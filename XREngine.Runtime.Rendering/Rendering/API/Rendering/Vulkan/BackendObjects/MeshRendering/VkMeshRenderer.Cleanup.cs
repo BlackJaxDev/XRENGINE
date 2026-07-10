@@ -138,8 +138,7 @@ public unsafe partial class VulkanRenderer
 
 			if (destroyImmediately)
 			{
-				Api!.DestroyDescriptorPool(Device, descriptorPool, null);
-				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
+				Renderer.RetireDescriptorPool(descriptorPool);
 				return;
 			}
 

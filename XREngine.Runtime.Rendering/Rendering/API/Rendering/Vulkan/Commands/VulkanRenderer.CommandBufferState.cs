@@ -299,6 +299,7 @@ namespace XREngine.Rendering.Vulkan
 
         internal void ResetCommandBufferBindState(CommandBuffer commandBuffer)
         {
+            ResetVulkanCommandBufferLifetime(commandBuffer);
             ulong key = (ulong)commandBuffer.Handle;
             CommandBufferBindState state = new()
             {
@@ -376,12 +377,20 @@ namespace XREngine.Rendering.Vulkan
                 _commandBindStates.Remove(key);
                 _commandBufferImageIndices.Remove(key);
             }
+
+            RemoveVulkanCommandBufferLifetime(new CommandBuffer { Handle = unchecked((nint)key) });
         }
 
         internal void BindPipelineTracked(CommandBuffer commandBuffer, PipelineBindPoint bindPoint, Pipeline pipeline)
         {
             if (pipeline.Handle == 0)
                 return;
+
+            TrackVulkanCommandBufferResource(
+                commandBuffer,
+                ObjectType.Pipeline,
+                pipeline.Handle,
+                "Pipeline.Bind");
 
             bool shouldBind = true;
             ulong key = (ulong)commandBuffer.Handle;
@@ -521,6 +530,24 @@ namespace XREngine.Rendering.Vulkan
             DescriptorSet[] sets)
             => BindDescriptorSetsTracked(commandBuffer, bindPoint, layout, firstSet, (ReadOnlySpan<DescriptorSet>)sets, ReadOnlySpan<uint>.Empty);
 
+        internal void BindDescriptorSetTracked(
+            CommandBuffer commandBuffer,
+            PipelineBindPoint bindPoint,
+            PipelineLayout layout,
+            uint firstSet,
+            DescriptorSet descriptorSet)
+        {
+            Span<DescriptorSet> sets = stackalloc DescriptorSet[1];
+            sets[0] = descriptorSet;
+            BindDescriptorSetsTracked(
+                commandBuffer,
+                bindPoint,
+                layout,
+                firstSet,
+                sets,
+                ReadOnlySpan<uint>.Empty);
+        }
+
         internal void BindDescriptorSetsTracked(
             CommandBuffer commandBuffer,
             PipelineBindPoint bindPoint,
@@ -531,6 +558,14 @@ namespace XREngine.Rendering.Vulkan
         {
             if (sets.Length == 0)
                 return;
+
+            TrackVulkanCommandBufferResource(
+                commandBuffer,
+                ObjectType.PipelineLayout,
+                layout.Handle,
+                "DescriptorSet.PipelineLayout");
+            for (int i = 0; i < sets.Length; i++)
+                TrackVulkanDescriptorSetBinding(commandBuffer, sets[i]);
 
             HashCode hash = new();
             hash.Add((int)bindPoint);
@@ -589,6 +624,12 @@ namespace XREngine.Rendering.Vulkan
             if (layout.Handle == 0)
                 return;
 
+            TrackVulkanCommandBufferResource(
+                commandBuffer,
+                ObjectType.PipelineLayout,
+                layout.Handle,
+                "PushConstants.PipelineLayout");
+
             T localValue = value;
             Api!.CmdPushConstants(
                 commandBuffer,
@@ -609,6 +650,15 @@ namespace XREngine.Rendering.Vulkan
         {
             if (buffers.Length == 0)
                 return;
+
+            for (int i = 0; i < buffers.Length; i++)
+            {
+                TrackVulkanCommandBufferResource(
+                    commandBuffer,
+                    ObjectType.Buffer,
+                    buffers[i].Handle,
+                    "VertexBuffer.Bind");
+            }
 
             HashCode hash = new();
             hash.Add(firstBinding);
@@ -655,6 +705,12 @@ namespace XREngine.Rendering.Vulkan
             if (buffer.Handle == 0)
                 return;
 
+            TrackVulkanCommandBufferResource(
+                commandBuffer,
+                ObjectType.Buffer,
+                buffer.Handle,
+                "VertexBuffer.Bind");
+
             HashCode hash = new();
             hash.Add(binding);
             hash.Add(1);
@@ -691,6 +747,12 @@ namespace XREngine.Rendering.Vulkan
         {
             if (indexBuffer.Handle == 0)
                 return;
+
+            TrackVulkanCommandBufferResource(
+                commandBuffer,
+                ObjectType.Buffer,
+                indexBuffer.Handle,
+                "IndexBuffer.Bind");
 
             bool shouldBind;
             ulong key = (ulong)commandBuffer.Handle;
@@ -777,7 +839,7 @@ namespace XREngine.Rendering.Vulkan
                 fixed (CommandBuffer* commandBuffersPtr = _commandBuffers)
                 {
                     if (_commandBuffers.Length > 0)
-                        Api!.FreeCommandBuffers(device, commandPool, (uint)_commandBuffers.Length, commandBuffersPtr);
+                        FreeVulkanCommandBuffersTracked(commandPool, (uint)_commandBuffers.Length, commandBuffersPtr, "CommandBuffers.DestroyPrimary");
                 }
             }
 
@@ -815,7 +877,7 @@ namespace XREngine.Rendering.Vulkan
                     if (primary.Handle != 0)
                     {
                         if (variant.OwnsPrimaryCommandBuffer && !_deviceLost)
-                            Api!.FreeCommandBuffers(device, commandPool, 1, ref primary);
+                            FreeVulkanCommandBufferTracked(commandPool, ref primary, "CommandBuffers.DestroyVariantPrimary");
                         RemoveCommandBufferBindState(primary);
                     }
 
@@ -823,7 +885,7 @@ namespace XREngine.Rendering.Vulkan
                     if (secondary.Handle != 0)
                     {
                         if (variant.OwnsDynamicUiSecondaryCommandBuffer && !_deviceLost)
-                            Api!.FreeCommandBuffers(device, commandPool, 1, ref secondary);
+                            FreeVulkanCommandBufferTracked(commandPool, ref secondary, "CommandBuffers.DestroyVariantSecondary");
                         RemoveCommandBufferBindState(secondary);
                     }
                 }
@@ -912,6 +974,9 @@ namespace XREngine.Rendering.Vulkan
         private void UntrackOwnedCommandChainSecondaryCommandBuffer(CommandPool pool, CommandBuffer commandBuffer)
         {
             if (pool.Handle == 0 || commandBuffer.Handle == 0)
+                return;
+
+            if (IsCommandBufferPendingRetirement(commandBuffer))
                 return;
 
             ulong poolHandle = pool.Handle;
@@ -1071,7 +1136,7 @@ namespace XREngine.Rendering.Vulkan
             fixed (CommandBuffer* commandBuffersPtr = _dynamicUiBatchTextSecondaryCommandBuffers)
             {
                 if (_dynamicUiBatchTextSecondaryCommandBuffers.Length > 0)
-                    Api!.FreeCommandBuffers(device, commandPool, (uint)_dynamicUiBatchTextSecondaryCommandBuffers.Length, commandBuffersPtr);
+                    FreeVulkanCommandBuffersTracked(commandPool, (uint)_dynamicUiBatchTextSecondaryCommandBuffers.Length, commandBuffersPtr, "CommandBuffers.DestroyDynamicUiSecondary");
             }
 
             foreach (CommandBuffer commandBuffer in _dynamicUiBatchTextSecondaryCommandBuffers)
@@ -1099,7 +1164,7 @@ namespace XREngine.Rendering.Vulkan
             fixed (CommandBuffer* commandBuffersPtr = _dynamicUiBatchTextOverlayCommandBuffers)
             {
                 if (_dynamicUiBatchTextOverlayCommandBuffers.Length > 0)
-                    Api!.FreeCommandBuffers(device, commandPool, (uint)_dynamicUiBatchTextOverlayCommandBuffers.Length, commandBuffersPtr);
+                    FreeVulkanCommandBuffersTracked(commandPool, (uint)_dynamicUiBatchTextOverlayCommandBuffers.Length, commandBuffersPtr, "CommandBuffers.DestroyDynamicUiOverlay");
             }
 
             foreach (CommandBuffer commandBuffer in _dynamicUiBatchTextOverlayCommandBuffers)
@@ -1125,7 +1190,7 @@ namespace XREngine.Rendering.Vulkan
             fixed (CommandBuffer* commandBuffersPtr = _imguiOverlayCommandBuffers)
             {
                 if (_imguiOverlayCommandBuffers.Length > 0)
-                    Api!.FreeCommandBuffers(device, commandPool, (uint)_imguiOverlayCommandBuffers.Length, commandBuffersPtr);
+                    FreeVulkanCommandBuffersTracked(commandPool, (uint)_imguiOverlayCommandBuffers.Length, commandBuffersPtr, "CommandBuffers.DestroyImGuiOverlay");
             }
 
             foreach (CommandBuffer commandBuffer in _imguiOverlayCommandBuffers)
@@ -1179,7 +1244,7 @@ namespace XREngine.Rendering.Vulkan
                     continue;
                 }
 
-                Api!.FreeCommandBuffers(device, entry.Pool, 1, ref secondary);
+                FreeVulkanCommandBufferTracked(entry.Pool, ref secondary, "CommandBuffers.DeferredSecondary");
                 RemoveCommandBufferBindState(secondary);
                 UntrackOwnedCommandChainSecondaryCommandBuffer(entry.Pool, entry.CommandBuffer);
                 DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(entry.Pool);
@@ -1195,7 +1260,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (_deferredSecondaryCommandBuffers is null || imageIndex >= _deferredSecondaryCommandBuffers.Length)
             {
-                Api!.FreeCommandBuffers(device, pool, 1, ref commandBuffer);
+                FreeVulkanCommandBufferTracked(pool, ref commandBuffer, "CommandBuffers.OwnedSecondary");
                 RemoveCommandBufferBindState(commandBuffer);
                 UntrackOwnedCommandChainSecondaryCommandBuffer(pool, commandBuffer);
                 DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(pool);
@@ -1318,23 +1383,21 @@ namespace XREngine.Rendering.Vulkan
                 {
                     if (destroyPools)
                     {
-                        Api!.DestroyDescriptorPool(device, descriptorPool, null);
-                        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
+                        RetireDescriptorPool(descriptorPool);
                         resources.DescriptorPools[i] = default;
                         if (i < resources.DescriptorPoolSignatures.Count)
                             resources.DescriptorPoolSignatures[i] = 0;
                     }
                     else
                     {
-                        Result resetResult = Api!.ResetDescriptorPool(device, descriptorPool, 0);
+                        Result resetResult = ResetVulkanDescriptorPoolTracked(descriptorPool);
                         if (resetResult == Result.Success)
                         {
                             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolReset();
                         }
                         else
                         {
-                            Api!.DestroyDescriptorPool(device, descriptorPool, null);
-                            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
+                            RetireDescriptorPool(descriptorPool);
                             resources.DescriptorPools[i] = default;
                             if (i < resources.DescriptorPoolSignatures.Count)
                                 resources.DescriptorPoolSignatures[i] = 0;
@@ -1400,6 +1463,11 @@ namespace XREngine.Rendering.Vulkan
                         Result allocResult = Api!.AllocateDescriptorSets(device, ref allocInfo, setPtr);
                         if (allocResult == Result.Success)
                         {
+                            RegisterVulkanDescriptorSets(
+                                pool,
+                                sets,
+                                requireUpdateAfterBind,
+                                "RendererOwned.DescriptorSet");
                             SetDebugDescriptorSetNames(sets, "RendererOwned.DescriptorSet");
                             RecordVulkanDescriptorTableGeneration("RendererOwnedDescriptorSets.Allocated");
                             return true;

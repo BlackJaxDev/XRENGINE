@@ -132,7 +132,7 @@ namespace XREngine.Rendering.Vulkan
                         Size = byteCount,
                     };
 
-                    Api!.CmdCopyBuffer(scope.CommandBuffer, sourceHandle, stagingBuffer, 1, &copy);
+                    CmdCopyBufferTracked(scope.CommandBuffer, sourceHandle, stagingBuffer, 1, &copy);
                 }
 
                 if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, byteCount, out void* mappedPtr))
@@ -367,7 +367,7 @@ namespace XREngine.Rendering.Vulkan
                     ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
                 };
 
-                Api!.CmdCopyImageToBuffer(
+                CmdCopyImageToBufferTracked(
                     scope.CommandBuffer,
                     _swapchainDepthImage,
                     ImageLayout.TransferSrcOptimal,
@@ -469,7 +469,7 @@ namespace XREngine.Rendering.Vulkan
                 CommandBufferCount = 1,
             };
 
-            if (Api!.AllocateCommandBuffers(device, ref allocateInfo, out CommandBuffer commandBuffer) != Result.Success)
+            if (AllocateVulkanCommandBuffersTracked(ref allocateInfo, out CommandBuffer commandBuffer, "Readback.Depth") != Result.Success)
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 depthCallback?.Invoke(1.0f);
@@ -485,7 +485,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (Api!.CreateFence(device, ref fenceInfo, null, out Fence fence) != Result.Success)
             {
-                Api!.FreeCommandBuffers(device, commandPool, 1, ref commandBuffer);
+                FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.RecordFailure");
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 depthCallback?.Invoke(1.0f);
                 return;
@@ -498,7 +498,15 @@ namespace XREngine.Rendering.Vulkan
                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
             };
 
-            Api!.BeginCommandBuffer(commandBuffer, ref beginInfo);
+            if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
+            {
+                Api.DestroyFence(device, fence, null);
+                FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.BeginFailure");
+                DestroyBuffer(stagingBuffer, stagingMemory);
+                depthCallback?.Invoke(1.0f);
+                return;
+            }
+            ResetCommandBufferBindState(commandBuffer);
 
             // Transition depth image to transfer source
             ImageMemoryBarrier toTransferBarrier = new()
@@ -543,7 +551,7 @@ namespace XREngine.Rendering.Vulkan
                 ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
             };
 
-            Api!.CmdCopyImageToBuffer(
+            CmdCopyImageToBufferTracked(
                 commandBuffer,
                 _swapchainDepthImage,
                 ImageLayout.TransferSrcOptimal,
@@ -588,7 +596,7 @@ namespace XREngine.Rendering.Vulkan
                     MarkDeviceLost("Depth readback QueueSubmit returned ErrorDeviceLost");
 
                 Api!.DestroyFence(device, fence, null);
-                Api!.FreeCommandBuffers(device, commandPool, 1, ref commandBuffer);
+                FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.SubmitFailure");
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 depthCallback?.Invoke(1.0f);
                 return;
@@ -604,6 +612,7 @@ namespace XREngine.Rendering.Vulkan
             // Wait for the fence asynchronously on a background thread
             var readbackTask = System.Threading.Tasks.Task.Run(() =>
             {
+                bool submissionCompleted = false;
                 try
                 {
                     // Poll the fence with a timeout to avoid blocking indefinitely
@@ -619,6 +628,9 @@ namespace XREngine.Rendering.Vulkan
                         return;
                     }
 
+                    NotifyVulkanFenceCompleted(fence);
+                    submissionCompleted = true;
+
                     // Map and read depth value
                     if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
                     {
@@ -633,12 +645,20 @@ namespace XREngine.Rendering.Vulkan
                 }
                 finally
                 {
-                    // Cleanup resources
-                    api!.DestroyFence(dev, fence, null);
+                    if (!submissionCompleted)
+                    {
+                        Debug.VulkanWarning(
+                            "[Vulkan.ResourceLifetime] Preserving timed-out depth-readback fence, command buffer, and staging buffer because GPU completion was not proven.");
+                    }
+                    else
+                    {
+                        // Cleanup resources only after the fence proves the submission completed.
+                        api!.DestroyFence(dev, fence, null);
 
-                    CommandBuffer cmdToFree = capturedCommandBuffer;
-                    api!.FreeCommandBuffers(dev, pool, 1, ref cmdToFree);
-                    DestroyBuffer(stagingBuffer, stagingMemory);
+                        CommandBuffer cmdToFree = capturedCommandBuffer;
+                        FreeVulkanCommandBufferTracked(pool, ref cmdToFree, "Readback.AsyncComplete");
+                        DestroyBuffer(stagingBuffer, stagingMemory);
+                    }
                 }
             });
 
@@ -955,7 +975,7 @@ namespace XREngine.Rendering.Vulkan
                     ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
                 };
 
-                Api!.CmdCopyImageToBuffer(
+                CmdCopyImageToBufferTracked(
                     scope.CommandBuffer,
                     vkTex.Image,
                     ImageLayout.TransferSrcOptimal,
@@ -1046,7 +1066,7 @@ namespace XREngine.Rendering.Vulkan
                     ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
                 };
 
-                Api!.CmdCopyImageToBuffer(
+                CmdCopyImageToBufferTracked(
                     scope.CommandBuffer,
                     vkTex.Image,
                     ImageLayout.TransferSrcOptimal,

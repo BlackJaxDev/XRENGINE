@@ -1092,7 +1092,7 @@ namespace XREngine.Rendering.Vulkan
                     ImageExtent = new Extent3D { Width = (uint)width, Height = (uint)height, Depth = 1 }
                 };
 
-                Api!.CmdCopyImageToBuffer(
+                CmdCopyImageToBufferTracked(
                     scope.CommandBuffer,
                     liveSource.Image,
                     ImageLayout.TransferSrcOptimal,
@@ -1185,7 +1185,7 @@ namespace XREngine.Rendering.Vulkan
                     ImageExtent = new Extent3D { Width = (uint)width, Height = (uint)height, Depth = 1 }
                 };
 
-                Api!.CmdCopyImageToBuffer(
+                CmdCopyImageToBufferTracked(
                     scope.CommandBuffer,
                     liveSource.Image,
                     ImageLayout.TransferSrcOptimal,
@@ -1282,7 +1282,7 @@ namespace XREngine.Rendering.Vulkan
                     ImageExtent = new Extent3D { Width = (uint)width, Height = (uint)height, Depth = 1 }
                 };
 
-                Api!.CmdCopyImageToBuffer(
+                CmdCopyImageToBufferTracked(
                     scope.CommandBuffer,
                     liveSource.Image,
                     ImageLayout.TransferSrcOptimal,
@@ -1744,7 +1744,7 @@ namespace XREngine.Rendering.Vulkan
                     ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
                 };
 
-                Api!.CmdCopyImageToBuffer(
+                CmdCopyImageToBufferTracked(
                     scope.CommandBuffer,
                     liveSource.Image,
                     ImageLayout.TransferSrcOptimal,
@@ -1847,7 +1847,7 @@ namespace XREngine.Rendering.Vulkan
                     ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
                 };
 
-                Api!.CmdCopyImageToBuffer(
+                CmdCopyImageToBufferTracked(
                     scope.CommandBuffer,
                     liveSource.Image,
                     ImageLayout.TransferSrcOptimal,
@@ -1963,7 +1963,7 @@ namespace XREngine.Rendering.Vulkan
                     ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
                 };
 
-                Api!.CmdCopyImageToBuffer(
+                CmdCopyImageToBufferTracked(
                     scope.CommandBuffer,
                     liveSource.Image,
                     ImageLayout.TransferSrcOptimal,

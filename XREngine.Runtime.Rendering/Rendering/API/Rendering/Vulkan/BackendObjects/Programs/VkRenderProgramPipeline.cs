@@ -105,6 +105,7 @@ public unsafe partial class VulkanRenderer
                 if (result != Result.Success)
                     throw new InvalidOperationException($"Failed to create graphics pipeline ({result}).");
 
+                Renderer.RegisterVulkanPipeline(pipeline, "VkRenderProgramPipeline.Graphics");
                 return pipeline;
             }
         }
@@ -127,6 +128,7 @@ public unsafe partial class VulkanRenderer
             if (result != Result.Success)
                 throw new InvalidOperationException($"Failed to create compute pipeline ({result}).");
 
+            Renderer.RegisterVulkanPipeline(pipeline, "VkRenderProgramPipeline.Compute");
             return pipeline;
         }
 

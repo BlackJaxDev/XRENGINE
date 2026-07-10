@@ -310,6 +310,17 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
+        TrackVulkanCommandBufferResource(
+            commandBuffer,
+            ObjectType.Buffer,
+            _descriptorHeapSamplerStorage.Buffer.Handle,
+            "DescriptorHeap.SamplerStorage");
+        TrackVulkanCommandBufferResource(
+            commandBuffer,
+            ObjectType.Buffer,
+            _descriptorHeapResourceStorage.Buffer.Handle,
+            "DescriptorHeap.ResourceStorage");
+
         ulong signature = unchecked((ulong)HashCode.Combine(
             _descriptorHeapSamplerStorage.DeviceAddress,
             _descriptorHeapSamplerStorage.Size,

@@ -57,7 +57,12 @@ namespace XREngine.Rendering.Vulkan
                 CommandBufferCount = 1,
             };
 
-            Api!.AllocateCommandBuffers(device, ref allocateInfo, out CommandBuffer commandBuffer);
+            Result allocateResult = AllocateVulkanCommandBuffersTracked(
+                ref allocateInfo,
+                out CommandBuffer commandBuffer,
+                "OneTimeSubmit");
+            if (allocateResult != Result.Success || commandBuffer.Handle == 0)
+                throw new InvalidOperationException($"Failed to allocate a Vulkan one-shot command buffer ({allocateResult}).");
 
             CommandBufferBeginInfo beginInfo = new()
             {
@@ -65,7 +70,12 @@ namespace XREngine.Rendering.Vulkan
                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
             };
 
-            Api!.BeginCommandBuffer(commandBuffer, ref beginInfo);
+            Result beginResult = Api!.BeginCommandBuffer(commandBuffer, ref beginInfo);
+            if (beginResult != Result.Success)
+            {
+                FreeVulkanCommandBufferTracked(pool, ref commandBuffer, "OneTimeSubmit.BeginFailure");
+                throw new InvalidOperationException($"Failed to begin a Vulkan one-shot command buffer ({beginResult}).");
+            }
             ResetCommandBufferBindState(commandBuffer);
 
             lock (_oneTimeCommandPoolsLock)
@@ -134,6 +144,8 @@ namespace XREngine.Rendering.Vulkan
                 {
                     Result waitResult = Api!.WaitForFences(device, 1, &submitFence, true, ulong.MaxValue);
                     waitSucceeded = waitResult == Result.Success;
+                    if (waitSucceeded)
+                        NotifyVulkanFenceCompleted(submitFence);
                     if (waitResult == Result.ErrorDeviceLost)
                         MarkDeviceLost();
                     if (!waitSucceeded)
@@ -169,7 +181,7 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            Api!.FreeCommandBuffers(device, pool, 1, ref commandBuffer);
+            FreeVulkanCommandBufferTracked(pool, ref commandBuffer, "OneTimeSubmit.Completed");
             RemoveCommandBufferBindState(commandBuffer);
         }
 

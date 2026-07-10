@@ -1344,7 +1344,7 @@ public unsafe partial class VulkanRenderer
 
             fixed (Image* imagePtr = &_image)
             {
-                Result result = Api!.CreateImage(Device, ref imageInfo, null, imagePtr);
+                Result result = Renderer.CreateVulkanImageTracked(ref imageInfo, imagePtr, "VkImageBackedTexture.Image");
                 if (result != Result.Success)
                 {
                     // The driver may have written a garbage handle to *imagePtr on failure
@@ -1800,7 +1800,7 @@ public unsafe partial class VulkanRenderer
                 SharingMode = SharingMode.Exclusive,
             };
 
-            Result createResult = Api!.CreateImage(Device, ref imageInfo, null, out image);
+            Result createResult = Renderer.CreateVulkanImageTracked(ref imageInfo, out image, "VkImageBackedTexture.ImportedUpload");
             if (createResult != Result.Success || image.Handle == 0)
             {
                 image = default;
@@ -1816,7 +1816,7 @@ public unsafe partial class VulkanRenderer
                     out VulkanMemoryAllocation allocation,
                     out string allocationFailure))
             {
-                Api!.DestroyImage(Device, image, null);
+                Renderer.DestroyVulkanImageImmediateTracked(image, "ImportedUpload.AllocationFailure");
                 image = default;
                 failureReason = allocationFailure;
                 return false;
@@ -1843,8 +1843,8 @@ public unsafe partial class VulkanRenderer
             {
                 Renderer._imageAllocations.TryRemove(image.Handle, out _);
                 Renderer.UntrackImageAllocation(image);
+                Renderer.DestroyVulkanImageImmediateTracked(image, "ImportedUpload.BindFailure");
                 Renderer.FreeMemoryAllocation(allocation);
-                Api!.DestroyImage(Device, image, null);
                 image = default;
                 memory = default;
                 failureReason = $"failed to bind synchronized imported texture image memory ({bindResult})";
@@ -3225,7 +3225,7 @@ public unsafe partial class VulkanRenderer
                         &acquireBarrier);
                 }
 
-                Api!.CmdCopyBufferToImage(transferScope.CommandBuffer, buffer, _image, ImageLayout.TransferDstOptimal, 1, ref region);
+                Renderer.CmdCopyBufferToImageTracked(transferScope.CommandBuffer, buffer, _image, ImageLayout.TransferDstOptimal, 1, &region);
 
                 if (dedicatedTransferFamily)
                 {
@@ -3704,7 +3704,7 @@ public unsafe partial class VulkanRenderer
                     Depth = color.R,
                     Stencil = (uint)Math.Clamp((int)color.G, 0, 255),
                 };
-                Api!.CmdClearDepthStencilImage(scope.CommandBuffer, _image, ImageLayout.TransferDstOptimal, ref clearDepthStencil, 1, ref range);
+                Renderer.CmdClearDepthStencilImageTracked(scope.CommandBuffer, _image, ImageLayout.TransferDstOptimal, ref clearDepthStencil, 1, ref range);
             }
             else
             {
@@ -3715,7 +3715,7 @@ public unsafe partial class VulkanRenderer
                     Float32_2 = color.B,
                     Float32_3 = color.A,
                 };
-                Api!.CmdClearColorImage(scope.CommandBuffer, _image, ImageLayout.TransferDstOptimal, ref clearColor, 1, ref range);
+                Renderer.CmdClearColorImageTracked(scope.CommandBuffer, _image, ImageLayout.TransferDstOptimal, ref clearColor, 1, ref range);
             }
 
             ImageLayout targetLayout = previousLayout == ImageLayout.Undefined
@@ -4125,9 +4125,8 @@ public unsafe partial class VulkanRenderer
                 ImageLayout currentLayout = CurrentImageLayout;
                 if (currentLayout != ImageLayout.ShaderReadOnlyOptimal &&
                     currentLayout != ImageLayout.DepthStencilReadOnlyOptimal)
-                {
                     TransitionImageLayout(currentLayout, ImageLayout.ShaderReadOnlyOptimal);
-                }
+                
                 return;
             }
 
@@ -4172,17 +4171,37 @@ public unsafe partial class VulkanRenderer
                 barrier.SrcAccessMask = AccessFlags.TransferWriteBit;
                 barrier.DstAccessMask = AccessFlags.TransferReadBit;
 
-                Api.CmdPipelineBarrier(cmd, PipelineStageFlags.TransferBit, PipelineStageFlags.TransferBit, 0, 0, null, 0, null, 1, ref barrier);
+                Renderer.CmdPipelineBarrierTracked(
+                    cmd,
+                    PipelineStageFlags.TransferBit,
+                    PipelineStageFlags.TransferBit,
+                    0,
+                    0,
+                    null,
+                    0,
+                    null,
+                    1,
+                    &barrier);
 
                 ImageBlit blit = CreateMipBlit(level, mipWidth, mipHeight);
-                Api.CmdBlitImage(cmd, Image, ImageLayout.TransferSrcOptimal, Image, ImageLayout.TransferDstOptimal, 1, ref blit, Filter.Linear);
+                Renderer.CmdBlitImageTracked(cmd, Image, ImageLayout.TransferSrcOptimal, Image, ImageLayout.TransferDstOptimal, 1, &blit, Filter.Linear);
 
                 barrier.OldLayout = ImageLayout.TransferSrcOptimal;
                 barrier.NewLayout = ImageLayout.ShaderReadOnlyOptimal;
                 barrier.SrcAccessMask = AccessFlags.TransferReadBit;
                 barrier.DstAccessMask = AccessFlags.ShaderReadBit;
 
-                Api.CmdPipelineBarrier(cmd, PipelineStageFlags.TransferBit, PipelineStageFlags.FragmentShaderBit, 0, 0, null, 0, null, 1, ref barrier);
+                Renderer.CmdPipelineBarrierTracked(
+                    cmd,
+                    PipelineStageFlags.TransferBit,
+                    PipelineStageFlags.FragmentShaderBit,
+                    0,
+                    0,
+                    null,
+                    0,
+                    null,
+                    1,
+                    &barrier);
 
                 if (mipWidth > 1)
                     mipWidth /= 2;
@@ -4196,11 +4215,20 @@ public unsafe partial class VulkanRenderer
             barrier.SrcAccessMask = AccessFlags.TransferWriteBit;
             barrier.DstAccessMask = AccessFlags.ShaderReadBit;
 
-            Api.CmdPipelineBarrier(cmd, PipelineStageFlags.TransferBit, PipelineStageFlags.FragmentShaderBit, 0, 0, null, 0, null, 1, ref barrier);
+            Renderer.CmdPipelineBarrierTracked(
+                cmd,
+                PipelineStageFlags.TransferBit,
+                PipelineStageFlags.FragmentShaderBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &barrier);
 
             _currentImageLayout = ImageLayout.ShaderReadOnlyOptimal;
-            if (_physicalGroup is not null)
-                _physicalGroup.LastKnownLayout = ImageLayout.ShaderReadOnlyOptimal;
+            _physicalGroup?.LastKnownLayout = ImageLayout.ShaderReadOnlyOptimal;
         }
 
         /// <summary>

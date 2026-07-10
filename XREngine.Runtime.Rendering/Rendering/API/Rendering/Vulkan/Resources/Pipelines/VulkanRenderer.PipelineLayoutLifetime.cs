@@ -12,7 +12,10 @@ public unsafe partial class VulkanRenderer
     internal void TrackLivePipelineLayout(PipelineLayout pipelineLayout, string owner = "unknown")
     {
         if (pipelineLayout.Handle != 0)
+        {
             _livePipelineLayoutHandles[pipelineLayout.Handle] = owner;
+            RegisterVulkanResource(ObjectType.PipelineLayout, pipelineLayout.Handle, owner);
+        }
     }
 
     internal bool TryBeginDestroyPipelineLayout(PipelineLayout pipelineLayout, string owner)
@@ -20,8 +23,25 @@ public unsafe partial class VulkanRenderer
         if (pipelineLayout.Handle == 0)
             return false;
 
-        if (_livePipelineLayoutHandles.TryRemove(pipelineLayout.Handle, out _))
+        if (_livePipelineLayoutHandles.TryRemove(pipelineLayout.Handle, out string? trackedOwner))
+        {
+            VulkanRetirementTicket ticket = CaptureVulkanRetirementTicket(
+                ObjectType.PipelineLayout,
+                pipelineLayout.Handle,
+                owner);
+            if (!IsVulkanRetirementReady(ticket))
+            {
+                _livePipelineLayoutHandles[pipelineLayout.Handle] = trackedOwner ?? owner;
+                Debug.VulkanWarning(
+                    "[Vulkan.ResourceLifetime] Pipeline-layout destruction deferred until shutdown: handle=0x{0:X} owner={1}.",
+                    pipelineLayout.Handle,
+                    owner);
+                return false;
+            }
+
+            CompleteVulkanResourceDestruction(ObjectType.PipelineLayout, pipelineLayout.Handle);
             return true;
+        }
 
         Debug.VulkanEvery(
             $"Vulkan.PipelineLayout.SkipStaleDestroy.{GetHashCode()}.{owner}.{pipelineLayout.Handle}",
@@ -46,6 +66,7 @@ public unsafe partial class VulkanRenderer
                 pair.Key,
                 owner);
             Api!.DestroyPipelineLayout(device, pipelineLayout, null);
+            CompleteVulkanResourceDestruction(ObjectType.PipelineLayout, pair.Key);
             destroyedLayouts++;
         }
 

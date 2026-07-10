@@ -144,13 +144,31 @@ public unsafe partial class VulkanRenderer
         diagnosticContext = CompleteSubmissionDiagnosticContext(queue, ref submitInfo, fence, diagnosticContext, caller);
         RecordLastVulkanSubmissionDiagnosticContext(diagnosticContext);
 
+        if (!ValidateVulkanSubmissionResourceLifetimes(ref submitInfo, out string lifetimeFailure))
+        {
+            Debug.VulkanWarning(
+                "[Vulkan.ResourceLifetime] Rejected queue submission before vkQueueSubmit: caller={0} reason={1}",
+                caller ?? "<unknown>",
+                lifetimeFailure);
+            RecordVulkanQueueOperation(
+                "submit-rejected-resource-lifetime",
+                queue,
+                Result.ErrorValidationFailedExt,
+                diagnosticContext.SubmissionSerial,
+                caller);
+            return Result.ErrorValidationFailedExt;
+        }
+
         Result result = UsesSynchronization2
             ? SubmitToQueueSync2(queue, ref submitInfo, fence)
             : Api!.QueueSubmit(queue, 1, ref submitInfo, fence);
 
         RecordVulkanQueueOperation("submit", queue, result, diagnosticContext.SubmissionSerial, caller);
         if (result == Result.Success)
+        {
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanQueueSubmit();
+            RecordSuccessfulVulkanSubmissionLifetime(queue, ref submitInfo, fence, diagnosticContext);
+        }
         else if (result == Result.ErrorDeviceLost)
         {
             RecordFirstFailingVulkanApi($"vkQueueSubmit:{caller ?? "<unknown>"}:{result}");
@@ -175,7 +193,11 @@ public unsafe partial class VulkanRenderer
 
         Result result = Api!.QueueWaitIdle(queue);
         RecordVulkanQueueOperation("wait-idle", queue, result, 0, caller);
-        if (result == Result.ErrorDeviceLost)
+        if (result == Result.Success)
+        {
+            NotifyVulkanQueueIdle(queue);
+        }
+        else if (result == Result.ErrorDeviceLost)
         {
             RecordFirstFailingVulkanApi($"vkQueueWaitIdle:{caller ?? "<unknown>"}:{result}");
             MarkDeviceLost($"QueueWaitIdle returned ErrorDeviceLost in {caller ?? "<unknown>"}");
@@ -384,6 +406,23 @@ public unsafe partial class VulkanRenderer
         ImageMemoryBarrier* imageBarriers,
         [CallerMemberName] string? caller = null)
     {
+        for (int i = 0; i < bufferBarrierCount; i++)
+        {
+            TrackVulkanCommandBufferResource(
+                commandBuffer,
+                ObjectType.Buffer,
+                bufferBarriers[i].Buffer.Handle,
+                "PipelineBarrier.Buffer");
+        }
+        for (int i = 0; i < imageBarrierCount; i++)
+        {
+            TrackVulkanCommandBufferResource(
+                commandBuffer,
+                ObjectType.Image,
+                imageBarriers[i].Image.Handle,
+                "PipelineBarrier.Image");
+        }
+
         WarnBroadBarrierStages(srcStageMask, dstStageMask, caller);
         RecordVulkanImageLayoutTransitionBreadcrumb(commandBuffer, imageBarrierCount, imageBarriers, caller);
 

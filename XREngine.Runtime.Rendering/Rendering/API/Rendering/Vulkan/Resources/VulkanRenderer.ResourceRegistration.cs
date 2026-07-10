@@ -103,7 +103,7 @@ public unsafe partial class VulkanRenderer
 
         fixed (Image* imagePtr = &image)
         {
-            Result result = Api!.CreateImage(device, ref imageInfo, null, imagePtr);
+            Result result = CreateVulkanImageTracked(ref imageInfo, imagePtr, $"ResourcePlanner.{group.Key}");
             if (result != Result.Success)
             {
                 image = default;
@@ -148,7 +148,7 @@ public unsafe partial class VulkanRenderer
             {
                 if (image.Handle != 0)
                 {
-                    Api!.DestroyImage(device, image, null);
+                    DestroyVulkanImageImmediateTracked(image, "ResourcePlanner.AllocationFailure");
                     image = default;
                 }
 
@@ -177,12 +177,12 @@ public unsafe partial class VulkanRenderer
             {
                 _imageAllocations.TryRemove(image.Handle, out _);
                 UntrackImageAllocation(image);
-                FreeMemoryAllocation(allocation);
                 if (image.Handle != 0)
                 {
-                    Api!.DestroyImage(device, image, null);
+                    DestroyVulkanImageImmediateTracked(image, "ResourcePlanner.BindFailure");
                     image = default;
                 }
+                FreeMemoryAllocation(allocation);
 
                 memory = default;
                 failureReason = $"Failed to bind device memory for Vulkan image group '{group.Key}'. Result={bindResult}.";
@@ -191,19 +191,23 @@ public unsafe partial class VulkanRenderer
         }
         catch
         {
+            VulkanMemoryAllocation trackedAllocation = default;
+            bool hasTrackedAllocation = image.Handle != 0 &&
+                _imageAllocations.TryRemove(image.Handle, out trackedAllocation);
+            if (image.Handle != 0)
+            {
+                UntrackImageAllocation(image);
+                DestroyVulkanImageImmediateTracked(image, "ResourcePlanner.ExceptionCleanup");
+                image = default;
+            }
+
             if (memory.Handle != 0)
             {
-                if (_imageAllocations.TryRemove(image.Handle, out VulkanMemoryAllocation fallbackAlloc))
-                    FreeMemoryAllocation(fallbackAlloc);
+                if (hasTrackedAllocation)
+                    FreeMemoryAllocation(trackedAllocation);
                 else
                     Api!.FreeMemory(device, memory, null);
                 memory = default;
-            }
-
-            if (image.Handle != 0)
-            {
-                Api!.DestroyImage(device, image, null);
-                image = default;
             }
 
             throw;
@@ -246,7 +250,7 @@ public unsafe partial class VulkanRenderer
             UntrackImageAllocation(imageToDestroy);
 
         if (imageToDestroy.Handle != 0)
-            Api!.DestroyImage(device, imageToDestroy, null);
+            DestroyVulkanImageImmediateTracked(imageToDestroy, nameof(DestroyPhysicalImageImmediate));
 
         if (hasTrackedAllocation)
         {

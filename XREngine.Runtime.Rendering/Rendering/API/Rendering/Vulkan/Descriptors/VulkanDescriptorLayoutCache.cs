@@ -71,6 +71,8 @@ public unsafe partial class VulkanRenderer
             if (!TryCreateDescriptorSetLayout(setIndex, bindings, out layout, out usesUpdateAfterBind, out usesVariableDescriptorCount))
                 return false;
 
+            TrackLiveDescriptorSetLayout(layout, $"DescriptorLayoutCache.Set{setIndex}");
+
             CachedDescriptorSetLayout created = new()
             {
                 Layout = layout,
@@ -98,7 +100,8 @@ public unsafe partial class VulkanRenderer
         {
             if (!_descriptorSetLayoutsByHandle.TryGetValue(layout.Handle, out CachedDescriptorSetLayout? cached))
             {
-                Api!.DestroyDescriptorSetLayout(device, layout, null);
+                if (TryBeginDestroyDescriptorSetLayout(layout, "DescriptorLayoutCache.UncachedRelease"))
+                    Api!.DestroyDescriptorSetLayout(device, layout, null);
                 return;
             }
 
@@ -114,7 +117,8 @@ public unsafe partial class VulkanRenderer
                     _descriptorSetLayoutsByHash.Remove(cached.SchemaHash);
             }
 
-            Api!.DestroyDescriptorSetLayout(device, cached.Layout, null);
+            if (TryBeginDestroyDescriptorSetLayout(cached.Layout, "DescriptorLayoutCache.Release"))
+                Api!.DestroyDescriptorSetLayout(device, cached.Layout, null);
         }
     }
 
@@ -125,7 +129,10 @@ public unsafe partial class VulkanRenderer
             foreach (CachedDescriptorSetLayout cached in _descriptorSetLayoutsByHandle.Values)
             {
                 if (cached.Layout.Handle != 0)
-                    Api!.DestroyDescriptorSetLayout(device, cached.Layout, null);
+                {
+                    if (TryBeginDestroyDescriptorSetLayout(cached.Layout, "DescriptorLayoutCache.DestroyAll"))
+                        Api!.DestroyDescriptorSetLayout(device, cached.Layout, null);
+                }
             }
 
             _descriptorSetLayoutsByHash.Clear();

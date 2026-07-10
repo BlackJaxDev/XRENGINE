@@ -998,7 +998,7 @@ public unsafe partial class VulkanRenderer
             CommandBufferCount = 1
         };
 
-        Result allocateResult = Api!.AllocateCommandBuffers(device, ref allocInfo, out secondary);
+        Result allocateResult = AllocateVulkanCommandBuffersTracked(ref allocInfo, out secondary, "CommandChain.Secondary");
         if (allocateResult != Result.Success || secondary.Handle == 0)
         {
             if (pool.Handle != 0)
@@ -1044,7 +1044,7 @@ public unsafe partial class VulkanRenderer
             CommandBufferCount = 1
         };
 
-        Result allocateResult = Api!.AllocateCommandBuffers(device, ref allocInfo, out CommandBuffer replacement);
+        Result allocateResult = AllocateVulkanCommandBuffersTracked(ref allocInfo, out CommandBuffer replacement, "CommandChain.SecondaryReplacement");
         if (allocateResult != Result.Success || replacement.Handle == 0)
             return false;
 
@@ -1101,7 +1101,7 @@ public unsafe partial class VulkanRenderer
                 else
                 {
                     CommandBuffer freedSecondary = secondary;
-                    Api!.FreeCommandBuffers(device, pool, 1, ref secondary);
+                    FreeVulkanCommandBufferTracked(pool, ref secondary, "CommandChain.SecondaryReplacement");
                     RemoveCommandBufferBindState(freedSecondary);
                     UntrackOwnedCommandChainSecondaryCommandBuffer(pool, freedSecondary);
                     DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(pool);

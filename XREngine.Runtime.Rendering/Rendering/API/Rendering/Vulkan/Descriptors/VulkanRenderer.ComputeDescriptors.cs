@@ -83,8 +83,7 @@ public unsafe partial class VulkanRenderer
                     if (block.Pool.Handle == 0 || !destroyedPools.Add(block.Pool.Handle))
                         continue;
 
-                    Api!.DestroyDescriptorPool(device, block.Pool, null);
-                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
+                    RetireDescriptorPool(block.Pool);
                 }
             }
         }
@@ -203,7 +202,11 @@ public unsafe partial class VulkanRenderer
             if (block.AllocatedAllocations >= block.MaxAllocations)
                 continue;
 
-            Result allocResult = TryAllocateDescriptorSetsFromPool(block.Pool, layouts, out descriptorSets);
+            Result allocResult = TryAllocateDescriptorSetsFromPool(
+                block.Pool,
+                layouts,
+                block.UsesUpdateAfterBind,
+                out descriptorSets);
             if (allocResult == Result.Success)
             {
                 block.AllocatedAllocations++;
@@ -234,7 +237,11 @@ public unsafe partial class VulkanRenderer
 
         blocks.Add(newBlock);
 
-        Result result = TryAllocateDescriptorSetsFromPool(newBlock.Pool, layouts, out descriptorSets);
+        Result result = TryAllocateDescriptorSetsFromPool(
+            newBlock.Pool,
+            layouts,
+            newBlock.UsesUpdateAfterBind,
+            out descriptorSets);
         if (result != Result.Success)
             return false;
 
@@ -296,6 +303,7 @@ public unsafe partial class VulkanRenderer
     private Result TryAllocateDescriptorSetsFromPool(
         DescriptorPool descriptorPool,
         DescriptorSetLayout[] layouts,
+        bool usesUpdateAfterBind,
         out DescriptorSet[] descriptorSets)
     {
         descriptorSets = new DescriptorSet[layouts.Length];
@@ -314,6 +322,11 @@ public unsafe partial class VulkanRenderer
             Result result = Api!.AllocateDescriptorSets(device, ref allocInfo, setPtr);
             if (result == Result.Success)
             {
+                RegisterVulkanDescriptorSets(
+                    descriptorPool,
+                    descriptorSets,
+                    usesUpdateAfterBind,
+                    "Compute.DescriptorSet");
                 SetDebugDescriptorSetNames(descriptorSets, "Compute.DescriptorSet");
                 RecordVulkanDescriptorTableGeneration("ComputeDescriptorSets.Allocated");
             }

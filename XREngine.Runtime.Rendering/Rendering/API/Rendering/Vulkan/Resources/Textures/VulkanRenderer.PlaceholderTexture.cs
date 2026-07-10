@@ -91,7 +91,7 @@ public unsafe partial class VulkanRenderer
             SharingMode = SharingMode.Exclusive,
         };
 
-        if (Api!.CreateImage(device, ref imageInfo, null, out _placeholderImage) != Result.Success)
+        if (CreateVulkanImageTracked(ref imageInfo, out _placeholderImage, "Placeholder.Texture2D") != Result.Success)
         {
             Debug.VulkanWarning("[Vulkan] Failed to create placeholder image.");
             return;
@@ -105,9 +105,10 @@ public unsafe partial class VulkanRenderer
         if (Api.BindImageMemory(device, _placeholderImage, _placeholderImageMemory, allocation.Offset) != Result.Success)
         {
             _imageAllocations.TryRemove(_placeholderImage.Handle, out _);
+            DestroyVulkanImageImmediateTracked(_placeholderImage, "Placeholder.BindFailure");
             FreeMemoryAllocation(allocation);
-            Api.DestroyImage(device, _placeholderImage, null);
             _placeholderImage = default;
+            _placeholderImageMemory = default;
             Debug.VulkanWarning("[Vulkan] Failed to bind placeholder image memory.");
             return;
         }
@@ -154,7 +155,7 @@ public unsafe partial class VulkanRenderer
                     ImageExtent = new Extent3D(width, height, 1),
                 };
 
-                Api!.CmdCopyBufferToImage(scope.CommandBuffer, staging, _placeholderImage,
+                CmdCopyBufferToImageTracked(scope.CommandBuffer, staging, _placeholderImage,
                     ImageLayout.TransferDstOptimal, 1, &copy);
 
                 // TransferDstOptimal → ShaderReadOnlyOptimal
@@ -349,55 +350,19 @@ public unsafe partial class VulkanRenderer
         if (!_placeholderTextureReady)
             return;
 
-        if (_placeholderSampler.Handle != 0)
-        {
-            UnregisterLiveSampler(_placeholderSampler);
-            Api!.DestroySampler(device, _placeholderSampler, null);
-            _placeholderSampler = default;
-        }
-
-        if (_placeholderImageView.Handle != 0)
-        {
-            if (TryBeginDestroyImageView(_placeholderImageView, "DestroyPlaceholderImageView2D"))
-                Api!.DestroyImageView(device, _placeholderImageView, null);
-            _placeholderImageView = default;
-        }
-
-        if (_placeholderImageView2DArray.Handle != 0)
-        {
-            if (TryBeginDestroyImageView(_placeholderImageView2DArray, "DestroyPlaceholderImageView2DArray"))
-                Api!.DestroyImageView(device, _placeholderImageView2DArray, null);
-            _placeholderImageView2DArray = default;
-        }
-
-        if (_placeholderImageViewCube.Handle != 0)
-        {
-            if (TryBeginDestroyImageView(_placeholderImageViewCube, "DestroyPlaceholderImageViewCube"))
-                Api!.DestroyImageView(device, _placeholderImageViewCube, null);
-            _placeholderImageViewCube = default;
-        }
-
-        if (_placeholderImageViewCubeArray.Handle != 0)
-        {
-            if (TryBeginDestroyImageView(_placeholderImageViewCubeArray, "DestroyPlaceholderImageViewCubeArray"))
-                Api!.DestroyImageView(device, _placeholderImageViewCubeArray, null);
-            _placeholderImageViewCubeArray = default;
-        }
-
-        if (_placeholderImage.Handle != 0)
-        {
-            Api!.DestroyImage(device, _placeholderImage, null);
-            if (_imageAllocations.TryRemove(_placeholderImage.Handle, out VulkanMemoryAllocation alloc))
-                FreeMemoryAllocation(alloc);
-            else if (_placeholderImageMemory.Handle != 0)
-                Api!.FreeMemory(device, _placeholderImageMemory, null);
-            _placeholderImage = default;
-        }
-        else if (_placeholderImageMemory.Handle != 0)
-        {
-            Api!.FreeMemory(device, _placeholderImageMemory, null);
-        }
-
+        RetireImageResources(new RetiredImageResources(
+            _placeholderImage,
+            _placeholderImageMemory,
+            _placeholderImageView,
+            [_placeholderImageView2DArray, _placeholderImageViewCube, _placeholderImageViewCubeArray],
+            _placeholderSampler,
+            0));
+        _placeholderSampler = default;
+        _placeholderImageView = default;
+        _placeholderImageView2DArray = default;
+        _placeholderImageViewCube = default;
+        _placeholderImageViewCubeArray = default;
+        _placeholderImage = default;
         _placeholderImageMemory = default;
 
         _placeholderTextureReady = false;

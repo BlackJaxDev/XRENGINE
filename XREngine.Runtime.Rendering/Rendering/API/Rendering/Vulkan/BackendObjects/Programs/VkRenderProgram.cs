@@ -1235,7 +1235,7 @@ public unsafe partial class VulkanRenderer
 
             if (_computePipeline.Handle != 0)
             {
-                Api!.DestroyPipeline(Device, _computePipeline, null);
+                Renderer.RetirePipeline(_computePipeline);
                 _computePipeline = default;
             }
 
@@ -1463,6 +1463,7 @@ public unsafe partial class VulkanRenderer
                                 throw new InvalidOperationException($"Failed to create graphics pipeline ({result}).");
                             }
 
+                            Renderer.RegisterVulkanPipeline(mappedHeapPipeline, "VkRenderProgram.GraphicsMappedHeap");
                             Renderer.NotifyVulkanPipelineCreated("graphics");
                             return mappedHeapPipeline;
                         }
@@ -1477,6 +1478,7 @@ public unsafe partial class VulkanRenderer
                         throw new InvalidOperationException($"Failed to create graphics pipeline ({result}).");
                     }
 
+                    Renderer.RegisterVulkanPipeline(heapPipeline, "VkRenderProgram.GraphicsHeap");
                     Renderer.NotifyVulkanPipelineCreated("graphics");
                     return heapPipeline;
                 }
@@ -1488,6 +1490,7 @@ public unsafe partial class VulkanRenderer
                     throw new InvalidOperationException($"Failed to create graphics pipeline ({result}).");
                 }
 
+                Renderer.RegisterVulkanPipeline(pipeline, "VkRenderProgram.Graphics");
                 Renderer.NotifyVulkanPipelineCreated("graphics");
                 return pipeline;
             }
@@ -1540,6 +1543,7 @@ public unsafe partial class VulkanRenderer
                         if (result != Result.Success)
                             throw new InvalidOperationException($"Failed to create compute pipeline ({result}).");
 
+                        Renderer.RegisterVulkanPipeline(mappedHeapPipeline, "VkRenderProgram.ComputeMappedHeap");
                         Renderer.NotifyVulkanPipelineCreated("compute");
                         return mappedHeapPipeline;
                     }
@@ -1550,6 +1554,7 @@ public unsafe partial class VulkanRenderer
                 if (result != Result.Success)
                     throw new InvalidOperationException($"Failed to create compute pipeline ({result}).");
 
+                Renderer.RegisterVulkanPipeline(heapPipeline, "VkRenderProgram.ComputeHeap");
                 Renderer.NotifyVulkanPipelineCreated("compute");
                 return heapPipeline;
             }
@@ -1558,6 +1563,7 @@ public unsafe partial class VulkanRenderer
             if (result != Result.Success)
                 throw new InvalidOperationException($"Failed to create compute pipeline ({result}).");
 
+            Renderer.RegisterVulkanPipeline(pipeline, "VkRenderProgram.Compute");
             Renderer.NotifyVulkanPipelineCreated("compute");
             return pipeline;
         }

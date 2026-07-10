@@ -64,7 +64,7 @@ public unsafe partial class VulkanRenderer
                 CommandBufferCount = 1,
             };
 
-            Result allocateResult = Api!.AllocateCommandBuffers(device, ref allocateInfo, out commandBuffer);
+            Result allocateResult = AllocateVulkanCommandBuffersTracked(ref allocateInfo, out commandBuffer, "TextureUpload.Transfer");
             if (allocateResult != Result.Success || commandBuffer.Handle == 0)
             {
                 failureReason = $"failed to allocate transfer command buffer ({allocateResult})";
@@ -147,7 +147,7 @@ public unsafe partial class VulkanRenderer
 
             if (commandBuffer.Handle != 0)
             {
-                Api!.FreeCommandBuffers(device, pool, 1, ref commandBuffer);
+                FreeVulkanCommandBufferTracked(pool, ref commandBuffer, "TextureUpload.TransferFailure");
                 RemoveCommandBufferBindState(commandBuffer);
             }
         }
@@ -170,6 +170,7 @@ public unsafe partial class VulkanRenderer
         Result result = Api!.GetFenceStatus(device, submitted.Fence);
         if (result == Result.Success)
         {
+            NotifyVulkanFenceCompleted(submitted.Fence);
             complete = true;
             return true;
         }
@@ -200,9 +201,12 @@ public unsafe partial class VulkanRenderer
 
         CommandBuffer commandBuffer = submitted.CommandBuffer;
         if (submitted.Fence.Handle != 0)
+        {
+            NotifyVulkanFenceCompleted(submitted.Fence);
             Api!.DestroyFence(device, submitted.Fence, null);
+        }
         if (commandBuffer.Handle != 0)
-            Api!.FreeCommandBuffers(device, submitted.CommandPool, 1, ref commandBuffer);
+            FreeVulkanCommandBufferTracked(submitted.CommandPool, ref commandBuffer, "TextureUpload.TransferComplete");
         RemoveCommandBufferBindState(submitted.CommandBuffer);
         return true;
     }
@@ -251,7 +255,7 @@ public unsafe partial class VulkanRenderer
         {
             VulkanImportedTextureUploadStagingResource staging = upload.StagingResources[i];
             BufferImageCopy copyRegion = staging.CopyRegion;
-            Api!.CmdCopyBufferToImage(
+            CmdCopyBufferToImageTracked(
                 commandBuffer,
                 staging.Buffer,
                 upload.Image,

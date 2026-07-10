@@ -81,7 +81,16 @@ namespace XREngine.Rendering.Vulkan
                 if (!EnsureQueryPool(queryType))
                     return false;
 
+                Renderer.EnsureVulkanResourceMutationAllowed(
+                    ObjectType.QueryPool,
+                    _queryPool.Handle,
+                    "ResetQueryPool");
                 Api!.ResetQueryPool(Device, _queryPool, 0, 1);
+                Renderer.TrackVulkanCommandBufferResource(
+                    commandBuffer,
+                    ObjectType.QueryPool,
+                    _queryPool.Handle,
+                    "Query.Begin");
                 Api.CmdBeginQuery(commandBuffer, _queryPool, 0, flags);
                 Data.CurrentQuery = target;
                 _queryActive = true;
@@ -92,6 +101,12 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (!_queryActive || _queryPool.Handle == 0)
                     return;
+
+                Renderer.TrackVulkanCommandBufferResource(
+                    commandBuffer,
+                    ObjectType.QueryPool,
+                    _queryPool.Handle,
+                    "Query.End");
 
                 if (_queryType == QueryType.TransformFeedbackStreamExt && Renderer.SupportsTransformFeedbackQueries && Renderer._extTransformFeedback is not null)
                     Renderer._extTransformFeedback.CmdEndQueryIndexed(commandBuffer, _queryPool, 0, 0);
@@ -107,6 +122,11 @@ namespace XREngine.Rendering.Vulkan
                 if (!EnsureQueryPool(QueryType.Timestamp))
                     return false;
 
+                Renderer.TrackVulkanCommandBufferResource(
+                    commandBuffer,
+                    ObjectType.QueryPool,
+                    _queryPool.Handle,
+                    "Query.Timestamp");
                 Api!.CmdResetQueryPool(commandBuffer, _queryPool, 0, 1);
                 Api.CmdWriteTimestamp(commandBuffer, stage, _queryPool, 0);
                 Data.CurrentQuery = EQueryTarget.Timestamp;
@@ -137,6 +157,7 @@ namespace XREngine.Rendering.Vulkan
 
                 if (queryResult == Result.Success)
                 {
+                    Renderer.NotifyVulkanResourceUseCompleted(ObjectType.QueryPool, _queryPool.Handle);
                     result = value;
                     return true;
                 }
@@ -170,6 +191,8 @@ namespace XREngine.Rendering.Vulkan
                     if (queryResult == Result.Success || queryResult == Result.NotReady)
                     {
                         available = data[1] != 0;
+                        if (available)
+                            Renderer.NotifyVulkanResourceUseCompleted(ObjectType.QueryPool, _queryPool.Handle);
                         return true;
                     }
 
@@ -198,6 +221,10 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
+                Renderer.RegisterVulkanResource(
+                    ObjectType.QueryPool,
+                    _queryPool.Handle,
+                    $"QueryPool.{Data.Name ?? "<unnamed>"}");
                 _queryType = queryType;
                 return true;
             }
@@ -215,6 +242,11 @@ namespace XREngine.Rendering.Vulkan
                 if (!EnsureQueryPool(QueryType.TransformFeedbackStreamExt))
                     return false;
 
+                Renderer.TrackVulkanCommandBufferResource(
+                    commandBuffer,
+                    ObjectType.QueryPool,
+                    _queryPool.Handle,
+                    "Query.TransformFeedback");
                 Api!.CmdResetQueryPool(commandBuffer, _queryPool, 0, 1);
                 Renderer._extTransformFeedback.CmdBeginQueryIndexed(commandBuffer, _queryPool, 0, flags, 0);
                 Data.CurrentQuery = EQueryTarget.TransformFeedbackPrimitivesWritten;
@@ -226,7 +258,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (_queryPool.Handle != 0)
                 {
-                    Api!.DestroyQueryPool(Device, _queryPool, null);
+                    Renderer.RetireQueryPool(_queryPool);
                     _queryPool = default;
                 }
 

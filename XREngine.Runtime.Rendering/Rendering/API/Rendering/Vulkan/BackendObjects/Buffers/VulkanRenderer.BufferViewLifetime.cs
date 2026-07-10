@@ -13,6 +13,7 @@ public unsafe partial class VulkanRenderer
             return;
 
         _descriptorHeapBufferViewCreateInfos[bufferView.Handle] = createInfo with { PNext = null };
+        RegisterVulkanBufferViewResource(bufferView, createInfo.Buffer, "BufferView");
     }
 
     internal void UntrackDescriptorHeapBufferView(BufferView bufferView)

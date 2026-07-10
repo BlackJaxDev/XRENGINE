@@ -223,6 +223,11 @@ namespace XREngine.Rendering.Vulkan
 
                 Buffer handle = ResolveBufferHandle(buffer, "transform feedback");
                 ulong resolvedSize = ResolveBufferSize(buffer, offset, size);
+                Renderer.TrackVulkanCommandBufferResource(
+                    commandBuffer,
+                    ObjectType.Buffer,
+                    handle.Handle,
+                    "TransformFeedback.Buffer");
 
                 Extension.CmdBindTransformFeedbackBuffers(
                     commandBuffer,
@@ -249,6 +254,11 @@ namespace XREngine.Rendering.Vulkan
                 ValidateBindingRange(firstCounterBuffer, 1);
 
                 Buffer counterHandle = ResolveBufferHandle(counterBuffer, "transform feedback counter");
+                Renderer.TrackVulkanCommandBufferResource(
+                    commandBuffer,
+                    ObjectType.Buffer,
+                    counterHandle.Handle,
+                    "TransformFeedback.BeginCounter");
                 Extension.CmdBeginTransformFeedback(
                     commandBuffer,
                     firstCounterBuffer,
@@ -273,6 +283,11 @@ namespace XREngine.Rendering.Vulkan
                 ValidateBindingRange(firstCounterBuffer, 1);
 
                 Buffer counterHandle = ResolveBufferHandle(counterBuffer, "transform feedback counter");
+                Renderer.TrackVulkanCommandBufferResource(
+                    commandBuffer,
+                    ObjectType.Buffer,
+                    counterHandle.Handle,
+                    "TransformFeedback.EndCounter");
                 Extension.CmdEndTransformFeedback(
                     commandBuffer,
                     firstCounterBuffer,
@@ -297,6 +312,11 @@ namespace XREngine.Rendering.Vulkan
                     throw new ArgumentOutOfRangeException(nameof(vertexStride), "Vertex stride must be non-zero.");
 
                 Buffer counterHandle = ResolveBufferHandle(counterBuffer, "transform feedback counter");
+                Renderer.TrackVulkanCommandBufferResource(
+                    commandBuffer,
+                    ObjectType.Buffer,
+                    counterHandle.Handle,
+                    "TransformFeedback.DrawCounter");
                 Extension.CmdDrawIndirectByteCount(
                     commandBuffer,
                     instanceCount,

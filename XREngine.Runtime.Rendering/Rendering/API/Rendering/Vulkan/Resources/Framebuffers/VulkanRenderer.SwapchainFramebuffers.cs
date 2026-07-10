@@ -14,9 +14,10 @@ public unsafe partial class VulkanRenderer
         foreach (var framebuffer in swapChainFramebuffers)
         {
             if (framebuffer.Handle != 0)
-                Api!.DestroyFramebuffer(device, framebuffer, null);
+                RetireFramebuffer(framebuffer);
         }
 
+        DrainRetiredFramebuffers(currentFrame, int.MaxValue);
         swapChainFramebuffers = null;
     }
 
@@ -55,6 +56,10 @@ public unsafe partial class VulkanRenderer
                 if (Api!.CreateFramebuffer(device, ref framebufferInfo, null, out swapChainFramebuffers[i]) != Result.Success)
                     throw new Exception("Failed to create framebuffer.");
 
+                RegisterVulkanFramebuffer(
+                    swapChainFramebuffers[i],
+                    attachments,
+                    $"Swapchain.Framebuffer[{i}]");
                 SetDebugObjectName(ObjectType.Framebuffer, swapChainFramebuffers[i].Handle, $"Swapchain.Framebuffer[{i}]");
             }
         }

@@ -31,7 +31,7 @@ namespace XREngine.Rendering.Vulkan
 
             fixed (CommandBuffer* commandBuffersPtr = _commandBuffers)
             {
-                if (Api!.AllocateCommandBuffers(device, ref allocInfo, commandBuffersPtr) != Result.Success)
+                if (AllocateVulkanCommandBuffersTracked(ref allocInfo, commandBuffersPtr, "Frame.Primary") != Result.Success)
                     throw new Exception("Failed to allocate command buffers.");
             }
 
@@ -50,7 +50,7 @@ namespace XREngine.Rendering.Vulkan
 
             fixed (CommandBuffer* commandBuffersPtr = _dynamicUiBatchTextSecondaryCommandBuffers)
             {
-                if (Api!.AllocateCommandBuffers(device, ref dynamicUiTextAllocInfo, commandBuffersPtr) != Result.Success)
+                if (AllocateVulkanCommandBuffersTracked(ref dynamicUiTextAllocInfo, commandBuffersPtr, "UI.TextSecondary") != Result.Success)
                     throw new Exception("Failed to allocate dynamic UI text secondary command buffers.");
             }
 
@@ -65,7 +65,7 @@ namespace XREngine.Rendering.Vulkan
 
             fixed (CommandBuffer* commandBuffersPtr = _dynamicUiBatchTextOverlayCommandBuffers)
             {
-                if (Api!.AllocateCommandBuffers(device, ref dynamicUiTextOverlayAllocInfo, commandBuffersPtr) != Result.Success)
+                if (AllocateVulkanCommandBuffersTracked(ref dynamicUiTextOverlayAllocInfo, commandBuffersPtr, "UI.TextOverlaySecondary") != Result.Success)
                     throw new Exception("Failed to allocate dynamic UI text overlay command buffers.");
             }
 
@@ -80,7 +80,7 @@ namespace XREngine.Rendering.Vulkan
 
             fixed (CommandBuffer* commandBuffersPtr = _imguiOverlayCommandBuffers)
             {
-                if (Api!.AllocateCommandBuffers(device, ref imguiOverlayAllocInfo, commandBuffersPtr) != Result.Success)
+                if (AllocateVulkanCommandBuffersTracked(ref imguiOverlayAllocInfo, commandBuffersPtr, "UI.ImGuiOverlaySecondary") != Result.Success)
                     throw new Exception("Failed to allocate ImGui overlay command buffers.");
             }
 
@@ -284,7 +284,7 @@ namespace XREngine.Rendering.Vulkan
                 CommandBufferCount = 1,
             };
 
-            if (Api!.AllocateCommandBuffers(device, ref allocInfo, out CommandBuffer commandBuffer) != Result.Success ||
+            if (AllocateVulkanCommandBuffersTracked(ref allocInfo, out CommandBuffer commandBuffer, label) != Result.Success ||
                 commandBuffer.Handle == 0)
             {
                 throw new Exception($"Failed to allocate Vulkan {label}.");

@@ -167,6 +167,11 @@ public unsafe partial class VulkanRenderer
 					}
 
 					Renderer.SetDebugDescriptorSetNames(frameSets, $"MeshRenderer.DescriptorSet.Frame{frame}.Draw{drawSlot}");
+					Renderer.RegisterVulkanDescriptorSets(
+						descriptorPool,
+						frameSets,
+						_program.DescriptorSetsRequireUpdateAfterBind,
+						$"MeshRenderer.DescriptorSet.Frame{frame}.Draw{drawSlot}");
 					Renderer.RecordVulkanDescriptorTableGeneration("MeshRendererDescriptorSets.Allocated");
 					int descriptorSlotIndex = ResolveUniformBufferIndex(frame, drawSlot, descriptorSets.Length);
 					descriptorSets[descriptorSlotIndex] = frameSets;

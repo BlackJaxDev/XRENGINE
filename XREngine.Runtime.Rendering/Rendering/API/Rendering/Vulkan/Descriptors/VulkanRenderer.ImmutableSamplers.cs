@@ -91,6 +91,9 @@ public unsafe partial class VulkanRenderer
 
             UnregisterLiveSampler(_canonicalImmutableSamplers[i]);
             Api!.DestroySampler(device, _canonicalImmutableSamplers[i], null);
+            CompleteVulkanResourceDestruction(
+                ObjectType.Sampler,
+                _canonicalImmutableSamplers[i].Handle);
             _canonicalImmutableSamplers[i] = default;
         }
     }

@@ -1390,7 +1390,7 @@ namespace XREngine.Rendering.Vulkan
 
                 if (_recordedTextureUploadsForSubmit.Count == queuedBefore)
                 {
-                    Api.FreeCommandBuffers(device, commandPool, 1, ref commandBuffer);
+                    FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "TextureUpload.RecordFailure");
                     RemoveCommandBufferBindState(commandBuffer);
                     commandBuffer = default;
                     commandPool = default;
@@ -1407,11 +1407,11 @@ namespace XREngine.Rendering.Vulkan
                 {
                     if (!commandBufferBegun)
                     {
-                        Api!.FreeCommandBuffers(device, commandPool, 1, ref commandBuffer);
+                        FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "TextureUpload.RecordException");
                     }
                     else
                     {
-                        Api!.FreeCommandBuffers(device, commandPool, 1, ref commandBuffer);
+                        FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "TextureUpload.RecordDeviceLoss");
                     }
                 }
 
@@ -1502,7 +1502,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 VulkanImportedTextureUploadStagingResource staging = upload.StagingResources[i];
                 BufferImageCopy copyRegion = staging.CopyRegion;
-                Api!.CmdCopyBufferToImage(
+                CmdCopyBufferToImageTracked(
                     commandBuffer,
                     staging.Buffer,
                     upload.Image,
@@ -3107,7 +3107,7 @@ namespace XREngine.Rendering.Vulkan
                     renderPassInfo.ClearValueCount = attachmentCount;
                     renderPassInfo.PClearValues = clearValues;
 
-                    Api!.CmdBeginRenderPass(
+                    CmdBeginRenderPassTracked(
                         commandBuffer,
                         &renderPassInfo,
                         secondaryContents ? SubpassContents.SecondaryCommandBuffers : SubpassContents.Inline);
@@ -3453,7 +3453,7 @@ namespace XREngine.Rendering.Vulkan
                 fboPassInfo.ClearValueCount = attachmentCountFbo;
                 fboPassInfo.PClearValues = clearValuesFbo;
 
-                Api!.CmdBeginRenderPass(
+                CmdBeginRenderPassTracked(
                     commandBuffer,
                     &fboPassInfo,
                     secondaryContents ? SubpassContents.SecondaryCommandBuffers : SubpassContents.Inline);
@@ -4163,7 +4163,7 @@ namespace XREngine.Rendering.Vulkan
 
                     BeginRenderPassForTarget(firstDraw.Target, passIndex, firstDraw.Context, secondaryContents: true);
                     fixed (CommandBuffer* secondaryPtr = secondaryBuffers)
-                        Api!.CmdExecuteCommands(commandBuffer, (uint)runCount, secondaryPtr);
+                        CmdExecuteCommandsTracked(commandBuffer, (uint)runCount, secondaryPtr);
                     for (int i = 0; i < runCount; i++)
                     {
                         if (secondaryBuffers[i].Handle != 0)
@@ -4440,7 +4440,7 @@ namespace XREngine.Rendering.Vulkan
 
                     BeginRenderPassForTarget(firstDraw.Target, passIndex, firstDraw.Context, secondaryContents: true);
                     fixed (CommandBuffer* secondaryPtr = secondaryBuffers)
-                        Api!.CmdExecuteCommands(commandBuffer, (uint)runCount, secondaryPtr);
+                        CmdExecuteCommandsTracked(commandBuffer, (uint)runCount, secondaryPtr);
                     for (int i = 0; i < runCount; i++)
                     {
                         if (secondaryBuffers[i].Handle != 0)
@@ -4652,7 +4652,7 @@ namespace XREngine.Rendering.Vulkan
                     MarkCommandChainSecondaryCommandBufferRecorded(chain);
                     secondaryRecordingFinished = true;
                     BeginRenderPassForTarget(firstDraw.Target, passIndex, firstDraw.Context, secondaryContents: true);
-                    Api!.CmdExecuteCommands(commandBuffer, 1, &secondary);
+                    CmdExecuteCommandsTracked(commandBuffer, 1, &secondary);
                     if (secondary.Handle != 0)
                         executedCommandChainSecondaryHandles.Add(secondary.Handle);
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(secondaryCommandBuffers: 1);
@@ -4812,7 +4812,7 @@ namespace XREngine.Rendering.Vulkan
                             SampleCountFlags.Count1Bit);
 
                         BeginDynamicRenderingScope(in scopePlan, secondaryContents: true);
-                        Api!.CmdExecuteCommands(commandBuffer, 1, &secondaryCommandBuffer);
+                        CmdExecuteCommandsTracked(commandBuffer, 1, &secondaryCommandBuffer);
                         CmdEndDynamicRendering(commandBuffer);
 
                         usedSwapchainDynamicRendering = true;
@@ -4839,8 +4839,8 @@ namespace XREngine.Rendering.Vulkan
                         renderPassInfo.ClearValueCount = attachmentCount;
                         renderPassInfo.PClearValues = clearValues;
 
-                        Api!.CmdBeginRenderPass(commandBuffer, &renderPassInfo, SubpassContents.SecondaryCommandBuffers);
-                        Api!.CmdExecuteCommands(commandBuffer, 1, &secondaryCommandBuffer);
+                        CmdBeginRenderPassTracked(commandBuffer, &renderPassInfo, SubpassContents.SecondaryCommandBuffers);
+                        CmdExecuteCommandsTracked(commandBuffer, 1, &secondaryCommandBuffer);
                         Api!.CmdEndRenderPass(commandBuffer);
 
                         swapchainClearedThisFrame = true;
@@ -6367,7 +6367,7 @@ namespace XREngine.Rendering.Vulkan
                         filter);
                 }
 
-                Api!.CmdBlitImage(
+                CmdBlitImageTracked(
                     commandBuffer,
                     resolvedSource.Image,
                     ImageLayout.TransferSrcOptimal,
@@ -6508,6 +6508,11 @@ namespace XREngine.Rendering.Vulkan
 
             // Calculate the byte offset into the indirect buffer
             ulong bufferOffset = op.ByteOffset;
+            TrackVulkanCommandBufferResource(
+                commandBuffer,
+                ObjectType.Buffer,
+                indirectBuffer.Value.Handle,
+                "IndirectDraw.Commands");
 
             if (IndirectTraceEnabled)
             {
@@ -6558,6 +6563,11 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 // The parameter buffer contains the draw count at offset 0 (uint)
+                TrackVulkanCommandBufferResource(
+                    commandBuffer,
+                    ObjectType.Buffer,
+                    parameterBuffer.Value.Handle,
+                    "IndirectDraw.Count");
                 _khrDrawIndirectCount.CmdDrawIndexedIndirectCount(
                     commandBuffer,
                     indirectBuffer.Value,
@@ -6759,6 +6769,16 @@ namespace XREngine.Rendering.Vulkan
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAdhocBarrier(emittedCount: 0, redundantCount: 1);
             }
 
+            TrackVulkanCommandBufferResource(
+                commandBuffer,
+                ObjectType.Buffer,
+                indirectBuffer.Value.Handle,
+                "MeshTaskIndirect.Commands");
+            TrackVulkanCommandBufferResource(
+                commandBuffer,
+                ObjectType.Buffer,
+                countBuffer.Value.Handle,
+                "MeshTaskIndirect.Count");
             _extMeshShader.CmdDrawMeshTasksIndirectCount(
                 commandBuffer,
                 indirectBuffer.Value,

@@ -59,6 +59,7 @@ public unsafe partial class VulkanRenderer
                 continue;
 
             Api.DestroyPipeline(device, library, null);
+            CompleteVulkanResourceDestruction(ObjectType.Pipeline, library.Handle);
             destroyed++;
         }
 

@@ -287,6 +287,11 @@ public unsafe partial class VulkanRenderer
             }
 
             _globalMaterialTextureDescriptorSet = descriptorSet;
+            RegisterVulkanDescriptorSet(
+                _globalMaterialTextureDescriptorPool,
+                descriptorSet,
+                _globalMaterialTextureDescriptorSetUsesUpdateAfterBind,
+                "GlobalMaterialTexture.DescriptorSet");
             SetDebugDescriptorSetName(_globalMaterialTextureDescriptorSet, "GlobalMaterialTexture.DescriptorSet");
             RecordVulkanDescriptorTableGeneration("GlobalMaterialTextureDescriptorSet.Allocated");
             _globalMaterialTextureDescriptorSlots = new MaterialTextureDescriptorSlot[_globalMaterialTextureDescriptorCapacity];
@@ -718,8 +723,7 @@ public unsafe partial class VulkanRenderer
 
             if (_globalMaterialTextureDescriptorPool.Handle != 0)
             {
-                Api!.DestroyDescriptorPool(device, _globalMaterialTextureDescriptorPool, null);
-                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
+                RetireDescriptorPool(_globalMaterialTextureDescriptorPool);
                 _globalMaterialTextureDescriptorPool = default;
             }
 
