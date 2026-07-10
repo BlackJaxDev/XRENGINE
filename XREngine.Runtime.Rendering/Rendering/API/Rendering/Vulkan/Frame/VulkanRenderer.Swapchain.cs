@@ -486,7 +486,8 @@ public unsafe partial class VulkanRenderer
     {
         bool requestHdr = XRWindow.PreferHDROutput;
 
-        if (requestHdr
+        if (_supportsSwapchainColorspace
+            && requestHdr
             && NvidiaDlssManager.IsFrameGenerationRequested
             && TrySelectSurfaceFormat(availableFormats, DlssFrameGenerationHdrSurfacePreferences, out SurfaceFormatKHR dlssFrameGenerationHdrFormat))
         {
@@ -495,7 +496,9 @@ public unsafe partial class VulkanRenderer
             return dlssFrameGenerationHdrFormat;
         }
 
-        if (requestHdr && TrySelectSurfaceFormat(availableFormats, HDRSurfacePreferences, out SurfaceFormatKHR hdrFormat))
+        if (_supportsSwapchainColorspace &&
+            requestHdr &&
+            TrySelectSurfaceFormat(availableFormats, HDRSurfacePreferences, out SurfaceFormatKHR hdrFormat))
         {
             PreferredFormat = hdrFormat.Format;
             PreferredColorSpace = hdrFormat.ColorSpace;

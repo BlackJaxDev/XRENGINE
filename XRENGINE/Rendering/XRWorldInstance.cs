@@ -727,6 +727,7 @@ namespace XREngine.Rendering
         {
             using var profilerScope = Engine.Profiler.Start("WorldInstance.PreCollectVisible");
 
+            Engine.Rendering.Stats.FrameOutputs.RecordSceneSnapshot();
             ApplyRenderMatrixChanges();
             RenderableMesh.ProcessPendingRenderMatrixUpdates();
             VisualScene.GlobalCollectVisible();

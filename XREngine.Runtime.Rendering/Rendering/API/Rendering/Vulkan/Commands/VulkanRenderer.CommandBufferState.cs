@@ -70,12 +70,35 @@ namespace XREngine.Rendering.Vulkan
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanTrace), "1", StringComparison.Ordinal);
         private static readonly bool OpenXrVulkanPrimaryReuseEnabled =
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanPrimaryReuse), "1", StringComparison.Ordinal);
-        private static readonly bool VulkanPrimaryCommandBufferReuseEnabled =
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanPrimaryCommandBufferReuse), "1", StringComparison.Ordinal);
+        private static readonly bool? VulkanPrimaryCommandBufferReuseOverride =
+            ReadOptionalBooleanEnvironmentOverride(XREngineEnvironmentVariables.VulkanPrimaryCommandBufferReuse);
+        private bool VulkanPrimaryCommandBufferReuseEnabled =>
+            VulkanPrimaryCommandBufferReuseOverride ??
+            RuntimeRenderingHostServices.Current.EnableVulkanPrimaryCommandBufferReuse;
         private static bool VulkanFrameDiagnosticsTraceEnabled =>
             CommandRecordingDiagnosticsEnabled ||
             XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
             XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw;
+
+        private static bool? ReadOptionalBooleanEnvironmentOverride(string name)
+        {
+            string? value = Environment.GetEnvironmentVariable(name);
+            if (string.IsNullOrWhiteSpace(value))
+                return null;
+            if (value is "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("yes", StringComparison.OrdinalIgnoreCase) || value.Equals("on", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+            if (value is "0" || value.Equals("false", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("no", StringComparison.OrdinalIgnoreCase) || value.Equals("off", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            Debug.VulkanWarning("[Vulkan] Ignoring invalid {0}='{1}'. Expected 0/1, false/true, no/yes, or off/on.", name, value);
+            return null;
+        }
         private FrameOpSignatureDebugPart[][]? _commandBufferFrameOpSignatureDebugParts;
         private int _frameOpSignatureDiffLogCount;
         private string? _vulkanDiagnosticBaseWindowTitle;
@@ -142,6 +165,27 @@ namespace XREngine.Rendering.Vulkan
             ulong Signature,
             string Detail);
 
+        private readonly record struct CommandBufferGenerationDomains(
+            ulong Structural,
+            ulong FrameData,
+            ulong CameraPose,
+            ulong TargetSlot,
+            ulong Descriptor,
+            ulong ResourceAllocation,
+            ulong Query,
+            ulong Overlay,
+            ulong Profiler);
+
+        private sealed class CameraPoseReuseState
+        {
+            public ulong RawPoseGeneration;
+            public ulong ReplayGeneration = 1;
+            public ulong LastObservedFrame;
+            public bool SettleInvalidationPending;
+        }
+
+        private readonly Dictionary<ulong, CameraPoseReuseState> _cameraPoseReuseStates = new(8);
+
         private sealed class CommandBufferRecordingScratch
         {
             public Dictionary<int, VulkanRenderGraphCompiler.SecondaryRecordingBucket> SecondaryBucketByStart { get; } = new();
@@ -195,11 +239,13 @@ namespace XREngine.Rendering.Vulkan
             public ulong DynamicUiSignature { get; set; } = ulong.MaxValue;
             public int DynamicUiOpCount { get; set; } = -1;
             public bool DynamicUiSecondaryRecorded { get; set; }
+            public bool DynamicUiSecondaryIncludesDepth { get; set; }
             public bool PreserveSwapchainForOverlay { get; set; }
             public ulong RecordedFrameOpContextFingerprint { get; set; } = ulong.MaxValue;
             public ulong RecordedFrameOpContextId { get; set; }
             public ulong RecordedResourceGeneration { get; set; }
             public ulong RecordedDescriptorGeneration { get; set; }
+            public CommandBufferGenerationDomains RecordedGenerations { get; set; }
             public bool RecordedSwapchainImageEverPresented { get; set; }
             public ImageLayout RecordedSwapchainFinalLayout { get; set; } = ImageLayout.PresentSrcKhr;
             public int RecordedSwapchainWriteCount { get; set; }
@@ -307,6 +353,8 @@ namespace XREngine.Rendering.Vulkan
             };
             lock (_commandBindStateLock)
                 _commandBindStates[key] = state;
+            BeginCommandBufferTrackingBatch(commandBuffer);
+            ResetRecordedImageLayoutState(commandBuffer);
         }
 
         private ulong ResolveCommandBufferRecordingGeneration(CommandBuffer commandBuffer)
@@ -378,7 +426,10 @@ namespace XREngine.Rendering.Vulkan
                 _commandBufferImageIndices.Remove(key);
             }
 
-            RemoveVulkanCommandBufferLifetime(new CommandBuffer { Handle = unchecked((nint)key) });
+            CommandBuffer commandBuffer = new() { Handle = unchecked((nint)key) };
+            ReleaseRecordedImageLayoutState(commandBuffer);
+            RemoveCommandBufferTrackingBatch(commandBuffer);
+            RemoveVulkanCommandBufferLifetime(commandBuffer);
         }
 
         internal void BindPipelineTracked(CommandBuffer commandBuffer, PipelineBindPoint bindPoint, Pipeline pipeline)

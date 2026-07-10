@@ -879,6 +879,8 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
+        RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
+            new FrameOutputWorkTelemetry(PlannerPrunes: pruneCount));
         ResourcePlannerRuntimeState previousState = CaptureResourcePlannerRuntimeState();
         WaitForAllInFlightWork();
         int prunedCount = 0;
@@ -894,9 +896,6 @@ public unsafe partial class VulkanRenderer
             if (!IsAllocatorOwnedByFrameOpPlannerState(switchingState, state.ResourceAllocator))
             {
                 RestoreResourcePlannerRuntimeState(state);
-                ReleaseDescriptorReferencesForPhysicalResourceDestruction(
-                    $"FrameOpResourcePlannerStatePrune.pipe{key.PipelineIdentity}.vp{key.ViewportIdentity}");
-                DrainAllRetiredDescriptorPools();
                 _ = ResourceAllocator.TryRetirePhysicalResources(this);
             }
             prunedCount++;
@@ -1255,8 +1254,6 @@ public unsafe partial class VulkanRenderer
             return;
 
         RestoreResourcePlannerRuntimeState(state);
-        ReleaseDescriptorReferencesForPhysicalResourceDestruction(reason);
-        DrainAllRetiredDescriptorPools();
         _ = allocator.TryRetirePhysicalResources(this);
     }
 
@@ -2471,13 +2468,11 @@ public unsafe partial class VulkanRenderer
             context.InternalWidth,
             context.InternalHeight);
 
-        ReleaseDescriptorReferencesForPhysicalResourceDestruction("OpenXrMirrorPlannerTransition");
         if (!IsDeviceLost)
             DeviceWaitIdle();
         if (IsDeviceLost)
             return false;
 
-        DrainAllRetiredDescriptorPools();
         ResourceAllocator.DestroyPhysicalImagesImmediate(this, reusedImageGroups);
         ActiveHasResourcePlannerFastPathKey = false;
         return true;
@@ -2518,7 +2513,6 @@ public unsafe partial class VulkanRenderer
         if (retiredImageCount > 0 || retiredBufferCount > 0)
         {
             LogDeferredResourcePlanReplacementRetirement(retiredImageCount, retiredBufferCount);
-            ReleaseDescriptorReferencesForPhysicalResourceDestruction("ResourcePlanReplacement");
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourcePlanReplacement(retiredImageCount, retiredBufferCount);
         }
 

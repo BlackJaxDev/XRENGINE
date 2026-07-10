@@ -1,0 +1,55 @@
+{
+  "phase": "5.2.2",
+  "status": "implemented-acceptance-blocked-by-phase-5.2.3",
+  "date": "2026-07-09",
+  "validation": {
+    "runtimeRenderingBuild": "passed",
+    "editorBuild": "passed",
+    "targetedTests": {
+      "passed": 24,
+      "failed": 0
+    },
+    "phase522ContractTests": {
+      "passed": 6,
+      "failed": 0
+    }
+  },
+  "liveValidation": {
+    "backend": "Vulkan",
+    "configuration": "Debug",
+    "strategy": "CpuDirect",
+    "result": "acceptance-blocked",
+    "samples": 89,
+    "commandBufferRecords": 125,
+    "commandBufferCleanReuses": 0,
+    "commandBufferForcedDirty": 125,
+    "cleanReuseRatio": 0.0,
+    "validationVuidCount": 0,
+    "primaryBlocker": "Phase 5.2.3 resource identity churn globally dirtied every primary variant during capture.",
+    "dominantAttribution": [
+      "retiring image views",
+      "retiring mesh/deformation buffers",
+      "imported texture upload publication",
+      "XRRenderPipelineInstance texture/FBO generation changes"
+    ]
+  },
+  "implementedContracts": [
+    "Default-on production setting with an environment diagnostic override",
+    "Independent structural, frame-data, target-slot, descriptor, resource-allocation, query, overlay, and profiler generations",
+    "Bounded per-image primary variants and static/volatile secondary partitions",
+    "Frame-data refresh without static command-range re-recording",
+    "Volatile secondary content generation excluded from primary structure identity",
+    "One deterministic old/new field for every classified primary reuse miss",
+    "Host-reset query epochs before replaying cached query-bearing primaries",
+    "Phase 5.1 recorded image entry/end state restoration on reuse"
+  ],
+  "evidence": {
+    "agentRunRoot": "Build/_AgentValidation/20260709-235500-vulkan-phase522/",
+    "retainedRepresentativeSession": "Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-09_23-58-11_pid33916/"
+  },
+  "remainingAcceptance": [
+    "Reach at least 99% clean primary reuse after Phase 5.2.3 removes global resource churn",
+    "Capture camera-motion evidence in the resulting structurally quiet scene",
+    "Compare reuse enabled/disabled in explicit dynamic-rendering and legacy-render-pass cohorts"
+  ]
+}

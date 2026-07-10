@@ -19,7 +19,8 @@ namespace XREngine.Rendering.Vulkan
             CommandBufferCacheVariant variant,
             FrameOp[] dynamicUiBatchTextOps,
             ulong dynamicUiBatchTextSignature,
-            bool forceRecord = false)
+            bool forceRecord = false,
+            bool includeDepthAttachment = true)
         {
             if (dynamicUiBatchTextOps.Length == 0)
             {
@@ -31,7 +32,8 @@ namespace XREngine.Rendering.Vulkan
 
             if (!forceRecord &&
                 variant.DynamicUiSignature == dynamicUiBatchTextSignature &&
-                variant.DynamicUiSecondaryRecorded)
+                variant.DynamicUiSecondaryRecorded &&
+                variant.DynamicUiSecondaryIncludesDepth == includeDepthAttachment)
             {
                 if (XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
                     XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw)
@@ -98,7 +100,9 @@ namespace XREngine.Rendering.Vulkan
             colorAttachmentFormats[0] = swapChainImageFormat;
 
             DynamicRenderingFormatSignature dynamicRenderingFormats = useDynamicRendering
-                ? CreateSwapchainColorOnlyDynamicRenderingFormatSignature(swapChainImageFormat)
+                ? includeDepthAttachment
+                    ? CreateSwapchainDynamicRenderingFormatSignature(swapChainImageFormat, _swapchainDepthFormat)
+                    : CreateSwapchainColorOnlyDynamicRenderingFormatSignature(swapChainImageFormat)
                 : default;
 
             CommandBufferInheritanceRenderingInfo renderingInheritanceInfo = new()
@@ -108,8 +112,8 @@ namespace XREngine.Rendering.Vulkan
                 ViewMask = dynamicRenderingFormats.ViewMask,
                 ColorAttachmentCount = 1,
                 PColorAttachmentFormats = colorAttachmentFormats,
-                DepthAttachmentFormat = Format.Undefined,
-                StencilAttachmentFormat = Format.Undefined,
+                DepthAttachmentFormat = dynamicRenderingFormats.DepthAttachmentFormat,
+                StencilAttachmentFormat = dynamicRenderingFormats.StencilAttachmentFormat,
                 RasterizationSamples = SampleCountFlags.Count1Bit
             };
 
@@ -263,6 +267,7 @@ namespace XREngine.Rendering.Vulkan
             variant.DynamicUiOpCount = dynamicUiBatchTextOps.Length;
             variant.DynamicUiSignature = dynamicUiBatchTextSignature;
             variant.DynamicUiSecondaryRecorded = true;
+            variant.DynamicUiSecondaryIncludesDepth = includeDepthAttachment;
             if (CommandChainsEnabledForCurrentRecording)
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(secondaryCommandBuffers: 1);
 
@@ -275,6 +280,7 @@ namespace XREngine.Rendering.Vulkan
             CommandBuffer secondaryCommandBuffer,
             int dynamicUiBatchTextOpCount,
             ImageLayout initialSwapchainLayout,
+            CommandBuffer predecessorCommandBuffer,
             CommandBufferCacheVariant? dynamicUiBatchTextVariant,
             FrameOp[] dynamicUiBatchTextOps,
             ulong dynamicUiBatchTextSignature,
@@ -289,7 +295,8 @@ namespace XREngine.Rendering.Vulkan
                         dynamicUiBatchTextVariant,
                         dynamicUiBatchTextOps,
                         dynamicUiBatchTextSignature,
-                        forceRecord: true))
+                        forceRecord: true,
+                        includeDepthAttachment: false))
                 {
                     return false;
                 }
@@ -325,6 +332,7 @@ namespace XREngine.Rendering.Vulkan
                 throw new InvalidOperationException("Failed to begin dynamic UI text overlay command buffer.");
 
             ResetCommandBufferBindState(commandBuffer);
+            SeedRecordedImageLayoutState(commandBuffer, predecessorCommandBuffer);
             CmdBeginLabel(commandBuffer, "DynamicUIBatchTextOverlay");
 
             TransitionSwapchainImageForImGuiOverlay(

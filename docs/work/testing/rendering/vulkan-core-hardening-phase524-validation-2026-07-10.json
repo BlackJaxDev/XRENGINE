@@ -1,0 +1,86 @@
+{
+  "phase": "5.2.4",
+  "date": "2026-07-10",
+  "status": "passed",
+  "implementation": {
+    "commandLocalDependencyCapacity": 64,
+    "commandLocalImageRangeCapacity": 32,
+    "retainedTouchedDependencyLists": true,
+    "retainedTouchedSubresourceLists": true,
+    "descriptorExpansionGenerationCache": true,
+    "descriptorLayoutValidationGenerationCache": true,
+    "compactRangeCoalescing": true,
+    "submitUsesTouchedLists": true,
+    "perDrawGlobalLifetimeLock": false,
+    "perBarrierGlobalLayoutLock": false
+  },
+  "automatedValidation": {
+    "command": "dotnet test .\\XREngine.UnitTests\\XREngine.UnitTests.csproj --no-restore --filter FullyQualifiedName~VulkanCoreHardeningPhase52 /p:UseSharedCompilation=false /m:1 /nodeReuse:false /v:minimal",
+    "passed": 26,
+    "failed": 0,
+    "editorBuildErrors": 0,
+    "notes": "Existing NuGet vulnerability advisories were emitted; no compiler or test failure occurred."
+  },
+  "quietDesktopCapture": {
+    "summary": "Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-10_01-26-23/summary.json",
+    "logSession": "Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-10_01-25-06_pid23624",
+    "configuration": "Debug",
+    "vrMode": "Desktop",
+    "renderTargetMode": "DynamicRendering",
+    "primaryReuse": "Enabled",
+    "samples": 369,
+    "stableWorkloadIdentityCount": 1,
+    "trackingDependencyBinds": 36900,
+    "trackingUniqueDependencies": 23247,
+    "trackingImageAccessWrites": 1476,
+    "trackingCompactImageRanges": 1476,
+    "descriptorExpansionCacheHits": 4059,
+    "descriptorExpansionCacheMisses": 5904,
+    "lifetimeLockContentions": 0,
+    "layoutLockContentions": 0,
+    "recordCommandBufferAllocatedBytes": 0,
+    "commandBufferRecords": 0,
+    "commandBufferCleanReuses": 369,
+    "commandBufferCleanReuseRatio": 1.0,
+    "recordCommandBufferP95Ms": 0.424,
+    "recordCommandBufferMaxMs": 0.628,
+    "retiredResourceCount": 0,
+    "submissionRejections": 0,
+    "globalInFlightWaits": 0,
+    "forceFlushes": 0,
+    "fpsDropRecordsDuringCapture": 0
+  },
+  "cameraMotionValidation": {
+    "logSession": "Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-10_01-33-56_pid50536",
+    "evidenceDirectory": "Build/_AgentValidation/20260710-010000-vulkan-camera-motion-black/mcp-captures",
+    "motionDurationSeconds": 3,
+    "postMotionObservationSeconds": 6.5,
+    "sampledFullWindowFrames": 45,
+    "populatedFrames": 45,
+    "deviceLossMatches": 0,
+    "vuidMatches": 0,
+    "visuallyInspected": [
+      "phase524-stop-boundary-10.png",
+      "phase524-stop-boundary-11.png"
+    ],
+    "stopBoundarySettleInvalidation": true
+  },
+  "postFixQuietCapture": {
+    "summary": "Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-10_01-37-10/summary.json",
+    "logSession": "Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-10_01-35-46_pid57272",
+    "samples": 234,
+    "commandBufferRecords": 0,
+    "commandBufferCleanReuses": 234,
+    "commandBufferCleanReuseRatio": 1.0,
+    "recordCommandBufferAllocatedBytes": 0,
+    "lifetimeLockContentions": 0,
+    "layoutLockContentions": 0,
+    "retiredResourceCount": 0,
+    "submissionRejections": 0
+  },
+  "acceptance": {
+    "costTracksUniqueTouchedEntries": true,
+    "debugCoverageRetained": true,
+    "recurringBookkeepingDropsOver100Ms": false
+  }
+}

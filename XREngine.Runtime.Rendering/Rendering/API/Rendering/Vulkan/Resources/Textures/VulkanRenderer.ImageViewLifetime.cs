@@ -10,6 +10,162 @@ public unsafe partial class VulkanRenderer
     private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, string> _liveImageViewHandles = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, ImageViewCreateInfo> _descriptorHeapImageViewCreateInfos = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, byte> _retiringImageHandles = new();
+    private readonly object _internedImageViewsLock = new();
+    private readonly Dictionary<VulkanImageViewStructuralKey, InternedImageViewEntry> _internedImageViews = new();
+    private readonly Dictionary<ulong, VulkanImageViewStructuralKey> _internedImageViewKeysByHandle = new();
+
+    private readonly record struct VulkanImageViewStructuralKey(
+        ulong ImageHandle,
+        ulong ImageGeneration,
+        ImageViewCreateFlags Flags,
+        ImageViewType ViewType,
+        Format Format,
+        ComponentSwizzle R,
+        ComponentSwizzle G,
+        ComponentSwizzle B,
+        ComponentSwizzle A,
+        ImageAspectFlags AspectMask,
+        uint BaseMipLevel,
+        uint LevelCount,
+        uint BaseArrayLayer,
+        uint LayerCount);
+
+    private sealed class InternedImageViewEntry(ImageView view)
+    {
+        public ImageView View { get; } = view;
+        public int ReferenceCount { get; set; } = 1;
+    }
+
+    private VulkanImageViewStructuralKey BuildImageViewStructuralKey(in ImageViewCreateInfo createInfo)
+        => new(
+            createInfo.Image.Handle,
+            GetCurrentVulkanResourceGeneration(ObjectType.Image, createInfo.Image.Handle),
+            createInfo.Flags,
+            createInfo.ViewType,
+            createInfo.Format,
+            createInfo.Components.R,
+            createInfo.Components.G,
+            createInfo.Components.B,
+            createInfo.Components.A,
+            createInfo.SubresourceRange.AspectMask,
+            createInfo.SubresourceRange.BaseMipLevel,
+            createInfo.SubresourceRange.LevelCount,
+            createInfo.SubresourceRange.BaseArrayLayer,
+            createInfo.SubresourceRange.LayerCount);
+
+    internal bool TryAcquireInternedImageView(
+        in ImageViewCreateInfo createInfo,
+        string owner,
+        out ImageView imageView)
+    {
+        VulkanImageViewStructuralKey key = BuildImageViewStructuralKey(createInfo);
+        lock (_internedImageViewsLock)
+        {
+            if (_internedImageViews.TryGetValue(key, out InternedImageViewEntry? existing) &&
+                IsLiveImageViewBackedByLiveImage(existing.View))
+            {
+                existing.ReferenceCount++;
+                imageView = existing.View;
+                return true;
+            }
+
+            if (existing is not null)
+            {
+                _internedImageViews.Remove(key);
+                _internedImageViewKeysByHandle.Remove(existing.View.Handle);
+            }
+
+            ImageViewCreateInfo mutableCreateInfo = createInfo;
+            if (Api!.CreateImageView(device, ref mutableCreateInfo, null, out imageView) != Result.Success)
+                return false;
+
+            TrackLiveImageView(imageView, in mutableCreateInfo, owner);
+            _internedImageViews[key] = new InternedImageViewEntry(imageView);
+            _internedImageViewKeysByHandle[imageView.Handle] = key;
+            return true;
+        }
+    }
+
+    internal bool IsLiveImageViewStructurallyEquivalent(
+        ImageView imageView,
+        in ImageViewCreateInfo createInfo)
+    {
+        if (imageView.Handle == 0 || !IsLiveImageViewBackedByLiveImage(imageView))
+            return false;
+
+        if (!_descriptorHeapImageViewCreateInfos.TryGetValue(imageView.Handle, out ImageViewCreateInfo existing))
+            return false;
+
+        return BuildImageViewStructuralKey(existing) == BuildImageViewStructuralKey(createInfo);
+    }
+
+    internal bool ReleaseInternedImageView(ImageView imageView)
+    {
+        if (imageView.Handle == 0)
+            return false;
+
+        lock (_internedImageViewsLock)
+        {
+            if (!_internedImageViewKeysByHandle.TryGetValue(imageView.Handle, out VulkanImageViewStructuralKey key) ||
+                !_internedImageViews.TryGetValue(key, out InternedImageViewEntry? entry))
+            {
+                return true;
+            }
+
+            entry.ReferenceCount--;
+            if (entry.ReferenceCount > 0)
+                return false;
+
+            // Keep an unreferenced structural view dormant while its backing allocation
+            // remains live. Rotating target slots can then reacquire the same handle
+            // without a create/retire cycle. Backing-image retirement purges it.
+            entry.ReferenceCount = 0;
+            return false;
+        }
+    }
+
+    private void RetireInternedImageViewsForBackingImage(ulong imageHandle)
+    {
+        if (imageHandle == 0)
+            return;
+
+        List<ImageView>? retiredViews = null;
+        lock (_internedImageViewsLock)
+        {
+            foreach ((VulkanImageViewStructuralKey key, InternedImageViewEntry entry) in _internedImageViews)
+            {
+                if (key.ImageHandle != imageHandle)
+                    continue;
+
+                retiredViews ??= [];
+                retiredViews.Add(entry.View);
+            }
+
+            if (retiredViews is not null)
+            {
+                for (int i = 0; i < retiredViews.Count; i++)
+                {
+                    ImageView view = retiredViews[i];
+                    if (_internedImageViewKeysByHandle.Remove(view.Handle, out VulkanImageViewStructuralKey key))
+                        _internedImageViews.Remove(key);
+                }
+            }
+        }
+
+        if (retiredViews is null)
+            return;
+
+        for (int i = 0; i < retiredViews.Count; i++)
+        {
+            RetireImageResources(new RetiredImageResources(
+                default,
+                default,
+                retiredViews[i],
+                [],
+                default,
+                0));
+        }
+    }
 
     internal void TrackLiveImageView(ImageView imageView, string owner = "unknown")
     {
@@ -133,6 +289,11 @@ public unsafe partial class VulkanRenderer
                 continue;
 
             _descriptorHeapImageViewCreateInfos.TryRemove(pair.Key, out _);
+            lock (_internedImageViewsLock)
+            {
+                if (_internedImageViewKeysByHandle.Remove(pair.Key, out VulkanImageViewStructuralKey key))
+                    _internedImageViews.Remove(key);
+            }
             ImageView imageView = new() { Handle = pair.Key };
             Debug.Vulkan(
                 "[Vulkan] Destroying remaining tracked image view 0x{0:X} owner={1} during renderer shutdown.",

@@ -22,17 +22,7 @@ namespace XREngine.Components.Capture.Lights
                 _registeredWorld = world;
                 SyncPreviewRenderCommandTransform();
             }
-            if (!RealtimeCapture && AutoCaptureOnActivate)
-            {
-                _startupCaptureTimer.StartSingleFire(() =>
-                {
-                    var w = WorldAs<XREngine.Rendering.IRuntimeRenderWorld>();
-                    if (!IsActiveInHierarchy || w is null)
-                        return;
-
-                    FullCapture(128, false);
-                }, TimeSpan.FromMilliseconds(1.0f));
-            }
+            ScheduleStartupCaptureIfRequested();
         }
 
         protected override void OnComponentDeactivated()
@@ -95,17 +85,38 @@ namespace XREngine.Components.Capture.Lights
                     break;
                 case nameof(World):
                     SyncPreviewRenderCommandTransform();
+                    ScheduleStartupCaptureIfRequested();
                     break;
                 case nameof(RealtimeCapture):
                     if (RealtimeCapture)
                         _realtimeCaptureTimer.StartMultiFire(QueueCapture, RealTimeCaptureUpdateInterval ?? TimeSpan.Zero);
                     else
                         _realtimeCaptureTimer.Cancel();
+                    ScheduleStartupCaptureIfRequested();
+                    break;
+                case nameof(AutoCaptureOnActivate):
+                    ScheduleStartupCaptureIfRequested();
                     break;
                 case nameof(RealTimeCaptureUpdateInterval):
                     _realtimeCaptureTimer.TimeBetweenFires = RealTimeCaptureUpdateInterval ?? TimeSpan.Zero;
                     break;
             }
+        }
+
+        private void ScheduleStartupCaptureIfRequested()
+        {
+            _startupCaptureTimer.Cancel();
+            if (!IsActiveInHierarchy || RealtimeCapture || !AutoCaptureOnActivate)
+                return;
+
+            _startupCaptureTimer.StartSingleFire(() =>
+            {
+                var world = WorldAs<XREngine.Rendering.IRuntimeRenderWorld>();
+                if (!IsActiveInHierarchy || world is null || RealtimeCapture || !AutoCaptureOnActivate)
+                    return;
+
+                FullCapture(Resolution, CaptureDepthCubeMap);
+            }, TimeSpan.FromMilliseconds(1.0f));
         }
 
         #endregion

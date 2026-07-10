@@ -2052,9 +2052,9 @@ public unsafe partial class VulkanRenderer
         /// </summary>
         private void CreateImageView(AttachmentViewKey key)
         {
-            DestroyView(ref _view);
             if (_image.Handle == 0)
             {
+                DestroyView(ref _view);
                 Debug.VulkanWarningEvery(
                     $"Vulkan.Texture.ViewWithoutImage.{Data.GetHashCode()}",
                     TimeSpan.FromSeconds(2),
@@ -2071,7 +2071,12 @@ public unsafe partial class VulkanRenderer
                 : key;
 
             descriptor = NormalizeAttachmentViewKey(descriptor);
-            _view = CreateView(descriptor);
+            ImageView replacement = CreateView(descriptor, _view);
+            if (replacement.Handle == _view.Handle)
+                return;
+
+            DestroyView(ref _view);
+            _view = replacement;
         }
 
         /// <summary>
@@ -2079,7 +2084,7 @@ public unsafe partial class VulkanRenderer
         /// The aspect mask is normalised to ensure depth/stencil formats don't include the
         /// color bit.
         /// </summary>
-        private ImageView CreateView(AttachmentViewKey descriptor)
+        private ImageView CreateView(AttachmentViewKey descriptor, ImageView reusableView = default)
         {
             if (_image.Handle == 0)
             {
@@ -2110,6 +2115,9 @@ public unsafe partial class VulkanRenderer
                     LayerCount = descriptor.LayerCount,
                 }
             };
+
+            if (Renderer.IsLiveImageViewStructurallyEquivalent(reusableView, in viewInfo))
+                return reusableView;
 
             if (Api!.CreateImageView(Device, ref viewInfo, null, out ImageView created) != Result.Success)
                 throw new Exception("Failed to create image view.");

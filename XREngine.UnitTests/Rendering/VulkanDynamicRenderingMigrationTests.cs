@@ -514,18 +514,19 @@ public sealed class VulkanDynamicRenderingMigrationTests
         retirementSource.ShouldContain("private readonly HashSet<ulong>[] _retiredImageViewHandles");
         retirementSource.ShouldContain("private readonly HashSet<ulong>[] _retiredSamplerHandles");
         retirementSource.ShouldContain("private ImageView[] FilterRetiredAttachmentViews");
-        retirementSource.ShouldContain("!_retiredImageHandles[frameSlot].Add(image.Handle)");
-        retirementSource.ShouldContain("!_retiredImageMemoryHandles[frameSlot].Add(memory.Handle)");
-        retirementSource.ShouldContain("!_retiredImageViewHandles[frameSlot].Add(primaryView.Handle)");
-        retirementSource.ShouldContain("!_retiredSamplerHandles[frameSlot].Add(sampler.Handle)");
+        retirementSource.ShouldContain("_retiredImageHandles[frameSlot].Add(image.Handle)");
+        retirementSource.ShouldContain("_retiredImageMemoryHandles[frameSlot].Add(memory.Handle)");
+        retirementSource.ShouldContain("_retiredImageViewHandles[frameSlot].Add(primaryView.Handle)");
+        retirementSource.ShouldContain("_retiredSamplerHandles[frameSlot].Add(sampler.Handle)");
+        retirementSource.ShouldContain("CompleteRetiredImageDeduplication(frameSlot, in r)");
         retirementSource.ShouldContain("_retiredImageHandles[frameSlot].Remove(resources.Image.Handle)");
-        retirementSource.ShouldContain("_retiredImageMemoryHandles[frameSlot].Remove(resources.Memory.Handle)");
-        retirementSource.ShouldContain("_retiredImageViewHandles[frameSlot].Remove(resources.PrimaryView.Handle)");
-        retirementSource.ShouldContain("_retiredSamplerHandles[frameSlot].Remove(resources.Sampler.Handle)");
+        retirementSource.ShouldContain("TryBeginDestroyVulkanResourceGeneration(");
+        retirementSource.ShouldContain("entry.ImageGeneration");
+        retirementSource.ShouldContain("entry.SamplerGeneration");
         retirementSource.ShouldContain("_imageAllocations.TryRemove(r.Image.Handle, out trackedImageAllocation)");
-        retirementSource.ShouldContain("DeviceMemory memory = hasTrackedImageAllocation ? trackedImageAllocation.Memory : r.Memory;");
         retirementSource.ShouldContain("FreeMemoryAllocation(trackedImageAllocation)");
-        retirementSource.ShouldContain("Api!.FreeMemory(device, memory, null)");
+        retirementSource.ShouldContain("Skipping raw vkFreeMemory for unowned/stale image memory");
+        retirementSource.ShouldNotContain("Api!.FreeMemory(device, memory, null)");
         retirementSource.ShouldContain("freedMemories++;");
     }
 

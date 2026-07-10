@@ -673,7 +673,8 @@ public sealed class OpenXrTimingPipelineContractTests
 
         canReuse.ShouldContain("ulong schemaFingerprint = ComputeDescriptorSchemaFingerprint(bindings, setCount);");
         canReuse.ShouldContain("ulong resourceFingerprint = ComputeDescriptorResourceFingerprint(material, frameCount, bindings);");
-        descriptors.ShouldContain("allocation.ResourceFingerprint != resourceFingerprint");
+        descriptors.ShouldContain("DescriptorSlotResourceFingerprintMatches(allocation, descriptorSlotIndex, resourceFingerprint)");
+        descriptors.ShouldContain("EnsureDescriptorSlotReady(");
         canReuse.ShouldContain("schemaFingerprint,\n\t\t\t\t\tresourceFingerprint,");
 
         string capturedReuse = SliceMethod(
@@ -681,8 +682,8 @@ public sealed class OpenXrTimingPipelineContractTests
             "private bool TryActivateReusableDescriptorSetsForCapturedResources",
             "private bool TryActivateReusableDescriptorSetsFast");
 
-        capturedReuse.ShouldContain("allocation.SchemaFingerprint != schemaFingerprint");
-        capturedReuse.ShouldContain("allocation.ResourceFingerprint != resourceFingerprint");
+        capturedReuse.ShouldContain("DescriptorSlotResourceFingerprintMatches(allocation, descriptorSlotIndex, resourceFingerprint)");
+        capturedReuse.ShouldContain("TryRefreshCapturedDescriptorAllocationResources");
         capturedReuse.ShouldContain("ComputeDescriptorResourceFingerprintDetails(material, Renderer.DescriptorFrameSlotFrameCount, currentBindings)");
 
         string frameSourceFingerprint = SliceMethod(
@@ -697,13 +698,13 @@ public sealed class OpenXrTimingPipelineContractTests
         frameSourceFingerprint.ShouldNotContain("DescriptorImage.Handle");
         frameSourceFingerprint.ShouldNotContain("ResourceAllocatorIdentity");
         descriptors.ShouldContain("private bool TryRefreshFrameSourceDescriptorSetsForDraw");
-        descriptors.ShouldContain("Api!.UpdateDescriptorSets(Device, 1, &write, 0, null);");
+        descriptors.ShouldContain("Renderer.UpdateDescriptorSetsTracked(1, &write);");
         descriptors.ShouldContain("FrameSourceDescriptorWriteMatches(allocation, descriptorSlotIndex, binding, descriptorCount, resolvedImageInfos)");
         descriptors.ShouldContain("RecordFrameSourceDescriptorWriteSignature(allocation, descriptorSlotIndex, binding, descriptorCount, resolvedImageInfos);");
         descriptors.ShouldContain("ComputeDescriptorImageInfoSignature(binding.DescriptorType, imageInfos)");
         descriptors.ShouldContain("BindingResolvesPipelineResourceTexture(binding)");
         descriptors.ShouldContain("SnapshotHasFrameSourceSampler(snapshot, pipeline)");
-        descriptors.ShouldContain("DescriptorBindingsHaveFrameSourceSampler(_program.DescriptorBindings)");
+        descriptors.ShouldContain("DescriptorBindingsHaveFrameSourceSampler(material, _program.DescriptorBindings)");
 
         string meshRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
         string samplerUnitHashing = SliceMethod(

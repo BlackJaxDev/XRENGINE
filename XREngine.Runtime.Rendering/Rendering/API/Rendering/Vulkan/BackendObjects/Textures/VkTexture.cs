@@ -135,16 +135,16 @@ public unsafe partial class VulkanRenderer
         }
 
         protected void MarkDescriptorDirty()
-        {
-            IsDescriptorDirty = true;
-            IncrementDescriptorGeneration();
-        }
+            => IsDescriptorDirty = true;
 
         protected void MarkDescriptorClean()
             => IsDescriptorDirty = false;
 
         protected void MarkDescriptorPublished()
         {
+            if (!IsDescriptorDirty)
+                return;
+
             IncrementDescriptorGeneration();
             MarkDescriptorClean();
         }

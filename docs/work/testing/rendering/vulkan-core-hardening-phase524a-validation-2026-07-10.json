@@ -1,0 +1,74 @@
+{
+  "phase": "5.2.4a",
+  "date": "2026-07-10",
+  "status": "passed",
+  "implementation": {
+    "descriptorPoolOwnedSetReverseIndex": true,
+    "descriptorReferencedResourceReverseIndex": true,
+    "duplicatePoolRetirementSuppressedBeforeTicketCapture": true,
+    "allocationIdentity": [
+      "descriptor-layout handles",
+      "descriptor schema",
+      "frame/draw slot shape",
+      "set count"
+    ],
+    "resourceFingerprintInAllocationKey": false,
+    "programBindingIdInAllocationKey": false,
+    "lazyDescriptorSlotAllocation": true,
+    "maxStructuralVariantsPerMeshRenderer": 32,
+    "aggregatePoolDependencyInvalidation": true,
+    "globalDescriptorReleaseOnPhysicalPlanReplacement": false,
+    "latePublicationUsesFirstChanceException": false,
+    "retirementDiagnosticsRateLimitedByObjectType": true
+  },
+  "automatedValidation": {
+    "command": "dotnet test .\\XREngine.UnitTests\\XREngine.UnitTests.csproj --filter FullyQualifiedName~VulkanDescriptorLifetimePressureTests|FullyQualifiedName~VulkanCoreHardeningPhase4Tests|FullyQualifiedName~VulkanCoreHardeningPhase524Tests|Name~DescriptorImageInfoAndAllocationKeys --no-restore --verbosity minimal",
+    "passed": 27,
+    "failed": 0,
+    "runtimeRenderingBuildErrors": 0,
+    "editorBuildErrors": 0,
+    "powershellParserErrors": 0,
+    "notes": "Builds emitted existing NuGet vulnerability advisories; no compiler or test failure occurred."
+  },
+  "preFinalIdentityEvidence": {
+    "logSession": "Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-10_02-28-55_pid14880",
+    "retainedTailFrames": 250,
+    "descriptorPoolCreates": 4050,
+    "retiredDescriptorPools": 4050,
+    "cause": "DescriptorAllocationKey still contained transient VkRenderProgram.BindingId."
+  },
+  "monadoOpenXrLiveValidation": {
+    "logSession": "Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-10_02-39-41_pid5884",
+    "durationSeconds": 35,
+    "backend": "Vulkan",
+    "runtime": "Monado",
+    "requestedViewMode": "SinglePassStereo",
+    "effectiveViewMode": "SinglePassStereo",
+    "implementationPath": "OpenXrSinglePassCompatibility",
+    "dynamicRendering": true,
+    "retainedTailFrames": 250,
+    "tailWorkloadIdentityCount": 2,
+    "tailDescriptorPoolCreates": 0,
+    "tailRetiredDescriptorPools": 0,
+    "tailSubmissionRejections": 0,
+    "tailGlobalFallbackInvalidations": 0,
+    "tailLiveResourceMin": 4669,
+    "tailLiveResourceMax": 4727,
+    "tailTrackedDescriptorSetMin": 2356,
+    "tailTrackedDescriptorSetMax": 2367,
+    "fullRunLifetimeLogMaxLiveResources": 4715,
+    "fullRunLifetimeLogMaxTrackedDescriptorSets": 2367,
+    "fullRunStartupSubmissionRejections": 3,
+    "fullRunFirstChanceExceptions": 0,
+    "fullRunRenderExceptions": 0,
+    "fullRunValidationVuids": 0,
+    "fullRunDeviceLosses": 0
+  },
+  "pressureGates": {
+    "maxSteadyStateLiveResources": 50000,
+    "maxSteadyStateTrackedDescriptorSets": 25000,
+    "requireZeroSteadyStateDescriptorPoolCreates": true,
+    "passedByDirectTailEvaluation": true,
+    "automaticStableWindowResult": "inconclusive-two-alternating-workload-identities"
+  }
+}

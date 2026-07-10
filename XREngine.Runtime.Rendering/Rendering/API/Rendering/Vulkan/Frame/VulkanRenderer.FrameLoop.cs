@@ -910,7 +910,6 @@ namespace XREngine.Rendering.Vulkan
             else if (result == Result.SuboptimalKhr)
             {
                 ScheduleSwapchainRecreate("AcquireNextImage returned SuboptimalKhr");
-                return;
             }
             else if (result == Result.NotReady || result == Result.Timeout)
             {
@@ -1350,6 +1349,7 @@ namespace XREngine.Rendering.Vulkan
                             imageIndex,
                             imguiOverlaySnapshot,
                             swapchainLayoutAfterScene,
+                            submitCommandBuffer,
                             out imguiOverlayCommandBuffer);
                     if (preserveSwapchainForImGuiOverlay && !hasImGuiOverlayCommandBuffer)
                         throw new InvalidOperationException("Scene primary preserved the swapchain for ImGui, but the overlay command buffer was not recorded.");
@@ -1410,6 +1410,7 @@ namespace XREngine.Rendering.Vulkan
                             dynamicUiBatchTextSecondaryCommandBuffer,
                             dynamicUiBatchTextOverlayOpCount,
                             ImageLayout.PresentSrcKhr,
+                            imguiOverlayCommandBuffer,
                             dynamicUiBatchTextOverlayVariant,
                             dynamicUiBatchTextOverlayOps,
                             dynamicUiBatchTextOverlaySignature,
@@ -1568,11 +1569,22 @@ namespace XREngine.Rendering.Vulkan
             if (submitResult != Result.Success)
             {
                 if (submitResult != Result.ErrorDeviceLost)
+                {
                     ReleaseUnsubmittedTextureUploadCommandBuffer($"graphics frame submit failed with {submitResult}");
+                    MarkCommandBuffersDirty($"graphics frame submit rejected with {submitResult}");
+                    if (TryPresentAbortedDirtyFrame(
+                            commandBufferDirtyFlagSet: true,
+                            commandBuffersDirtiedAfterSceneRecord: true))
+                    {
+                        return;
+                    }
+                }
 
                 if (submitResult == Result.ErrorDeviceLost)
                     throw CreateDeviceLostException("Draw QueueSubmit", submitResult);
 
+                ConsumeAcquireSemaphoreForAbortedFrame($"DrawSubmitFailed:{submitResult}");
+                RecreateSwapchainImmediately($"Draw submit failed with {submitResult} - recovering acquired image state");
                 throw new Exception($"Failed to submit draw command buffer ({submitResult}).");
             }
             acquireSemaphoreConsumed = true;

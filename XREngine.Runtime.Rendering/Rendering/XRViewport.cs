@@ -28,6 +28,9 @@ namespace XREngine.Rendering
     {
         #region Fields
 
+        private static long _nextFrameOutputIdentity;
+        private readonly ulong _frameOutputIdentity = unchecked((ulong)Interlocked.Increment(ref _nextFrameOutputIdentity));
+
         /// <summary>
         /// The standalone camera instance used for rendering when no CameraComponent is assigned.
         /// This allows the viewport to render without requiring a full scene graph hierarchy.
@@ -929,6 +932,8 @@ namespace XREngine.Rendering
             if (AssociatedPlayer is not null && world is not null)
                 world.Lights.UpdateCameraLightIntersections(camera);
 
+            RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
+                new FrameOutputWorkTelemetry(VisibilityBuilds: 1));
             var commandCollection = renderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
             int beforeUpdatingCount = 0;
             //if (Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DebugRenderSubmit) == "1")
@@ -1583,6 +1588,34 @@ namespace XREngine.Rendering
                 viewKind is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye ||
                 (viewKind == EVrOutputViewKind.CyclopeanDesktop && mirrorMode != EVrMirrorMode.FullIndependentRender);
 
+            RenderOutputRequest request = pacing.Request.IsDefined
+                ? pacing.Request
+                : RenderOutputRequest.CreateDefault(
+                    viewKind,
+                    outputKind,
+                    pacing.FrameId,
+                    pacing.ConfiguredTargetRateHz,
+                    pacing.SourceRateHz);
+            ulong outputId = MixFrameOutputIdentity(request.OutputId, _frameOutputIdentity);
+            bool sharedXrFamily = outputKind is EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit;
+            request = request with
+            {
+                OutputId = outputId,
+                ViewFamilyId = sharedXrFamily
+                    ? request.ViewFamilyId
+                    : MixFrameOutputIdentity(request.ViewFamilyId, _frameOutputIdentity),
+            };
+            RenderOutputTargetDescriptor target = request.Target with
+            {
+                StableTargetId = outputId,
+                TargetGeneration = unchecked((ulong)Math.Max(0, _renderPipeline.ResourceGeneration)),
+                DisplayWidth = (uint)Math.Max(0, Width),
+                DisplayHeight = (uint)Math.Max(0, Height),
+                InternalWidth = (uint)Math.Max(0, InternalWidth),
+                InternalHeight = (uint)Math.Max(0, InternalHeight),
+            };
+            request = request.WithTarget(target);
+
             var telemetry = new FrameOutputTelemetry(
                 outputKind,
                 viewKind,
@@ -1601,8 +1634,16 @@ namespace XREngine.Rendering
                 0,
                 0,
                 cpuMs,
-                gpuMs);
+                gpuMs,
+                request);
             hostServices.RecordRenderFrameOutput(telemetry);
+        }
+
+        private static ulong MixFrameOutputIdentity(ulong contractIdentity, ulong instanceIdentity)
+        {
+            ulong hash = 1469598103934665603UL;
+            hash = (hash ^ contractIdentity) * 1099511628211UL;
+            return (hash ^ instanceIdentity) * 1099511628211UL;
         }
 
         private static string BuildFrameOutputName(EFrameOutputKind outputKind, EVrOutputViewKind viewKind)

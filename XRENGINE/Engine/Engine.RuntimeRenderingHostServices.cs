@@ -95,6 +95,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public EVulkanRenderTargetMode VulkanRenderTargetMode => Engine.EffectiveSettings.VulkanRenderTargetMode;
     public EVulkanGpuDrivenProfile VulkanGpuDrivenProfile => Engine.EffectiveSettings.VulkanGpuDrivenProfile;
     public EVulkanQueueOverlapMode VulkanQueueOverlapMode => Engine.EffectiveSettings.VulkanQueueOverlapMode;
+    public bool EnableVulkanPrimaryCommandBufferReuse => Engine.Rendering.Settings.EnableVulkanPrimaryCommandBufferReuse;
     public EVulkanDiagnosticPreset VulkanDiagnosticPreset => Engine.EffectiveSettings.VulkanDiagnosticPreset;
     public EVulkanDiagnosticFlags VulkanDiagnosticFlags => Engine.EffectiveSettings.VulkanDiagnosticFlags;
 
@@ -1003,6 +1004,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RecordRenderVulkanDescriptorPoolReset()
         => Engine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolReset();
 
+    public void RecordRenderVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanResourceLifetimeGauges(liveResourceCount, trackedDescriptorSetCount);
+
     public void RecordRenderVulkanDynamicUniformAllocation(long bytes)
         => Engine.Rendering.Stats.Vulkan.RecordVulkanDynamicUniformAllocation(bytes);
 
@@ -1119,7 +1123,8 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         bool plannerDirty,
         bool profilerDirty,
         string? dirtyReason)
-        => Engine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
+    {
+        Engine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
             reusedClean,
             recorded,
             forcedDirty,
@@ -1127,9 +1132,41 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
             plannerDirty,
             profilerDirty,
             dirtyReason);
+        Engine.Rendering.Stats.FrameOutputs.RecordWork(new FrameOutputWorkTelemetry(
+            CompiledPlanCacheHits: reusedClean ? 1 : 0,
+            CompiledPlanCacheMisses: recorded ? 1 : 0));
+    }
 
     public void RecordRenderVulkanCommandBuffersDirty(string? reason)
         => Engine.Rendering.Stats.Vulkan.RecordVulkanCommandBuffersDirty(reason);
+
+    public void RecordRenderVulkanExactResourceInvalidation(
+        int exactVariantsDirtied,
+        int exactCommandChainsDirtied,
+        int unrelatedVariantsPreserved,
+        int globalFallbackInvalidations)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanExactResourceInvalidation(
+            exactVariantsDirtied,
+            exactCommandChainsDirtied,
+            unrelatedVariantsPreserved,
+            globalFallbackInvalidations);
+
+    public void RecordRenderVulkanTrackingBatch(
+        int dependencyBinds,
+        int uniqueDependencies,
+        int imageAccessWrites,
+        int compactImageRanges)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanTrackingBatch(
+            dependencyBinds,
+            uniqueDependencies,
+            imageAccessWrites,
+            compactImageRanges);
+
+    public void RecordRenderVulkanDescriptorExpansion(int cacheHits, int cacheMisses)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanDescriptorExpansion(cacheHits, cacheMisses);
+
+    public void RecordRenderVulkanTrackingContention(int lifetimeLockContentions, int layoutLockContentions)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanTrackingContention(lifetimeLockContentions, layoutLockContentions);
 
     public void RecordRenderVulkanCommandChainMetrics(
         int chainsScheduled,
@@ -1147,7 +1184,8 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         string? firstStructuralDirtyReason,
         string? firstDescriptorGenerationMismatch,
         string? firstResourcePlanRevisionMismatch)
-        => Engine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(
+    {
+        Engine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(
             chainsScheduled,
             chainsRecorded,
             chainsReused,
@@ -1163,6 +1201,11 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
             firstStructuralDirtyReason,
             firstDescriptorGenerationMismatch,
             firstResourcePlanRevisionMismatch);
+        Engine.Rendering.Stats.FrameOutputs.RecordWork(new FrameOutputWorkTelemetry(
+            SharedPassReuses: chainsReused,
+            RecordedWorkItems: chainsRecorded + primaryCommandBuffersRecorded,
+            ReusedWorkItems: chainsReused + primaryCommandBuffersReused));
+    }
 
     public void RecordRenderVulkanGpuDrivenStageTiming(int stage, TimeSpan elapsed)
         => Engine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming((Engine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming)stage, elapsed);
@@ -1199,6 +1242,10 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public void RecordRenderVulkanRetiredResourceDrain(
         int descriptorPools,
+        int descriptorSets,
+        int commandBuffers,
+        int queryPools,
+        int bufferViews,
         int pipelines,
         int framebuffers,
         int buffers,
@@ -1210,6 +1257,10 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         long imageBytes)
         => Engine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
             descriptorPools,
+            descriptorSets,
+            commandBuffers,
+            queryPools,
+            bufferViews,
             pipelines,
             framebuffers,
             buffers,
@@ -1396,6 +1447,8 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public void RecordRenderFrameOutput(in FrameOutputTelemetry telemetry)
         => Engine.Rendering.Stats.FrameOutputs.RecordOutput(telemetry);
+    public void RecordRenderFrameOutputWork(in FrameOutputWorkTelemetry telemetry)
+        => Engine.Rendering.Stats.FrameOutputs.RecordWork(telemetry);
     public bool EnableVrFoveatedViewSet => Engine.Rendering.Settings.EnableVrFoveatedViewSet;
     public ERvcPipelineMode RvcPipelineMode => Engine.Rendering.Settings.RvcPipelineMode;
     public bool RvcQuadViewEnabled => Engine.Rendering.Settings.RvcQuadViewEnabled;

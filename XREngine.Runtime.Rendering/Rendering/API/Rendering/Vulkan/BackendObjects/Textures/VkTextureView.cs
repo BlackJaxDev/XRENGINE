@@ -286,10 +286,8 @@ namespace XREngine.Rendering.Vulkan
                         SubresourceRange = subresourceRange,
                     };
 
-                    if (Api!.CreateImageView(Device, ref depthViewInfo, null, out cached) != Result.Success)
+                    if (!Renderer.TryAcquireInternedImageView(in depthViewInfo, "VkTextureView.AspectOnlyDescriptor", out cached))
                         return default;
-
-                    Renderer.TrackLiveImageView(cached, in depthViewInfo, "VkTextureView.AspectOnlyDescriptor");
                     return cached;
                 }
             }
@@ -800,9 +798,8 @@ namespace XREngine.Rendering.Vulkan
                     SubresourceRange = subresourceRange,
                 };
 
-                if (Api!.CreateImageView(Device, ref viewInfo, null, out _view) != Result.Success)
+                if (!Renderer.TryAcquireInternedImageView(in viewInfo, "VkTextureView.View", out _view))
                     throw new InvalidOperationException("Failed to create Vulkan texture view.");
-                Renderer.TrackLiveImageView(_view, in viewInfo, "VkTextureView.View");
 
                 // For depth/stencil formats with both aspects, create a depth-only view for
                 // sampled descriptors (Vulkan requires exactly one aspect in that case).
@@ -816,9 +813,8 @@ namespace XREngine.Rendering.Vulkan
                             AspectMask = ImageAspectFlags.DepthBit,
                         },
                     };
-                    if (Api!.CreateImageView(Device, ref depthOnlyViewInfo, null, out _depthOnlyView) != Result.Success)
+                    if (!Renderer.TryAcquireInternedImageView(in depthOnlyViewInfo, "VkTextureView.DepthOnlyDescriptor", out _depthOnlyView))
                         throw new InvalidOperationException("Failed to create depth-only descriptor view for texture view.");
-                    Renderer.TrackLiveImageView(_depthOnlyView, in depthOnlyViewInfo, "VkTextureView.DepthOnlyDescriptor");
                 }
 
                 CreateSampler();
@@ -880,10 +876,7 @@ namespace XREngine.Rendering.Vulkan
                         return;
                     }
 
-                    if (liveImage.Handle == _image.Handle)
-                        ForgetOwnedImageViews();
-                    else
-                        RetireOwnedImageViews();
+                    RetireOwnedImageViews();
 
                     _image = liveImage;
                     _format = source.DescriptorFormat;
@@ -903,10 +896,8 @@ namespace XREngine.Rendering.Vulkan
                         SubresourceRange = subresourceRange,
                     };
 
-                    if (Api!.CreateImageView(Device, ref viewInfo, null, out _view) != Result.Success)
+                    if (!Renderer.TryAcquireInternedImageView(in viewInfo, "VkTextureView.RefreshedView", out _view))
                         _view = default;
-                    else
-                        Renderer.TrackLiveImageView(_view, in viewInfo, "VkTextureView.RefreshedView");
 
                     bool hasStencil = _format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
                     if (_view.Handle != 0 && hasStencil && (_usage & ImageUsageFlags.SampledBit) != 0)
@@ -918,10 +909,8 @@ namespace XREngine.Rendering.Vulkan
                                 AspectMask = ImageAspectFlags.DepthBit,
                             },
                         };
-                        if (Api!.CreateImageView(Device, ref depthOnlyViewInfo, null, out _depthOnlyView) != Result.Success)
+                        if (!Renderer.TryAcquireInternedImageView(in depthOnlyViewInfo, "VkTextureView.RefreshedDepthOnlyDescriptor", out _depthOnlyView))
                             _depthOnlyView = default;
-                        else
-                            Renderer.TrackLiveImageView(_depthOnlyView, in depthOnlyViewInfo, "VkTextureView.RefreshedDepthOnlyDescriptor");
                     }
 
                     if (_view.Handle != 0 && _sampler.Handle == 0)
@@ -1012,23 +1001,27 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 }
 
+                bool retirePrimary = Renderer.ReleaseInternedImageView(_view);
+                bool retireDepth = Renderer.ReleaseInternedImageView(_depthOnlyView);
+                bool retireStencil = Renderer.ReleaseInternedImageView(_stencilOnlyView);
+
                 int attachmentCount = 0;
-                if (_depthOnlyView.Handle != 0)
+                if (retireDepth)
                     attachmentCount++;
-                if (_stencilOnlyView.Handle != 0)
+                if (retireStencil)
                     attachmentCount++;
 
                 ImageView[] attachmentViews = attachmentCount == 0 ? [] : new ImageView[attachmentCount];
                 int index = 0;
-                if (_depthOnlyView.Handle != 0)
+                if (retireDepth)
                     attachmentViews[index++] = _depthOnlyView;
-                if (_stencilOnlyView.Handle != 0)
+                if (retireStencil)
                     attachmentViews[index] = _stencilOnlyView;
 
                 Renderer.RetireImageResources(new RetiredImageResources(
                     default,
                     default,
-                    _view,
+                    retirePrimary ? _view : default,
                     attachmentViews,
                     default,
                     0));
@@ -1038,17 +1031,16 @@ namespace XREngine.Rendering.Vulkan
                 _stencilOnlyView = default;
             }
 
-            private void ForgetOwnedImageViews()
-            {
-                _view = default;
-                _depthOnlyView = default;
-                _stencilOnlyView = default;
-            }
-
             private void RetireSingleImageView(ref ImageView view)
             {
                 if (view.Handle == 0)
                     return;
+
+                if (!Renderer.ReleaseInternedImageView(view))
+                {
+                    view = default;
+                    return;
+                }
 
                 Renderer.RetireImageResources(new RetiredImageResources(
                     default,

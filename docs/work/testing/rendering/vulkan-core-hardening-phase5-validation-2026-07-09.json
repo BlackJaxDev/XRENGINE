@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "captured_at_utc": "2026-07-10T01:24:14.6419839Z",
+  "scope": "Vulkan core hardening Phase 5 implementation and live validation",
+  "source": {
+    "branch": "rendering-vulkan-core-hardening",
+    "base_commit": "c81dc41328d2e3c3b98588b7a16559b739b274d6",
+    "dirty_worktree": true,
+    "unrelated_dirty_state_preserved": true
+  },
+  "machine": {
+    "gpu": "NVIDIA GeForce RTX 3090",
+    "windows_driver_version": "32.0.16.1062",
+    "vulkan_api_version": "1.4.341",
+    "openxr_runtime": "SteamVR"
+  },
+  "implementation": {
+    "subresource_dimensions": ["image", "aspect", "mip", "layer", "queue_family"],
+    "state_phases": ["recorded", "submitted", "completed"],
+    "sync_backend": "Vulkan 1.3 synchronization2",
+    "submission_publication": "after successful queue submit only",
+    "completion_sources": ["fence", "timeline", "queue idle", "device idle"],
+    "descriptor_validation": "exact registered image-view subresource range during command recording"
+  },
+  "builds_and_tests": {
+    "runtime_rendering_build": { "passed": true, "errors": 0 },
+    "editor_build": { "passed": true, "warnings": 216, "errors": 0 },
+    "phase4_phase5_tests": { "passed": 27, "failed": 0, "skipped": 0 },
+    "legacy_contract_filter": {
+      "passed": 67,
+      "failed": 18,
+      "skipped": 1,
+      "classification": "pre-existing stale source path/token contracts from renderer decomposition"
+    }
+  },
+  "visual_validation": {
+    "backend": "Vulkan",
+    "light_probe_mode": "Single Startup",
+    "light_probe_resolution": 64,
+    "captures_inspected": 2,
+    "camera_dependent_output": true,
+    "coherent_output": true,
+    "device_lost": false
+  },
+  "openxr_smoke": {
+    "diagnostic_preset": "SyncValidation",
+    "target_frames": 12,
+    "submitted_frames": 12,
+    "no_layer_frames": 0,
+    "end_frame_failures": 0,
+    "per_eye_acquire_wait_release": [12, 12],
+    "desktop_mirror_composed": true,
+    "per_frame_allocations_bytes": 0,
+    "teardown_completed": true,
+    "smoke_failures": 0,
+    "device_lost": false,
+    "summary": "Build/_AgentValidation/20260709-180000-vulkan-phase4-live/phase5-implementation/reports/openxr-syncvalidation-final2.json",
+    "engine_log": "Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-09_18-21-03_pid49468"
+  },
+  "validation": {
+    "clean": false,
+    "total_errors": 1878,
+    "descriptor_diagnostic_warnings": 571,
+    "active_pipeline_invalid_image_layout": 150,
+    "sync_hazard_write_after_read": 1315,
+    "sync_hazard_read_after_write": 339,
+    "sync_hazard_write_after_write": 6,
+    "invalid_optional_shader_stage_masks": 0,
+    "stale_old_layout_vuids": 0,
+    "device_lost_messages": 0,
+    "known_non_phase5_followups": [
+      "device teardown child objects",
+      "invalid teardown image and memory handles"
+    ]
+  },
+  "phase_5_1_remediation": {
+    "captured_at_utc": "2026-07-10T03:40:00Z",
+    "toolchain": {
+      "vulkan_loader_runtime": "1.4.341",
+      "validation_layer": "1.4.350",
+      "sdk_mode": "portable side-by-side; system installer required elevation",
+      "gpu": "NVIDIA GeForce RTX 3090",
+      "driver_version": "610.62.0.0",
+      "steamvr_build_id": "23791826",
+      "steamvr_target_build_id": "23791826"
+    },
+    "builds_and_tests": {
+      "focused_tests": { "passed": 25, "failed": 0, "skipped": 0 },
+      "broader_source_contract_sweep": {
+        "passed": 124,
+        "failed": 21,
+        "classification": "stale path/token assertions from earlier renderer decomposition; changed Phase 5.1 contracts pass directly"
+      },
+      "runtime_rendering_build_errors": 0,
+      "editor_build_errors": 0,
+      "editor_existing_advisory_warnings": 216
+    },
+    "runs": [
+      {
+        "lane": "desktop_no_imgui",
+        "engine_log": "Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-09_20-26-35_pid668",
+        "engine_owned_validation_errors": 0,
+        "runtime_owned_validation_errors": 0
+      },
+      {
+        "lane": "desktop_imgui",
+        "engine_log": "Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-09_20-28-32_pid39624",
+        "engine_owned_validation_errors": 0,
+        "runtime_owned_validation_errors": 0
+      },
+      {
+        "lane": "openxr_no_probe",
+        "frames_submitted": 12,
+        "no_layer_frames": 0,
+        "teardown_completed": true,
+        "engine_log": "Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-09_20-28-58_pid53492",
+        "summary": "Build/_AgentValidation/20260709-203000-vulkan-phase51/reports/openxr-no-probe-sync-final.json",
+        "engine_owned_validation_errors": 0,
+        "runtime_owned_validation_errors": 14
+      },
+      {
+        "lane": "openxr_one_startup_probe",
+        "frames_submitted": 20,
+        "scene_capture_context_updates": 57,
+        "no_layer_frames": 0,
+        "teardown_completed": true,
+        "engine_log": "Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-09_20-34-41_pid50500",
+        "summary": "Build/_AgentValidation/20260709-203000-vulkan-phase51/reports/openxr-one-probe-sync-actual.json",
+        "engine_owned_validation_errors": 0,
+        "runtime_owned_validation_errors": 14
+      },
+      {
+        "lane": "bounded_phase5_probe_openxr_repeat",
+        "frames_submitted": 12,
+        "scene_capture_context_updates": 49,
+        "no_layer_frames": 0,
+        "teardown_completed": true,
+        "engine_log": "Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-09_20-37-39_pid38400",
+        "summary": "Build/_AgentValidation/20260709-203000-vulkan-phase51/reports/openxr-probe-bounded-final.json",
+        "engine_owned_validation_errors": 0,
+        "runtime_owned_validation_errors": 14
+      }
+    ],
+    "runtime_exception": {
+      "broad_allowlist_added": false,
+      "reproduction_boundary": "SteamVR work performed synchronously inside xrEndFrame plus SteamVR children retained through engine Vulkan-device teardown",
+      "messages_per_openxr_run": {
+        "VUID-VkImageCreateInfo-pNext-01443": 7,
+        "UNASSIGNED-SyncValidation-vkCmdCopyImage-WAW": 6,
+        "VUID-vkDestroyDevice-device-05137": 1
+      },
+      "destroy_device_runtime_children": 9,
+      "engine_command_buffers_or_images_involved": false,
+      "retest_when": "SteamVR build or validation-layer version changes"
+    },
+    "engine_owned_validation_clean": true,
+    "phase_5_1_acceptance_met": true
+  },
+  "settings_sha256_after_restore": "C7A9EC1F8F82CE2B9A03948B3F5752299C3C5F84FD7093013C7536E40A9CD254",
+  "conclusion": {
+    "phase5_source_complete": true,
+    "visual_smoke_passed": true,
+    "openxr_smoke_passed": true,
+    "sync_validation_acceptance_met": true,
+    "descriptor_mismatch_diagnostics_active": true,
+    "remaining_work": "No engine-owned Phase 5.1 validation work remains. Retest the exact bounded SteamVR exception when the runtime or validation layer changes."
+  }
+}

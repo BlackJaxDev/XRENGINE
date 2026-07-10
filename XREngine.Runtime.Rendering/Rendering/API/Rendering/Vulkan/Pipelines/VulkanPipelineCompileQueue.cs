@@ -119,7 +119,8 @@ public unsafe partial class VulkanRenderer
                 {
                     try
                     {
-                        MarkCommandBuffersDirty();
+                        if (!VulkanPrimaryCommandBufferReuseEnabled)
+                            MarkCommandBuffersDirty();
                     }
                     catch
                     {

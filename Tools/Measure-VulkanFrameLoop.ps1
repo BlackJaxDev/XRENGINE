@@ -21,8 +21,13 @@ param(
     [switch]$NoClearCachesBetweenVariants,
     [switch]$NoP3Logging,
     [switch]$FailOnSteadyStateResourceChurn,
+    [switch]$FailOnSteadyStateCommandBufferChurn,
     [switch]$FailOnSteadyStateCommandBufferAllocations,
+    [double]$MinSteadyStateCommandBufferCleanReuseRatio = 0,
     [long]$MaxSteadyStateRecordCommandBufferAllocatedBytes = 0,
+    [int]$StabilityWindowSec = 5,
+    [int]$StabilityTimeoutSec = 120,
+    [switch]$NoStabilityGate,
     [int]$ShutdownGraceSec = 20,
     [int]$NoSampleHangSec = 15,
     [int]$RetainedRunCount = 5,
@@ -52,6 +57,9 @@ $arguments = @{
     GpuClockPolicy = $GpuClockPolicy
     TargetRefreshHz = $TargetRefreshHz
     MaxSteadyStateRecordCommandBufferAllocatedBytes = $MaxSteadyStateRecordCommandBufferAllocatedBytes
+    MinSteadyStateCommandBufferCleanReuseRatio = $MinSteadyStateCommandBufferCleanReuseRatio
+    StabilityWindowSec = $StabilityWindowSec
+    StabilityTimeoutSec = $StabilityTimeoutSec
     ShutdownGraceSec = $ShutdownGraceSec
     NoSampleHangSec = $NoSampleHangSec
     RetainedRunCount = $RetainedRunCount
@@ -74,8 +82,16 @@ if ($FailOnSteadyStateResourceChurn) {
     $arguments['FailOnSteadyStateResourceChurn'] = $true
 }
 
+if ($FailOnSteadyStateCommandBufferChurn) {
+    $arguments['FailOnSteadyStateCommandBufferChurn'] = $true
+}
+
 if ($FailOnSteadyStateCommandBufferAllocations) {
     $arguments['FailOnSteadyStateCommandBufferAllocations'] = $true
+}
+
+if ($NoStabilityGate) {
+    $arguments['NoStabilityGate'] = $true
 }
 
 & $measureScript @arguments

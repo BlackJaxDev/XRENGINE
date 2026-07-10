@@ -456,7 +456,8 @@ public unsafe partial class VulkanRenderer
 				bool requiresDescriptors = program.DescriptorSetLayouts.Count > 0 && program.DescriptorBindings.Count > 0;
 				if (requiresDescriptors)
 				{
-					if (!EnsureDescriptorSets(material, drawUniformSlot))
+					int frameIndex = imageIndex > int.MaxValue ? int.MaxValue : (int)imageIndex;
+					if (!EnsureDescriptorSets(material, drawUniformSlot, frameIndex))
 					{
 						reason = "descriptor sets pending";
 						ReturnRentedVertexBufferSnapshot(vertexBuffers, vertexBindings);
@@ -474,7 +475,6 @@ public unsafe partial class VulkanRenderer
 						return false;
 					}
 
-					int frameIndex = imageIndex > int.MaxValue ? int.MaxValue : (int)imageIndex;
 					int descriptorSlotIndex = ResolveUniformBufferIndex(frameIndex, drawUniformSlot, _descriptorSets.Length);
 					UpdateEngineUniformBuffersForDraw(frameIndex, drawUniformSlot, draw);
 					UpdateAutoUniformBuffersForDraw(frameIndex, drawUniformSlot, material, draw);
@@ -708,7 +708,7 @@ public unsafe partial class VulkanRenderer
 
 			int imageIndex = Math.Max(frameDataImageIndex, 0);
 
-			if (!EnsureDescriptorSets(material, drawUniformSlot))
+			if (!EnsureDescriptorSets(material, drawUniformSlot, imageIndex))
 			{
 				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=EnsureDescriptorSets returned false");
 				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(

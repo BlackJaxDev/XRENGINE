@@ -1,0 +1,27 @@
+namespace XREngine;
+
+public readonly record struct FrameOutputTelemetry(
+    EFrameOutputKind OutputKind,
+    EVrOutputViewKind ViewKind,
+    EFrameOutputPhase Phase,
+    FrameOutputPacingDecision Pacing,
+    string? Name,
+    string? PipelineName,
+    bool Active,
+    bool Rendered,
+    bool SceneRendered,
+    bool Mirror,
+    bool SeparateSceneRender,
+    bool SharedVisibility,
+    int CommandCount,
+    int DrawCalls,
+    int MultiDrawCalls,
+    int Triangles,
+    double CpuMs,
+    double GpuMs,
+    RenderOutputRequest Request = default,
+    ERenderOutputWorkDisposition WorkDisposition = ERenderOutputWorkDisposition.FreshRender,
+    uint ContentAgeFrames = 0u,
+    bool DeadlineMissed = false,
+    bool PolicyAuthorized = true,
+    ERenderOutputPolicyReason PolicyReason = ERenderOutputPolicyReason.None);

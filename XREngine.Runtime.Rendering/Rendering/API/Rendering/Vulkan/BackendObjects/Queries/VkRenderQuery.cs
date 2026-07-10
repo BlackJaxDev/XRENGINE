@@ -117,6 +117,26 @@ namespace XREngine.Rendering.Vulkan
                 Data.CurrentQuery = null;
             }
 
+            internal bool PrepareForCommandBufferReuse(EQueryTarget target)
+            {
+                if (!TryMapQueryType(target, out QueryType queryType, out bool isOcclusion) || !isOcclusion)
+                    return false;
+
+                if (!Renderer.SupportsHostQueryReset || !EnsureQueryPool(queryType))
+                    return false;
+
+                // The occlusion coordinator only schedules a new query after the prior
+                // result resolves. Reset the persistent pool on the host before replaying
+                // the already-recorded begin/end commands; the command buffer itself does
+                // not need to be re-recorded merely to establish a new query epoch.
+                Renderer.EnsureVulkanResourceMutationAllowed(
+                    ObjectType.QueryPool,
+                    _queryPool.Handle,
+                    "ResetQueryPoolForCommandBufferReuse");
+                Api!.ResetQueryPool(Device, _queryPool, 0, 1);
+                return true;
+            }
+
             public bool WriteTimestamp(CommandBuffer commandBuffer, PipelineStageFlags stage = PipelineStageFlags.BottomOfPipeBit)
             {
                 if (!EnsureQueryPool(QueryType.Timestamp))
