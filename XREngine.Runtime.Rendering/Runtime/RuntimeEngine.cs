@@ -1336,6 +1336,12 @@ internal static partial class RuntimeEngine
                     RuntimeRenderingHostServices.Current.RecordRenderVulkanDescriptorPoolReset();
             }
 
+            public static void RecordVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount)
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVulkanResourceLifetimeGauges(liveResourceCount, trackedDescriptorSetCount);
+            }
+
             public static void RecordVulkanDynamicUniformAllocation(long bytes)
             {
                 if (HasHostStats)
@@ -1495,6 +1501,50 @@ internal static partial class RuntimeEngine
                     RuntimeRenderingHostServices.Current.RecordRenderVulkanCommandBuffersDirty(reason);
             }
 
+            public static void RecordVulkanExactResourceInvalidation(
+                int exactVariantsDirtied,
+                int exactCommandChainsDirtied,
+                int unrelatedVariantsPreserved,
+                int globalFallbackInvalidations)
+            {
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderVulkanExactResourceInvalidation(
+                        exactVariantsDirtied,
+                        exactCommandChainsDirtied,
+                        unrelatedVariantsPreserved,
+                        globalFallbackInvalidations);
+                }
+            }
+
+            public static void RecordVulkanTrackingBatch(
+                int dependencyBinds,
+                int uniqueDependencies,
+                int imageAccessWrites,
+                int compactImageRanges)
+            {
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderVulkanTrackingBatch(
+                        dependencyBinds,
+                        uniqueDependencies,
+                        imageAccessWrites,
+                        compactImageRanges);
+                }
+            }
+
+            public static void RecordVulkanDescriptorExpansion(int cacheHits, int cacheMisses)
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVulkanDescriptorExpansion(cacheHits, cacheMisses);
+            }
+
+            public static void RecordVulkanTrackingContention(int lifetimeLockContentions, int layoutLockContentions)
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVulkanTrackingContention(lifetimeLockContentions, layoutLockContentions);
+            }
+
             public static void RecordVulkanCommandChainMetrics(
                 int chainsScheduled = 0,
                 int chainsRecorded = 0,
@@ -1611,6 +1661,10 @@ internal static partial class RuntimeEngine
 
             public static void RecordVulkanRetiredResourceDrain(
                 int descriptorPools = 0,
+                int descriptorSets = 0,
+                int commandBuffers = 0,
+                int queryPools = 0,
+                int bufferViews = 0,
                 int pipelines = 0,
                 int framebuffers = 0,
                 int buffers = 0,
@@ -1625,6 +1679,10 @@ internal static partial class RuntimeEngine
                 {
                     RuntimeRenderingHostServices.Current.RecordRenderVulkanRetiredResourceDrain(
                         descriptorPools,
+                        descriptorSets,
+                        commandBuffers,
+                        queryPools,
+                        bufferViews,
                         pipelines,
                         framebuffers,
                         buffers,
@@ -1878,6 +1936,8 @@ internal static partial class RuntimeEngine
                 public static void RecordVulkanDescriptorPoolCreate() => Stats.RecordVulkanDescriptorPoolCreate();
                 public static void RecordVulkanDescriptorPoolDestroy() => Stats.RecordVulkanDescriptorPoolDestroy();
                 public static void RecordVulkanDescriptorPoolReset() => Stats.RecordVulkanDescriptorPoolReset();
+                public static void RecordVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount)
+                    => Stats.RecordVulkanResourceLifetimeGauges(liveResourceCount, trackedDescriptorSetCount);
                 public static void RecordVulkanDynamicUniformAllocation(long bytes) => Stats.RecordVulkanDynamicUniformAllocation(bytes);
                 public static void RecordVulkanDynamicUniformExhaustion() => Stats.RecordVulkanDynamicUniformExhaustion();
                 public static void RecordVulkanRecordCommandBufferAllocation(long bytes) => Stats.RecordVulkanRecordCommandBufferAllocation(bytes);
@@ -1985,6 +2045,30 @@ internal static partial class RuntimeEngine
                         dirtyReason);
                 public static void RecordVulkanCommandBuffersDirty(string? reason)
                     => Stats.RecordVulkanCommandBuffersDirty(reason);
+                public static void RecordVulkanExactResourceInvalidation(
+                    int exactVariantsDirtied,
+                    int exactCommandChainsDirtied,
+                    int unrelatedVariantsPreserved,
+                    int globalFallbackInvalidations)
+                    => Stats.RecordVulkanExactResourceInvalidation(
+                        exactVariantsDirtied,
+                        exactCommandChainsDirtied,
+                        unrelatedVariantsPreserved,
+                        globalFallbackInvalidations);
+                public static void RecordVulkanTrackingBatch(
+                    int dependencyBinds,
+                    int uniqueDependencies,
+                    int imageAccessWrites,
+                    int compactImageRanges)
+                    => Stats.RecordVulkanTrackingBatch(
+                        dependencyBinds,
+                        uniqueDependencies,
+                        imageAccessWrites,
+                        compactImageRanges);
+                public static void RecordVulkanDescriptorExpansion(int cacheHits, int cacheMisses)
+                    => Stats.RecordVulkanDescriptorExpansion(cacheHits, cacheMisses);
+                public static void RecordVulkanTrackingContention(int lifetimeLockContentions, int layoutLockContentions)
+                    => Stats.RecordVulkanTrackingContention(lifetimeLockContentions, layoutLockContentions);
                 public static void RecordVulkanCommandChainMetrics(
                     int chainsScheduled = 0,
                     int chainsRecorded = 0,
@@ -2037,6 +2121,10 @@ internal static partial class RuntimeEngine
                     => Stats.RecordVulkanRetiredResourcePlanReplacement(imageCount, bufferCount);
                 public static void RecordVulkanRetiredResourceDrain(
                     int descriptorPools = 0,
+                    int descriptorSets = 0,
+                    int commandBuffers = 0,
+                    int queryPools = 0,
+                    int bufferViews = 0,
                     int pipelines = 0,
                     int framebuffers = 0,
                     int buffers = 0,
@@ -2048,6 +2136,10 @@ internal static partial class RuntimeEngine
                     long imageBytes = 0)
                     => Stats.RecordVulkanRetiredResourceDrain(
                         descriptorPools,
+                        descriptorSets,
+                        commandBuffers,
+                        queryPools,
+                        bufferViews,
                         pipelines,
                         framebuffers,
                         buffers,

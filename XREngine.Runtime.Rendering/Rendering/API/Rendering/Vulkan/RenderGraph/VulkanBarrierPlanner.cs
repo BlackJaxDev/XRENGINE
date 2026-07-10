@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.RenderGraph;
@@ -20,7 +19,7 @@ internal sealed class VulkanBarrierPlanner
 
     private readonly List<PlannedImageBarrier> _imageBarriers = [];
     private readonly Dictionary<int, List<PlannedImageBarrier>> _perPassImageBarriers = [];
-    private readonly Dictionary<string, PlannedImageState> _lastImageStates = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<PhysicalImageStateKey, PlannedImageState> _lastImageStates = [];
 
     private readonly List<PlannedBufferBarrier> _bufferBarriers = [];
     private readonly Dictionary<int, List<PlannedBufferBarrier>> _perPassBufferBarriers = [];
@@ -33,7 +32,8 @@ internal sealed class VulkanBarrierPlanner
     private uint _lastSwapchainQueueOwner;
     private bool _hasLastSwapchainQueueOwner;
 
-    private readonly Dictionary<string, uint> _lastImageQueueOwners = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<PhysicalImageStateKey, uint> _lastImageQueueOwners = [];
+    private readonly Dictionary<PhysicalImageStateKey, PendingPassImageUsage> _pendingPassImageUsages = [];
     private readonly Dictionary<string, uint> _lastBufferQueueOwners = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<int> _knownPassIndices = [];
 
@@ -131,16 +131,11 @@ internal sealed class VulkanBarrierPlanner
         foreach (RenderPassMetadata pass in RenderGraphSynchronizationPlanner.TopologicallySort(passMetadata))
         {
             IReadOnlyList<RenderGraphSynchronizationEdge> consumerEdges = syncInfo.GetEdgesForConsumer(pass.PassIndex);
+            _pendingPassImageUsages.Clear();
 
             foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
             {
-                RenderGraphSynchronizationEdge? edge = consumerEdges
-                    .Where(e =>
-                        !e.DependencyOnly &&
-                        e.ResourceType == usage.ResourceType &&
-                        string.Equals(e.ResourceName, usage.ResourceName, StringComparison.OrdinalIgnoreCase) &&
-                        e.SubresourceRange.Equals(usage.SubresourceRange))
-                    .LastOrDefault();
+                RenderGraphSynchronizationEdge? edge = FindConsumerEdge(consumerEdges, usage);
 
                 if (IsSwapchainTargetUsage(usage, resourcePlanner))
                 {
@@ -149,12 +144,35 @@ internal sealed class VulkanBarrierPlanner
                 }
 
                 if (ShouldTrackImage(usage.ResourceType))
-                    TrackImageUsage(pass, usage, resourcePlanner, resourceAllocator, edge, ownership);
+                    AccumulateImageUsage(pass, usage, resourcePlanner, resourceAllocator, edge, ownership);
 
                 if (ShouldTrackBuffer(usage.ResourceType))
                     TrackBufferUsage(pass, usage, resourcePlanner, edge, ownership);
             }
+
+            foreach (PendingPassImageUsage pending in _pendingPassImageUsages.Values)
+                TrackImageUsage(pass, pending);
         }
+    }
+
+    private static RenderGraphSynchronizationEdge? FindConsumerEdge(
+        IReadOnlyList<RenderGraphSynchronizationEdge> consumerEdges,
+        RenderPassResourceUsage usage)
+    {
+        RenderGraphSynchronizationEdge? match = null;
+        for (int i = 0; i < consumerEdges.Count; i++)
+        {
+            RenderGraphSynchronizationEdge edge = consumerEdges[i];
+            if (!edge.DependencyOnly &&
+                edge.ResourceType == usage.ResourceType &&
+                string.Equals(edge.ResourceName, usage.ResourceName, StringComparison.OrdinalIgnoreCase) &&
+                edge.SubresourceRange.Equals(usage.SubresourceRange))
+            {
+                match = edge;
+            }
+        }
+
+        return match;
     }
 
     private void TrackSwapchainUsage(
@@ -212,7 +230,7 @@ internal sealed class VulkanBarrierPlanner
         _hasLastSwapchainQueueOwner = true;
     }
 
-    private void TrackImageUsage(
+    private void AccumulateImageUsage(
         RenderPassMetadata pass,
         RenderPassResourceUsage usage,
         VulkanResourcePlanner resourcePlanner,
@@ -224,66 +242,73 @@ internal sealed class VulkanBarrierPlanner
         {
             string logicalResource = binding.ResourceName;
             if (!resourceAllocator.TryGetPhysicalGroupForResource(logicalResource, out VulkanPhysicalImageGroup? group) || group is null)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.BarrierPlanner.UnresolvedImage.{pass.PassIndex}.{logicalResource}",
+                    TimeSpan.FromSeconds(5),
+                    "[Vulkan] Barrier planner could not resolve image resource '{0}' for pass {1} ({2}); dedicated/external consumers must register an explicit dependency before recording.",
+                    logicalResource,
+                    pass.PassIndex,
+                    pass.Name);
                 continue;
+            }
 
             ResolvedImageSubresourceRange bindingRange = ResolveSubresourceRange(binding.Range, group);
-            foreach (ResolvedImageSubresourceRange range in ExpandTrackingRanges(bindingRange, splitMips: !binding.Range.IsWholeResource))
+            foreach (ResolvedImageSubresourceRange range in ExpandTrackingRanges(bindingRange))
             {
-                string stateKey = BuildImageStateKey(logicalResource, range, group);
+                PhysicalImageStateKey stateKey = BuildImageStateKey(range, group);
                 PlannedImageState desiredState = syncEdge is null
                     ? PlannedImageState.FromUsage(usage, group, pass.Stage)
                     : PlannedImageState.FromSyncState(syncEdge.ConsumerState, usage.ResourceType, group, pass.Stage);
-
-                PlannedImageBarrier? plannedBarrier = null;
                 uint desiredOwnerQueue = ownership.ResolveOwner(pass.Stage, usage.ResourceType);
-                uint previousOwnerQueue = desiredOwnerQueue;
-                if (_lastImageQueueOwners.TryGetValue(stateKey, out uint existingOwner))
-                    previousOwnerQueue = existingOwner;
-                else if (!string.Equals(stateKey, logicalResource, StringComparison.OrdinalIgnoreCase) &&
-                    _lastImageQueueOwners.TryGetValue(logicalResource, out existingOwner))
+                if (_pendingPassImageUsages.TryGetValue(stateKey, out PendingPassImageUsage? pending))
                 {
-                    previousOwnerQueue = existingOwner;
-                }
-
-                uint srcQueueFamily = previousOwnerQueue != desiredOwnerQueue ? previousOwnerQueue : Vk.QueueFamilyIgnored;
-                uint dstQueueFamily = previousOwnerQueue != desiredOwnerQueue ? desiredOwnerQueue : Vk.QueueFamilyIgnored;
-
-                if (_lastImageStates.TryGetValue(stateKey, out PlannedImageState previousState) ||
-                    (!string.Equals(stateKey, logicalResource, StringComparison.OrdinalIgnoreCase) &&
-                        _lastImageStates.TryGetValue(logicalResource, out previousState)))
-                {
-                    // Sync edges are keyed before texture-view/FBO aliases resolve. Keep
-                    // the physical tracker authoritative once it has seen the image.
-                    if (syncEdge is not null && previousState.Layout == ImageLayout.Undefined)
-                    {
-                        PlannedImageState syncPreviousState = PlannedImageState.FromSyncState(syncEdge.ProducerState, usage.ResourceType, group, pass.Stage);
-                        if (syncPreviousState.Layout != ImageLayout.Undefined)
-                            previousState = syncPreviousState;
-                    }
-
-                    if (!previousState.Equals(desiredState))
-                        plannedBarrier = new PlannedImageBarrier(pass.PassIndex, logicalResource, group, range, previousState, desiredState, srcQueueFamily, dstQueueFamily);
+                    pending.Merge(usage, desiredState, desiredOwnerQueue, pass);
                 }
                 else
                 {
-                    plannedBarrier = new PlannedImageBarrier(
-                        pass.PassIndex,
+                    _pendingPassImageUsages[stateKey] = new PendingPassImageUsage(
+                        stateKey,
                         logicalResource,
                         group,
                         range,
-                        PlannedImageState.Initial(desiredState.AspectMask),
                         desiredState,
-                        srcQueueFamily,
-                        dstQueueFamily);
+                        desiredOwnerQueue,
+                        usage);
                 }
-
-                if (plannedBarrier.HasValue)
-                    AddImageBarrier(plannedBarrier.Value);
-
-                _lastImageStates[stateKey] = desiredState;
-                _lastImageQueueOwners[stateKey] = desiredOwnerQueue;
             }
         }
+    }
+
+    private void TrackImageUsage(RenderPassMetadata pass, PendingPassImageUsage pending)
+    {
+        PhysicalImageStateKey stateKey = pending.Key;
+        PlannedImageState desiredState = pending.State;
+        uint desiredOwnerQueue = pending.OwnerQueue;
+        uint previousOwnerQueue = _lastImageQueueOwners.TryGetValue(stateKey, out uint existingOwner)
+            ? existingOwner
+            : desiredOwnerQueue;
+        uint srcQueueFamily = previousOwnerQueue != desiredOwnerQueue ? previousOwnerQueue : Vk.QueueFamilyIgnored;
+        uint dstQueueFamily = previousOwnerQueue != desiredOwnerQueue ? desiredOwnerQueue : Vk.QueueFamilyIgnored;
+
+        PlannedImageState previousState = _lastImageStates.TryGetValue(stateKey, out PlannedImageState tracked)
+            ? tracked
+            : PlannedImageState.Initial(desiredState.AspectMask);
+        if (!previousState.Equals(desiredState) || srcQueueFamily != Vk.QueueFamilyIgnored)
+        {
+            AddImageBarrier(new PlannedImageBarrier(
+                pass.PassIndex,
+                pending.ResourceName,
+                pending.Group,
+                pending.Range,
+                previousState,
+                desiredState,
+                srcQueueFamily,
+                dstQueueFamily));
+        }
+
+        _lastImageStates[stateKey] = desiredState;
+        _lastImageQueueOwners[stateKey] = desiredOwnerQueue;
     }
 
     private void TrackBufferUsage(
@@ -558,8 +583,11 @@ internal sealed class VulkanBarrierPlanner
     {
         uint mipLevels = Math.Max(group.MipLevels, 1u);
         uint layers = Math.Max(group.Template.Layers, 1u);
-        uint baseMip = Math.Min(range.BaseMipLevel, mipLevels - 1u);
-        uint baseLayer = Math.Min(range.BaseArrayLayer, layers - 1u);
+        if (range.BaseMipLevel >= mipLevels || range.BaseArrayLayer >= layers)
+            return new ResolvedImageSubresourceRange(range.BaseMipLevel, 0u, range.BaseArrayLayer, 0u);
+
+        uint baseMip = range.BaseMipLevel;
+        uint baseLayer = range.BaseArrayLayer;
         uint levelCount = range.MipLevelCount == RenderGraphSubresourceRange.Remaining
             ? mipLevels - baseMip
             : Math.Min(Math.Max(range.MipLevelCount, 1u), mipLevels - baseMip);
@@ -570,29 +598,152 @@ internal sealed class VulkanBarrierPlanner
         return new ResolvedImageSubresourceRange(baseMip, levelCount, baseLayer, layerCount);
     }
 
-    private static string BuildImageStateKey(
-        string logicalResource,
+    private static PhysicalImageStateKey BuildImageStateKey(
         ResolvedImageSubresourceRange range,
         VulkanPhysicalImageGroup group)
-    {
-        if (range.CoversWholeImage(group))
-            return logicalResource;
-
-        return $"{logicalResource}|m{range.BaseMipLevel}:{range.LevelCount}|l{range.BaseArrayLayer}:{range.LayerCount}";
-    }
+        => new(group, range);
 
     private static IEnumerable<ResolvedImageSubresourceRange> ExpandTrackingRanges(
-        ResolvedImageSubresourceRange range,
-        bool splitMips)
+        ResolvedImageSubresourceRange range)
     {
-        if (!splitMips || range.LevelCount <= 1u)
+        for (uint mip = range.BaseMipLevel; mip < range.BaseMipLevel + range.LevelCount; mip++)
         {
-            yield return range;
-            yield break;
+            for (uint layer = range.BaseArrayLayer; layer < range.BaseArrayLayer + range.LayerCount; layer++)
+                yield return new ResolvedImageSubresourceRange(mip, 1u, layer, 1u);
+        }
+    }
+
+    private readonly record struct PhysicalImageStateKey(
+        VulkanPhysicalImageGroup Group,
+        ResolvedImageSubresourceRange Range);
+
+    private sealed class PendingPassImageUsage
+    {
+        private bool _sampled;
+        private bool _depthAttachment;
+        private bool _depthWrites;
+        private bool _colorAttachment;
+        private bool _storage;
+        private bool _storageWrites;
+
+        public PendingPassImageUsage(
+            PhysicalImageStateKey key,
+            string resourceName,
+            VulkanPhysicalImageGroup group,
+            ResolvedImageSubresourceRange range,
+            PlannedImageState state,
+            uint ownerQueue,
+            RenderPassResourceUsage usage)
+        {
+            Key = key;
+            ResourceName = resourceName;
+            Group = group;
+            Range = range;
+            State = state;
+            OwnerQueue = ownerQueue;
+            AccumulateUsageFlags(usage);
         }
 
-        for (uint mip = range.BaseMipLevel; mip < range.BaseMipLevel + range.LevelCount; mip++)
-            yield return range with { BaseMipLevel = mip, LevelCount = 1u };
+        public PhysicalImageStateKey Key { get; }
+        public string ResourceName { get; }
+        public VulkanPhysicalImageGroup Group { get; }
+        public ResolvedImageSubresourceRange Range { get; }
+        public PlannedImageState State { get; private set; }
+        public uint OwnerQueue { get; }
+
+        public void Merge(
+            RenderPassResourceUsage usage,
+            PlannedImageState desired,
+            uint ownerQueue,
+            RenderPassMetadata pass)
+        {
+            if (ownerQueue != OwnerQueue)
+            {
+                throw new InvalidOperationException(
+                    $"Pass {pass.PassIndex} ('{pass.Name}') uses physical image 0x{Group.Image.Handle:X} " +
+                    $"from multiple queue families ({OwnerQueue} and {ownerQueue}) in one pass.");
+            }
+
+            AccumulateUsageFlags(usage);
+            PipelineStageFlags stages = State.StageMask | desired.StageMask;
+            AccessFlags access = State.AccessMask | desired.AccessMask;
+            ImageAspectFlags aspect = State.AspectMask | desired.AspectMask;
+
+            if (_sampled && _depthAttachment)
+            {
+                if (_depthWrites)
+                {
+                    throw new InvalidOperationException(
+                        $"Pass {pass.PassIndex} ('{pass.Name}') samples and writes depth image 0x{Group.Image.Handle:X} " +
+                        $"mip={Range.BaseMipLevel} layer={Range.BaseArrayLayer}. Split the pass or use an explicit supported feedback-loop path.");
+                }
+
+                State = new PlannedImageState(
+                    ImageLayout.DepthStencilReadOnlyOptimal,
+                    stages |
+                        PipelineStageFlags.FragmentShaderBit |
+                        PipelineStageFlags.EarlyFragmentTestsBit |
+                        PipelineStageFlags.LateFragmentTestsBit,
+                    access |
+                        AccessFlags.ShaderReadBit |
+                        AccessFlags.DepthStencilAttachmentReadBit,
+                    aspect);
+                return;
+            }
+
+            if (_sampled && _colorAttachment)
+            {
+                throw new InvalidOperationException(
+                    $"Pass {pass.PassIndex} ('{pass.Name}') samples and attaches color image 0x{Group.Image.Handle:X} " +
+                    $"mip={Range.BaseMipLevel} layer={Range.BaseArrayLayer}. Use a separate source or an explicit local-read/feedback-loop path.");
+            }
+
+            if (_sampled && _storage)
+            {
+                if (_storageWrites)
+                {
+                    throw new InvalidOperationException(
+                        $"Pass {pass.PassIndex} ('{pass.Name}') samples and storage-writes image 0x{Group.Image.Handle:X} " +
+                        $"mip={Range.BaseMipLevel} layer={Range.BaseArrayLayer}. Split the pass or declare an explicit feedback-loop path.");
+                }
+
+                State = new PlannedImageState(ImageLayout.General, stages, access | AccessFlags.ShaderReadBit, aspect);
+                return;
+            }
+
+            if (State.Layout != desired.Layout)
+            {
+                throw new InvalidOperationException(
+                    $"Pass {pass.PassIndex} ('{pass.Name}') requires incompatible layouts {State.Layout} and {desired.Layout} " +
+                    $"for physical image 0x{Group.Image.Handle:X} mip={Range.BaseMipLevel} layer={Range.BaseArrayLayer}.");
+            }
+
+            State = new PlannedImageState(State.Layout, stages, access, aspect);
+        }
+
+        private void AccumulateUsageFlags(RenderPassResourceUsage usage)
+        {
+            bool writes = usage.Access is ERenderGraphAccess.Write or ERenderGraphAccess.ReadWrite;
+            switch (usage.ResourceType)
+            {
+                case ERenderPassResourceType.SampledTexture:
+                    _sampled = true;
+                    break;
+                case ERenderPassResourceType.DepthAttachment:
+                case ERenderPassResourceType.StencilAttachment:
+                    _depthAttachment = true;
+                    _depthWrites |= writes;
+                    break;
+                case ERenderPassResourceType.ColorAttachment:
+                case ERenderPassResourceType.ResolveAttachment:
+                    _colorAttachment = true;
+                    break;
+                case ERenderPassResourceType.StorageTexture:
+                    _storage = true;
+                    _storageWrites |= writes;
+                    break;
+            }
+        }
     }
 
     private readonly record struct ImageResourceBinding(

@@ -1,0 +1,71 @@
+{
+  "phase": "5.2.3",
+  "status": "complete",
+  "date": "2026-07-10",
+  "validation": {
+    "editorBuild": "passed",
+    "phase5FocusedTests": {
+      "passed": 39,
+      "failed": 0
+    },
+    "phase523ContractTests": {
+      "passed": 6,
+      "failed": 0
+    }
+  },
+  "quietLiveCapture": {
+    "backend": "Vulkan",
+    "configuration": "Debug",
+    "strategy": "CpuDirect",
+    "warmupSeconds": 60,
+    "captureSeconds": 5,
+    "samples": 66,
+    "renderP50Ms": 58.83,
+    "renderP95Ms": 110.076,
+    "vulkanFrameP50Ms": 28.605,
+    "vulkanFrameP95Ms": 33.822,
+    "retiredResourceCount": 0,
+    "retiredImageViews": 0,
+    "retiredImages": 0,
+    "retiredBuffers": 0,
+    "retiredSamplers": 0,
+    "retiredFramebuffers": 0,
+    "retiredPipelines": 0,
+    "retiredDescriptorPools": 0,
+    "resourcePlanReplacements": 0,
+    "plannerPrunes": 0,
+    "globalInFlightWaits": 0,
+    "forceFlushes": 0,
+    "forcedDirty": 0,
+    "exactVariantsDirtied": 0,
+    "exactCommandChainsDirtied": 0,
+    "globalFallbackInvalidations": 0,
+    "commandBufferRecords": 66,
+    "commandBufferCleanReuses": 66,
+    "aggregateCleanReuseRatio": 0.5,
+    "reuseMetricNote": "The aggregate denominator includes one intentional volatile overlay recording per frame; there were no forced-dirty events or dirty summaries."
+  },
+  "exactIsolationCapture": {
+    "samples": 56,
+    "exactVariantsDirtied": 54,
+    "unrelatedVariantsPreserved": 7753,
+    "globalFallbackInvalidations": 0,
+    "note": "Captured while imported textures and output families were still publishing; used only to verify exact dependency isolation."
+  },
+  "implementedContracts": [
+    "Image-view structural identity includes backing image allocation generation, flags, view type, format, component mapping, and complete subresource range",
+    "Dormant interned views survive target-slot rotation and retire before their backing image",
+    "Mesh and deformation buffer publication compares stable allocation-backed structural identities",
+    "External indirect-atlas index buffers are not overwritten by mesh-owned wrappers",
+    "Retirement reverse dependencies dirty only exact recorded command-buffer handles and secondary chains",
+    "Descriptor generations advance only on dirty-to-published transitions",
+    "Exact dirtied, exact chain, unrelated preserved, and global fallback counters are emitted to profiler captures and enforced by the strict harness"
+  ],
+  "evidence": {
+    "quietSummary": "Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-10_00-25-39/summary.json",
+    "quietSession": "Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-10_00-24-26_pid56888/",
+    "isolationSummary": "Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-10_00-23-57/summary.json",
+    "isolationSession": "Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-10_00-23-38_pid40952/"
+  },
+  "followUp": "Phase 5.2.2 must classify reusable primary outcomes separately from intentional volatile overlay recordings before its 99% gate is meaningful."
+}

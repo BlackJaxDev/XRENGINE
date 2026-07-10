@@ -5,8 +5,8 @@ public unsafe partial class VulkanRenderer
     public partial class VkMeshRenderer
     {
         private readonly record struct DescriptorAllocationKey(
+            ulong LayoutFingerprint,
             ulong SchemaFingerprint,
-            ulong ResourceFingerprint,
             int DescriptorFrameSlotCount,
             int SetCount);
     }

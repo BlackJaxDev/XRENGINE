@@ -859,7 +859,9 @@ public unsafe partial class VulkanRenderer
                     // passes that received an initial-layout override will have a concrete
                     // layout and should keep their LOAD op to preserve content.
                     AttachmentLoadOp effectiveLoadOp = loadOp;
-                    if (loadOp == AttachmentLoadOp.Load && existing.InitialLayout == ImageLayout.Undefined)
+                    if (loadOp == AttachmentLoadOp.Load &&
+                        existing.InitialLayout == ImageLayout.Undefined &&
+                        usage.Access != ERenderGraphAccess.Read)
                         effectiveLoadOp = AttachmentLoadOp.DontCare;
 
                     FrameBufferAttachmentSignature updated = usage.ResourceType switch
@@ -896,6 +898,12 @@ public unsafe partial class VulkanRenderer
                     planned[index] = updated;
                     touchedAttachments.Add(index);
                 }
+            }
+
+            for (int i = 0; i < planned.Length; i++)
+            {
+                if (!touchedAttachments.Contains(i))
+                    planned[i] = WithRoleAndColorIndex(planned[i], AttachmentRole.Unused, planned[i].ColorIndex);
             }
 
             ValidateAttachmentSampleCounts(planned, touchedAttachments, pass, frameBufferName);

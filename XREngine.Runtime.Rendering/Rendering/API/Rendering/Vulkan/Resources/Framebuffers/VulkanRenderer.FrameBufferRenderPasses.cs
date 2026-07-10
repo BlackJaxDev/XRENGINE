@@ -310,6 +310,7 @@ public unsafe partial class VulkanRenderer
 
     internal enum AttachmentRole
     {
+        Unused,
         Color,
         Resolve,
         Depth,

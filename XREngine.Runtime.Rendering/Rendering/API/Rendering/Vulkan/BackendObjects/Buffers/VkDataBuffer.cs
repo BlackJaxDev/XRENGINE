@@ -723,8 +723,11 @@ namespace XREngine.Rendering.Vulkan
 
                     if (replacesExistingBacking)
                     {
-                        Renderer.MarkCommandBuffersDirty("VkDataBufferRecreated");
-                        Renderer.MarkOpenXrPrimaryCommandBufferVariantsDirty();
+                        if (!Renderer.VulkanPrimaryCommandBufferReuseEnabled)
+                        {
+                            Renderer.MarkCommandBuffersDirty("VkDataBufferRecreated");
+                            Renderer.MarkOpenXrPrimaryCommandBufferVariantsDirty();
+                        }
                     }
 
                     // Track VRAM allocation only when the actual backing allocation is device-local.

@@ -1,0 +1,30 @@
+namespace XREngine;
+
+public enum ERvcFallbackReason
+{
+    None,
+    DisabledBySettings,
+    MissingForwardPlusOracle,
+    MissingFrameGraph,
+    MissingVisibilityTargets,
+    MissingDescriptorBackend,
+    MissingFoveationRateBackend,
+    MissingQuadViewRuntime,
+    MissingVisibilityMask,
+    MissingMultiview,
+    MissingDepthLayerSupport,
+    UnsupportedBackend,
+    UnsupportedOpenGlProductionPath,
+    UnsupportedMaterialClass,
+    PayloadOverflow,
+    ShadeletMapOverflow,
+    DeduplicationOverflow,
+    MemoryBudgetExceeded,
+    ValidationHarnessFailed,
+    StereoReuseDisabledUntilValidated,
+    TemporalCacheInvalidated,
+    HardwareValidationUnavailable,
+    SynchronousCounterReadbackForbidden,
+    MissingVisibilitySourcePath,
+    MissingVulkanProductionFeature,
+}

@@ -245,13 +245,14 @@ public partial class VulkanRenderSettings : XRBase
     private VulkanTargetModeSettings _targetMode = new();
     private VulkanGpuDrivenSettings _gpuDriven = new();
     private VulkanDescriptorSettings _descriptors = new();
+    private VulkanCommandRecordingSettings _commandRecording = new();
     private VulkanSynchronizationSettings _synchronization = new();
     private VulkanMemorySettings _memory = new();
     private VulkanRobustnessSettings _robustness = new();
     private VulkanDiagnosticsSettings _diagnostics = new();
 
     public VulkanRenderSettings()
-        => AttachSubSettings(_startup, _targetMode, _gpuDriven, _descriptors, _synchronization, _memory, _robustness, _diagnostics);
+        => AttachSubSettings(_startup, _targetMode, _gpuDriven, _descriptors, _commandRecording, _synchronization, _memory, _robustness, _diagnostics);
 
     [Category("Vulkan")]
     [Description("Vulkan startup and backend creation policy.")]
@@ -283,6 +284,14 @@ public partial class VulkanRenderSettings : XRBase
     {
         get => _descriptors;
         set => SetField(ref _descriptors, value ?? new VulkanDescriptorSettings());
+    }
+
+    [Category("Vulkan")]
+    [Description("Vulkan command recording, caching, and reuse policy.")]
+    public VulkanCommandRecordingSettings CommandRecording
+    {
+        get => _commandRecording;
+        set => SetField(ref _commandRecording, value ?? new VulkanCommandRecordingSettings());
     }
 
     [Category("Vulkan")]
@@ -325,6 +334,7 @@ public partial class VulkanRenderSettings : XRBase
             || propName == nameof(TargetMode)
             || propName == nameof(GpuDriven)
             || propName == nameof(Descriptors)
+            || propName == nameof(CommandRecording)
             || propName == nameof(Synchronization)
             || propName == nameof(Memory)
             || propName == nameof(Robustness)
@@ -354,6 +364,21 @@ public partial class VulkanRenderSettings : XRBase
 
     private void HandleSubSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
         => OnPropertyChanged(e.PropertyName, e.PreviousValue, e.NewValue);
+}
+
+[Serializable]
+[MemoryPackable]
+public partial class VulkanCommandRecordingSettings : XRBase
+{
+    private bool _primaryCommandBufferReuseEnabled = true;
+
+    [Category("Vulkan Command Recording")]
+    [Description("Reuses correctness-validated primary command buffers and stable secondary command ranges. XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE=0 is the diagnostic disable override.")]
+    public bool PrimaryCommandBufferReuseEnabled
+    {
+        get => _primaryCommandBufferReuseEnabled;
+        set => SetField(ref _primaryCommandBufferReuseEnabled, value);
+    }
 }
 
 [Serializable]

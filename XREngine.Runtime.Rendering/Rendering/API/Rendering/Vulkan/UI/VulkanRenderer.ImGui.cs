@@ -1551,6 +1551,7 @@ public unsafe partial class VulkanRenderer
         uint imageIndex,
         ImGuiFrameSnapshot drawData,
         ImageLayout initialSwapchainLayout,
+        CommandBuffer predecessorCommandBuffer,
         out CommandBuffer overlayCommandBuffer)
     {
         overlayCommandBuffer = default;
@@ -1582,6 +1583,8 @@ public unsafe partial class VulkanRenderer
             throw new InvalidOperationException("Failed to begin ImGui overlay command buffer.");
 
         ResetCommandBufferBindState(commandBuffer);
+        SeedRecordedImageLayoutState(commandBuffer, predecessorCommandBuffer);
+        TransitionImGuiSnapshotTexturesForSampling(commandBuffer, drawData);
         CmdBeginLabel(commandBuffer, "ImGuiOverlay");
 
         if (useDynamicRendering)
@@ -1676,6 +1679,81 @@ public unsafe partial class VulkanRenderer
            drawData.DisplaySize.Y > 0f &&
            drawData.FramebufferWidth > 0 &&
            drawData.FramebufferHeight > 0;
+
+    private void TransitionImGuiSnapshotTexturesForSampling(
+        CommandBuffer commandBuffer,
+        ImGuiFrameSnapshot drawData)
+    {
+        for (int listIndex = 0; listIndex < drawData.CommandLists.Count; listIndex++)
+        {
+            ImGuiCommandListSnapshot commandList = drawData.CommandLists[listIndex];
+            for (int commandIndex = 0; commandIndex < commandList.Commands.Length; commandIndex++)
+            {
+                ImGuiCommandSnapshot drawCommand = commandList.Commands[commandIndex];
+                if (drawCommand.HasUserCallback || drawCommand.TextureId <= 1 ||
+                    !_imguiTexturesById.TryGetValue(drawCommand.TextureId, out XRTexture? texture) ||
+                    GetOrCreateAPIRenderObject(texture, generateNow: false) is not IVkImageDescriptorSource source)
+                {
+                    continue;
+                }
+
+                ImageView view = ResolveImGuiDescriptorView(source);
+                if (view.Handle == 0 ||
+                    !TryGetDescriptorHeapImageViewCreateInfo(view, out ImageViewCreateInfo viewInfo) ||
+                    viewInfo.Image.Handle == 0)
+                {
+                    continue;
+                }
+
+                ImageLayout descriptorLayout = ResolveDescriptorImageLayout(
+                    source,
+                    DescriptorType.CombinedImageSampler);
+                VulkanImageAccessState priorState;
+                ImageLayout oldLayout;
+                if (TryGetRecordedImageAccessState(
+                        commandBuffer,
+                        viewInfo.Image,
+                        viewInfo.SubresourceRange,
+                        out priorState))
+                {
+                    oldLayout = priorState.Layout;
+                }
+                else
+                {
+                    oldLayout = source.TrackedImageLayout;
+                    priorState = ResolveVulkanImageAccessState(
+                        oldLayout,
+                        viewInfo.SubresourceRange.AspectMask);
+                }
+
+                if (oldLayout == descriptorLayout)
+                    continue;
+
+                VulkanImageAccessState nextState = ResolveVulkanImageAccessState(
+                    descriptorLayout,
+                    viewInfo.SubresourceRange.AspectMask);
+                ImageMemoryBarrier barrier = new()
+                {
+                    SType = StructureType.ImageMemoryBarrier,
+                    SrcAccessMask = (AccessFlags)(ulong)priorState.AccessMask,
+                    DstAccessMask = (AccessFlags)(ulong)nextState.AccessMask,
+                    OldLayout = oldLayout,
+                    NewLayout = descriptorLayout,
+                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    Image = viewInfo.Image,
+                    SubresourceRange = viewInfo.SubresourceRange,
+                };
+                CmdPipelineBarrierTracked(
+                    commandBuffer,
+                    (PipelineStageFlags)(ulong)priorState.StageMask,
+                    PipelineStageFlags.FragmentShaderBit,
+                    DependencyFlags.None,
+                    0, null, 0, null,
+                    1, &barrier);
+            }
+        }
+    }
 
     private void TransitionSwapchainImageForImGuiOverlay(
         CommandBuffer commandBuffer,

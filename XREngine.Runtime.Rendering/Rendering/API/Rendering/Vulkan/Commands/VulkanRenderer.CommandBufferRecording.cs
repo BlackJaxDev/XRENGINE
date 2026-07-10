@@ -247,6 +247,16 @@ namespace XREngine.Rendering.Vulkan
                 ops,
                 dynamicUiBatchTextOps,
                 commandBufferFallbackContext);
+            CommandBufferGenerationDomains currentGenerations = CaptureCommandBufferGenerationDomains(
+                imageIndex,
+                frameOpsSignature,
+                ops,
+                dynamicUiBatchTextOps,
+                dynamicUiBatchTextSignature,
+                commandBufferFallbackContext,
+                frameOpContextFingerprint,
+                gpuPipelineProfilingActive,
+                commandBufferImageSlot);
 
             BeginRecordedTextureUploadSubmitBatch();
             FrameOp[] textureUploadOps = DrainTextureUploadFrameOps();
@@ -294,7 +304,6 @@ namespace XREngine.Rendering.Vulkan
             if (VulkanPrimaryCommandBufferReuseEnabled &&
                 !imageForcedDirty &&
                 !gpuPipelineProfilingActive &&
-                !hasQueryFrameOps &&
                 TryReuseCleanCommandChainPrimaryVariant(
                     imageIndex,
                     frameOpsSignature,
@@ -306,6 +315,7 @@ namespace XREngine.Rendering.Vulkan
                     imageLayoutStartSignature,
                     gpuPipelineProfilingActive,
                     commandBufferImageSlot,
+                    currentGenerations,
                     ops,
                     dynamicUiBatchTextOps,
                     delayDynamicUiBatchTextOverlayRecording,
@@ -394,7 +404,7 @@ namespace XREngine.Rendering.Vulkan
             bool forcedDirty = dirty;
             bool usingCommandChains = commandChainSchedule is not null;
             bool hasTextureUploadFrameOps = hasStaticFrameOps && HasTextureUploadFrameOps(ops);
-            bool frameOpsRequireFreshPrimary = hasStaticFrameOps && (!VulkanPrimaryCommandBufferReuseEnabled || hasQueryFrameOps);
+            bool frameOpsRequireFreshPrimary = hasStaticFrameOps && !VulkanPrimaryCommandBufferReuseEnabled;
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.DirtyEvaluation"))
             {
@@ -402,9 +412,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     dirty = true;
                     primaryFrameStateDirty = true;
-                    primaryFrameStateDirtyReason = hasQueryFrameOps
-                        ? "query-ops"
-                        : "reuse-disabled";
+                    primaryFrameStateDirtyReason = "reuse-disabled";
                 }
 
                 if (gpuProfilerCommandBufferStateDirty)
@@ -440,6 +448,20 @@ namespace XREngine.Rendering.Vulkan
                 {
                     dirty = true;
                     plannerDirty = true;
+                }
+
+                // Inline desktop primaries need a fresh swapchain writer when the camera pose moves.
+                // The broader frame-data generation includes temporal jitter and refreshed constants,
+                // which are safe to publish through frame-slot buffers and must not defeat steady reuse.
+                // Command-chain primaries retain their refresh path because stable scene work lives in
+                // independently reusable secondary ranges.
+                if (!dirty &&
+                    !usingCommandChains &&
+                    variant.RecordedGenerations.CameraPose != currentGenerations.CameraPose)
+                {
+                    dirty = true;
+                    frameDataDirty = true;
+                    _lastReusableFrameDataRefreshFailureReason = "inline primary camera pose changed";
                 }
 
                 if (!dirty && IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature))
@@ -528,6 +550,18 @@ namespace XREngine.Rendering.Vulkan
                 }
                 else
                 {
+                    if (hasQueryFrameOps &&
+                        (!PrepareQueryFrameOpsForCommandBufferReuse(ops) ||
+                         !PrepareQueryFrameOpsForCommandBufferReuse(dynamicUiBatchTextOps)))
+                    {
+                        dirty = true;
+                        primaryFrameStateDirty = true;
+                        primaryFrameStateDirtyReason = "query-pool-prepare";
+                    }
+
+                    if (dirty)
+                        goto ReuseRejected;
+
                     bool dynamicUiSecondaryReady = true;
                     if (!delayDynamicUiBatchTextOverlayRecording)
                     {
@@ -560,6 +594,7 @@ namespace XREngine.Rendering.Vulkan
                             variant.CommandChainPrimaryGroupCount = commandChainPrimaryGroupCount;
                         }
                         variant.PreserveSwapchainForOverlay = preserveSwapchainForOverlay;
+                        variant.RecordedGenerations = currentGenerations;
                         variant.LastUsedFrameId = VulkanFrameCounter;
                         variant.DirtyReason = null;
                         SetActiveCommandBufferVariant(imageIndex, variant);
@@ -608,29 +643,30 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            string dirtyReason = forcedDirty
-                ? FormatForcedCommandBufferDirtyReason(imageForcedDirty, variant.Dirty, forcedVariantDirtyReason)
-                : frameOpSignatureDirty
-                    ? "frame-ops"
-                    : plannerDirty
-                        ? "planner"
-                        : profilerDirty
-                            ? "profiler"
-                            : frameDataDirty
-                                ? string.IsNullOrEmpty(_lastReusableFrameDataRefreshFailureReason)
-                                    ? "frame-data"
-                                    : $"frame-data:{_lastReusableFrameDataRefreshFailureReason}"
-                    : dynamicUiDirty
-                        ? "dynamic-ui"
-                        : swapchainLifecycleDirty
-                            ? "swapchain-lifecycle"
-                        : commandChainPrimaryDirty
-                            ? $"command-chain-primary:{commandChainPrimaryDirtyReason}"
-                        : primaryFrameStateDirty
-                            ? string.IsNullOrEmpty(primaryFrameStateDirtyReason)
-                                ? "primary-frame-state"
-                                : $"primary-frame-state:{primaryFrameStateDirtyReason}"
-                            : "unknown";
+        ReuseRejected:
+
+            string dirtyReason = DescribePrimaryReuseMiss(
+                variant,
+                currentGenerations,
+                forcedDirty,
+                imageForcedDirty,
+                forcedVariantDirtyReason,
+                frameOpSignatureDirty,
+                plannerDirty,
+                profilerDirty,
+                frameDataDirty,
+                dynamicUiDirty,
+                swapchainLifecycleDirty,
+                commandChainPrimaryDirty,
+                commandChainPrimaryDirtyReason,
+                commandChainSchedule?.StructuralSignature ?? ulong.MaxValue,
+                commandChainPrimaryGroupSignature,
+                commandChainPrimaryGroupCount,
+                primaryFrameStateDirty,
+                primaryFrameStateDirtyReason,
+                plannerRevision,
+                imageLayoutStartSignature,
+                swapchainImageEverPresentedAtRecord);
 
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
                 reusedClean: false,
@@ -702,6 +738,7 @@ namespace XREngine.Rendering.Vulkan
             variant.RecordedFrameOpContextId = frameOpContextId;
             variant.RecordedResourceGeneration = commandBufferFallbackContext.ResourceGeneration;
             variant.RecordedDescriptorGeneration = commandBufferFallbackContext.DescriptorGeneration;
+            variant.RecordedGenerations = currentGenerations;
             variant.RecordedSwapchainImageEverPresented = swapchainImageEverPresentedAtRecord;
             variant.RecordedSwapchainFinalLayout = swapchainLayoutAfterCommandBuffer;
             variant.RecordedSwapchainWriteCount = recordedSwapchainWriteCount;
@@ -860,6 +897,7 @@ namespace XREngine.Rendering.Vulkan
             variant.RecordedFrameOpContextId = 0;
             variant.RecordedResourceGeneration = 0;
             variant.RecordedDescriptorGeneration = 0;
+            variant.RecordedGenerations = default;
             variant.RecordedSwapchainImageEverPresented = false;
             variant.RecordedSwapchainFinalLayout = ImageLayout.PresentSrcKhr;
             variant.RecordedSwapchainWriteCount = 0;
@@ -882,6 +920,232 @@ namespace XREngine.Rendering.Vulkan
         {
             variant.Dirty = true;
             variant.DirtyReason = "concurrent invalidation during primary record";
+        }
+
+        private CommandBufferGenerationDomains CaptureCommandBufferGenerationDomains(
+            uint imageIndex,
+            ulong structuralSignature,
+            FrameOp[] staticOps,
+            FrameOp[] volatileOps,
+            ulong overlaySignature,
+            in FrameOpContext context,
+            ulong frameOpContextFingerprint,
+            bool profilerActive,
+            int profilerFrameSlot)
+            => new(
+                Structural: structuralSignature,
+                FrameData: ComputeFrameDataGeneration(staticOps, volatileOps),
+                CameraPose: ResolveCameraPoseReplayGeneration(
+                    frameOpContextFingerprint,
+                    ComputeCameraPoseGeneration(staticOps, volatileOps)),
+                TargetSlot: imageIndex + 1UL,
+                Descriptor: context.DescriptorGeneration,
+                ResourceAllocation: context.ResourceGeneration,
+                Query: ComputeQueryGeneration(staticOps, volatileOps),
+                Overlay: overlaySignature,
+                Profiler: ((profilerActive ? 1UL : 0UL) << 32) | unchecked((uint)(profilerFrameSlot + 1)));
+
+        private ulong ResolveCameraPoseReplayGeneration(ulong contextFingerprint, ulong rawPoseGeneration)
+        {
+            if (rawPoseGeneration == 0)
+                return 0;
+
+            ref CameraPoseReuseState? state = ref CollectionsMarshal.GetValueRefOrAddDefault(
+                _cameraPoseReuseStates,
+                contextFingerprint,
+                out bool exists);
+            state ??= new CameraPoseReuseState
+            {
+                RawPoseGeneration = rawPoseGeneration,
+                LastObservedFrame = VulkanFrameCounter,
+            };
+
+            if (!exists)
+                return CombineCameraPoseReplayGeneration(rawPoseGeneration, state.ReplayGeneration);
+
+            ulong frame = VulkanFrameCounter;
+            if (state.LastObservedFrame == frame)
+                return CombineCameraPoseReplayGeneration(state.RawPoseGeneration, state.ReplayGeneration);
+
+            state.LastObservedFrame = frame;
+            if (state.RawPoseGeneration != rawPoseGeneration)
+            {
+                state.RawPoseGeneration = rawPoseGeneration;
+                state.ReplayGeneration++;
+                state.SettleInvalidationPending = true;
+            }
+            else if (state.SettleInvalidationPending)
+            {
+                // Previous-camera matrices and temporal history converge on the first frame after
+                // input stops. Advance the replay generation once more so no inline primary from
+                // the final moving frame can be selected for that boundary frame.
+                state.ReplayGeneration++;
+                state.SettleInvalidationPending = false;
+            }
+
+            return CombineCameraPoseReplayGeneration(state.RawPoseGeneration, state.ReplayGeneration);
+        }
+
+        private static ulong CombineCameraPoseReplayGeneration(ulong rawPoseGeneration, ulong replayGeneration)
+        {
+            FrameOpSignatureHasher hash = new();
+            hash.Add(rawPoseGeneration);
+            hash.Add(replayGeneration);
+            return hash.ToHash();
+        }
+
+        private static ulong ComputeCameraPoseGeneration(FrameOp[] staticOps, FrameOp[] volatileOps)
+        {
+            FrameOpSignatureHasher hash = new();
+            int cameraDrawCount = 0;
+            AddCameraPoseGenerationParts(ref hash, staticOps, ref cameraDrawCount);
+            AddCameraPoseGenerationParts(ref hash, volatileOps, ref cameraDrawCount);
+            return cameraDrawCount == 0 ? 0UL : hash.ToHash();
+        }
+
+        private static void AddCameraPoseGenerationParts(
+            ref FrameOpSignatureHasher hash,
+            FrameOp[] ops,
+            ref int cameraDrawCount)
+        {
+            for (int i = 0; i < ops.Length; i++)
+            {
+                if (ops[i] is not MeshDrawOp draw)
+                    continue;
+
+                cameraDrawCount++;
+                AddVector3Signature(ref hash, draw.Draw.CameraPosition);
+                AddVector3Signature(ref hash, draw.Draw.CameraForward);
+                AddVector3Signature(ref hash, draw.Draw.CameraUp);
+                AddVector3Signature(ref hash, draw.Draw.CameraRight);
+            }
+        }
+
+        private static ulong ComputeFrameDataGeneration(FrameOp[] staticOps, FrameOp[] volatileOps)
+        {
+            FrameOpSignatureHasher hash = new();
+            hash.Add(staticOps.Length);
+            for (int i = 0; i < staticOps.Length; i++)
+                hash.Add(ComputeFrameOpFrameDataSignature(staticOps[i], i));
+            hash.Add(volatileOps.Length);
+            for (int i = 0; i < volatileOps.Length; i++)
+                hash.Add(ComputeFrameOpFrameDataSignature(volatileOps[i], i));
+            return hash.ToHash();
+        }
+
+        private static ulong ComputeQueryGeneration(FrameOp[] staticOps, FrameOp[] volatileOps)
+        {
+            FrameOpSignatureHasher hash = new();
+            int queryCount = 0;
+            AddQueryGenerationParts(ref hash, staticOps, ref queryCount);
+            AddQueryGenerationParts(ref hash, volatileOps, ref queryCount);
+            return queryCount == 0 ? 0UL : hash.ToHash();
+        }
+
+        private static void AddQueryGenerationParts(
+            ref FrameOpSignatureHasher hash,
+            FrameOp[] ops,
+            ref int queryCount)
+        {
+            for (int i = 0; i < ops.Length; i++)
+            {
+                if (ops[i] is not QueryOp query)
+                    continue;
+
+                queryCount++;
+                hash.Add(query.Query.GetHashCode());
+                hash.Add((int)query.QueryTarget);
+                hash.Add((int)query.Operation);
+            }
+        }
+
+        private string DescribePrimaryReuseMiss(
+            CommandBufferCacheVariant variant,
+            in CommandBufferGenerationDomains current,
+            bool forcedDirty,
+            bool imageForcedDirty,
+            string? forcedVariantDirtyReason,
+            bool frameOpSignatureDirty,
+            bool plannerDirty,
+            bool profilerDirty,
+            bool frameDataDirty,
+            bool dynamicUiDirty,
+            bool swapchainLifecycleDirty,
+            bool commandChainPrimaryDirty,
+            PrimaryCommandBufferDirtyReason commandChainPrimaryDirtyReason,
+            ulong commandChainScheduleSignature,
+            ulong commandChainPrimaryGroupSignature,
+            int commandChainPrimaryGroupCount,
+            bool primaryFrameStateDirty,
+            string? primaryFrameStateDirtyReason,
+            ulong plannerRevision,
+            ulong imageLayoutStartSignature,
+            bool swapchainImageEverPresented)
+        {
+            CommandBufferGenerationDomains previous = variant.RecordedGenerations;
+            if (forcedDirty)
+            {
+                string reason = FormatForcedCommandBufferDirtyReason(
+                    imageForcedDirty,
+                    variant.Dirty,
+                    forcedVariantDirtyReason);
+                return $"cache-state old={(variant.Dirty ? "dirty" : "clean")} new=record-required reason={reason}";
+            }
+            if (frameOpSignatureDirty)
+                return $"structural-generation old=0x{previous.Structural:X16} new=0x{current.Structural:X16}";
+            if (plannerDirty)
+                return $"resource-plan-generation old={variant.PlannerRevision} new={plannerRevision}";
+            if (profilerDirty)
+                return $"profiler-generation old=0x{previous.Profiler:X16} new=0x{current.Profiler:X16}";
+            if (frameDataDirty)
+                return $"frame-data-generation old=0x{previous.FrameData:X16} new=0x{current.FrameData:X16} refresh={_lastReusableFrameDataRefreshFailureReason ?? "failed"}";
+            if (dynamicUiDirty)
+                return $"overlay-generation old=0x{previous.Overlay:X16} new=0x{current.Overlay:X16}";
+            if (swapchainLifecycleDirty)
+                return $"target-slot-state slot={current.TargetSlot} presented={variant.RecordedSwapchainImageEverPresented}->{swapchainImageEverPresented}";
+            if (commandChainPrimaryDirty)
+                return DescribePrimaryCommandChainReuseMiss(
+                    variant,
+                    commandChainPrimaryDirtyReason,
+                    commandChainScheduleSignature,
+                    commandChainPrimaryGroupSignature,
+                    commandChainPrimaryGroupCount,
+                    plannerRevision,
+                    current.Profiler);
+            if (primaryFrameStateDirty)
+            {
+                if (string.Equals(primaryFrameStateDirtyReason, "query-pool-prepare", StringComparison.Ordinal))
+                    return $"query-generation old=0x{previous.Query:X16} new=0x{current.Query:X16}";
+                if (string.Equals(primaryFrameStateDirtyReason, "image-layout-start", StringComparison.Ordinal))
+                    return $"image-layout-generation old=0x{variant.RecordedImageLayoutStartSignature:X16} new=0x{imageLayoutStartSignature:X16}";
+                return $"primary-frame-state old=cached new=record-required field={primaryFrameStateDirtyReason ?? "unknown"}";
+            }
+
+            if (previous.Descriptor != current.Descriptor)
+                return $"descriptor-generation old={previous.Descriptor} new={current.Descriptor}";
+            if (previous.ResourceAllocation != current.ResourceAllocation)
+                return $"resource-allocation-generation old={previous.ResourceAllocation} new={current.ResourceAllocation}";
+            return "cache-state old=unknown new=record-required reason=unclassified";
+        }
+
+        private static string DescribePrimaryCommandChainReuseMiss(
+            CommandBufferCacheVariant variant,
+            PrimaryCommandBufferDirtyReason reasons,
+            ulong scheduleSignature,
+            ulong groupSignature,
+            int groupCount,
+            ulong plannerRevision,
+            ulong profilerGeneration)
+        {
+            if ((reasons & PrimaryCommandBufferDirtyReason.ScheduleStructure) != 0)
+                return $"primary-chain-schedule old=0x{variant.CommandChainScheduleSignature:X16} new=0x{scheduleSignature:X16}";
+            if ((reasons & PrimaryCommandBufferDirtyReason.GroupStructure) != 0)
+                return $"primary-chain-groups old=0x{variant.CommandChainPrimaryGroupSignature:X16}/{variant.CommandChainPrimaryGroupCount} new=0x{groupSignature:X16}/{groupCount}";
+            if ((reasons & PrimaryCommandBufferDirtyReason.ResourcePlan) != 0)
+                return $"primary-chain-resource-plan old={variant.PlannerRevision} new={plannerRevision}";
+            if ((reasons & PrimaryCommandBufferDirtyReason.ProfilerMode) != 0)
+                return $"primary-chain-profiler old=0x{variant.RecordedGenerations.Profiler:X16} new=0x{profilerGeneration:X16}";
+            return $"primary-chain-state old=clean new=record-required field={PrimaryCommandBufferDirtyReason.None}";
         }
 
         private static ulong ComputeCommandBufferFrameOpContextFingerprint(
@@ -1004,6 +1268,7 @@ namespace XREngine.Rendering.Vulkan
             ulong imageLayoutStartSignature,
             bool gpuPipelineProfilingActive,
             int commandBufferImageSlot,
+            in CommandBufferGenerationDomains currentGenerations,
             FrameOp[] ops,
             FrameOp[] dynamicUiBatchTextOps,
             bool delayDynamicUiSecondaryRecording,
@@ -1121,6 +1386,7 @@ namespace XREngine.Rendering.Vulkan
                 variant.PlannerRevision = plannerRevision;
                 variant.GpuProfilerActive = gpuPipelineProfilingActive;
                 variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
+                variant.RecordedGenerations = currentGenerations;
                 variant.LastUsedFrameId = VulkanFrameCounter;
                 variant.DirtyReason = null;
                 StoreFrameOpSignatureDebugParts(variant, ops);
@@ -2408,7 +2674,9 @@ namespace XREngine.Rendering.Vulkan
             static PipelineStageFlags ResolveSwapchainLayoutStage(ImageLayout layout)
                 => layout switch
                 {
-                    ImageLayout.Undefined => PipelineStageFlags.TopOfPipeBit,
+                    // The acquired image semaphore is waited at graphics stages. Put
+                    // the first layout transition in that wait scope as well.
+                    ImageLayout.Undefined => PipelineStageFlags.ColorAttachmentOutputBit,
                     ImageLayout.ColorAttachmentOptimal => PipelineStageFlags.ColorAttachmentOutputBit,
                     ImageLayout.TransferSrcOptimal or ImageLayout.TransferDstOptimal => PipelineStageFlags.TransferBit,
                     ImageLayout.PresentSrcKhr => PipelineStageFlags.BottomOfPipeBit,
@@ -2777,16 +3045,33 @@ namespace XREngine.Rendering.Vulkan
                     }
                     else if (activeTarget is not null && activeFboAttachmentSignature is not null)
                     {
+                        VkFrameBuffer? vkFbo = GenericToAPI<VkFrameBuffer>(activeTarget);
+                        if (vkFbo is not null)
+                        {
+                            // Dynamic rendering has just completed. Publish the attachment
+                            // accesses (including store-op writes) before the final-layout
+                            // barriers query the command-buffer-local synchronization state.
+                            RecordFboAttachmentAccessState(
+                                commandBuffer,
+                                vkFbo,
+                                activeFboAttachmentSignature,
+                                useReferenceLayouts: true);
+                        }
+
                         TransitionFboAttachmentsForDynamicRendering(
                             commandBuffer,
                             activeTarget,
                             activeFboAttachmentSignature,
                             beginRendering: false);
 
-                        UpdatePhysicalGroupLayoutsForFbo(
-                            activeTarget,
-                            activeFboAttachmentSignature,
-                            useReferenceLayouts: false);
+                        if (vkFbo is not null)
+                        {
+                            RecordFboAttachmentAccessState(
+                                commandBuffer,
+                                vkFbo,
+                                activeFboAttachmentSignature,
+                                useReferenceLayouts: false);
+                        }
 
                         ImageLayout[] finalLayouts = VkFrameBuffer.GetFinalLayouts(activeFboAttachmentSignature);
                         fboLayoutTracking[activeTarget] = finalLayouts;
@@ -2801,17 +3086,32 @@ namespace XREngine.Rendering.Vulkan
                     // barriers use the correct OldLayout.
                     if (activeTarget is not null)
                     {
-                        UpdatePhysicalGroupLayoutsForFbo(activeTarget);
-
                         // Record the finalLayout of each attachment so the NEXT render
                         // pass on this FBO can set initialLayout correctly and preserve
                         // content across pass boundaries.
                         var vkFbo = GenericToAPI<VkFrameBuffer>(activeTarget);
                         if (vkFbo is not null)
-                            fboLayoutTracking[activeTarget] = vkFbo.GetFinalLayouts();
+                        {
+                            ImageLayout[] finalLayouts = activeFboAttachmentSignature is not null
+                                ? VkFrameBuffer.GetFinalLayouts(activeFboAttachmentSignature)
+                                : vkFbo.GetFinalLayouts();
+                            fboLayoutTracking[activeTarget] = finalLayouts;
+                        }
                     }
 
                     Api!.CmdEndRenderPass(commandBuffer);
+                    if (activeTarget is not null && activeFboAttachmentSignature is not null)
+                    {
+                        VkFrameBuffer? vkFbo = GenericToAPI<VkFrameBuffer>(activeTarget);
+                        if (vkFbo is not null)
+                        {
+                            RecordFboAttachmentAccessState(
+                                commandBuffer,
+                                vkFbo,
+                                activeFboAttachmentSignature,
+                                useReferenceLayouts: false);
+                        }
+                    }
                 }
 
                 if (renderPassLabelActive)
@@ -2958,24 +3258,36 @@ namespace XREngine.Rendering.Vulkan
                             }
                         };
 
+                        ImageSubresourceRange depthRange = new()
+                        {
+                            AspectMask = swapchainTarget.DepthAspect,
+                            BaseMipLevel = 0,
+                            LevelCount = 1,
+                            BaseArrayLayer = 0,
+                            LayerCount = 1
+                        };
+                        bool hasRecordedDepthState = TryGetRecordedImageAccessState(
+                            commandBuffer,
+                            swapchainTarget.DepthImage,
+                            depthRange,
+                            out VulkanImageAccessState recordedDepthState);
+                        ImageLayout depthOldLayout = hasRecordedDepthState
+                            ? recordedDepthState.Layout
+                            : ImageLayout.Undefined;
+
                         ImageMemoryBarrier depthBarrier = new()
                         {
                             SType = StructureType.ImageMemoryBarrier,
-                            SrcAccessMask = 0,
+                            SrcAccessMask = hasRecordedDepthState
+                                ? (AccessFlags)(ulong)recordedDepthState.AccessMask
+                                : AccessFlags.None,
                             DstAccessMask = AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit,
-                            OldLayout = ImageLayout.Undefined,
+                            OldLayout = depthOldLayout,
                             NewLayout = ImageLayout.DepthStencilAttachmentOptimal,
                             SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
                             DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
                             Image = swapchainTarget.DepthImage,
-                            SubresourceRange = new ImageSubresourceRange
-                            {
-                                AspectMask = swapchainTarget.DepthAspect,
-                                BaseMipLevel = 0,
-                                LevelCount = 1,
-                                BaseArrayLayer = 0,
-                                LayerCount = 1
-                            }
+                            SubresourceRange = depthRange
                         };
 
                         ImageMemoryBarrier* preRenderingBarriers = stackalloc ImageMemoryBarrier[2];
@@ -2986,7 +3298,10 @@ namespace XREngine.Rendering.Vulkan
 
                         CmdPipelineBarrierTracked(
                             commandBuffer,
-                            PipelineStageFlags.TopOfPipeBit,
+                            PipelineStageFlags.ColorAttachmentOutputBit |
+                                (hasRecordedDepthState
+                                    ? (PipelineStageFlags)(ulong)recordedDepthState.StageMask
+                                    : PipelineStageFlags.None),
                             PipelineStageFlags.ColorAttachmentOutputBit | PipelineStageFlags.EarlyFragmentTestsBit,
                             0,
                             0,
@@ -3017,7 +3332,7 @@ namespace XREngine.Rendering.Vulkan
                             swapchainTarget.DepthView,
                             swapchainTarget.DepthFormat,
                             swapchainTarget.DepthAspect,
-                            ImageLayout.Undefined,
+                            depthOldLayout,
                             ImageLayout.DepthStencilAttachmentOptimal,
                             ImageLayout.DepthStencilAttachmentOptimal,
                             depthLoadOp,
@@ -3236,11 +3551,6 @@ namespace XREngine.Rendering.Vulkan
                         target,
                         fboSignature,
                         beginRendering: true);
-                    UpdatePhysicalGroupLayoutsForFbo(
-                        target,
-                        fboSignature,
-                        useReferenceLayouts: true);
-
                     uint dynamicAttachmentCountFbo = Math.Max((uint)fboSignature.Length, 1u);
                     ClearValue* dynamicClearValuesFbo = stackalloc ClearValue[(int)dynamicAttachmentCountFbo];
                     vkFrameBuffer.WriteClearValues(dynamicClearValuesFbo, dynamicAttachmentCountFbo, fboSignature);
@@ -3320,13 +3630,15 @@ namespace XREngine.Rendering.Vulkan
                             continue;
                         }
 
-                        if ((signature.AspectMask & ImageAspectFlags.DepthBit) != 0)
+                        if (signature.Role is AttachmentRole.Depth or AttachmentRole.DepthStencil &&
+                            (signature.AspectMask & ImageAspectFlags.DepthBit) != 0)
                         {
                             depthAttachmentPlan = attachmentPlan;
                             hasDepthAttachment = true;
                         }
 
-                        if ((signature.AspectMask & ImageAspectFlags.StencilBit) != 0)
+                        if (signature.Role is AttachmentRole.Stencil or AttachmentRole.DepthStencil &&
+                            (signature.AspectMask & ImageAspectFlags.StencilBit) != 0)
                         {
                             stencilAttachmentPlan = new DynamicRenderingAttachmentPlan(
                                 attachmentImage,
@@ -3457,6 +3769,11 @@ namespace XREngine.Rendering.Vulkan
                     commandBuffer,
                     &fboPassInfo,
                     secondaryContents ? SubpassContents.SecondaryCommandBuffers : SubpassContents.Inline);
+                RecordFboAttachmentAccessState(
+                    commandBuffer,
+                    vkFrameBuffer,
+                    fboSignature,
+                    useReferenceLayouts: true);
 
                 renderPassActive = true;
                 activeDynamicRendering = false;
@@ -3464,7 +3781,7 @@ namespace XREngine.Rendering.Vulkan
                 activeRenderPass = passRenderPass;
                 activeFramebuffer = vkFrameBuffer.FrameBuffer;
                 activeDynamicRenderingFormats = default;
-                activeFboAttachmentSignature = null;
+                activeFboAttachmentSignature = fboSignature;
                 activeRenderArea = fboPassInfo.RenderArea;
                 activeDepthStencilReadOnly = passDepthStencilReadOnly;
                 if (TargetTraceEnabled)
@@ -4726,24 +5043,36 @@ namespace XREngine.Rendering.Vulkan
                             }
                         };
 
+                        ImageSubresourceRange depthRange = new()
+                        {
+                            AspectMask = swapchainTarget.DepthAspect,
+                            BaseMipLevel = 0,
+                            LevelCount = 1,
+                            BaseArrayLayer = 0,
+                            LayerCount = 1
+                        };
+                        bool hasRecordedDepthState = TryGetRecordedImageAccessState(
+                            commandBuffer,
+                            swapchainTarget.DepthImage,
+                            depthRange,
+                            out VulkanImageAccessState recordedDepthState);
+                        ImageLayout depthOldLayout = hasRecordedDepthState
+                            ? recordedDepthState.Layout
+                            : ImageLayout.Undefined;
+
                         ImageMemoryBarrier depthBarrier = new()
                         {
                             SType = StructureType.ImageMemoryBarrier,
-                            SrcAccessMask = 0,
+                            SrcAccessMask = hasRecordedDepthState
+                                ? (AccessFlags)(ulong)recordedDepthState.AccessMask
+                                : AccessFlags.None,
                             DstAccessMask = AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit,
-                            OldLayout = ImageLayout.Undefined,
+                            OldLayout = depthOldLayout,
                             NewLayout = ImageLayout.DepthStencilAttachmentOptimal,
                             SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
                             DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
                             Image = swapchainTarget.DepthImage,
-                            SubresourceRange = new ImageSubresourceRange
-                            {
-                                AspectMask = swapchainTarget.DepthAspect,
-                                BaseMipLevel = 0,
-                                LevelCount = 1,
-                                BaseArrayLayer = 0,
-                                LayerCount = 1
-                            }
+                            SubresourceRange = depthRange
                         };
 
                         ImageMemoryBarrier* preRenderingBarriers = stackalloc ImageMemoryBarrier[2];
@@ -4754,7 +5083,10 @@ namespace XREngine.Rendering.Vulkan
 
                         CmdPipelineBarrierTracked(
                             commandBuffer,
-                            PipelineStageFlags.TopOfPipeBit,
+                            PipelineStageFlags.ColorAttachmentOutputBit |
+                                (hasRecordedDepthState
+                                    ? (PipelineStageFlags)(ulong)recordedDepthState.StageMask
+                                    : PipelineStageFlags.None),
                             PipelineStageFlags.ColorAttachmentOutputBit | PipelineStageFlags.EarlyFragmentTestsBit,
                             0,
                             0,
@@ -4785,7 +5117,7 @@ namespace XREngine.Rendering.Vulkan
                             swapchainTarget.DepthView,
                             swapchainTarget.DepthFormat,
                             swapchainTarget.DepthAspect,
-                            ImageLayout.Undefined,
+                            depthOldLayout,
                             ImageLayout.DepthStencilAttachmentOptimal,
                             ImageLayout.DepthStencilAttachmentOptimal,
                             AttachmentLoadOp.Clear,
@@ -4897,12 +5229,6 @@ namespace XREngine.Rendering.Vulkan
                         TimeSpan.FromSeconds(2),
                         "[Vulkan] Pass {0} is unknown to the barrier planner. Emitting conservative memory + image barriers.",
                         passIndex);
-
-                    // Emit image layout transitions for any physical-group images that
-                    // are still in UNDEFINED.  Without this, the first draw that
-                    // references these images triggers a validation error because the
-                    // barrier planner never planned a transition for them.
-                    EmitInitialImageBarriersForUnknownPass(commandBuffer);
 
                     MemoryBarrier safetyBarrier = new()
                     {
@@ -5194,6 +5520,12 @@ namespace XREngine.Rendering.Vulkan
                             }
 
                             EmitPassBarriers(opPassIndex);
+                            TransitionFrameOpDescriptorSnapshotsForSampling(
+                                commandBuffer,
+                                ops,
+                                opIndex,
+                                opPassIndex,
+                                opSchedulingIdentity);
                             activePassIndex = opPassIndex;
                             activeSchedulingIdentity = opSchedulingIdentity;
                             }
@@ -6092,18 +6424,11 @@ namespace XREngine.Rendering.Vulkan
                         out transitionLayerCount);
                 }
 
-                ResolveFboAttachmentTrackedLayerSpan(
-                    vkFbo,
-                    layerIndex,
-                    out uint trackedBaseLayer,
-                    out uint trackedLayerCount);
-
                 ImageLayout targetLayout = ResolvePublishedSampledLayout(info.DescriptorSource, aspectMask);
                 uint layerCount = Math.Max(transitionLayerCount, 1u);
                 for (uint layerOffset = 0; layerOffset < layerCount; layerOffset++)
                 {
                     uint imageLayer = imageBaseLayer + layerOffset;
-                    int trackedLayer = checked((int)(trackedBaseLayer + Math.Min(layerOffset, Math.Max(trackedLayerCount, 1u) - 1u)));
                     ImageSubresourceRange transitionRange = new()
                     {
                         AspectMask = aspectMask,
@@ -6113,17 +6438,18 @@ namespace XREngine.Rendering.Vulkan
                         LayerCount = 1
                     };
 
-                    ImageLayout oldLayout = TryGetTrackedImageLayout(transitionImage, transitionRange, out ImageLayout trackedImageLayout)
-                        ? trackedImageLayout
-                        : ResolveFboAttachmentOldLayout(target, mipLevel, trackedLayer, info.PreferredLayout);
+                    ImageLayout oldLayout = TryGetRecordedImageAccessState(
+                        commandBuffer,
+                        transitionImage,
+                        transitionRange,
+                        out VulkanImageAccessState recordedState)
+                            ? recordedState.Layout
+                            : ImageLayout.Undefined;
                     if (oldLayout == ImageLayout.Undefined)
                         oldLayout = ImageLayout.ColorAttachmentOptimal;
 
                     if (oldLayout == targetLayout)
-                    {
-                        UpdateAttachmentTrackedLayout(target, mipLevel, trackedLayer, targetLayout);
                         continue;
-                    }
 
                     PipelineStageFlags srcStage = ResolvePublishedSampledSourceStage(oldLayout);
                     PipelineStageFlags dstStage = ResolvePublishedSampledDestinationStage(targetLayout);
@@ -6143,7 +6469,6 @@ namespace XREngine.Rendering.Vulkan
                     barriers[barrierCount++] = barrier;
                     srcStages |= srcStage;
                     dstStages |= dstStage;
-                    UpdateAttachmentTrackedLayout(target, mipLevel, trackedLayer, targetLayout);
                 }
             }
 
@@ -6875,24 +7200,6 @@ namespace XREngine.Rendering.Vulkan
                 uint baseMipLevel = binding.Level < 0 ? 0u : Math.Min((uint)binding.Level, mipLevels - 1u);
                 uint baseArrayLayer = binding.Layered || binding.Layer < 0 ? 0u : Math.Min((uint)binding.Layer, arrayLayers - 1u);
                 uint layerCount = binding.Layered || binding.Layer < 0 ? arrayLayers - baseArrayLayer : 1u;
-                int trackedLayer = binding.Layered ? -1 : (int)baseArrayLayer;
-
-                IVkFrameBufferAttachmentSource? attachmentSource = source as IVkFrameBufferAttachmentSource;
-                ImageLayout oldLayout = attachmentSource?.GetAttachmentTrackedLayout((int)baseMipLevel, trackedLayer)
-                    ?? source.TrackedImageLayout;
-                if (oldLayout == ImageLayout.Undefined && (mipLevels > 1u || arrayLayers > 1u))
-                {
-                    Debug.VulkanWarningEvery(
-                        $"Vulkan.ComputeStorageImage.MixedLayout.{texture.Name ?? texture.GetHashCode().ToString()}",
-                        TimeSpan.FromSeconds(1),
-                        "[Vulkan] Skipping fallback compute storage layout transition for '{0}' because its live layout is mixed/unknown across subresources.",
-                        texture.Name ?? texture.GetDescribingName());
-                    continue;
-                }
-
-                if (oldLayout == ImageLayout.General)
-                    continue;
-
                 Image image = source.DescriptorImage;
                 if (image.Handle == 0)
                     continue;
@@ -6909,6 +7216,16 @@ namespace XREngine.Rendering.Vulkan
                     BaseArrayLayer = baseArrayLayer,
                     LayerCount = Math.Max(layerCount, 1u)
                 };
+
+                ImageLayout oldLayout = TryGetRecordedImageAccessState(
+                    commandBuffer,
+                    image,
+                    range,
+                    out VulkanImageAccessState recordedState)
+                        ? recordedState.Layout
+                        : ImageLayout.Undefined;
+                if (oldLayout == ImageLayout.General)
+                    continue;
 
                 ImageMemoryBarrier barrier = new()
                 {
@@ -6934,14 +7251,6 @@ namespace XREngine.Rendering.Vulkan
                     null,
                     1,
                     &barrier);
-
-                if (attachmentSource is not null)
-                {
-                    if (baseMipLevel == 0u && mipLevels == 1u && baseArrayLayer == 0u && layerCount >= arrayLayers)
-                        attachmentSource.UpdateTrackedLayout(ImageLayout.General);
-                    else
-                        attachmentSource.UpdateAttachmentTrackedLayout(ImageLayout.General, (int)baseMipLevel, trackedLayer);
-                }
             }
         }
 
@@ -7185,6 +7494,8 @@ namespace XREngine.Rendering.Vulkan
             for (int i = 0; i < attachmentCapacity; i++)
             {
                 FrameBufferAttachmentSignature signature = signatures[i];
+                if (signature.Role == AttachmentRole.Unused)
+                    continue;
                 ImageLayout requestedOldLayout = NormalizeFboAttachmentLayout(
                     signature,
                     beginRendering ? signature.InitialLayout : signature.ReferenceLayout);
@@ -7270,19 +7581,17 @@ namespace XREngine.Rendering.Vulkan
                         LayerCount = 1
                     };
                     ImageLayout oldLayout;
-                    if (beginRendering && requestedOldLayout == ImageLayout.Undefined)
+                    if (TryGetRecordedImageAccessState(
+                        commandBuffer,
+                        transitionImage,
+                        transitionRange,
+                        out VulkanImageAccessState recordedState))
                     {
-                        oldLayout = ImageLayout.Undefined;
-                    }
-                    else if (TryGetTrackedImageLayout(transitionImage, transitionRange, out ImageLayout trackedImageLayout))
-                    {
-                        oldLayout = NormalizeFboAttachmentLayout(signature, trackedImageLayout);
+                        oldLayout = NormalizeFboAttachmentLayout(signature, recordedState.Layout);
                     }
                     else
                     {
-                        oldLayout = NormalizeFboAttachmentLayout(
-                            signature,
-                            ResolveFboAttachmentOldLayout(target, mipLevel, trackedLayer, requestedOldLayout));
+                        oldLayout = NormalizeFboAttachmentLayout(signature, requestedOldLayout);
                     }
                     if (oldLayout == newLayout)
                         continue;
@@ -7452,7 +7761,9 @@ namespace XREngine.Rendering.Vulkan
                     or ImageLayout.StencilReadOnlyOptimal)
             {
                 AccessFlags access = AccessFlags.DepthStencilAttachmentReadBit;
-                if (!asRenderAttachment)
+                if (asRenderAttachment)
+                    access |= AccessFlags.DepthStencilAttachmentWriteBit;
+                else
                     access |= AccessFlags.ShaderReadBit;
                 return access;
             }
@@ -7464,158 +7775,6 @@ namespace XREngine.Rendering.Vulkan
             }
 
             return AccessFlags.MemoryReadBit;
-        }
-
-        private void UpdatePhysicalGroupLayoutsForFbo(XRFrameBuffer fbo)
-        {
-            var vkFbo = GenericToAPI<VkFrameBuffer>(fbo);
-            if (vkFbo is not null)
-                UpdatePhysicalGroupLayoutsForFbo(vkFbo, vkFbo.GetFinalLayouts());
-        }
-
-        private void UpdatePhysicalGroupLayoutsForFbo(XRFrameBuffer fbo, ImageLayout[]? finalLayouts)
-        {
-            var vkFbo = GenericToAPI<VkFrameBuffer>(fbo);
-            if (vkFbo is not null)
-                UpdatePhysicalGroupLayoutsForFbo(vkFbo, finalLayouts);
-        }
-
-        private void UpdatePhysicalGroupLayoutsForFbo(VkFrameBuffer vkFbo, ImageLayout[]? finalLayouts)
-        {
-            int attachmentCount = vkFbo.AttachmentCount > 0
-                ? (int)vkFbo.AttachmentCount
-                : finalLayouts?.Length ?? 0;
-            for (int attachmentIndex = 0; attachmentIndex < attachmentCount; attachmentIndex++)
-            {
-                ImageLayout finalLayout = (finalLayouts is not null && attachmentIndex < finalLayouts.Length)
-                    ? finalLayouts[attachmentIndex]
-                    : ImageLayout.Undefined;
-
-                if (finalLayout == ImageLayout.Undefined)
-                    continue;
-
-                if (vkFbo.TryGetAttachmentTarget(
-                    attachmentIndex,
-                    out IFrameBufferAttachement? target,
-                    out _,
-                    out int mipLevel,
-                    out int layerIndex))
-                    UpdateAttachmentTrackedLayoutForFbo(vkFbo, target, mipLevel, layerIndex, finalLayout);
-            }
-        }
-
-        private void UpdatePhysicalGroupLayoutsForFbo(
-            XRFrameBuffer fbo,
-            FrameBufferAttachmentSignature[] signatures,
-            bool useReferenceLayouts)
-        {
-            if (signatures.Length == 0)
-                return;
-
-            var vkFbo = GenericToAPI<VkFrameBuffer>(fbo);
-            if (vkFbo is null || vkFbo.AttachmentCount == 0)
-                return;
-
-            int attachmentCount = Math.Min((int)vkFbo.AttachmentCount, signatures.Length);
-            for (int attachmentIndex = 0; attachmentIndex < attachmentCount; attachmentIndex++)
-            {
-                ImageLayout layout = useReferenceLayouts
-                    ? signatures[attachmentIndex].ReferenceLayout
-                    : signatures[attachmentIndex].FinalLayout;
-
-                if (layout == ImageLayout.Undefined)
-                    continue;
-
-                if (vkFbo.TryGetAttachmentTarget(
-                    attachmentIndex,
-                    out IFrameBufferAttachement? target,
-                    out _,
-                    out int mipLevel,
-                    out int layerIndex))
-                    UpdateAttachmentTrackedLayoutForFbo(vkFbo, target, mipLevel, layerIndex, layout);
-            }
-        }
-
-        private void UpdateAttachmentTrackedLayoutForFbo(
-            VkFrameBuffer vkFbo,
-            IFrameBufferAttachement target,
-            int mipLevel,
-            int layerIndex,
-            ImageLayout layout)
-        {
-            ResolveFboAttachmentTrackedLayerSpan(
-                vkFbo,
-                layerIndex,
-                out uint baseLayer,
-                out uint layerCount);
-
-            if (layerCount <= 1u)
-            {
-                UpdateAttachmentTrackedLayout(target, mipLevel, layerIndex, layout);
-                return;
-            }
-
-            for (uint layerOffset = 0; layerOffset < layerCount; layerOffset++)
-                UpdateAttachmentTrackedLayout(target, mipLevel, checked((int)(baseLayer + layerOffset)), layout);
-        }
-
-        private void UpdateAttachmentTrackedLayout(
-            IFrameBufferAttachement target,
-            int mipLevel,
-            int layerIndex,
-            ImageLayout layout)
-        {
-            switch (target)
-            {
-                case XRRenderBuffer rb:
-                {
-                    if (GetOrCreateAPIRenderObject(rb, true) is VkRenderBuffer vkRb && vkRb.PhysicalGroup is { } group)
-                        group.LastKnownLayout = layout;
-                    break;
-                }
-                case XRTexture tex:
-                {
-                    if (GetOrCreateAPIRenderObject(tex, true) is IVkFrameBufferAttachmentSource attSrc)
-                        attSrc.UpdateAttachmentTrackedLayout(layout, mipLevel, layerIndex);
-                    break;
-                }
-            }
-        }
-
-        private ImageLayout ResolveFboAttachmentOldLayout(
-            IFrameBufferAttachement target,
-            int mipLevel,
-            int layerIndex,
-            ImageLayout fallback)
-        {
-            ImageLayout layout = fallback;
-            switch (target)
-            {
-                case XRRenderBuffer rb:
-                {
-                    if (GetOrCreateAPIRenderObject(rb, true) is VkRenderBuffer vkRb && vkRb.PhysicalGroup is { } group)
-                        layout = group.LastKnownLayout;
-                    break;
-                }
-                case XRTexture tex:
-                {
-                    if (GetOrCreateAPIRenderObject(tex, true) is IVkFrameBufferAttachmentSource attSrc)
-                    {
-                        ImageLayout tracked = attSrc.GetAttachmentTrackedLayout(mipLevel, layerIndex);
-                        if (tracked != ImageLayout.Undefined)
-                            layout = tracked;
-                    }
-                    else if (GetOrCreateAPIRenderObject(tex, true) is IVkImageDescriptorSource imgSrc)
-                    {
-                        ImageLayout tracked = imgSrc.TrackedImageLayout;
-                        if (tracked != ImageLayout.Undefined)
-                            layout = tracked;
-                    }
-                    break;
-                }
-            }
-
-            return layout;
         }
 
         private static void ResolveFboAttachmentImageLayerSpan(
@@ -7723,7 +7882,7 @@ namespace XREngine.Rendering.Vulkan
                     layerIndex,
                     out ImageLayout layout)
                     ? layout
-                    : ResolveFboAttachmentOldLayout(target, mipLevel, layerIndex, ImageLayout.Undefined);
+                    : ImageLayout.Undefined;
             }
 
             return layouts;
@@ -7797,36 +7956,12 @@ namespace XREngine.Rendering.Vulkan
         {
             foreach (VulkanPhysicalImageGroup group in ResourceAllocator.EnumeratePhysicalGroups())
             {
-                if (!group.IsAllocated || group.LastKnownLayout != ImageLayout.Undefined)
+                if (!group.IsAllocated || group.Image.Handle == 0)
                     continue;
 
                 bool isDepth = VulkanResourceAllocator.IsDepthStencilFormat(group.Format);
                 ImageLayout targetLayout = ResolveInitialPhysicalGroupLayout(group.Usage, isDepth);
-                ImageAspectFlags aspect = isDepth
-                    ? ImageAspectFlags.DepthBit | (HasStencilComponent(group.Format) ? ImageAspectFlags.StencilBit : 0)
-                    : ImageAspectFlags.ColorBit;
 
-                ImageMemoryBarrier barrier = new()
-                {
-                    SType = StructureType.ImageMemoryBarrier,
-                    OldLayout = ImageLayout.Undefined,
-                    NewLayout = targetLayout,
-                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                    Image = group.Image,
-                    SubresourceRange = new ImageSubresourceRange
-                    {
-                        AspectMask = aspect,
-                        BaseMipLevel = 0,
-                        LevelCount = Math.Max(1u, group.MipLevels),
-                        BaseArrayLayer = 0,
-                        LayerCount = Math.Max(group.Template.Layers, 1u),
-                    },
-                    SrcAccessMask = 0,
-                    DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
-                };
-
-                // Narrow dst stage based on target layout instead of AllCommandsBit.
                 PipelineStageFlags initDstStage = targetLayout switch
                 {
                     ImageLayout.DepthStencilAttachmentOptimal =>
@@ -7841,16 +7976,151 @@ namespace XREngine.Rendering.Vulkan
                         PipelineStageFlags.TransferBit,
                     _ => PipelineStageFlags.AllGraphicsBit | PipelineStageFlags.ComputeShaderBit,
                 };
+                VulkanImageAccessState targetState = ResolveVulkanImageAccessState(
+                    targetLayout,
+                    isDepth ? ImageAspectFlags.DepthBit : ImageAspectFlags.ColorBit);
+                AccessFlags initDstAccess = (AccessFlags)(ulong)targetState.AccessMask;
 
-                CmdPipelineBarrierTracked(
+                if (isDepth)
+                {
+                    EmitInitialImageAspectBarriers(
+                        commandBuffer,
+                        group,
+                        HasStencilComponent(group.Format)
+                            ? ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit
+                            : ImageAspectFlags.DepthBit,
+                        targetLayout,
+                        initDstStage,
+                        initDstAccess);
+                }
+                else
+                {
+                    EmitInitialImageAspectBarriers(
+                        commandBuffer,
+                        group,
+                        ImageAspectFlags.ColorBit,
+                        targetLayout,
+                        initDstStage,
+                        initDstAccess);
+                }
+            }
+        }
+
+        private void RecordFboAttachmentAccessState(
+            CommandBuffer commandBuffer,
+            VkFrameBuffer vkFbo,
+            FrameBufferAttachmentSignature[] signatures,
+            bool useReferenceLayouts)
+        {
+            int attachmentCount = Math.Min((int)vkFbo.AttachmentCount, signatures.Length);
+            for (int attachmentIndex = 0; attachmentIndex < attachmentCount; attachmentIndex++)
+            {
+                FrameBufferAttachmentSignature signature = signatures[attachmentIndex];
+                if (signature.Role == AttachmentRole.Unused)
+                    continue;
+                ImageLayout layout = useReferenceLayouts
+                    ? signature.ReferenceLayout
+                    : signature.FinalLayout;
+                if (layout == ImageLayout.Undefined ||
+                    !vkFbo.TryGetAttachmentView(attachmentIndex, out ImageView attachmentView) ||
+                    !TryGetDescriptorHeapImageViewCreateInfo(attachmentView, out ImageViewCreateInfo viewInfo) ||
+                    viewInfo.Image.Handle == 0)
+                {
+                    continue;
+                }
+
+                ImageSubresourceRange range = viewInfo.SubresourceRange;
+                range.AspectMask = NormalizeBarrierAspectMask(signature.Format, range.AspectMask);
+                range.LevelCount = Math.Max(range.LevelCount, 1u);
+                range.LayerCount = Math.Max(range.LayerCount, 1u);
+                ImageLayout accessLayout = signature.ReferenceLayout != ImageLayout.Undefined
+                    ? signature.ReferenceLayout
+                    : layout;
+                PipelineStageFlags stageMask = ResolveFboAttachmentStage(
+                    accessLayout,
+                    signature,
+                    asRenderAttachment: true);
+                AccessFlags accessMask = ResolveFboAttachmentAccess(
+                    accessLayout,
+                    signature,
+                    asRenderAttachment: true);
+                RecordImageAccess(
                     commandBuffer,
-                    PipelineStageFlags.TopOfPipeBit,
-                    initDstStage,
-                    DependencyFlags.None,
-                    0, null, 0, null,
-                    1, &barrier);
+                    viewInfo.Image,
+                    range,
+                    layout,
+                    stageMask,
+                    accessMask,
+                    Vk.QueueFamilyIgnored);
+            }
+        }
 
-                group.LastKnownLayout = targetLayout;
+        private void EmitInitialImageAspectBarriers(
+            CommandBuffer commandBuffer,
+            VulkanPhysicalImageGroup group,
+            ImageAspectFlags aspect,
+            ImageLayout targetLayout,
+            PipelineStageFlags dstStage,
+            AccessFlags dstAccess)
+        {
+            uint mipLevels = Math.Max(1u, group.MipLevels);
+            uint layers = Math.Max(1u, group.Template.Layers);
+            for (uint mip = 0; mip < mipLevels; mip++)
+            {
+                uint layer = 0;
+                while (layer < layers)
+                {
+                    ImageSubresourceRange single = new()
+                    {
+                        AspectMask = aspect,
+                        BaseMipLevel = mip,
+                        LevelCount = 1,
+                        BaseArrayLayer = layer,
+                        LayerCount = 1,
+                    };
+                    if (TryGetRecordedImageAccessState(commandBuffer, group.Image, single, out _))
+                    {
+                        layer++;
+                        continue;
+                    }
+
+                    uint firstUnknownLayer = layer++;
+                    while (layer < layers)
+                    {
+                        single.BaseArrayLayer = layer;
+                        if (TryGetRecordedImageAccessState(commandBuffer, group.Image, single, out _))
+                            break;
+                        layer++;
+                    }
+
+                    ImageMemoryBarrier barrier = new()
+                    {
+                        SType = StructureType.ImageMemoryBarrier,
+                        OldLayout = ImageLayout.Undefined,
+                        NewLayout = targetLayout,
+                        SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                        DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                        Image = group.Image,
+                        SubresourceRange = new ImageSubresourceRange
+                        {
+                            AspectMask = aspect,
+                            BaseMipLevel = mip,
+                            LevelCount = 1,
+                            BaseArrayLayer = firstUnknownLayer,
+                            LayerCount = layer - firstUnknownLayer,
+                        },
+                        SrcAccessMask = AccessFlags.None,
+                        DstAccessMask = dstAccess,
+                    };
+
+                    CmdPipelineBarrierTracked(
+                        commandBuffer,
+                        PipelineStageFlags.TopOfPipeBit,
+                        dstStage,
+                        DependencyFlags.None,
+                        0, null, 0, null,
+                        1, &barrier);
+                }
             }
         }
 
@@ -7869,13 +8139,20 @@ namespace XREngine.Rendering.Vulkan
                 // validation cares about the live subresource layout, so use the physical
                 // group's tracker whenever it has a concrete value.
                 ImageLayout effectiveOldLayout = planned.Previous.Layout;
-                ImageLayout groupLayout = planned.Group.GetKnownLayout(
-                    planned.Range.BaseMipLevel,
-                    planned.Range.LevelCount,
-                    planned.Range.BaseArrayLayer,
-                    planned.Range.LayerCount);
-                if (groupLayout != ImageLayout.Undefined &&
-                    groupLayout != effectiveOldLayout)
+                ImageSubresourceRange range = new()
+                {
+                    AspectMask = NormalizeBarrierAspectMask(planned.Group.Format, planned.Next.AspectMask),
+                    BaseMipLevel = planned.Range.BaseMipLevel,
+                    LevelCount = Math.Max(1u, planned.Range.LevelCount),
+                    BaseArrayLayer = planned.Range.BaseArrayLayer,
+                    LayerCount = Math.Max(1u, planned.Range.LayerCount)
+                };
+                if (TryGetRecordedImageLayout(
+                        commandBuffer,
+                        planned.Group.Image,
+                        range,
+                        out ImageLayout recordedLayout) &&
+                    recordedLayout != effectiveOldLayout)
                 {
                     if (CommandRecordingDiagnosticsEnabled)
                     {
@@ -7886,20 +8163,11 @@ namespace XREngine.Rendering.Vulkan
                             planned.ResourceName,
                             planned.PassIndex,
                             effectiveOldLayout,
-                            groupLayout,
+                            recordedLayout,
                             planned.Next.Layout);
                     }
-                    effectiveOldLayout = groupLayout;
+                    effectiveOldLayout = recordedLayout;
                 }
-
-                ImageSubresourceRange range = new()
-                {
-                    AspectMask = planned.Next.AspectMask,
-                    BaseMipLevel = planned.Range.BaseMipLevel,
-                    LevelCount = Math.Max(1u, planned.Range.LevelCount),
-                    BaseArrayLayer = planned.Range.BaseArrayLayer,
-                    LayerCount = Math.Max(1u, planned.Range.LayerCount)
-                };
 
                 if (BloomVulkanDiagnosticsEnabled && IsBloomDiagnosticName(planned.ResourceName))
                 {
@@ -7951,14 +8219,6 @@ namespace XREngine.Rendering.Vulkan
                     1,
                     &barrier);
 
-                // Update the group's tracked layout so subsequent barriers and blit
-                // operations use the correct OldLayout.
-                planned.Group.UpdateKnownLayout(
-                    planned.Next.Layout,
-                    planned.Range.BaseMipLevel,
-                    planned.Range.LevelCount,
-                    planned.Range.BaseArrayLayer,
-                    planned.Range.LayerCount);
             }
         }
 
@@ -7999,6 +8259,145 @@ namespace XREngine.Rendering.Vulkan
                     0,
                     null);
             }
+        }
+
+        private void TransitionFrameOpDescriptorSnapshotsForSampling(
+            CommandBuffer commandBuffer,
+            FrameOp[] ops,
+            int startIndex,
+            int passIndex,
+            int schedulingIdentity)
+        {
+            for (int i = startIndex; i < ops.Length; i++)
+            {
+                FrameOp candidate = ops[i];
+                int candidatePassIndex = candidate.PassIndex == int.MinValue
+                    ? passIndex
+                    : EnsureValidPassIndex(candidate.PassIndex, candidate.GetType().Name, candidate.Context.PassMetadata);
+                if (candidatePassIndex != passIndex || candidate.Context.SchedulingIdentity != schedulingIdentity)
+                    break;
+
+                ComputeDispatchSnapshot? snapshot = candidate switch
+                {
+                    MeshDrawOp meshDraw => meshDraw.Draw.ProgramBindingSnapshot,
+                    ComputeDispatchOp compute => compute.Snapshot,
+                    _ => null,
+                };
+                if (snapshot is null)
+                    continue;
+
+                foreach (XRTexture texture in snapshot.Samplers.Values)
+                    TransitionDescriptorTextureForSampling(commandBuffer, texture, candidate.Target);
+                foreach (XRTexture texture in snapshot.SamplersByName.Values)
+                    TransitionDescriptorTextureForSampling(commandBuffer, texture, candidate.Target);
+            }
+        }
+
+        private void TransitionDescriptorTextureForSampling(
+            CommandBuffer commandBuffer,
+            XRTexture texture,
+            XRFrameBuffer? target)
+        {
+            if (GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source ||
+                source.DescriptorView.Handle == 0 ||
+                !TryGetDescriptorHeapImageViewCreateInfo(source.DescriptorView, out ImageViewCreateInfo viewInfo) ||
+                viewInfo.Image.Handle == 0)
+            {
+                return;
+            }
+
+            ImageSubresourceRange range = viewInfo.SubresourceRange;
+            range.AspectMask = NormalizeBarrierAspectMask(source.DescriptorFormat, range.AspectMask);
+            range.LevelCount = Math.Max(range.LevelCount, 1u);
+            range.LayerCount = Math.Max(range.LayerCount, 1u);
+            if (IsImageRangeAttachedToFrameBuffer(target, viewInfo.Image, range))
+                return;
+            if (!TryGetRecordedImageAccessState(
+                    commandBuffer,
+                    viewInfo.Image,
+                    range,
+                    out VulkanImageAccessState priorState))
+            {
+                return;
+            }
+
+            ImageLayout targetLayout = ResolveDescriptorImageLayout(source, DescriptorType.CombinedImageSampler);
+            if (priorState.Layout == targetLayout)
+                return;
+
+            VulkanImageAccessState nextState = ResolveVulkanImageAccessState(targetLayout, range.AspectMask);
+            ImageMemoryBarrier barrier = new()
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = (AccessFlags)(ulong)priorState.AccessMask,
+                DstAccessMask = AccessFlags.ShaderReadBit,
+                OldLayout = priorState.Layout,
+                NewLayout = targetLayout,
+                SrcQueueFamilyIndex = priorState.QueueFamilyIndex,
+                DstQueueFamilyIndex = priorState.QueueFamilyIndex,
+                Image = viewInfo.Image,
+                SubresourceRange = range,
+            };
+
+            CmdPipelineBarrierTracked(
+                commandBuffer,
+                (PipelineStageFlags)(ulong)priorState.StageMask,
+                (PipelineStageFlags)(ulong)nextState.StageMask,
+                DependencyFlags.None,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &barrier,
+                nameof(TransitionFrameOpDescriptorSnapshotsForSampling));
+        }
+
+        private bool IsImageRangeAttachedToFrameBuffer(
+            XRFrameBuffer? target,
+            Image image,
+            ImageSubresourceRange range)
+        {
+            if (target is null || GenericToAPI<VkFrameBuffer>(target) is not { } vkFbo)
+                return false;
+
+            for (int i = 0; i < vkFbo.AttachmentCount; i++)
+            {
+                if (!vkFbo.TryGetAttachmentView(i, out ImageView attachmentView) ||
+                    !TryGetDescriptorHeapImageViewCreateInfo(attachmentView, out ImageViewCreateInfo attachmentInfo) ||
+                    attachmentInfo.Image.Handle != image.Handle)
+                {
+                    continue;
+                }
+
+                ImageSubresourceRange attachmentRange = attachmentInfo.SubresourceRange;
+                bool aspectOverlap = (attachmentRange.AspectMask & range.AspectMask) != 0;
+                bool mipOverlap = attachmentRange.BaseMipLevel < range.BaseMipLevel + Math.Max(range.LevelCount, 1u) &&
+                    range.BaseMipLevel < attachmentRange.BaseMipLevel + Math.Max(attachmentRange.LevelCount, 1u);
+                bool layerOverlap = attachmentRange.BaseArrayLayer < range.BaseArrayLayer + Math.Max(range.LayerCount, 1u) &&
+                    range.BaseArrayLayer < attachmentRange.BaseArrayLayer + Math.Max(attachmentRange.LayerCount, 1u);
+                if (aspectOverlap && mipOverlap && layerOverlap)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool PrepareQueryFrameOpsForCommandBufferReuse(FrameOp[] ops)
+        {
+            for (int index = 0; index < ops.Length; index++)
+            {
+                if (ops[index] is QueryOp
+                    {
+                        Operation: EVulkanQueryFrameOpKind.Begin
+                    } queryOp &&
+                    !queryOp.Query.PrepareForCommandBufferReuse(queryOp.QueryTarget))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         /// Appends dynamic rendering local-read pNext structs when a pass explicitly

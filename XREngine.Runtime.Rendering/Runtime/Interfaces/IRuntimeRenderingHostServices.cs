@@ -266,6 +266,7 @@ public interface IRuntimeRenderingHostServices
     /// Gets the Vulkan queue-overlap policy.
     /// </summary>
     EVulkanQueueOverlapMode VulkanQueueOverlapMode => RuntimeRenderingHostServiceDefaults.VulkanQueueOverlapMode;
+    bool EnableVulkanPrimaryCommandBufferReuse => RuntimeRenderingHostServiceDefaults.EnableVulkanPrimaryCommandBufferReuse;
 
     /// <summary>
     /// Gets the named Vulkan diagnostics preset requested by the host.
@@ -1230,6 +1231,7 @@ public interface IRuntimeRenderingHostServices
     void RecordRenderVulkanDescriptorPoolCreate();
     void RecordRenderVulkanDescriptorPoolDestroy();
     void RecordRenderVulkanDescriptorPoolReset();
+    void RecordRenderVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount);
     void RecordRenderVulkanDynamicUniformAllocation(long bytes);
     void RecordRenderVulkanDynamicUniformExhaustion();
     void RecordRenderVulkanRecordCommandBufferAllocation(long bytes);
@@ -1289,6 +1291,26 @@ public interface IRuntimeRenderingHostServices
         bool profilerDirty,
         string? dirtyReason);
     void RecordRenderVulkanCommandBuffersDirty(string? reason);
+    void RecordRenderVulkanExactResourceInvalidation(
+        int exactVariantsDirtied,
+        int exactCommandChainsDirtied,
+        int unrelatedVariantsPreserved,
+        int globalFallbackInvalidations)
+    {
+    }
+    void RecordRenderVulkanTrackingBatch(
+        int dependencyBinds,
+        int uniqueDependencies,
+        int imageAccessWrites,
+        int compactImageRanges)
+    {
+    }
+    void RecordRenderVulkanDescriptorExpansion(int cacheHits, int cacheMisses)
+    {
+    }
+    void RecordRenderVulkanTrackingContention(int lifetimeLockContentions, int layoutLockContentions)
+    {
+    }
     void RecordRenderVulkanCommandChainMetrics(
         int chainsScheduled,
         int chainsRecorded,
@@ -1318,6 +1340,10 @@ public interface IRuntimeRenderingHostServices
     void RecordRenderVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount);
     void RecordRenderVulkanRetiredResourceDrain(
         int descriptorPools,
+        int descriptorSets,
+        int commandBuffers,
+        int queryPools,
+        int bufferViews,
         int pipelines,
         int framebuffers,
         int buffers,
@@ -1406,6 +1432,8 @@ public interface IRuntimeRenderingHostServices
     /// Records a per-output frame manifest contribution.
     /// </summary>
     void RecordRenderFrameOutput(in FrameOutputTelemetry telemetry) { }
+
+    void RecordRenderFrameOutputWork(in FrameOutputWorkTelemetry telemetry) { }
 
     /// <summary>
     /// Gets whether VR rendering should configure a foveated multi-view view set.

@@ -52,14 +52,16 @@ public sealed class VulkanCpuDirectOcclusionTests
         frameOps.ShouldContain("EnqueueFrameOp(new QueryOp(");
 
         recorder.ShouldContain("bool hasQueryFrameOps = HasQueryFrameOps(ops)");
-        recorder.ShouldContain("!hasQueryFrameOps");
-        recorder.ShouldContain("(!VulkanPrimaryCommandBufferReuseEnabled || hasQueryFrameOps)");
+        recorder.ShouldContain("PrepareQueryFrameOpsForCommandBufferReuse");
+        recorder.ShouldNotContain("(!VulkanPrimaryCommandBufferReuseEnabled || hasQueryFrameOps)");
         recorder.ShouldContain("private static bool HasQueryFrameOps(FrameOp[] ops)");
         recorder.ShouldContain("case QueryOp queryOp:");
         recorder.ShouldContain("queryOp.Query.BeginQuery(commandBuffer, queryOp.QueryTarget);");
         recorder.ShouldContain("queryOp.Query.EndQuery(commandBuffer);");
 
         query.ShouldContain("vkCmdResetQueryPool is queued on the GPU");
+        query.ShouldContain("PrepareForCommandBufferReuse(EQueryTarget target)");
+        query.ShouldContain("ResetQueryPoolForCommandBufferReuse");
         query.ShouldContain("DestroyQueryPool();");
 
         renderGraph.ShouldContain("op is MeshDrawOp or QueryOp or BlitOp");

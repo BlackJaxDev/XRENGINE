@@ -613,15 +613,15 @@ public sealed class VulkanP0ValidationTests
     }
 
     [Test]
-    public void VulkanDescriptorImageLayouts_DoNotAdvertiseDepthReadOnlyWhenTrackedLayoutDiffers()
+    public void VulkanDescriptorImageLayouts_ArePureAndNeverRecordHiddenTransitions()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorImageLayouts.cs");
         string method = SliceMethod(source, "internal ImageLayout ResolveDescriptorImageLayout");
 
         method.ShouldContain("ImageLayout requestedLayout = GetDefaultSampledDescriptorLayout(source);");
-        method.ShouldContain("if (trackedLayout == requestedLayout)");
-        method.ShouldContain("source.TryTransitionDedicatedImageLayout(trackedLayout, requestedLayout)");
-        method.ShouldContain("return trackedLayout;");
+        method.ShouldContain("CanSampleFromTrackedGeneralLayout(source.DescriptorUsage, trackedLayout)");
+        method.ShouldContain("return requestedLayout;");
+        method.ShouldNotContain("TryTransitionDedicatedImageLayout");
     }
 
     [Test]

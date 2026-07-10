@@ -114,6 +114,30 @@ public sealed class ProfilerProtocolTests
             ForbiddenGpuFallbackEvents = 1,
             GpuMappedBuffers = 3,
             GpuReadbackBytes = 4096,
+            FrameOutputs = new FrameOutputManifestData
+            {
+                WorkloadIdentityHash = 0x1234UL,
+                OutputRequestCount = 4,
+                UniqueViewFamilyCount = 2,
+                TargetVariantCount = 3,
+                SceneSnapshotCount = 1,
+                VisibilityBuildCount = 2,
+                CompiledPlanCacheHits = 5,
+                CompiledPlanCacheMisses = 1,
+                SharedPassReuseCount = 3,
+                RecordedWorkItemCount = 2,
+                ReusedWorkItemCount = 6,
+                DuplicatedWorkItemCount = 1,
+                CpuBudgetDeferralCount = 1,
+                GpuBudgetDeferralCount = 2,
+                StaleResultReuseCount = 1,
+                MissedDeadlineCount = 0,
+                UnapprovedPolicyEventCount = 0,
+                SubmissionRejectionCount = 0,
+                PlannerPruneCount = 0,
+                GlobalInFlightWaitCount = 0,
+                ForceFlushCount = 0,
+            },
             ShadowAtlasSolve = new ShadowAtlasSolveDiagnosticsData
             {
                 ElapsedMilliseconds = 1.25,
@@ -557,6 +581,11 @@ public sealed class ProfilerProtocolTests
         clone.ForbiddenGpuFallbackEvents.ShouldBe(1);
         clone.GpuMappedBuffers.ShouldBe(3);
         clone.GpuReadbackBytes.ShouldBe(4096);
+        clone.FrameOutputs.WorkloadIdentityHash.ShouldBe(0x1234UL);
+        clone.FrameOutputs.OutputRequestCount.ShouldBe(4);
+        clone.FrameOutputs.CompiledPlanCacheHits.ShouldBe(5);
+        clone.FrameOutputs.ReusedWorkItemCount.ShouldBe(6);
+        clone.FrameOutputs.SubmissionRejectionCount.ShouldBe(0);
         clone.ShadowAtlasSolve.ElapsedMilliseconds.ShouldBe(1.25);
         clone.ShadowAtlasSolve.ClassifiedRequestCount.ShouldBe(12);
         clone.ShadowAtlasSolve.DirectionalRequestCount.ShouldBe(4);
@@ -586,7 +615,7 @@ public sealed class ProfilerProtocolTests
         clone.ShadowAtlasSolve.IncrementalReuseCount.ShouldBe(9);
         clone.ShadowAtlasSolve.WaterlineDemotionCount.ShouldBe(2);
         clone.ShadowAtlasSolve.LastFailureReason.ShouldBe("PageBudgetExceeded");
-        clone.RenderProfilerV2.ProfileCaptureSchemaVersion.ShouldBe(3);
+        clone.RenderProfilerV2.ProfileCaptureSchemaVersion.ShouldBe(4);
         var rendererState = clone.RenderProfilerV2.RendererState;
         rendererState.IndirectCountCalls.ShouldBe(6);
         rendererState.ShaderProgramSwitches.ShouldBe(7);

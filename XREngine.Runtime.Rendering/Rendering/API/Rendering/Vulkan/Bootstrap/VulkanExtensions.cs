@@ -12,6 +12,8 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
+        private const string ExtSwapchainColorspaceExtensionName = "VK_EXT_swapchain_colorspace";
+        private bool _supportsSwapchainColorspace;
         /// <summary>
         /// The KHR_draw_indirect_count extension handle, loaded at device creation if available.
         /// </summary>
@@ -418,6 +420,9 @@ namespace XREngine.Rendering.Vulkan
         {
             var glfwExtensions = Window!.VkSurface!.GetRequiredExtensions(out var glfwExtensionCount);
             var extensions = SilkMarshal.PtrToStringArray((nint)glfwExtensions, (int)glfwExtensionCount);
+            _supportsSwapchainColorspace = IsInstanceExtensionAvailable(ExtSwapchainColorspaceExtensionName);
+            if (_supportsSwapchainColorspace)
+                extensions = [.. extensions, ExtSwapchainColorspaceExtensionName];
             var openXrRequirements = OpenXRAPI.GetRequestedVulkanRuntimeRequirements();
             if (openXrRequirements.InstanceExtensions.Length > 0)
                 extensions = [.. extensions, .. openXrRequirements.InstanceExtensions];
@@ -428,6 +433,34 @@ namespace XREngine.Rendering.Vulkan
             return [.. extensions
                 .Where(static name => !string.IsNullOrWhiteSpace(name))
                 .Distinct(StringComparer.Ordinal)];
+        }
+
+        private bool IsInstanceExtensionAvailable(string extensionName)
+        {
+            uint extensionCount = 0;
+            if (Api!.EnumerateInstanceExtensionProperties((byte*)null, ref extensionCount, null) != Result.Success ||
+                extensionCount == 0)
+            {
+                return false;
+            }
+
+            ExtensionProperties[] properties = new ExtensionProperties[extensionCount];
+            fixed (ExtensionProperties* propertiesPtr = properties)
+            {
+                if (Api.EnumerateInstanceExtensionProperties((byte*)null, ref extensionCount, propertiesPtr) != Result.Success)
+                    return false;
+            }
+
+            for (int i = 0; i < extensionCount; i++)
+            {
+                string? availableName;
+                fixed (byte* extensionNamePtr = properties[i].ExtensionName)
+                    availableName = SilkMarshal.PtrToString((nint)extensionNamePtr);
+                if (string.Equals(availableName, extensionName, StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
         }
     }
 }

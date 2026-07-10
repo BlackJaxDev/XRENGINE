@@ -1,636 +1,175 @@
 # Vulkan Dynamic Rendering Migration Todo (Remaining Work)
 
-Last Updated: 2026-07-01
+Last Updated: 2026-07-09
 Owner: Rendering
-Status: Source implementation for phases 5-9 is complete. Core migration is implemented and the audited completed items were verified against source on 2026-06-09, 2026-06-18, and 2026-07-01. `Auto` resolves to dynamic rendering when supported, explicit legacy remains selectable, and explicit dynamic fails visibly when unsupported. The shared dynamic rendering scope/attachment planner is now in source for swapchain, FBO, and dynamic UI secondary-command-buffer scopes. This document tracks the remaining runtime-validation, promotion, and modern-extension work.
-Target Branch: intentionally skipped; user requested not to branch.
-
-Design sources:
-
-- [Vulkan Dynamic Rendering Migration Design](../../design/rendering/vulkan-dynamic-rendering-migration-design.md)
-- [Vulkan Shader Object Pipeline Replacement](../../design/rendering/vulkan-shader-object-pipeline-replacement-design.md)
-- Vulkan deprecation appendix: https://vulkan.lunarg.com/doc/view/1.4.328.1/linux/antora/spec/latest/appendices/deprecation.html
-- Vulkan Guide deprecated functionality: https://docs.vulkan.org/guide/latest/deprecated.html
-- Dynamic rendering sample: https://docs.vulkan.org/samples/latest/samples/extensions/dynamic_rendering/README.html
-- Dynamic rendering local read proposal: https://docs.vulkan.org/features/latest/features/proposals/VK_KHR_dynamic_rendering_local_read.html
-- Descriptor heap guide: https://docs.vulkan.org/guide/latest/descriptor_heap.html
-- `VK_EXT_descriptor_heap`: https://docs.vulkan.org/refpages/latest/refpages/source/VK_EXT_descriptor_heap.html
-- `VK_EXT_descriptor_buffer`: https://docs.vulkan.org/refpages/latest/refpages/source/VK_EXT_descriptor_buffer.html
-- `VK_EXT_shader_object`: https://docs.vulkan.org/refpages/latest/refpages/source/VK_EXT_shader_object.html
-- `VK_KHR_fragment_shading_rate`: https://docs.vulkan.org/refpages/latest/refpages/source/VK_KHR_fragment_shading_rate.html
-- `VK_EXT_fragment_density_map`: https://docs.vulkan.org/refpages/latest/refpages/source/VK_EXT_fragment_density_map.html
-
-## Goal
-
-Finish hardening explicit dynamic rendering across every Vulkan graphics target (swapchain, offscreen FBO, post-process, shadow, capture, VR mirror, debug, ImGui) and validate it under the Vulkan validation layers. The legacy render-pass/framebuffer path stays selectable through the runtime toggle until validation says it can be retired or isolated as a diagnostics-only backend.
-
-High-level engine render-pass concepts remain unchanged. `RenderPassMetadata`, `RenderPassBuilder`, `EDefaultRenderPass`, and pass indices describe engine graph scheduling and resource usage, not Vulkan `VkRenderPass` objects.
-
-This todo also tracks the adjacent modern Vulkan extension plan because dynamic rendering is the compatibility pivot for several follow-on migrations:
-
-- `VK_KHR_dynamic_rendering_local_read` / Vulkan 1.4 local read.
-- `VK_EXT_shader_object` pipeline replacement.
-- `VK_EXT_descriptor_heap` descriptor binding replacement.
-- `VK_KHR_fragment_shading_rate` and `VK_EXT_fragment_density_map` for XR foveation.
-- Sync2, timeline semaphore, memory-budget, ray-tracing, and device-generated/indirect GPU-driven plumbing.
-
-The intent is not to enable every modern extension by default. The intent is to make every capability explicit: queried, reported, gated by profile/runtime policy, validated where used, and never hidden behind silent CPU or legacy fallbacks when a modern path was explicitly requested.
-
-## Audit Summary (2026-06-09)
-
-Verified directly against source and confirmed correctly implemented:
-
-- Runtime target mode enum, `XRE_VK_RENDER_TARGET_MODE` override, and visible unsupported-dynamic failure in `VulkanRenderTargetMode.cs`.
-- `Auto` selects dynamic when supported and legacy only when unsupported; startup diagnostics report requested/resolved mode (`[Vulkan] Render target mode:`).
-- Swapchain and FBO dynamic paths record `CmdBeginRendering` / `CmdEndRendering` with explicit layout barriers; legacy `CmdBeginRenderPass` is mode-gated.
-- Swapchain present transition to `PresentSrcKhr` occurs exactly once per dynamic frame and is runtime-asserted.
-- Dynamic-path pipeline and prewarm keys use `DynamicRenderingFormatSignature` (ordered color formats, depth, stencil, sample count) with no `VkRenderPass` handle.
-- `RenderPasses.cs` / `FrameBuffers.cs` create swapchain `VkRenderPass` / `VkFramebuffer` only in legacy mode.
-- Source-verifiable migration tests pass: `VulkanDynamicRenderingMigrationTests` 3/3.
-
-Phases 0, 1, and 10 are fully complete and are not reproduced below.
-
-## Source Audit Update (2026-06-18)
-
-Additional items verified directly against source:
-
-- Swapchain dynamic rendering preserves first-use/re-entry layouts, first-entry clear/re-entry load behavior, depth clear behavior, and present-transition diagnostics.
-- FBO dynamic rendering now flows through `VulkanBarrierPlanner` / `RenderGraphSynchronizationPlanner` planning where available and resolves FBO attachment resource names through stable `fbo::<name>::<slot>` semantic bindings.
-- A dynamic UI text secondary command-buffer path now uses `CommandBufferInheritanceRenderingInfo` with inherited color/depth/stencil formats, sample count, and view mask, then executes inside a dynamic rendering scope.
-- At this audit point, resolve attachment metadata still existed in the render-graph model but dynamic rendering did not yet map resolve attachments to `RenderingAttachmentInfo.ResolveMode` / `ResolveImageView`; the 2026-07-01 audit update supersedes this.
-- `DynamicRenderingFormatSignature` still allocates arrays (`ToArray()` / `new Format[...]`) while constructing dynamic-path signatures, so allocation hardening remains open.
-
-## Source Audit Update (2026-07-01)
-
-Additional source and Khronos documentation checks:
-
-- `DynamicRenderingAttachmentPlan` and `DynamicRenderingScopePlan` now centralize dynamic rendering target planning. The scope plan is stack-only and carries render area, layer count, view mask, color/depth/stencil attachment plans, read-only depth/stencil state, format signature, sample count, and a semantic signature alias.
-- Swapchain dynamic rendering, FBO dynamic rendering, and the dynamic UI text secondary-command-buffer path now begin through `BeginDynamicRenderingScope(...)` instead of building separate inline `RenderingInfo` blocks.
-- Attachment plans now carry image, image view, format, aspect mask, initial/rendering/final layouts, load/store ops, clear value, and resolve image view/mode/layout fields. Live resolve pairing is implemented through resolve attachment roles, source color indices, native `RenderingAttachmentInfo` resolve fields, and legacy `pResolveAttachments`.
-- Resolve attachment validation now enforces source/target sample-count and format/aspect compatibility before recording a Vulkan pass.
-- `VulkanBarrierPlanner` now treats `RenderGraphResourceNames.OutputRenderTarget` as a swapchain pseudo-resource and emits planned swapchain barriers at frame start and per-pass boundaries without requiring a physical image group.
-- Attachment-only transient render resources now request `TransientAttachmentBit` and prefer lazily allocated device-local memory when supported. Resources that need sampled, storage, transfer, or present use remain regular device-local images.
-- Source coverage for shadow, bloom/downsample/upsample, cubemap/texture-array capture, and VR mirror FBO targets routes through the generic dynamic FBO path. Runtime validation for those scenarios remains open.
-- Dynamic rendering view masks are in the format signature, dynamic pipeline keys, GPL keys, inheritance structs, and dynamic rendering diagnostics. Stereo/OpenVR/OpenXR visual validation remains open.
-- Descriptor heap research was refreshed against the Khronos Guide/refpages. `VK_EXT_descriptor_heap` is the modern descriptor binding target; `VK_EXT_descriptor_buffer` is deprecated by descriptor heap and should not become the new long-term backend.
-- Phase 11/12 source update: `VK_KHR_dynamic_rendering_local_read` / Vulkan 1.4 and `VK_KHR_maintenance5` are queried/enabled when available; render-graph layout mapping includes `RenderingLocalRead`; `RenderingAttachmentLocationInfo` / `RenderingInputAttachmentIndexInfo` plumbing exists for dynamic scopes and secondary inheritance but remains dormant until a pass opts into a non-empty local-read plan.
-- Startup capability reporting now covers the Modern Vulkan Capability Matrix with `unavailable`, `available-disabled`, `enabled-unused`, `enabled-active`, and `explicitly-required-missing` states. Runtime selection env vars are available for capability tier, descriptor backend, program-binding backend, foveation backend, and ray-tracing backend. Explicit unsupported modern backend requests fail visibly.
-- Current Silk.NET Vulkan bindings include dynamic-rendering local read, Vulkan 1.4, maintenance5, shader object, ray tracing, memory budget/priority, and device-generated-command structs. They do not expose `VK_EXT_descriptor_heap` yet, so the engine now carries a small registry-derived native interop shim for the descriptor heap structs/commands needed by phase 13.
-- Phase 13 source update: descriptor heap is now attempted by default when the machine exposes the extension and dependencies. The renderer queries/enables `VK_EXT_descriptor_heap`, loads native heap commands, reports heap properties, allocates one sampler heap and one resource heap with descriptor-heap buffer usage plus shader-device-address usage, exposes primary/secondary heap binding hooks, writes sampled/storage image, sampler, buffer, and texel-buffer descriptors into heap storage, and logs allocation/write/bind counters. Legacy `set`/`binding` SPIR-V is mapped through `VkShaderDescriptorSetAndBindingMappingInfoEXT`, heap pipelines set `VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT`, and material, mesh, compute, and ImGui descriptor payloads now push heap indices with `vkCmdPushDataEXT`. Descriptor indexing/sets remain the fallback when descriptor heap is unsupported or explicitly disabled.
-
-## Modern Vulkan Capability Matrix (2026-07-01)
-
-Status meanings:
-
-- **Active**: queried/enabled and used on a production or normal runtime path.
-- **Plumbed**: queried/enabled or partially loaded, but not broadly exercised.
-- **Designed**: design docs or todos exist, but runtime capability plumbing is missing.
-- **Absent**: no source-level runtime plumbing found in the Vulkan renderer.
-
-| Area | Extension / API | Current status | Required follow-up |
-| --- | --- | --- | --- |
-| Dynamic rendering | `VK_KHR_dynamic_rendering` / Vulkan 1.3 | **Active**. `Auto` resolves to dynamic when supported; legacy render-pass mode remains selectable. Shared scope/attachment planning is implemented for swapchain, FBO, and dynamic UI secondary scopes, including native resolve attachments, swapchain pseudo-resource barriers, and attachment-only transient policy. | Finish runtime validation and promotion criteria. |
-| Render-pass local reads | `VK_KHR_dynamic_rendering_local_read` / Vulkan 1.4 | **Plumbed**. Feature and Vulkan 1.4 properties are queried; local-read storage/single-sampled color/depth-stencil/multisampled support is reported; `RenderingLocalRead` maps to `ImageLayout.RenderingLocalRead`; pNext plumbing exists for scopes and secondary inheritance. No pass opts in yet. | Validate tiled deferred/VR use cases before broad adoption; keep dormant until a real framebuffer-local pass is identified. |
-| Synchronization | `VK_KHR_synchronization2` / Vulkan 1.3 | **Plumbed**. Device feature is queried; `QueueSubmit2` and `CmdPipelineBarrier2` backend exists behind `EVulkanSynchronizationBackend.Sync2`. | Make Sync2 the default once validation confirms no regressions; eliminate broad legacy stage/access masks from hot paths. |
-| Frame pacing | Timeline semaphores / Vulkan 1.2 | **Active**. Renderer uses graphics/present/transfer timeline semaphores and treats them as required. | Audit frame pacing and async transfer/compute overlap. |
-| Descriptor indexing | `VK_EXT_descriptor_indexing` / Vulkan 1.2 | **Active**. Used for bindless material texture table and update-after-bind policy. | Keep as the Vulkan 1.2/1.3 fallback binding backend after descriptor heap arrives. |
-| Descriptor heap | `VK_EXT_descriptor_heap` | **Active/Plumbed**. Startup reporting checks extension availability and dependencies (`VK_KHR_extended_flags` or maintenance5 plus buffer device address, or Vulkan 1.4, plus shader untyped pointers). Native interop loads `vkCmdBindResourceHeapEXT`, `vkCmdBindSamplerHeapEXT`, `vkCmdPushDataEXT`, `vkWriteResourceDescriptorsEXT`, `vkWriteSamplerDescriptorsEXT`, and descriptor-size queries. One resource heap and one sampler heap are allocated when supported; heap state is bound/inherited only when `DescriptorHeap` is active, and descriptor-set/push-constant invalidation is tracked. Legacy shaders are mapped with `VkShaderDescriptorSetAndBindingMappingInfoEXT`, heap pipelines set `VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT`, and material, mesh, compute, and ImGui descriptors write heap payloads. | Runtime-validate material textures, storage images, SSBOs, UBOs, texel buffers, immutable samplers, ImGui textures, and compute dispatches under validation layers. Finish staged/non-host-visible heap placement, native `SPV_EXT_descriptor_heap` shader variants, full push-data constant migration, and acceleration-structure descriptors before ray tracing. |
-| Descriptor buffer | `VK_EXT_descriptor_buffer` | **Reported disabled**. Khronos marks it deprecated by `VK_EXT_descriptor_heap`; startup reporting names it but keeps it out of the target backend set. | Do not build a new long-term backend on this extension. Evaluate only as temporary compatibility or backend-comparison research if descriptor heap availability is too narrow. |
-| Buffer device address | `VK_KHR_buffer_device_address` / Vulkan 1.2 | **Plumbed**. Required by NV copy/decompression and scene-database address work; `VkDataBuffer` can expose device addresses. | Wire production draw/compute consumers so scene DB buffers can avoid descriptor rebinding where appropriate. |
-| Shader objects | `VK_EXT_shader_object` | **Reported / backend absent**. Feature and shader-object properties are queried and reported; explicit shader-object program-binding requests fail visibly because the renderer backend still uses pipeline objects. | Implement the shader-object backend from the design doc and decide how it composes with descriptor heap. |
-| Graphics pipeline library | `VK_KHR_pipeline_library` + `VK_EXT_graphics_pipeline_library` | **Active/Plumbed**. Dependency is enabled with GPL; dynamic rendering keys preserve format identity. | Validate cache miss behavior after warmup and keep GPL as the pipeline-object fallback while shader objects mature. |
-| Fragment shading rate | `VK_KHR_fragment_shading_rate` | **Reported**. Feature bits are queried/reported. Explicit foveation backend selection fails visibly until a VRS backend exists. | Add render-target planner support for shading-rate images, material/per-view policy, and XR visual validation. |
-| Fragment density map | `VK_EXT_fragment_density_map` | **Reported**. Feature bits are queried/reported. Explicit density-map foveation selection fails visibly until a backend exists. | Evaluate against OpenXR/OpenVR foveation needs; add only if it beats or complements fragment shading rate on target devices. |
-| Multiview/stereo | `VK_KHR_multiview` / Vulkan 1.1 | **Plumbed**. Feature is queried; dynamic rendering format signatures, pipeline keys, inheritance, FBO planning, and diagnostics carry view masks; dynamic layer count is derived from view mask when present rather than texture-array length. | Validate OpenVR/OpenXR stereo targets. |
-| Mesh/task shaders | `VK_EXT_mesh_shader` | **Plumbed**. EXT mesh shader handle and indirect-count dispatch path exist. | Keep gated on EXT feature bits; validate production meshlet dispatch under dynamic rendering and descriptor backend changes. |
-| Draw indirect count | `VK_KHR_draw_indirect_count` / Vulkan 1.2 | **Active/Plumbed**. Used for multi-draw indirect-count paths with fallback diagnostics. | Ensure fallback is visible when GPU-driven rendering explicitly requires indirect count. |
-| External memory/semaphore | `VK_KHR_external_memory`, `VK_KHR_external_semaphore`, Win32 variants | **Active/Plumbed**. Used by Windows sidecar/upscale/interop paths. | Keep Windows-first diagnostics and validate against OpenVR/OBS/upscaler handoff flows. |
-| Memory budget/residency | `VK_EXT_memory_budget`, `VK_EXT_memory_priority` | **Reported**. Extension/feature availability is part of startup reporting; allocator residency policy does not consume it yet. | Add to memory allocator diagnostics and residency policy; connect with transient/lazily allocated attachment policy. |
-| Transient/lazy attachments | lazily allocated memory where supported | **Plumbed**. Lazy allocation probing and allocator fallback logic exist; attachment-only transient images request transient attachment usage and prefer lazily allocated device-local memory, with visible warning fallback when unsupported. | Validate on GPUs with and without lazy memory and connect the policy with memory-budget/residency reporting. |
-| Ray tracing | `VK_KHR_acceleration_structure`, `VK_KHR_ray_tracing_pipeline`, `VK_KHR_ray_query`, `VK_KHR_deferred_host_operations` | **Reported / backend absent**. Feature availability is queried/reported; explicit Vulkan ray-tracing backend requests fail visibly until the backend exists. | Keep capability reporting shared; do not mix ray-tracing enablement into this migration except for descriptor heap/resource binding compatibility. |
-| Device generated commands | `VK_EXT_device_generated_commands` | **Reported**. Feature availability is queried/reported but not used. | Defer until descriptor heap/shader object/resource-table architecture is stable. |
-| Maintenance / flags | `VK_KHR_maintenance4`; `VK_KHR_maintenance5`; `VK_KHR_extended_flags` | **Plumbed/reported**. Maintenance4 is queried/enabled; maintenance5 is queried/enabled when available; extended flags availability is enabled/reported when exposed. Descriptor heap dependency reporting uses these states. | Use the maintenance5/extended-flags dependency state during descriptor heap bring-up. |
-| Depth clip / viewport-layer | `VK_EXT_depth_clip_control`, `VK_EXT_shader_viewport_index_layer` | **Plumbed**. Used for clip-space/layered shadow planning. | Keep diagnostics in startup capability snapshot; validate with layered shadow and cubemap/cascade paths. |
-| Index type uint8 | `VK_EXT_index_type_uint8` / `VK_KHR_index_type_uint8` | **Plumbed**. Feature queried; byte-sized index buffers gated. | Add targeted test coverage if byte-indexed runtime meshes are in production content. |
-| Transform feedback | `VK_EXT_transform_feedback` | **Plumbed**. Vulkan transform-feedback object path uses it when enabled. | Treat as legacy/parity support, not a modernization target. Ensure it does not block shader-object adoption. |
-| NVIDIA data movement | `VK_NV_memory_decompression`, `VK_NV_copy_memory_indirect` | **Plumbed**. Optional accelerated copy/decompression helpers exist. | Keep NVIDIA-only paths explicit and diagnostic; no CPU fallback when an accelerated path is explicitly required. |
-
-## Operating Rules (Open)
-
-- [ ] Avoid heap allocations in per-frame command recording, target planning, and draw submission hot paths.
-
-All other operating rules were satisfied during the core migration.
-
-## Phase 2 - Shared Dynamic Rendering Scope
-
-- [x] **2.1** Extract the current swapchain dynamic-rendering branch from `BeginRenderPassForTarget` into a reusable dynamic rendering scope helper.
-- [x] **2.2** Rename or wrap `BeginRenderPassForTarget` with a dynamic-aware name such as `BeginRenderingForTarget` without disturbing call sites prematurely.
-- [x] **2.3** Add a lightweight target plan type for dynamic rendering scopes.
-- [x] **2.4** Include these fields in the plan:
-  - render area
-  - layer count
-  - view mask
-  - color attachment plans
-  - depth attachment plan
-  - stencil attachment plan
-  - read-only depth/stencil state
-  - color/depth/stencil formats
-  - sample count
-  - semantic signature
-- [x] **2.5** Add a lightweight attachment plan type with:
-  - image
-  - image view
-  - format
-  - aspect mask
-  - initial layout
-  - rendering layout
-  - final layout
-  - load op
-  - store op
-  - clear value
-  - resolve image view and resolve mode
-- [x] **2.6** Keep the scope plan stack-backed or otherwise allocation-free in command recording.
-- [x] **2.7** Preserve current swapchain dynamic-rendering behavior exactly through the new shared helper.
-- [x] **2.8** Preserve the existing invariant that a dynamic-rendering swapchain frame transitions to `PresentSrcKhr` exactly once before submit/present.
-- [x] **2.9** Keep the legacy swapchain render-pass branch selectable through the runtime mode.
-- [x] **2.10** Add tests/source checks that the shared dynamic path still uses `CmdBeginRendering` and `CmdEndRendering`.
-
-## Phase 3 - Swapchain Dynamic Path Hardening
-
-- [x] **3.1** Move swapchain target planning into the shared target planner.
-- [x] **3.2** Ensure the swapchain plan includes:
-  - active swapchain image and image view
-  - swapchain depth image and view
-  - `swapChainImageFormat`
-  - `_swapchainDepthFormat`
-  - `SampleCountFlags.Count1Bit`
-  - `swapChainExtent`
-- [x] **3.3** Preserve first-use/re-entry layout rules:
-  - `PresentSrcKhr`
-  - `ColorAttachmentOptimal`
-  - `Undefined`
-- [x] **3.4** Preserve first-entry clear and re-entry load behavior.
-- [x] **3.5** Preserve depth clear behavior.
-- [x] **3.6** Keep final swapchain transition diagnostics.
-- [ ] **3.7** Validate resize/minimize/recreate does not reuse stale command buffers or image views.
-- [ ] **3.8** Validate ImGui overlay still renders in dynamic mode.
-- [ ] **3.9** Validate explicit legacy mode still renders the swapchain through `_renderPass` / `_renderPassLoad`.
-
-## Phase 4 - Dynamic Rendering For Simple FBOs (Open Items)
-
-Planning, conversion, pipeline keying, and diagnostics for simple FBOs are implemented. Remaining items are runtime validation:
-
-- [ ] **4.11** Validate Unit Testing World with dynamic swapchain plus simple dynamic FBOs.
-- [ ] **4.12** Validate `ForwardPassFBO` and deferred GBuffer writes survive compute/blit interruptions and render-scope re-entry.
-
-## Phase 5 - Full FBO Coverage
-
-Multiple color attachments, depth-only, depth/stencil, stencil-only, mip-level, array-layer, cubemap-face, read-only depth/stencil, shadow, bloom/downsample/upsample, cubemap/texture-array capture, and VR mirror FBO target routing are implemented in the generic dynamic FBO path. Resolve attachment mapping and transient attachment policy are implemented in source. Remaining items are runtime validation:
-
-- [x] **5.8** Support live resolve attachments with dynamic rendering resolve fields. `DynamicRenderingAttachmentPlan.WithResolve(...)` pairs single-sample resolve targets with multisampled color sources, fills native resolve fields, and legacy render-pass creation emits `pResolveAttachments`.
-- [x] **5.9** Support transient attachments as an explicit dynamic render-target policy. Attachment-only transient images request `TransientAttachmentBit` and prefer lazily allocated device-local memory; sampled/storage/transfer/present resources are excluded.
-- [x] **5.11** Support shadow map targets.
-- [x] **5.12** Support bloom/downsample/upsample targets.
-- [x] **5.13** Support cubemap and texture-array capture targets.
-- [x] **5.14** Support VR mirror targets that route through Vulkan FBOs.
-- [ ] **5.15** Validate DefaultRenderPipeline in dynamic mode.
-- [ ] **5.16** Validate DefaultRenderPipeline2 in dynamic mode when applicable.
-- [ ] **5.17** Validate explicit legacy mode still renders the same FBO scenarios.
-
-## Phase 6 - Synchronization And Layout Tracking
-
-Explicit barriers, attachment entry/exit layouts, dynamic-scope final states, swapchain pseudo-resource barriers, and compute/blit interruption handling are implemented. Remaining runtime validation:
-
-- [x] **6.2** Reuse `VulkanBarrierPlanner` and `RenderGraphSynchronizationPlanner` where possible.
-- [x] **6.5** Make the planner aware of swapchain target resources.
-- [x] **6.6** Make the planner aware of FBO attachments using stable semantic resource identities.
-- [ ] **6.12** Validate no layout errors under Vulkan validation layers.
-
-## Phase 7 - Pipeline Signature And Prewarm Cleanup (Open Items)
-
-Dynamic-path keys, format/sample-count fields, semantic prewarm signatures, and diagnostics are implemented. Remaining:
-
-- [x] **7.11** Add view mask to dynamic-path keys.
-- [ ] **7.16** Verify pipeline cache miss summaries trend toward zero after warmup in dynamic mode.
-
-## Phase 8 - Secondary Command Buffer Support (Open Items)
-
-2026-07-01 audit note: the dynamic UI text secondary command-buffer path records and executes a secondary graphics command buffer inside dynamic rendering. It uses `CommandBufferInheritanceRenderingInfo` with active color/depth/stencil formats, active sample count, and active view mask. General runtime parallel/secondary validation remains open.
-
-- [x] **8.3** Add `CommandBufferInheritanceRenderingInfo` for secondary graphics command buffers recorded inside dynamic rendering.
-- [x] **8.4** Ensure inherited formats match active color/depth/stencil formats.
-- [x] **8.5** Ensure inherited sample count matches active rendering scope.
-- [x] **8.6** Ensure inherited view mask matches active rendering scope.
-- [ ] **8.8** Validate parallel/secondary recording in dynamic mode if enabled.
-
-## Phase 9 - Resolve, Multiview, And Stereo
-
-- [x] **9.1** Preserve `ERenderPassResourceType.ResolveAttachment` metadata.
-- [x] **9.2** Map resolve attachments to `RenderingAttachmentInfo.ResolveMode`.
-- [x] **9.3** Map resolve attachments to `RenderingAttachmentInfo.ResolveImageView`.
-- [x] **9.4** Add explicit layout transitions for resolve targets.
-- [x] **9.5** Validate resolve source and target sample-count requirements.
-- [x] **9.6** Validate resolve formats match Vulkan requirements.
-- [x] **9.7** Add dynamic rendering `ViewMask` support for multiview.
-- [x] **9.8** Add view mask to pipeline compatibility and diagnostics.
-- [x] **9.9** Ensure stereo target planning does not infer view count from texture array length alone.
-- [ ] **9.10** Validate stereo, OpenVR mirror, and OpenXR-related paths that use Vulkan targets.
-
-## Phase 11 - Vulkan 1.4 Dynamic Rendering Local Read
-
-- [x] **11.1** Inventory passes that would benefit from framebuffer-local dependencies.
-  - Current candidates are tiled/deferred lighting variants that would otherwise re-read GBuffer attachments, VR/stereo target passes where preserving per-eye attachment locality matters, and post-process passes that could collapse attachment readbacks. No current pass has been promoted to local-read mode yet.
-- [x] **11.2** Query and expose `VK_KHR_dynamic_rendering_local_read` / Vulkan 1.4 support.
-- [x] **11.3** Query and report Vulkan 1.4 local-read properties:
-  - storage-resource local read support
-  - single-sampled color attachment local read support
-  - depth/stencil local read support
-  - multisampled attachment local read support
-- [x] **11.4** Add `VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR` / core alias mapping to the render graph layout model.
-- [x] **11.5** Add `RenderingAttachmentLocationInfo` and `RenderingInputAttachmentIndexInfo` plumbing for dynamic rendering scopes and secondary inheritance.
-- [x] **11.6** Prototype local-read barriers only for a pass with a real need.
-  - The prototype is deliberately dormant: `DynamicRenderingLocalReadPlan` must be non-empty before local-read pNext structs are attached, and no current pass emits local-read barriers.
-- [ ] **11.7** Validate tiled deferred or VR use cases before broad adoption.
-- [x] **11.8** Keep local read optional until the engine has a required Vulkan 1.4 tier.
-
-## Phase 12 - Capability Tiers And Startup Reporting
-
-These are not required to keep the dynamic rendering default, but they define how the Vulkan backend presents modern capability use.
-
-- [x] **12.1** Define a Vulkan 1.4 opt-in baseline tier.
-- [x] **12.2** Define a Vulkan 1.3 production baseline tier:
-  - dynamic rendering
-  - synchronization2 capable, even if the legacy backend remains selectable
-  - timeline semaphores
-  - descriptor indexing
-  - buffer device address
-  - draw indirect count
-  - maintenance4
-- [x] **12.3** Define a Vulkan 1.4 experimental tier:
-  - local read
-  - maintenance5 / extended flags where needed by descriptor heap
-  - descriptor heap capability reporting
-  - shader-object capability reporting
-- [x] **12.4** Keep runtime selection explicit through settings/env vars:
-  - render target mode
-  - synchronization backend
-  - descriptor backend
-  - program binding backend
-  - foveation/VRS backend
-  - ray-tracing backend
-- [x] **12.5** Add startup reporting for every capability in the Modern Vulkan Capability Matrix.
-- [x] **12.6** Report each capability as: unavailable, available-disabled, enabled-unused, enabled-active, or explicitly-required-missing.
-- [x] **12.7** Include Vulkan API version, extension name, feature bit, relevant properties/limits, runtime mode, and fallback reason in capability diagnostics.
-- [x] **12.8** Add tests/source checks that every optional extension in `Extensions.cs` is represented in the startup capability snapshot.
-- [x] **12.9** Make explicitly requested modern backends fail visibly when unsupported; do not silently use legacy paths for required modern modes.
-
-## Phase 13 - Descriptor Binding Modernization
-
-The current production path is descriptor sets plus descriptor indexing. Keep that path as the fallback while adding a profile-gated modern backend. `VK_EXT_descriptor_buffer` is not the long-term target because Khronos marks it deprecated by `VK_EXT_descriptor_heap`.
-
-Descriptor heap research update (2026-07-01):
-
-- `VK_EXT_descriptor_heap` replaces the descriptor-set/pool/layout model on the heap-backed path with explicit descriptor memory: one resource heap and one sampler heap are bound for shader access.
-- Heap storage is buffer-backed and must be planned like a GPU-visible resource: size/alignment limits, descriptor sizes, device addresses, residency, and capture/replay behavior need startup reporting.
-- Descriptor updates should use `vkWriteResourceDescriptorsEXT` and `vkWriteSamplerDescriptorsEXT` for resource/sampler payloads, with host-visible direct writes or staged GPU copies according to memory placement.
-- Draw/dispatch binding uses `vkCmdBindResourceHeapEXT` and `vkCmdBindSamplerHeapEXT`; heap-backed push data uses `vkCmdPushDataEXT` / `VkPushDataInfoEXT`.
-- Legacy `set`/`binding` shaders can migrate through `VkShaderDescriptorSetAndBindingMappingInfoEXT`; native heap shaders should use `SPV_EXT_descriptor_heap`.
-- Secondary command buffers need `CommandBufferInheritanceDescriptorHeapInfoEXT` so inherited heap state is explicit.
-- `VK_EXT_descriptor_buffer` should be kept out of the primary architecture unless driver coverage forces a temporary comparison path.
-
-- [x] **13.1** Add a renderer-level descriptor backend enum:
-  - `DescriptorSets`
-  - `DescriptorIndexing`
-  - `DescriptorHeap`
-- [x] **13.2** Add capability query and startup reporting for `VK_EXT_descriptor_heap`.
-- [x] **13.3** Add dependency checks for descriptor heap:
-  - `VK_KHR_extended_flags` or `VK_KHR_maintenance5`
-  - `VK_KHR_buffer_device_address` or Vulkan 1.2
-  - Vulkan 1.4 shortcut when available
-  - `VK_KHR_shader_untyped_pointers` as the shader-side dependency currently exposed by the extension
-- [x] **13.4** Add descriptor heap properties reporting:
-  - resource heap size/alignment limits
-  - sampler heap size/alignment limits
-  - descriptor sizes per resource type
-  - capture/replay support
-- [x] **13.5** Add one resource heap and one sampler heap allocator.
-- [x] **13.6** Allocate heap storage with `VK_BUFFER_USAGE_DESCRIPTOR_HEAP_BIT_EXT` and `VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT`.
-- [ ] **13.7** Add descriptor write path using:
-  - `vkWriteResourceDescriptorsEXT`
-  - `vkWriteSamplerDescriptorsEXT`
-  - direct mapped writes where host-visible
-  - staged GPU copy where not host-visible
-- Phase 13 source state: wrappers for direct host-visible writes are implemented and material, mesh, compute, and ImGui descriptor payload generation now use them. Non-host-visible staged-copy placement remains open.
-- [x] **13.8** Bind heaps through `vkCmdBindResourceHeapEXT` and `vkCmdBindSamplerHeapEXT`.
-- [ ] **13.9** Replace push-constant assumptions in heap-backed shaders with `vkCmdPushDataEXT` / `VkPushDataInfoEXT` where needed.
-- Phase 13 source state: descriptor heap index payloads use `vkCmdPushDataEXT`, and heap state is rebound after legacy push constants invalidate heap state. Full shader-side replacement of existing engine push constants with push-data constants remains open.
-- [x] **13.10** Add legacy shader mapping through `VkShaderDescriptorSetAndBindingMappingInfoEXT` so existing `set`/`binding` SPIR-V can run during migration.
-- Phase 13 source state: `VkRenderProgram` attaches heap mappings to graphics and compute shader stages, ImGui attaches its fragment mapping, and heap pipelines set the descriptor-heap pipeline-create flag.
-- [x] **13.11** Add secondary command-buffer inheritance support with `CommandBufferInheritanceDescriptorHeapInfoEXT`.
-- [ ] **13.12** Add descriptor heap diagnostics:
-  - heap capacity and residency
-  - descriptor allocation high-water marks
-  - per-frame descriptor write/copy counts
-  - missing mapping failures
-  - fallback reason
-- Phase 13 source state: startup capability/allocation diagnostics, high-water counters, bind/write counters, active/fallback backend reason, and per-binding heap write failure diagnostics are implemented. Per-frame copy counts, residency reporting, and validation-layer evidence remain open.
-- [ ] **13.13** Validate material textures, storage images, SSBOs, UBOs, texel buffers, immutable samplers, and acceleration structures under descriptor heap.
-- [x] **13.14** Add a migration note that `VK_EXT_descriptor_buffer` should be evaluated only as a temporary compatibility/backend-comparison path, not the primary v1 architecture.
-
-## Phase 14 - Shader Object Program Binding
-
-Shader objects are a separate backend from descriptor heap, but the two should be designed together because descriptor heap removes pipeline layouts and shader objects remove monolithic pipeline objects.
-
-- [ ] **14.1** Add runtime capability query for `VK_EXT_shader_object`.
-- [ ] **14.2** Add a program binding backend enum:
-  - `PipelineObjects`
-  - `ShaderObjectsNative`
-  - `ShaderObjectsLayer`
-- [ ] **14.3** Gate `ShaderObjectsNative` on native driver support, not only the emulation layer.
-- [ ] **14.4** Keep `ShaderObjectsLayer` as coverage/iteration only; do not count it as a shipping hitch/permutation win.
-- [ ] **14.5** Add `VkShaderEXT` artifact cache keyed by shader source, entry point, specialization constants, stage, and required dynamic-state feature set.
-- [ ] **14.6** Emit dynamic fixed-function state required by shader objects:
-  - vertex input
-  - primitive topology and restart
-  - viewport/scissor count
-  - rasterization state
-  - depth/stencil state
-  - color blend/write state
-  - multisample state
-  - fragment shading rate / density map state when active
-- [ ] **14.7** Validate shader objects with dynamic rendering, graphics pipeline library fallback, descriptor indexing fallback, and descriptor heap.
-- [ ] **14.8** Add hot-reload validation that shader-object rebuilds do not invalidate unrelated material/resource bindings.
-
-## Phase 15 - XR Foveation And Variable Rate Shading
-
-- [ ] **15.1** Add capability query/reporting for `VK_KHR_fragment_shading_rate`.
-- [ ] **15.2** Query and report fragment shading rate properties and attachment texel-size limits.
-- [ ] **15.3** Add render-target planner support for fragment shading rate attachments in dynamic rendering.
-- [ ] **15.4** Add dynamic state / pipeline state wiring for pipeline, primitive, and attachment shading-rate modes.
-- [ ] **15.5** Add OpenVR/OpenXR foveation policy hooks so VRS is driven by headset/runtime data where available.
-- [ ] **15.6** Add capability query/reporting for `VK_EXT_fragment_density_map`.
-- [ ] **15.7** Add dynamic-rendering fragment density map attachment support if the XR runtime/device mix justifies it.
-- [ ] **15.8** Validate foveation visually:
-  - center clarity
-  - periphery stability
-  - stereo mismatch
-  - UI/text readability
-  - motion artifacts
-- [ ] **15.9** Measure frame pacing and fragment workload savings versus quality loss.
-
-## Phase 16 - Memory, Residency, And Transient Attachments
-
-- [ ] **16.1** Add `VK_EXT_memory_budget` query/reporting.
-- [ ] **16.2** Add `VK_EXT_memory_priority` query/reporting if driver coverage makes it useful.
-- [ ] **16.3** Add memory heap/type budget reporting to startup and per-run logs.
-- [ ] **16.4** Connect memory-budget data to VMA/allocator residency diagnostics.
-- [x] **16.5** Add explicit transient/lazily allocated attachment policy for temporary color/depth targets.
-- [ ] **16.6** Validate transient attachments with dynamic rendering, resize, bloom/downsample, shadow maps, and capture targets.
-- [ ] **16.7** Keep GPU-required allocation paths visible: if a transient/lazy policy is explicitly requested and unsupported, fail or warn loudly according to profile policy.
-
-## Phase 17 - Ray Tracing And GI Extension Plumbing
-
-Most ray-tracing feature work belongs to the ReSTIR/radiance-cache todos, but the dynamic-rendering/descriptor modernization work must not paint the binding model into a corner.
-
-- [ ] **17.1** Share capability reporting for:
-  - `VK_KHR_acceleration_structure`
-  - `VK_KHR_ray_tracing_pipeline`
-  - `VK_KHR_ray_query`
-  - `VK_KHR_deferred_host_operations`
-  - `VK_KHR_buffer_device_address`
-  - descriptor indexing / descriptor heap
-- [ ] **17.2** Make descriptor heap support acceleration-structure descriptors before enabling heap-backed ray tracing.
-- [ ] **17.3** Validate ray query and ray tracing pipeline descriptor compatibility with material/resource table plans.
-- [ ] **17.4** Keep ray-tracing backend selection independent from dynamic rendering target mode.
-
-## Phase 18 - GPU-Driven Follow-Ups
-
-- [ ] **18.1** Add capability reporting for `VK_EXT_device_generated_commands` without enabling a runtime path yet.
-- [ ] **18.2** Defer device-generated command implementation until descriptor heap, shader objects, and GPU scene/material table contracts are stable.
-- [ ] **18.3** Continue validating `VK_KHR_draw_indirect_count` and `VK_EXT_mesh_shader` as the current GPU-driven production path.
-- [ ] **18.4** Ensure every GPU-driven fallback path reports whether the missing capability was optional, profile-required, or explicitly requested.
-
-## Validation Checklist (Remaining)
-
-Static validation (no unintended `CreateRenderPass` / `CreateFramebuffer` / `CmdBeginRenderPass` in the dynamic path, `PipelineRenderingCreateInfo` always present, attachment-format keys, legacy isolation, resolve mapping, swapchain pseudo-resource barriers, transient attachment policy, and multiview contracts) is complete and verified by focused source tests.
-
-### Build And Unit Tests
-
-- [x] Run targeted dynamic-rendering source tests:
+Status: Core source migration complete; runtime promotion and modern-backend follow-ups remain
+Target Branch: intentionally skipped; user requested not to create a separate migration branch
+
+## Scope And Tracker Ownership
+
+This document contains only work that remains after auditing the current source tree. Completed migration history is available through Git and is not repeated here.
+
+This is one of two active Vulkan todo documents:
+
+- This document owns dynamic-rendering parity and promotion, allocation cleanup specific to the dynamic target path, dynamic-rendering local read, descriptor-heap completion, shader objects, Vulkan XR foveation, and compatibility checks for modern GPU-driven/ray-tracing consumers.
+- [Vulkan Core Hardening And Device Loss Todo](vulkan-core-hardening-and-device-loss-todo.md) exclusively owns synchronization/layout remediation, acquire/present recovery, resource lifetime and retirement, device-loss behavior, OpenXR submit lifecycle, memory-pressure/TDR policy, fault injection, validation-toolchain upgrades, and the current Phase 5.1 validation gate.
+
+Do not duplicate core-hardening implementation tasks here. Dynamic-rendering promotion depends on that todo's Phase 5.1 acceptance gate becoming clean.
+
+## Current Source Baseline
+
+The July 9 source audit confirms:
+
+- `Auto` selects dynamic rendering when supported, explicit legacy mode remains available, and explicitly requested unsupported dynamic rendering fails during logical-device initialization.
+- Swapchain, generic FBO, resolve, multiview, secondary-command-buffer, local-read plumbing, and pipeline compatibility all use shared dynamic-rendering plans. The legacy `VkRenderPass` / `VkFramebuffer` path remains mode-gated.
+- The generic FBO path covers multiple color attachments, depth/stencil variants, mips/layers, shadows, bloom, cubemap and texture-array capture, and Vulkan VR mirror targets.
+- Descriptor heap already has capability/dependency reporting, native command loading, host-visible sampler/resource writes, heap binding/inheritance, legacy set/binding mapping, push-data index payloads, and material/mesh/compute/ImGui integration.
+- Shader objects, fragment shading rate, fragment density maps, memory budget/priority, ray tracing, and device-generated commands are already queried and represented in startup capability reporting. Their production backends are not implied by capability reporting.
+- The July 9 core-hardening runs produced coherent camera-dependent Vulkan output, exercised OpenXR stereo, desktop mirror composition, a startup light-probe capture, and repeated resize stress without device loss. They did not satisfy clean sync-validation acceptance, so they are evidence of path viability rather than final dynamic-rendering promotion.
+- A 2026-07-09 focused run executed 28 `VulkanDynamicRenderingMigrationTests`: 23 passed and five stale source-contract/path/token assertions failed:
+  - `DynamicCommandRecording_UsesDynamicRenderingAndKeepsLegacyCallsModeGated`
+  - `StereoAoAndBloomPasses_UseActiveCommandStateAndFramebufferUvSampling`
+  - `BarrierPlanner_TracksSwapchainPseudoResourceWithoutPhysicalImageGroup`
+  - `SynchronousDepthReadback_UsesBoundFramebufferBeforeSwapchainFallback`
+  - `FboDepthStencilMetadata_PreservesStencilForOnTopAndPostProcessPasses`
+- That build also encountered the active editor's lock on `Build\Editor\Debug\AnyCPU\Debug\net10.0-windows7.0\XREngine.dll` (`dotnet.exe`, PID 53492).
+
+## 1. Dynamic Rendering Promotion Gate
+
+### 1.1 Remove Remaining Hot-Path Allocations
+
+- [ ] Replace the `Format[]` storage in `DynamicRenderingFormatSignature` with bounded inline/value storage or another allocation-free representation.
+- [ ] Remove `ReadOnlySpan<T>.ToArray()` and `new Format[...]` from dynamic signature construction in `VulkanRenderTargetMode.cs`.
+- [ ] Verify command recording, target planning, secondary inheritance, pipeline lookup, and draw submission introduce no per-frame or per-draw heap allocations for dynamic-rendering identity.
+- [ ] Keep diagnostic string construction behind existing trace/throttle gates rather than the normal recording path.
+
+### 1.2 Complete Runtime Parity After Core Phase 5.1
+
+- [ ] After the core-hardening Phase 5.1 remediation gate passes, run default editor and Unit Testing World startup with `XRE_VK_RENDER_TARGET_MODE=DynamicRendering` under current Vulkan validation layers.
+- [ ] Run the same default editor and Unit Testing World scenarios with `XRE_VK_RENDER_TARGET_MODE=LegacyRenderPass`; confirm the retained `_renderPass` / `_renderPassLoad` path still records and presents correctly.
+- [ ] Exercise both `DefaultRenderPipeline` and `DefaultRenderPipeline2`, including:
+  - [ ] deferred GBuffer writes and forward depth reuse,
+  - [ ] transparent/weighted blended OIT,
+  - [ ] compute and blit interruptions followed by graphics-scope re-entry,
+  - [ ] bloom/downsample/upsample,
+  - [ ] shadow targets,
+  - [ ] forced diagnostic output,
+  - [ ] pipeline rebuild and material shader invalidation.
+- [ ] Exercise attachment variants through the generic FBO path:
+  - [ ] multiple color attachments,
+  - [ ] depth-only, depth/stencil, stencil-only, and read-only depth/stencil,
+  - [ ] mip-level, array-layer, cubemap-face, and texture-array targets,
+  - [ ] multisample resolve targets,
+  - [ ] transient attachment-only targets.
+- [ ] Validate swapchain resize, minimize/restore, and recreation without stale command-buffer, image, or image-view reuse. Lifetime/remediation fixes remain owned by the core-hardening todo.
+- [ ] Validate ImGui and dynamic UI-text secondary command buffers in dynamic mode, including correct inherited formats, samples, and view mask.
+- [ ] Validate stereo/multiview, OpenVR mirror, and OpenXR Vulkan target paths. Reuse the core-hardening smoke harness, but record dynamic-rendering-specific results separately.
+
+### 1.3 Visual And Performance Parity
+
+- [ ] Compare dynamic and explicit legacy output for the same scenes and camera views; verify no black frame, stale-frame flash, lost GBuffer color/depth, forward-depth rejection, missing ImGui, bloom extent mismatch, or shadow layer corruption.
+- [ ] Verify pipeline cache misses trend toward zero after warmup and that dynamic compatibility keys do not create attachment-format/view-mask permutation explosions.
+- [ ] Verify redundant barriers are not emitted when tracked state is already compatible. Correctness changes to barrier planning remain in the core-hardening todo.
+- [ ] Measure frame pacing against explicit legacy mode and document any material regression with an explained tolerance.
+
+### 1.4 Promotion Validation
+
+- [ ] Run the focused dynamic-rendering suite from a freshly built test assembly:
 
   ```powershell
   dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj --no-restore
-  dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-build --filter VulkanDynamicRenderingMigrationTests
-  dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-build --filter "FullyQualifiedName~XREngine.UnitTests.Rendering.VulkanCommandChainDataModelTests.VulkanDynamicRenderingMultiviewContracts_PropagateViewMaskAcrossBeginInheritanceAndPipeline"
+  dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter VulkanDynamicRenderingMigrationTests
+  dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~XREngine.UnitTests.Rendering.VulkanCommandChainDataModelTests.VulkanDynamicRenderingMultiviewContracts_PropagateViewMaskAcrossBeginInheritanceAndPipeline"
   ```
 
-  2026-07-01 note: runtime-rendering build succeeded with 0 errors and existing Magick.NET advisory warnings. A rebuilt unit-test run was blocked by `.NET Host (16628)` locking `Build\Editor\Debug\AnyCPU\Debug\net10.0-windows7.0\*.dll`; the focused source tests were rerun with `--no-build` and passed: `VulkanDynamicRenderingMigrationTests` 19/19, multiview command-chain contract 1/1.
-
-- [ ] Run broader Vulkan tests:
+- [ ] Fix or retire stale source-path/token contracts, then run the broader Vulkan test filter:
 
   ```powershell
   dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter Vulkan
   ```
 
-  2026-06-09 note: `--filter VulkanDynamicRenderingMigrationTests` passed 3/3. A broader Vulkan-focused filter passed 59 tests and failed 10 stale source-path assertions that still look under `XRENGINE\Rendering\API\Rendering\Vulkan\...` instead of `XREngine.Runtime.Rendering\Rendering\API\Rendering\Vulkan\...`. Fix the stale source-path assertions before relying on the broad filter.
+- [ ] Before final promotion, run `dotnet restore`, `dotnet build XRENGINE.slnx`, and the full unit-test project.
+- [ ] Create or update a dynamic-rendering promotion investigation under `docs/work/investigations/rendering/` with exact commands, hardware/runtime/layer versions, screenshots from at least two camera positions, log paths, VUID/message counts, frame pacing, and pipeline-cache results.
 
-  2026-06-18 note: `--filter VulkanDynamicRenderingMigrationTests --no-restore` did not reach test execution because `Build\Editor\Debug\AnyCPU\Debug\net10.0-windows7.0\XREngine.dll` was locked first by `.NET Host (11020)` and then by `.NET Host (29760)`. A pre-fix `--no-build` run executed the existing test assembly and reported 4/9 passing with 5 stale source/assertion failures; the stale checks were updated in `VulkanDynamicRenderingMigrationTests.cs`, but rebuilt execution remains pending until the editor output DLL is unlocked.
+## 2. Dynamic Rendering Local Read
 
-- [ ] Before final promotion, run:
+The capability query, Vulkan 1.4/KHR layout mapping, pNext structures, and dormant `DynamicRenderingLocalReadPlan` are already implemented. No current pass emits a non-empty plan.
 
-  ```powershell
-  dotnet restore
-  dotnet build XRENGINE.slnx
-  dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj
-  ```
+- [ ] Select one real tiled-deferred or VR pass whose attachment-local reads remove a measurable bandwidth/pass cost; if no such pass is justified, document that result and keep local read dormant.
+- [ ] For an adopted pass, emit a non-empty attachment-location/input-index plan and exact local-read barriers without changing unrelated passes.
+- [ ] Validate color, depth/stencil, single-sample, and multisample use only against the queried local-read feature/property subset.
+- [ ] Compare correctness and performance against the existing sampled-attachment path before considering local read for a required capability tier.
 
-### Runtime Scenarios
+## 3. Descriptor Heap Completion
 
-- [ ] Run editor default startup in dynamic mode with validation layers.
-- [ ] Run editor `--unit-testing` in dynamic mode with validation layers.
-- [ ] Run editor default startup in explicit legacy mode with validation layers.
-- [ ] Run editor `--unit-testing` in explicit legacy mode with validation layers.
-- [ ] Resize and recreate the swapchain repeatedly.
-- [ ] Validate deferred scene with GBuffer writes.
-- [ ] Validate forward scene with depth read from deferred prepass.
-- [ ] Validate transparent/weighted blended OIT pass.
-- [ ] Validate bloom/downsample/upsample.
-- [ ] Validate shadow map rendering.
-- [ ] Validate cubemap capture.
-- [ ] Validate texture-array capture.
-- [ ] Validate ImGui overlay.
-- [ ] Validate compute pass between graphics passes.
-- [ ] Validate blit pass between graphics passes.
-- [ ] Validate forced magenta diagnostic path.
-- [ ] Validate pipeline rebuild / material shader invalidation.
-- [ ] Validate VR mirror path if Vulkan mirror rendering is active.
+Descriptor indexing remains the production fallback. Do not build a new long-term backend on deprecated `VK_EXT_descriptor_buffer`.
 
-### Visual Criteria
+- [ ] Add staged GPU-copy updates for non-host-visible descriptor-heap placement, with explicit copy synchronization and per-frame copy counts.
+- [ ] Add native `SPV_EXT_descriptor_heap` shader variants so the final heap path does not depend entirely on legacy set/binding mapping.
+- [ ] Finish shader-side push-data migration where existing engine push constants still assume pipeline-layout semantics; preserve unrelated user push constants where appropriate.
+- [ ] Add acceleration-structure descriptor writes before allowing descriptor-heap-backed ray tracing.
+- [ ] Complete diagnostics for heap residency, capacity/high-water marks, allocation failure, per-frame writes/copies, missing mappings, and denied fallback. Keep high-frequency counters allocation-free.
+- [ ] Validate descriptor-indexing and descriptor-heap parity for:
+  - [ ] material and ImGui textures,
+  - [ ] sampled/storage images,
+  - [ ] UBOs and SSBOs,
+  - [ ] texel buffers,
+  - [ ] mutable and immutable samplers,
+  - [ ] graphics and compute dispatch,
+  - [ ] secondary command buffers,
+  - [ ] acceleration structures after support lands.
+- [ ] Verify descriptor heap does not regress hot reload, material invalidation, command-buffer reuse, or per-draw allocation behavior.
+- [ ] Decide, from driver coverage and parity evidence, whether descriptor heap is a preferred optional backend or the required v1 Vulkan binding architecture; keep explicit requests failure-visible either way.
 
-- [ ] No black frame.
-- [ ] No stale-frame flash after resize.
-- [ ] No lost GBuffer color content.
-- [ ] No lost GBuffer depth content.
-- [ ] No forward pass depth rejection caused by discarded depth.
-- [ ] No bloom mip size mismatch.
-- [ ] No missing ImGui.
-- [ ] No shadow atlas/layer corruption.
-- [ ] No presentation layout validation error.
-- [ ] Dynamic and legacy modes produce visually comparable output for the same scene.
+## 4. Shader Object Program Binding
 
-### Performance Criteria
+`VK_EXT_shader_object` feature/property querying, capability reporting, strict unsupported-request failure, and `EVulkanProgramBindingBackend` already exist. Pipeline objects remain the only implemented backend.
 
-- [ ] No new per-draw heap allocations.
-- [ ] No LINQ in command recording or target planning hot paths.
-- [ ] No per-frame render target dictionary rebuild when target identity is unchanged.
-- [ ] No pipeline explosion from missing attachment-key fields.
-- [ ] Pipeline cache miss summary trends toward zero after warmup.
-- [ ] No extra `CmdPipelineBarrier` spam when layout is already correct.
-- [ ] Dynamic mode does not regress frame pacing versus legacy mode beyond an explained tolerance.
+- [ ] Capture the design's decision-gate baseline on at least one native shader-object GPU and one GPL-only GPU: cold/warm creation time, permutation count, prewarm size, cache misses, and hot-reload time.
+- [ ] Record a go/no-go decision before building a permanent second program-binding backend.
+- [ ] If proceeding, distinguish native shader objects from any deliberately packaged emulation/layer mode in `EVulkanProgramBindingBackend`; never count layer results as native performance coverage.
+- [ ] Enable/load the required shader-object device feature and commands only when the selected backend is supported.
+- [ ] Add a `VkShaderEXT` artifact cache keyed by source/binary identity, entry point, specialization constants, stage, linkage, and required dynamic-state capabilities.
+- [ ] Emit and track all fixed-function dynamic state required by the active shader stages: vertex input, topology/restart, viewport/scissor, rasterization, depth/stencil, blend/write, multisample, and active foveation state.
+- [ ] Fully invalidate dynamic-state tracking when a command buffer switches between `vkCmdBindPipeline` and `vkCmdBindShadersEXT`; count and minimize mixed-mode transitions.
+- [ ] Validate dynamic-rendering parity with pipeline objects across default pipelines, ImGui, compute, mesh/task paths, hot reload, descriptor indexing, and descriptor heap.
+- [ ] Keep GPL/pipeline objects available until shader-object parity and the decision-gate metrics justify a different default.
 
-### Modern Extension Validation
+## 5. Vulkan XR Foveation
 
-- [x] Startup capability snapshot includes every extension/API in the Modern Vulkan Capability Matrix.
-- [x] Explicitly requested dynamic rendering, Sync2, descriptor heap, shader object, VRS, and ray-tracing modes fail visibly when unsupported.
-- [ ] Descriptor indexing path still works after descriptor backend abstraction lands.
-- [ ] Descriptor heap path renders the same material/texture/storage-buffer scenarios as descriptor indexing.
-- [ ] Shader object path renders the same dynamic rendering targets as the pipeline-object path.
-- [ ] Shader object path does not regress hot reload or material shader invalidation.
-- [ ] Fragment shading rate path improves or preserves frame pacing within documented quality thresholds.
-- [ ] Fragment density map path is enabled only when it has a validated XR/runtime use case.
-- [ ] Memory budget reporting agrees with driver-reported heap/type data and allocator residency state.
-- [ ] Ray-tracing capability reporting agrees with the ReSTIR/radiance-cache todo requirements.
+Feature queries/reporting and the engine/OpenXR foveation policy and attachment intent already exist. Vulkan attachment creation and command recording do not yet consume that intent.
 
-## Diagnostics To Add Or Update
+- [ ] Query and report fragment-shading-rate properties and attachment texel-size/combiner limits, not only feature bits.
+- [ ] Connect the existing `VrFoveation` plan and `EVrFoveationAttachmentKind` to Vulkan render-target planning and dynamic-rendering scopes.
+- [ ] Implement fragment-shading-rate attachment creation, layout transitions, inheritance, and pipeline/dynamic-state commands for supported pipeline, primitive, and attachment modes.
+- [ ] Add OpenVR/OpenXR per-view policy input without inferring a headset/runtime capability from Vulkan support alone.
+- [ ] Implement fragment-density-map dynamic-rendering attachment support only if the target runtime/device matrix shows a real advantage or required compatibility case.
+- [ ] Validate center clarity, peripheral stability, stereo consistency, UI/text readability, motion artifacts, frame pacing, and fragment-work reduction.
+- [ ] Keep explicit unsupported foveation requests failure-visible and leave foveation off by default until visual/performance acceptance is recorded.
 
-- [ ] `Vulkan.DynamicRendering.Scope.Begin`
-- [ ] `Vulkan.DynamicRendering.Scope.End`
-- [ ] `Vulkan.DynamicRendering.AttachmentPlan`
-- [ ] `Vulkan.DynamicRendering.LayoutMismatch`
-- [ ] `Vulkan.DynamicRendering.UnsupportedAttachment`
-- [ ] `Vulkan.DynamicRendering.PresentTransitions`
-- [ ] `Vulkan.RenderTargetMode`
-- [ ] `Vulkan.RenderTargetMode.Fallback`
-- [ ] `Vulkan.Pipeline.AttachmentSignature`
-- [ ] `Vulkan.Capability.<Name>`
-- [ ] `Vulkan.Sync.Backend`
-- [ ] `Vulkan.DescriptorBackend`
-- [ ] `Vulkan.DescriptorHeap.Capability`
-- [ ] `Vulkan.DescriptorHeap.Allocation`
-- [ ] `Vulkan.DescriptorHeap.Write`
-- [ ] `Vulkan.DescriptorHeap.Bind`
-- [ ] `Vulkan.DescriptorHeap.FallbackDenied`
-- [ ] `Vulkan.ShaderObject.Capability`
-- [ ] `Vulkan.ShaderObject.Create`
-- [ ] `Vulkan.ShaderObject.Bind`
-- [ ] `Vulkan.ShaderObject.MissingDynamicState`
-- [ ] `Vulkan.ShaderObject.FallbackDenied`
-- [ ] `Vulkan.Foveation.FragmentShadingRate`
-- [ ] `Vulkan.Foveation.FragmentDensityMap`
-- [ ] `Vulkan.MemoryBudget`
-- [ ] `Vulkan.RayTracing.Capability`
-- [ ] `Vulkan.GpuDriven.DeviceGeneratedCommands`
+## 6. Transient, GPU-Driven, And Ray-Tracing Compatibility
 
-Each diagnostic should include the relevant subset of:
+Memory-budget/residency admission policy belongs to the core-hardening todo. Capability reporting for memory budget/priority, ray tracing, and device-generated commands is already present.
 
-- pass index and pass name
-- target name
-- runtime rendering mode
-- attachment role/index
-- image handle
-- image view handle
-- mip level and layer
-- old/render/final layouts
-- load/store ops
-- color/depth/stencil formats
-- sample count
-- view mask
-- Vulkan API version
-- extension name
-- feature/property name and value
-- selected backend
-- requested backend
-- fallback reason
+- [ ] Validate transient attachment behavior on hardware with and without lazily allocated memory across resize, bloom, shadows, capture, and dynamic/legacy parity.
+- [ ] Validate `VK_KHR_draw_indirect_count` and `VK_EXT_mesh_shader` production paths under dynamic rendering with both descriptor-indexing and descriptor-heap binding.
+- [ ] Make every GPU-driven fallback identify whether the capability was optional, profile-required, or explicitly requested.
+- [ ] Validate ray-query/ray-tracing descriptor compatibility with the shared material/resource model after acceleration-structure heap descriptors exist.
 
-Keep high-frequency logs behind existing throttles or explicit trace flags.
+Do not implement `VK_EXT_device_generated_commands` until descriptor heap, shader objects, and GPU scene/material-table contracts are stable.
 
-## Files Expected To Change (Remaining)
+## Final Acceptance
 
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanBarrierPlanner.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderGraphCompiler.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLayoutCache.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorUpdateTemplates.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorPool.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorSetLayout.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorSets.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Memory/VulkanVmaAllocator.cs`
-- [x] new descriptor heap backend files under `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/`
-- [ ] new shader object backend files under `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/`
-- [ ] new VRS/foveation capability files under `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/`
-- [x] relevant unit tests under `XREngine.UnitTests/Rendering/`
-- [x] relevant docs under `docs/work/design/rendering/` and `docs/work/todo/rendering/`
+- [ ] The core-hardening Phase 5.1 gate is clean for the dynamic-rendering promotion scenarios; this document does not waive or duplicate its VUID acceptance criteria.
+- [ ] Default editor and Unit Testing World render correctly in explicit dynamic and explicit legacy modes under current validation layers.
+- [ ] Dynamic rendering covers swapchain, generic FBO, secondary, resolve, multiview/stereo, capture, shadow, bloom, ImGui, compute/blit re-entry, and VR mirror targets without mode-specific visual regressions.
+- [ ] Dynamic-rendering command recording and compatibility-key construction are allocation-free in per-frame/per-draw hot paths.
+- [ ] Pipeline-cache behavior and frame pacing meet the recorded promotion thresholds.
+- [ ] The promotion investigation and PR notes state what changed, why, validation performed, hardware/runtime coverage, remaining optional modern backends, risks, and follow-ups.
 
-Already-changed files (`CommandBuffers.cs`, `LogicalDevice.cs`, `VkFrameBuffer.cs`, `VkMeshRenderer.Pipeline.cs`, `VkMeshRenderer.Drawing.cs`, `VulkanRenderTargetMode.cs`, `VulkanPipelinePrewarmDatabase.cs`, `VulkanRenderer.ImGui.cs`, the Vulkan unit tests, and the architecture/todo docs) plus the runtime-mode-isolated legacy files (`RenderPasses.cs`, `FrameBuffers.cs`, `FrameBufferRenderPasses.cs`) are complete.
+## Design And Evidence
 
-## Risks To Track
-
-- [ ] Lost implicit layout transitions.
-- [ ] FBO re-entry clears preserved contents.
-- [ ] Dynamic pipeline key omits attachment compatibility.
-- [ ] Legacy pipeline key accidentally stops including render-pass compatibility.
-- [ ] Mip/layer FBO extents regress.
-- [ ] Depth read-only passes write depth accidentally.
-- [ ] Secondary command buffers inherit stale render-pass info.
-- [ ] Resolve attachment behavior diverges.
-- [ ] Unsupported dynamic rendering falls back without a visible reason.
-- [ ] Terminology confusion between engine render passes and Vulkan `VkRenderPass`.
-- [ ] Descriptor heap backend diverges from descriptor indexing material binding semantics.
-- [ ] Descriptor heap capacity fragmentation causes intermittent missing descriptors.
-- [ ] Descriptor heap shader mapping masks broken legacy set/binding declarations.
-- [ ] Descriptor buffer work accidentally becomes the new long-term backend despite descriptor heap superseding it.
-- [ ] Shader object path misses fixed-function dynamic state that pipeline objects previously baked.
-- [ ] Shader object emulation layer is mistaken for native-driver performance coverage.
-- [ ] Fragment shading rate or density map reduces UI/text legibility in VR.
-- [ ] Memory budget data is logged but not connected to allocator decisions.
-- [ ] Ray-tracing descriptor requirements conflict with material table or descriptor heap layout.
-- [ ] Device-generated commands are implemented before the binding/program backends are stable.
-
-## Open Questions
-
-- [ ] Should explicit dynamic mode fail at initialization or only when the first graphics target is used?
-- [ ] Should dynamic rendering local read become part of a future required Vulkan 1.4 tier?
-- [ ] How much of `VkFrameBuffer` should survive as a Vulkan-specific attachment-view cache versus moving into a renderer-level target cache?
-- [ ] Should render graph metadata become the only source of load/store behavior, or should `XRFrameBuffer` keep explicit overrides for hand-authored target flows?
-- [ ] Should source files be renamed away from "RenderPass" after dynamic mode is default, even though the legacy path is retained?
-- [ ] Should descriptor heap become the only v1 Vulkan binding architecture when supported, with descriptor indexing as fallback?
-- [ ] Should descriptor buffer be skipped entirely unless driver coverage makes descriptor heap impractical?
-- [ ] Should shader objects and descriptor heap ship together, or should descriptor heap land first under pipeline objects?
-- [ ] Which Vulkan 1.4 features are worth requiring for the editor versus optional for clients/VR?
-- [ ] Should foveation choose fragment shading rate first and fragment density map only for runtimes/devices where it is clearly better?
-- [ ] Should ray tracing share the same descriptor heap global resource model from day one?
-
-## Final Promotion (Remaining)
-
-- [ ] **F.1** Confirm every acceptance criterion below is satisfied.
-- [ ] **F.2** Update PR notes with what changed, why, validation performed, risks, and follow-ups.
-
-Acceptance criteria still open:
-
-- [ ] Unit Testing World and default editor startup render correctly in dynamic mode under Vulkan validation.
-- [ ] Unit Testing World and default editor startup render correctly in explicit legacy mode under Vulkan validation.
-
-Acceptance criteria already satisfied (kept for reference):
-
-- Dynamic rendering is the default in `Auto` mode when supported; explicit legacy still renders through the retained `VkRenderPass` / `VkFramebuffer` path; explicit dynamic fails visibly when unsupported.
-- All dynamic-path graphics recording uses `CmdBeginRendering` / `CmdEndRendering` and all dynamic-path pipelines use `PipelineRenderingCreateInfo`.
-- Dynamic-path pipeline and prewarm keys exclude `VkRenderPass` / `VkFramebuffer` handles; legacy keys retain render-pass compatibility.
-- Swapchain present transition occurs exactly once per submitted dynamic frame.
-- Relevant Vulkan architecture and manual-validation docs are updated.
+- [Vulkan Dynamic Rendering Migration Design](../../design/rendering/vulkan-dynamic-rendering-migration-design.md)
+- [Vulkan Shader Object Pipeline Replacement Design](../../design/rendering/vulkan-shader-object-pipeline-replacement-design.md)
+- [Vulkan Core Hardening Phase 5 Live Validation](../../investigations/rendering/vulkan-core-hardening-phase5-live-validation-2026-07-09.md)
+- [Vulkan Core Hardening Phase 5 Validation Manifest](../../testing/rendering/vulkan-core-hardening-phase5-validation-2026-07-09.json)

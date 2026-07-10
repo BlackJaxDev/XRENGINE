@@ -29,6 +29,23 @@ namespace XREngine
                     private static long _wholeFrameTicks;
                     private static int _wholeFrameHistoryHead;
                     private static int _wholeFrameHistoryCount;
+                    private static int _sceneSnapshots;
+                    private static int _visibilityBuilds;
+                    private static int _compiledPlanCacheHits;
+                    private static int _compiledPlanCacheMisses;
+                    private static int _sharedPassReuses;
+                    private static int _recordedWorkItems;
+                    private static int _reusedWorkItems;
+                    private static int _duplicatedWorkItems;
+                    private static int _cpuBudgetDeferrals;
+                    private static int _gpuBudgetDeferrals;
+                    private static int _staleResultReuses;
+                    private static int _missedDeadlines;
+                    private static int _unapprovedPolicyEvents;
+                    private static int _submissionRejections;
+                    private static int _plannerPrunes;
+                    private static int _globalInFlightWaits;
+                    private static int _forceFlushes;
 
                     public static FrameOutputManifestSnapshot LastManifest
                     {
@@ -71,12 +88,17 @@ namespace XREngine
                                 if (kind != 0)
                                     return kind;
                                 int view = left.ViewKind.CompareTo(right.ViewKind);
-                                return view != 0 ? view : string.CompareOrdinal(left.Name, right.Name);
+                                if (view != 0)
+                                    return view;
+                                int name = string.CompareOrdinal(left.Name, right.Name);
+                                return name != 0 ? name : left.Request.OutputId.CompareTo(right.Request.OutputId);
                             });
 
                             double wholeFrameMs = StopwatchTicksToMilliseconds(Volatile.Read(ref _wholeFrameTicks));
                             FrameBudgetSnapshot budget = ResolveCurrentBudget();
                             FramePercentileSnapshot percentiles = ComputePercentilesNoLock();
+                            FrameOutputWorkSnapshot work = CaptureWorkSnapshot(outputs);
+                            ulong workloadIdentityHash = ComputeWorkloadIdentityHash(outputs);
 
                             _lastOutputs = outputs;
                             _lastManifest = new FrameOutputManifestSnapshot(
@@ -92,6 +114,8 @@ namespace XREngine
                                 percentiles.P95,
                                 percentiles.P99,
                                 percentiles.Worst,
+                                workloadIdentityHash,
+                                work,
                                 outputs);
 
                             CurrentOutputs.Clear();
@@ -116,6 +140,36 @@ namespace XREngine
                                 _wholeFrameHistoryCount++;
                         }
                     }
+
+                    public static void RecordWork(in FrameOutputWorkTelemetry telemetry)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        AddNonNegative(ref _sceneSnapshots, telemetry.SceneSnapshots);
+                        AddNonNegative(ref _visibilityBuilds, telemetry.VisibilityBuilds);
+                        AddNonNegative(ref _compiledPlanCacheHits, telemetry.CompiledPlanCacheHits);
+                        AddNonNegative(ref _compiledPlanCacheMisses, telemetry.CompiledPlanCacheMisses);
+                        AddNonNegative(ref _sharedPassReuses, telemetry.SharedPassReuses);
+                        AddNonNegative(ref _recordedWorkItems, telemetry.RecordedWorkItems);
+                        AddNonNegative(ref _reusedWorkItems, telemetry.ReusedWorkItems);
+                        AddNonNegative(ref _duplicatedWorkItems, telemetry.DuplicatedWorkItems);
+                        AddNonNegative(ref _cpuBudgetDeferrals, telemetry.CpuBudgetDeferrals);
+                        AddNonNegative(ref _gpuBudgetDeferrals, telemetry.GpuBudgetDeferrals);
+                        AddNonNegative(ref _staleResultReuses, telemetry.StaleResultReuses);
+                        AddNonNegative(ref _missedDeadlines, telemetry.MissedDeadlines);
+                        AddNonNegative(ref _unapprovedPolicyEvents, telemetry.UnapprovedPolicyEvents);
+                        AddNonNegative(ref _submissionRejections, telemetry.SubmissionRejections);
+                        AddNonNegative(ref _plannerPrunes, telemetry.PlannerPrunes);
+                        AddNonNegative(ref _globalInFlightWaits, telemetry.GlobalInFlightWaits);
+                        AddNonNegative(ref _forceFlushes, telemetry.ForceFlushes);
+                    }
+
+                    public static void RecordSceneSnapshot()
+                        => RecordWork(new FrameOutputWorkTelemetry(SceneSnapshots: 1));
+
+                    public static void RecordVisibilityBuild()
+                        => RecordWork(new FrameOutputWorkTelemetry(VisibilityBuilds: 1));
 
                     public static FrameOutputPacingDecision EvaluatePacing(
                         EVrOutputViewKind viewKind,
@@ -196,7 +250,8 @@ namespace XREngine
                         if (!EnableTracking)
                             return;
 
-                        OutputKey key = new(telemetry.OutputKind, telemetry.ViewKind, telemetry.Name ?? string.Empty);
+                        RenderOutputRequest request = ResolveRequest(telemetry);
+                        OutputKey key = new(request.OutputId, telemetry.OutputKind, telemetry.ViewKind, telemetry.Name ?? string.Empty);
                         lock (Sync)
                         {
                             if (!CurrentOutputs.TryGetValue(key, out OutputAccumulator? output))
@@ -208,7 +263,7 @@ namespace XREngine
                                 CurrentOutputs.Add(key, output);
                             }
 
-                            output.Apply(telemetry);
+                            output.Apply(telemetry, request);
                         }
                     }
 
@@ -223,7 +278,7 @@ namespace XREngine
                         float configuredTargetRateHz,
                         float sourceRateHz)
                     {
-                        OutputKey key = new(outputKind, viewKind, string.Empty);
+                        OutputKey key = new(0UL, outputKind, viewKind, string.Empty);
                         lock (Sync)
                         {
                             if (!Pacing.TryGetValue(key, out PacingAccumulator? accumulator))
@@ -242,6 +297,12 @@ namespace XREngine
                             if (total > 0 && sourceRateHz > 0.0f)
                                 achievedRateHz = sourceRateHz * (accumulator.RenderCount / (double)total);
 
+                            RenderOutputRequest request = RenderOutputRequest.CreateDefault(
+                                viewKind,
+                                outputKind,
+                                frameId,
+                                configuredTargetRateHz,
+                                sourceRateHz);
                             return new FrameOutputPacingDecision(
                                 viewKind,
                                 outputKind,
@@ -254,7 +315,8 @@ namespace XREngine
                                 sourceRateHz,
                                 achievedRateHz,
                                 accumulator.RenderCount,
-                                accumulator.SkipCount);
+                                accumulator.SkipCount,
+                                request);
                         }
                     }
 
@@ -346,7 +408,144 @@ namespace XREngine
                     private static double StopwatchTicksToMilliseconds(long ticks)
                         => ticks <= 0L ? 0.0 : ticks * 1000.0 / Stopwatch.Frequency;
 
-                    private readonly record struct OutputKey(EFrameOutputKind OutputKind, EVrOutputViewKind ViewKind, string Name);
+                    private static RenderOutputRequest ResolveRequest(in FrameOutputTelemetry telemetry)
+                    {
+                        if (telemetry.Request.IsDefined)
+                            return telemetry.Request;
+                        if (telemetry.Pacing.Request.IsDefined)
+                            return telemetry.Pacing.Request;
+                        return RenderOutputRequest.CreateDefault(
+                            telemetry.ViewKind,
+                            telemetry.OutputKind,
+                            telemetry.Pacing.FrameId,
+                            telemetry.Pacing.ConfiguredTargetRateHz,
+                            telemetry.Pacing.SourceRateHz);
+                    }
+
+                    private static void AddNonNegative(ref int field, int value)
+                    {
+                        if (value > 0)
+                            Interlocked.Add(ref field, value);
+                    }
+
+                    private static FrameOutputWorkSnapshot CaptureWorkSnapshot(FrameOutputEntrySnapshot[] outputs)
+                    {
+                        int uniqueViewFamilies = 0;
+                        int targetVariants = 0;
+                        int cpuBudgetDeferrals = Interlocked.Exchange(ref _cpuBudgetDeferrals, 0);
+                        int gpuBudgetDeferrals = Interlocked.Exchange(ref _gpuBudgetDeferrals, 0);
+                        int staleResultReuses = Interlocked.Exchange(ref _staleResultReuses, 0);
+                        int missedDeadlines = Interlocked.Exchange(ref _missedDeadlines, 0);
+                        int unapprovedPolicyEvents = Interlocked.Exchange(ref _unapprovedPolicyEvents, 0);
+                        for (int i = 0; i < outputs.Length; i++)
+                        {
+                            FrameOutputEntrySnapshot output = outputs[i];
+                            if (output.Request.ViewFamilyId != 0UL && IsFirstViewFamily(outputs, i))
+                                uniqueViewFamilies++;
+                            if (output.Request.Target.IsSpecified && IsFirstTargetVariant(outputs, i))
+                                targetVariants++;
+                            if (output.WorkDisposition == ERenderOutputWorkDisposition.Deferred)
+                            {
+                                if (output.PolicyReason == ERenderOutputPolicyReason.GpuBudget)
+                                    gpuBudgetDeferrals++;
+                                else
+                                    cpuBudgetDeferrals++;
+                            }
+                            if (output.WorkDisposition == ERenderOutputWorkDisposition.ReusedStale)
+                                staleResultReuses++;
+                            if (output.DeadlineMissed)
+                                missedDeadlines++;
+                            if (!output.PolicyAuthorized)
+                                unapprovedPolicyEvents++;
+                        }
+
+                        return new(
+                            OutputRequestCount: outputs.Length,
+                            UniqueViewFamilyCount: uniqueViewFamilies,
+                            TargetVariantCount: targetVariants,
+                            SceneSnapshotCount: Interlocked.Exchange(ref _sceneSnapshots, 0),
+                            VisibilityBuildCount: Interlocked.Exchange(ref _visibilityBuilds, 0),
+                            CompiledPlanCacheHits: Interlocked.Exchange(ref _compiledPlanCacheHits, 0),
+                            CompiledPlanCacheMisses: Interlocked.Exchange(ref _compiledPlanCacheMisses, 0),
+                            SharedPassReuseCount: Interlocked.Exchange(ref _sharedPassReuses, 0),
+                            RecordedWorkItemCount: Interlocked.Exchange(ref _recordedWorkItems, 0),
+                            ReusedWorkItemCount: Interlocked.Exchange(ref _reusedWorkItems, 0),
+                            DuplicatedWorkItemCount: Interlocked.Exchange(ref _duplicatedWorkItems, 0),
+                            CpuBudgetDeferralCount: cpuBudgetDeferrals,
+                            GpuBudgetDeferralCount: gpuBudgetDeferrals,
+                            StaleResultReuseCount: staleResultReuses,
+                            MissedDeadlineCount: missedDeadlines,
+                            UnapprovedPolicyEventCount: unapprovedPolicyEvents,
+                            SubmissionRejectionCount: Interlocked.Exchange(ref _submissionRejections, 0),
+                            PlannerPruneCount: Interlocked.Exchange(ref _plannerPrunes, 0),
+                            GlobalInFlightWaitCount: Interlocked.Exchange(ref _globalInFlightWaits, 0),
+                            ForceFlushCount: Interlocked.Exchange(ref _forceFlushes, 0));
+                    }
+
+                    private static bool IsFirstViewFamily(FrameOutputEntrySnapshot[] outputs, int index)
+                    {
+                        ulong familyId = outputs[index].Request.ViewFamilyId;
+                        for (int i = 0; i < index; i++)
+                        {
+                            if (outputs[i].Request.ViewFamilyId == familyId)
+                                return false;
+                        }
+                        return true;
+                    }
+
+                    private static bool IsFirstTargetVariant(FrameOutputEntrySnapshot[] outputs, int index)
+                    {
+                        ulong compatibilityKey = outputs[index].Request.Target.CompatibilityKey;
+                        int externalSlot = outputs[index].Request.Target.ExternalImageSlot;
+                        for (int i = 0; i < index; i++)
+                        {
+                            RenderOutputTargetDescriptor target = outputs[i].Request.Target;
+                            if (target.IsSpecified &&
+                                target.CompatibilityKey == compatibilityKey &&
+                                target.ExternalImageSlot == externalSlot)
+                            {
+                                return false;
+                            }
+                        }
+                        return true;
+                    }
+
+                    private static ulong ComputeWorkloadIdentityHash(FrameOutputEntrySnapshot[] outputs)
+                    {
+                        ulong hash = 1469598103934665603UL;
+                        AddHash(ref hash, (ulong)outputs.Length);
+                        for (int i = 0; i < outputs.Length; i++)
+                        {
+                            FrameOutputEntrySnapshot output = outputs[i];
+                            AddHash(ref hash, output.Request.OutputId);
+                            AddHash(ref hash, output.Request.ViewFamilyId);
+                            AddHash(ref hash, (ulong)output.Request.OutputKind);
+                            AddHash(ref hash, (ulong)output.Request.ViewKind);
+                            AddHash(ref hash, (ulong)output.Request.OutputClass);
+                            RenderOutputTargetDescriptor target = output.Request.Target;
+                            AddHash(ref hash, (ulong)target.TargetClass);
+                            AddHash(ref hash, target.StableTargetId);
+                            AddHash(ref hash, target.TargetGeneration);
+                            AddHash(ref hash, target.DisplayWidth);
+                            AddHash(ref hash, target.DisplayHeight);
+                            AddHash(ref hash, target.InternalWidth);
+                            AddHash(ref hash, target.InternalHeight);
+                            AddHash(ref hash, target.FormatCompatibilityKey);
+                            AddHash(ref hash, target.SampleCount);
+                            AddHash(ref hash, target.ViewMask);
+                            AddHash(ref hash, (ulong)output.Request.QualityRequirements);
+                            AddHash(ref hash, (ulong)output.Request.FallbackPolicy);
+                        }
+                        return hash;
+                    }
+
+                    private static void AddHash(ref ulong hash, ulong value)
+                    {
+                        hash ^= value;
+                        hash *= 1099511628211UL;
+                    }
+
+                    private readonly record struct OutputKey(ulong OutputId, EFrameOutputKind OutputKind, EVrOutputViewKind ViewKind, string Name);
 
                     private sealed class PacingAccumulator
                     {
@@ -389,8 +588,14 @@ namespace XREngine
                         public double OverlayCpuMs;
                         public double PresentCpuMs;
                         public double GpuMs;
+                        public RenderOutputRequest Request;
+                        public ERenderOutputWorkDisposition WorkDisposition;
+                        public uint ContentAgeFrames;
+                        public bool DeadlineMissed;
+                        public bool PolicyAuthorized = true;
+                        public ERenderOutputPolicyReason PolicyReason;
 
-                        public void Apply(in FrameOutputTelemetry telemetry)
+                        public void Apply(in FrameOutputTelemetry telemetry, in RenderOutputRequest request)
                         {
                             FrameId = telemetry.Pacing.FrameId != 0UL ? telemetry.Pacing.FrameId : FrameId;
                             if (!string.IsNullOrWhiteSpace(telemetry.PipelineName))
@@ -414,6 +619,23 @@ namespace XREngine
                             AchievedRateHz = telemetry.Pacing.AchievedRateHz > 0.0 ? telemetry.Pacing.AchievedRateHz : AchievedRateHz;
                             TotalRenderCount = Math.Max(TotalRenderCount, telemetry.Pacing.TotalRenderCount);
                             TotalSkipCount = Math.Max(TotalSkipCount, telemetry.Pacing.TotalSkipCount);
+                            Request = request;
+                            ERenderOutputWorkDisposition disposition = ResolveDisposition(telemetry);
+                            WorkDisposition = MergeDisposition(WorkDisposition, disposition);
+                            ContentAgeFrames = Math.Max(ContentAgeFrames, telemetry.ContentAgeFrames);
+                            DeadlineMissed |= telemetry.DeadlineMissed;
+                            ERenderOutputPolicyReason policyReason = telemetry.PolicyReason != ERenderOutputPolicyReason.None
+                                ? telemetry.PolicyReason
+                                : ResolvePolicyReason(telemetry.Pacing.SkipReason);
+                            if (policyReason != ERenderOutputPolicyReason.None)
+                                PolicyReason = policyReason;
+                            bool availabilitySkip = telemetry.Pacing.SkipReason is
+                                EFrameOutputSkipReason.MirrorOff or
+                                EFrameOutputSkipReason.SurfaceUnavailable or
+                                EFrameOutputSkipReason.VrGated or
+                                EFrameOutputSkipReason.Disabled;
+                            PolicyAuthorized &= telemetry.PolicyAuthorized &&
+                                (availabilitySkip || request.Allows(disposition));
                             CommandCount = Math.Max(CommandCount, telemetry.CommandCount);
                             DrawCalls += Math.Max(0, telemetry.DrawCalls);
                             MultiDrawCalls += Math.Max(0, telemetry.MultiDrawCalls);
@@ -468,6 +690,12 @@ namespace XREngine
                                 AchievedRateHz,
                                 TotalRenderCount,
                                 TotalSkipCount,
+                                Request,
+                                WorkDisposition,
+                                ContentAgeFrames,
+                                DeadlineMissed,
+                                PolicyAuthorized,
+                                PolicyReason,
                                 CommandCount,
                                 DrawCalls,
                                 MultiDrawCalls,
@@ -479,6 +707,36 @@ namespace XREngine
                                 OverlayCpuMs,
                                 PresentCpuMs,
                                 GpuMs);
+
+                        private static ERenderOutputWorkDisposition ResolveDisposition(in FrameOutputTelemetry telemetry)
+                        {
+                            if (!telemetry.Pacing.Skipped)
+                                return telemetry.WorkDisposition;
+                            return telemetry.Pacing.SkipReason switch
+                            {
+                                EFrameOutputSkipReason.HeldLastImage => ERenderOutputWorkDisposition.ReusedStale,
+                                EFrameOutputSkipReason.Cadence or EFrameOutputSkipReason.Budget => ERenderOutputWorkDisposition.Deferred,
+                                _ => ERenderOutputWorkDisposition.Skipped,
+                            };
+                        }
+
+                        private static ERenderOutputWorkDisposition MergeDisposition(
+                            ERenderOutputWorkDisposition current,
+                            ERenderOutputWorkDisposition next)
+                            => (ERenderOutputWorkDisposition)Math.Max((int)current, (int)next);
+
+                        private static ERenderOutputPolicyReason ResolvePolicyReason(EFrameOutputSkipReason reason)
+                            => reason switch
+                            {
+                                EFrameOutputSkipReason.Cadence => ERenderOutputPolicyReason.Cadence,
+                                EFrameOutputSkipReason.Budget => ERenderOutputPolicyReason.CpuBudget,
+                                EFrameOutputSkipReason.MirrorOff => ERenderOutputPolicyReason.MirrorDisabled,
+                                EFrameOutputSkipReason.SurfaceUnavailable => ERenderOutputPolicyReason.SurfaceUnavailable,
+                                EFrameOutputSkipReason.VrGated => ERenderOutputPolicyReason.VrGated,
+                                EFrameOutputSkipReason.Disabled => ERenderOutputPolicyReason.OutputDisabled,
+                                EFrameOutputSkipReason.HeldLastImage => ERenderOutputPolicyReason.HeldLastImage,
+                                _ => ERenderOutputPolicyReason.None,
+                            };
                     }
 
                     private readonly record struct FrameBudgetSnapshot(string Band, double BudgetMs);
@@ -498,6 +756,8 @@ namespace XREngine
                     double WholeFrameP95Ms,
                     double WholeFrameP99Ms,
                     double WholeFrameWorstMs,
+                    ulong WorkloadIdentityHash,
+                    FrameOutputWorkSnapshot Work,
                     FrameOutputEntrySnapshot[] Outputs)
                 {
                     public static FrameOutputManifestSnapshot Empty
@@ -514,8 +774,32 @@ namespace XREngine
                             0.0,
                             0.0,
                             0.0,
+                            0UL,
+                            default,
                             []);
                 }
+
+                public readonly record struct FrameOutputWorkSnapshot(
+                    int OutputRequestCount,
+                    int UniqueViewFamilyCount,
+                    int TargetVariantCount,
+                    int SceneSnapshotCount,
+                    int VisibilityBuildCount,
+                    int CompiledPlanCacheHits,
+                    int CompiledPlanCacheMisses,
+                    int SharedPassReuseCount,
+                    int RecordedWorkItemCount,
+                    int ReusedWorkItemCount,
+                    int DuplicatedWorkItemCount,
+                    int CpuBudgetDeferralCount,
+                    int GpuBudgetDeferralCount,
+                    int StaleResultReuseCount,
+                    int MissedDeadlineCount,
+                    int UnapprovedPolicyEventCount,
+                    int SubmissionRejectionCount,
+                    int PlannerPruneCount,
+                    int GlobalInFlightWaitCount,
+                    int ForceFlushCount);
 
                 public readonly record struct FrameOutputEntrySnapshot(
                     ulong FrameId,
@@ -540,6 +824,12 @@ namespace XREngine
                     double AchievedRateHz,
                     int TotalRenderCount,
                     int TotalSkipCount,
+                    RenderOutputRequest Request,
+                    ERenderOutputWorkDisposition WorkDisposition,
+                    uint ContentAgeFrames,
+                    bool DeadlineMissed,
+                    bool PolicyAuthorized,
+                    ERenderOutputPolicyReason PolicyReason,
                     int CommandCount,
                     int DrawCalls,
                     int MultiDrawCalls,

@@ -76,7 +76,7 @@ public static partial class Engine
         private const string ManifestFileName = "profiler-capture-manifest.json";
         private const string SummaryFileName = "profiler-capture-summary.json";
         private const string RuntimeCaptureDirectoryName = "speed-profiles";
-        private const int ProfileCaptureSchemaVersion = 3;
+        private const int ProfileCaptureSchemaVersion = 4;
         private const int RuntimeCaptureRetentionCount = 3;
         private const int FlushIntervalMilliseconds = 1000;
         private const int MaxBufferedCharacters = 256 * 1024;
@@ -219,7 +219,8 @@ public static partial class Engine
                     return;
 
                 RunMetadata metadata = GetMetadataNoLock();
-                WriteManifestNoLock(metadata);
+                if (metadata.FrameOutputWorkloadIdentityHash != 0UL)
+                    WriteManifestNoLock(metadata);
 
                 long nowTicks = Engine.ElapsedTicks;
                 if (s_startTicks == 0L)
@@ -333,7 +334,22 @@ public static partial class Engine
         private static RunMetadata GetMetadataNoLock()
         {
             if (s_metadata is not null)
+            {
+                if (!s_manifestWritten)
+                {
+                    Engine.Rendering.Stats.FrameOutputManifestSnapshot currentOutputManifest =
+                        Engine.Rendering.Stats.FrameOutputs.LastManifest;
+                    if (currentOutputManifest.WorkloadIdentityHash != 0UL)
+                    {
+                        s_metadata = s_metadata with
+                        {
+                            FrameOutputWorkloadIdentityHash = currentOutputManifest.WorkloadIdentityHash,
+                            OutputInventory = CaptureOutputInventory(currentOutputManifest),
+                        };
+                    }
+                }
                 return s_metadata;
+            }
 
             bool runtimeCapture = s_runtimeCaptureEnabled;
             string runLabel = runtimeCapture && !string.IsNullOrWhiteSpace(s_runtimeRunLabel)
@@ -346,6 +362,20 @@ public static partial class Engine
             double? targetRefreshHz = TryParsePositiveDouble(targetRefreshHzEnv);
             double? xrFrameBudgetMs = targetRefreshHz is > 0.0 ? 1000.0 / targetRefreshHz.Value : null;
             string benchmarkErrors = CaptureBenchmarkEnvironmentErrors();
+            string renderTargetModeEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VkRenderTargetMode) ?? string.Empty;
+            string renderTargetModeSetting = CaptureString(() => Engine.EffectiveSettings.VulkanRenderTargetMode.ToString());
+            string primaryReuseEnvironment = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanPrimaryCommandBufferReuse) ?? string.Empty;
+            bool primaryReuseSetting = CaptureBoolean(() => Engine.Rendering.Settings.EnableVulkanPrimaryCommandBufferReuse);
+            bool primaryReuseEnabled = ResolveOptionalBooleanOverride(primaryReuseEnvironment) ?? primaryReuseSetting;
+            string primaryReusePolicy = string.IsNullOrWhiteSpace(primaryReuseEnvironment)
+                ? $"Setting:{primaryReuseSetting}"
+                : $"Environment:{primaryReuseEnvironment}";
+            string sceneIdentity = CaptureSceneIdentity();
+            string settingsIdentity = BuildSettingsIdentity(renderTargetModeEnv, renderTargetModeSetting);
+            string sceneIdentityHash = ComputeStableIdentityHash(sceneIdentity);
+            string settingsIdentityHash = ComputeStableIdentityHash(settingsIdentity);
+            string sceneSettingsHash = ComputeStableIdentityHash(sceneIdentity + "|" + settingsIdentity);
+            Engine.Rendering.Stats.FrameOutputManifestSnapshot outputManifest = Engine.Rendering.Stats.FrameOutputs.LastManifest;
 
             s_metadata = new RunMetadata(
                 SchemaVersion: ProfileCaptureSchemaVersion,
@@ -367,6 +397,12 @@ public static partial class Engine
                 Viewport: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileViewport) ?? string.Empty,
                 RenderScale: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileRenderScale) ??
                     CaptureString(() => Engine.Rendering.Settings.TsrRenderScale.ToString(CultureInfo.InvariantCulture)),
+                SceneIdentity: sceneIdentity,
+                SceneIdentityHash: sceneIdentityHash,
+                SettingsIdentityHash: settingsIdentityHash,
+                SceneSettingsHash: sceneSettingsHash,
+                FrameOutputWorkloadIdentityHash: outputManifest.WorkloadIdentityHash,
+                OutputInventory: CaptureOutputInventory(outputManifest),
                 StereoMode: CaptureString(() => Engine.Rendering.Stats.RendererState.ActiveStereoMode),
                 VrViewRenderModeRequested: CaptureString(() => Engine.Rendering.Stats.RendererState.ActiveVrViewRenderModeRequested),
                 VrViewRenderModeEffective: CaptureString(() => Engine.Rendering.Stats.RendererState.ActiveVrViewRenderModeEffective),
@@ -378,6 +414,12 @@ public static partial class Engine
                 VrDesktopEditorTargetRateHz: CaptureString(() => Engine.Rendering.Settings.VrDesktopEditorTargetRateHz.ToString(CultureInfo.InvariantCulture)),
                 VrCyclopeanDesktopTargetRateHz: CaptureString(() => Engine.Rendering.Settings.VrCyclopeanDesktopTargetRateHz.ToString(CultureInfo.InvariantCulture)),
                 VrDesktopAutoSkipWhenOverBudget: CaptureString(() => Engine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget ? "true" : "false"),
+                VulkanRenderTargetModeEnvironment: renderTargetModeEnv,
+                VulkanRenderTargetModeSetting: renderTargetModeSetting,
+                VulkanPrimaryCommandBufferReusePolicy: primaryReusePolicy,
+                VulkanPrimaryCommandBufferReuseEnabled: primaryReuseEnabled,
+                VulkanObsHookPolicy: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VkObsHook) ?? "Auto",
+                VulkanSkipImGui: IsEnvFlagEnabled(XREngineEnvironmentVariables.VkSkipImGui),
                 ValidationLayersEnabled: CaptureString(() => Engine.Rendering.Stats.RendererState.ValidationLayersEnabled ? "true" : "false"),
                 DebugOutputEnabled: CaptureString(() => Engine.Rendering.Stats.RendererState.DebugOutputEnabled ? "true" : "false"),
                 DeferredDebugView: CaptureString(() => global::XREngine.Rendering.RenderDiagnosticsFlags.DeferredDebugView.ToString(CultureInfo.InvariantCulture)),
@@ -399,7 +441,10 @@ public static partial class Engine
                 SkipCommandSwapIfClean: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.SkipCommandSwapIfClean) ?? string.Empty,
                 BucketLoopSkipEmpty: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.BucketLoopSkipEmpty) ?? string.Empty,
                 ForceSingleBucket: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ForceSingleBucket) ?? string.Empty,
-                Configuration: CaptureString(() => Engine.GameSettings?.BuildSettings?.Configuration.ToString() ?? string.Empty),
+                Configuration: CaptureString(() => typeof(Engine).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyConfigurationAttribute), false)
+                    .OfType<System.Reflection.AssemblyConfigurationAttribute>()
+                    .FirstOrDefault()?.Configuration ?? string.Empty),
+                GameBuildConfiguration: CaptureString(() => Engine.GameSettings?.BuildSettings?.Configuration.ToString() ?? string.Empty),
                 CreatedUtc: DateTimeOffset.UtcNow,
                 ProcessId: Environment.ProcessId);
 
@@ -414,7 +459,7 @@ public static partial class Engine
             var manifest = new
             {
                 capture_file = FrameStatsFileName,
-                schema = "xrengine.profile_capture.render_stats.v3",
+                schema = "xrengine.profile_capture.render_stats.v4",
                 schema_version = ProfileCaptureSchemaVersion,
                 fields_note = "One JSON object per completed render frame. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are backend timestamp-query snapshots when ready.",
                 run = metadata,
@@ -499,6 +544,27 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "frame_output_whole_frame_p95_ms", frameOutputs.WholeFrameP95Ms, ref first);
             AppendNumberField(s_lineBuilder, "frame_output_whole_frame_p99_ms", frameOutputs.WholeFrameP99Ms, ref first);
             AppendNumberField(s_lineBuilder, "frame_output_whole_frame_worst_ms", frameOutputs.WholeFrameWorstMs, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_workload_identity_hash", frameOutputs.WorkloadIdentityHash, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_request_count", frameOutputs.Work.OutputRequestCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_unique_view_family_count", frameOutputs.Work.UniqueViewFamilyCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_target_variant_count", frameOutputs.Work.TargetVariantCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_scene_snapshot_count", frameOutputs.Work.SceneSnapshotCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_visibility_build_count", frameOutputs.Work.VisibilityBuildCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_compiled_plan_cache_hits", frameOutputs.Work.CompiledPlanCacheHits, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_compiled_plan_cache_misses", frameOutputs.Work.CompiledPlanCacheMisses, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_shared_pass_reuse_count", frameOutputs.Work.SharedPassReuseCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_recorded_work_item_count", frameOutputs.Work.RecordedWorkItemCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_reused_work_item_count", frameOutputs.Work.ReusedWorkItemCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_duplicated_work_item_count", frameOutputs.Work.DuplicatedWorkItemCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_cpu_budget_deferral_count", frameOutputs.Work.CpuBudgetDeferralCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_gpu_budget_deferral_count", frameOutputs.Work.GpuBudgetDeferralCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_stale_result_reuse_count", frameOutputs.Work.StaleResultReuseCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_missed_deadline_count", frameOutputs.Work.MissedDeadlineCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_unapproved_policy_event_count", frameOutputs.Work.UnapprovedPolicyEventCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_submission_rejection_count", frameOutputs.Work.SubmissionRejectionCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_planner_prune_count", frameOutputs.Work.PlannerPruneCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_global_in_flight_wait_count", frameOutputs.Work.GlobalInFlightWaitCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_force_flush_count", frameOutputs.Work.ForceFlushCount, ref first);
             AppendRawJsonField(s_lineBuilder, "frame_outputs", JsonSerializer.Serialize(CreateFrameOutputCaptureManifest(frameOutputs)), ref first);
             AppendNullableNumberField(
                 s_lineBuilder,
@@ -720,6 +786,21 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_command_buffer_frame_op_signature_dirty_count", Engine.Rendering.Stats.Vulkan.VulkanCommandBufferFrameOpSignatureDirtyCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_buffer_planner_dirty_count", Engine.Rendering.Stats.Vulkan.VulkanCommandBufferPlannerDirtyCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_buffer_profiler_dirty_count", Engine.Rendering.Stats.Vulkan.VulkanCommandBufferProfilerDirtyCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_exact_variants_dirtied", Engine.Rendering.Stats.Vulkan.VulkanExactVariantsDirtied, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_exact_command_chains_dirtied", Engine.Rendering.Stats.Vulkan.VulkanExactCommandChainsDirtied, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_unrelated_variants_preserved", Engine.Rendering.Stats.Vulkan.VulkanUnrelatedVariantsPreserved, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_global_fallback_invalidations", Engine.Rendering.Stats.Vulkan.VulkanGlobalFallbackInvalidations, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_tracking_dependency_binds", Engine.Rendering.Stats.Vulkan.VulkanTrackingDependencyBinds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_tracking_unique_dependencies", Engine.Rendering.Stats.Vulkan.VulkanTrackingUniqueDependencies, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_tracking_image_access_writes", Engine.Rendering.Stats.Vulkan.VulkanTrackingImageAccessWrites, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_tracking_compact_image_ranges", Engine.Rendering.Stats.Vulkan.VulkanTrackingCompactImageRanges, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_descriptor_expansion_cache_hits", Engine.Rendering.Stats.Vulkan.VulkanDescriptorExpansionCacheHits, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_descriptor_expansion_cache_misses", Engine.Rendering.Stats.Vulkan.VulkanDescriptorExpansionCacheMisses, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_lifetime_lock_contentions", Engine.Rendering.Stats.Vulkan.VulkanLifetimeLockContentions, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_descriptor_pool_create_count", Engine.Rendering.Stats.Vulkan.VulkanDescriptorPoolCreateCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_lifetime_live_resource_count", Engine.Rendering.Stats.Vulkan.VulkanLifetimeLiveResourceCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_tracked_descriptor_set_count", Engine.Rendering.Stats.Vulkan.VulkanTrackedDescriptorSetCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_layout_lock_contentions", Engine.Rendering.Stats.Vulkan.VulkanLayoutLockContentions, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_record_command_buffer_allocated_bytes", Engine.Rendering.Stats.Vulkan.VulkanRecordCommandBufferAllocatedBytes, ref first);
             AppendStringField(s_lineBuilder, "vulkan_command_buffer_dirty_summary", Engine.Rendering.Stats.Vulkan.VulkanCommandBufferDirtySummary, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_chains_scheduled", Engine.Rendering.Stats.Vulkan.VulkanCommandChainsScheduled, ref first);
@@ -741,6 +822,10 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_retired_resource_plan_images", Engine.Rendering.Stats.Vulkan.VulkanRetiredResourcePlanImages, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_retired_resource_plan_buffers", Engine.Rendering.Stats.Vulkan.VulkanRetiredResourcePlanBuffers, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_retired_descriptor_pool_count", Engine.Rendering.Stats.Vulkan.VulkanRetiredDescriptorPoolCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_retired_descriptor_set_count", Engine.Rendering.Stats.Vulkan.VulkanRetiredDescriptorSetCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_retired_command_buffer_count", Engine.Rendering.Stats.Vulkan.VulkanRetiredCommandBufferCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_retired_query_pool_count", Engine.Rendering.Stats.Vulkan.VulkanRetiredQueryPoolCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_retired_buffer_view_count", Engine.Rendering.Stats.Vulkan.VulkanRetiredBufferViewCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_retired_pipeline_count", Engine.Rendering.Stats.Vulkan.VulkanRetiredPipelineCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_retired_framebuffer_count", Engine.Rendering.Stats.Vulkan.VulkanRetiredFramebufferCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_retired_buffer_count", Engine.Rendering.Stats.Vulkan.VulkanRetiredBufferCount, ref first);
@@ -907,6 +992,37 @@ public static partial class Engine
                     frame_id = output.FrameId,
                     output_kind = output.OutputKind.ToString(),
                     view_kind = output.ViewKind.ToString(),
+                    output_id = output.Request.OutputId,
+                    view_family_id = output.Request.ViewFamilyId,
+                    output_class = output.Request.OutputClass.ToString(),
+                    priority = output.Request.Schedule.Priority.ToString(),
+                    target_class = output.Request.Target.TargetClass.ToString(),
+                    stable_target_id = output.Request.Target.StableTargetId,
+                    target_generation = output.Request.Target.TargetGeneration,
+                    display_width = output.Request.Target.DisplayWidth,
+                    display_height = output.Request.Target.DisplayHeight,
+                    internal_width = output.Request.Target.InternalWidth,
+                    internal_height = output.Request.Target.InternalHeight,
+                    target_compatibility_key = output.Request.Target.CompatibilityKey,
+                    sample_count = output.Request.Target.SampleCount,
+                    view_mask = output.Request.Target.ViewMask,
+                    external_image_slot = output.Request.Target.ExternalImageSlot,
+                    desired_rate_hz = output.Request.Schedule.DesiredRateHz,
+                    deadline_ms = output.Request.Schedule.DeadlineMs,
+                    max_cpu_budget_ms = output.Request.Schedule.MaxCpuBudgetMs,
+                    max_gpu_budget_ms = output.Request.Schedule.MaxGpuBudgetMs,
+                    max_content_age_frames = output.Request.Schedule.MaxContentAgeFrames,
+                    hard_deadline = output.Request.Schedule.HardDeadline,
+                    quality_requirements = output.Request.QualityRequirements.ToString(),
+                    fallback_policy = output.Request.FallbackPolicy.ToString(),
+                    completion_requirement = output.Request.CompletionRequirement.ToString(),
+                    producer_dependency_set_id = output.Request.ProducerDependencySetId,
+                    consumer_dependency_set_id = output.Request.ConsumerDependencySetId,
+                    work_disposition = output.WorkDisposition.ToString(),
+                    content_age_frames = output.ContentAgeFrames,
+                    deadline_missed = output.DeadlineMissed,
+                    policy_authorized = output.PolicyAuthorized,
+                    policy_reason = output.PolicyReason.ToString(),
                     name = output.Name,
                     pipeline_name = output.PipelineName,
                     active = output.Active,
@@ -954,6 +1070,27 @@ public static partial class Engine
                 whole_frame_p95_ms = snapshot.WholeFrameP95Ms,
                 whole_frame_p99_ms = snapshot.WholeFrameP99Ms,
                 whole_frame_worst_ms = snapshot.WholeFrameWorstMs,
+                workload_identity_hash = snapshot.WorkloadIdentityHash,
+                output_request_count = snapshot.Work.OutputRequestCount,
+                unique_view_family_count = snapshot.Work.UniqueViewFamilyCount,
+                target_variant_count = snapshot.Work.TargetVariantCount,
+                scene_snapshot_count = snapshot.Work.SceneSnapshotCount,
+                visibility_build_count = snapshot.Work.VisibilityBuildCount,
+                compiled_plan_cache_hits = snapshot.Work.CompiledPlanCacheHits,
+                compiled_plan_cache_misses = snapshot.Work.CompiledPlanCacheMisses,
+                shared_pass_reuse_count = snapshot.Work.SharedPassReuseCount,
+                recorded_work_item_count = snapshot.Work.RecordedWorkItemCount,
+                reused_work_item_count = snapshot.Work.ReusedWorkItemCount,
+                duplicated_work_item_count = snapshot.Work.DuplicatedWorkItemCount,
+                cpu_budget_deferral_count = snapshot.Work.CpuBudgetDeferralCount,
+                gpu_budget_deferral_count = snapshot.Work.GpuBudgetDeferralCount,
+                stale_result_reuse_count = snapshot.Work.StaleResultReuseCount,
+                missed_deadline_count = snapshot.Work.MissedDeadlineCount,
+                unapproved_policy_event_count = snapshot.Work.UnapprovedPolicyEventCount,
+                submission_rejection_count = snapshot.Work.SubmissionRejectionCount,
+                planner_prune_count = snapshot.Work.PlannerPruneCount,
+                global_in_flight_wait_count = snapshot.Work.GlobalInFlightWaitCount,
+                force_flush_count = snapshot.Work.ForceFlushCount,
                 outputs = rows,
             };
         }
@@ -1165,6 +1302,124 @@ public static partial class Engine
                    raw.Equals("on", StringComparison.OrdinalIgnoreCase);
         }
 
+        private static string CaptureSceneIdentity()
+        {
+            try
+            {
+                string[] worldNames = Engine.WorldInstances
+                    .Select(static world => world.TargetWorldName ?? "<unnamed>")
+                    .OrderBy(static name => name, StringComparer.Ordinal)
+                    .ToArray();
+                string configuredScene = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileScene) ?? string.Empty;
+                return string.Join("|", worldNames) + "|profile=" + configuredScene;
+            }
+            catch
+            {
+                return Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileScene) ?? string.Empty;
+            }
+        }
+
+        private static string BuildSettingsIdentity(string renderTargetModeEnv, string renderTargetModeSetting)
+            => string.Join(
+                "|",
+                "backend=" + CaptureString(() => Engine.Rendering.Stats.RendererState.ActiveRenderBackend),
+                "renderTargetEnv=" + renderTargetModeEnv,
+                "renderTargetSetting=" + renderTargetModeSetting,
+                "renderScale=" + CaptureString(() => Engine.Rendering.Settings.TsrRenderScale.ToString(CultureInfo.InvariantCulture)),
+                "strategy=" + CaptureString(() => Engine.Rendering.ResolveMeshSubmissionStrategy().ToString()),
+                "vrMode=" + CaptureString(() => Engine.Rendering.Settings.VrViewRenderMode.ToString()),
+                "foveation=" + CaptureString(() => Engine.Rendering.Settings.VrFoveationMode.ToString()),
+                "mirror=" + CaptureString(() => Engine.Rendering.Settings.VrMirrorMode.ToString()),
+                "renderWindowsInVr=" + CaptureString(() => Engine.Rendering.Settings.RenderWindowsWhileInVR ? "1" : "0"),
+                "primaryReuse=" + ((ResolveOptionalBooleanOverride(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanPrimaryCommandBufferReuse)) ??
+                    CaptureBoolean(() => Engine.Rendering.Settings.EnableVulkanPrimaryCommandBufferReuse)) ? "1" : "0"),
+                "skipImGui=" + (IsEnvFlagEnabled(XREngineEnvironmentVariables.VkSkipImGui) ? "1" : "0"));
+
+        private static string ComputeStableIdentityHash(string value)
+        {
+            ulong hash = 1469598103934665603UL;
+            for (int i = 0; i < value.Length; i++)
+            {
+                char c = value[i];
+                hash ^= (byte)c;
+                hash *= 1099511628211UL;
+                hash ^= (byte)(c >> 8);
+                hash *= 1099511628211UL;
+            }
+            return $"0x{hash:X16}";
+        }
+
+        private static bool CaptureBoolean(Func<bool> capture)
+        {
+            try
+            {
+                return capture();
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool? ResolveOptionalBooleanOverride(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return null;
+            if (value is "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("yes", StringComparison.OrdinalIgnoreCase) || value.Equals("on", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+            if (value is "0" || value.Equals("false", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("no", StringComparison.OrdinalIgnoreCase) || value.Equals("off", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return null;
+        }
+
+        private static FrameOutputInventoryMetadata[] CaptureOutputInventory(
+            Engine.Rendering.Stats.FrameOutputManifestSnapshot snapshot)
+        {
+            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs = snapshot.Outputs ?? [];
+            FrameOutputInventoryMetadata[] inventory = new FrameOutputInventoryMetadata[outputs.Length];
+            for (int i = 0; i < outputs.Length; i++)
+            {
+                Engine.Rendering.Stats.FrameOutputEntrySnapshot output = outputs[i];
+                inventory[i] = new(
+                    output.Request.OutputId,
+                    output.Request.ViewFamilyId,
+                    output.OutputKindName,
+                    output.ViewKindName,
+                    output.Request.OutputClass.ToString(),
+                    output.Request.Schedule.Priority.ToString(),
+                    output.Request.Target.TargetClass.ToString(),
+                    output.Request.Target.StableTargetId,
+                    output.Request.Target.TargetGeneration,
+                    output.Request.Target.DisplayWidth,
+                    output.Request.Target.DisplayHeight,
+                    output.Request.Target.InternalWidth,
+                    output.Request.Target.InternalHeight,
+                    output.Request.Target.FormatCompatibilityKey,
+                    output.Request.Target.SampleCount,
+                    output.Request.Target.ViewMask,
+                    output.Request.Target.ExternalImageSlot,
+                    output.Request.Schedule.DesiredRateHz,
+                    output.Request.Schedule.DeadlineMs,
+                    output.Request.Schedule.MaxCpuBudgetMs,
+                    output.Request.Schedule.MaxGpuBudgetMs,
+                    output.Request.Schedule.MaxContentAgeFrames,
+                    output.Request.Schedule.HardDeadline,
+                    output.Request.QualityRequirements.ToString(),
+                    output.Request.FallbackPolicy.ToString(),
+                    output.Request.CompletionRequirement.ToString(),
+                    output.Request.ProducerDependencySetId,
+                    output.Request.ConsumerDependencySetId);
+            }
+            return inventory;
+        }
+
         private sealed record RunMetadata(
             int SchemaVersion,
             string CaptureMode,
@@ -1184,6 +1439,12 @@ public static partial class Engine
             string Lights,
             string Viewport,
             string RenderScale,
+            string SceneIdentity,
+            string SceneIdentityHash,
+            string SettingsIdentityHash,
+            string SceneSettingsHash,
+            ulong FrameOutputWorkloadIdentityHash,
+            FrameOutputInventoryMetadata[] OutputInventory,
             string StereoMode,
             string VrViewRenderModeRequested,
             string VrViewRenderModeEffective,
@@ -1195,6 +1456,12 @@ public static partial class Engine
             string VrDesktopEditorTargetRateHz,
             string VrCyclopeanDesktopTargetRateHz,
             string VrDesktopAutoSkipWhenOverBudget,
+            string VulkanRenderTargetModeEnvironment,
+            string VulkanRenderTargetModeSetting,
+            string VulkanPrimaryCommandBufferReusePolicy,
+            bool VulkanPrimaryCommandBufferReuseEnabled,
+            string VulkanObsHookPolicy,
+            bool VulkanSkipImGui,
             string ValidationLayersEnabled,
             string DebugOutputEnabled,
             string DeferredDebugView,
@@ -1217,8 +1484,39 @@ public static partial class Engine
             string BucketLoopSkipEmpty,
             string ForceSingleBucket,
             string Configuration,
+            string GameBuildConfiguration,
             DateTimeOffset CreatedUtc,
             int ProcessId);
+
+        private sealed record FrameOutputInventoryMetadata(
+            ulong OutputId,
+            ulong ViewFamilyId,
+            string OutputKind,
+            string ViewKind,
+            string OutputClass,
+            string Priority,
+            string TargetClass,
+            ulong StableTargetId,
+            ulong TargetGeneration,
+            uint DisplayWidth,
+            uint DisplayHeight,
+            uint InternalWidth,
+            uint InternalHeight,
+            ulong FormatCompatibilityKey,
+            uint SampleCount,
+            uint ViewMask,
+            int ExternalImageSlot,
+            float DesiredRateHz,
+            double DeadlineMs,
+            double MaxCpuBudgetMs,
+            double MaxGpuBudgetMs,
+            uint MaxContentAgeFrames,
+            bool HardDeadline,
+            string QualityRequirements,
+            string FallbackPolicy,
+            string CompletionRequirement,
+            ulong ProducerDependencySetId,
+            ulong ConsumerDependencySetId);
 
         private sealed record CaptureCompletion(
             RunMetadata Metadata,

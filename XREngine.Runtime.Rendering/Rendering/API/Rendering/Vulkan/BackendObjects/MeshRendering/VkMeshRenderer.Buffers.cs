@@ -54,11 +54,64 @@ public unsafe partial class VulkanRenderer
 				AddRuntimeDeformationBuffers();
 				CaptureRuntimeDeformationBufferReferences();
 
-				_buffersDirty = true;
-				_descriptorDirty = true;
-				_vertexInputStateDirty = true;
-				Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
+				bool structuralBindingsChanged = UpdateBufferStructuralIdentitySnapshot();
+				if (structuralBindingsChanged)
+				{
+					_buffersDirty = true;
+					_descriptorDirty = true;
+					_vertexInputStateDirty = true;
+					Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
+				}
 			}
+		}
+
+		private readonly record struct BufferStructuralIdentity(
+			ulong Handle,
+			ulong AllocationGeneration,
+			ulong Range,
+			uint Binding,
+			EBufferTarget Target,
+			EComponentType ComponentType,
+			uint ComponentCount,
+			uint ElementCount);
+
+		private BufferStructuralIdentity CaptureBufferStructuralIdentity(VkDataBuffer? buffer)
+		{
+			if (buffer is null)
+				return default;
+
+			XRDataBuffer data = buffer.Data;
+			ulong handle = buffer.BufferHandle?.Handle ?? 0UL;
+			return new BufferStructuralIdentity(
+				handle,
+				Renderer.GetCurrentVulkanResourceGeneration(ObjectType.Buffer, handle),
+				buffer.AllocatedByteSize,
+				data.BindingIndexOverride ?? uint.MaxValue,
+				data.Target,
+				data.ComponentType,
+				data.ComponentCount,
+				data.ElementCount);
+		}
+
+		private BufferStructuralIdentity CaptureBufferStructuralIdentity(XRDataBuffer? buffer)
+			=> buffer is null
+				? default
+				: CaptureBufferStructuralIdentity(Renderer.GenericToAPI<VkDataBuffer>(buffer));
+
+		private bool UpdateBufferStructuralIdentitySnapshot()
+		{
+			bool changed = _bufferStructuralIdentities.Count != _bufferCache.Count;
+			foreach ((string name, VkDataBuffer buffer) in _bufferCache)
+			{
+				BufferStructuralIdentity identity = CaptureBufferStructuralIdentity(buffer);
+				if (!_bufferStructuralIdentities.TryGetValue(name, out BufferStructuralIdentity previous) || previous != identity)
+					changed = true;
+			}
+
+			_bufferStructuralIdentities.Clear();
+			foreach ((string name, VkDataBuffer buffer) in _bufferCache)
+				_bufferStructuralIdentities[name] = CaptureBufferStructuralIdentity(buffer);
+			return changed;
 		}
 
 		private void FilterRuntimeDeformationSourceBuffers()
@@ -192,24 +245,24 @@ public unsafe partial class VulkanRenderer
 
 		private void CaptureRuntimeDeformationBufferReferences()
 		{
-			_cachedSkinnedPositionsBuffer = MeshRenderer.SkinnedPositionsBuffer;
-			_cachedSkinnedNormalsBuffer = MeshRenderer.SkinnedNormalsBuffer;
-			_cachedSkinnedTangentsBuffer = MeshRenderer.SkinnedTangentsBuffer;
-			_cachedSkinnedInterleavedBuffer = MeshRenderer.SkinnedInterleavedBuffer;
-			_cachedPrecombinedBlendshapePositionsBuffer = MeshRenderer.PrecombinedBlendshapePositionsBuffer;
-			_cachedPrecombinedBlendshapeNormalsBuffer = MeshRenderer.PrecombinedBlendshapeNormalsBuffer;
-			_cachedPrecombinedBlendshapeTangentsBuffer = MeshRenderer.PrecombinedBlendshapeTangentsBuffer;
 			_cachedHasValidPrecombinedBlendshapeDeltas = MeshRenderer.HasValidPrecombinedBlendshapeDeltas;
+			_cachedSkinnedPositionsIdentity = CaptureBufferStructuralIdentity(MeshRenderer.SkinnedPositionsBuffer);
+			_cachedSkinnedNormalsIdentity = CaptureBufferStructuralIdentity(MeshRenderer.SkinnedNormalsBuffer);
+			_cachedSkinnedTangentsIdentity = CaptureBufferStructuralIdentity(MeshRenderer.SkinnedTangentsBuffer);
+			_cachedSkinnedInterleavedIdentity = CaptureBufferStructuralIdentity(MeshRenderer.SkinnedInterleavedBuffer);
+			_cachedPrecombinedBlendshapePositionsIdentity = CaptureBufferStructuralIdentity(MeshRenderer.PrecombinedBlendshapePositionsBuffer);
+			_cachedPrecombinedBlendshapeNormalsIdentity = CaptureBufferStructuralIdentity(MeshRenderer.PrecombinedBlendshapeNormalsBuffer);
+			_cachedPrecombinedBlendshapeTangentsIdentity = CaptureBufferStructuralIdentity(MeshRenderer.PrecombinedBlendshapeTangentsBuffer);
 		}
 
 		private bool RuntimeDeformationBufferReferencesChanged()
-			=> !ReferenceEquals(_cachedSkinnedPositionsBuffer, MeshRenderer.SkinnedPositionsBuffer)
-			|| !ReferenceEquals(_cachedSkinnedNormalsBuffer, MeshRenderer.SkinnedNormalsBuffer)
-			|| !ReferenceEquals(_cachedSkinnedTangentsBuffer, MeshRenderer.SkinnedTangentsBuffer)
-			|| !ReferenceEquals(_cachedSkinnedInterleavedBuffer, MeshRenderer.SkinnedInterleavedBuffer)
-			|| !ReferenceEquals(_cachedPrecombinedBlendshapePositionsBuffer, MeshRenderer.PrecombinedBlendshapePositionsBuffer)
-			|| !ReferenceEquals(_cachedPrecombinedBlendshapeNormalsBuffer, MeshRenderer.PrecombinedBlendshapeNormalsBuffer)
-			|| !ReferenceEquals(_cachedPrecombinedBlendshapeTangentsBuffer, MeshRenderer.PrecombinedBlendshapeTangentsBuffer)
+			=> _cachedSkinnedPositionsIdentity != CaptureBufferStructuralIdentity(MeshRenderer.SkinnedPositionsBuffer)
+			|| _cachedSkinnedNormalsIdentity != CaptureBufferStructuralIdentity(MeshRenderer.SkinnedNormalsBuffer)
+			|| _cachedSkinnedTangentsIdentity != CaptureBufferStructuralIdentity(MeshRenderer.SkinnedTangentsBuffer)
+			|| _cachedSkinnedInterleavedIdentity != CaptureBufferStructuralIdentity(MeshRenderer.SkinnedInterleavedBuffer)
+			|| _cachedPrecombinedBlendshapePositionsIdentity != CaptureBufferStructuralIdentity(MeshRenderer.PrecombinedBlendshapePositionsBuffer)
+			|| _cachedPrecombinedBlendshapeNormalsIdentity != CaptureBufferStructuralIdentity(MeshRenderer.PrecombinedBlendshapeNormalsBuffer)
+			|| _cachedPrecombinedBlendshapeTangentsIdentity != CaptureBufferStructuralIdentity(MeshRenderer.PrecombinedBlendshapeTangentsBuffer)
 			|| _cachedHasValidPrecombinedBlendshapeDeltas != MeshRenderer.HasValidPrecombinedBlendshapeDeltas;
 
 		private void EnsureRuntimeDeformationBuffersCurrent()
@@ -260,6 +313,13 @@ public unsafe partial class VulkanRenderer
 					ClearIndexBufferBindings();
 					_indexBuffersSkippedForShaderGeneratedVertices = true;
 				}
+				else if (_triangleIndexBufferExternallyProvided)
+				{
+					_triangleIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
+					_lineIndexBuffer = null;
+					_pointIndexBuffer = null;
+					_indexBuffersSkippedForShaderGeneratedVertices = false;
+				}
 				else if (Mesh is not null)
 				{
 					_triangleIndexBufferExternallyProvided = false;
@@ -274,13 +334,6 @@ public unsafe partial class VulkanRenderer
 					var point = GetIndexBufferForBinding(EPrimitiveType.Points, out _pointIndexSize, _pointIndexBuffer);
 					_pointIndexBuffer = point is not null ? Renderer.GenericToAPI<VkDataBuffer>(point) : null;
 					_pointIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
-					_indexBuffersSkippedForShaderGeneratedVertices = false;
-				}
-				else if (_triangleIndexBufferExternallyProvided)
-				{
-					_triangleIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
-					_lineIndexBuffer = null;
-					_pointIndexBuffer = null;
 					_indexBuffersSkippedForShaderGeneratedVertices = false;
 				}
 				else
@@ -350,7 +403,8 @@ public unsafe partial class VulkanRenderer
 		{
 			lock (_bufferStateSync)
 			{
-				bool changed = !ReferenceEquals(_triangleIndexBuffer, buffer) || _triangleIndexSize != elementType;
+				bool changed = CaptureBufferStructuralIdentity(_triangleIndexBuffer) != CaptureBufferStructuralIdentity(buffer) ||
+					_triangleIndexSize != elementType;
 				_triangleIndexBuffer = buffer;
 				_triangleIndexSize = elementType;
 				_triangleIndexBufferExternallyProvided = buffer is not null;

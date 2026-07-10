@@ -1,14 +1,14 @@
 # Vulkan Core Hardening And Device-Loss TODO
 
-Last Updated: 2026-07-09
+Last Updated: 2026-07-10
 Owner: Rendering
-Status: Phase 2.1 Implemented; Validation Follow-Ups Open; Phase 3 Source Implementation Complete
+Status: Phase 5.1 Correctness Gate Complete; Phase 5.2 Multi-Output Throughput Gate Open
 Target Branch: `rendering-vulkan-core-hardening`
 
 ## Goal
 
-Make Vulkan robust enough for normal editor, OpenXR, scene-capture, light-probe,
-shadow, UI-preview, and diagnostic rendering without recurring
+Make Vulkan robust and fast enough for normal editor, OpenXR, scene-capture,
+light-probe, shadow, mirror, UI-preview, and diagnostic rendering without recurring
 `VK_ERROR_DEVICE_LOST` failures caused by cross-context resource churn, stale
 descriptors, unsafe resource retirement, or oversized GPU submissions.
 
@@ -555,87 +555,848 @@ Acceptance criteria:
 
 ## Phase 4 - Resource Lifetime And Retirement
 
-- [ ] Audit every Vulkan object destruction path:
-  - [ ] images,
-  - [ ] image views,
-  - [ ] samplers,
-  - [ ] framebuffers,
-  - [ ] buffers,
-  - [ ] descriptor sets/pools,
-  - [ ] command buffers,
-  - [ ] pipelines,
-  - [ ] query pools.
-- [ ] Distinguish CPU ownership, submitted GPU use, completed GPU use, external
+Implementation and live evidence:
+[vulkan-core-hardening-phase4-live-validation-2026-07-09.md](../../investigations/rendering/vulkan-core-hardening-phase4-live-validation-2026-07-09.md).
+The source work and bounded OpenXR smoke passed, but the final validation
+criterion remains open: teardown reported invalid image/memory destruction and
+live device children, and the stress run exposed unbounded retirement growth.
+
+- [x] Audit every Vulkan object destruction path:
+  - [x] images,
+  - [x] image views,
+  - [x] samplers,
+  - [x] framebuffers,
+  - [x] buffers,
+  - [x] descriptor sets/pools,
+  - [x] command buffers,
+  - [x] pipelines,
+  - [x] query pools.
+- [x] Distinguish CPU ownership, submitted GPU use, completed GPU use, external
   OpenXR ownership, and pending destruction in the resource state model.
-- [ ] Replace immediate destruction with timeline/fence-retired destruction
+- [x] Replace immediate destruction with timeline/fence-retired destruction
   where any in-flight command can still reference the object.
-- [ ] Track the last submit/timeline value for resources used by each frame-op.
-- [ ] Block or defer descriptor-reference release if the owning resource is still
+- [x] Track the last submit/timeline value for resources used by each frame-op.
+- [x] Block or defer descriptor-reference release if the owning resource is still
   in-flight.
-- [ ] Add diagnostics for retirement queue depth, oldest retired generation age,
+- [x] Add diagnostics for retirement queue depth, oldest retired generation age,
   and forced destruction.
-- [ ] Add assertions that resource handles are not recycled into a new frame-op
+- [x] Add assertions that resource handles are not recycled into a new frame-op
   while old commands can still reference them.
-- [ ] Define device-loss teardown separately from normal retirement. A lost
+- [x] Define device-loss teardown separately from normal retirement. A lost
   device may never advance its timeline/fences, so teardown must not deadlock
   waiting for normal retirement completion or falsely mark work complete.
-- [ ] Audit descriptor-set update/free/reset lifetime, including descriptor
+- [x] Audit descriptor-set update/free/reset lifetime, including descriptor
   pools and update-after-bind behavior; resource retirement alone is not enough
   if a live descriptor set is mutated illegally.
-- [ ] Audit `ReleaseDescriptorReferencesForPhysicalResourceDestruction` and all
+- [x] Audit `ReleaseDescriptorReferencesForPhysicalResourceDestruction` and all
   call sites that dirty command buffers due to resource destruction.
-- [ ] Add stress tests for rapid resize plus probe capture plus OpenXR eye
+- [x] Add stress tests for rapid resize plus probe capture plus OpenXR eye
   rendering.
 
 Acceptance criteria:
 
-- [ ] Resource destruction is tied to completed GPU timeline/fence values.
+- [x] Resource destruction is tied to completed GPU timeline/fence values.
 - [ ] Validation does not report destroyed-in-use objects in the targeted stress
-  scenarios.
+  scenarios. The July 9 live run reported seven invalid `vkDestroyImage` calls,
+  five invalid `vkFreeMemory` calls, and nine live child objects at
+  `vkDestroyDevice`; see the linked investigation.
 
 ## Phase 5 - Image Layout And Barrier Correctness
 
-- [ ] Centralize image layout state tracking by image subresource:
-  - [ ] aspect,
-  - [ ] mip,
-  - [ ] layer,
-  - [ ] queue family,
-  - [ ] last access mask/stage,
-  - [ ] expected descriptor layout.
-- [ ] Track recorded, submitted, and completed state separately where command
+Implementation and live evidence:
+[vulkan-core-hardening-phase5-live-validation-2026-07-09.md](../../investigations/rendering/vulkan-core-hardening-phase5-live-validation-2026-07-09.md).
+Source implementation and the bounded OpenXR smoke are complete. Sync-validation
+acceptance was closed by Phase 5.1: all engine-owned sampled-attachment,
+cross-pass synchronization, acquire/present, and retirement errors are gone.
+The precisely attributed SteamVR exception is documented in the linked evidence.
+
+- [x] Centralize image layout state tracking by image subresource:
+  - [x] aspect,
+  - [x] mip,
+  - [x] layer,
+  - [x] queue family,
+  - [x] last access mask/stage,
+  - [x] expected descriptor layout.
+- [x] Track recorded, submitted, and completed state separately where command
   buffers can overlap. Do not publish a layout transition globally merely
   because a barrier was recorded into an unsubmitted or discarded buffer.
-- [ ] Standardize new synchronization on Vulkan 1.3/
+- [x] Standardize new synchronization on Vulkan 1.3/
   `VK_KHR_synchronization2` stage/access semantics and maintain one reviewed
   mapping from engine access intent to barrier state.
-- [ ] Audit transitions for:
-  - [ ] color attachment to sampled,
-  - [ ] depth/stencil attachment to sampled depth view,
-  - [ ] transfer source/destination,
-  - [ ] storage image read/write,
-  - [ ] OpenXR swapchain images,
-  - [ ] generated mip chains,
-  - [ ] cubemap face rendering,
-  - [ ] texture-array rendering.
-- [ ] Audit queue-family ownership transfers and externally owned images,
+- [x] Audit transitions for:
+  - [x] color attachment to sampled,
+  - [x] depth/stencil attachment to sampled depth view,
+  - [x] transfer source/destination,
+  - [x] storage image read/write,
+  - [x] OpenXR swapchain images,
+  - [x] generated mip chains,
+  - [x] cubemap face rendering,
+  - [x] texture-array rendering.
+- [x] Audit queue-family ownership transfers and externally owned images,
   including acquire/release pairs when graphics, transfer, present, or OpenXR
   ownership differs.
-- [ ] Validate that descriptor `ImageLayout` matches tracked layout at command
+- [x] Validate that descriptor `ImageLayout` matches tracked layout at command
   recording time.
-- [ ] Add debug-only assertions when a sampled descriptor points at an attachment
+- [x] Add debug-only assertions when a sampled descriptor points at an attachment
   layout or a stale transfer layout.
-- [ ] Add explicit post-transfer restoration for sampled sources.
-- [ ] Audit mipmap generation for capture and IBL textures so all mips end in a
+- [x] Add explicit post-transfer restoration for sampled sources.
+- [x] Audit mipmap generation for capture and IBL textures so all mips end in a
   sampled-compatible layout.
-- [ ] Add tests for cubemap face render -> mip generate -> octa blit -> IBL
+- [x] Add tests for cubemap face render -> mip generate -> octa blit -> IBL
   fullscreen pass ordering.
 
 Acceptance criteria:
 
-- [ ] Sync validation is clean for light-probe capture and OpenXR eye rendering.
-- [ ] Descriptor layout mismatches are caught before submit in diagnostic mode.
+- [x] Sync validation is clean for engine-owned light-probe capture and OpenXR
+  eye rendering. The stable SteamVR-owned `xrEndFrame`/teardown exception is
+  bounded by exact message ID and runtime/layer version in the evidence.
+- [x] Descriptor layout mismatches are caught during command recording in Debug
+  diagnostic runs, before queue submission. The remaining mismatches are logged
+  with descriptor set, binding, view, image, owner, expected, and tracked layout.
+
+## Phase 5.1 - Sync-Validation Remediation Gate
+
+This correctness gate is complete. It addresses every validation message in the
+final Phase 5 run rather than carrying known synchronization, layout,
+frame-lifecycle, teardown, tooling, or runtime defects forward. Complete the
+Phase 5.2 throughput gate below before starting Phase 6.
+
+Evidence:
+[vulkan-core-hardening-phase5-live-validation-2026-07-09.md](../../investigations/rendering/vulkan-core-hardening-phase5-live-validation-2026-07-09.md)
+and
+[vulkan-core-hardening-phase5-validation-2026-07-09.json](../../testing/rendering/vulkan-core-hardening-phase5-validation-2026-07-09.json).
+The 1,878 final-run errors are partitioned as follows:
+
+- 1,804 engine synchronization/layout reports:
+  - 1,315 `SYNC-HAZARD-WRITE-AFTER-READ`,
+  - 339 `SYNC-HAZARD-READ-AFTER-WRITE`,
+  - 150 `UNASSIGNED-CoreValidation-DrawState-InvalidImageLayout`.
+- Eight desktop acquire/present lifecycle reports.
+- 47 retirement/teardown reports, including duplicate image/memory destruction,
+  threading diagnostics, and live children at device destruction.
+- Six validation-layer/toolchain compatibility reports caused by old layers
+  interpreting newer Vulkan feature/property chains.
+- 13 SteamVR/OpenXR-runtime-owned image/synchronization reports emitted during
+  `xrEndFrame`; keep these separate from engine-owned errors until independently
+  reproduced and attributed after tool/runtime upgrades.
+
+Status: complete on 2026-07-09. The rerun used portable LunarG SDK/VVL 1.4.350
+against Vulkan runtime 1.4.341 and current SteamVR build `23791826`. All five
+isolated/bounded lanes report zero engine-owned validation errors. Each OpenXR
+lane independently reproduced the same bounded SteamVR-owned 14-message set: 7
+`VUID-VkImageCreateInfo-pNext-01443`, 6 compositor `vkCmdCopyImage` WAW reports
+from unlabeled runtime command buffers inside `xrEndFrame`, and 1
+`VUID-vkDestroyDevice-device-05137` for nine runtime children. No broad allowlist
+was added. Commands, handles, ownership evidence, versions, and log paths are in
+the linked investigation and machine-readable manifest.
+
+Exact subresource initialization and access-state tracking:
+
+- [x] Stop treating aggregate `VulkanPhysicalImageGroup.LastKnownLayout ==
+  Undefined` as proof that an entire image is uninitialized. Mixed known states
+  across mips/layers must remain distinguishable from never-used subresources.
+- [x] Replace whole-image unknown-pass initialization with exact
+  aspect/mip/layer queries that prefer the current command-buffer overlay, then
+  the submitted canonical state.
+- [x] Permit `Undefined` as the old layout only when the exact subresource has no
+  recorded or submitted state for its current allocation generation.
+- [x] Batch adjacent ranges with identical prior state and deduplicate initial
+  transitions within a command buffer; remove the redundant unknown-pass
+  fallback invocation.
+- [x] Track actual last stage/access in the canonical image state instead of
+  reconstructing source scopes solely from the old layout. Emit barriers for
+  same-layout hazards when the prior access requires one.
+- [x] Add tests for a five-mip image with a mixture of known and unknown states;
+  only genuinely unknown ranges may receive an `Undefined` transition.
+
+Ordered command-buffer state propagation:
+
+- [x] Model each ordered submit chain explicitly, including upload -> scene ->
+  ImGui -> dynamic text -> present and the corresponding OpenXR/mirror paths.
+- [x] Seed each later command buffer's initial image state from its predecessor's
+  recorded end state rather than the last globally submitted state.
+- [x] Do not overwrite an authoritative cross-command-buffer old-layout contract
+  with a submitted-state fallback during barrier recording.
+- [x] Include exact entry-state contracts and image allocation generations in
+  cached-command-buffer fingerprints; reject or rerecord on mismatch.
+- [x] Make all recording-time layout queries prefer the current command-buffer
+  overlay, including FBO publication, dynamic transitions, attachment queries,
+  blits, and legacy render-pass implicit transitions.
+- [x] Keep global physical-image state immutable while recording. Publish only
+  accepted submissions and update the canonical overlay for render-pass
+  initial/reference/final layouts and queue-family release/acquire pairs.
+- [x] Add a regression test proving scene `ColorAttachmentOptimal` output is the
+  ImGui entry state and that the final transition reaches `PresentSrcKHR` in one
+  ordered submission.
+
+Render-graph and descriptor-consumer synchronization:
+
+- [x] Resolve render-graph usages to physical image identity plus exact
+  overlapping subresource before planning barriers; do not key correctness only
+  by logical resource name or silently skip dedicated/external images.
+- [x] Coalesce compatible usages within a pass. Sampling a depth subresource
+  while attaching it read-only must produce one `DepthStencilReadOnlyOptimal`
+  state with fragment-shader and early/late-depth read scopes.
+- [x] Reject sampling and writable depth attachment use of the same subresource
+  unless an explicit supported feedback-loop/local-read path is selected. Remove
+  unused depth attachments from fullscreen passes.
+- [x] Add dynamic descriptor resources, especially light-combine shadow maps, to
+  pass dependencies and transition the exact produced ranges before sampling.
+- [x] Add explicit producer-end to consumer-start barriers for color/depth
+  attachment outputs such as velocity, GTAO inputs, lighting inputs, shadow
+  outputs, and UI/offscreen viewport textures.
+- [x] Derive ImGui texture dependencies from the exact draw data used by the
+  overlay and transition those images before recording their draws.
+- [x] Make descriptor-layout resolution a pure state query. Do not submit hidden
+  one-shot layout transitions while preparing descriptor image info; schedule
+  required transitions as explicit frame operations.
+- [x] Restrict diagnostic descriptor validation to bindings consumed by the
+  active reflected pipeline, and reject command recording in diagnostic builds
+  when a consumed binding is stale or in an incompatible layout.
+- [x] Add behavioral tests for sampled plus read-only depth, sampled plus
+  writable depth rejection, dynamic shadow dependencies, attachment-to-sampled
+  color transitions, and UI draw-data texture transitions.
+
+Acquire, submit rejection, and cached-resource lifetime:
+
+- [x] Maintain a reverse dependency map from resource/allocation generation to
+  cached command-buffer variants. Retirement must invalidate and rerecord every
+  cached command buffer that references the retired generation.
+- [x] If validation or lifetime checks reject a frame after swapchain image
+  acquisition, consume the acquire semaphore and release/present the image via a
+  bounded recovery path, or safely unwind through swapchain recreation. Never
+  return with an acquired image outstanding.
+- [x] Treat `SuboptimalKhr` acquisition as successful: schedule recreation but
+  continue through a valid submit/present or explicit recovery path.
+- [x] Add tests for retirement-driven cached-command invalidation and every
+  post-acquire, pre-submit rejection path.
+
+Retirement and teardown correctness:
+
+- [x] Add an image lifetime gate equivalent to the image-view gate, keyed by
+  handle and allocation generation. Keep retirement deduplication active until
+  destruction completes successfully.
+- [x] Make duplicate/stale retire operations harmless and diagnostic. Clear
+  moved handles in owner wrappers so later teardown cannot destroy them again.
+- [x] Preserve allocator ownership: never call raw `vkFreeMemory` for VMA- or
+  allocator-owned memory, and reject stale entries without invoking Vulkan.
+- [x] Destroy OpenXR sessions, swapchains, imported image sidecars, command
+  buffers/pools, synchronization objects, and allocator resources before the
+  logical Vulkan device, after their work has completed or entered the explicit
+  lost-device teardown policy.
+- [x] Add tests for duplicate retirement, generation-safe handle reuse, allocator
+  ownership, and device teardown with zero live children.
+
+Validation toolchain and runtime-owned messages:
+
+- [x] Upgrade the active Vulkan SDK/validation layers from 1.3.239-era layers
+  to a version compatible with the Vulkan 1.4.341 runtime used by the validation
+  machine, and record both versions in the rerun manifest.
+- [x] Gate physical-device property and logical-device `pNext` structures by the
+  negotiated API version, advertised extension, and queried feature support.
+- [x] Upgrade/retest the active SteamVR/OpenXR runtime and validation layer before
+  classifying the 13 `xrEndFrame` messages as external exceptions.
+- [x] Verify that every engine-controlled OpenXR swapchain image is released in
+  an attachment-compatible layout with correct queue-family ownership.
+- [x] Do not add a broad allowlist. Any surviving runtime-owned message must have
+  an exact VUID/message ID, runtime/layer version, reproduction boundary, and
+  evidence that no engine command buffer or image is involved.
+- [x] Keep query-pool redesign out of this remediation inventory unless a new run
+  produces a genuine query-pool VUID; none of the final 1,878 reports did.
+
+Validation sequence:
+
+- [x] Run focused source/behavioral tests plus the narrow Vulkan rendering build.
+- [x] Run isolated `SyncValidation` sessions in this order:
+  - [x] desktop Vulkan without the ImGui overlay,
+  - [x] desktop Vulkan with ImGui,
+  - [x] OpenXR Vulkan without a probe capture,
+  - [x] OpenXR Vulkan with one probe capture,
+  - [x] the bounded Phase 5 light-probe/OpenXR batch.
+- [x] Record structured counts by VUID/message ID and ownership boundary for each
+  run so engine, loader/layer, driver, and OpenXR-runtime messages are not mixed.
+- [x] Update the Phase 5 investigation and machine-readable manifest with the
+  post-fix results, exact commands, hardware/runtime versions, and log paths.
+
+Acceptance criteria:
+
+- [x] All 1,804 engine-owned synchronization/layout reports are eliminated in
+  the isolated and bounded target runs; there are no WAR, RAW, WAW, or invalid
+  image-layout reports from engine command buffers.
+- [x] No acquire semaphore/image remains outstanding after any rejected frame,
+  and the target runs report no acquire/present lifecycle VUIDs.
+- [x] Normal teardown reports no engine-owned duplicate/stale image or memory
+  destruction, external-synchronization threading errors, or live Vulkan
+  children. SteamVR's exact nine-child exception is bounded below.
+- [x] Validation layers match the runtime closely enough that supported
+  `pNext` chains are recognized and unsupported chains are not emitted.
+- [x] Any surviving SteamVR/OpenXR-runtime message is independently reproduced,
+  precisely attributed, and documented with a bounded exception; no
+  engine-controlled validation error remains unaddressed.
+- [x] Phase 5's sync-validation acceptance criterion is checked only after this
+  complete sequence passes. Phase 5.1 closes correctness; proceed to Phase 5.2,
+  not directly to Phase 6.
+
+## Phase 5.2 - Multi-Output Render Throughput Architecture Gate
+
+Complete this phase before starting Phase 6. Phase 5.1 made synchronization,
+layout, and retirement failures visible and rejectable, but the resulting
+runtime has not yet reached an acceptable performance baseline, including in
+desktop-only rendering. This phase makes the correctness architecture cheap
+enough to support several simultaneous or interleaved outputs:
+
+- desktop/editor scene output;
+- foveated OpenXR eye view sets, including wide/inset or multiview variants;
+- VR pickup/handheld mirror views;
+- desktop VR mirror composition;
+- in-world 3D reflection mirrors;
+- shadow, scene-capture, light-probe, reflection-probe, and IBL work;
+- UI previews, thumbnails, and diagnostic targets.
+
+Evidence:
+[vulkan-cpu-framerate-regression-2026-07-09.md](../../investigations/rendering/vulkan-cpu-framerate-regression-2026-07-09.md).
+The current default reuse-disabled Release cohort measured 56.86 render
+samples/s, 15.169 ms p50, 28.800 ms p95, 6.226 GB of record-path allocation,
+5,178 retired image views, and four rejected submissions. A settled experimental
+reuse cohort on the same median workload measured 108.79 samples/s, 8.883 ms
+p50, 11.031 ms p95, zero record-path allocation, zero retirement, and zero
+rejection. This is an architectural diagnosis, not permission to promote the
+reuse flag without the correctness matrix below.
+
+The target data flow is:
+
+`Immutable frame snapshot -> output requests -> compatible view families -> cached plans/resources -> record or reuse -> deadline-ordered submit DAG`
+
+Ownership boundary:
+
+- This phase owns output-neutral scheduling, stable identity, command reuse,
+  targeted invalidation, local tracking, asynchronous retirement, and the
+  multi-output performance contract.
+- The [desktop frame-loop decomposition todo](vulkan-desktop-frame-loop-decomposition-todo.md)
+  owns extraction and coordinator file layout. It must preserve these contracts
+  and must not introduce a second desktop-only scheduler.
+- The [dynamic-rendering migration todo](vulkan-dynamic-rendering-migration-todo.md)
+  owns dynamic/legacy attachment-mode parity and dynamic-signature allocation
+  cleanup. This phase consumes either mode through one output/plan contract.
+- The [primary command recording fast-path todo](optimization/vulkan-primary-command-recording-fast-path-todo.md)
+  remains the focused recording reference. Phase 5.2 owns the cross-output
+  implementation order and promotion gate when the documents overlap.
+- Phase 6 still owns descriptor correctness completeness. Phase 5.2 establishes
+  the allocation-free, generation-driven publication seam that Phase 6 must use.
+
+### 5.2.1 - Establish The Multi-Output Performance Contract
+
+- [x] Define one `RenderOutputRequest`/equivalent contract with:
+  - [x] output kind and stable output ID,
+  - [x] view-family and view identity,
+  - [x] target class, target generation, extent, format/sample/view-mask
+    compatibility, and external-image slot,
+  - [x] hard deadline or desired cadence,
+  - [x] priority and maximum CPU/GPU budget,
+  - [x] maximum acceptable content age/staleness,
+  - [x] required quality features and explicit fallback policy,
+  - [x] producer/consumer dependencies and completion requirement.
+- [x] Define output classes and default scheduling priority:
+  - [x] acquired OpenXR eyes and runtime-required composition layers,
+  - [x] desktop/editor output and composition-only desktop VR mirror,
+  - [x] visible pickup/handheld and in-world mirrors,
+  - [x] shadows required by a deadline-critical view family,
+  - [x] light/reflection probes, IBL, thumbnails, and diagnostic captures.
+- [x] Treat quality reduction, stale reuse, cadence reduction, or skipped work as
+  an explicit per-output policy decision with telemetry. Never silently replace
+  an explicitly requested GPU path with a CPU fallback.
+- [x] Extend the profiler manifest with render-target mode, primary-reuse
+  policy, OBS-hook policy, ImGui-skip state, actual build configuration,
+  output/view-family inventory, target extents, cadence/budget policy, and
+  scene/settings hash.
+- [x] Extend `Measure-VulkanFrameLoop.ps1` so its steady-state gate covers every
+  retired resource kind, command-buffer records/reuses/dirty reasons,
+  record-path allocations, rejected submissions, planner prune/replacement,
+  global waits/force flushes, and stable workload identity.
+- [x] Start capture from measured stability (asset/shader work quiet, resource
+  generations stable, no retirement churn), not only a fixed warmup duration.
+- [x] Add counters for scene snapshots, visibility builds, output requests,
+  unique view families, compiled-plan hits/misses, shared-pass reuse, target
+  variants, CPU/GPU budget deferrals, stale-result reuse, and missed deadlines.
+
+Acceptance criteria:
+
+- [x] One frame manifest can explain how much work was built once, shared,
+  reused, re-recorded, deferred, or duplicated for every active output.
+- [x] Performance capture fails when workload identity changes or when any
+  unapproved output silently drops quality/work.
+
+Implementation and validation (2026-07-09): schema-v4 frame-output manifests now
+carry stable output/view-family/target identities, complete scheduling and policy
+contracts, work-disposition accounting, scene/settings identity, and Vulkan
+benchmark policy. The harness waits for a measured quiet window, covers all
+retirement queues plus planner/global synchronization, and rejects identity
+drift, unapproved output policy, or submission rejection. The editor and unit-
+test projects build cleanly; 79 targeted contract/profiler/host tests pass. Two
+short live Debug/Vulkan runs validated the gate: the first exposed and led to a
+fix for nondeterministic duplicate-output ordering; the second held one stable
+workload identity and correctly refused capture while texture uploads, retirement
+churn, and a global in-flight wait remained active. Its v4 manifest contained
+five real output entries and the required build/target/reuse/OBS/ImGui/scene
+metadata. Live evidence is under
+`Build/_AgentValidation/20260709-233000-vulkan-phase521/` and the engine session
+`Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-09_23-29-11_pid55356/`.
+The durable validation ledger is
+[`vulkan-core-hardening-phase521-validation-2026-07-09.json`](../../testing/rendering/vulkan-core-hardening-phase521-validation-2026-07-09.json).
+
+### 5.2.2 - Restore Correctness-Proven Command Reuse First
+
+- [x] Replace the environment-only desktop primary-reuse policy with a normal
+  capability/policy setting whose safe state can become the production default
+  after this phase passes. Keep an explicit diagnostic disable switch.
+- [x] Split structural generation from frame-data, target-slot, descriptor,
+  resource-allocation, query, overlay, and profiler generations. Camera,
+  transform, light constant, and material constant publication must not appear
+  as structural command changes.
+- [x] Partition each output into stable scene/pass ranges and genuinely volatile
+  ranges. Queries, profiler timestamps, dynamic text, ImGui, uploads, and
+  diagnostics must not dirty unrelated static scene work.
+- [x] Use stable per-frame-slot/per-external-image command-buffer variants where
+  Vulkan commands bake target handles. Rebind rotating acquired images through
+  a bounded variant set rather than recreating structural plans.
+- [x] Reuse static secondary command ranges for compatible target/pass/pipeline/
+  descriptor-layout/mesh generations. Refresh dynamic frame data through
+  preallocated frame-slot buffers without re-recording those ranges.
+- [x] Keep volatile work in separately ordered command buffers or other Vulkan-
+  legal partitions so rerecording it does not invalidate a cached scene primary.
+- [x] Make every reuse miss report exactly one primary reason and the old/new
+  generation or fingerprint field that changed.
+- [x] Prove query/occlusion operation cadence cannot force a full primary record
+  for every output or every frame.
+- [x] Preserve Phase 5.1 ordered entry/end image-state contracts for every reused
+  scene, overlay, mirror, eye, capture, and present command buffer.
+
+Acceptance criteria:
+
+- [ ] A stable desktop scene reaches at least 99% clean reuse after warmup; every
+  remaining record is attributable to an intentional structural or volatile
+  change.
+- [ ] Camera motion and ordinary frame-data updates do not record static scene
+  command ranges again.
+- [ ] Reuse enabled and disabled produce validation-clean, visually equivalent
+  output in explicit dynamic and legacy modes.
+
+Implementation status (2026-07-09): the production reuse policy is now a
+default-on Vulkan setting with a diagnostic environment override. Cached
+variants record independent structural, frame-data, target-slot, descriptor,
+resource-allocation, query, overlay, and profiler generations. Static command
+ranges retain stable secondary handles while volatile secondary contents can be
+rerecorded; frame data refreshes through the existing preallocated slot data.
+Primary misses now choose one deterministic old/new field. Query-bearing cached
+primaries establish a new host-reset query epoch before replay, so query cadence
+no longer mandates primary recording. Focused validation passed 24/24 tests and
+the runtime-rendering/editor builds completed without compiler errors.
+
+The live 99% gate remains open for a measured, attributable dependency: the
+Unit Testing World produced 125 records, 125 forced-dirty events, and zero clean
+reuse because the Phase 5.2.3 image-view/buffer retirement and imported-texture
+publication paths globally invalidated every variant throughout the capture.
+No validation VUID was emitted in the retained representative run. Complete the
+Phase 5.2.3 exact-resource invalidation work, then rerun the three acceptance
+checkboxes here without changing the 5.2.2 reuse design. Machine-readable
+evidence is in
+[`vulkan-core-hardening-phase522-validation-2026-07-09.json`](../../testing/rendering/vulkan-core-hardening-phase522-validation-2026-07-09.json).
+
+### 5.2.3 - Stabilize Resource Identity And Make Invalidation Exact
+
+- [x] Intern/cache image views by backing image allocation generation,
+  subresource range, format, view type, and component mapping. Do not create and
+  retire equivalent views during steady recording.
+- [x] Make mesh/deformation buffer collection diff-based. Compare stable backing
+  handle, allocation generation, binding layout, range, and element type rather
+  than wrapper/reference identity.
+- [x] Resolve the oscillating indirect-atlas/index-buffer wrapper path before
+  optimizing around its invalidations.
+- [x] Change the retirement reverse dependency index from a diagnostic count to
+  the source of truth for invalidation. Dirty only command-buffer variants and
+  secondary chains that reference the retiring allocation generation.
+- [x] Track target/view/descriptor/pipeline/mesh dependencies per cached range so
+  one mirror, probe face, eye image, or swapchain slot cannot globally dirty all
+  other outputs.
+- [x] Publish resource and descriptor generations only when the structural
+  binding actually changes; do not advance a global generation for an identical
+  write.
+- [x] Add per-owner invalidation counters for exact variants dirtied, unrelated
+  variants preserved, and global-fallback invalidations. Global fallback must be
+  diagnostic-only and treated as a failed steady-state gate.
+
+Acceptance criteria:
+
+- [x] Stable captures retire zero image views, images, buffers, samplers,
+  framebuffers, pipelines, and descriptor pools.
+- [x] Retiring one probe/mirror/eye resource cannot dirty an unrelated desktop,
+  eye, mirror, or capture command cache.
+- [x] `CollectBuffers`, indirect-index synchronization, and descriptor
+  publication produce zero steady-state structural invalidations.
+
+Phase 5.2.3 completed on 2026-07-10. Image views now use complete structural
+identity and retain dormant slot variants until the backing image allocation is
+retired. Mesh/deformation buffers compare allocation-backed identities, external
+indirect index buffers remain authoritative, descriptor publication advances
+only once per dirty epoch, and retirement invalidation consumes the exact reverse
+dependency set. The strict post-warmup capture retired zero gated resources and
+reported zero forced-dirty, exact-invalidation, and global-fallback events. A
+separate active-retirement capture preserved 7,753 unrelated variants with zero
+global fallback. Focused Phase 5 validation passed 39/39 tests; the editor build
+completed without compiler errors. Evidence is recorded in
+[`vulkan-core-hardening-phase523-validation-2026-07-10.json`](../../testing/rendering/vulkan-core-hardening-phase523-validation-2026-07-10.json).
+
+The aggregate command-record/reuse ratio in the retained quiet capture was 0.5:
+one clean scene-primary reuse and one expected volatile overlay recording per
+frame. There were no forced-dirty events or dirty summaries. Phase 5.2.2's 99%
+gate remains open until its metric separates reusable primaries from intentional
+volatile command buffers.
+
+### 5.2.4 - Move Lifetime And Layout Tracking Out Of Per-Draw Locks
+
+- [x] Record resource dependencies and image access/layout deltas in
+  command-buffer-local, capacity-backed storage while recording.
+- [x] Bulk-deduplicate and publish the finished dependency/layout snapshot under
+  one short lock or generation-checked handoff after successful recording.
+- [x] Expand each descriptor set's referenced resources once per descriptor-set
+  generation and command-buffer recording generation, not once per bind.
+- [x] Cache Debug descriptor-layout validation by command-buffer generation,
+  descriptor generation, and layout-state version while preserving exact
+  Phase 5.1 failure diagnostics.
+- [x] Replace per-aspect/mip/layer dictionary writes in the barrier hot path with
+  compact range/delta recording, then coalesce before publication.
+- [x] Replace submit-time full dictionaries scans with the submitted command
+  buffers' touched dependency/subresource lists.
+- [x] Remove global lifetime/layout locks from per-draw, per-descriptor-bind, and
+  per-barrier steady paths. Add contention and touched-entry counters to prove
+  the result.
+
+Acceptance criteria:
+
+- [x] Recording cost scales with unique changed dependencies/ranges, not total
+  repeated binds or the global number of tracked resources.
+- [x] Debug validation retains the same correctness coverage without recurring
+  100+ ms `MainOpLoop` drop samples from bookkeeping.
+
+Phase 5.2.4 completed on 2026-07-10. Command recording now accumulates resource
+dependencies and compact image-access ranges in command-buffer-local,
+capacity-backed batches. Descriptor reference expansion and Debug layout
+validation are cached by descriptor/recording/layout generation, and successful
+recording publishes retained touched lists under one short lifetime lock and one
+short layout lock. Submit validation and layout publication consume only those
+touched lists; the lists retain capacity and do not allocate `ToArray()`
+snapshots each frame.
+
+The retained desktop-only Dynamic Rendering capture passed the strict stable-
+workload, resource-churn, and 99% clean-reuse gates. Across 369 samples it
+reported 36,900 dependency binds compacted to 23,247 unique dependencies,
+1,476 image-access writes/ranges, 4,059 descriptor-expansion cache hits, zero
+lifetime/layout lock contentions, zero command-record allocations, zero
+resource retirements, and 369/369 clean primary reuse. Command recording was
+0.424 ms p95 and 0.628 ms max; no FPS-drop record occurred during the capture
+window. A follow-up six-second moving-camera run kept 15/15 sampled full editor
+window frames populated after narrowing the inline-primary safety key to actual
+camera pose rather than TSR jitter. After a user-reported stop-boundary flicker,
+the replay generation gained one explicit settle invalidation; a 45-frame
+motion-plus-stop capture stayed populated and a final quiet capture retained
+234/234 clean reuse with zero tracking contention or record allocations.
+Machine-readable evidence is in
+[`vulkan-core-hardening-phase524-validation-2026-07-10.json`](../../testing/rendering/vulkan-core-hardening-phase524-validation-2026-07-10.json).
+
+### 5.2.4a - Eliminate Descriptor Lifetime Pressure And Retirement Scans
+
+- [x] Add a descriptor-pool-to-owned-set reverse index. Pool retirement,
+  mutation checks, reset, and destruction now visit only that pool's sets rather
+  than scanning every tracked descriptor set for every pool.
+- [x] Reserve descriptor-pool retirement identity before capturing tickets so
+  duplicate retirement requests exit before any set traversal or allocation.
+- [x] Key mesh descriptor allocations by cached descriptor-layout handles,
+  schema, frame/draw shape, and set count. Program binding IDs and mutable
+  resource fingerprints no longer create pool variants.
+- [x] Allocate descriptor sets lazily for the frame/draw slot that is actually
+  used, rewrite changed resources in place, and retain an LRU-bounded set of 32
+  structural allocation variants.
+- [x] Add resource-to-referencing-descriptor-set and
+  resource-to-command-buffer reverse dependencies. Resource retirement now
+  advances only affected descriptor generations and dirties only exact cached
+  command variants.
+- [x] Aggregate all command-buffer dependencies for a retiring descriptor pool
+  into one exact invalidation pass; do not perform a global descriptor-cache
+  release or one cache invalidation/log pass per owned set.
+- [x] Convert late command-local lifetime publication races into pre-submit
+  rejection without first-chance exceptions, then dirty the exact cached
+  command buffer for rerecord.
+- [x] Rate-limit retirement diagnostics by Vulkan object type so startup texture
+  replacement cannot emit one expensive formatted log entry per resource.
+- [x] Publish live-resource, tracked-descriptor-set, and descriptor-pool-create
+  counters through profiler packets/captures. Add strict steady-state gates and
+  `Tools/Validate-VulkanDescriptorLifetimePressure.ps1` for OpenXR/Monado.
+
+Acceptance criteria:
+
+- [x] No descriptor-pool lifetime path contains the prior O(pool count x global
+  descriptor-set count) ownership scan.
+- [x] A live Monado OpenXR single-pass-compatibility run reaches steady state
+  with zero descriptor-pool creates/retirements, submission rejections, or
+  global fallback invalidations across its retained 250-frame tail.
+- [x] The same tail remains bounded at 4,669-4,727 live Vulkan resources and
+  2,356-2,367 tracked descriptor sets, below the 50,000/25,000 pressure gates.
+- [x] No render exception, first-chance lifetime exception, validation VUID,
+  device loss, or debugger-visible descriptor ownership scan occurs after the
+  fix.
+
+Phase 5.2.4a completed on 2026-07-10. The original pause site compared each
+descriptor set's pool while repeatedly scanning a global set table. Ownership
+and reference reverse indexes remove that scaling failure. Descriptor allocation
+identity is now structural all the way down: the final profiler run reported
+zero pool creates and zero retired pools in its retained steady 250-frame tail,
+versus 4,050 creates in the equivalent pre-fix tail. The run used Monado OpenXR,
+Vulkan, `SinglePassStereo`, desktop/mirror output, and dynamic rendering. Three
+startup submissions whose resources were replaced while command-local tracking
+was still being published were safely rejected and exactly dirtied; no
+first-chance exception was thrown, and the retained steady tail had zero
+rejections. The generic stability harness did not auto-select a window because
+the run intentionally exposed two alternating output workload identities, so
+the same profiler fields were evaluated directly over the retained tail.
+Evidence is recorded in
+[`vulkan-core-hardening-phase524a-validation-2026-07-10.json`](../../testing/rendering/vulkan-core-hardening-phase524a-validation-2026-07-10.json)
+and
+[`vulkan-descriptor-lifetime-freeze-2026-07-10.md`](../../investigations/rendering/vulkan-descriptor-lifetime-freeze-2026-07-10.md).
+
+### 5.2.5 - Make Render Plans And Resource Arenas Versioned And Nonblocking
+
+- [ ] Redefine planner/cache identity around physical compatibility: output kind,
+  view-family/pipeline identity, extent, pass graph, attachment signature,
+  resource-plan generation, and queue family. Do not key the compiled plan on a
+  rotating external swapchain/OpenXR image handle.
+- [ ] Bind the current external target slot as a bounded plan/command variant;
+  keep plan identity stable across acquisition rotation.
+- [ ] Store immutable compiled plan generations. A replacement publishes a new
+  generation while old plans, allocators, descriptors, and resources remain
+  alive behind their last submitted timeline/retirement ticket.
+- [ ] Remove `WaitForAllInFlightWork` and force-flush calls from command
+  recording, planner-state prune, physical-plan replacement, imported-texture
+  replacement, and normal cache eviction.
+- [ ] Evict planner states incrementally only after their last-use timeline is
+  complete. Cache capacity pressure must defer/retire work, not globally drain
+  the device.
+- [ ] Give each concurrently active output family a bounded persistent resource
+  arena and transient aliasing plan. Reuse compatible allocations across frames
+  and alias only resources whose scheduled lifetimes do not overlap.
+- [ ] Separate runtime-owned external images from engine-owned allocation and
+  retirement. External image rotation must not churn engine resource plans.
+- [ ] Add plan-cache hit/miss, plan-generation, arena high-water, alias reuse,
+  pending-retirement bytes, and eviction-defer telemetry by output family.
+
+Acceptance criteria:
+
+- [ ] No normal frame, eye render, mirror update, probe face, or cache eviction
+  waits for all in-flight GPU work or force-flushes the device.
+- [ ] Alternating OpenXR images, mirror targets, probe faces, and desktop
+  swapchain images does not grow planner-state count or replace an otherwise
+  compatible physical plan.
+- [ ] The correlated 43.7-second planner-prune and 8.4-second plan-replacement
+  failure shapes are no longer reachable in normal scheduling.
+
+### 5.2.6 - Build One Immutable Scene Snapshot And View-Family DAG
+
+- [ ] Publish one immutable render-world snapshot per engine frame containing
+  stable scene objects, transforms, lights, materials, shadow/probe state, and
+  GPU-scene references. Output workers must never reread mutable scene state.
+- [ ] Group output requests into compatible view families before collection and
+  command construction. A family owns shared scene/material/light publication
+  and contains one or more view/projection/target variants.
+- [ ] Build visibility once per compatible family or compute one conservative
+  superset plus compact per-view masks. Do not repeat a full scene traversal for
+  every eye, foveated inset, desktop mirror, or probe consumer.
+- [ ] For foveated XR eyes, represent wide/inset views as one deadline-critical
+  family. Use Vulkan multiview/single-pass and shared visibility/material data
+  where feature/quality constraints permit; keep an explicit sequential path
+  for parity and unsupported hardware.
+- [ ] Compose the normal desktop VR mirror from already rendered eye/family
+  outputs by default. Schedule a full independent desktop scene only when the
+  selected mirror policy explicitly requires a distinct camera or quality.
+- [ ] Model pickup/handheld mirrors and in-world 3D mirrors as view-dependent
+  output requests with stable IDs, screen-coverage/visibility input, maximum
+  update rate, content-age limit, resolution policy, recursion limit, and
+  cacheable last result.
+- [ ] Share view-independent work such as material publication, compatible
+  shadow results, BRDF/LUT inputs, and GPU-scene buffers across families. Never
+  share view-dependent results without an explicit compatibility proof.
+- [ ] Model light/reflection probe faces, mip generation, octa conversion,
+  irradiance, and prefilter mips as individually schedulable DAG nodes with
+  persistent intermediate resources and resumable progress.
+- [ ] Ensure one output's optional post-processing does not force unrelated
+  outputs through the full desktop temporal/post stack. Apply the existing
+  capture policy at graph construction time.
+
+Acceptance criteria:
+
+- [ ] Profiler counters prove one scene snapshot per engine frame and no
+  duplicate material/light publication for compatible output families.
+- [ ] A composition-only desktop VR mirror adds no scene traversal or independent
+  full render.
+- [ ] Adding compatible foveated views increases per-view cull/target work but
+  does not multiply scene snapshot, material, descriptor, or stable command
+  construction by view count.
+- [ ] Cached mirrors/probes reuse their prior result within explicit age/quality
+  policy and never masquerade as freshly rendered output.
+
+### 5.2.7 - Add A Deadline-Aware CPU/GPU Output Scheduler
+
+- [ ] Schedule the output DAG by deadline, dependency readiness, measured cost,
+  and policy priority rather than invoking independent full render loops in
+  callback order.
+- [ ] Reserve the acquired OpenXR eye budget first. Do not start optional work
+  that cannot finish or reach a legal preemption boundary before the eye
+  submission deadline.
+- [ ] Give desktop, pickup/in-world mirrors, shadows, probes, IBL, uploads, and
+  diagnostics explicit rolling CPU/GPU budgets and maximum consecutive work.
+- [ ] Use measured exponential/percentile cost estimates per node to decide
+  start/defer. Record predicted versus actual time and correct bad estimates.
+- [ ] Make auxiliary work resumable at legal graph boundaries: probe face,
+  cubemap mip, octa conversion, irradiance pass, individual prefilter mip,
+  shadow slice, and upload batch.
+- [ ] Add adaptive mirror/probe cadence based on visibility, screen coverage,
+  motion, content age, and available slack. Preserve an explicit fixed-cadence
+  mode for validation and user requests.
+- [ ] Keep GPU submissions bounded for TDR and frame pacing. Batching outputs is
+  permitted only when it reduces CPU overhead without creating an oversized,
+  non-preemptible submission.
+- [ ] Expose queued/running/deferred/completed/failed state, budget reason,
+  content age, deadline miss, and accumulated work for every output.
+
+Acceptance criteria:
+
+- [ ] Optional mirrors/captures/probes cannot cause a deadline-critical eye frame
+  to miss its CPU submit budget or wait behind a long auxiliary submission.
+- [ ] A 36-probe batch and visible mirrors make bounded forward progress while XR
+  remains active; neither monopolizes consecutive frames.
+- [ ] No work is silently dropped. Every defer, stale reuse, cadence reduction,
+  or quality choice is visible and policy-authorized.
+
+### 5.2.8 - Decompose Submission And Remove CPU Serialization
+
+- [ ] Split submit telemetry into queue-lock wait, diagnostic-context build,
+  image-contract validation, lifetime validation, native submit, lifetime
+  publication, layout publication, and completion advancement.
+- [ ] Build one ordered submission DAG across uploads, shadows, scene/view
+  families, mirrors, captures, overlays, and presentation. Preserve independent
+  queue work where dependencies permit.
+- [ ] Use timeline/frame-slot completion for engine queues and OpenXR image
+  reuse. Remove per-output fence creation and indefinite CPU waits from normal
+  eye/mirror/capture submission.
+- [ ] Narrow queue-lock ownership to the native externally synchronized Vulkan
+  operation and required adjacent state publication. Do not hold it while
+  building diagnostics or scanning unrelated state.
+- [ ] Batch compatible command buffers into a submit when it lowers CPU cost,
+  but retain separate completion/deadline boundaries for XR-critical and
+  auxiliary work.
+- [ ] Build render packets and record dirty independent secondary command ranges
+  on workers from the immutable frame snapshot. The render thread performs only
+  final ordered validation/reuse choice and submission.
+- [ ] Give workers persistent per-thread scratch, command pools, and capacity-
+  backed packet/recording buffers. Do not allocate or contend on shared global
+  collections in the worker hot path.
+- [ ] Measure worker record time, render-thread wait-for-worker time, queue-lock
+  time, submit count, command buffers per submit, and CPU/GPU overlap by family.
+
+Acceptance criteria:
+
+- [ ] Submit p95 has an attributable breakdown and contains no full global
+  dependency/layout scan.
+- [ ] OpenXR runtime updates, desktop submission, and auxiliary recording do not
+  serialize on a broad engine queue lock.
+- [ ] Parallel recording improves or preserves p95 without changing output,
+  submission order, fallback policy, or device-loss containment.
+
+### 5.2.9 - Remove Remaining Hot-Path Allocation And Superlinear Work
+
+- [ ] Remove per-FBO attachment-layout arrays, dynamic UI split arrays,
+  exact-length frame-op drain arrays, image-layout snapshot arrays/sorts,
+  planner registry merge arrays, and retirement-drain temporary arrays from
+  steady paths.
+- [ ] Complete dynamic-rendering Phase 1.1 bounded inline format-signature
+  storage and use the same allocation-free identity representation in planning,
+  inheritance, pipeline lookup, and command-cache keys.
+- [ ] Replace repeated render-graph sorting with one deterministic compile/sort
+  per structural generation. Replace O(n^2) context-order and clear-lifting
+  scans with indexed/linear algorithms.
+- [ ] Preallocate output/view-family DAG nodes, dependency edges, packet lists,
+  touched-resource lists, and telemetry rows to measured high-water marks.
+- [ ] Add per-scope allocation counters for snapshot build, family grouping,
+  visibility, plan lookup/compile, packet build, primary/secondary recording,
+  submit validation/publication, retirement drain, and diagnostics.
+
+Acceptance criteria:
+
+- [ ] Stable desktop and mixed-output frames allocate zero managed bytes in
+  collection, planning, recording, submission, and retirement hot paths.
+- [ ] Work scales approximately with changed nodes, unique view families, and
+  actual draws, not total cached outputs times total scene size.
+
+### 5.2.10 - Validation Matrix And Promotion Gate
+
+- [ ] Run validation-disabled performance and validation-enabled correctness as
+  separate cohorts with identical workload/settings manifests.
+- [ ] Capture at least three 60-second stable repetitions for:
+  - [ ] desktop only;
+  - [ ] desktop plus ImGui/dynamic text;
+  - [ ] OpenXR foveated eye family without a desktop mirror;
+  - [ ] OpenXR eyes plus composition desktop mirror;
+  - [ ] OpenXR eyes plus pickup/handheld mirror;
+  - [ ] desktop with one and four visible in-world mirrors;
+  - [ ] light-probe batch without XR;
+  - [ ] OpenXR eyes plus mirrors plus a 36-probe batch;
+  - [ ] explicit dynamic and legacy render-target modes;
+  - [ ] `CpuDirect` and a separate `GpuIndirectZeroReadback` cohort.
+- [ ] For every cohort record CPU frame p50/p95/p99/worst, observed render
+  throughput, GPU family/pass p50/p95, missed XR deadlines, output content age,
+  scene snapshots/visibility builds, record/reuse/dirty counts, allocation,
+  resource retirement, plan churn, queue waits/submits, and quality/fallback
+  events.
+- [ ] Capture and inspect screenshots from at least two camera positions for
+  desktop, each eye/foveated region, composition mirror, pickup/in-world mirror,
+  and representative probe faces/final IBL output.
+- [ ] Run StandardValidation and SyncValidation over the mixed-output matrix and
+  confirm Phase 5.1 ordered state/lifetime contracts remain clean.
+- [ ] On the RTX 3090 / 0.67-scale desktop diagnostic scene, require CPU frame
+  p50 <= 10 ms, p95 <= 12 ms, and p99 <= 14 ms, or approve and document a new
+  workload-equivalent baseline before promotion.
+- [ ] Require dynamic rendering to remain within 5% of legacy p50/p95/p99 across
+  repetitions unless an explained GPU-side win justifies a measured CPU cost.
+- [ ] Require >=99% clean command reuse, zero stable record-path allocation,
+  zero steady resource retirement/plan replacement, zero rejected submissions,
+  and zero global waits/force flushes for static-output cohorts.
+- [ ] Define and meet an XR missed-deadline threshold before running auxiliary
+  work. The threshold must be based on the active runtime refresh rate and
+  separately report runtime/compositor-owned misses.
+- [ ] Require a composition-only desktop VR mirror to add no independent scene
+  render and no more than an approved sub-millisecond CPU p95 delta.
+- [ ] Require mixed mirror/probe workload cost to follow the configured scheduler
+  budget rather than grow linearly with every potential output each frame.
+- [ ] Update the CPU framerate investigation with final before/after tables,
+  manifests, screenshots, raw-log paths, and any approved exceptions.
+
+Final acceptance criteria:
+
+- [ ] Desktop-only rendering has an accepted CPU baseline and no longer relies
+  on a diagnostic environment flag for acceptable command reuse.
+- [ ] Multiple outputs consume one shared frame snapshot and reuse compatible
+  visibility, material, plan, resource, and command work.
+- [ ] Deadline-critical XR eyes cannot be blocked by optional mirror, probe,
+  capture, upload, or diagnostic work.
+- [ ] Correctness-safe reuse and targeted invalidation remain clean under
+  retirement, resize, hot reload, target rotation, and device-loss injection.
+- [ ] No tested workload hides a requested accelerated path behind a CPU fallback
+  or unreported quality/cadence reduction.
+- [ ] Only after all Phase 5.2 acceptance criteria pass may Phase 6 begin.
 
 ## Phase 6 - Descriptor And Binding Robustness
+
+Build on Phase 5.2's allocation-free, generation-driven descriptor publication
+seam. Descriptor hardening must not restore per-draw fingerprint construction,
+global command-cache invalidation, or identical-write generation churn.
 
 - [ ] Define descriptor fingerprint inputs for all descriptor-affecting resources:
   - [ ] image handle,
@@ -680,6 +1441,11 @@ Acceptance criteria:
 
 ## Phase 7 - OpenXR Vulkan Submit And Synchronization Hardening
 
+Use the Phase 5.2 output scheduler, timeline completion, view-family, and submit
+DAG as the generic execution path. This phase owns OpenXR-specific image/runtime
+state-machine correctness and failure attribution, not a second eye-only
+submission architecture.
+
 - [ ] Audit OpenXR Vulkan frame phases:
   - [ ] acquire swapchain image,
   - [ ] wait image,
@@ -721,6 +1487,10 @@ Acceptance criteria:
   logical device loss.
 
 ## Phase 8 - GPU Work, Memory Budgeting, And TDR Protection
+
+Extend Phase 5.2's deadline scheduler and resumable auxiliary nodes with Vulkan
+memory admission, TDR protection, and subsystem-specific quality policy. Do not
+introduce a parallel probe/capture queue that bypasses the shared output DAG.
 
 - [ ] Add per-subsystem GPU work budgets for:
   - [ ] light-probe cubemap faces,

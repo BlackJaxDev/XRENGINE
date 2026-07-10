@@ -815,7 +815,28 @@ namespace XREngine.Rendering.Vulkan
             }
 
             ImageAspectFlags barrierAspectMask = NormalizeBarrierAspectMask(resolvedInfo.Format, resolvedInfo.AspectMask);
-            oldLayout = ResolveLiveBlitOldLayout(resolvedInfo, oldLayout);
+            ImageSubresourceRange transitionRange = new()
+            {
+                AspectMask = barrierAspectMask,
+                BaseMipLevel = resolvedInfo.MipLevel,
+                LevelCount = 1,
+                BaseArrayLayer = resolvedInfo.BaseArrayLayer,
+                LayerCount = resolvedInfo.LayerCount
+            };
+            if (TryGetRecordedImageAccessState(
+                commandBuffer,
+                resolvedInfo.Image,
+                transitionRange,
+                out VulkanImageAccessState recordedState))
+            {
+                oldLayout = recordedState.Layout;
+                srcStage = (PipelineStageFlags)(ulong)recordedState.StageMask;
+                srcAccess = (AccessFlags)(ulong)recordedState.AccessMask;
+            }
+            else
+            {
+                oldLayout = ResolveLiveBlitOldLayout(resolvedInfo, oldLayout);
+            }
 
             ImageMemoryBarrier barrier = new()
             {
@@ -827,14 +848,7 @@ namespace XREngine.Rendering.Vulkan
                 SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
                 DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
                 Image = resolvedInfo.Image,
-                SubresourceRange = new ImageSubresourceRange
-                {
-                    AspectMask = barrierAspectMask,
-                    BaseMipLevel = resolvedInfo.MipLevel,
-                    LevelCount = 1,
-                    BaseArrayLayer = resolvedInfo.BaseArrayLayer,
-                    LayerCount = resolvedInfo.LayerCount
-                }
+                SubresourceRange = transitionRange
             };
 
             ImageMemoryBarrier* barrierPtr = stackalloc ImageMemoryBarrier[1];
@@ -851,8 +865,6 @@ namespace XREngine.Rendering.Vulkan
                 null,
                 1,
                 barrierPtr);
-
-            UpdateTrackedBlitLayout(resolvedInfo, newLayout);
         }
 
         private ImageLayout ResolveLiveBlitOldLayout(in BlitImageInfo info, ImageLayout requestedOldLayout)
@@ -874,20 +886,6 @@ namespace XREngine.Rendering.Vulkan
                 return ImageLayout.Undefined;
 
             return requestedOldLayout;
-        }
-
-        private static void UpdateTrackedBlitLayout(in BlitImageInfo info, ImageLayout layout)
-        {
-            if (info.DescriptorSource is IVkFrameBufferAttachmentSource attachmentSource)
-            {
-                attachmentSource.UpdateAttachmentTrackedLayout(
-                    layout,
-                    checked((int)info.MipLevel),
-                    ResolveBlitInfoLayerIndex(info));
-            }
-
-            if (info.RenderBufferSource?.PhysicalGroup is { } group)
-                group.LastKnownLayout = layout;
         }
 
         private static ImageLayout ResolveTrackedBlitLayout(IVkImageDescriptorSource source, in BlitImageInfo info)

@@ -710,7 +710,16 @@ public sealed class VrViewRenderModeContractTests
     [Test]
     public void SourceContracts_FrameOutputPacingManifestAndMirrorPolicy()
     {
-        string contracts = ReadWorkspaceFile("XREngine.Runtime.Core/Settings/VrViewContextContracts.cs");
+        string contracts = string.Join("\n", new[]
+        {
+            ReadWorkspaceFile("XREngine.Runtime.Core/Settings/Contracts/Enums/EFrameOutputKind.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Core/Settings/Contracts/Enums/EVrMirrorMode.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Core/Settings/Contracts/Enums/EVrOutputViewKind.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Core/Settings/Contracts/Records/FrameOutputPacingDecision.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Core/Settings/Contracts/Records/FrameOutputTelemetry.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Core/Settings/Contracts/Records/RenderFrameViewSet.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Core/Settings/Contracts/RenderFrameViewBatchPlanner.cs"),
+        });
         string settings = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs");
         string stats = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.FrameOutputs.cs");
         string host = ReadWorkspaceFile("XRENGINE/Engine/Engine.RuntimeRenderingHostServices.cs");
@@ -744,7 +753,7 @@ public sealed class VrViewRenderModeContractTests
         window.ShouldContain("TryRenderDesktopMirrorComposition");
         packet.ShouldContain("FrameOutputManifestData");
         profileCapture.ShouldContain("\"frame_outputs\"");
-        profileCapture.ShouldContain("ProfileCaptureSchemaVersion = 3");
+        profileCapture.ShouldContain("ProfileCaptureSchemaVersion = 4");
     }
 
     [Test]
@@ -753,7 +762,13 @@ public sealed class VrViewRenderModeContractTests
         string settings = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/UnitTestingWorldSettings.cs");
         string store = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/UnitTestingWorldSettingsStore.cs");
         string bootstrap = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/BootstrapRenderSettings.cs");
-        string contracts = ReadWorkspaceFile("XREngine.Runtime.Core/Settings/VrRenderingContracts.cs");
+        string contracts = string.Join("\n", new[]
+        {
+            ReadWorkspaceFile("XREngine.Runtime.Core/Settings/VRRenderingContracts/Enums/EVrViewRenderImplementationPath.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Core/Settings/VRRenderingContracts/Enums/EVrTemporalHistoryPolicy.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Core/Settings/VRRenderingContracts/Enums/EOpenXrEyeResolutionPreset.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Core/Settings/VRRenderingContracts/VrViewRenderModeResolver.cs"),
+        });
         string openXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs");
         string openXrFrameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
         string openXrResolution = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Resolution.cs");
@@ -768,7 +783,7 @@ public sealed class VrViewRenderModeContractTests
         string profileCapture = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfileCapture.cs");
         string schema = ReadWorkspaceFile(".vscode/schemas/unit-testing-world-settings.schema.json");
         string xrViewport = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/XRViewport.cs");
-        string defaultPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs");
+        string defaultPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.PostProcessing.cs");
         string temporalAccumulation = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_TemporalAccumulationPass.cs");
         string pushViewportRenderArea = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/State/VPRC_PushViewportRenderArea.cs");
 
@@ -942,9 +957,9 @@ public sealed class VrViewRenderModeContractTests
     [Test]
     public void DefaultRenderPipelines_RouteStereoFboRendersThroughFullViewportCommandChain()
     {
-        string pipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs");
-        string pipeline2 = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs");
-        string pipelineLegacy = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
+        string pipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs");
+        string pipeline2 = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs");
+        string pipelineLegacy = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
 
         foreach (string source in new[] { pipeline, pipeline2 })
         {

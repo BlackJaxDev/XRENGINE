@@ -1363,16 +1363,17 @@ public unsafe partial class VulkanRenderer
 
         private readonly object _bufferStateSync = new();
         private readonly Dictionary<string, VkDataBuffer> _bufferCache = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, BufferStructuralIdentity> _bufferStructuralIdentities = new(StringComparer.Ordinal);
         private XRMesh.BufferCollection? _subscribedRendererBuffers;
         private XRMesh.BufferCollection? _subscribedMeshBuffers;
-        private XRDataBuffer? _cachedSkinnedPositionsBuffer;
-        private XRDataBuffer? _cachedSkinnedNormalsBuffer;
-        private XRDataBuffer? _cachedSkinnedTangentsBuffer;
-        private XRDataBuffer? _cachedSkinnedInterleavedBuffer;
-        private XRDataBuffer? _cachedPrecombinedBlendshapePositionsBuffer;
-        private XRDataBuffer? _cachedPrecombinedBlendshapeNormalsBuffer;
-        private XRDataBuffer? _cachedPrecombinedBlendshapeTangentsBuffer;
         private bool _cachedHasValidPrecombinedBlendshapeDeltas;
+        private BufferStructuralIdentity _cachedSkinnedPositionsIdentity;
+        private BufferStructuralIdentity _cachedSkinnedNormalsIdentity;
+        private BufferStructuralIdentity _cachedSkinnedTangentsIdentity;
+        private BufferStructuralIdentity _cachedSkinnedInterleavedIdentity;
+        private BufferStructuralIdentity _cachedPrecombinedBlendshapePositionsIdentity;
+        private BufferStructuralIdentity _cachedPrecombinedBlendshapeNormalsIdentity;
+        private BufferStructuralIdentity _cachedPrecombinedBlendshapeTangentsIdentity;
         private VkDataBuffer? _triangleIndexBuffer;
         private VkDataBuffer? _lineIndexBuffer;
         private VkDataBuffer? _pointIndexBuffer;
@@ -1643,7 +1644,7 @@ public unsafe partial class VulkanRenderer
                 if (collectBuffers)
                     CollectBuffers();
                 else
-                    Renderer.MarkCommandBuffersDirty();
+                    Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
             }
         }
 

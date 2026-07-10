@@ -253,16 +253,29 @@ namespace XREngine.Rendering.Vulkan
             if (descriptorPool.Handle == 0)
                 return;
 
-            VulkanRetirementTicket ticket = CaptureVulkanDescriptorPoolRetirementTicket(
-                descriptorPool,
-                nameof(RetireDescriptorPool));
             int frameSlot = currentFrame;
-
             lock (_retiredResourceLock)
             {
                 if (!_retiredDescriptorPoolHandlesAll.Add(descriptorPool.Handle))
                     return;
+            }
 
+            VulkanRetirementTicket ticket;
+            try
+            {
+                ticket = CaptureVulkanDescriptorPoolRetirementTicket(
+                    descriptorPool,
+                    nameof(RetireDescriptorPool));
+            }
+            catch
+            {
+                lock (_retiredResourceLock)
+                    _retiredDescriptorPoolHandlesAll.Remove(descriptorPool.Handle);
+                throw;
+            }
+
+            lock (_retiredResourceLock)
+            {
                 RemoveRetiredDescriptorSetsForPool_NoLock(descriptorPool.Handle);
                 _retiredDescriptorPoolHandles[frameSlot].Add(descriptorPool.Handle);
                 _retiredDescriptorPools[frameSlot].Add(new RetiredDescriptorPool(descriptorPool, ticket));
@@ -414,6 +427,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             ReportRetiredResourceBacklog("descriptor sets", frameSlot, remaining);
+            int destroyedDescriptorSets = 0;
             for (int i = 0; i < retired.Length; i++)
             {
                 RetiredDescriptorSet entry = retired[i];
@@ -430,7 +444,10 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 CompleteVulkanResourceDestruction(ObjectType.DescriptorSet, entry.DescriptorSet.Handle);
+                destroyedDescriptorSets++;
             }
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
+                descriptorSets: destroyedDescriptorSets);
         }
 
         internal void RetireQueryPool(QueryPool queryPool)
@@ -493,6 +510,8 @@ namespace XREngine.Rendering.Vulkan
                 Api!.DestroyQueryPool(device, queryPool, null);
                 CompleteVulkanResourceDestruction(ObjectType.QueryPool, queryPool.Handle);
             }
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
+                queryPools: retired.Length);
         }
 
         internal void RetireCommandBuffer(CommandPool commandPool, CommandBuffer commandBuffer)
@@ -577,6 +596,8 @@ namespace XREngine.Rendering.Vulkan
                     ObjectType.CommandBuffer,
                     unchecked((ulong)entry.CommandBuffer.Handle));
             }
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
+                commandBuffers: retired.Length);
         }
 
         internal void RetireBufferView(BufferView bufferView)
@@ -639,6 +660,8 @@ namespace XREngine.Rendering.Vulkan
                 Api!.DestroyBufferView(device, bufferView, null);
                 CompleteVulkanResourceDestruction(ObjectType.BufferView, bufferView.Handle);
             }
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
+                bufferViews: retired.Length);
         }
 
         internal void ReleaseDescriptorReferencesForPhysicalResourceDestruction(string reason)
@@ -946,7 +969,9 @@ namespace XREngine.Rendering.Vulkan
 
         private readonly record struct RetiredImageResourceEntry(
             RetiredImageResources Resources,
-            VulkanRetirementTicket Ticket);
+            VulkanRetirementTicket Ticket,
+            ulong ImageGeneration,
+            ulong SamplerGeneration);
 
         /// <summary>
         /// Per-frame-slot retirement queue for image resources that cannot be
@@ -980,30 +1005,34 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         internal void RetireImageResources(in RetiredImageResources resources)
         {
-            VulkanRetirementTicket ticket = CaptureVulkanRetirementTicket(
+            VulkanRetirementTicket imageTicket = CaptureVulkanRetirementTicket(
                 ObjectType.Image,
                 resources.Image.Handle,
                 nameof(RetireImageResources));
+            VulkanRetirementTicket ticket = imageTicket;
             if (resources.Image.Handle == 0 && resources.Memory.Handle != 0)
                 ticket = ticket.Merge(CaptureVulkanRetirementWatermark());
-            ticket = ticket.Merge(CaptureVulkanRetirementTicket(
+            VulkanRetirementTicket primaryViewTicket = CaptureVulkanRetirementTicket(
                 ObjectType.ImageView,
                 resources.PrimaryView.Handle,
-                nameof(RetireImageResources)));
+                nameof(RetireImageResources));
+            ticket = ticket.Merge(primaryViewTicket);
             if (resources.AttachmentViews is not null)
             {
                 for (int i = 0; i < resources.AttachmentViews.Length; i++)
                 {
-                    ticket = ticket.Merge(CaptureVulkanRetirementTicket(
+                    VulkanRetirementTicket attachmentViewTicket = CaptureVulkanRetirementTicket(
                         ObjectType.ImageView,
                         resources.AttachmentViews[i].Handle,
-                        nameof(RetireImageResources)));
+                        nameof(RetireImageResources));
+                    ticket = ticket.Merge(attachmentViewTicket);
                 }
             }
-            ticket = ticket.Merge(CaptureVulkanRetirementTicket(
+            VulkanRetirementTicket samplerTicket = CaptureVulkanRetirementTicket(
                 ObjectType.Sampler,
                 resources.Sampler.Handle,
-                nameof(RetireImageResources)));
+                nameof(RetireImageResources));
+            ticket = ticket.Merge(samplerTicket);
             int frameSlot = currentFrame;
 
             lock (_retiredResourceLock)
@@ -1073,7 +1102,9 @@ namespace XREngine.Rendering.Vulkan
                         attachmentViews,
                         sampler,
                         resources.AllocatedVRAMBytes),
-                    ticket));
+                    ticket,
+                    imageTicket.ResourceGeneration,
+                    samplerTicket.ResourceGeneration));
             }
         }
 
@@ -1144,38 +1175,6 @@ namespace XREngine.Rendering.Vulkan
 
                     ready.Add(candidate);
                     list.RemoveAt(i);
-                    RetiredImageResources resources = candidate.Resources;
-                    if (resources.Image.Handle != 0)
-                    {
-                        _retiredImageHandles[frameSlot].Remove(resources.Image.Handle);
-                        _retiredImageHandlesAll.Remove(resources.Image.Handle);
-                    }
-                    if (resources.Memory.Handle != 0)
-                    {
-                        _retiredImageMemoryHandles[frameSlot].Remove(resources.Memory.Handle);
-                        _retiredImageMemoryHandlesAll.Remove(resources.Memory.Handle);
-                    }
-                    if (resources.PrimaryView.Handle != 0)
-                    {
-                        _retiredImageViewHandles[frameSlot].Remove(resources.PrimaryView.Handle);
-                        _retiredImageViewHandlesAll.Remove(resources.PrimaryView.Handle);
-                    }
-                    if (resources.AttachmentViews is not null)
-                    {
-                        foreach (ImageView view in resources.AttachmentViews)
-                        {
-                            if (view.Handle != 0)
-                            {
-                                _retiredImageViewHandles[frameSlot].Remove(view.Handle);
-                                _retiredImageViewHandlesAll.Remove(view.Handle);
-                            }
-                        }
-                    }
-                    if (resources.Sampler.Handle != 0)
-                    {
-                        _retiredSamplerHandles[frameSlot].Remove(resources.Sampler.Handle);
-                        _retiredSamplerHandlesAll.Remove(resources.Sampler.Handle);
-                    }
                 }
                 retired = [.. ready];
                 remaining = list.Count;
@@ -1191,15 +1190,27 @@ namespace XREngine.Rendering.Vulkan
             foreach (RetiredImageResourceEntry entry in retired)
             {
                 RetiredImageResources r = entry.Resources;
+                bool canDestroyImage = r.Image.Handle != 0 &&
+                    TryBeginDestroyVulkanResourceGeneration(
+                        ObjectType.Image,
+                        r.Image.Handle,
+                        entry.ImageGeneration,
+                        "DrainRetiredImages.Image");
+                bool canDestroySampler = r.Sampler.Handle != 0 &&
+                    TryBeginDestroyVulkanResourceGeneration(
+                        ObjectType.Sampler,
+                        r.Sampler.Handle,
+                        entry.SamplerGeneration,
+                        "DrainRetiredImages.Sampler");
                 bool hasTrackedImageAllocation = false;
                 VulkanMemoryAllocation trackedImageAllocation = default;
-                if (r.Image.Handle != 0)
+                if (canDestroyImage)
                 {
                     hasTrackedImageAllocation = _imageAllocations.TryRemove(r.Image.Handle, out trackedImageAllocation);
                     UntrackImageAllocation(r.Image);
                 }
 
-                if (r.Sampler.Handle != 0)
+                if (canDestroySampler)
                 {
                     Api!.DestroySampler(device, r.Sampler, null);
                     CompleteVulkanResourceDestruction(ObjectType.Sampler, r.Sampler.Handle);
@@ -1229,7 +1240,7 @@ namespace XREngine.Rendering.Vulkan
                         }
                     }
                 }
-                if (r.Image.Handle != 0)
+                if (canDestroyImage)
                 {
                     Api!.DestroyImage(device, r.Image, null);
                     CompleteVulkanResourceDestruction(ObjectType.Image, r.Image.Handle);
@@ -1237,19 +1248,29 @@ namespace XREngine.Rendering.Vulkan
                     if (r.AllocatedVRAMBytes > 0)
                         destroyedImageBytes += r.AllocatedVRAMBytes;
                 }
-                if (r.Image.Handle != 0)
+                if (canDestroyImage)
                     _retiringImageHandles.TryRemove(r.Image.Handle, out _);
 
-                // Free through allocator if tracked, otherwise direct FreeMemory.
-                DeviceMemory memory = hasTrackedImageAllocation ? trackedImageAllocation.Memory : r.Memory;
-                if (memory.Handle != 0)
+                // Image memory is allocator-owned. A missing allocation record means the
+                // entry is stale or ownership was already transferred; never raw-free it.
+                if (canDestroyImage && hasTrackedImageAllocation && trackedImageAllocation.Memory.Handle != 0)
                 {
-                    if (hasTrackedImageAllocation)
-                        FreeMemoryAllocation(trackedImageAllocation);
-                    else
-                        Api!.FreeMemory(device, memory, null);
+                    FreeMemoryAllocation(trackedImageAllocation);
                     freedMemories++;
                 }
+                else if (r.Memory.Handle != 0 && (!canDestroyImage || !hasTrackedImageAllocation))
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.Retirement.SkipUnownedImageMemory.{r.Memory.Handle}",
+                        TimeSpan.FromSeconds(5),
+                        "[Vulkan.ResourceLifetime] Skipping raw vkFreeMemory for unowned/stale image memory 0x{0:X}; image=0x{1:X} generation={2} trackedAllocation={3}.",
+                        r.Memory.Handle,
+                        r.Image.Handle,
+                        entry.ImageGeneration,
+                        hasTrackedImageAllocation);
+                }
+
+                CompleteRetiredImageDeduplication(frameSlot, in r);
             }
 
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
@@ -1258,6 +1279,46 @@ namespace XREngine.Rendering.Vulkan
                 samplers: destroyedSamplers,
                 imageMemories: freedMemories,
                 imageBytes: destroyedImageBytes);
+        }
+
+        private void CompleteRetiredImageDeduplication(
+            int frameSlot,
+            in RetiredImageResources resources)
+        {
+            lock (_retiredResourceLock)
+            {
+                if (resources.Image.Handle != 0)
+                {
+                    _retiredImageHandles[frameSlot].Remove(resources.Image.Handle);
+                    _retiredImageHandlesAll.Remove(resources.Image.Handle);
+                }
+                if (resources.Memory.Handle != 0)
+                {
+                    _retiredImageMemoryHandles[frameSlot].Remove(resources.Memory.Handle);
+                    _retiredImageMemoryHandlesAll.Remove(resources.Memory.Handle);
+                }
+                if (resources.PrimaryView.Handle != 0)
+                {
+                    _retiredImageViewHandles[frameSlot].Remove(resources.PrimaryView.Handle);
+                    _retiredImageViewHandlesAll.Remove(resources.PrimaryView.Handle);
+                }
+                if (resources.AttachmentViews is not null)
+                {
+                    for (int i = 0; i < resources.AttachmentViews.Length; i++)
+                    {
+                        ulong handle = resources.AttachmentViews[i].Handle;
+                        if (handle == 0)
+                            continue;
+                        _retiredImageViewHandles[frameSlot].Remove(handle);
+                        _retiredImageViewHandlesAll.Remove(handle);
+                    }
+                }
+                if (resources.Sampler.Handle != 0)
+                {
+                    _retiredSamplerHandles[frameSlot].Remove(resources.Sampler.Handle);
+                    _retiredSamplerHandlesAll.Remove(resources.Sampler.Handle);
+                }
+            }
         }
 
         /// <summary>
@@ -1270,6 +1331,8 @@ namespace XREngine.Rendering.Vulkan
             if (_frameSlotTimelineValues is null || _graphicsTimelineSemaphore.Handle == 0)
                 return;
 
+            RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
+                new FrameOutputWorkTelemetry(GlobalInFlightWaits: 1));
             for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
             {
                 ulong value = _frameSlotTimelineValues[i];
@@ -1285,6 +1348,8 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         internal void ForceFlushAllRetiredResources()
         {
+            RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
+                new FrameOutputWorkTelemetry(ForceFlushes: 1));
             bool forcedAfterDeviceLoss = IsDeviceLost;
             if (forcedAfterDeviceLoss)
             {

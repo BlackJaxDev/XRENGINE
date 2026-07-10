@@ -247,17 +247,20 @@ at least one sample has been written. Harness summaries are written under
 `summary.json`, `summary.txt`, and `run-logdirs.txt`; by default the harness keeps
 only the latest three summary runs, configurable with `-RetainedRunCount`.
 
-### Render Stats Capture Schema v3
+### Render Stats Capture Schema v4
 
 `profiler-capture-manifest.json` now records
-`xrengine.profile_capture.render_stats.v3` with `schema_version = 3`. The
+`xrengine.profile_capture.render_stats.v4` with `schema_version = 4`. The
 manifest makes benchmark context explicit: build configuration, world mode,
 forced and effective mesh submission strategy, zero-readback material draw path,
 render backend, GPU/vendor, scene, camera, lights, viewport, render scale,
 stereo mode, VR view render mode, VR mirror mode, desktop mirror target rates,
 validation/debug state, shader and texture cache mode, GPU clock policy, target
 refresh rate, frame budget, warmup/capture durations, and any invalid benchmark
-environment overrides detected at launch.
+environment overrides detected at launch. Schema v4 also records Vulkan render-
+target mode, primary-command reuse and OBS-hook policies, ImGui skip state, the
+actual assembly build configuration, scene/settings hashes, and a structured
+output/view-family inventory with target extents and cadence/budget policy.
 
 Each `profiler-render-stats.ndjson` sample includes the old frame timing fields
 plus renderer-state churn counters: indirect-count and multi-draw calls, shader
@@ -284,7 +287,16 @@ mirror, XR submit, overlay, and present work. Top-level fields include
 per active output such as `DesktopScene`, `DesktopMirror`, `OpenXREyeSubmit`,
 `OpenVRSubmit`, `ImGuiOverlay`, `DynamicTextOverlay`, and `Present`, with
 configured/achieved rate, skip reason/counts, command count, phase CPU timings,
-GPU timing when available, and flags for mirror vs. separate scene render.
+GPU timing when available, and flags for mirror vs. separate scene render. Each
+row also publishes its stable output/view-family identity, target class and
+generation, display/internal extent, format/sample/view-mask compatibility,
+external-image slot, deadline/budgets/staleness, quality requirements, allowed
+fallbacks, dependency/completion contract, actual work disposition, and whether
+the policy decision was authorized. Aggregate fields count scene snapshots,
+visibility builds, output requests, unique view families, target variants,
+compiled-plan hits/misses, shared and reused work, deferrals, stale reuse,
+deadline misses, planner pruning, global waits/force flushes, rejected submits,
+and unapproved policy events.
 
 Scene and asset counters identify whether a slowdown is global or asset-local:
 visible renderer/submesh/triangle counts, material slots, active materials,
@@ -330,6 +342,18 @@ renderer comparisons. Reports separate startup, warmup, steady-state capture,
 and streaming interpretation and include p50/p90/p95/p99 frame timings, dropped
 sample notes, state churn totals, asset counters, readback totals, fallback
 events, and GPU-driven compactness counters.
+
+After the minimum `-WarmupSec`, capture begins only after a measured quiet
+window (default: five seconds, with a 120-second timeout): output workload
+identity and target generations must be stable, asset/shader work must be quiet,
+and retirement, planner-prune, global-wait, and force-flush counters must be
+zero. Use `-StabilityWindowSec` and `-StabilityTimeoutSec` to tune this gate;
+`-NoStabilityGate` is diagnostic-only. A capture is invalid if workload identity
+changes, an output takes an unapproved fallback, or a Vulkan submission is
+rejected. `-FailOnSteadyStateResourceChurn` covers every published retirement
+kind plus planner/global synchronization, while
+`-FailOnSteadyStateCommandBufferChurn` reports and gates record/reuse/dirty
+outcomes with an optional `-MinSteadyStateCommandBufferCleanReuseRatio`.
 
 Do not compare Debug and Release numbers as architectural evidence. Disable
 validation layers and verbose GL debug output for benchmark captures unless the

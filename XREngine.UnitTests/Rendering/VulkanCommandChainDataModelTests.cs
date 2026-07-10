@@ -448,11 +448,14 @@ public sealed class VulkanCommandChainDataModelTests
         textureSource.ShouldContain("ImageView = _view");
         textureSource.ShouldContain("Sampler = _sampler");
         textureSource.ShouldContain("if (!TryRestorePhysicalImageViewCache(_physicalGroup, current))");
-        descriptorKeySource.ShouldContain("ulong ResourceFingerprint");
+        descriptorKeySource.ShouldContain("ulong LayoutFingerprint");
+        descriptorKeySource.ShouldNotContain("ProgramBindingId");
+        descriptorKeySource.ShouldNotContain("ulong ResourceFingerprint");
         descriptorKeySource.ShouldContain("int DescriptorFrameSlotCount");
         descriptorSource.ShouldContain("hash.Add(Renderer.ResourceAllocatorIdentity);");
         descriptorSource.ShouldContain("AppendComponent(builder, \"resourceAllocator\", unchecked((ulong)Renderer.ResourceAllocatorIdentity));");
-        descriptorSource.ShouldContain("DescriptorAllocationKey allocationKey = new(schemaFingerprint, resourceFingerprint, descriptorFrameSlotCount, setCount);");
+        descriptorSource.ShouldContain("DescriptorAllocationKey allocationKey = new(layoutFingerprint, schemaFingerprint, descriptorFrameSlotCount, setCount);");
+        descriptorSource.ShouldContain("EnsureDescriptorSlotReady(cachedAllocation, material, bindings, frameIndex, drawUniformSlot, resourceFingerprint)");
     }
 
     [Test]

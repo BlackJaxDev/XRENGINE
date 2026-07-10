@@ -1603,6 +1603,17 @@ namespace XREngine
                 }
 
                 /// <summary>
+                /// Enables correctness-validated Vulkan primary and stable secondary command-buffer reuse.
+                /// </summary>
+                [Category("Vulkan")]
+                [Description("Enables correctness-validated Vulkan primary and stable secondary command-buffer reuse. XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE=0 disables reuse for diagnostics.")]
+                public bool EnableVulkanPrimaryCommandBufferReuse
+                {
+                    get => Vulkan.CommandRecording.PrimaryCommandBufferReuseEnabled;
+                    set => Vulkan.CommandRecording.PrimaryCommandBufferReuseEnabled = value;
+                }
+
+                /// <summary>
                 /// Selects the named Vulkan diagnostics preset used during backend startup.
                 /// Environment override: XRE_VULKAN_DIAGNOSTIC_PRESET=Off|StandardValidation|SyncValidation|GpuAssisted|BestPractices|CrashDiagnostics|RenderDocFriendly.
                 /// </summary>

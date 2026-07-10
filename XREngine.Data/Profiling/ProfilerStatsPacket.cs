@@ -80,6 +80,8 @@ public sealed partial class RenderStatsPacket
     public int VulkanDescriptorPoolCreateCount { get; set; }
     public int VulkanDescriptorPoolDestroyCount { get; set; }
     public int VulkanDescriptorPoolResetCount { get; set; }
+    public int VulkanLifetimeLiveResourceCount { get; set; }
+    public int VulkanTrackedDescriptorSetCount { get; set; }
     public int VulkanQueueSubmitCount { get; set; }
     public int VulkanDroppedFrameOps { get; set; }
     public int VulkanDroppedDrawOps { get; set; }
@@ -244,7 +246,7 @@ public sealed partial class RenderStatsPacket
 [MemoryPackable]
 public sealed partial class RenderProfilerV2Data
 {
-    public int ProfileCaptureSchemaVersion { get; set; } = 3;
+    public int ProfileCaptureSchemaVersion { get; set; } = 4;
     public RenderProfilerRendererStateData RendererState { get; set; } = new();
     public RenderProfilerSceneAssetData SceneAssets { get; set; } = new();
     public RenderProfilerGpuDrivenData GpuDriven { get; set; } = new();
@@ -341,6 +343,27 @@ public sealed partial class FrameOutputManifestData
     public double WholeFrameP95Ms { get; set; }
     public double WholeFrameP99Ms { get; set; }
     public double WholeFrameWorstMs { get; set; }
+    public ulong WorkloadIdentityHash { get; set; }
+    public int OutputRequestCount { get; set; }
+    public int UniqueViewFamilyCount { get; set; }
+    public int TargetVariantCount { get; set; }
+    public int SceneSnapshotCount { get; set; }
+    public int VisibilityBuildCount { get; set; }
+    public int CompiledPlanCacheHits { get; set; }
+    public int CompiledPlanCacheMisses { get; set; }
+    public int SharedPassReuseCount { get; set; }
+    public int RecordedWorkItemCount { get; set; }
+    public int ReusedWorkItemCount { get; set; }
+    public int DuplicatedWorkItemCount { get; set; }
+    public int CpuBudgetDeferralCount { get; set; }
+    public int GpuBudgetDeferralCount { get; set; }
+    public int StaleResultReuseCount { get; set; }
+    public int MissedDeadlineCount { get; set; }
+    public int UnapprovedPolicyEventCount { get; set; }
+    public int SubmissionRejectionCount { get; set; }
+    public int PlannerPruneCount { get; set; }
+    public int GlobalInFlightWaitCount { get; set; }
+    public int ForceFlushCount { get; set; }
     public FrameOutputEntryData[] Outputs { get; set; } = [];
 }
 
@@ -350,6 +373,37 @@ public sealed partial class FrameOutputEntryData
     public ulong FrameId { get; set; }
     public string OutputKind { get; set; } = string.Empty;
     public string ViewKind { get; set; } = string.Empty;
+    public ulong OutputId { get; set; }
+    public ulong ViewFamilyId { get; set; }
+    public string OutputClass { get; set; } = string.Empty;
+    public string Priority { get; set; } = string.Empty;
+    public string TargetClass { get; set; } = string.Empty;
+    public ulong StableTargetId { get; set; }
+    public ulong TargetGeneration { get; set; }
+    public uint DisplayWidth { get; set; }
+    public uint DisplayHeight { get; set; }
+    public uint InternalWidth { get; set; }
+    public uint InternalHeight { get; set; }
+    public ulong TargetCompatibilityKey { get; set; }
+    public uint SampleCount { get; set; }
+    public uint ViewMask { get; set; }
+    public int ExternalImageSlot { get; set; }
+    public float DesiredRateHz { get; set; }
+    public double DeadlineMs { get; set; }
+    public double MaxCpuBudgetMs { get; set; }
+    public double MaxGpuBudgetMs { get; set; }
+    public uint MaxContentAgeFrames { get; set; }
+    public bool HardDeadline { get; set; }
+    public string QualityRequirements { get; set; } = string.Empty;
+    public string FallbackPolicy { get; set; } = string.Empty;
+    public string CompletionRequirement { get; set; } = string.Empty;
+    public ulong ProducerDependencySetId { get; set; }
+    public ulong ConsumerDependencySetId { get; set; }
+    public string WorkDisposition { get; set; } = string.Empty;
+    public uint ContentAgeFrames { get; set; }
+    public bool DeadlineMissed { get; set; }
+    public bool PolicyAuthorized { get; set; }
+    public string PolicyReason { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string PipelineName { get; set; } = string.Empty;
     public bool Active { get; set; }

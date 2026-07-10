@@ -84,16 +84,22 @@ public unsafe partial class VulkanRenderer
 
     internal void MarkCommandBuffersDirtyForLegacyMeshState([CallerMemberName] string? reason = null)
     {
-        if (CommandChainsEnabledForCurrentRecording || t_frameOpCapture is not null)
+        if (VulkanPrimaryCommandBufferReuseEnabled || CommandChainsEnabledForCurrentRecording || t_frameOpCapture is not null)
             return;
 
         MarkCommandBuffersDirty(reason);
     }
 
     internal override void NotifyRenderResourcesChanged()
-        => MarkCommandBuffersDirty();
+    {
+        if (!VulkanPrimaryCommandBufferReuseEnabled)
+            MarkCommandBuffersDirty();
+    }
 
     internal override void NotifyRenderResourcesChanged(string? reason)
-        => MarkCommandBuffersDirty(string.IsNullOrWhiteSpace(reason) ? nameof(NotifyRenderResourcesChanged) : reason);
+    {
+        if (!VulkanPrimaryCommandBufferReuseEnabled)
+            MarkCommandBuffersDirty(string.IsNullOrWhiteSpace(reason) ? nameof(NotifyRenderResourcesChanged) : reason);
+    }
 
 }

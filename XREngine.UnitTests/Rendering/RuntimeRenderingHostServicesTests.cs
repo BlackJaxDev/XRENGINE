@@ -1135,6 +1135,10 @@ public sealed class RuntimeRenderingHostServicesTests
         {
         }
 
+        public void RecordRenderVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount)
+        {
+        }
+
         public void RecordRenderVulkanDynamicUniformAllocation(long bytes)
         {
         }
@@ -1289,6 +1293,10 @@ public sealed class RuntimeRenderingHostServicesTests
 
         public void RecordRenderVulkanRetiredResourceDrain(
             int descriptorPools,
+            int descriptorSets,
+            int commandBuffers,
+            int queryPools,
+            int bufferViews,
             int pipelines,
             int framebuffers,
             int buffers,

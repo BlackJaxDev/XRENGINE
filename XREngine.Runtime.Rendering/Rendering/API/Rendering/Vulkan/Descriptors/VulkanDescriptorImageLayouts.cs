@@ -7,37 +7,12 @@ public unsafe partial class VulkanRenderer
     internal ImageLayout ResolveDescriptorImageLayout(IVkImageDescriptorSource source, DescriptorType descriptorType)
     {
         if (descriptorType == DescriptorType.StorageImage)
-        {
-            ImageLayout trackedStorageLayout = source.TrackedImageLayout;
-            if (trackedStorageLayout == ImageLayout.General)
-                return trackedStorageLayout;
-
-            if (source.TryTransitionDedicatedImageLayout(trackedStorageLayout, ImageLayout.General))
-                return ImageLayout.General;
-
             return ImageLayout.General;
-        }
 
         ImageLayout requestedLayout = GetDefaultSampledDescriptorLayout(source);
-        ImageLayout trackedLayout = source.TrackedImageLayout;
-        if (trackedLayout == requestedLayout)
-            return trackedLayout;
-
+        ImageLayout trackedLayout = ResolveSubmittedDescriptorLayout(source, source.DescriptorView);
         if (CanSampleFromTrackedGeneralLayout(source.DescriptorUsage, trackedLayout))
             return ImageLayout.General;
-
-        if (trackedLayout is ImageLayout.ShaderReadOnlyOptimal
-            or ImageLayout.DepthStencilReadOnlyOptimal)
-        {
-            if (source.TryTransitionDedicatedImageLayout(trackedLayout, requestedLayout))
-                return requestedLayout;
-
-            return trackedLayout;
-        }
-
-        if (source.TryTransitionDedicatedImageLayout(trackedLayout, requestedLayout))
-            return requestedLayout;
-
         return requestedLayout;
     }
 
@@ -47,37 +22,12 @@ public unsafe partial class VulkanRenderer
         DescriptorType descriptorType)
     {
         if (descriptorType == DescriptorType.StorageImage)
-        {
-            ImageLayout trackedStorageLayout = snapshot.TrackedLayout;
-            if (trackedStorageLayout == ImageLayout.General)
-                return trackedStorageLayout;
-
-            if (source.TryTransitionDedicatedImageLayout(trackedStorageLayout, ImageLayout.General))
-                return ImageLayout.General;
-
             return ImageLayout.General;
-        }
 
         ImageLayout requestedLayout = GetDefaultSampledDescriptorLayout(in snapshot);
-        ImageLayout trackedLayout = snapshot.TrackedLayout;
-        if (trackedLayout == requestedLayout)
-            return trackedLayout;
-
+        ImageLayout trackedLayout = ResolveSubmittedDescriptorLayout(source, snapshot.View, snapshot.TrackedLayout);
         if (CanSampleFromTrackedGeneralLayout(snapshot.Usage, trackedLayout))
             return ImageLayout.General;
-
-        if (trackedLayout is ImageLayout.ShaderReadOnlyOptimal
-            or ImageLayout.DepthStencilReadOnlyOptimal)
-        {
-            if (source.TryTransitionDedicatedImageLayout(trackedLayout, requestedLayout))
-                return requestedLayout;
-
-            return trackedLayout;
-        }
-
-        if (source.TryTransitionDedicatedImageLayout(trackedLayout, requestedLayout))
-            return requestedLayout;
-
         return requestedLayout;
     }
 
@@ -115,4 +65,18 @@ public unsafe partial class VulkanRenderer
     private static bool UsesGeneralSampledDescriptorLayout(ImageUsageFlags usage)
         => (usage & ImageUsageFlags.StorageBit) != 0 &&
            (usage & ImageUsageFlags.SampledBit) != 0;
+
+    private ImageLayout ResolveSubmittedDescriptorLayout(
+        IVkImageDescriptorSource source,
+        ImageView view,
+        ImageLayout fallback = ImageLayout.Undefined)
+    {
+        if (view.Handle != 0 &&
+            TryGetDescriptorHeapImageViewCreateInfo(view, out ImageViewCreateInfo viewInfo) &&
+            TryGetTrackedImageLayout(viewInfo.Image, viewInfo.SubresourceRange, out ImageLayout submitted))
+            return submitted;
+
+        ImageLayout sourceLayout = source.TrackedImageLayout;
+        return sourceLayout != ImageLayout.Undefined ? sourceLayout : fallback;
+    }
 }

@@ -19,10 +19,14 @@ public unsafe partial class VulkanRenderer
             public DescriptorPool Pool;
             public DescriptorSet[][] Sets = [];
             public DescriptorHeapPushDataPayload[] DescriptorHeapPushData = [];
+            public DescriptorSetLayout[] Layouts = [];
+            public uint[] VariableDescriptorCounts = [];
+            public ulong LayoutFingerprint;
             public ulong SchemaFingerprint;
             public ulong ResourceFingerprint;
             public ulong[] SlotResourceFingerprints = [];
             public string ResourceFingerprintDetails = string.Empty;
+            public ulong LastUsedSerial;
             public readonly Dictionary<FrameSourceDescriptorWriteKey, ulong> FrameSourceDescriptorWriteSignatures = new();
         }
 

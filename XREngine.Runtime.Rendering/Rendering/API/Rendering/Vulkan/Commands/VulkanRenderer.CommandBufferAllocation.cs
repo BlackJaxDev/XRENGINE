@@ -251,6 +251,7 @@ namespace XREngine.Rendering.Vulkan
             evicted.PreserveSwapchainForOverlay = false;
             evicted.RecordedFrameOpContextFingerprint = ulong.MaxValue;
             evicted.RecordedFrameOpContextId = 0;
+            evicted.RecordedGenerations = default;
             evicted.RecordedSwapchainFinalLayout = ImageLayout.PresentSrcKhr;
             evicted.RecordedSwapchainWriteCount = 0;
             evicted.RecordedSwapchainRefreshFromLastPresentSource = false;
@@ -363,6 +364,99 @@ namespace XREngine.Rendering.Vulkan
                 variant.Dirty = true;
                 variant.DirtyReason = dirtyReason;
             }
+        }
+
+        private readonly record struct VulkanExactInvalidationResult(
+            int ExactVariantsDirtied,
+            int ExactCommandChainsDirtied,
+            int UnrelatedVariantsPreserved,
+            int GlobalFallbackInvalidations);
+
+        private VulkanExactInvalidationResult InvalidateCachedCommandBuffersByHandle(
+            ReadOnlySpan<ulong> dependentCommandBuffers,
+            string reason)
+        {
+            if (dependentCommandBuffers.IsEmpty)
+                return default;
+
+            HashSet<ulong> dependentHandles = new(dependentCommandBuffers.Length);
+            for (int i = 0; i < dependentCommandBuffers.Length; i++)
+            {
+                if (dependentCommandBuffers[i] != 0)
+                    dependentHandles.Add(dependentCommandBuffers[i]);
+            }
+
+            int exactVariantsDirtied = 0;
+            int exactChainsDirtied = 0;
+            int unrelatedVariantsPreserved = 0;
+
+            if (_commandBufferVariants is not null)
+            {
+                for (int imageIndex = 0; imageIndex < _commandBufferVariants.Length; imageIndex++)
+                {
+                    List<CommandBufferCacheVariant> variants = _commandBufferVariants[imageIndex];
+                    for (int variantIndex = 0; variantIndex < variants.Count; variantIndex++)
+                    {
+                        CommandBufferCacheVariant variant = variants[variantIndex];
+                        bool dependent = dependentHandles.Contains(unchecked((ulong)variant.PrimaryCommandBuffer.Handle)) ||
+                            dependentHandles.Contains(unchecked((ulong)variant.DynamicUiSecondaryCommandBuffer.Handle));
+                        if (!dependent)
+                        {
+                            unrelatedVariantsPreserved++;
+                            continue;
+                        }
+
+                        if (!variant.Dirty)
+                            exactVariantsDirtied++;
+                        variant.Dirty = true;
+                        variant.DirtyReason = reason;
+                    }
+                }
+            }
+
+            lock (_openXrPrimaryCommandBufferVariantsLock)
+            {
+                foreach (List<CommandBufferCacheVariant> variants in _openXrPrimaryCommandBufferVariants.Values)
+                {
+                    for (int variantIndex = 0; variantIndex < variants.Count; variantIndex++)
+                    {
+                        CommandBufferCacheVariant variant = variants[variantIndex];
+                        if (!dependentHandles.Contains(unchecked((ulong)variant.PrimaryCommandBuffer.Handle)))
+                        {
+                            unrelatedVariantsPreserved++;
+                            continue;
+                        }
+
+                        if (!variant.Dirty)
+                            exactVariantsDirtied++;
+                        variant.Dirty = true;
+                        variant.DirtyReason = reason;
+                    }
+                }
+            }
+
+            if (_commandChainCaches is not null)
+            {
+                for (int cacheIndex = 0; cacheIndex < _commandChainCaches.Length; cacheIndex++)
+                {
+                    foreach (CommandChain chain in _commandChainCaches[cacheIndex].Values)
+                    {
+                        if (!dependentHandles.Contains(unchecked((ulong)chain.SecondaryCommandBuffer.Handle)))
+                            continue;
+
+                        chain.State = CommandChainState.Unrecorded;
+                        chain.SecondaryCommandBufferExecutable = false;
+                        chain.DirtyReason = CommandChainDirtyReason.ResourcePlan;
+                        exactChainsDirtied++;
+                    }
+                }
+            }
+
+            return new VulkanExactInvalidationResult(
+                exactVariantsDirtied,
+                exactChainsDirtied,
+                unrelatedVariantsPreserved,
+                GlobalFallbackInvalidations: 0);
         }
 
         private void AllocateCommandBufferDirtyFlags()

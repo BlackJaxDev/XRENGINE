@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "captured_at_utc": "2026-07-10T00:45:06.8984345Z",
+  "scope": "Vulkan core hardening Phase 4 live validation",
+  "source": {
+    "branch": "rendering-vulkan-core-hardening",
+    "commit": "c81dc41328d2e3c3b98588b7a16559b739b274d6",
+    "dirty_worktree": true,
+    "unrelated_dirty_state_preserved": true
+  },
+  "machine": {
+    "gpu": "NVIDIA GeForce RTX 3090",
+    "windows_driver_version": "32.0.16.1062",
+    "vulkan_api_version": "1.4.341",
+    "openxr_runtime": "SteamVR",
+    "openxr_runtime_manifest": "C:/Program Files (x86)/Steam/steamapps/common/SteamVR/steamxr_win64.json"
+  },
+  "settings": {
+    "backend": "Vulkan",
+    "backend_fallback": "RequireRequested",
+    "diagnostic_preset": "SyncValidation",
+    "view_render_mode": "SinglePassStereo",
+    "view_render_implementation": "OpenXrSinglePassCompatibility",
+    "light_probe_grid": "3x3x4",
+    "light_probe_count": 36,
+    "light_probe_resolution": 64,
+    "interactive_capture_mode": "Realtime",
+    "interactive_capture_interval_ms": 100,
+    "settings_sha256_after_restore": "BE9E4B7AEC0BA8EB0D5B132654C4FC0D0D08B159BD44B2C964F09879DF670940"
+  },
+  "build": {
+    "command": "dotnet build .\\XREngine.Editor\\XREngine.Editor.csproj --no-restore",
+    "passed": true,
+    "warnings": 216,
+    "errors": 0,
+    "raw_log": "Build/_AgentValidation/20260709-180000-vulkan-phase4-live/logs/build-editor.log"
+  },
+  "interactive_stress": {
+    "openxr_active": true,
+    "probe_capture_active": true,
+    "resize_count": 12,
+    "resize_failures": 0,
+    "resize_sizes": ["1280x720", "960x540", "1600x900", "1024x768", "1440x810", "800x600"],
+    "maximum_resize_call_ms": 4909,
+    "process_responsive_after_resizes": true,
+    "mcp_screenshots_inspected": 4,
+    "camera_dependent_images_confirmed": true,
+    "device_lost": false,
+    "raw_root": "Build/_AgentValidation/20260709-180000-vulkan-phase4-live"
+  },
+  "bounded_openxr_smoke": {
+    "target_frames": 12,
+    "submitted_frames": 12,
+    "no_layer_frames": 0,
+    "end_frame_failures": 0,
+    "per_eye_acquire_wait_release": [12, 12],
+    "desktop_mirror_composed": true,
+    "per_frame_allocations_bytes": 0,
+    "teardown_completed": true,
+    "warnings": 0,
+    "failures": 0,
+    "device_lost": false,
+    "summary": "Build/_AgentValidation/20260709-180000-vulkan-phase4-live/reports/openxr-phase4-smoke-12-summary.json",
+    "engine_log": "Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-09_17-44-43_pid36564"
+  },
+  "validation": {
+    "clean": false,
+    "total_error_messages": 1763,
+    "resource_lifetime_submission_rejections": 2,
+    "retirement_queue_peak": 86119,
+    "invalid_destroy_image": 7,
+    "invalid_free_memory": 5,
+    "live_children_at_destroy_device": 9,
+    "device_lost_messages": 0,
+    "dominant_non_phase4_messages": {
+      "SYNC-HAZARD-READ-AFTER-WRITE": 1246,
+      "SYNC-HAZARD-WRITE-AFTER-READ": 435,
+      "SYNC-HAZARD-WRITE-AFTER-WRITE": 6
+    }
+  },
+  "conclusion": {
+    "phase4_source_complete": true,
+    "completion_value_retirement_implemented": true,
+    "combined_stress_executed": true,
+    "phase4_final_acceptance_met": false,
+    "blockers": [
+      "invalid image and memory destruction during teardown",
+      "live Vulkan child objects at device destruction",
+      "retirement queue growth to 86119 entries",
+      "upstream command buffers retained references to resources already pending retirement"
+    ]
+  }
+}

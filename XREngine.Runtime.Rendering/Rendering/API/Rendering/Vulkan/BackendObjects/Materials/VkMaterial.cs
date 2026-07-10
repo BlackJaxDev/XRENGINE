@@ -438,7 +438,8 @@ namespace XREngine.Rendering.Vulkan
                         descriptorPool,
                         frameSets,
                         program.DescriptorSetsRequireUpdateAfterBind,
-                        $"Material.DescriptorSet.Frame{frame}");
+                        $"Material.DescriptorSet.Frame{frame}",
+                        bindings);
                     Renderer.RecordVulkanDescriptorTableGeneration("MaterialDescriptorSets.Allocated");
                     descriptorSets[frame] = frameSets;
                     descriptorHeapPushData[frame] = Renderer.CreateDescriptorHeapPushDataPayload(program.DescriptorHeapLayout);

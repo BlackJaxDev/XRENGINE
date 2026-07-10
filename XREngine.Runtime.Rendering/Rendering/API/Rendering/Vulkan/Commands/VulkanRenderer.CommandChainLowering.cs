@@ -1323,11 +1323,9 @@ public unsafe partial class VulkanRenderer
                 if (chains is not null && chains.TryGetValue(key, out CommandChain? chain))
                 {
                     hash.Add(chain.SecondaryCommandBuffer.Handle);
-                    hash.Add(chain.SecondaryCommandBufferGeneration);
                 }
                 else
                 {
-                    hash.Add(0UL);
                     hash.Add(0UL);
                 }
             }
