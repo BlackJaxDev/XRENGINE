@@ -14,7 +14,10 @@ public unsafe partial class VulkanRenderer
     internal void TrackLiveImageView(ImageView imageView, string owner = "unknown")
     {
         if (imageView.Handle != 0)
+        {
             _liveImageViewHandles[imageView.Handle] = owner;
+            RegisterVulkanResource(ObjectType.ImageView, imageView.Handle, owner);
+        }
     }
 
     internal void TrackLiveImageView(ImageView imageView, in ImageViewCreateInfo createInfo, string owner = "unknown")
@@ -24,6 +27,11 @@ public unsafe partial class VulkanRenderer
 
         _liveImageViewHandles[imageView.Handle] = owner;
         _descriptorHeapImageViewCreateInfos[imageView.Handle] = createInfo with { PNext = null };
+        RegisterVulkanImageViewResource(
+            imageView,
+            createInfo.Image,
+            owner,
+            IsExternalImageViewOwner(owner));
     }
 
     internal bool TryGetDescriptorHeapImageViewCreateInfo(ImageView imageView, out ImageViewCreateInfo createInfo)
@@ -84,9 +92,26 @@ public unsafe partial class VulkanRenderer
         if (imageView.Handle == 0)
             return false;
 
+        VulkanRetirementTicket ticket = CaptureVulkanRetirementTicket(
+            ObjectType.ImageView,
+            imageView.Handle,
+            owner);
+        if (!IsVulkanRetirementReady(ticket))
+        {
+            RetireImageResources(new RetiredImageResources(
+                default,
+                default,
+                imageView,
+                [],
+                default,
+                0));
+            return false;
+        }
+
         if (_liveImageViewHandles.TryRemove(imageView.Handle, out _))
         {
             _descriptorHeapImageViewCreateInfos.TryRemove(imageView.Handle, out _);
+            CompleteVulkanResourceDestruction(ObjectType.ImageView, imageView.Handle);
             return true;
         }
 
@@ -114,6 +139,7 @@ public unsafe partial class VulkanRenderer
                 pair.Key,
                 owner);
             Api!.DestroyImageView(device, imageView, null);
+            CompleteVulkanResourceDestruction(ObjectType.ImageView, pair.Key);
             destroyedViews++;
         }
 

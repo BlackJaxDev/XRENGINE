@@ -427,14 +427,18 @@ namespace XREngine.Rendering.Vulkan
 
                         if (Api!.AllocateDescriptorSets(Device, ref allocInfo, setPtr) != Result.Success)
                         {
-                            Api.DestroyDescriptorPool(Device, descriptorPool, null);
-                            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
+                            Renderer.RetireDescriptorPool(descriptorPool);
                             WarnOnce("Failed to allocate Vulkan descriptor sets for material.");
                             return false;
                         }
                     }
 
                     Renderer.SetDebugDescriptorSetNames(frameSets, $"Material.DescriptorSet.Frame{frame}");
+                    Renderer.RegisterVulkanDescriptorSets(
+                        descriptorPool,
+                        frameSets,
+                        program.DescriptorSetsRequireUpdateAfterBind,
+                        $"Material.DescriptorSet.Frame{frame}");
                     Renderer.RecordVulkanDescriptorTableGeneration("MaterialDescriptorSets.Allocated");
                     descriptorSets[frame] = frameSets;
                     descriptorHeapPushData[frame] = Renderer.CreateDescriptorHeapPushDataPayload(program.DescriptorHeapLayout);
@@ -442,8 +446,7 @@ namespace XREngine.Rendering.Vulkan
 
                 if (!TryCreateUniformResources(program, bindings, frameCount, out Dictionary<(uint set, uint binding), UniformBindingResource> uniformResources))
                 {
-                    Api!.DestroyDescriptorPool(Device, descriptorPool, null);
-                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
+                    Renderer.RetireDescriptorPool(descriptorPool);
                     return false;
                 }
 
@@ -575,10 +578,7 @@ namespace XREngine.Rendering.Vulkan
                         Renderer.RetireDescriptorPool(state.DescriptorPool);
                     }
                     else
-                    {
-                        Api!.DestroyDescriptorPool(Device, state.DescriptorPool, null);
-                        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
-                    }
+                        Renderer.RetireDescriptorPool(state.DescriptorPool);
                 }
             }
 
@@ -1052,12 +1052,7 @@ namespace XREngine.Rendering.Vulkan
                 foreach (UniformBindingResource resource in resources.Values)
                 {
                     for (int i = 0; i < resource.Buffers.Length; i++)
-                    {
-                        if (resource.Buffers[i].Handle != 0)
-                            Api!.DestroyBuffer(Device, resource.Buffers[i], null);
-                        if (resource.Memories[i].Handle != 0)
-                            Api!.FreeMemory(Device, resource.Memories[i], null);
-                    }
+                        Renderer.DestroyBuffer(resource.Buffers[i], resource.Memories[i]);
                 }
             }
 

@@ -124,6 +124,10 @@ public unsafe partial class VulkanRenderer
                 Debug.VulkanWarning("[Vulkan] Frame timing query pool allocation failed; GPU frame timing instrumentation disabled.");
                 return;
             }
+            RegisterVulkanResource(
+                ObjectType.QueryPool,
+                _frameTimingQueryPools[i].Handle,
+                $"FrameTiming.QueryPool[{i}]");
         }
 
         _frameTimingGpuEnabled = true;
@@ -167,6 +171,13 @@ public unsafe partial class VulkanRenderer
                 Debug.VulkanWarning("[Vulkan] Frame timing query pool growth failed for frame slot {0}; GPU frame timing disabled for that slot.", i);
                 _frameTimingQueryPools[i] = default;
             }
+            else
+            {
+                RegisterVulkanResource(
+                    ObjectType.QueryPool,
+                    _frameTimingQueryPools[i].Handle,
+                    $"FrameTiming.QueryPool[{i}]");
+            }
         }
     }
 
@@ -180,7 +191,7 @@ public unsafe partial class VulkanRenderer
             {
                 QueryPool queryPool = _frameTimingQueryPools[i];
                 if (queryPool.Handle != 0)
-                    Api!.DestroyQueryPool(device, queryPool, null);
+                    RetireQueryPool(queryPool);
             }
         }
 
@@ -203,6 +214,11 @@ public unsafe partial class VulkanRenderer
         if (queryPool.Handle == 0)
             return;
 
+        TrackVulkanCommandBufferResource(
+            commandBuffer,
+            ObjectType.QueryPool,
+            queryPool.Handle,
+            "FrameTiming.QueryPool");
         Api!.CmdResetQueryPool(commandBuffer, queryPool, 0, FrameTimingQueryCount);
         Api.CmdWriteTimestamp(commandBuffer, PipelineStageFlags.TopOfPipeBit, queryPool, 0);
     }
@@ -254,6 +270,8 @@ public unsafe partial class VulkanRenderer
         if (result != Result.Success)
             return;
 
+        NotifyVulkanResourceUseCompleted(ObjectType.QueryPool, queryPool.Handle);
+
         ulong start = timestamps[0];
         ulong end = timestamps[1];
         if (end < start)
@@ -302,6 +320,10 @@ public unsafe partial class VulkanRenderer
                 Debug.VulkanWarning("[Vulkan] GPU pipeline profiler query pool allocation failed; Vulkan GPU render-pipeline timing disabled.");
                 return;
             }
+            RegisterVulkanResource(
+                ObjectType.QueryPool,
+                _vulkanGpuProfilerQueryPools[i].Handle,
+                $"GpuProfiler.QueryPool[{i}]");
         }
 
         _vulkanGpuProfilerEnabled = true;
@@ -342,6 +364,13 @@ public unsafe partial class VulkanRenderer
                 Debug.VulkanWarning("[Vulkan] GPU pipeline profiler query pool growth failed for frame slot {0}; render-pipeline GPU timings disabled for that slot.", i);
                 _vulkanGpuProfilerQueryPools[i] = default;
             }
+            else
+            {
+                RegisterVulkanResource(
+                    ObjectType.QueryPool,
+                    _vulkanGpuProfilerQueryPools[i].Handle,
+                    $"GpuProfiler.QueryPool[{i}]");
+            }
         }
     }
 
@@ -355,7 +384,7 @@ public unsafe partial class VulkanRenderer
             {
                 QueryPool queryPool = _vulkanGpuProfilerQueryPools[i];
                 if (queryPool.Handle != 0)
-                    Api!.DestroyQueryPool(device, queryPool, null);
+                    RetireQueryPool(queryPool);
             }
         }
 
@@ -512,6 +541,11 @@ public unsafe partial class VulkanRenderer
         if (queryPool.Handle == 0)
             return;
 
+        TrackVulkanCommandBufferResource(
+            commandBuffer,
+            ObjectType.QueryPool,
+            queryPool.Handle,
+            "GpuProfiler.QueryPool");
         Api!.CmdResetQueryPool(commandBuffer, queryPool, 0, VulkanGpuProfilerQueryCount);
         _vulkanGpuProfilerRecordingActive = true;
         _vulkanGpuProfilerRecordingFrameSlot = frameSlot;
@@ -742,6 +776,8 @@ public unsafe partial class VulkanRenderer
 
                 if (result != Result.Success)
                     return;
+
+                NotifyVulkanResourceUseCompleted(ObjectType.QueryPool, queryPool.Handle);
 
                 for (int i = 0; i < samples.Count; i++)
                 {

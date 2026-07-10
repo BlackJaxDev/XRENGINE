@@ -138,6 +138,52 @@ namespace XREngine.Rendering.Vulkan
 
         private void CmdBeginDynamicRendering(CommandBuffer commandBuffer, RenderingInfo* renderingInfo)
         {
+            if (renderingInfo is not null)
+            {
+                for (int i = 0; i < renderingInfo->ColorAttachmentCount; i++)
+                {
+                    RenderingAttachmentInfo attachment = renderingInfo->PColorAttachments[i];
+                    TrackVulkanCommandBufferResource(
+                        commandBuffer,
+                        ObjectType.ImageView,
+                        attachment.ImageView.Handle,
+                        "DynamicRendering.ColorAttachment");
+                    TrackVulkanCommandBufferResource(
+                        commandBuffer,
+                        ObjectType.ImageView,
+                        attachment.ResolveImageView.Handle,
+                        "DynamicRendering.ColorResolveAttachment");
+                }
+
+                if (renderingInfo->PDepthAttachment is not null)
+                {
+                    TrackVulkanCommandBufferResource(
+                        commandBuffer,
+                        ObjectType.ImageView,
+                        renderingInfo->PDepthAttachment->ImageView.Handle,
+                        "DynamicRendering.DepthAttachment");
+                    TrackVulkanCommandBufferResource(
+                        commandBuffer,
+                        ObjectType.ImageView,
+                        renderingInfo->PDepthAttachment->ResolveImageView.Handle,
+                        "DynamicRendering.DepthResolveAttachment");
+                }
+
+                if (renderingInfo->PStencilAttachment is not null)
+                {
+                    TrackVulkanCommandBufferResource(
+                        commandBuffer,
+                        ObjectType.ImageView,
+                        renderingInfo->PStencilAttachment->ImageView.Handle,
+                        "DynamicRendering.StencilAttachment");
+                    TrackVulkanCommandBufferResource(
+                        commandBuffer,
+                        ObjectType.ImageView,
+                        renderingInfo->PStencilAttachment->ResolveImageView.Handle,
+                        "DynamicRendering.StencilResolveAttachment");
+                }
+            }
+
             if (UseCoreDynamicRenderingCommands)
             {
                 Api!.CmdBeginRendering(commandBuffer, renderingInfo);
@@ -194,6 +240,7 @@ namespace XREngine.Rendering.Vulkan
             if (renderPass.Handle == 0)
                 return;
 
+            RegisterVulkanResource(ObjectType.RenderPass, renderPass.Handle, "RenderPass");
             _renderPassColorAttachmentCounts[renderPass.Handle] = colorAttachmentCount;
             _renderPassColorAttachmentFormats.Remove(renderPass.Handle);
             if (!string.IsNullOrWhiteSpace(semanticSignature))
@@ -205,6 +252,7 @@ namespace XREngine.Rendering.Vulkan
             if (renderPass.Handle == 0)
                 return;
 
+            RegisterVulkanResource(ObjectType.RenderPass, renderPass.Handle, "RenderPass");
             _renderPassColorAttachmentCounts[renderPass.Handle] = (uint)colorAttachmentFormats.Length;
             _renderPassColorAttachmentFormats[renderPass.Handle] = colorAttachmentFormats.ToArray();
             if (!string.IsNullOrWhiteSpace(semanticSignature))

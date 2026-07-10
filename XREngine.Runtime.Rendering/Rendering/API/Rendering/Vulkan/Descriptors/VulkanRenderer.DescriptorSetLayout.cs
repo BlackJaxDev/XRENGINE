@@ -7,7 +7,11 @@ namespace XREngine.Rendering.Vulkan
         private DescriptorSetLayout descriptorSetLayout;
 
         private void DestroyDescriptorSetLayout()
-            => Api!.DestroyDescriptorSetLayout(device, descriptorSetLayout, null);
+        {
+            if (TryBeginDestroyDescriptorSetLayout(descriptorSetLayout, "Swapchain.DescriptorSetLayout"))
+                Api!.DestroyDescriptorSetLayout(device, descriptorSetLayout, null);
+            descriptorSetLayout = default;
+        }
 
         private void CreateDescriptorSetLayout()
         {
@@ -32,6 +36,8 @@ namespace XREngine.Rendering.Vulkan
                 if (Api!.CreateDescriptorSetLayout(device, ref layoutInfo, null, descriptorSetLayoutPtr) != Result.Success)
                     throw new Exception("failed to create descriptor set layout!");
             }
+
+            TrackLiveDescriptorSetLayout(descriptorSetLayout, "Swapchain.DescriptorSetLayout");
         }
     }
 }

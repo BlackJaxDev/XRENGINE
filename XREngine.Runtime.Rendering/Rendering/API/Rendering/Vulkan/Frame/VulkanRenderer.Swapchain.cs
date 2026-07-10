@@ -222,27 +222,15 @@ public unsafe partial class VulkanRenderer
 
     private void DestroyDepth()
     {
-        if (_swapchainDepthView.Handle != 0)
-        {
-            if (TryBeginDestroyImageView(_swapchainDepthView, "DestroySwapchainDepth"))
-                Api!.DestroyImageView(device, _swapchainDepthView, null);
-            _swapchainDepthView = default;
-        }
-
-        if (_swapchainDepthImage.Handle != 0)
-        {
-            Api!.DestroyImage(device, _swapchainDepthImage, null);
-            if (_imageAllocations.TryRemove(_swapchainDepthImage.Handle, out VulkanMemoryAllocation alloc))
-                FreeMemoryAllocation(alloc);
-            else if (_swapchainDepthMemory.Handle != 0)
-                Api!.FreeMemory(device, _swapchainDepthMemory, null);
-            _swapchainDepthImage = default;
-        }
-        else if (_swapchainDepthMemory.Handle != 0)
-        {
-            Api!.FreeMemory(device, _swapchainDepthMemory, null);
-        }
-
+        RetireImageResources(new RetiredImageResources(
+            _swapchainDepthImage,
+            _swapchainDepthMemory,
+            _swapchainDepthView,
+            [],
+            default,
+            0));
+        _swapchainDepthView = default;
+        _swapchainDepthImage = default;
         _swapchainDepthMemory = default;
     }
 
@@ -266,7 +254,7 @@ public unsafe partial class VulkanRenderer
             SharingMode = SharingMode.Exclusive,
         };
 
-        if (Api!.CreateImage(device, ref imageInfo, null, out _swapchainDepthImage) != Result.Success)
+        if (CreateVulkanImageTracked(ref imageInfo, out _swapchainDepthImage, "Swapchain.Depth") != Result.Success)
             throw new Exception("Failed to create swapchain depth image.");
 
         ClearTrackedImageLayouts(_swapchainDepthImage);
@@ -277,7 +265,10 @@ public unsafe partial class VulkanRenderer
         if (Api!.BindImageMemory(device, _swapchainDepthImage, _swapchainDepthMemory, allocation.Offset) != Result.Success)
         {
             _imageAllocations.TryRemove(_swapchainDepthImage.Handle, out _);
+            DestroyVulkanImageImmediateTracked(_swapchainDepthImage, "Swapchain.Depth.BindFailure");
             FreeMemoryAllocation(allocation);
+            _swapchainDepthImage = default;
+            _swapchainDepthMemory = default;
             throw new Exception("Failed to bind swapchain depth memory.");
         }
 
@@ -298,7 +289,14 @@ public unsafe partial class VulkanRenderer
         };
 
         if (Api!.CreateImageView(device, ref viewInfo, null, out _swapchainDepthView) != Result.Success)
+        {
+            _imageAllocations.TryRemove(_swapchainDepthImage.Handle, out _);
+            DestroyVulkanImageImmediateTracked(_swapchainDepthImage, "Swapchain.Depth.ViewFailure");
+            FreeMemoryAllocation(allocation);
+            _swapchainDepthImage = default;
+            _swapchainDepthMemory = default;
             throw new Exception("Failed to create swapchain depth view.");
+        }
 
         TrackLiveImageView(_swapchainDepthView, in viewInfo, "Swapchain.Depth");
     }

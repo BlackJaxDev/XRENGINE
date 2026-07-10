@@ -359,7 +359,7 @@ namespace XREngine.Rendering.Vulkan
             };
 
             CmdBeginDynamicRendering(commandBuffer, &renderingInfo);
-            Api.CmdExecuteCommands(commandBuffer, 1, &secondaryCommandBuffer);
+            CmdExecuteCommandsTracked(commandBuffer, 1, &secondaryCommandBuffer);
             CmdEndDynamicRendering(commandBuffer);
 
             TransitionSwapchainImageForImGuiOverlay(
@@ -577,7 +577,7 @@ namespace XREngine.Rendering.Vulkan
                     throw firstError;
 
                 fixed (CommandBuffer* secondaryPtr = secondaryBuffers)
-                    Api!.CmdExecuteCommands(primaryCommandBuffer, (uint)count, secondaryPtr);
+                    CmdExecuteCommandsTracked(primaryCommandBuffer, (uint)count, secondaryPtr);
                 for (int i = 0; i < count; i++)
                 {
                     if (secondaryBuffers[i].Handle != 0)
@@ -670,8 +670,13 @@ namespace XREngine.Rendering.Vulkan
                     CommandBufferCount = 1
                 };
 
-                Api!.AllocateCommandBuffers(device, ref allocInfo, out secondary);
-                allocated = secondary.Handle != 0;
+                Result allocateResult = AllocateVulkanCommandBuffersTracked(
+                    ref allocInfo,
+                    out secondary,
+                    "SecondaryCommandBuffer.Worker");
+                allocated = allocateResult == Result.Success && secondary.Handle != 0;
+                if (!allocated)
+                    throw new InvalidOperationException($"Failed to allocate Vulkan secondary command buffer ({allocateResult}).");
                 if (allocated)
                 {
                     RegisterCommandBufferImageIndex(secondary, imageIndex);
@@ -717,7 +722,7 @@ namespace XREngine.Rendering.Vulkan
                 if (Api!.EndCommandBuffer(secondary) != Result.Success)
                     throw new Exception("Failed to end Vulkan secondary command buffer.");
 
-                Api!.CmdExecuteCommands(primaryCommandBuffer, 1, &secondary);
+                CmdExecuteCommandsTracked(primaryCommandBuffer, 1, &secondary);
                 executedInPrimary = true;
             }
             finally
@@ -728,7 +733,7 @@ namespace XREngine.Rendering.Vulkan
                         DeferSecondaryCommandBufferFree(imageIndex, pool, secondary);
                     else
                     {
-                        Api!.FreeCommandBuffers(device, pool, 1, ref secondary);
+                        FreeVulkanCommandBufferTracked(pool, ref secondary, "SecondaryCommandBuffer.RecordFailure");
                         RemoveCommandBufferBindState(secondary);
                     }
                 }
@@ -788,8 +793,13 @@ namespace XREngine.Rendering.Vulkan
                                 CommandBufferCount = 1
                             };
 
-                            Api!.AllocateCommandBuffers(device, ref allocInfo, out secondary);
-                            localAllocated = secondary.Handle != 0;
+                            Result allocateResult = AllocateVulkanCommandBuffersTracked(
+                                ref allocInfo,
+                                out secondary,
+                                "SecondaryCommandBuffer.ParallelWorker");
+                            localAllocated = allocateResult == Result.Success && secondary.Handle != 0;
+                            if (!localAllocated)
+                                throw new InvalidOperationException($"Failed to allocate Vulkan secondary command buffer ({allocateResult}).");
                             if (localAllocated)
                             {
                                 RegisterCommandBufferImageIndex(secondary, imageIndex);
@@ -841,7 +851,7 @@ namespace XREngine.Rendering.Vulkan
                             {
                                 try
                                 {
-                                    Api!.FreeCommandBuffers(device, pool, 1, ref secondary);
+                                    FreeVulkanCommandBufferTracked(pool, ref secondary, "SecondaryCommandBuffer.BatchFailure");
                                     RemoveCommandBufferBindState(secondary);
                                 }
                                 catch
@@ -858,7 +868,7 @@ namespace XREngine.Rendering.Vulkan
                     throw firstError;
 
                 fixed (CommandBuffer* secondaryPtr = secondaryBuffers)
-                    Api!.CmdExecuteCommands(primaryCommandBuffer, (uint)count, secondaryPtr);
+                    CmdExecuteCommandsTracked(primaryCommandBuffer, (uint)count, secondaryPtr);
 
                 executedInPrimary = true;
             }
@@ -873,7 +883,7 @@ namespace XREngine.Rendering.Vulkan
                         DeferSecondaryCommandBufferFree(imageIndex, ownerPools[i], secondaryBuffers[i]);
                     else
                     {
-                        Api!.FreeCommandBuffers(device, ownerPools[i], 1, ref secondaryBuffers[i]);
+                        FreeVulkanCommandBufferTracked(ownerPools[i], ref secondaryBuffers[i], "SecondaryCommandBuffer.BatchCleanup");
                         RemoveCommandBufferBindState(secondaryBuffers[i]);
                     }
                 }

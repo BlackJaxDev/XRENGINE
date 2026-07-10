@@ -87,6 +87,12 @@ namespace XREngine.Rendering.Vulkan
             if (device.Handle != 0)
                 DeviceWaitIdle();
 
+            bool forceRetirementDrain = IsDeviceLost;
+            if (forceRetirementDrain)
+                BeginForcedVulkanRetirementDrain();
+
+            try
+            {
             _textureUploadService.CancelAllQueuedWork(this, "Vulkan renderer shutdown");
             CancelPendingImportedTextureUploadFrameOps("Vulkan renderer shutdown");
             CancelRecordedTextureUploadPublications("Vulkan renderer shutdown");
@@ -154,6 +160,7 @@ namespace XREngine.Rendering.Vulkan
             // handles retired by sync/command-pool teardown.
             ForceFlushAllRetiredResources();
             DestroyRemainingTrackedImageViews();
+            DestroyRemainingTrackedDescriptorSetLayouts();
             DestroySharedGraphicsPipelines();
             DestroyRemainingTrackedPipelineLayouts();
             DestroySharedGraphicsPipelineLibraries();
@@ -162,6 +169,12 @@ namespace XREngine.Rendering.Vulkan
             DestroyValidationLayers();
             DestroySurface();
             DestroyInstance();
+            }
+            finally
+            {
+                if (forceRetirementDrain)
+                    EndForcedVulkanRetirementDrain();
+            }
         }
 
         private void DestroyDanglingMaterialWrappers()
@@ -317,7 +330,7 @@ namespace XREngine.Rendering.Vulkan
 
                 Image image = new() { Handle = pair.Key };
                 if (image.Handle != 0)
-                    Api!.DestroyImage(device, image, null);
+                    DestroyVulkanImageImmediateTracked(image, "RendererShutdown.RemainingAllocation");
 
                 FreeMemoryAllocation(allocation);
             }
@@ -986,7 +999,11 @@ namespace XREngine.Rendering.Vulkan
                     return;
 
                 Result result = Api!.DeviceWaitIdle(device);
-                if (result == Result.ErrorDeviceLost)
+                if (result == Result.Success)
+                {
+                    NotifyVulkanDeviceIdle();
+                }
+                else if (result == Result.ErrorDeviceLost)
                 {
                     MarkDeviceLost("DeviceWaitIdle returned ErrorDeviceLost");
                     Debug.VulkanWarning("[Vulkan] DeviceWaitIdle returned ErrorDeviceLost. Device state is irrecoverable.");

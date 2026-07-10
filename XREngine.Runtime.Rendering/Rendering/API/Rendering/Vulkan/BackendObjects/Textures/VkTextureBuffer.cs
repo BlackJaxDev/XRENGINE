@@ -47,7 +47,7 @@ public unsafe partial class VulkanRenderer
             if (_view.Handle != 0)
             {
                 Renderer.UntrackDescriptorHeapBufferView(_view);
-                Api!.DestroyBufferView(Device, _view, null);
+                Renderer.RetireBufferView(_view);
                 _view = default;
             }
 

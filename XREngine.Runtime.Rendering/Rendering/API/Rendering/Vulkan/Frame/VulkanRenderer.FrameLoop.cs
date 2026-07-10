@@ -825,8 +825,12 @@ namespace XREngine.Rendering.Vulkan
             stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.DrainRetiredResources"))
             {
+                DrainRetiredCommandBuffers(currentFrame);
+                DrainRetiredDescriptorSets(currentFrame);
                 DrainRetiredDescriptorPools();
                 DrainRetiredPipelines();
+                DrainRetiredQueryPools(currentFrame);
+                DrainRetiredBufferViews(currentFrame);
                 DrainRetiredBuffers();
                 DrainRetiredFramebuffers();
                 DrainRetiredImages();
@@ -977,7 +981,7 @@ namespace XREngine.Rendering.Vulkan
 
                 CommandBuffer uploadCommandBuffer = textureUploadCommandBuffer;
                 if (textureUploadCommandPool.Handle != 0 && !_deviceLost)
-                    Api!.FreeCommandBuffers(device, textureUploadCommandPool, 1, ref uploadCommandBuffer);
+                    FreeVulkanCommandBufferTracked(textureUploadCommandPool, ref uploadCommandBuffer, "FrameLoop.UploadAbort");
 
                 RemoveCommandBufferBindState(textureUploadCommandBuffer);
                 textureUploadCommandBuffer = default;
@@ -1112,7 +1116,7 @@ namespace XREngine.Rendering.Vulkan
 
                         if (abortCommandBuffer.Handle != 0)
                         {
-                            Api!.FreeCommandBuffers(device, abortCommandPool, 1, ref abortCommandBuffer);
+                            FreeVulkanCommandBufferTracked(abortCommandPool, ref abortCommandBuffer, "FrameLoop.AbortBridge");
                             RemoveCommandBufferBindState(abortCommandBuffer);
                         }
 
@@ -1202,7 +1206,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     if (abortCommandBuffer.Handle != 0 && abortCommandBufferCount == 0 && abortCommandPool.Handle != 0 && !_deviceLost)
                     {
-                        Api!.FreeCommandBuffers(device, abortCommandPool, 1, ref abortCommandBuffer);
+                        FreeVulkanCommandBufferTracked(abortCommandPool, ref abortCommandBuffer, "FrameLoop.AbortPresent");
                         RemoveCommandBufferBindState(abortCommandBuffer);
                     }
 

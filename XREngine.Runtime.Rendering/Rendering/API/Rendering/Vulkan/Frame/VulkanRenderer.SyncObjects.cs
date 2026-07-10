@@ -73,6 +73,7 @@ public unsafe partial class VulkanRenderer
                 if (firstObservation)
                 {
                     _deviceLost = true;
+                    NotifyVulkanResourceLifetimeDeviceLost();
 
                     // Pending timeline signals will never arrive after device loss.
                     if (_frameSlotTimelineValues is not null)
@@ -152,7 +153,10 @@ public unsafe partial class VulkanRenderer
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to query timeline semaphore value {value}. Result={result}.");
 
-        return currentValue >= value;
+        bool completed = currentValue >= value;
+        if (completed)
+            NotifyVulkanTimelineCompleted(semaphore, currentValue);
+        return completed;
     }
 
     private bool TryWaitForTimelineValue(Semaphore semaphore, ulong value, ulong timeoutNanoseconds)
@@ -178,7 +182,10 @@ public unsafe partial class VulkanRenderer
 
         Result waitResult = Api!.WaitSemaphores(device, &waitInfo, timeoutNanoseconds);
         if (waitResult == Result.Success)
+        {
+            NotifyVulkanTimelineCompleted(semaphore, value);
             return true;
+        }
 
         if (waitResult == Result.Timeout)
             return false;

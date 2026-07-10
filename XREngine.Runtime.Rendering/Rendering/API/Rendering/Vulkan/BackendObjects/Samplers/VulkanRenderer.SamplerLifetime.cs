@@ -16,6 +16,7 @@ public unsafe partial class VulkanRenderer
 
         lock (_samplerLifetimeLock)
             _liveSamplerHandles.Add(sampler.Handle);
+        RegisterVulkanResource(ObjectType.Sampler, sampler.Handle, "Sampler");
     }
 
     internal void RegisterLiveSampler(Sampler sampler, in SamplerCreateInfo createInfo)
@@ -28,6 +29,7 @@ public unsafe partial class VulkanRenderer
             _liveSamplerHandles.Add(sampler.Handle);
             _descriptorHeapSamplerCreateInfos[sampler.Handle] = createInfo with { PNext = null };
         }
+        RegisterVulkanResource(ObjectType.Sampler, sampler.Handle, "Sampler");
     }
 
     internal void UnregisterLiveSampler(Sampler sampler)
@@ -86,6 +88,7 @@ public unsafe partial class VulkanRenderer
                 "[Vulkan] Destroying remaining tracked sampler 0x{0:X} during renderer shutdown.",
                 handles[i]);
             Api!.DestroySampler(device, sampler, null);
+            CompleteVulkanResourceDestruction(ObjectType.Sampler, handles[i]);
         }
 
         Debug.Vulkan(

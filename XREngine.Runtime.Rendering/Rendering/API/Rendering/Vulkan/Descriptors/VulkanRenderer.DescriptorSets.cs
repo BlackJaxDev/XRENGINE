@@ -11,6 +11,7 @@ public unsafe partial class VulkanRenderer
         if (!IsDeviceOperational)
             throw new InvalidOperationException($"Cannot update Vulkan descriptors while device state is {DeviceState}.");
 
+        ValidateAndRecordVulkanDescriptorWrites(descriptorWriteCount, descriptorWrites);
         Api!.UpdateDescriptorSets(device, descriptorWriteCount, descriptorWrites, 0, null);
     }
 
@@ -37,6 +38,7 @@ public unsafe partial class VulkanRenderer
             }
         }
 
+        RegisterVulkanDescriptorSets(descriptorPool, descriptorSets, usesUpdateAfterBind: false, "Swapchain.DescriptorSet");
         SetDebugDescriptorSetNames(descriptorSets, "Swapchain.DescriptorSet");
         RecordVulkanDescriptorTableGeneration("SwapchainDescriptorSets.Allocated");
 

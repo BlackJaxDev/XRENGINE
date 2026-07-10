@@ -82,6 +82,11 @@ namespace XREngine.Rendering.Vulkan
             if (image.Handle == 0)
                 return;
 
+            RegisterVulkanResource(
+                ObjectType.Image,
+                image.Handle,
+                $"{source}:{(string.IsNullOrWhiteSpace(name) ? "<unnamed>" : name)}");
+
             ResolveImageAllocationDiagnosticFields(
                 allocation,
                 out uint heapIndex,
@@ -1852,7 +1857,7 @@ namespace XREngine.Rendering.Vulkan
                     Size = copySize
                 };
 
-                Api!.CmdCopyBuffer(transferScope.CommandBuffer, stagingBuffer, deviceBuffer, 1, &copyRegion);
+                CmdCopyBufferTracked(transferScope.CommandBuffer, stagingBuffer, deviceBuffer, 1, &copyRegion);
 
                 if (dedicatedTransferFamily)
                 {
@@ -1915,13 +1920,7 @@ namespace XREngine.Rendering.Vulkan
 
         public void DestroyBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory)
         {
-            if (vkBuffer.HasValue && vkMemory.HasValue && _stagingManager.TryRelease(vkBuffer.Value, vkMemory.Value))
-            {
-                _stagingManager.Trim(this);
-                return;
-            }
-
-            DestroyBufferRaw(vkBuffer, vkMemory);
+            RetireBuffer(vkBuffer.GetValueOrDefault(), vkMemory.GetValueOrDefault());
         }
 
         internal MemoryPropertyFlags GetReadbackMemoryProperties()
@@ -2237,6 +2236,19 @@ namespace XREngine.Rendering.Vulkan
         internal void DestroyBufferRaw(Buffer? buffer, DeviceMemory? memory)
         {
             if (buffer.HasValue && buffer.Value.Handle != 0)
+            {
+                VulkanRetirementTicket ticket = CaptureVulkanRetirementTicket(
+                    ObjectType.Buffer,
+                    buffer.Value.Handle,
+                    nameof(DestroyBufferRaw));
+                if (!IsVulkanRetirementReady(ticket))
+                {
+                    RetireBuffer(buffer.Value, memory.GetValueOrDefault());
+                    return;
+                }
+            }
+
+            if (buffer.HasValue && buffer.Value.Handle != 0)
                 _stagingManager.TryForget(buffer.Value, memory.GetValueOrDefault());
 
             if (buffer.HasValue && buffer.Value.Handle != 0)
@@ -2293,7 +2305,10 @@ namespace XREngine.Rendering.Vulkan
         private void TrackLiveBuffer(Buffer buffer)
         {
             if (buffer.Handle != 0)
+            {
                 _liveBufferHandles[buffer.Handle] = 0;
+                RegisterVulkanResource(ObjectType.Buffer, buffer.Handle, "Buffer.Allocation");
+            }
         }
 
         private bool TryBeginDestroyBuffer(Buffer buffer, string owner)
@@ -2301,9 +2316,17 @@ namespace XREngine.Rendering.Vulkan
             if (buffer.Handle == 0)
                 return false;
 
+            VulkanRetirementTicket ticket = CaptureVulkanRetirementTicket(
+                ObjectType.Buffer,
+                buffer.Handle,
+                owner);
+            if (!IsVulkanRetirementReady(ticket))
+                return false;
+
             if (_liveBufferHandles.TryRemove(buffer.Handle, out _))
             {
                 UnregisterVulkanDeviceAddressRange(buffer);
+                CompleteVulkanResourceDestruction(ObjectType.Buffer, buffer.Handle);
                 return true;
             }
 

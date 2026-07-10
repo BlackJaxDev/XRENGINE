@@ -1798,7 +1798,7 @@ public unsafe partial class VulkanRenderer
 
         CommandBuffer commandBuffer = recorded.CommandBuffer;
         if (commandBuffer.Handle != 0)
-            Api!.FreeCommandBuffers(device, commandPool, 1, ref commandBuffer);
+            FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "OpenXR.RecordedEye");
     }
 
     private void CompleteOpenXrGpuProfilerSubmission(in OpenXrRecordedEyeCommandBuffer recorded)
@@ -2922,7 +2922,7 @@ public unsafe partial class VulkanRenderer
             Z = 1
         };
 
-        Api!.CmdBlitImage(
+        CmdBlitImageTracked(
             commandBuffer,
             plan.SourceImage,
             ImageLayout.TransferSrcOptimal,
@@ -3004,7 +3004,7 @@ public unsafe partial class VulkanRenderer
             CommandBufferCount = 1,
         };
 
-        Result allocateResult = Api!.AllocateCommandBuffers(device, ref allocateInfo, out commandBuffer);
+        Result allocateResult = AllocateVulkanCommandBuffersTracked(ref allocateInfo, out commandBuffer, "OpenXR.CommandBuffer");
         if (allocateResult != Result.Success || commandBuffer.Handle == 0)
         {
             Debug.VulkanWarning($"[OpenXR] Failed to allocate eye mirror publish command buffer: {allocateResult}");
@@ -3068,7 +3068,7 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        Api!.FreeCommandBuffers(device, commandPool, 1, ref commandBuffer);
+        FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "OpenXR.Temporary");
         RemoveCommandBufferBindState(commandBuffer);
     }
 
@@ -3197,7 +3197,7 @@ public unsafe partial class VulkanRenderer
             plan.SwapchainExtent,
             flipDestinationY: false);
 
-        Api!.CmdBlitImage(
+        CmdBlitImageTracked(
             commandBuffer,
             plan.SourceImage,
             ImageLayout.TransferSrcOptimal,
@@ -3232,7 +3232,7 @@ public unsafe partial class VulkanRenderer
                 plan.PreviewExtent,
                 plan.FlipPreviewY);
 
-            Api!.CmdBlitImage(
+            CmdBlitImageTracked(
                 commandBuffer,
                 plan.SourceImage,
                 ImageLayout.TransferSrcOptimal,
@@ -3442,7 +3442,7 @@ public unsafe partial class VulkanRenderer
                 Z = 1
             };
 
-            Api!.CmdBlitImage(
+            CmdBlitImageTracked(
                 commandBuffer,
                 sourceImage,
                 ImageLayout.TransferSrcOptimal,
@@ -3582,7 +3582,7 @@ public unsafe partial class VulkanRenderer
                 Z = 1
             };
 
-            Api!.CmdBlitImage(
+            CmdBlitImageTracked(
                 commandBuffer,
                 sourceImage,
                 ImageLayout.TransferSrcOptimal,
@@ -3764,7 +3764,7 @@ public unsafe partial class VulkanRenderer
                 Z = 1
             };
 
-            Api!.CmdBlitImage(
+            CmdBlitImageTracked(
                 commandBuffer,
                 sourceImage,
                 ImageLayout.TransferSrcOptimal,
@@ -3869,7 +3869,7 @@ public unsafe partial class VulkanRenderer
             CommandBufferCount = 1,
         };
 
-        Result allocateResult = Api!.AllocateCommandBuffers(device, ref allocateInfo, out commandBuffer);
+        Result allocateResult = AllocateVulkanCommandBuffersTracked(ref allocateInfo, out commandBuffer, "OpenXR.CommandBuffer");
         if (allocateResult != Result.Success || commandBuffer.Handle == 0)
         {
             Debug.VulkanWarning($"[OpenXR] Failed to allocate stereo layer publish command buffer: {allocateResult}");
@@ -4136,7 +4136,7 @@ public unsafe partial class VulkanRenderer
             Z = 1
         };
 
-        Api!.CmdBlitImage(
+        CmdBlitImageTracked(
             commandBuffer,
             plan.SourceImage,
             ImageLayout.TransferSrcOptimal,
@@ -4853,7 +4853,7 @@ public unsafe partial class VulkanRenderer
                 &toTransfer);
 
             ClearColorValue clearColor = new(color.R, color.G, color.B, color.A);
-            Api!.CmdClearColorImage(commandBuffer, image, ImageLayout.TransferDstOptimal, ref clearColor, 1, ref range);
+            CmdClearColorImageTracked(commandBuffer, image, ImageLayout.TransferDstOptimal, ref clearColor, 1, ref range);
 
             ImageMemoryBarrier toColorAttachment = new()
             {
@@ -5119,6 +5119,7 @@ public unsafe partial class VulkanRenderer
         int frameSlotCount = Math.Min(_frameSlotTimelineValues.Length, MAX_FRAMES_IN_FLIGHT);
         bool desktopFrameActive = Volatile.Read(ref _windowRenderCallbackInProgress) != 0;
         int activeDesktopFrameSlot = desktopFrameActive ? currentFrame : -1;
+        Span<bool> drainableSlots = stackalloc bool[MAX_FRAMES_IN_FLIGHT];
         for (int i = 0; i < frameSlotCount; i++)
         {
             if (desktopFrameActive && i == activeDesktopFrameSlot)
@@ -5144,12 +5145,28 @@ public unsafe partial class VulkanRenderer
                 continue;
             }
 
-            DrainRetiredDescriptorPools(i, int.MaxValue);
-            DrainRetiredPipelines(i, int.MaxValue);
-            DrainRetiredBuffers(i, int.MaxValue);
-            DrainRetiredFramebuffers(i, int.MaxValue);
-            DrainRetiredImages(i, int.MaxValue);
+            drainableSlots[i] = true;
         }
+
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i]) DrainRetiredCommandBuffers(i, int.MaxValue);
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i]) DrainRetiredDescriptorSets(i, int.MaxValue);
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i]) DrainRetiredDescriptorPools(i, int.MaxValue);
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i]) DrainRetiredPipelines(i, int.MaxValue);
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i]) DrainRetiredQueryPools(i, int.MaxValue);
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i]) DrainRetiredBufferViews(i, int.MaxValue);
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i]) DrainRetiredFramebuffers(i, int.MaxValue);
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i]) DrainRetiredBuffers(i, int.MaxValue);
+        for (int pass = 0; pass < frameSlotCount; pass++)
+            for (int i = 0; i < frameSlotCount; i++)
+                if (drainableSlots[i]) DrainRetiredImages(i, int.MaxValue);
 
         DrainCompletedRecordedTextureUploadPublications();
     }
@@ -5263,7 +5280,7 @@ public unsafe partial class VulkanRenderer
         VulkanMemoryAllocation allocation = VulkanMemoryAllocation.Null;
         try
         {
-            if (Api!.CreateImage(device, ref imageInfo, null, out depthImage) != Result.Success)
+            if (CreateVulkanImageTracked(ref imageInfo, out depthImage, "OpenXR.DepthTarget") != Result.Success)
                 throw new InvalidOperationException("Failed to create OpenXR Vulkan depth image.");
 
             ClearTrackedImageLayouts(depthImage);
@@ -5302,12 +5319,11 @@ public unsafe partial class VulkanRenderer
 
             if (depthImage.Handle != 0)
             {
-                if (_imageAllocations.TryRemove(depthImage.Handle, out VulkanMemoryAllocation trackedAllocation))
-                    FreeMemoryAllocation(trackedAllocation);
-                else
-                    FreeMemoryAllocation(allocation);
-
-                Api!.DestroyImage(device, depthImage, null);
+                bool hasTrackedAllocation = _imageAllocations.TryRemove(
+                    depthImage.Handle,
+                    out VulkanMemoryAllocation trackedAllocation);
+                DestroyVulkanImageImmediateTracked(depthImage, "CreateOpenXrDepthTargetFailed");
+                FreeMemoryAllocation(hasTrackedAllocation ? trackedAllocation : allocation);
             }
 
             throw;
@@ -5316,17 +5332,13 @@ public unsafe partial class VulkanRenderer
 
     private void DestroyOpenXrDepthTarget(OpenXrDepthTarget target)
     {
-        if (target.View.Handle != 0 && TryBeginDestroyImageView(target.View, "DestroyOpenXrDepthTarget"))
-            Api!.DestroyImageView(device, target.View, null);
-
-        if (target.Image.Handle == 0)
-            return;
-
-        Api!.DestroyImage(device, target.Image, null);
-        if (_imageAllocations.TryRemove(target.Image.Handle, out VulkanMemoryAllocation allocation))
-            FreeMemoryAllocation(allocation);
-        else if (target.Memory.Handle != 0)
-            Api!.FreeMemory(device, target.Memory, null);
+        RetireImageResources(new RetiredImageResources(
+            target.Image,
+            target.Memory,
+            target.View,
+            [],
+            default,
+            0));
     }
 
     private void DestroyOpenXrRenderingResources()
@@ -5777,7 +5789,7 @@ public unsafe partial class VulkanRenderer
                                 CommandPool ownerPool = variant.PrimaryCommandPool.Handle != 0
                                     ? variant.PrimaryCommandPool
                                     : commandPool;
-                                Api!.FreeCommandBuffers(device, ownerPool, 1, ref primary);
+                                FreeVulkanCommandBufferTracked(ownerPool, ref primary, "OpenXR.PrimaryCache");
                             }
                             RemoveCommandBufferBindState(variant.PrimaryCommandBuffer);
                         }
@@ -5790,7 +5802,7 @@ public unsafe partial class VulkanRenderer
                                 CommandPool ownerPool = variant.DynamicUiSecondaryCommandPool.Handle != 0
                                     ? variant.DynamicUiSecondaryCommandPool
                                     : commandPool;
-                                Api!.FreeCommandBuffers(device, ownerPool, 1, ref dynamicSecondary);
+                                FreeVulkanCommandBufferTracked(ownerPool, ref dynamicSecondary, "OpenXR.DynamicSecondaryCache");
                             }
                             RemoveCommandBufferBindState(variant.DynamicUiSecondaryCommandBuffer);
                         }
@@ -5929,6 +5941,8 @@ public unsafe partial class VulkanRenderer
                 Debug.VulkanWarning($"[OpenXR] Vulkan eye fence wait failed: {waitResult}");
                 return false;
             }
+
+            NotifyVulkanFenceCompleted(fence);
 
             if (OpenXrVulkanTraceEnabled)
             {

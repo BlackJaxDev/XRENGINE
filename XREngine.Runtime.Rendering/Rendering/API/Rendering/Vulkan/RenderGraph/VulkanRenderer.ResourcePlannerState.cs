@@ -2644,7 +2644,7 @@ public unsafe partial class VulkanRenderer
                 Math.Max(1u, oldGroup.ResolvedExtent.Depth))
         };
 
-        Api!.CmdCopyImage(
+        CmdCopyImageTracked(
             scope.CommandBuffer,
             oldGroup.Image,
             ImageLayout.TransferSrcOptimal,

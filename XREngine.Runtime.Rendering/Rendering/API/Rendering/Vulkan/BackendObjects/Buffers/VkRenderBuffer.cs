@@ -211,7 +211,7 @@ public unsafe partial class VulkanRenderer
 
             fixed (Image* imagePtr = &_image)
             {
-                if (Api!.CreateImage(Device, ref info, null, imagePtr) != Result.Success)
+                if (Renderer.CreateVulkanImageTracked(ref info, imagePtr, "VkRenderBuffer.Image") != Result.Success)
                     throw new Exception("Failed to create Vulkan render buffer image.");
             }
 
@@ -223,7 +223,10 @@ public unsafe partial class VulkanRenderer
             if (Api!.BindImageMemory(Device, _image, _memory, allocation.Offset) != Result.Success)
             {
                 Renderer._imageAllocations.TryRemove(_image.Handle, out _);
+                Renderer.DestroyVulkanImageImmediateTracked(_image, "VkRenderBuffer.BindFailure");
                 Renderer.FreeMemoryAllocation(allocation);
+                _image = default;
+                _memory = default;
                 throw new Exception("Failed to bind memory for render buffer image.");
             }
 

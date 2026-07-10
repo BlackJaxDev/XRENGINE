@@ -1197,6 +1197,7 @@ public unsafe partial class VulkanRenderer
 				if (result != Result.Success)
 					throw new InvalidOperationException($"failed to create graphics pipeline ({result}).");
 
+				Renderer.RegisterVulkanPipeline(pipeline, "VkMeshRenderer.Graphics");
 				Renderer.NotifyVulkanPipelineCreated("graphics");
 				return pipeline;
 			}
@@ -1296,6 +1297,7 @@ public unsafe partial class VulkanRenderer
 				if (result != Result.Success)
 					throw new InvalidOperationException($"failed to link graphics pipeline libraries ({result}) after {linkElapsed.TotalMilliseconds:F2} ms.");
 
+				Renderer.RegisterVulkanPipeline(pipeline, "VkMeshRenderer.GraphicsLibraryLink");
 				if (linkElapsed.TotalMilliseconds >= 16.0)
 				{
 					Debug.VulkanWarningEvery(
@@ -1443,6 +1445,7 @@ public unsafe partial class VulkanRenderer
 				if (result != Result.Success)
 					throw new InvalidOperationException($"failed to create {key.Subset} graphics pipeline library ({result}) after {createElapsed.TotalMilliseconds:F2} ms.");
 
+				Renderer.RegisterVulkanPipeline(library, $"VkMeshRenderer.GraphicsLibrary.{key.Subset}");
 				Pipeline cachedOrCreated = Renderer.StoreSharedGraphicsPipelineLibrary(key, library);
 				if (cachedOrCreated.Handle != library.Handle)
 				{

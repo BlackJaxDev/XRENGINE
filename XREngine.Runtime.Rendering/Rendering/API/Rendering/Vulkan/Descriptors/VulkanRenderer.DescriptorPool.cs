@@ -11,9 +11,8 @@ namespace XREngine.Rendering.Vulkan
             if (descriptorPool.Handle == 0)
                 return;
 
-            Api!.DestroyDescriptorPool(device, descriptorPool, null);
+            RetireDescriptorPool(descriptorPool);
             descriptorPool = default;
-            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
         }
 
         private void CreateDescriptorPool()
