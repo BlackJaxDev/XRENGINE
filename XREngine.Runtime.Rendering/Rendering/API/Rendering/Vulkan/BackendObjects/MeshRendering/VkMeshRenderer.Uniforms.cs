@@ -94,8 +94,15 @@ public unsafe partial class VulkanRenderer
 			while (newCapacity < requiredSlots)
 				newCapacity <<= 1;
 
+			// Descriptor allocations are already keyed by frame/slot count. Keep the old
+			// allocation and uniform-buffer generations live: a desktop or eye command
+			// buffer may have completed recording and still be waiting to submit while a
+			// different output discovers a larger repeated-renderer count. Retiring the old
+			// generation here makes that otherwise valid command buffer fail lifetime
+			// validation. The geometric capacity growth bounds retained storage to less than
+			// the current generation, and a matching generation is reused if the frame layout
+			// is encountered again.
 			_uniformDrawSlotCapacity = newCapacity;
-			DestroyDescriptors();
 			_descriptorDirty = true;
 			Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
 		}
@@ -125,7 +132,14 @@ public unsafe partial class VulkanRenderer
 				if (valid)
 					return true;
 
-				DestroyEngineUniformBuffers(name);
+				RetainEngineUniformBufferGeneration(name, existing);
+				_engineUniformBuffers.Remove(name);
+			}
+
+			if (_retainedEngineUniformBufferGenerations.TryTake(name, bufferCount, size, out EngineUniformBuffer[] retained))
+			{
+				_engineUniformBuffers[name] = retained;
+				return true;
 			}
 
 			EngineUniformBuffer[] buffers = new EngineUniformBuffer[bufferCount];
@@ -170,7 +184,14 @@ public unsafe partial class VulkanRenderer
 				if (valid)
 					return true;
 
-				DestroyAutoUniformBuffers(name);
+				RetainAutoUniformBufferGeneration(name, existing);
+				_autoUniformBuffers.Remove(name);
+			}
+
+			if (_retainedAutoUniformBufferGenerations.TryTake(name, bufferCount, size, out AutoUniformBuffer[] retained))
+			{
+				_autoUniformBuffers[name] = retained;
+				return true;
 			}
 
 			AutoUniformBuffer[] buffers = new AutoUniformBuffer[bufferCount];

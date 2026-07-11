@@ -6,6 +6,12 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+    /// <summary>
+    /// Records a DLSS upscale operation into the specified Vulkan command buffer.
+    /// </summary>
+    /// <param name="commandBuffer">The Vulkan command buffer to record the operation into.</param>
+    /// <param name="op">The DLSS upscale operation to record.</param>
+    /// <exception cref="InvalidOperationException">Thrown if the DLSS upscale operation fails during Vulkan command recording.</exception>
     private void RecordDlssUpscaleOp(CommandBuffer commandBuffer, DlssUpscaleOp op)
     {
         VulkanStreamlineImage sourceColor = TransitionStreamlineImageToGeneral(commandBuffer, op.SourceColor);
@@ -38,6 +44,12 @@ public unsafe partial class VulkanRenderer
         MakeStreamlineOutputVisibleForSampling(commandBuffer, outputColor);
     }
 
+    /// <summary>
+    /// Records a DLSS frame generation operation into the specified Vulkan command buffer.
+    /// </summary>
+    /// <param name="commandBuffer">The Vulkan command buffer to record the operation into.</param>
+    /// <param name="op">The DLSS frame generation operation to record.</param>
+    /// <exception cref="InvalidOperationException">Thrown if the DLSS frame generation operation fails during Vulkan command recording.</exception>
     private void RecordDlssFrameGenerationOp(CommandBuffer commandBuffer, DlssFrameGenerationOp op)
     {
         VulkanStreamlineImage depth = TransitionStreamlineImageToGeneral(commandBuffer, op.Depth);
@@ -62,6 +74,12 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Transitions the specified Vulkan streamline image to the general layout.
+    /// </summary>
+    /// <param name="commandBuffer">The Vulkan command buffer used for the transition.</param>
+    /// <param name="image">The Vulkan streamline image to transition.</param>
+    /// <returns>The Vulkan streamline image with its layout transitioned to general.</returns>
     private VulkanStreamlineImage TransitionStreamlineImageToGeneral(CommandBuffer commandBuffer, in VulkanStreamlineImage image)
     {
         if (image.Image.Handle == 0)
@@ -110,6 +128,11 @@ public unsafe partial class VulkanRenderer
         return image with { Layout = ImageLayout.General };
     }
 
+    /// <summary>
+    /// Makes the specified Vulkan streamline image visible for sampling by transitioning its layout appropriately.
+    /// </summary>
+    /// <param name="commandBuffer">The Vulkan command buffer used for the transition.</param>
+    /// <param name="image">The Vulkan streamline image to make visible for sampling.</param>
     private void MakeStreamlineOutputVisibleForSampling(CommandBuffer commandBuffer, in VulkanStreamlineImage image)
     {
         if (image.Image.Handle == 0)
@@ -150,6 +173,11 @@ public unsafe partial class VulkanRenderer
         image.LayoutTracker?.UpdateTrackedLayout(ImageLayout.General);
     }
 
+    /// <summary>
+    /// Resolves the appropriate Vulkan access flags for the given image layout.
+    /// </summary>
+    /// <param name="layout">The Vulkan image layout for which to resolve access flags.</param>
+    /// <returns>The Vulkan access flags corresponding to the specified image layout.</returns>
     private static AccessFlags ResolveStreamlineAccessMask(ImageLayout layout)
         => layout switch
         {
@@ -164,6 +192,11 @@ public unsafe partial class VulkanRenderer
             _ => AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
         };
 
+    /// <summary>
+    /// Resolves the appropriate Vulkan pipeline stage flags for the given image layout.
+    /// </summary>
+    /// <param name="layout">The Vulkan image layout for which to resolve pipeline stage flags.</param>
+    /// <returns>The Vulkan pipeline stage flags corresponding to the specified image layout.</returns>
     private static PipelineStageFlags ResolveStreamlinePipelineStage(ImageLayout layout)
         => layout switch
         {

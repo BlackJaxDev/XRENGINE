@@ -673,7 +673,13 @@ public unsafe partial class VulkanRenderer
 				useNativeNegativeOneToOneDepth);
 
 			if (pipelineInvalidated && _pipelines.Count > 256)
-				DestroyPipelines();
+			{
+				// Graphics pipeline handles are renderer-cache owned. Trimming this local
+				// lookup must not tear down descriptor/uniform generations: command buffers
+				// for another output may already reference them, and the descriptors remain
+				// structurally valid across a local pipeline lookup-cache trim.
+				_pipelines.Clear();
+			}
 
 			// Check pipeline cache before creating a new pipeline object
 			if (_pipelines.TryGetValue(key, out pipeline) && pipeline.Handle != 0)

@@ -5,17 +5,17 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    internal enum VulkanCanonicalSampler
-    {
-        LinearClamp,
-        NearestClamp,
-        LinearRepeat,
-        Anisotropic,
-        ShadowComparison,
-    }
-
+    /// <summary>
+    /// Represents the collection of canonical immutable Vulkan samplers used in the renderer.
+    /// </summary>
     private readonly Sampler[] _canonicalImmutableSamplers = new Sampler[5];
 
+    /// <summary>
+    /// Tries to retrieve the canonical immutable Vulkan sampler corresponding to the specified sampler type.
+    /// </summary>
+    /// <param name="sampler">The canonical Vulkan sampler type to retrieve.</param>
+    /// <param name="handle">The retrieved Vulkan sampler handle if available; otherwise, the default handle.</param>
+    /// <returns>True if the sampler was successfully retrieved; otherwise, false.</returns>
     internal bool TryGetCanonicalImmutableSampler(VulkanCanonicalSampler sampler, out Sampler handle)
     {
         int index = (int)sampler;
@@ -25,6 +25,10 @@ public unsafe partial class VulkanRenderer
         return handle.Handle != 0;
     }
 
+    /// <summary>
+    /// Initializes the collection of canonical immutable Vulkan samplers used in the renderer.
+    /// This method should be called during the renderer's initialization phase to ensure that all canonical samplers are created and available for use.
+    /// </summary>
     private void InitializeCanonicalImmutableSamplers()
     {
         CreateCanonicalSampler(VulkanCanonicalSampler.LinearClamp, Filter.Linear, SamplerMipmapMode.Linear, SamplerAddressMode.ClampToEdge, false, false);
@@ -34,6 +38,15 @@ public unsafe partial class VulkanRenderer
         CreateCanonicalSampler(VulkanCanonicalSampler.ShadowComparison, Filter.Linear, SamplerMipmapMode.Linear, SamplerAddressMode.ClampToEdge, false, true);
     }
 
+    /// <summary>
+    /// Creates a canonical immutable Vulkan sampler with the specified parameters and stores it in the internal collection.
+    /// </summary>
+    /// <param name="sampler">The canonical Vulkan sampler type to create.</param>
+    /// <param name="filter">The filtering mode for the sampler.</param>
+    /// <param name="mipmapMode">The mipmap mode for the sampler.</param>
+    /// <param name="addressMode">The address mode for the sampler.</param>
+    /// <param name="anisotropy">Indicates whether anisotropic filtering should be enabled.</param>
+    /// <param name="comparison">Indicates whether comparison mode should be enabled for the sampler.</param>
     private void CreateCanonicalSampler(
         VulkanCanonicalSampler sampler,
         Filter filter,
@@ -82,6 +95,10 @@ public unsafe partial class VulkanRenderer
             Debug.VulkanWarning($"[Vulkan] Failed to create canonical immutable sampler '{sampler}'.");
     }
 
+    /// <summary>
+    /// Destroys all canonical immutable Vulkan samplers and releases their associated resources.
+    /// This method should be called during the renderer's shutdown phase to ensure proper cleanup of Vulkan resources.
+    /// </summary>
     private void DestroyCanonicalImmutableSamplers()
     {
         for (int i = 0; i < _canonicalImmutableSamplers.Length; i++)

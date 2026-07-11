@@ -10,76 +10,9 @@ using XREngine.Rendering.XeSS;
 
 namespace XREngine.Rendering.Vulkan;
 
-public enum EVulkanUpscaleBridgeState
-{
-    Unsupported,
-    Disabled,
-    Initializing,
-    Ready,
-    NeedsRecreate,
-    Faulted,
-}
-
-public readonly record struct VulkanUpscaleBridgeFrameResources(
-    int DisplayWidth,
-    int DisplayHeight,
-    int InternalWidth,
-    int InternalHeight,
-    bool OutputHdr,
-    EAntiAliasingMode AntiAliasingMode,
-    uint MsaaSampleCount,
-    bool Stereo,
-    bool EnableDlss,
-    EDlssQualityMode DlssQuality,
-    bool EnableXess,
-    EXessQualityMode XessQuality,
-    EVulkanUpscaleBridgeQueueModel QueueModel)
-{
-    public bool VendorRequested => EnableDlss || EnableXess;
-}
-
-internal enum EVulkanUpscaleBridgeVendor
-{
-    Dlss,
-    Xess,
-}
-
-internal readonly struct VulkanUpscaleBridgeDispatchParameters
-{
-    public EVulkanUpscaleBridgeVendor Vendor { get; init; }
-    public uint InputWidth { get; init; }
-    public uint InputHeight { get; init; }
-    public uint OutputWidth { get; init; }
-    public uint OutputHeight { get; init; }
-    public uint FrameIndex { get; init; }
-    public bool ResetHistory { get; init; }
-    public bool OutputHdr { get; init; }
-    public bool ReverseDepth { get; init; }
-    public bool IsOrthographic { get; init; }
-    public bool HasExposureTexture { get; init; }
-    public EDlssQualityMode DlssQuality { get; init; }
-    public EXessQualityMode XessQuality { get; init; }
-    public float DlssSharpness { get; init; }
-    public float XessSharpness { get; init; }
-    public float ExposureScale { get; init; }
-    public float MotionVectorScaleX { get; init; }
-    public float MotionVectorScaleY { get; init; }
-    public float JitterOffsetX { get; init; }
-    public float JitterOffsetY { get; init; }
-    public Matrix4x4 CameraViewToClip { get; init; }
-    public Matrix4x4 ClipToCameraView { get; init; }
-    public Matrix4x4 ClipToPrevClip { get; init; }
-    public Matrix4x4 PrevClipToClip { get; init; }
-    public Vector3 CameraPosition { get; init; }
-    public Vector3 CameraUp { get; init; }
-    public Vector3 CameraRight { get; init; }
-    public Vector3 CameraForward { get; init; }
-    public float CameraNear { get; init; }
-    public float CameraFar { get; init; }
-    public float CameraFovRadians { get; init; }
-    public float CameraAspectRatio { get; init; }
-}
-
+/// <summary>
+/// Provides a bridge for handling upscaling features in Vulkan, such as DLSS and XeSS, managing frame resources and state transitions.
+/// </summary>
 public sealed class VulkanUpscaleBridge : IDisposable
 {
     private const string ViewportResizeReason = "viewport resized";
@@ -118,17 +51,31 @@ public sealed class VulkanUpscaleBridge : IDisposable
     public bool SidecarDeviceOwned { get; private set; }
     internal uint ResourceGeneration => _resourceGeneration;
     internal bool HasInteropResources => _sidecar is not null && _frameSlots.Length > 0;
+    /// <summary>
+    /// Gets the current frame slot for the upscaling bridge, if available.
+    /// </summary>
     internal VulkanUpscaleBridgeFrameSlot? CurrentFrameSlot
         => _frameSlotIndex >= 0 && _frameSlotIndex < _frameSlots.Length
             ? _frameSlots[_frameSlotIndex]
             : null;
 
+    /// <summary>
+    /// Tries to resolve the current frame slot for the upscaling bridge.
+    /// </summary>
+    /// <param name="slot">The resolved current frame slot, if available.</param>
+    /// <returns>True if the current frame slot is successfully resolved and the bridge is ready; otherwise, false.</returns>
     internal bool TryResolveCurrentFrameSlot(out VulkanUpscaleBridgeFrameSlot? slot)
     {
         slot = CurrentFrameSlot;
         return !_disposed && _state == EVulkanUpscaleBridgeState.Ready && _sidecar is not null && slot is not null;
     }
 
+    /// <summary>
+    /// Prepares the upscaling bridge for the current frame, updating frame resources and determining availability based on the provided snapshot.
+    /// </summary>
+    /// <param name="pipeline">The render pipeline instance for the current frame.</param>
+    /// <param name="snapshot">The capability snapshot for the upscaling bridge.</param>
+    /// <returns>The current state of the upscaling bridge after preparation.</returns>
     public EVulkanUpscaleBridgeState PrepareForFrame(
         XRRenderPipelineInstance pipeline,
         global::XREngine.VulkanUpscaleBridgeCapabilitySnapshot snapshot)
@@ -203,6 +150,10 @@ public sealed class VulkanUpscaleBridge : IDisposable
         }
     }
 
+    /// <summary>
+    /// Notifies the upscaling bridge that the vendor selection has changed, potentially triggering a recreation of the bridge.
+    /// </summary>
+    /// <param name="reason">The reason for the vendor selection change.</param>
     public void NotifyVendorSelectionChanged(string reason)
     {
         if (_disposed)
@@ -220,6 +171,10 @@ public sealed class VulkanUpscaleBridge : IDisposable
         MarkNeedsRecreate(reason);
     }
 
+    /// <summary>
+    /// Notifies the upscaling bridge that the capability snapshot has changed, potentially triggering a recreation of the bridge.
+    /// </summary>
+    /// <param name="reason">The reason for the capability snapshot change.</param>
     public void NotifyCapabilitySnapshotChanged(string reason)
     {
         if (_disposed)
@@ -237,6 +192,10 @@ public sealed class VulkanUpscaleBridge : IDisposable
         MarkNeedsRecreate(reason);
     }
 
+    /// <summary>
+    /// Marks the upscaling bridge as needing recreation, typically due to a change in configuration or environment.
+    /// </summary>
+    /// <param name="reason">The reason for marking the bridge as needing recreation.</param>
     public void MarkNeedsRecreate(string reason)
     {
         if (_disposed)
@@ -251,6 +210,10 @@ public sealed class VulkanUpscaleBridge : IDisposable
             TransitionState(EVulkanUpscaleBridgeState.NeedsRecreate, effectiveReason);
     }
 
+    /// <summary>
+    /// Destroys the upscaling bridge, releasing all associated resources and transitioning it to the disabled state.
+    /// </summary>
+    /// <param name="reason">The reason for destroying the bridge.</param>
     public void Destroy(string reason)
     {
         if (_disposed)
@@ -266,9 +229,27 @@ public sealed class VulkanUpscaleBridge : IDisposable
         TransitionState(EVulkanUpscaleBridgeState.Disabled, reason);
     }
 
+    /// <summary>
+    /// Disposes the upscaling bridge, releasing all associated resources. 
+    /// This is equivalent to calling <see cref="Destroy"/> with a reason of "bridge disposed".
+    /// </summary>
+    /// <remarks>
+    /// This method should be called when the upscaling bridge is no longer needed, ensuring that all resources are properly released.
+    /// </remarks>
     public void Dispose()
         => Destroy("bridge disposed");
 
+    /// <summary>
+    /// Attempts to execute a passthrough operation using the provided frame buffers and renderer.
+    /// </summary>
+    /// <param name="renderer">The OpenGL renderer used for the passthrough operation.</param>
+    /// <param name="sourceColorFbo">The source color frame buffer.</param>
+    /// <param name="sourceDepthFbo">The source depth frame buffer.</param>
+    /// <param name="sourceMotionFbo">The source motion frame buffer.</param>
+    /// <param name="outputTexture">The output texture resulting from the passthrough operation.</param>
+    /// <param name="dispatchDuration">The duration of the dispatch operation.</param>
+    /// <param name="failureReason">The reason for failure, if the operation was not successful.</param>
+    /// <returns>True if the passthrough operation was successful; otherwise, false.</returns>
     internal bool TryExecutePassthrough(
         OpenGLRenderer renderer,
         XRFrameBuffer sourceColorFbo,
@@ -369,6 +350,19 @@ public sealed class VulkanUpscaleBridge : IDisposable
         }
     }
 
+    /// <summary>
+    /// Attempts to execute a vendor-specific upscale operation using the provided frame buffers and renderer.
+    /// </summary>
+    /// <param name="renderer">The OpenGL renderer used for the upscale operation.</param>
+    /// <param name="sourceColorFbo">The source color frame buffer.</param>
+    /// <param name="sourceDepthFbo">The source depth frame buffer.</param>
+    /// <param name="sourceMotionFbo">The source motion frame buffer.</param>
+    /// <param name="sourceExposureFbo">The optional source exposure frame buffer.</param>
+    /// <param name="parameters">The dispatch parameters for the upscale operation.</param>
+    /// <param name="outputTexture">The output texture resulting from the upscale operation.</param>
+    /// <param name="dispatchDuration">The duration of the dispatch operation.</param>
+    /// <param name="failureReason">The reason for failure, if the operation was not successful.</param>
+    /// <returns>True if the vendor-specific upscale operation was successful; otherwise, false.</returns>
     internal bool TryExecuteVendorUpscale(
         OpenGLRenderer renderer,
         XRFrameBuffer sourceColorFbo,
@@ -505,12 +499,26 @@ public sealed class VulkanUpscaleBridge : IDisposable
         }
     }
 
+    /// <summary>
+    /// Handles the event when the viewport is resized, marking the bridge as needing recreation.
+    /// </summary>
+    /// <param name="_">The viewport that was resized.</param>
     private void HandleViewportResized(XRViewport _)
         => MarkNeedsRecreate(ViewportResizeReason);
 
+    /// <summary>
+    /// Handles the event when the internal resolution is resized, marking the bridge as needing recreation.
+    /// </summary>
+    /// <param name="_">The viewport whose internal resolution was resized.</param>
     private void HandleInternalResolutionResized(XRViewport _)
         => MarkNeedsRecreate(InternalResolutionResizeReason);
 
+    /// <summary>
+    /// Reports a fault in the Vulkan upscale bridge, ensuring it is only reported once for a given exception fingerprint.
+    /// </summary>
+    /// <param name="stage">The stage during which the fault occurred.</param>
+    /// <param name="ex">The exception that caused the fault.</param>
+    /// <returns>The new state of the Vulkan upscale bridge after reporting the fault.</returns>
     private EVulkanUpscaleBridgeState ReportFaultOnce(string stage, Exception ex)
     {
         string fingerprint = string.Concat(stage, "|", ex.GetType().FullName, "|", ex.Message);
@@ -530,6 +538,12 @@ public sealed class VulkanUpscaleBridge : IDisposable
         return _state;
     }
 
+    /// <summary>
+    /// Transitions the Vulkan upscale bridge to a new state, optionally logging the transition.
+    /// </summary>
+    /// <param name="newState">The new state to transition to.</param>
+    /// <param name="reason">The reason for the state transition.</param>
+    /// <param name="log">Whether to log the state transition.</param>
     private void TransitionState(EVulkanUpscaleBridgeState newState, string? reason, bool log = false)
     {
         if (_state == newState && string.Equals(_lastStateReason, reason, StringComparison.Ordinal))
@@ -560,12 +574,21 @@ public sealed class VulkanUpscaleBridge : IDisposable
             SidecarDeviceOwned ? 1 : 0);
     }
 
+    /// <summary>
+    /// Describes the current viewport, including its window title, index, and dimensions.
+    /// </summary>
+    /// <returns>A string describing the current viewport.</returns>
     private string DescribeViewport()
     {
         string windowTitle = _viewport.Window?.Window?.Title ?? "Viewport";
         return $"{windowTitle}#{_viewport.Index}:{_viewport.Width}x{_viewport.Height}/{_viewport.InternalWidth}x{_viewport.InternalHeight}";
     }
 
+    /// <summary>
+    /// Builds the frame resources required for the Vulkan upscale bridge based on the current render pipeline instance.
+    /// </summary>
+    /// <param name="pipeline">The current render pipeline instance.</param>
+    /// <returns>A new instance of <see cref="VulkanUpscaleBridgeFrameResources"/> containing the frame resources.</returns>
     private static VulkanUpscaleBridgeFrameResources BuildFrameResources(XRRenderPipelineInstance pipeline)
     {
         EAntiAliasingMode antiAliasingMode = pipeline.EffectiveAntiAliasingModeThisFrame
@@ -594,6 +617,13 @@ public sealed class VulkanUpscaleBridge : IDisposable
             QueueModel: RuntimeEngine.Rendering.VulkanUpscaleBridgeQueueModel);
     }
 
+    /// <summary>
+    /// Determines the availability of the Vulkan upscale bridge based on the current capability snapshot and frame resources.
+    /// </summary>
+    /// <param name="snapshot">The current capability snapshot of the Vulkan upscale bridge.</param>
+    /// <param name="frameResources">The frame resources for the current frame.</param>
+    /// <param name="reason">The reason why the bridge is unavailable, if applicable.</param>
+    /// <returns>The current state of the Vulkan upscale bridge.</returns>
     private EVulkanUpscaleBridgeState DetermineAvailability(
         global::XREngine.VulkanUpscaleBridgeCapabilitySnapshot snapshot,
         in VulkanUpscaleBridgeFrameResources frameResources,
@@ -672,6 +702,12 @@ public sealed class VulkanUpscaleBridge : IDisposable
         return EVulkanUpscaleBridgeState.Ready;
     }
 
+    /// <summary>
+    /// Attempts to resolve the requested vendor runtime for the Vulkan upscale bridge based on the current frame resources.
+    /// </summary>
+    /// <param name="frameResources">The frame resources for the current frame.</param>
+    /// <param name="reason">The reason why the requested vendor runtime could not be resolved, if applicable.</param>
+    /// <returns><c>true</c> if the requested vendor runtime is available; otherwise, <c>false</c>.</returns>
     private static bool TryResolveRequestedVendorRuntime(
         in VulkanUpscaleBridgeFrameResources frameResources,
         out string reason)
@@ -693,6 +729,12 @@ public sealed class VulkanUpscaleBridge : IDisposable
         return false;
     }
 
+    /// <summary>
+    /// Resolves the reason for a configuration change between two sets of Vulkan upscale bridge frame resources.
+    /// </summary>
+    /// <param name="previous">The previous frame resources.</param>
+    /// <param name="current">The current frame resources.</param>
+    /// <returns>A string describing the reason for the configuration change.</returns>
     private static string ResolveConfigurationChangeReason(
         in VulkanUpscaleBridgeFrameResources previous,
         in VulkanUpscaleBridgeFrameResources current)
@@ -724,6 +766,15 @@ public sealed class VulkanUpscaleBridge : IDisposable
         return "bridge configuration changed";
     }
 
+    /// <summary>
+    /// Recreates the interop resources for the Vulkan upscale bridge, optionally reusing existing frame slots if possible.
+    /// </summary>
+    /// <param name="renderer">The OpenGL renderer instance.</param>
+    /// <param name="snapshot">The capability snapshot for the Vulkan upscale bridge.</param>
+    /// <param name="frameResources">The current frame resources.</param>
+    /// <param name="previousFrameResources">The previous frame resources, if available.</param>
+    /// <param name="recreateReason">The reason for recreating the interop resources.</param>
+    /// <exception cref="InvalidOperationException">Thrown if the Vulkan upscale bridge sidecar fails to create or recreate any interop frame slots.</exception>
     private void RecreateInteropResources(
         OpenGLRenderer renderer,
         global::XREngine.VulkanUpscaleBridgeCapabilitySnapshot snapshot,
@@ -762,22 +813,27 @@ public sealed class VulkanUpscaleBridge : IDisposable
             throw new InvalidOperationException("The Vulkan upscale bridge sidecar did not create any interop frame slots.");
     }
 
+    /// <summary>
+    /// Determines whether the interop frame slots can be recreated in place based on the previous and current frame resources and the reason for recreation.
+    /// </summary>
+    /// <param name="previous">The previous frame resources.</param>
+    /// <param name="current">The current frame resources.</param>
+    /// <param name="recreateReason">The reason for recreating the interop resources.</param>
+    /// <returns>True if the frame slots can be recreated in place; otherwise, false.</returns>
     private static bool CanRecreateFrameSlotsInPlace(
         in VulkanUpscaleBridgeFrameResources previous,
         in VulkanUpscaleBridgeFrameResources current,
         string recreateReason)
-    {
-        if (previous.EnableDlss != current.EnableDlss
-            || previous.EnableXess != current.EnableXess
-            || previous.QueueModel != current.QueueModel
-            || previous.Stereo != current.Stereo)
-        {
-            return false;
-        }
+        => previous.EnableDlss == current.EnableDlss
+            && previous.EnableXess == current.EnableXess
+            && previous.QueueModel == current.QueueModel
+            && previous.Stereo == current.Stereo && IsFrameSlotOnlyRecreateReason(recreateReason);
 
-        return IsFrameSlotOnlyRecreateReason(recreateReason);
-    }
-
+    /// <summary>
+    /// Determines whether the given reason for recreating interop resources only requires recreating the frame slots.
+    /// </summary>
+    /// <param name="recreateReason">The reason for recreating the interop resources.</param>
+    /// <returns>True if only the frame slots need to be recreated; otherwise, false.</returns>
     private static bool IsFrameSlotOnlyRecreateReason(string recreateReason)
         => string.Equals(recreateReason, ViewportResizeReason, StringComparison.Ordinal)
             || string.Equals(recreateReason, InternalResolutionResizeReason, StringComparison.Ordinal)
@@ -786,14 +842,26 @@ public sealed class VulkanUpscaleBridge : IDisposable
             || string.Equals(recreateReason, "anti-aliasing resources changed", StringComparison.Ordinal)
             || string.Equals(recreateReason, "vendor quality changed", StringComparison.Ordinal);
 
+    /// <summary>
+    /// Destroys the interop resources associated with the Vulkan upscale bridge, including the sidecar and frame slots.
+    /// </summary>
     private void DestroyInteropResources()
     {
+        // Dispose of the sidecar if it exists.
         _sidecar?.Dispose();
         _sidecar = null;
+
+        // Clear the frame slots and reset the frame slot index.
         _frameSlots = [];
         _frameSlotIndex = -1;
     }
 
+    /// <summary>
+    /// Advances to the next frame slot, wrapping around if necessary.
+    /// </summary>
+    /// <remarks>
+    /// If there are no frame slots, the frame slot index is set to -1.
+    /// </remarks>
     private void AdvanceFrameSlot()
     {
         if (_frameSlots.Length == 0)
@@ -811,6 +879,11 @@ public sealed class VulkanUpscaleBridge : IDisposable
         _frameSlotIndex = (_frameSlotIndex + 1) % _frameSlots.Length;
     }
 
+    /// <summary>
+    /// Sanitizes the given label by replacing non-alphanumeric characters with dots and ensuring it is not empty.
+    /// </summary>
+    /// <param name="value">The label to sanitize.</param>
+    /// <returns>The sanitized label.</returns>
     private static string SanitizeLabel(string value)
     {
         Span<char> buffer = stackalloc char[value.Length];
@@ -826,6 +899,13 @@ public sealed class VulkanUpscaleBridge : IDisposable
         return length == 0 ? "Viewport" : new string(buffer[..length]);
     }
 
+    /// <summary>
+    /// Tries to get the OpenGL texture binding ID for the given texture.
+    /// </summary>
+    /// <param name="renderer">The OpenGL renderer instance.</param>
+    /// <param name="texture">The XR texture to get the binding for.</param>
+    /// <param name="bindingId">The output binding ID if found, otherwise 0.</param>
+    /// <returns>True if the binding ID was successfully retrieved, otherwise false.</returns>
     private static bool TryGetGlTextureBinding(OpenGLRenderer renderer, XRTexture texture, out uint bindingId)
     {
         bindingId = renderer.GenericToAPI<GLTexture2D>(texture)?.BindingId ?? 0u;

@@ -122,6 +122,37 @@ public unsafe partial class VulkanRenderer
                 PDepthStencilAttachment = depthPtr,
             };
 
+            PipelineStageFlags attachmentStages =
+                PipelineStageFlags.ColorAttachmentOutputBit |
+                PipelineStageFlags.EarlyFragmentTestsBit |
+                PipelineStageFlags.LateFragmentTestsBit;
+            AccessFlags attachmentAccess =
+                AccessFlags.ColorAttachmentReadBit |
+                AccessFlags.ColorAttachmentWriteBit |
+                AccessFlags.DepthStencilAttachmentReadBit |
+                AccessFlags.DepthStencilAttachmentWriteBit;
+            SubpassDependency* dependencies = stackalloc SubpassDependency[2];
+            dependencies[0] = new SubpassDependency
+            {
+                SrcSubpass = Vk.SubpassExternal,
+                DstSubpass = 0,
+                SrcStageMask = PipelineStageFlags.AllCommandsBit,
+                DstStageMask = attachmentStages,
+                SrcAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+                DstAccessMask = attachmentAccess,
+                DependencyFlags = DependencyFlags.ByRegionBit,
+            };
+            dependencies[1] = new SubpassDependency
+            {
+                SrcSubpass = 0,
+                DstSubpass = Vk.SubpassExternal,
+                SrcStageMask = attachmentStages,
+                DstStageMask = PipelineStageFlags.AllCommandsBit,
+                SrcAccessMask = attachmentAccess,
+                DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+                DependencyFlags = DependencyFlags.ByRegionBit,
+            };
+
             RenderPassCreateInfo createInfo = new()
             {
                 SType = StructureType.RenderPassCreateInfo,
@@ -129,6 +160,8 @@ public unsafe partial class VulkanRenderer
                 PAttachments = descPtr,
                 SubpassCount = 1,
                 PSubpasses = &subpass,
+                DependencyCount = 2,
+                PDependencies = dependencies,
             };
 
             if (Api!.CreateRenderPass(device, ref createInfo, null, out RenderPass renderPass) != Result.Success)
@@ -231,9 +264,16 @@ public unsafe partial class VulkanRenderer
             AspectMask = aspectMask;
             Role = role;
             ColorIndex = colorIndex;
-            LoadOp = loadOp;
+            // Vulkan cannot preserve contents from UNDEFINED. Normalize stale or
+            // first-use planner state here so both legacy render passes and dynamic
+            // rendering receive a valid, deterministic load operation.
+            LoadOp = initialLayout == ImageLayout.Undefined && loadOp == AttachmentLoadOp.Load
+                ? AttachmentLoadOp.DontCare
+                : loadOp;
             StoreOp = storeOp;
-            StencilLoadOp = stencilLoadOp;
+            StencilLoadOp = initialLayout == ImageLayout.Undefined && stencilLoadOp == AttachmentLoadOp.Load
+                ? AttachmentLoadOp.DontCare
+                : stencilLoadOp;
             StencilStoreOp = stencilStoreOp;
             InitialLayout = initialLayout;
             FinalLayout = finalLayout;

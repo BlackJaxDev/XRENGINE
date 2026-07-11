@@ -1,6 +1,7 @@
 using Silk.NET.OpenXR;
 using Silk.NET.Windowing;
 using System;
+using System.IO;
 using System.Threading;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
@@ -17,6 +18,7 @@ public unsafe partial class OpenXRAPI
         RecordAppliedOpenXrEyeResolutionSettings();
         _runtimeMonitoringEnabled = true;
         ResetSmokeDiagnostics();
+        ResetOpenXrProbeFailureState();
         SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
         _runtimeLossReason = OpenXrRuntimeLossReason.None;
         Interlocked.Exchange(ref _runtimeLossPending, 0);
@@ -73,6 +75,9 @@ public unsafe partial class OpenXRAPI
             return;
 
         if (Window is null || Window.Renderer is null)
+            return;
+
+        if (_runtimeState == OpenXrRuntimeState.Unavailable)
             return;
 
         if (Window.Renderer is VulkanRenderer &&
@@ -157,32 +162,172 @@ public unsafe partial class OpenXRAPI
 
         try
         {
-            CreateInstance();
+            OpenXrInstanceCreationAttempt attempt = TryCreateInstance();
+            if (!attempt.Succeeded)
+            {
+                HandleInstanceProbeFailure(attempt);
+                return;
+            }
+
+            _consecutiveInstanceProbeFailures = 0;
+            _runtimeFailureReason = null;
             SetupDebugMessenger();
             SetRuntimeState(OpenXrRuntimeState.XrInstanceReady);
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"OpenXR probe: instance creation failed. {ex.Message}");
-            ScheduleProbeRetry();
+            HandleUnexpectedInstanceProbeFailure(ex);
         }
     }
 
     private void TryCreateSystem()
     {
+        if (DateTime.UtcNow < _nextProbeUtc)
+            return;
+
+        Result result;
         try
         {
-            CreateSystem();
-            SetRuntimeState(OpenXrRuntimeState.XrSystemReady);
+            result = CreateSystem();
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"OpenXR probe: system creation failed. {ex.Message}");
-            RecordSmokeFailureOnce($"OpenXR system creation failed: {ex.GetType().Name}: {ex.Message}");
-            ScheduleProbeRetry();
+            HandleUnexpectedSystemProbeFailure(ex);
+            return;
+        }
+
+        if (result == Result.Success)
+        {
+            _consecutiveSystemProbeFailures = 0;
+            _runtimeFailureReason = null;
+            SetRuntimeState(OpenXrRuntimeState.XrSystemReady);
+            return;
+        }
+
+        HandleSystemProbeFailure(result);
+    }
+
+    private void HandleInstanceProbeFailure(OpenXrInstanceCreationAttempt attempt)
+    {
+        int failureCount = ++_consecutiveInstanceProbeFailures;
+        OpenXrProbeRetryDecision decision = OpenXrProbeRetryPolicy.ForCreateInstanceResult(
+            attempt.Result,
+            failureCount,
+            _probeInterval,
+            _maximumProbeRetryInterval);
+        _runtimeFailureReason =
+            $"Stage={attempt.Operation}; Result={attempt.Result}; Category={decision.Category}; Reason={attempt.FailureReason}";
+        RecordSmokeFailureOnce($"OpenXR instance probe failed. {_runtimeFailureReason}");
+
+        if (decision.ShouldRetry)
+        {
+            Debug.VR(
+                "[WARN] OpenXR instance probe failed; retry scheduled with exponential backoff. " +
+                $"Stage={attempt.Operation}; Result={attempt.Result}; Category={decision.Category}; Attempt={failureCount}; " +
+                $"RetryIn={decision.Delay.TotalSeconds:0.###}s; Reason={attempt.FailureReason}");
+            ScheduleProbeRetry(decision.Delay);
+            SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+            return;
+        }
+
+        Debug.VR(
+            "[ERROR] OpenXR instance probe failed with a non-recoverable configuration or capability error. " +
+            $"Stage={attempt.Operation}; Result={attempt.Result}; Category={decision.Category}; Reason={attempt.FailureReason}; " +
+            "automatic probing is halted until OpenXR is reconfigured or runtime monitoring is restarted.");
+        SetRuntimeState(OpenXrRuntimeState.Unavailable);
+    }
+
+    private void HandleUnexpectedInstanceProbeFailure(Exception ex)
+    {
+        int failureCount = ++_consecutiveInstanceProbeFailures;
+        bool configurationFailure = ex is DllNotFoundException
+            or FileNotFoundException
+            or BadImageFormatException
+            or EntryPointNotFoundException;
+        _runtimeFailureReason =
+            $"Stage=xrCreateInstance; ManagedException={ex.GetType().FullName}; Reason={ex.Message}";
+        RecordSmokeFailureOnce($"OpenXR instance probe failed unexpectedly. {_runtimeFailureReason}");
+
+        if (configurationFailure)
+        {
+            Debug.VR(
+                "[ERROR] OpenXR instance probe failed before the runtime returned an OpenXR Result. " +
+                $"Exception={ex.GetType().FullName}; Reason={ex.Message}; " +
+                "automatic probing is halted until OpenXR is reconfigured or runtime monitoring is restarted.");
+            if (_instance.Handle != 0)
+                TearDownSessionResourcesOnOwningThread(true);
+            SetRuntimeState(OpenXrRuntimeState.Unavailable);
+            return;
+        }
+
+        TimeSpan delay = OpenXrProbeRetryPolicy.CalculateBackoff(
+            failureCount,
+            _probeInterval,
+            _maximumProbeRetryInterval);
+        Debug.VR(
+            "[WARN] OpenXR instance probe raised an unexpected managed exception; retry scheduled with exponential backoff. " +
+            $"Exception={ex.GetType().FullName}; Attempt={failureCount}; RetryIn={delay.TotalSeconds:0.###}s; Reason={ex.Message}");
+        if (_instance.Handle != 0)
+            TearDownSessionResourcesOnOwningThread(true);
+        ScheduleProbeRetry(delay);
+        SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+    }
+
+    private void HandleSystemProbeFailure(Result result)
+    {
+        int failureCount = ++_consecutiveSystemProbeFailures;
+        OpenXrProbeRetryDecision decision = OpenXrProbeRetryPolicy.ForGetSystemResult(
+            result,
+            failureCount,
+            _probeInterval,
+            _maximumProbeRetryInterval);
+        _runtimeFailureReason =
+            $"Stage=xrGetSystem; Result={result}; Category={decision.Category}; FormFactor={FormFactor.HeadMountedDisplay}";
+        RecordSmokeFailureOnce($"OpenXR system probe failed. {_runtimeFailureReason}");
+
+        if (decision.ShouldRetry)
+        {
+            Debug.VR(
+                "[WARN] OpenXR system probe did not find a usable HMD; retry scheduled with exponential backoff. " +
+                $"Result={result}; Category={decision.Category}; Attempt={failureCount}; RetryIn={decision.Delay.TotalSeconds:0.###}s.");
+            ScheduleProbeRetry(decision.Delay);
+
+            if (!decision.RecreateInstance)
+            {
+                // The instance remains valid. Retrying xrGetSystem avoids repeatedly recreating the
+                // instance and re-running extension negotiation while a headset is disconnected.
+                return;
+            }
+
             TearDownSessionResourcesOnOwningThread(true);
             SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+            return;
         }
+
+        Debug.VR(
+            "[ERROR] OpenXR system probe failed with a non-recoverable error. " +
+            $"Result={result}; Category={decision.Category}; " +
+            "automatic probing is halted until OpenXR is reconfigured or runtime monitoring is restarted.");
+        TearDownSessionResourcesOnOwningThread(true);
+        SetRuntimeState(OpenXrRuntimeState.Unavailable);
+    }
+
+    private void HandleUnexpectedSystemProbeFailure(Exception ex)
+    {
+        int failureCount = ++_consecutiveSystemProbeFailures;
+        TimeSpan delay = OpenXrProbeRetryPolicy.CalculateBackoff(
+            failureCount,
+            _probeInterval,
+            _maximumProbeRetryInterval);
+        _runtimeFailureReason =
+            $"Stage=xrGetSystem; ManagedException={ex.GetType().FullName}; Reason={ex.Message}";
+        RecordSmokeFailureOnce($"OpenXR system probe failed unexpectedly. {_runtimeFailureReason}");
+        Debug.VR(
+            "[WARN] OpenXR system probe raised an unexpected managed exception; the instance will be recreated after backoff. " +
+            $"Exception={ex.GetType().FullName}; Attempt={failureCount}; RetryIn={delay.TotalSeconds:0.###}s; Reason={ex.Message}");
+        TearDownSessionResourcesOnOwningThread(true);
+        ScheduleProbeRetry(delay);
+        SetRuntimeState(OpenXrRuntimeState.RecreatePending);
     }
 
     private void TryCreateSessionAndSwapchains(AbstractRenderer renderer)
@@ -383,6 +528,13 @@ public unsafe partial class OpenXRAPI
 
     private void ScheduleProbeRetry(TimeSpan delay)
         => _nextProbeUtc = DateTime.UtcNow + delay;
+
+    private void ResetOpenXrProbeFailureState()
+    {
+        _consecutiveInstanceProbeFailures = 0;
+        _consecutiveSystemProbeFailures = 0;
+        _runtimeFailureReason = null;
+    }
 
     private void SetRuntimeState(OpenXrRuntimeState next)
     {

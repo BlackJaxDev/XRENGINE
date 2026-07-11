@@ -60,6 +60,40 @@ vec2 ClampHistoryUv(vec2 uv)
     return ClampUvToTexels(uv, TextureTexelSize(TsrHistoryColor));
 }
 
+vec3 SampleCatmullRom(sampler2DArray tex, vec2 uv, vec2 texelSize)
+{
+    uv = ClampUvToTexels(uv, texelSize);
+
+    vec2 texSize = 1.0 / texelSize;
+    vec2 position = uv * texSize;
+    vec2 center = floor(position - 0.5) + 0.5;
+    vec2 f = position - center;
+    vec2 f2 = f * f;
+    vec2 f3 = f2 * f;
+
+    vec2 w0 = -0.5 * f3 + f2 - 0.5 * f;
+    vec2 w1 =  1.5 * f3 - 2.5 * f2 + 1.0;
+    vec2 w2 = -1.5 * f3 + 2.0 * f2 + 0.5 * f;
+    vec2 w3 =  0.5 * f3 - 0.5 * f2;
+
+    vec2 w12 = w1 + w2;
+    vec2 tc12 = (center + w2 / w12) * texelSize;
+    vec2 tc0 = (center - 1.0) * texelSize;
+    vec2 tc3 = (center + 2.0) * texelSize;
+    float eye = float(gl_ViewID_OVR);
+
+    vec3 result =
+        texture(tex, vec3(ClampUvToTexels(vec2(tc12.x, tc12.y), texelSize), eye)).rgb * (w12.x * w12.y) +
+        texture(tex, vec3(ClampUvToTexels(vec2(tc0.x,  tc12.y), texelSize), eye)).rgb * (w0.x  * w12.y) +
+        texture(tex, vec3(ClampUvToTexels(vec2(tc3.x,  tc12.y), texelSize), eye)).rgb * (w3.x  * w12.y) +
+        texture(tex, vec3(ClampUvToTexels(vec2(tc12.x, tc0.y ), texelSize), eye)).rgb * (w12.x * w0.y ) +
+        texture(tex, vec3(ClampUvToTexels(vec2(tc12.x, tc3.y ), texelSize), eye)).rgb * (w12.x * w3.y );
+
+    float totalWeight = (w12.x * w12.y) + (w0.x * w12.y) + (w3.x * w12.y)
+        + (w12.x * w0.y) + (w12.x * w3.y);
+    return result / max(totalWeight, 1e-6);
+}
+
 vec3 RGBToYCoCg(vec3 rgb)
 {
     float y = dot(rgb, vec3(0.25, 0.5, 0.25));
@@ -202,13 +236,22 @@ void main()
     if (postTemporalCoverage > 0.5)
         velocity = vec2(0.0);
 
-    vec2 historyUV = uv - velocity * 0.5;
+    // Velocity is encoded from unjittered NDC matrices. Convert it to UV and
+    // account for projection-sample displacement exactly once here.
+    vec2 historyUV = uv - velocity * 0.5 + PreviousJitterUv - CurrentJitterUv;
     vec2 sourceTexelSize = TextureTexelSize(PostProcessOutputTexture);
     vec2 historyTexelSize = TextureTexelSize(TsrHistoryColor);
+    bool nativeResolution = all(equal(
+        textureSize(PostProcessOutputTexture, 0).xy,
+        textureSize(TsrHistoryColor, 0).xy));
 
     vec4 currentSample = texture(PostProcessOutputTexture, EyeUv(uv));
     vec3 currentColorRaw = currentSample.rgb;
-    vec3 currentColor = mix(currentColorRaw, SampleCurrentReconstruction(PostProcessOutputTexture, uv, sourceTexelSize), 0.25);
+    // Native resolution keeps the exact current sample but still performs the
+    // per-eye temporal history resolve below.
+    vec3 currentColor = nativeResolution
+        ? currentColorRaw
+        : mix(currentColorRaw, SampleCurrentReconstruction(PostProcessOutputTexture, uv, sourceTexelSize), 0.25);
     vec3 currentYCoCg = RGBToYCoCg(currentColor);
     float currentLuma = currentYCoCg.x;
 
@@ -226,7 +269,7 @@ void main()
         vec2 historySampleUv = ClampHistoryUv(historyUV);
         float historyDepth = texture(HistoryDepth, EyeUv(historySampleUv)).r;
         if (abs(historyDepth - currentDepth) <= DepthRejectThreshold)
-            historyYCoCg = RGBToYCoCg(texture(TsrHistoryColor, EyeUv(historySampleUv)).rgb);
+            historyYCoCg = RGBToYCoCg(SampleCatmullRom(TsrHistoryColor, historySampleUv, historyTexelSize));
         else
             canUseHistory = false;
     }
@@ -238,6 +281,8 @@ void main()
     float luminanceMask = smoothstep(0.25 * ReactiveLumaThreshold, ReactiveLumaThreshold, abs(currentLuma - clippedHistory.x)) * motionMask;
     float reactiveMask = clamp(max(transparencyMask, max(motionMask, luminanceMask)), 0.0, 1.0);
     float confidence = pow(clamp((1.0 - geometryInstability) * (1.0 - reactiveMask), 0.0, 1.0), ConfidencePower);
+    float staticConfidenceFloor = (1.0 - motionMask) * (1.0 - reactiveMask) * 0.5;
+    confidence = max(confidence, staticConfidenceFloor);
     float historyWeight = canUseHistory ? mix(FeedbackMin, FeedbackMax, confidence) : 0.0;
     if (postTemporalCoverage > 0.5)
         historyWeight = 0.0;
@@ -258,7 +303,10 @@ void main()
             texture(PostProcessOutputTexture, EyeUv(ClampSourceUv(uv + vec2(0.0, -1.0) * sourceTexelSize))).rgb +
             texture(PostProcessOutputTexture, EyeUv(ClampSourceUv(uv + vec2(0.0,  1.0) * sourceTexelSize))).rgb;
         vec3 highFreq = currentColorRaw - neighbors * 0.25;
-        result += highFreq * 0.18 * (1.0 - historyWeight) * (1.0 - 0.5 * reactiveMask);
+        float sharpenStrength = (nativeResolution ? 0.08 : 0.18)
+            * (1.0 - historyWeight)
+            * (1.0 - 0.5 * reactiveMask);
+        result += highFreq * sharpenStrength;
     }
 
     OutColor = vec4(max(result, vec3(0.0)), 1.0);

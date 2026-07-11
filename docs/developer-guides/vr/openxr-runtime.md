@@ -133,7 +133,7 @@ Per-eye rendering uses:
 
 ## Tracking Loss And Diagnostics
 
-Engine settings expose OpenXR pose, tracking-loss, action-sync, pacing, and diagnostic policies. Debug options include frame lifecycle logging, OpenGL diagnostics, eye-order testing, and clear-only eye rendering for swapchain verification. SteamVR OpenXR Vulkan uses the per-eye `OpenXrSinglePassCompatibility` path by default; set `XRE_OPENXR_VULKAN_TRUE_STEREO=1` only when intentionally diagnosing the staged true-stereo publish path.
+Engine settings expose OpenXR pose, tracking-loss, action-sync, pacing, and diagnostic policies. Debug options include frame lifecycle logging, OpenGL diagnostics, eye-order testing, and clear-only eye rendering for swapchain verification. `SinglePassStereo` is strict: OpenXR Vulkan uses the layered multiview staging path when its required capabilities are available and otherwise logs the precise rejection reason and submits no projection layer. Choose `SequentialViews` explicitly for per-eye rendering.
 
 ## Monado Tooling
 

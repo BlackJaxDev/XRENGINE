@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices;
 using Silk.NET.Vulkan;
 using XREngine;
 
@@ -56,7 +57,19 @@ public unsafe partial class VulkanRenderer
 
     internal readonly struct DynamicRenderingFormatSignature : IEquatable<DynamicRenderingFormatSignature>
     {
-        private readonly Format[]? _colorFormats;
+        // Vulkan implementations must support at least eight color attachments. The
+        // engine deliberately caps render-target signatures at that portable limit so
+        // compatibility keys remain pure values and never allocate in draw recording.
+        internal const int MaxColorAttachmentCount = 8;
+
+        [InlineArray(MaxColorAttachmentCount)]
+        private struct ColorFormatStorage
+        {
+            private Format _element0;
+        }
+
+        private readonly ColorFormatStorage _colorFormats;
+        private readonly byte _colorAttachmentCount;
 
         public DynamicRenderingFormatSignature(
             ReadOnlySpan<Format> colorFormats,
@@ -65,26 +78,39 @@ public unsafe partial class VulkanRenderer
             uint viewMask = 0u,
             uint layerCount = 1u)
         {
-            _colorFormats = colorFormats.Length == 0 ? null : colorFormats.ToArray();
+            if ((uint)colorFormats.Length > MaxColorAttachmentCount)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(colorFormats),
+                    colorFormats.Length,
+                    $"Dynamic rendering supports at most {MaxColorAttachmentCount} engine color attachments per target.");
+            }
+
+            ColorFormatStorage storage = default;
+            for (int i = 0; i < colorFormats.Length; i++)
+                storage[i] = colorFormats[i];
+
+            _colorFormats = storage;
+            _colorAttachmentCount = checked((byte)colorFormats.Length);
             DepthAttachmentFormat = depthAttachmentFormat;
             StencilAttachmentFormat = stencilAttachmentFormat;
             ViewMask = viewMask;
             LayerCount = ResolveDynamicRenderingLayerCount(layerCount, viewMask);
         }
 
-        public uint ColorAttachmentCount => (uint)(_colorFormats?.Length ?? 0);
+        public uint ColorAttachmentCount => _colorAttachmentCount;
         public Format DepthAttachmentFormat { get; }
         public Format StencilAttachmentFormat { get; }
         public uint ViewMask { get; }
         public uint LayerCount { get; }
-        public Format FirstColorAttachmentFormat => _colorFormats is { Length: > 0 } ? _colorFormats[0] : Format.Undefined;
+        public Format FirstColorAttachmentFormat => _colorAttachmentCount > 0 ? _colorFormats[0] : Format.Undefined;
 
         public Format GetColorAttachmentFormat(uint index)
         {
-            if (_colorFormats is null || index >= _colorFormats.Length)
+            if (index >= _colorAttachmentCount)
                 return Format.Undefined;
 
-            return _colorFormats[index];
+            return _colorFormats[(int)index];
         }
 
         public void CopyColorAttachmentFormats(Format* destination, uint count)
@@ -99,10 +125,14 @@ public unsafe partial class VulkanRenderer
 
         public string DescribeColorFormats()
         {
-            if (_colorFormats is null || _colorFormats.Length == 0)
+            if (_colorAttachmentCount == 0)
                 return Format.Undefined.ToString();
 
-            return string.Join(",", _colorFormats);
+            System.Text.StringBuilder builder = new();
+            builder.Append(GetColorAttachmentFormat(0));
+            for (uint i = 1; i < _colorAttachmentCount; i++)
+                builder.Append(',').Append(GetColorAttachmentFormat(i));
+            return builder.ToString();
         }
 
         public bool Equals(DynamicRenderingFormatSignature other)
@@ -369,7 +399,9 @@ public unsafe partial class VulkanRenderer
                 stencilFormat = signature.Format;
         }
 
-        Format[] colorFormats = colorCount == 0 ? [] : new Format[colorCount];
+        Span<Format> colorFormats = colorCount == 0
+            ? []
+            : stackalloc Format[colorCount];
         int colorIndex = 0;
         for (int i = 0; i < signatures.Length; i++)
         {

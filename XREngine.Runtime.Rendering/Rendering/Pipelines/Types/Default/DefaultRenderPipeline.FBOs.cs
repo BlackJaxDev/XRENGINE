@@ -1014,6 +1014,8 @@ public partial class DefaultRenderPipeline
 
     private XRMaterial CreateMotionVectorsMaterial()
     {
+        XRRenderPipelineInstance ownerPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline
+            ?? throw new InvalidOperationException("Motion-vector material creation requires an owning pipeline instance.");
         XRShader shader = XRShader.EngineShader(
             Path.Combine(SceneShaderPath, Stereo ? "MotionVectorsStereo.fs" : "MotionVectors.fs"),
             EShaderType.Fragment);
@@ -1036,7 +1038,8 @@ public partial class DefaultRenderPipeline
             }
         };
 
-        material.SettingUniforms += MotionVectorsMaterial_SettingUniforms;
+        material.SettingUniforms += (material, program) =>
+            MotionVectorsMaterial_SettingUniforms(ownerPipeline, material, program);
         return material;
     }
 
@@ -1087,9 +1090,12 @@ public partial class DefaultRenderPipeline
         };
     }
 
-    private void MotionVectorsMaterial_SettingUniforms(XRMaterialBase material, XRRenderProgram program)
+    private void MotionVectorsMaterial_SettingUniforms(
+        XRRenderPipelineInstance ownerPipeline,
+        XRMaterialBase material,
+        XRRenderProgram program)
     {
-        if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporal))
+        if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(ownerPipeline, out var temporal))
         {
             //Debug.Out($"[Velocity] Using temporal uniforms. HistoryReady={temporal.HistoryReady}, ExposureReady={temporal.HistoryExposureReady}, Size={temporal.Width}x{temporal.Height}");
             if (Stereo)

@@ -926,12 +926,14 @@ public unsafe partial class VulkanRenderer
         out bool featureSupported,
         out bool pipelineFragmentShadingRate,
         out bool primitiveFragmentShadingRate,
-        out bool attachmentFragmentShadingRate)
+        out bool attachmentFragmentShadingRate,
+        out PhysicalDeviceFragmentShadingRatePropertiesKHR properties)
     {
         featureSupported = false;
         pipelineFragmentShadingRate = false;
         primitiveFragmentShadingRate = false;
         attachmentFragmentShadingRate = false;
+        properties = default;
 
         if (!extensionEnabled)
             return;
@@ -953,6 +955,18 @@ public unsafe partial class VulkanRenderer
         primitiveFragmentShadingRate = features.PrimitiveFragmentShadingRate;
         attachmentFragmentShadingRate = features.AttachmentFragmentShadingRate;
         featureSupported = pipelineFragmentShadingRate || primitiveFragmentShadingRate || attachmentFragmentShadingRate;
+
+        PhysicalDeviceFragmentShadingRatePropertiesKHR queriedProperties = new()
+        {
+            SType = StructureType.PhysicalDeviceFragmentShadingRatePropertiesKhr,
+        };
+        PhysicalDeviceProperties2 properties2 = new()
+        {
+            SType = StructureType.PhysicalDeviceProperties2,
+            PNext = &queriedProperties,
+        };
+        Api.GetPhysicalDeviceProperties2(_physicalDevice, &properties2);
+        properties = queriedProperties;
     }
 
     private unsafe void QueryFragmentDensityMapCapabilities(
@@ -1101,7 +1115,7 @@ public unsafe partial class VulkanRenderer
         var availableExtensionSet = new HashSet<string>(_availableDeviceExtensions, StringComparer.Ordinal);
 
         // Build the list of extensions to enable (required + supported optional)
-        var extensionsToEnable = new List<string>(deviceExtensions);
+        var extensionsToEnable = new List<string>(_requiredDeviceExtensions);
         var openXrRequirements = OpenXRAPI.GetRequestedVulkanRuntimeRequirements();
         foreach (string requiredOpenXrExtension in openXrRequirements.DeviceExtensions)
         {
@@ -1155,7 +1169,7 @@ public unsafe partial class VulkanRenderer
         AddDiagnosticDeviceExtensionIfRequested(NvDeviceDiagnosticCheckpointsExtensionName, _diagnosticOptions.RequestNvDiagnosticCheckpoints);
         AddDiagnosticDeviceExtensionIfRequested(NvDeviceDiagnosticsConfigExtensionName, _diagnosticOptions.RequestNvDiagnosticsConfig);
 
-        foreach (var optionalExt in optionalDeviceExtensions)
+        foreach (var optionalExt in _optionalDeviceExtensions)
         {
             if (optionalExt == "VK_EXT_graphics_pipeline_library" &&
                 !availableExtensionSet.Contains("VK_KHR_pipeline_library"))
@@ -1508,7 +1522,8 @@ public unsafe partial class VulkanRenderer
             out bool fragmentShadingRateFeatureSupported,
             out bool pipelineFragmentShadingRateSupported,
             out bool primitiveFragmentShadingRateSupported,
-            out bool attachmentFragmentShadingRateSupported);
+            out bool attachmentFragmentShadingRateSupported,
+            out PhysicalDeviceFragmentShadingRatePropertiesKHR fragmentShadingRateProperties);
         bool enableFragmentShadingRateFeature =
             fragmentShadingRateExtensionEnabled &&
             fragmentShadingRateFeatureSupported;
@@ -2045,6 +2060,7 @@ public unsafe partial class VulkanRenderer
         _supportsHostQueryReset = enableHostQueryResetFeature;
         _supportsVulkanFragmentShadingRate = enableFragmentShadingRateFeature;
         _supportsVulkanFragmentShadingRateAttachment = enableFragmentShadingRateFeature && attachmentFragmentShadingRateSupported;
+        _fragmentShadingRateProperties = enableFragmentShadingRateFeature ? fragmentShadingRateProperties : default;
         _supportsVulkanFragmentDensityMap = enableFragmentDensityMapFeature;
         _supportsVulkanFragmentDensityMapDynamic = enableFragmentDensityMapFeature && fragmentDensityMapDynamicSupported;
         _supportsVulkanTaskShaderFeature = enableMeshShaderFeature;
@@ -2106,7 +2122,6 @@ public unsafe partial class VulkanRenderer
             accelerationStructureFeatureSupported,
             rayTracingPipelineFeatureSupported,
             rayQueryFeatureSupported);
-        ResolveRenderTargetMode();
         RuntimeEngine.Rendering.State.HasVulkanMultiView = enableMultiviewFeature;
         RuntimeEngine.Rendering.State.HasOvrMultiViewExtension = enableMultiviewFeature;
         RuntimeEngine.Rendering.State.HasVulkanDepthClipControl = enableDepthClipControlFeature;
@@ -2243,10 +2258,18 @@ public unsafe partial class VulkanRenderer
                 if (enableFragmentShadingRateFeature)
                 {
                     Debug.Vulkan(
-                        "[Vulkan] VK_KHR_fragment_shading_rate enabled (pipeline={0}, primitive={1}, attachment={2}).",
+                        "[Vulkan] VK_KHR_fragment_shading_rate enabled (pipeline={0}, primitive={1}, attachment={2}, attachmentTexelMin={3}x{4}, attachmentTexelMax={5}x{6}, maxFragment={7}x{8}, nonTrivialCombiner={9}, strictMultiplyCombiner={10}).",
                         pipelineFragmentShadingRateSupported,
                         primitiveFragmentShadingRateSupported,
-                        attachmentFragmentShadingRateSupported);
+                        attachmentFragmentShadingRateSupported,
+                        fragmentShadingRateProperties.MinFragmentShadingRateAttachmentTexelSize.Width,
+                        fragmentShadingRateProperties.MinFragmentShadingRateAttachmentTexelSize.Height,
+                        fragmentShadingRateProperties.MaxFragmentShadingRateAttachmentTexelSize.Width,
+                        fragmentShadingRateProperties.MaxFragmentShadingRateAttachmentTexelSize.Height,
+                        fragmentShadingRateProperties.MaxFragmentSize.Width,
+                        fragmentShadingRateProperties.MaxFragmentSize.Height,
+                        fragmentShadingRateProperties.FragmentShadingRateNonTrivialCombinerOps,
+                        fragmentShadingRateProperties.FragmentShadingRateStrictMultiplyCombiner);
                 }
                 else
                 {
@@ -2500,6 +2523,10 @@ public unsafe partial class VulkanRenderer
             _nvCopyMemoryIndirectSupportedQueues = 0;
         }
 
+        // Resolve only after core/extension command tables have finalized the effective
+        // dynamic-rendering capability. Resolving earlier could cache legacy mode before
+        // VK_KHR_dynamic_rendering command loading completed.
+        ResolveRenderTargetMode();
         Debug.Vulkan(
             "[Vulkan] Render target mode: requested={0} resolved={1} dynamicRenderingFeature={2}. Override with {3}=Auto|DynamicRendering|LegacyRenderPass.",
             _requestedRenderTargetMode,

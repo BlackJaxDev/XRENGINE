@@ -322,7 +322,7 @@ public unsafe partial class VulkanRenderer
             return Result.ErrorValidationFailedExt;
         }
 
-        if (!ValidateVulkanSubmissionResourceLifetimes(ref submitInfo, out string lifetimeFailure))
+        if (!ValidateVulkanSubmissionResourceLifetimes(ref submitInfo, in diagnosticContext, out string lifetimeFailure))
         {
             RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
                 new FrameOutputWorkTelemetry(SubmissionRejections: 1));

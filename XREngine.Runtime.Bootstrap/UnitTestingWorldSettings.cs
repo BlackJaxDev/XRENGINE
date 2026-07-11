@@ -100,10 +100,10 @@ public class UnitTestingVrSettings
 {
     public UnitTestingVrLaunchMode Mode { get; set; } = UnitTestingVrLaunchMode.Desktop;
     /// <summary>
-    /// Requested VR eye rendering mode. OpenXR Vulkan uses true stereo when
-    /// the layered staging path is available, and otherwise reports a
-    /// compatibility path over per-eye swapchains. Logs and profile captures
-    /// report the effective implementation path.
+    /// Requested VR eye rendering mode. OpenXR Vulkan SinglePassStereo strictly
+    /// requires true layered multiview rendering; unavailable capabilities are
+    /// logged and the XR output is not rendered. It never falls back to per-eye
+    /// rendering. Logs and profile captures report the effective implementation.
     /// </summary>
     public EVrViewRenderMode ViewRenderMode { get; set; } = EVrViewRenderMode.SequentialViews;
     public bool PreviewStereoViews { get; set; } = false;

@@ -578,9 +578,9 @@ namespace XREngine.Rendering.Commands
                 || renderPass == (int)EDefaultRenderPass.MaskedForward;
         }
 
-        private static bool ShouldSuppressOcclusionForCurrentPass(bool suppressDepthNormalPrePass, out bool isShadowPass, out bool isDepthNormalPrePass)
+        private bool ShouldSuppressOcclusionForCurrentPass(bool suppressDepthNormalPrePass, out bool isShadowPass, out bool isDepthNormalPrePass)
         {
-            isShadowPass = RuntimeEngine.Rendering.State.IsShadowPass;
+            isShadowPass = _ownerPipeline?.IsShadowPipeline == true;
             isDepthNormalPrePass = suppressDepthNormalPrePass;
             return isShadowPass || isDepthNormalPrePass;
         }
@@ -642,6 +642,8 @@ namespace XREngine.Rendering.Commands
                 return;
 
             EOcclusionCullingMode occlusionMode = RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode;
+            OcclusionViewOwnership occlusionOwnership = _ownerPipeline?.OcclusionViewOwnership
+                ?? default;
             bool suppressOcclusion = ShouldSuppressOcclusionForCurrentPass(suppressCpuOcclusionForPass, out bool isShadowPass, out bool isDepthNormalPrePass);
             bool useCpuQueryOcclusion =
                 !suppressOcclusion &&
@@ -662,7 +664,20 @@ namespace XREngine.Rendering.Commands
 
             if (useCpuQueryOcclusion)
             {
-                s_cpuOcclusionCoordinator.BeginPass(renderPass, camera!, (uint)list.Count);
+                s_cpuOcclusionCoordinator.BeginPass(
+                    renderPass,
+                    camera!,
+                    (uint)list.Count,
+                    occlusionOwnership);
+                if (!occlusionOwnership.IsValid)
+                {
+                    Debug.RenderingWarningEvery(
+                        $"RenderCommandCollection.CpuOcclusion.MissingOwnership.{GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "CPU hardware-query occlusion is fail-visible because this render-command collection has no owning pipeline. owner={0} pass={1}",
+                        _ownerPipeline?.DebugDescriptor ?? "<none>",
+                        renderPass);
+                }
                 XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuPassBegin(list.Count);
             }
             else
@@ -730,7 +745,8 @@ namespace XREngine.Rendering.Commands
                         renderPass,
                         camera,
                         queryKey,
-                        out CpuOcclusionProbeRequest probeRequest);
+                        out CpuOcclusionProbeRequest probeRequest,
+                        occlusionOwnership);
                     bool needsHardwareQuery = probeRequest.Requested;
 
                     if (decision == XREngine.Rendering.Occlusion.ECpuOcclusionDecision.Skip)
@@ -769,7 +785,7 @@ namespace XREngine.Rendering.Commands
                         {
                             if (CpuQueryProxyIsNearPlaneUnsafe(camera!, probeBounds.Value))
                             {
-                                s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey, ECpuOcclusionForceVisibleReason.NearPlaneUnsafe);
+                                s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey, ECpuOcclusionForceVisibleReason.NearPlaneUnsafe, occlusionOwnership);
                                 if (ShouldLogSponzaCpuDiag(cmd))
                                     LogSponzaCpuDiag("draw-cpu-query-near-plane", renderPass, cmd, camera, $"queryKey={queryKey}");
                                 RenderWithGpuScope(cmd, renderPass);
@@ -788,7 +804,7 @@ namespace XREngine.Rendering.Commands
                             cpuCmdIndex++;
                             continue;
                         }
-                        s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey, ECpuOcclusionForceVisibleReason.NoBounds);
+                        s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey, ECpuOcclusionForceVisibleReason.NoBounds, occlusionOwnership);
                         // No bounds available — fall through to full-mesh requery so the
                         // query can still refresh (correctness fallback; will flicker).
                     }
@@ -807,7 +823,7 @@ namespace XREngine.Rendering.Commands
                         cmd.CullingVolume is AABB visibleProbeBounds)
                     {
                         if (CpuQueryProxyIsNearPlaneUnsafe(camera!, visibleProbeBounds))
-                            s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey, ECpuOcclusionForceVisibleReason.NearPlaneUnsafe);
+                            s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey, ECpuOcclusionForceVisibleReason.NearPlaneUnsafe, occlusionOwnership);
                         else
                             probeCandidates.Add(CreateCpuOcclusionProbeCandidate(queryKey, visibleProbeBounds, probeRequest, camera!));
 
@@ -820,7 +836,7 @@ namespace XREngine.Rendering.Commands
                         // Fallback: command has no AABB, so we can't issue a proxy probe.
                         if (needsHardwareQuery)
                         {
-                            s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey, ECpuOcclusionForceVisibleReason.NoBounds);
+                            s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey, ECpuOcclusionForceVisibleReason.NoBounds, occlusionOwnership);
                             XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuBudgetSkipped(ECpuOcclusionQueryReason.DiagnosticForcedQuery);
                         }
 
@@ -855,16 +871,21 @@ namespace XREngine.Rendering.Commands
             // visible meshes from this pass, so the conservative samples-passed query
             // result is a faithful "is this mesh's AABB exposed to the camera?" answer.
             if (probeCandidates is { Count: > 0 } && deferredProbes is not null)
-                s_cpuOcclusionCoordinator.SelectProbeCandidates(renderPass, camera, probeCandidates, deferredProbes);
+                s_cpuOcclusionCoordinator.SelectProbeCandidates(
+                    renderPass,
+                    camera,
+                    probeCandidates,
+                    deferredProbes,
+                    occlusionOwnership);
 
             if (deferredProbes is { Count: > 0 })
             {
                 foreach (var probe in deferredProbes)
                 {
                     if (probe.IsHierarchyGroup)
-                        s_cpuOcclusionCoordinator.BeginHierarchyQuery(renderPass, camera, probe.HierarchyGroupKey);
+                        s_cpuOcclusionCoordinator.BeginHierarchyQuery(renderPass, camera, probe.HierarchyGroupKey, occlusionOwnership);
                     else
-                        s_cpuOcclusionCoordinator.BeginQuery(renderPass, camera, probe.QueryKey);
+                        s_cpuOcclusionCoordinator.BeginQuery(renderPass, camera, probe.QueryKey, occlusionOwnership);
                     try
                     {
                         XREngine.Rendering.Occlusion.CpuOcclusionProxyRenderer.Draw(probe.WorldBounds);
@@ -872,9 +893,9 @@ namespace XREngine.Rendering.Commands
                     finally
                     {
                         if (probe.IsHierarchyGroup)
-                            s_cpuOcclusionCoordinator.EndHierarchyQuery(renderPass, camera, probe.HierarchyGroupKey);
+                            s_cpuOcclusionCoordinator.EndHierarchyQuery(renderPass, camera, probe.HierarchyGroupKey, occlusionOwnership);
                         else
-                            s_cpuOcclusionCoordinator.EndQuery(renderPass, camera, probe.QueryKey);
+                            s_cpuOcclusionCoordinator.EndQuery(renderPass, camera, probe.QueryKey, occlusionOwnership);
                     }
                 }
                 deferredProbes.Clear();
@@ -1048,6 +1069,8 @@ namespace XREngine.Rendering.Commands
                 camera is not null &&
                 !useCpuQueryOcclusion &&
                 PrepareCpuSoftwareOcclusion(renderPass, camera);
+            OcclusionViewOwnership occlusionOwnership = _ownerPipeline?.OcclusionViewOwnership
+                ?? default;
 
             uint cpuCmdIndex = 0;
             foreach (var cmd in list)
@@ -1067,7 +1090,11 @@ namespace XREngine.Rendering.Commands
                 if (useCpuQueryOcclusion && cmd is IRenderCommandMesh)
                 {
                     // C-CPU-4: stable per-command identity, matches primary RenderCPU keying.
-                    if (!s_cpuOcclusionCoordinator.PeekShouldRender(renderPass, camera, cmd.StableQueryKey))
+                    if (!s_cpuOcclusionCoordinator.PeekShouldRender(
+                            renderPass,
+                            camera,
+                            cmd.StableQueryKey,
+                            occlusionOwnership))
                     {
                         cpuCmdIndex++;
                         continue;

@@ -1558,7 +1558,7 @@ namespace XREngine.Rendering.Vulkan
                 _ => "Vulkan.RecordPrimary.Op.Unknown"
             };
 
-        private static void EnsureMeshDrawUniformSlotCapacityForRecording(
+        internal static void EnsureMeshDrawUniformSlotCapacityForRecording(
             FrameOp[] ops,
             Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer)
         {
@@ -1566,10 +1566,15 @@ namespace XREngine.Rendering.Vulkan
 
             for (int i = 0; i < ops.Length; i++)
             {
-                if (ops[i] is not MeshDrawOp drawOp)
+                VkMeshRenderer? renderer = ops[i] switch
+                {
+                    MeshDrawOp drawOp => drawOp.Draw.Renderer,
+                    IndirectDrawOp indirectDrawOp => indirectDrawOp.MeshRenderer,
+                    _ => null
+                };
+                if (renderer is null)
                     continue;
 
-                VkMeshRenderer renderer = drawOp.Draw.Renderer;
                 meshDrawSlotsByRenderer.TryGetValue(renderer, out int count);
                 meshDrawSlotsByRenderer[renderer] = count + 1;
             }
@@ -2189,6 +2194,8 @@ namespace XREngine.Rendering.Vulkan
                 BeginVulkanGpuProfilerQueries(commandBuffer, commandBufferImageSlot);
 
                 ResetCommandBufferBindState(commandBuffer);
+                recordingScratch.PreparedInlineQueries.Clear();
+                recordingScratch.BegunInlineQueries.Clear();
 
                 if (CanRecordCommandBufferDebugLabels)
                 {
@@ -2628,6 +2635,8 @@ namespace XREngine.Rendering.Vulkan
             bool renderPassActive = false;
             bool activeDynamicRendering = false;
             XRFrameBuffer? activeTarget = null;
+            VkRenderQuery? activeInlineQuery = null;
+            bool inlineQueriesPreparedAtPassBoundary = false;
             RenderPass activeRenderPass = default;
             Framebuffer activeFramebuffer = default;
             DynamicRenderingFormatSignature activeDynamicRenderingFormats = default;
@@ -3032,6 +3041,12 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 bool transitionSwapchainToPresent = activeDynamicRendering && activeTarget is null;
+                if (activeInlineQuery is not null)
+                {
+                    activeInlineQuery.EndQuery(commandBuffer);
+                    activeInlineQuery = null;
+                }
+
                 if (activeDynamicRendering)
                 {
                     CmdEndDynamicRendering(commandBuffer);
@@ -3730,12 +3745,17 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 }
 
-                RenderPass passRenderPass = vkFrameBuffer.ResolveRenderPassForPass(
-                    passIndex,
-                    context.PassMetadata,
-                    trackedLayouts,
-                    CompiledRenderGraph.Synchronization,
-                    preserveTrackedClearLoads: targetReenteredThisCommandBuffer);
+                // Keep the legacy fallback on the same explicit layout contract as
+                // dynamic rendering. This removes the fragile dependency on cached
+                // render-pass initial layouts when physical images are reused by a
+                // newly compiled render graph.
+                TransitionFboAttachmentsForDynamicRendering(
+                    commandBuffer,
+                    target,
+                    fboSignature,
+                    beginRendering: true);
+                fboSignature = CreateLegacyRenderPassSignature(fboSignature);
+                RenderPass passRenderPass = GetOrCreateFrameBufferRenderPass(fboSignature);
 
                 if (VulkanFrameDiagnosticsTraceEnabled)
                 {
@@ -3787,7 +3807,7 @@ namespace XREngine.Rendering.Vulkan
                 if (TargetTraceEnabled)
                 {
                     Debug.Vulkan(
-                        "[VulkanTarget] begin target='{0}' targetId={1} pass={2} passName='{3}' dynamic=false renderPass=0x{4:X} framebuffer=0x{5:X} attachments={6} extent={7}x{8} secondary={9}",
+                    "[VulkanTarget] begin target='{0}' targetId={1} pass={2} passName='{3}' dynamic=false renderPass=0x{4:X} framebuffer=0x{5:X} attachments={6} extent={7}x{8} secondary={9} signature={10}",
                         fboName,
                         target.GetHashCode(),
                         passIndex,
@@ -3797,7 +3817,8 @@ namespace XREngine.Rendering.Vulkan
                         vkFrameBuffer.AttachmentCount,
                         fboPassInfo.RenderArea.Extent.Width,
                         fboPassInfo.RenderArea.Extent.Height,
-                        secondaryContents);
+                    secondaryContents,
+                    FormatFboAttachmentSignature(fboSignature));
                 }
             }
 
@@ -5638,6 +5659,27 @@ namespace XREngine.Rendering.Vulkan
                         break;
 
                     case QueryOp queryOp:
+                        if (!inlineQueriesPreparedAtPassBoundary)
+                        {
+                            // Planner/context activation can create or replace backend
+                            // objects. Reset the final query pools at the first query
+                            // boundary, outside dynamic rendering, after all such setup.
+                            EndActiveRenderPass();
+                            recordingScratch.PreparedInlineQueries.Clear();
+                            for (int remainingIndex = opIndex; remainingIndex < ops.Length; remainingIndex++)
+                            {
+                                if (ops[remainingIndex] is QueryOp
+                                    {
+                                        Operation: EVulkanQueryFrameOpKind.Begin
+                                    } remainingQuery &&
+                                    recordingScratch.PreparedInlineQueries.Add(remainingQuery.Query))
+                                {
+                                    remainingQuery.Query.PrepareForRecording(commandBuffer, remainingQuery.QueryTarget);
+                                }
+                            }
+                            inlineQueriesPreparedAtPassBoundary = true;
+                        }
+
                         if (!renderPassActive || activeTarget != queryOp.Target)
                         {
                             EndActiveRenderPass();
@@ -5648,9 +5690,32 @@ namespace XREngine.Rendering.Vulkan
                         if (CanRecordCommandBufferDebugLabels)
                             queryLabelActive = CmdBeginLabel(commandBuffer, $"Query.{queryOp.Operation}");
                         if (queryOp.Operation == EVulkanQueryFrameOpKind.Begin)
-                            queryOp.Query.BeginQuery(commandBuffer, queryOp.QueryTarget);
-                        else
+                        {
+                            if (activeInlineQuery is not null)
+                                activeInlineQuery.EndQuery(commandBuffer);
+                            if (recordingScratch.BegunInlineQueries.Add(queryOp.Query))
+                            {
+                                activeInlineQuery = queryOp.Query.BeginQuery(commandBuffer, queryOp.QueryTarget)
+                                    ? queryOp.Query
+                                    : null;
+                            }
+                            else
+                            {
+                                activeInlineQuery = null;
+                                Debug.VulkanWarningEvery(
+                                    $"Vulkan.DuplicateInlineOcclusionQuery.{queryOp.Query.GetHashCode()}",
+                                    TimeSpan.FromSeconds(1),
+                                    "[Vulkan] Duplicate inline occlusion query begin suppressed in one command buffer. Query='{0}' pass={1} op={2}.",
+                                    queryOp.Query.Data.Name ?? "<unnamed>",
+                                    opPassIndex,
+                                    opIndex);
+                            }
+                        }
+                        else if (ReferenceEquals(activeInlineQuery, queryOp.Query))
+                        {
                             queryOp.Query.EndQuery(commandBuffer);
+                            activeInlineQuery = null;
+                        }
                         if (queryLabelActive)
                             CmdEndLabel(commandBuffer);
                         break;
@@ -6565,6 +6630,12 @@ namespace XREngine.Rendering.Vulkan
                         "[Vulkan] Blit skipped: source/destination image could not be resolved to a live handle.");
                     return false;
                 }
+
+                uint commonLayerCount = Math.Min(resolvedSource.LayerCount, resolvedDestination.LayerCount);
+                if (commonLayerCount == 0)
+                    return false;
+                resolvedSource = resolvedSource.WithLayerCount(commonLayerCount);
+                resolvedDestination = resolvedDestination.WithLayerCount(commonLayerCount);
 
                 // Validate image handles before issuing Vulkan commands.
                 // A stale/destroyed handle causes a native access violation (0xC0000005) in the driver.
@@ -7593,12 +7664,17 @@ namespace XREngine.Rendering.Vulkan
                     {
                         oldLayout = NormalizeFboAttachmentLayout(signature, requestedOldLayout);
                     }
-                    if (oldLayout == newLayout)
-                        continue;
+                    bool sameLayout = oldLayout == newLayout;
+                    // A render-pass attachment can remain in the same layout while
+                    // its producer changes.  Dynamic rendering has no implicit
+                    // external-subpass dependency, so retain this memory barrier on
+                    // scope exit for a later sampled read of the attachment.
 
                     bool oldLayoutIsRenderAttachment = !beginRendering;
                     bool newLayoutIsRenderAttachment = beginRendering;
-                    PipelineStageFlags srcStage = oldLayout == ImageLayout.Undefined
+                    PipelineStageFlags srcStage = sameLayout
+                        ? PipelineStageFlags.AllCommandsBit
+                        : oldLayout == ImageLayout.Undefined
                         ? PipelineStageFlags.TopOfPipeBit
                         : ResolveFboAttachmentStage(oldLayout, signature, oldLayoutIsRenderAttachment);
                     PipelineStageFlags dstStage = ResolveFboAttachmentStage(newLayout, signature, newLayoutIsRenderAttachment);
@@ -7606,7 +7682,9 @@ namespace XREngine.Rendering.Vulkan
                     ImageMemoryBarrier barrier = new()
                     {
                         SType = StructureType.ImageMemoryBarrier,
-                        SrcAccessMask = oldLayout == ImageLayout.Undefined
+                        SrcAccessMask = sameLayout
+                            ? AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit
+                            : oldLayout == ImageLayout.Undefined
                             ? 0
                             : ResolveFboAttachmentAccess(oldLayout, signature, oldLayoutIsRenderAttachment),
                         DstAccessMask = ResolveFboAttachmentAccess(newLayout, signature, newLayoutIsRenderAttachment),
@@ -7702,6 +7780,34 @@ namespace XREngine.Rendering.Vulkan
                 ImageLayout.ShaderReadOnlyOptimal => ImageLayout.DepthStencilReadOnlyOptimal,
                 _ => layout
             };
+        }
+
+        private static FrameBufferAttachmentSignature[] CreateLegacyRenderPassSignature(
+            FrameBufferAttachmentSignature[] signatures)
+        {
+            FrameBufferAttachmentSignature[] result = (FrameBufferAttachmentSignature[])signatures.Clone();
+            for (int i = 0; i < result.Length; i++)
+            {
+                FrameBufferAttachmentSignature signature = result[i];
+                if (signature.Role == AttachmentRole.Unused || signature.ReferenceLayout == ImageLayout.Undefined)
+                    continue;
+
+                result[i] = new FrameBufferAttachmentSignature(
+                    signature.Format,
+                    signature.Samples,
+                    signature.AspectMask,
+                    signature.Role,
+                    signature.ColorIndex,
+                    signature.LoadOp,
+                    signature.StoreOp,
+                    signature.StencilLoadOp,
+                    signature.StencilStoreOp,
+                    signature.ReferenceLayout,
+                    signature.FinalLayout,
+                    signature.ReferenceLayout);
+            }
+
+            return result;
         }
 
         private static PipelineStageFlags ResolveFboAttachmentStage(

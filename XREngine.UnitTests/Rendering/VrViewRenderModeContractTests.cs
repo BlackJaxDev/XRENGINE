@@ -10,6 +10,22 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class VrViewRenderModeContractTests
 {
+    [TestCase(true, false, false, true)]
+    [TestCase(true, false, true, false)]
+    [TestCase(true, true, false, false)]
+    [TestCase(false, false, false, false)]
+    public void StrictSinglePassStereo_FinalGuardBlocksOnlyUnhandledSequentialFallback(
+        bool strictRequested,
+        bool allEyesRendered,
+        bool batchHandled,
+        bool expectedBlocked)
+    {
+        OpenXRAPI.MustBlockStrictSinglePassStereoSequentialFallback(
+            strictRequested,
+            allEyesRendered,
+            batchHandled).ShouldBe(expectedBlocked);
+    }
+
     [Test]
     public void ViewRenderModeResolver_ExposesBackendSupportMatrix()
     {
@@ -23,14 +39,15 @@ public sealed class VrViewRenderModeContractTests
         vulkanSequential.IsSupported.ShouldBeTrue();
         vulkanSequential.EffectiveImplementationPath.ShouldBe(EVrViewRenderImplementationPath.SequentialViews);
         vulkanSequential.TemporalHistoryPolicy.ShouldBe(EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain);
-        vulkanSinglePass.IsSupported.ShouldBeTrue();
-        vulkanSinglePass.EffectiveImplementationPath.ShouldBe(EVrViewRenderImplementationPath.OpenXrSinglePassCompatibility);
-        vulkanSinglePass.TemporalHistoryPolicy.ShouldBe(EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain);
+        vulkanSinglePass.IsSupported.ShouldBeFalse();
+        vulkanSinglePass.EffectiveImplementationPath.ShouldBe(EVrViewRenderImplementationPath.Unsupported);
+        vulkanSinglePass.TemporalHistoryPolicy.ShouldBe(EVrTemporalHistoryPolicy.Disabled);
+        vulkanSinglePass.Diagnostic!.ShouldContain("Sequential or per-eye compatibility fallback is forbidden");
         vulkanParallel.IsSupported.ShouldBeTrue();
         vulkanParallel.EffectiveImplementationPath.ShouldBe(EVrViewRenderImplementationPath.ParallelCommandBufferRecording);
 
         VrViewRenderModeResolver.Resolve(ERenderLibrary.OpenGL, EVrViewRenderMode.SequentialViews).IsSupported.ShouldBeTrue();
-        VrViewRenderModeResolver.Resolve(ERenderLibrary.OpenGL, EVrViewRenderMode.SinglePassStereo).IsSupported.ShouldBeTrue();
+        VrViewRenderModeResolver.Resolve(ERenderLibrary.OpenGL, EVrViewRenderMode.SinglePassStereo).IsSupported.ShouldBeFalse();
 
         VrViewRenderModeResolution openGlParallel =
             VrViewRenderModeResolver.Resolve(ERenderLibrary.OpenGL, EVrViewRenderMode.ParallelCommandBufferRecording);
@@ -41,15 +58,19 @@ public sealed class VrViewRenderModeContractTests
     }
 
     [Test]
-    public void ViewRenderModeResolver_SeparatesRequestedModeFromTrueStereoImplementation()
+    public void ViewRenderModeResolver_RequiresTrueStereoAndNeverSelectsCompatibilityFallback()
     {
-        VrViewRenderModeResolution compatibility = VrViewRenderModeResolver.Resolve(
+        VrViewRenderModeResolution unavailable = VrViewRenderModeResolver.Resolve(
             ERenderLibrary.Vulkan,
             EVrViewRenderMode.SinglePassStereo,
-            trueSinglePassStereoAvailable: false);
-        compatibility.EffectiveMode.ShouldBe(EVrViewRenderMode.SinglePassStereo);
-        compatibility.EffectiveImplementationPath.ShouldBe(EVrViewRenderImplementationPath.OpenXrSinglePassCompatibility);
-        compatibility.TemporalHistoryPolicy.ShouldBe(EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain);
+            trueSinglePassStereoAvailable: false,
+            trueSinglePassStereoUnavailableReason: "multiview feature was not enabled");
+        unavailable.IsSupported.ShouldBeFalse();
+        unavailable.EffectiveMode.ShouldBe(EVrViewRenderMode.SinglePassStereo);
+        unavailable.EffectiveImplementationPath.ShouldBe(EVrViewRenderImplementationPath.Unsupported);
+        unavailable.TemporalHistoryPolicy.ShouldBe(EVrTemporalHistoryPolicy.Disabled);
+        unavailable.Diagnostic!.ShouldContain("multiview feature was not enabled");
+        unavailable.Diagnostic!.ShouldContain("fallback is forbidden");
 
         VrViewRenderModeResolution trueStereo = VrViewRenderModeResolver.Resolve(
             ERenderLibrary.Vulkan,
@@ -791,7 +812,7 @@ public sealed class VrViewRenderModeContractTests
         settings.ShouldContain("public UnitTestingVrFoveationSettings Foveation");
         settings.ShouldContain("public UnitTestingOpenXrEyeResolutionSettings OpenXrEyeResolution");
         settings.ShouldContain("public EOpenXrEyeResolutionPreset Preset");
-        settings.ShouldContain("OpenXR Vulkan uses true stereo when");
+        settings.ShouldContain("OpenXR Vulkan SinglePassStereo strictly");
         store.ShouldContain("IsJsonPropertyPathSpecified");
         store.ShouldContain("UnitTestVrViewRenderMode");
         store.ShouldContain("UnitTestVrFoveationMode");
@@ -844,9 +865,11 @@ public sealed class VrViewRenderModeContractTests
         openXr.ShouldContain("TryRenderVulkanTrueSinglePassStereoToSwapchains");
         openXr.ShouldContain("TryEnsureVulkanStereoRenderTarget");
         openXr.ShouldContain("_openXrStereoViewport ??= new XRViewport(null)");
-        openXr.ShouldContain("True SinglePassStereo did not render this frame; skipping eye submission");
+        openXr.ShouldContain("True SinglePassStereo did not render this frame. Sequential/per-eye fallback is forbidden");
         openXr.ShouldContain("FrameModeMismatch");
-        openXr.ShouldNotContain("True SinglePassStereo failed this frame; falling back");
+        openXr.ShouldNotContain("using OpenXR per-eye swapchain compatibility path");
+        openXr.ShouldContain("Strict SinglePassStereo render failed");
+        openXr.ShouldContain("requestSequentialFallback = permitSequentialFallback");
         openXr.ShouldContain("stereoViewport.RenderStereo");
         openXr.ShouldContain("stereoViewport.MeshRenderCommandsOverride = null");
         openXr.ShouldNotContain("stereoViewport.MeshRenderCommandsOverride = sharedMeshCommands");
@@ -862,8 +885,12 @@ public sealed class VrViewRenderModeContractTests
         openXrFrameLifecycle.ShouldContain("eyeCamera.AntiAliasingModeOverride = antiAliasingMode");
         openXrFrameLifecycle.ShouldContain("EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain");
         openXrFrameLifecycle.ShouldContain("collectViewport = _openXrStereoViewport");
-        openXrFrameLifecycle.ShouldContain("collectViewport.RenderPipeline = collectPipeline");
+        openXrFrameLifecycle.ShouldContain("collectViewport.RenderPipeline = leftEyePipeline");
         openXrFrameLifecycle.ShouldContain("stereoViewport.SwapBuffers(stereoMeshCommands");
+        openXrFrameLifecycle.ShouldContain("CollectOpenXrEyeVisible");
+        openXrFrameLifecycle.ShouldContain("_openXrLeftViewport.SwapBuffers(leftCommands");
+        openXrFrameLifecycle.ShouldContain("_openXrRightViewport.SwapBuffers(rightCommands");
+        openXrFrameLifecycle.ShouldNotContain("_openXrSharedMeshRenderCommands");
         openXrState.ShouldContain("_openXrStereoViewport");
         openXrState.ShouldContain("_openXrStereoRenderPipeline");
         openXrState.ShouldContain("_pendingXrFrameUsesTrueSinglePassStereo");
@@ -875,7 +902,7 @@ public sealed class VrViewRenderModeContractTests
         contracts.ShouldContain("EVrViewRenderImplementationPath");
         contracts.ShouldContain("EVrTemporalHistoryPolicy");
         contracts.ShouldContain("EOpenXrEyeResolutionPreset");
-        contracts.ShouldContain("OpenXrSinglePassCompatibility");
+        contracts.ShouldNotContain("OpenXrSinglePassCompatibility");
         contracts.ShouldContain("DisabledExternalPerEyeSwapchain");
         openXrFoveation.ShouldContain("BuildOpenXrFoveationBackendCapabilities");
         openXrFoveation.ShouldContain("CreateOpenXrEyeFoveationContext");
@@ -894,8 +921,9 @@ public sealed class VrViewRenderModeContractTests
         profileCapture.ShouldContain("vr_view_render_mode_effective");
         profileCapture.ShouldContain("vr_view_render_implementation_path");
         profileCapture.ShouldContain("vr_temporal_history_policy");
-        schema.ShouldContain("OpenXR Vulkan SinglePassStereo uses true stereo when the layered staging path is available");
-        schema.ShouldContain("Diagnostics and profile captures expose the effective implementation path separately");
+        schema.ShouldContain("OpenXR Vulkan SinglePassStereo strictly requires true layered multiview rendering");
+        schema.ShouldContain("never falls back to per-eye rendering");
+        schema.ShouldContain("unavailable capabilities are logged and the XR output is not rendered");
 
         string vulkanOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
         openXr.ShouldContain("if (!trueSinglePassStereo)");

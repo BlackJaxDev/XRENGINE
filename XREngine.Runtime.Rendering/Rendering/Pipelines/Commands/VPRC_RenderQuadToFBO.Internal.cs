@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Numerics;
 using XREngine.Core.Attributes;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.RenderGraph;
@@ -176,12 +177,133 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Debug.Log(ELogCategory.Rendering, $"[QuadBlitDiag] Rendering '{SourceQuadFBOName}' → '{DestinationFBOName ?? "<current>"}' (dest has targets: {hasTargets}, dest type: {destFBO?.GetType().Name ?? "null"})");
             }
 
-            using var renderAreaScope = MatchDestinationRenderArea && TryResolveDestinationRenderArea(destFBO, out int renderWidth, out int renderHeight)
+            bool resolvedDestinationArea = TryResolveDestinationRenderArea(destFBO, out int renderWidth, out int renderHeight);
+            if (MatchDestinationRenderArea && !resolvedDestinationArea)
+            {
+                throw new InvalidOperationException(
+                    $"Fullscreen pass '{SourceQuadFBOName}' cannot derive a render area from destination '{destination}'.");
+            }
+
+            using var renderAreaScope = MatchDestinationRenderArea
                 ? activeInstance.RenderState.PushRenderArea(renderWidth, renderHeight)
                 : default;
 
+            if (MatchDestinationRenderArea)
+            {
+                ValidateDestinationScreenRegionContract(
+                    activeInstance,
+                    sourceFBO,
+                    destFBO!,
+                    destination,
+                    renderWidth,
+                    renderHeight);
+            }
+
             sourceFBO.Render(destFBO);
         }
+
+        private static void ValidateDestinationScreenRegionContract(
+            XRRenderPipelineInstance activeInstance,
+            XRQuadFrameBuffer sourceFbo,
+            XRFrameBuffer destinationFbo,
+            string destinationLabel,
+            int destinationWidth,
+            int destinationHeight)
+        {
+            BoundingRectangle area = activeInstance.RenderState.CurrentRenderRegion;
+            if (area.X != 0 ||
+                area.Y != 0 ||
+                area.Width != destinationWidth ||
+                area.Height != destinationHeight)
+            {
+                throw new InvalidOperationException(
+                    $"Fullscreen pass '{sourceFbo.Name}' screen-region mismatch for '{destinationLabel}'. " +
+                    $"Expected=(0,0,{destinationWidth},{destinationHeight}) Actual={area}.");
+            }
+
+            bool stereo = RuntimeEngine.Rendering.State.IsStereoPass;
+            uint attachmentLayers = 1u;
+            uint expectedViewMask = 0u;
+            if (destinationFbo.Targets is { Length: > 0 } targets)
+            {
+                for (int i = 0; i < targets.Length; i++)
+                {
+                    var (target, _, _, layerIndex) = targets[i];
+                    uint targetLayers = ResolveAttachmentLayerCount(target);
+                    attachmentLayers = Math.Max(attachmentLayers, targetLayers);
+
+                    if (!stereo)
+                        continue;
+
+                    if (layerIndex != -1)
+                    {
+                        throw new InvalidOperationException(
+                            $"Stereo fullscreen pass '{sourceFbo.Name}' selects destination layer {layerIndex} on '{destinationLabel}'. " +
+                            "True single-pass stereo must bind the complete two-layer attachment.");
+                    }
+
+                    XRTexture? texture = target as XRTexture;
+                    XRTexture viewedTexture = texture is XRTextureViewBase view
+                        ? view.GetViewedTexture()
+                        : texture!;
+                    if (texture is null ||
+                        targetLayers != 2u ||
+                        viewedTexture is not XRTexture2DArray array ||
+                        array.OVRMultiViewParameters is not { Offset: 0, NumViews: 2u })
+                    {
+                        throw new InvalidOperationException(
+                            $"Stereo fullscreen pass '{sourceFbo.Name}' destination '{destinationLabel}' is not a complete two-layer multiview attachment. " +
+                            $"Target={target.GetType().Name} Layers={targetLayers}.");
+                    }
+                }
+
+                if (stereo)
+                    expectedViewMask = 0x3u;
+            }
+
+            if (!RenderDiagnosticsFlags.DiagPostProcess && !DiagnosticsEnabled)
+                return;
+
+            XRTexture? primarySource = null;
+            XRMaterial? material = sourceFbo.Material;
+            if (material is not null)
+            {
+                for (int i = 0; i < material.Textures.Count; i++)
+                {
+                    if (material.Textures[i] is XRTexture texture)
+                    {
+                        primarySource = texture;
+                        break;
+                    }
+                }
+            }
+
+            Vector3 sourceDimensions = primarySource?.WidthHeightDepth ?? Vector3.Zero;
+            string sourceExtent = primarySource is null
+                ? "<none>"
+                : $"{Math.Max(1, (int)MathF.Round(sourceDimensions.X))}x{Math.Max(1, (int)MathF.Round(sourceDimensions.Y))}";
+            Debug.RenderingEvery(
+                $"FullscreenRegion.{activeInstance.InstanceId}.{sourceFbo.Name}.{destinationLabel}",
+                TimeSpan.FromSeconds(1),
+                "[PostProcessDiag] Fullscreen source={0} destination={1} sourceExtent={2} destinationExtent={3}x{4} " +
+                "renderArea=(0,0,{3},{4}) viewport=(0,0,{3},{4}) scissor=(0,0,{3},{4}) " +
+                "layers={5} viewMask=0x{6:X} screenOrigin=(0,0) screenSize=({3},{4}) uv=localRaster/destinationExtent->[0,1]",
+                sourceFbo.Name ?? sourceFbo.GetType().Name,
+                destinationLabel,
+                sourceExtent,
+                destinationWidth,
+                destinationHeight,
+                attachmentLayers,
+                expectedViewMask);
+        }
+
+        private static uint ResolveAttachmentLayerCount(IFrameBufferAttachement attachment)
+            => attachment switch
+            {
+                XRTextureViewBase view => Math.Max(view.NumLayers, 1u),
+                XRTexture2DArray array => Math.Max(array.Depth, 1u),
+                _ => 1u,
+            };
 
         /// <summary>
         /// Tries to resolve the render area dimensions from the destination FBO, 

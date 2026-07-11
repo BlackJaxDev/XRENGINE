@@ -11,6 +11,9 @@ param(
     [int]$SmokeFrames = 120,
 
     [Parameter()]
+    [int]$WarmupFrames = 0,
+
+    [Parameter()]
     [int]$TimeoutSeconds = 120,
 
     [Parameter()]
@@ -394,6 +397,8 @@ function Invoke-EditorSmoke {
         "--unit-testing",
         "--smoke-frames",
         [string]$SmokeFrames,
+        "--smoke-warmup-frames",
+        [string]$WarmupFrames,
         "--smoke-timeout-seconds",
         [string]$TimeoutSeconds,
         "--openxr-smoke-summary",
@@ -588,6 +593,7 @@ try {
         XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS   = "1"
         XRE_WINDOW_TITLE                        = "XRE OpenXR Monado Smoke"
         XRE_SMOKE_FRAMES                        = [string]$SmokeFrames
+        XRE_SMOKE_WARMUP_FRAMES                 = [string]$WarmupFrames
         XRE_OPENXR_SMOKE_SUMMARY                = $summaryFullPath
         XRE_SMOKE_TIMEOUT_SECONDS               = [string]$TimeoutSeconds
     }

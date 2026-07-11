@@ -1,10 +1,23 @@
 namespace XREngine.Rendering;
 
+using XREngine.Rendering.Occlusion;
+
 /// <summary>
 /// Debug metadata exposed by the active pipeline without depending on the concrete pipeline type.
 /// </summary>
 public interface IRuntimeRenderPipelineDebugContext
 {
+    /// <summary>
+    /// Gets the stable identity of this concrete pipeline instance.
+    /// </summary>
+    int InstanceId { get; }
+
+    /// <summary>
+    /// Gets the immutable output/POV ownership used by CPU hardware-query
+    /// occlusion. The resource generation is refreshed by the concrete pipeline.
+    /// </summary>
+    OcclusionViewOwnership OcclusionViewOwnership { get; }
+
     /// <summary>
     /// Gets the short human-readable name for the active pipeline or diagnostic context.
     /// </summary>

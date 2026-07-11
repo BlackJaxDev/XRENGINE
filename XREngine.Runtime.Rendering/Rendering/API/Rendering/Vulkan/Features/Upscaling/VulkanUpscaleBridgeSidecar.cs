@@ -16,163 +16,9 @@ using VkSemaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal enum EVulkanUpscaleBridgeSurfaceKind
-{
-    SourceColor,
-    SourceDepth,
-    SourceMotion,
-    Exposure,
-    OutputColor,
-}
-
-internal sealed unsafe class VulkanUpscaleBridgeSharedSemaphore(
-    string name,
-    OpenGLRenderer renderer,
-    VkSemaphore vkSemaphore,
-    uint glSemaphore) : IDisposable
-{
-    private readonly OpenGLRenderer _renderer = renderer;
-    private bool _disposed;
-
-    public string Name { get; } = name;
-    public VkSemaphore VulkanSemaphore { get; } = vkSemaphore;
-    public uint GlSemaphore { get; } = glSemaphore;
-
-    internal void DestroyVulkanResources(Vk api, Device device)
-    {
-        if (VulkanSemaphore.Handle != 0)
-            api.DestroySemaphore(device, VulkanSemaphore, null);
-    }
-
-    public void Dispose()
-    {
-        if (_disposed)
-            return;
-
-        _disposed = true;
-        _renderer.DeleteSemaphore(GlSemaphore);
-    }
-}
-
-internal sealed unsafe class VulkanUpscaleBridgeSharedImage(
-    string name,
-    EVulkanUpscaleBridgeSurfaceKind kind,
-    Image vkImage,
-    DeviceMemory vkMemory,
-    ImageView vkImageView,
-    Format vkFormat,
-    ImageAspectFlags aspectMask,
-    ImageAspectFlags viewAspectMask,
-    ImageUsageFlags usage,
-    XRTexture2D texture,
-    XRFrameBuffer frameBuffer) : IDisposable
-{
-    private bool _disposed;
-
-    public string Name { get; } = name;
-    public EVulkanUpscaleBridgeSurfaceKind Kind { get; } = kind;
-    public Image VulkanImage { get; } = vkImage;
-    public DeviceMemory VulkanMemory { get; } = vkMemory;
-    public ImageView VulkanImageView { get; } = vkImageView;
-    public Format VulkanFormat { get; } = vkFormat;
-    public ImageAspectFlags AspectMask { get; } = aspectMask;
-    public ImageAspectFlags ViewAspectMask { get; } = viewAspectMask;
-    public ImageUsageFlags Usage { get; } = usage;
-    public XRTexture2D Texture { get; } = texture;
-    public XRFrameBuffer FrameBuffer { get; } = frameBuffer;
-    public ImageLayout CurrentLayout { get; set; }
-
-    internal void DestroyVulkanResources(Vk api, Device device)
-    {
-        if (VulkanImageView.Handle != 0)
-            api.DestroyImageView(device, VulkanImageView, null);
-        if (VulkanImage.Handle != 0)
-            api.DestroyImage(device, VulkanImage, null);
-        if (VulkanMemory.Handle != 0)
-            api.FreeMemory(device, VulkanMemory, null);
-    }
-
-    public void Dispose()
-    {
-        if (_disposed)
-            return;
-
-        _disposed = true;
-        FrameBuffer.Destroy(true);
-        Texture.Destroy(true);
-    }
-}
-
-internal sealed unsafe class VulkanUpscaleBridgeFrameSlot(
-    int slotIndex,
-    VulkanUpscaleBridgeSharedImage sourceColor,
-    VulkanUpscaleBridgeSharedImage sourceDepth,
-    VulkanUpscaleBridgeSharedImage sourceMotion,
-    VulkanUpscaleBridgeSharedImage exposure,
-    VulkanUpscaleBridgeSharedImage outputColor,
-    VulkanUpscaleBridgeSharedSemaphore readySemaphore,
-    VulkanUpscaleBridgeSharedSemaphore completeSemaphore,
-    CommandBuffer commandBuffer,
-    Fence submitFence) : IDisposable
-{
-    private bool _disposed;
-
-    public int SlotIndex { get; } = slotIndex;
-    public VulkanUpscaleBridgeSharedImage SourceColor { get; } = sourceColor;
-    public VulkanUpscaleBridgeSharedImage SourceDepth { get; } = sourceDepth;
-    public VulkanUpscaleBridgeSharedImage SourceMotion { get; } = sourceMotion;
-    public VulkanUpscaleBridgeSharedImage Exposure { get; } = exposure;
-    public VulkanUpscaleBridgeSharedImage OutputColor { get; } = outputColor;
-    public VulkanUpscaleBridgeSharedSemaphore ReadySemaphore { get; } = readySemaphore;
-    public VulkanUpscaleBridgeSharedSemaphore CompleteSemaphore { get; } = completeSemaphore;
-    public CommandBuffer CommandBuffer { get; } = commandBuffer;
-    public Fence SubmitFence { get; } = submitFence;
-
-    public XRTexture2D SourceColorTexture => SourceColor.Texture;
-    public XRTexture2D SourceDepthTexture => SourceDepth.Texture;
-    public XRTexture2D SourceMotionTexture => SourceMotion.Texture;
-    public XRTexture2D ExposureTexture => Exposure.Texture;
-    public XRTexture2D OutputColorTexture => OutputColor.Texture;
-
-    public XRFrameBuffer SourceColorFrameBuffer => SourceColor.FrameBuffer;
-    public XRFrameBuffer SourceDepthFrameBuffer => SourceDepth.FrameBuffer;
-    public XRFrameBuffer SourceMotionFrameBuffer => SourceMotion.FrameBuffer;
-    public XRFrameBuffer ExposureFrameBuffer => Exposure.FrameBuffer;
-    public XRFrameBuffer OutputColorFrameBuffer => OutputColor.FrameBuffer;
-
-    public uint GlReadySemaphore => ReadySemaphore.GlSemaphore;
-    public uint GlCompleteSemaphore => CompleteSemaphore.GlSemaphore;
-
-    internal void DestroyVulkanResources(Vk api, Device device)
-    {
-        if (SubmitFence.Handle != 0)
-            api.DestroyFence(device, SubmitFence, null);
-
-        CompleteSemaphore.DestroyVulkanResources(api, device);
-        ReadySemaphore.DestroyVulkanResources(api, device);
-        OutputColor.DestroyVulkanResources(api, device);
-        Exposure.DestroyVulkanResources(api, device);
-        SourceMotion.DestroyVulkanResources(api, device);
-        SourceDepth.DestroyVulkanResources(api, device);
-        SourceColor.DestroyVulkanResources(api, device);
-    }
-
-    public void Dispose()
-    {
-        if (_disposed)
-            return;
-
-        _disposed = true;
-        CompleteSemaphore.Dispose();
-        ReadySemaphore.Dispose();
-        OutputColor.Dispose();
-        Exposure.Dispose();
-        SourceMotion.Dispose();
-        SourceDepth.Dispose();
-        SourceColor.Dispose();
-    }
-}
-
+/// <summary>
+/// Represents a Vulkan-based sidecar for handling upscaling bridge operations, including resource management and queue handling.
+/// </summary>
 internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
 {
     private const int FramesInFlight = 2;
@@ -199,6 +45,13 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     private NvidiaDlssManager.Native.BridgeSession? _dlssSession;
     private IntelXessManager.Native.BridgeSession? _xessSession;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="VulkanUpscaleBridgeSidecar"/> class with the specified OpenGL vendor, renderer, and frame resources.
+    /// </summary>
+    /// <param name="openGlVendor">The vendor string of the OpenGL implementation.</param>
+    /// <param name="openGlRenderer">The renderer string of the OpenGL implementation.</param>
+    /// <param name="frameResources">The frame resources required for the upscaling bridge sidecar.</param>
+    /// <exception cref="InvalidOperationException">Thrown if the Vulkan instance or device cannot be created successfully.</exception>
     public VulkanUpscaleBridgeSidecar(string? openGlVendor, string? openGlRenderer, in VulkanUpscaleBridgeFrameResources frameResources)
     {
         _frameResources = frameResources;
@@ -217,10 +70,6 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
 
         _instance = CreateInstance(additionalInstanceExtensions, minApiVersion);
         _selectedDevice = SelectDevice(_api, _instance, openGlVendor, openGlRenderer);
-
-        uint streamlineGraphicsQueueIndex;
-        uint streamlineComputeQueueIndex;
-        uint streamlineOpticalFlowQueueIndex;
         _device = CreateDevice(
             _selectedDevice,
             additionalDeviceExtensions,
@@ -229,9 +78,9 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             additionalDeviceFeatures13,
             dlssQueueRequirements,
             requirementsVendor == EVulkanUpscaleBridgeVendor.Xess,
-            out streamlineGraphicsQueueIndex,
-            out streamlineComputeQueueIndex,
-            out streamlineOpticalFlowQueueIndex);
+            out global::System.UInt32 streamlineGraphicsQueueIndex,
+            out global::System.UInt32 streamlineComputeQueueIndex,
+            out global::System.UInt32 streamlineOpticalFlowQueueIndex);
         _streamlineGraphicsQueueIndex = streamlineGraphicsQueueIndex;
         _streamlineComputeQueueIndex = streamlineComputeQueueIndex;
         _streamlineOpticalFlowQueueIndex = streamlineOpticalFlowQueueIndex;
@@ -258,6 +107,12 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     public uint StreamlineComputeQueueIndex => _streamlineComputeQueueIndex;
     public uint StreamlineOpticalFlowQueueIndex => _streamlineOpticalFlowQueueIndex;
 
+    /// <summary>
+    /// Waits for the specified frame slot to become available for use.
+    /// </summary>
+    /// <param name="slot">The frame slot to wait for.</param>
+    /// <exception cref="ObjectDisposedException">Thrown if the bridge sidecar has been disposed.</exception>
+    /// <exception cref="InvalidOperationException">Thrown if the Vulkan upscale bridge device is not operational or if waiting for the frame slot fails.</exception>
     public void WaitForFrameSlotAvailability(VulkanUpscaleBridgeFrameSlot slot)
     {
         if (_disposed)
@@ -273,6 +128,13 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             throw new InvalidOperationException($"Failed to wait for bridge slot {slot.SlotIndex} availability ({waitResult}).");
     }
 
+    /// <summary>
+    /// Creates an array of frame slots for the specified viewport using the provided renderer and frame resources.
+    /// </summary>
+    /// <param name="renderer">The OpenGL renderer to use for creating the frame slots.</param>
+    /// <param name="frameResources">The frame resources containing the internal width and height for the frame slots.</param>
+    /// <param name="viewportTag">A tag identifying the viewport for which the frame slots are being created.</param>
+    /// <returns>An array of Vulkan upscale bridge frame slots.</returns>
     public VulkanUpscaleBridgeFrameSlot[] CreateFrameSlots(OpenGLRenderer renderer, VulkanUpscaleBridgeFrameResources frameResources, string viewportTag)
     {
         VulkanUpscaleBridgeFrameSlot[] slots = new VulkanUpscaleBridgeFrameSlot[FramesInFlight];
@@ -383,6 +245,15 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         return slots;
     }
 
+    /// <summary>
+    /// Recreates the frame slots for the specified viewport, destroying any existing slots and creating new ones based on the provided frame resources.
+    /// </summary>
+    /// <param name="renderer">The OpenGL renderer to use for recreating the frame slots.</param>
+    /// <param name="frameResources">The frame resources containing the internal width and height for the frame slots.</param>
+    /// <param name="viewportTag">A tag identifying the viewport for which the frame slots are being recreated.</param>
+    /// <returns>An array of Vulkan upscale bridge frame slots.</returns>
+    /// <exception cref="ObjectDisposedException">Thrown if the Vulkan upscale bridge sidecar has been disposed.</exception>
+    /// <exception cref="InvalidOperationException">Thrown if the Vulkan upscale bridge sidecar device is unavailable.</exception>
     public VulkanUpscaleBridgeFrameSlot[] RecreateFrameSlots(OpenGLRenderer renderer, VulkanUpscaleBridgeFrameResources frameResources, string viewportTag)
     {
         if (_disposed)
@@ -397,6 +268,12 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         return CreateFrameSlots(renderer, frameResources, viewportTag);
     }
 
+    /// <summary>
+    /// Submits a no-op handoff for the specified Vulkan upscale bridge frame slot.
+    /// </summary>
+    /// <param name="slot">The Vulkan upscale bridge frame slot for which to submit a no-op handoff.</param>
+    /// <exception cref="ObjectDisposedException">Thrown if the Vulkan upscale bridge sidecar has been disposed.</exception>
+    /// <exception cref="InvalidOperationException">Thrown if the Vulkan upscale bridge sidecar device is unavailable or if command buffer submission fails.</exception>
     public void SubmitNoOpHandoff(VulkanUpscaleBridgeFrameSlot slot)
     {
         if (_disposed)
@@ -440,6 +317,12 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             throw new InvalidOperationException($"Failed to submit bridge handoff for slot {slot.SlotIndex} ({submitResult}).");
     }
 
+    /// <summary>
+    /// Submits a passthrough blit for the specified Vulkan upscale bridge frame slot.
+    /// </summary>
+    /// <param name="slot">The Vulkan upscale bridge frame slot for which to submit a passthrough blit.</param>
+    /// <exception cref="ObjectDisposedException">Thrown if the Vulkan upscale bridge sidecar has been disposed.</exception>
+    /// <exception cref="InvalidOperationException">Thrown if the Vulkan upscale bridge sidecar device is unavailable or if command buffer submission fails.</exception>
     public void SubmitPassthroughBlit(VulkanUpscaleBridgeFrameSlot slot)
     {
         if (_disposed)
@@ -541,6 +424,15 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             throw new InvalidOperationException($"Failed to submit bridge passthrough blit for slot {slot.SlotIndex} ({submitResult}).");
     }
 
+    /// <summary>
+    /// Submits a vendor-specific upscale operation for the specified Vulkan upscale bridge frame slot.
+    /// </summary>
+    /// <param name="slot">The Vulkan upscale bridge frame slot for which to submit the vendor-specific upscale operation.</param>
+    /// <param name="parameters">The dispatch parameters for the vendor-specific upscale operation.</param>
+    /// <param name="failureReason">Outputs the reason for failure if the submission fails.</param>
+    /// <returns>True if the submission was successful; otherwise, false.</returns>
+    /// <exception cref="ObjectDisposedException">Thrown if the Vulkan upscale bridge sidecar has been disposed.</exception>
+    /// <exception cref="InvalidOperationException">Thrown if the Vulkan upscale bridge sidecar device is unavailable or if command buffer submission fails.</exception>
     public bool SubmitVendorUpscale(
         VulkanUpscaleBridgeFrameSlot slot,
         in VulkanUpscaleBridgeDispatchParameters parameters,
@@ -619,6 +511,12 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Submits the specified command buffer to the graphics queue with the given fence.
+    /// </summary>
+    /// <param name="submitInfo">The submit information describing the command buffer submission.</param>
+    /// <param name="fence">The fence to signal upon completion of the submission.</param>
+    /// <returns>The result of the queue submission operation.</returns>
     private Result SubmitToGraphicsQueue(ref SubmitInfo submitInfo, Fence fence)
     {
         using VulkanQueueOperationLease lease = VulkanQueueOperationLease.TryEnter(
@@ -632,12 +530,24 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         return result;
     }
 
+    /// <summary>
+    /// Observes the result of a Vulkan device operation and handles device loss if necessary.
+    /// </summary>
+    /// <param name="result">The result of the Vulkan device operation.</param>
     private void ObserveDeviceResult(Result result)
     {
         if (result == Result.ErrorDeviceLost && _deviceState.TryBeginLossCollection())
             _deviceState.CompleteLossCollection();
     }
 
+    /// <summary>
+    /// Records a command to transition the layout of the specified image within the given command buffer.
+    /// </summary>
+    /// <param name="commandBuffer">The command buffer in which to record the layout transition command.</param>
+    /// <param name="image">The image whose layout is to be transitioned.</param>
+    /// <param name="newLayout">The new layout to transition the image to.</param>
+    /// <param name="dstStage">The destination pipeline stage for the layout transition.</param>
+    /// <param name="dstAccessMask">The destination access mask for the layout transition.</param>
     public void RecordTransitionImageLayout(
         CommandBuffer commandBuffer,
         VulkanUpscaleBridgeSharedImage image,
@@ -646,6 +556,11 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         AccessFlags dstAccessMask)
         => TransitionImageLayout(commandBuffer, image, newLayout, dstStage, dstAccessMask);
 
+    /// <summary>
+    /// Ensures that a DLSS session is available, creating one if necessary.
+    /// </summary>
+    /// <param name="failureReason">Outputs the reason for failure if the session could not be ensured.</param>
+    /// <returns>True if the DLSS session is available or was successfully created; otherwise, false.</returns>
     private bool EnsureDlssSession(out string failureReason)
     {
         failureReason = string.Empty;
@@ -663,6 +578,12 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Ensures that an XESS session is available, creating one if necessary.
+    /// </summary>
+    /// <param name="parameters">The parameters required to create or ensure the XESS session.</param>
+    /// <param name="failureReason">Outputs the reason for failure if the session could not be ensured.</param>
+    /// <returns>True if the XESS session is available or was successfully created; otherwise, false.</returns>
     private bool EnsureXessSession(in VulkanUpscaleBridgeDispatchParameters parameters, out string failureReason)
     {
         failureReason = string.Empty;
@@ -680,6 +601,10 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Resets the session associated with the specified vendor, disposing of any existing session.
+    /// </summary>
+    /// <param name="vendor">The vendor whose session should be reset.</param>
     private void ResetVendorSession(EVulkanUpscaleBridgeVendor vendor)
     {
         switch (vendor)
@@ -695,6 +620,9 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         }
     }
 
+    /// <summary>
+    /// Resets the sessions for all vendors in preparation for recreating frame resources.
+    /// </summary>
     private void ResetVendorSessionsForFrameResourceRecreate()
     {
         _dlssSession?.ResetResources();
@@ -703,6 +631,9 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         _xessSession = null;
     }
 
+    /// <summary>
+    /// Destroys all frame slots owned by this instance, releasing their Vulkan resources and disposing of them.
+    /// </summary>
     private void DestroyOwnedFrameSlots()
     {
         for (int i = _ownedSlots.Length - 1; i >= 0; i--)
@@ -714,6 +645,9 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         _ownedSlots = [];
     }
 
+    /// <summary>
+    /// Disposes of the VulkanUpscaleBridgeSidecar instance, releasing all associated resources.
+    /// </summary>
     public void Dispose()
     {
         if (_disposed)
@@ -750,6 +684,15 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         _dlssSession = null;
     }
 
+    /// <summary>
+    /// Selects a suitable Vulkan device for the bridge sidecar based on the provided OpenGL vendor and renderer information.
+    /// </summary>
+    /// <param name="api">The Vulkan API instance.</param>
+    /// <param name="instance">The Vulkan instance.</param>
+    /// <param name="openGlVendor">The OpenGL vendor string.</param>
+    /// <param name="openGlRenderer">The OpenGL renderer string.</param>
+    /// <returns>The selected Vulkan device for the bridge sidecar.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if a suitable Vulkan device cannot be selected for the bridge sidecar.</exception>
     private static VulkanUpscaleBridgeProbe.VulkanUpscaleBridgeSelectedDevice SelectDevice(
         Vk api,
         Instance instance,
@@ -765,6 +708,19 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         return selectedDevice;
     }
 
+    /// <summary>
+    /// Resolves the vendor-specific requirements for the Vulkan upscale bridge based on the provided frame resources.
+    /// </summary>
+    /// <param name="frameResources">The frame resources for the Vulkan upscale bridge.</param>
+    /// <param name="requirementsVendor">The resolved vendor requirements for the bridge.</param>
+    /// <param name="instanceExtensions">The required Vulkan instance extensions.</param>
+    /// <param name="minApiVersion">The minimum Vulkan API version required.</param>
+    /// <param name="deviceExtensions">The required Vulkan device extensions.</param>
+    /// <param name="deviceFeatureChain">The pointer to the device feature chain.</param>
+    /// <param name="deviceFeatures12">The required Vulkan 1.2 device features.</param>
+    /// <param name="deviceFeatures13">The required Vulkan 1.3 device features.</param>
+    /// <param name="dlssQueueRequirements">The DLSS queue requirements.</param>
+    /// <exception cref="InvalidOperationException">Thrown if the vendor requirements cannot be resolved.</exception>
     private static void ResolveVendorRequirements(
         in VulkanUpscaleBridgeFrameResources frameResources,
         out EVulkanUpscaleBridgeVendor? requirementsVendor,
@@ -856,6 +812,17 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         }
     }
 
+    /// <summary>
+    /// Tries to resolve the Vulkan requirements for DLSS (Deep Learning Super Sampling) and returns whether the resolution was successful.
+    /// </summary>
+    /// <param name="instanceExtensions">The required Vulkan instance extensions for DLSS.</param>
+    /// <param name="minApiVersion">The minimum Vulkan API version required for DLSS.</param>
+    /// <param name="deviceExtensions">The required Vulkan device extensions for DLSS.</param>
+    /// <param name="deviceFeatures12">The required Vulkan 1.2 device features for DLSS.</param>
+    /// <param name="deviceFeatures13">The required Vulkan 1.3 device features for DLSS.</param>
+    /// <param name="queueRequirements">The DLSS queue requirements.</param>
+    /// <param name="failureReason">The reason for failure if the requirements could not be resolved.</param>
+    /// <returns>True if the Vulkan requirements for DLSS were successfully resolved; otherwise, false.</returns>
     private static bool TryResolveDlssRequirements(
         out string[] instanceExtensions,
         out uint minApiVersion,
@@ -1360,6 +1327,12 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         return false;
     }
 
+    /// <summary>
+    /// Tries to assign a boolean value to the "Value" member of a feature value instance, creating the appropriate type if necessary.
+    /// </summary>
+    /// <param name="instance">The feature value instance whose "Value" member is to be assigned.</param>
+    /// <param name="enabled">The boolean value to assign to the "Value" member.</param>
+    /// <returns>True if the assignment succeeds; otherwise, false.</returns>
     private static bool TryAssignFeatureValueMember(object instance, bool enabled)
     {
         Type instanceType = instance.GetType();
@@ -1382,6 +1355,12 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         return false;
     }
 
+    /// <summary>
+    /// Tries to read the "Value" member of a raw feature value instance and convert it to a boolean.
+    /// </summary>
+    /// <param name="rawValue">The raw feature value instance from which to read the "Value" member.</param>
+    /// <param name="value">The resulting boolean value if the conversion succeeds; otherwise, false.</param>
+    /// <returns>True if the conversion succeeds; otherwise, false.</returns>
     private static bool TryReadFeatureValueMember(object rawValue, out bool value)
     {
         Type rawType = rawValue.GetType();
@@ -1397,6 +1376,13 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         return false;
     }
 
+    /// <summary>
+    /// Tries to convert the raw feature field value to a boolean using an intermediate type and user-defined conversion operators.
+    /// </summary>
+    /// <param name="rawValue">The raw feature field value to be converted.</param>
+    /// <param name="intermediateType">The intermediate type to which the raw value should be converted before converting to boolean.</param>
+    /// <param name="value">The resulting boolean value if the conversion succeeds; otherwise, false.</param>
+    /// <returns>True if the conversion succeeds; otherwise, false.</returns>
     private static bool TryConvertFeatureFieldValueViaOperators(object rawValue, Type intermediateType, out bool value)
     {
         if (TryInvokeUserDefinedConversion(rawValue, intermediateType, out object? convertedValue))
@@ -1406,6 +1392,13 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         return false;
     }
 
+    /// <summary>
+    /// Tries to invoke a user-defined conversion operator to convert the source value to the target type.
+    /// </summary>
+    /// <param name="sourceValue">The value to be converted.</param>
+    /// <param name="targetType">The type to which the value should be converted.</param>
+    /// <param name="convertedValue">The converted value if the conversion succeeds; otherwise, null.</param>
+    /// <returns>True if the conversion succeeds; otherwise, false.</returns>
     private static bool TryInvokeUserDefinedConversion(object sourceValue, Type targetType, out object? convertedValue)
     {
         Type sourceType = sourceValue.GetType();
@@ -1431,12 +1424,23 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         return false;
     }
 
+    /// <summary>
+    /// Gets the graphics queue for the specified queue family index.
+    /// </summary>
+    /// <param name="queueFamilyIndex">The index of the queue family for which to get the graphics queue.</param>
+    /// <returns>The graphics queue for the specified queue family index.</returns>
     private Queue GetGraphicsQueue(uint queueFamilyIndex)
     {
         _api.GetDeviceQueue(_device, queueFamilyIndex, 0, out Queue queue);
         return queue;
     }
 
+    /// <summary>
+    /// Creates a Vulkan command pool for the specified queue family index.
+    /// </summary>
+    /// <param name="queueFamilyIndex">The index of the queue family for which to create the command pool.</param>
+    /// <returns>The created Vulkan command pool.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if the command pool cannot be created.</exception>
     private CommandPool CreateCommandPool(uint queueFamilyIndex)
     {
         CommandPoolCreateInfo createInfo = new()
@@ -1452,6 +1456,11 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         return commandPool;
     }
 
+    /// <summary>
+    /// Allocates a primary Vulkan command buffer from the command pool.
+    /// </summary>
+    /// <returns>the allocated primary Vulkan command buffer.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if the command buffer cannot be allocated.</exception>
     private CommandBuffer AllocateCommandBuffer()
     {
         CommandBufferAllocateInfo allocateInfo = new()
@@ -1462,13 +1471,17 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             CommandBufferCount = 1,
         };
 
-        CommandBuffer commandBuffer = default;
-        if (_api.AllocateCommandBuffers(_device, in allocateInfo, out commandBuffer) != Result.Success)
+        if (_api.AllocateCommandBuffers(_device, in allocateInfo, out CommandBuffer commandBuffer) != Result.Success)
             throw new InvalidOperationException("Failed to allocate a Vulkan bridge handoff command buffer.");
 
         return commandBuffer;
     }
 
+    /// <summary>
+    /// Creates a Vulkan fence that is initially signaled.
+    /// </summary>
+    /// <returns>A Vulkan fence that is initially signaled.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if the fence cannot be created.</exception>
     private Fence CreateFence()
     {
         FenceCreateInfo createInfo = new()
@@ -1483,6 +1496,13 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         return fence;
     }
 
+    /// <summary>
+    /// Creates a shared Vulkan semaphore that can be used with both Vulkan and OpenGL.
+    /// </summary>
+    /// <param name="renderer">The OpenGL renderer instance.</param>
+    /// <param name="name">The name of the shared semaphore.</param>
+    /// <returns>A VulkanUpscaleBridgeSharedSemaphore representing the shared semaphore.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if the shared semaphore cannot be created or imported into OpenGL.</exception>
     private VulkanUpscaleBridgeSharedSemaphore CreateSharedSemaphore(OpenGLRenderer renderer, string name)
     {
         ExportSemaphoreCreateInfo exportInfo = new()
@@ -1519,6 +1539,25 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         return new VulkanUpscaleBridgeSharedSemaphore(name, renderer, semaphore, glSemaphore);
     }
 
+    /// <summary>
+    /// Creates a shared Vulkan image that can be used with both Vulkan and OpenGL, and returns a handle to the shared image.
+    /// </summary>
+    /// <param name="renderer">The OpenGL renderer instance.</param>
+    /// <param name="slotTag">A tag identifying the slot for the shared image.</param>
+    /// <param name="kind">The kind of Vulkan upscale bridge surface.</param>
+    /// <param name="width">The width of the shared image.</param>
+    /// <param name="height">The height of the shared image.</param>
+    /// <param name="internalFormat">The internal format of the image.</param>
+    /// <param name="pixelFormat">The pixel format of the image.</param>
+    /// <param name="pixelType">The pixel type of the image.</param>
+    /// <param name="sizedInternalFormat">The sized internal format of the image.</param>
+    /// <param name="attachment">The framebuffer attachment for the image.</param>
+    /// <param name="usage">The usage flags for the Vulkan image.</param>
+    /// <param name="aspectMask">The aspect mask for the Vulkan image.</param>
+    /// <param name="viewAspectMask">The aspect mask for the Vulkan image view.</param>
+    /// <param name="linearFilter">Indicates whether linear filtering should be used.</param>
+    /// <returns>A handle to the shared Vulkan image.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if the shared image cannot be created.</exception>
     private VulkanUpscaleBridgeSharedImage CreateSharedImage(
         OpenGLRenderer renderer,
         string slotTag,
@@ -1651,6 +1690,13 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         return new VulkanUpscaleBridgeSharedImage(name, kind, image, memory, imageView, vkFormat, aspectMask, viewAspectMask, usage, texture, frameBuffer);
     }
 
+    /// <summary>
+    /// Finds a suitable Vulkan memory type index that satisfies the specified type bits and required memory properties.
+    /// </summary>
+    /// <param name="typeBits">A bitmask representing the allowed memory types for the Vulkan resource.</param>
+    /// <param name="requiredProperties">The required memory property flags for the Vulkan memory type.</param>
+    /// <returns>The index of a suitable Vulkan memory type that satisfies the specified requirements.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if no suitable Vulkan memory type could be found that satisfies the specified requirements.</exception>
     private uint FindMemoryType(uint typeBits, MemoryPropertyFlags requiredProperties)
     {
         _api.GetPhysicalDeviceMemoryProperties(_selectedDevice.Device, out PhysicalDeviceMemoryProperties memoryProperties);
@@ -1668,6 +1714,12 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         throw new InvalidOperationException($"Failed to resolve a Vulkan memory type for bridge resources on '{_selectedDevice.DeviceName}'.");
     }
 
+    /// <summary>
+    /// Maps a given OpenGL internal pixel format to the corresponding Vulkan format.
+    /// </summary>
+    /// <param name="internalFormat">The OpenGL internal pixel format to be mapped.</param>
+    /// <returns>The corresponding Vulkan format.</returns>
+    /// <exception cref="NotSupportedException">Thrown if the OpenGL internal pixel format does not have a corresponding Vulkan format mapping.</exception>
     private static Format MapFormat(EPixelInternalFormat internalFormat)
     {
         return internalFormat switch
@@ -1681,6 +1733,18 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         };
     }
 
+    /// <summary>
+    /// Transitions the layout of a Vulkan image to a new layout, updating the pipeline stage and access masks accordingly.
+    /// </summary>
+    /// <param name="commandBuffer">The command buffer used to record the pipeline barrier.</param>
+    /// <param name="image">The Vulkan image whose layout is to be transitioned.</param>
+    /// <param name="newLayout">The new layout to transition the image to.</param>
+    /// <param name="dstStage">The destination pipeline stage flags for the transition.</param>
+    /// <param name="dstAccessMask">The destination access mask for the transition.</param>
+    /// <remarks>
+    /// This method records a pipeline barrier into the specified command buffer to transition the image layout.
+    /// It automatically resolves the source pipeline stage and access mask based on the current layout of the image.
+    /// </remarks>
     private void TransitionImageLayout(
         CommandBuffer commandBuffer,
         VulkanUpscaleBridgeSharedImage image,
@@ -1733,6 +1797,11 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         image.CurrentLayout = newLayout;
     }
 
+    /// <summary>
+    /// Resolves the appropriate pipeline stage flags for a given image layout.
+    /// </summary>
+    /// <param name="layout">The image layout for which to resolve the pipeline stage flags.</param>
+    /// <returns>The corresponding pipeline stage flags for the specified image layout.</returns>
     private static PipelineStageFlags ResolvePipelineStage(ImageLayout layout)
         => layout switch
         {
@@ -1744,6 +1813,11 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             _ => PipelineStageFlags.AllCommandsBit,
         };
 
+    /// <summary>
+    /// Resolves the appropriate pipeline stage flags for a given image layout.
+    /// </summary>
+    /// <param name="layout">The image layout for which to resolve the pipeline stage flags.</param>
+    /// <returns>The corresponding pipeline stage flags for the specified image layout.</returns>
     private static AccessFlags ResolveAccessMask(ImageLayout layout)
         => layout switch
         {
@@ -1759,6 +1833,13 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             _ => AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
         };
 
+    /// <summary>
+    /// Duplicates a Win32 handle for import into another API, such as OpenGL. 
+    /// Closes the original handle after duplication.
+    /// </summary>
+    /// <param name="sourceHandle">The original Win32 handle to duplicate.</param>
+    /// <returns>The duplicated Win32 handle suitable for import into another API.</returns>
+    /// <exception cref="InvalidOperationException"></exception>
     private static IntPtr DuplicateHandleForImport(IntPtr sourceHandle)
     {
         IntPtr currentProcess = GetCurrentProcess();

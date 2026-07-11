@@ -560,18 +560,24 @@ public partial class DefaultRenderPipeline
         Texture(builder, BloomBlurTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), RenderPipelineResourceUsage.SampledTexture,
             ResolvePostProcessIntermediateInternalFormat(), EPixelFormat.Rgba, ResolvePostProcessIntermediatePixelType(), ResolvePostProcessIntermediateSizedInternalFormat(),
             CreateBloomBlurFallbackTexture)
+            .Layers(layerCount)
+            .StereoCompatible(builder.Profile.Stereo)
             .When(UsesOpenXrVulkanPostProcessFallbackResources)
             .Add();
 
         Texture(builder, AtmosphereColorTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), RenderPipelineResourceUsage.SampledTexture,
             EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f,
             CreateAtmosphereColorFallbackTexture)
+            .Layers(layerCount)
+            .StereoCompatible(builder.Profile.Stereo)
             .When(UsesOpenXrVulkanPostProcessFallbackResources)
             .Add();
 
         Texture(builder, VolumetricFogColorTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), RenderPipelineResourceUsage.SampledTexture,
             EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f,
             CreateVolumetricFogColorFallbackTexture)
+            .Layers(layerCount)
+            .StereoCompatible(builder.Profile.Stereo)
             .When(UsesOpenXrVulkanPostProcessFallbackResources)
             .Add();
 
@@ -795,6 +801,7 @@ public partial class DefaultRenderPipeline
     private void DeclareAntiAliasingResources(RenderPipelineResourceLayoutBuilder builder)
     {
         RenderResourceSizePolicy windowSize = RenderResourceSizePolicy.Window();
+        uint layerCount = DeclaredLayerCount(builder);
         RenderPipelineResourcePredicate fxaa = static profile =>
             profile.AntiAliasingMode == EAntiAliasingMode.Fxaa;
         RenderPipelineResourcePredicate smaa = static profile =>
@@ -867,12 +874,16 @@ public partial class DefaultRenderPipeline
         Texture(builder, TsrOutputTextureName, windowSize, SampledColorAttachment,
             ResolvePostProcessIntermediateInternalFormat(), EPixelFormat.Rgba, ResolvePostProcessIntermediatePixelType(), ResolvePostProcessIntermediateSizedInternalFormat(),
             CreateTsrOutputTexture)
+            .Layers(layerCount)
+            .StereoCompatible(builder.Profile.Stereo)
             .When(tsr)
             .Add();
 
         Texture(builder, TsrHistoryColorTextureName, windowSize, SampledColorAttachment,
             ResolvePostProcessIntermediateInternalFormat(), EPixelFormat.Rgba, ResolvePostProcessIntermediatePixelType(), ResolvePostProcessIntermediateSizedInternalFormat(),
             CreateTsrHistoryColorTexture)
+            .Layers(layerCount)
+            .StereoCompatible(builder.Profile.Stereo)
             .History(RenderResourceHistoryPolicy.SeedFromCurrentFrame)
             .When(tsr)
             .Add();
@@ -1155,26 +1166,76 @@ public partial class DefaultRenderPipeline
         texture.Name = BloomBlurTextureName;
     }
 
-    private static XRTexture CreateBloomBlurFallbackTexture()
-        => CreatePostProcessFallbackTexture(BloomBlurTextureName, 0.0f, 0.0f, 0.0f, 1.0f);
+    private XRTexture CreateBloomBlurFallbackTexture()
+        => CreatePostProcessFallbackTexture(
+            BloomBlurTextureName,
+            ResolvePostProcessIntermediateInternalFormat(),
+            ResolvePostProcessIntermediateSizedInternalFormat(),
+            ResolvePostProcessIntermediatePixelType(),
+            0.0f, 0.0f, 0.0f, 1.0f);
 
-    private static XRTexture CreateAtmosphereColorFallbackTexture()
-        => CreatePostProcessFallbackTexture(AtmosphereColorTextureName, 0.0f, 0.0f, 0.0f, 1.0f);
+    private XRTexture CreateAtmosphereColorFallbackTexture()
+        => CreatePostProcessFallbackTexture(
+            AtmosphereColorTextureName,
+            EPixelInternalFormat.Rgba16f,
+            ESizedInternalFormat.Rgba16f,
+            EPixelType.HalfFloat,
+            0.0f, 0.0f, 0.0f, 1.0f);
 
-    private static XRTexture CreateVolumetricFogColorFallbackTexture()
-        => CreatePostProcessFallbackTexture(VolumetricFogColorTextureName, 0.0f, 0.0f, 0.0f, 1.0f);
+    private XRTexture CreateVolumetricFogColorFallbackTexture()
+        => CreatePostProcessFallbackTexture(
+            VolumetricFogColorTextureName,
+            EPixelInternalFormat.Rgba16f,
+            ESizedInternalFormat.Rgba16f,
+            EPixelType.HalfFloat,
+            0.0f, 0.0f, 0.0f, 1.0f);
 
-    private static XRTexture CreatePostProcessFallbackTexture(string textureName, float r, float g, float b, float a)
+    private XRTexture CreatePostProcessFallbackTexture(
+        string textureName,
+        EPixelInternalFormat internalFormat,
+        ESizedInternalFormat sizedInternalFormat,
+        EPixelType pixelType,
+        float r,
+        float g,
+        float b,
+        float a)
     {
-        EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
+        byte[] pixelData = CreateRgbaPixelData(pixelType, r, g, b, a);
+        if (Stereo)
+        {
+            var array = new XRTexture2DArray(
+                2u,
+                1u,
+                1u,
+                internalFormat,
+                EPixelFormat.Rgba,
+                pixelType,
+                allocateData: false)
+            {
+                Resizable = false,
+                SizedInternalFormat = sizedInternalFormat,
+                AutoGenerateMipmaps = false,
+                MinFilter = ETexMinFilter.Linear,
+                MagFilter = ETexMagFilter.Linear,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
+                Name = textureName,
+                SamplerName = textureName,
+                OVRMultiViewParameters = new(0, 2u),
+            };
+            for (int layer = 0; layer < array.Textures.Length; layer++)
+                array.Textures[layer].Mipmaps[0].Data = new DataSource((byte[])pixelData.Clone());
+            return array;
+        }
+
         var texture = new XRTexture2D(
             1u,
             1u,
-            ResolvePostProcessIntermediateInternalFormat(),
+            internalFormat,
             EPixelFormat.Rgba,
             pixelType);
         texture.Resizable = false;
-        texture.SizedInternalFormat = ResolvePostProcessIntermediateSizedInternalFormat();
+        texture.SizedInternalFormat = sizedInternalFormat;
         texture.AutoGenerateMipmaps = false;
         texture.MinFilter = ETexMinFilter.Linear;
         texture.MagFilter = ETexMagFilter.Linear;
@@ -1182,7 +1243,7 @@ public partial class DefaultRenderPipeline
         texture.VWrap = ETexWrapMode.ClampToEdge;
         texture.Name = textureName;
         texture.SamplerName = textureName;
-        texture.Mipmaps[0].Data = new DataSource(CreateRgbaPixelData(pixelType, r, g, b, a));
+        texture.Mipmaps[0].Data = new DataSource(pixelData);
         return texture;
     }
 

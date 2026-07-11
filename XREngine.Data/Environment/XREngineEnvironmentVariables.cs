@@ -92,6 +92,7 @@ public static class XREngineEnvironmentVariables
     public const string DisableImGuiFileDialogs = "XR_DISABLE_IMGUI_FILE_DIALOGS";
     public const string CookCommonAssetsArchive = "XRE_COOK_COMMONASSETS_ARCHIVE";
     public const string OpenXrSmokeFrames = "XRE_SMOKE_FRAMES";
+    public const string OpenXrSmokeWarmupFrames = "XRE_SMOKE_WARMUP_FRAMES";
     public const string OpenXrSmokeTimeoutSeconds = "XRE_SMOKE_TIMEOUT_SECONDS";
     public const string OpenXrSmokeSummary = "XRE_OPENXR_SMOKE_SUMMARY";
     public const string OpenXrRenderPacingMode = "XRE_OPENXR_RENDER_PACING_MODE";
@@ -266,7 +267,6 @@ public static class XREngineEnvironmentVariables
     public const string OpenXrVulkanMirrorFbo = "XRE_OPENXR_VULKAN_MIRROR_FBO";
     public const string OpenXrVulkanPrewarmEyes = "XRE_OPENXR_VULKAN_PREWARM_EYES";
     public const string OpenXrVulkanSerialEyeSubmit = "XRE_OPENXR_VULKAN_SERIAL_EYE_SUBMIT";
-    public const string OpenXrVulkanTrueStereo = "XRE_OPENXR_VULKAN_TRUE_STEREO";
     public const string OpenXrVulkanPrimaryReuse = "XRE_OPENXR_VULKAN_PRIMARY_REUSE";
     public const string OpenXrVulkanEnable2Bootstrap = "XRE_OPENXR_VULKAN_ENABLE2_BOOTSTRAP";
     public const string VulkanAllowCpuMeshSafetyNet = "XRE_VULKAN_ALLOW_CPU_MESH_SAFETY_NET";

@@ -469,7 +469,7 @@ public static class VulkanFeatureProfile
     public static EVulkanDescriptorBackend RequestedDescriptorBackend
         => TryGetDescriptorBackendEnvOverride(out EVulkanDescriptorBackend backend)
             ? backend
-            : EVulkanDescriptorBackend.DescriptorHeap;
+            : EVulkanDescriptorBackend.DescriptorIndexing;
 
     public static EVulkanProgramBindingBackend RequestedProgramBindingBackend
         => TryGetProgramBindingBackendEnvOverride(out EVulkanProgramBindingBackend backend)

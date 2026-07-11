@@ -109,7 +109,7 @@ public static partial class EditorUnitTests
     public class UnitTestingVrSettings
     {
         public UnitTestingVrLaunchMode Mode { get; set; } = UnitTestingVrLaunchMode.Desktop; //Selects the VR launch path: Desktop, Emulated scene-only VR, Monado-backed OpenXR, vendor OpenVR, or vendor OpenXR.
-        public EVrViewRenderMode ViewRenderMode { get; set; } = EVrViewRenderMode.SequentialViews; //Requests how VR eye views are rendered. OpenXR Vulkan SinglePassStereo uses true stereo when the layered staging path is available, and otherwise reports OpenXrSinglePassCompatibility over per-eye swapchains. Diagnostics and profile captures expose the effective implementation path separately.
+        public EVrViewRenderMode ViewRenderMode { get; set; } = EVrViewRenderMode.SequentialViews; //Requests how VR eye views are rendered. OpenXR Vulkan SinglePassStereo strictly requires true layered multiview rendering and never falls back to per-eye rendering; unavailable capabilities are logged and the XR output is not rendered.
         public bool PreviewStereoViews { get; set; } = false; //Shows the VR left/right eye render targets side-by-side in a screenspace UI when a VR mode is active.
         public bool AllowDesktopEditing { get; set; } = true; //When a VR pawn is active, keeps a desktop editing camera/pawn available.
         public UnitTestingVrFoveationSettings Foveation { get; set; } = new(); //Grouped VR foveated-rendering request. Unsupported explicit requests must produce visible diagnostics instead of silent fallback.

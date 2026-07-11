@@ -1476,8 +1476,10 @@ public unsafe partial class VulkanRenderer
         private int _uniformDrawSlotCapacity = 1;
         private readonly HashSet<string> _descriptorWarnings = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, EngineUniformBuffer[]> _engineUniformBuffers = new(StringComparer.Ordinal);
+        private readonly VulkanUniformBufferGenerationCache<EngineUniformBuffer[]> _retainedEngineUniformBufferGenerations = new();
         private readonly HashSet<string> _engineUniformWarnings = new(StringComparer.Ordinal);
         private readonly Dictionary<string, AutoUniformBuffer[]> _autoUniformBuffers = new(StringComparer.Ordinal);
+        private readonly VulkanUniformBufferGenerationCache<AutoUniformBuffer[]> _retainedAutoUniformBufferGenerations = new();
         private readonly HashSet<string> _autoUniformWarnings = new(StringComparer.Ordinal);
         private const string VertexUniformSuffix = "_VTX";
         private const string TransformIdUniformName = "TransformId";

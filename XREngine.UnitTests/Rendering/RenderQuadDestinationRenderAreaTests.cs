@@ -48,6 +48,30 @@ public sealed class RenderQuadDestinationRenderAreaTests
     }
 
     [Test]
+    public void RenderQuadToFbo_StereoDestinationRenderArea_PreservesOddEyeHeightAtEveryMip()
+    {
+        XRTexture2DArray eyeArray = XRTexture2DArray.CreateFrameBufferTexture(
+            2u,
+            896u,
+            1007u,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        eyeArray.OVRMultiViewParameters = new(0, 2u);
+
+        XRFrameBuffer full = new((eyeArray, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+        VPRC_RenderQuadToFBO.TryResolveDestinationRenderArea(full, out int fullWidth, out int fullHeight).ShouldBeTrue();
+        fullWidth.ShouldBe(896);
+        fullHeight.ShouldBe(1007);
+
+        XRFrameBuffer mip4 = new((eyeArray, EFrameBufferAttachment.ColorAttachment0, 4, -1));
+        VPRC_RenderQuadToFBO.TryResolveDestinationRenderArea(mip4, out int mipWidth, out int mipHeight).ShouldBeTrue();
+        mipWidth.ShouldBe(56);
+        mipHeight.ShouldBe(62);
+    }
+
+    [Test]
     public void VulkanFramebufferDrawExtent_UsesSmallestAttachmentMipExtent()
     {
         XRTexture2D fullRes = XRTexture2D.CreateFrameBufferTexture(

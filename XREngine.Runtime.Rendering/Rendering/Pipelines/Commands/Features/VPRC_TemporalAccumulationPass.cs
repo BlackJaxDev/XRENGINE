@@ -19,6 +19,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 {
     private const float TaaJitterScaleInTexels = 0.35f;
     private const float TsrJitterScaleInTexels = 0.20f;
+    private const float CameraCutTranslationThreshold = 2.0f;
+    private const float CameraCutRotationDotThreshold = 0.94f;
     private const string TemporalInputCopyScopeName = "Temporal Copy Forward->Input";
     private const string TemporalAccumulationScopeName = "Temporal Accumulation shader=TemporalAccumulation.fs";
     private const string TemporalHistoryColorScopeName = "Temporal History Color";
@@ -52,7 +54,9 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         public bool HistoryReady;
         public bool HistoryExposureReady;
         public bool PendingHistoryReady;
+        public TemporalHistoryCoverage PendingHistoryCoverage;
         public StateObject? ActiveJitterHandle;
+        public StateObject? ActiveRightEyeJitterHandle;
         public EVrTemporalHistoryPolicy HistoryIsolationPolicy = EVrTemporalHistoryPolicy.HeadsetShared;
         public string HistoryIsolationReason = "mono/shared temporal history";
         public uint LastInternalWidth;
@@ -89,6 +93,10 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         public Matrix4x4 PrevViewProjection = Matrix4x4.Identity;
         public Matrix4x4 PrevViewProjectionUnjittered = Matrix4x4.Identity;
         public Matrix4x4 PrevInverseViewProjection = Matrix4x4.Identity;
+        public Vector3 CurrentCameraPosition = Vector3.Zero;
+        public Vector3 PreviousCameraPosition = Vector3.Zero;
+        public Vector3 CurrentCameraForward = Vector3.UnitZ;
+        public Vector3 PreviousCameraForward = Vector3.UnitZ;
 
         public void ResetCurrent()
         {
@@ -99,6 +107,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             CurrViewProjection = Matrix4x4.Identity;
             CurrViewProjectionUnjittered = Matrix4x4.Identity;
             CurrInverseViewProjection = Matrix4x4.Identity;
+            CurrentCameraPosition = Vector3.Zero;
+            CurrentCameraForward = Vector3.UnitZ;
         }
 
         public void ResetHistory()
@@ -110,6 +120,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             PrevViewProjection = Matrix4x4.Identity;
             PrevViewProjectionUnjittered = Matrix4x4.Identity;
             PrevInverseViewProjection = Matrix4x4.Identity;
+            PreviousCameraPosition = Vector3.Zero;
+            PreviousCameraForward = Vector3.UnitZ;
         }
 
         public void CommitCurrentToPrevious()
@@ -120,7 +132,51 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             PrevViewProjection = CurrViewProjection;
             PrevViewProjectionUnjittered = CurrViewProjectionUnjittered;
             PrevInverseViewProjection = CurrInverseViewProjection;
+            PreviousCameraPosition = CurrentCameraPosition;
+            PreviousCameraForward = CurrentCameraForward;
         }
+    }
+
+    internal struct TemporalHistoryCoverage
+    {
+        public uint ExpectedLayerMask { get; private set; }
+        public uint ColorLayerMask { get; private set; }
+        public uint DepthLayerMask { get; private set; }
+        public uint TsrColorLayerMask { get; private set; }
+        public bool RequiresTsrColor { get; private set; }
+
+        public readonly bool IsComplete
+            => ExpectedLayerMask != 0u
+                && (ColorLayerMask & ExpectedLayerMask) == ExpectedLayerMask
+                && (DepthLayerMask & ExpectedLayerMask) == ExpectedLayerMask
+                && (!RequiresTsrColor || (TsrColorLayerMask & ExpectedLayerMask) == ExpectedLayerMask);
+
+        public void Begin(uint expectedLayerCount, bool requiresTsrColor)
+        {
+            uint clampedLayerCount = Math.Clamp(expectedLayerCount, 1u, 32u);
+            ExpectedLayerMask = clampedLayerCount == 32u
+                ? uint.MaxValue
+                : (1u << (int)clampedLayerCount) - 1u;
+            ColorLayerMask = 0u;
+            DepthLayerMask = 0u;
+            TsrColorLayerMask = 0u;
+            RequiresTsrColor = requiresTsrColor;
+        }
+
+        public void RecordColorAndDepth(uint colorLayerMask, uint depthLayerMask)
+        {
+            ColorLayerMask |= colorLayerMask;
+            DepthLayerMask |= depthLayerMask;
+        }
+
+        public void RecordTsrColor(uint layerMask)
+            => TsrColorLayerMask |= layerMask;
+
+        public void Clear()
+            => this = default;
+
+        public override readonly string ToString()
+            => $"expected=0x{ExpectedLayerMask:X} color=0x{ColorLayerMask:X} depth=0x{DepthLayerMask:X} tsr=0x{TsrColorLayerMask:X} requireTsr={RequiresTsrColor}";
     }
 
     internal readonly struct TemporalUniformData
@@ -167,6 +223,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
     private static readonly object TemporalStatesLock = new();
     private static readonly Dictionary<TemporalViewKey, TemporalState> TemporalStates = [];
+    private static readonly Dictionary<int, TemporalViewKey> TemporalKeysByPipelineInstance = [];
 
     public enum EPhase
     {
@@ -178,6 +235,11 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         /// The jitter values are preserved in the temporal state for the Commit phase.
         /// </summary>
         PopJitter,
+        /// <summary>
+        /// Records that the full-resolution TSR history color copy was scheduled
+        /// for every required array layer.
+        /// </summary>
+        MarkTsrHistoryColor,
         Commit
     }
 
@@ -188,6 +250,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     public string TemporalAccumulationFBOName { get; set; } = DefaultRenderPipeline.TemporalAccumulationFBOName;
     public string HistoryColorFBOName { get; set; } = DefaultRenderPipeline.HistoryCaptureFBOName;
     public string HistoryExposureFBOName { get; set; } = DefaultRenderPipeline.HistoryExposureFBOName;
+    public string TsrSourceFBOName { get; set; } = DefaultRenderPipeline.TsrUpscaleFBOName;
+    public string TsrHistoryColorFBOName { get; set; } = DefaultRenderPipeline.TsrHistoryColorFBOName;
 
     public override string GpuProfilingName
         => $"{base.GpuProfilingName}[{Phase}]";
@@ -204,6 +268,15 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         TemporalAccumulationFBOName = accumulationFboName;
         HistoryColorFBOName = historyColorFboName;
         HistoryExposureFBOName = historyExposureFboName;
+        return this;
+    }
+
+    public VPRC_TemporalAccumulationPass ConfigureTsrHistoryTargets(
+        string sourceFboName,
+        string historyColorFboName)
+    {
+        TsrSourceFBOName = sourceFboName;
+        TsrHistoryColorFBOName = historyColorFboName;
         return this;
     }
 
@@ -224,6 +297,9 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
                 break;
             case EPhase.PopJitter:
                 PopActiveJitter();
+                break;
+            case EPhase.MarkTsrHistoryColor:
+                MarkTsrHistoryColorCaptured();
                 break;
             case EPhase.Commit:
                 //Debug.Out("[Temporal] Commit phase");
@@ -258,9 +334,11 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         if (IsHistoryIsolationPolicyDisabled(historyPolicy))
         {
             SetHistoryExposureReady(false);
-            FlagTemporalHistoryCaptured();
+            ResetHistory(ActivePipelineInstance);
             return;
         }
+
+        XRFrameBuffer historyColorSourceFbo = forwardFBO;
 
         if (shouldAccumulate)
         {
@@ -340,6 +418,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
                     false,
                     false);
             }
+
+            historyColorSourceFbo = accumulationFBO;
         }
         else
         {
@@ -359,10 +439,10 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             }
         }
 
-        // Always flag history as captured - motion blur depends on view-projection tracking
-        // even when TAA/jitter is disabled.
-        //Debug.Out("[Temporal] Flagging history captured.");
-        FlagTemporalHistoryCaptured();
+        // History becomes usable only when color and depth cover every layer
+        // represented by this temporal view key. TSR records its separate
+        // full-resolution history color later in the command chain.
+        RecordTemporalHistoryCaptured(historyColorSourceFbo, forwardFBO, historyColorFBO);
     }
 
     private IDisposable? PushRenderGraphPass(string passName)
@@ -562,6 +642,63 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         return false;
     }
 
+    /// <summary>
+    /// Resolves the temporal snapshot owned by a specific pipeline instance.
+    /// Deferred Vulkan recording uses this overload so another output's ambient
+    /// render state cannot redirect velocity bindings to a different view family.
+    /// </summary>
+    internal static bool TryGetTemporalUniformData(
+        XRRenderPipelineInstance instance,
+        [NotNullWhen(true)] out TemporalUniformData data)
+    {
+        lock (TemporalStatesLock)
+        {
+            if (TemporalKeysByPipelineInstance.TryGetValue(instance.InstanceId, out TemporalViewKey key) &&
+                TemporalStates.TryGetValue(key, out TemporalState? state))
+            {
+                TemporalEyeState leftEye = state.LeftEye;
+                TemporalEyeState rightEye = state.RightEye;
+                data = new TemporalUniformData
+                {
+                    HistoryReady = state.HistoryReady,
+                    HistoryExposureReady = state.HistoryExposureReady,
+                    HistoryIsolationPolicy = state.HistoryIsolationPolicy,
+                    HistoryIsolationReason = state.HistoryIsolationReason,
+                    PrevViewMatrix = leftEye.PrevViewMatrix,
+                    PrevProjection = leftEye.PrevProjection,
+                    PrevViewProjection = leftEye.PrevViewProjection,
+                    PrevViewProjectionUnjittered = leftEye.PrevViewProjectionUnjittered,
+                    PrevInverseViewProjection = leftEye.PrevInverseViewProjection,
+                    CurrViewMatrix = leftEye.CurrViewMatrix,
+                    CurrProjection = leftEye.CurrProjection,
+                    CurrInverseProjection = leftEye.CurrInverseProjection,
+                    CurrInverseViewProjection = leftEye.CurrInverseViewProjection,
+                    CurrViewProjection = leftEye.CurrViewProjection,
+                    CurrViewProjectionUnjittered = leftEye.CurrViewProjectionUnjittered,
+                    RightEyePrevViewMatrix = rightEye.PrevViewMatrix,
+                    RightEyePrevProjection = rightEye.PrevProjection,
+                    RightEyePrevViewProjection = rightEye.PrevViewProjection,
+                    RightEyePrevViewProjectionUnjittered = rightEye.PrevViewProjectionUnjittered,
+                    RightEyePrevInverseViewProjection = rightEye.PrevInverseViewProjection,
+                    RightEyeCurrViewMatrix = rightEye.CurrViewMatrix,
+                    RightEyeCurrProjection = rightEye.CurrProjection,
+                    RightEyeCurrInverseProjection = rightEye.CurrInverseProjection,
+                    RightEyeCurrInverseViewProjection = rightEye.CurrInverseViewProjection,
+                    RightEyeCurrViewProjection = rightEye.CurrViewProjection,
+                    RightEyeCurrViewProjectionUnjittered = rightEye.CurrViewProjectionUnjittered,
+                    CurrentJitter = leftEye.CurrentJitter,
+                    PreviousJitter = leftEye.PreviousJitter,
+                    Width = state.LastInternalWidth,
+                    Height = state.LastInternalHeight
+                };
+                return true;
+            }
+        }
+
+        data = default;
+        return false;
+    }
+
     internal static void ResetHistory(XRRenderPipelineInstance? instance)
     {
         if (!TryResolveTemporalKey(instance, out TemporalViewKey key))
@@ -591,6 +728,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
                 state = new TemporalState();
                 TemporalStates.Add(key, state);
             }
+
+            TemporalKeysByPipelineInstance[instance.InstanceId] = key;
         }
 
         return true;
@@ -600,9 +739,12 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     {
         state.ActiveJitterHandle?.Dispose();
         state.ActiveJitterHandle = null;
+        state.ActiveRightEyeJitterHandle?.Dispose();
+        state.ActiveRightEyeJitterHandle = null;
         state.HistoryReady = false;
         state.HistoryExposureReady = false;
         state.PendingHistoryReady = false;
+        state.PendingHistoryCoverage.Clear();
         state.LeftEye.ResetHistory();
         state.RightEye.ResetHistory();
         state.HaltonIndex = 1;
@@ -686,6 +828,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
         state.PendingHistoryReady = false;
         state.HistoryExposureReady = false;
+        state.PendingHistoryCoverage.Clear();
 
         var viewport = instance.RenderState.WindowViewport;
         uint width = viewport is null ? 0u : (uint)viewport.InternalWidth;
@@ -714,6 +857,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
         state.ActiveJitterHandle?.Dispose();
         state.ActiveJitterHandle = null;
+        state.ActiveRightEyeJitterHandle?.Dispose();
+        state.ActiveRightEyeJitterHandle = null;
 
         if (!TryResolveTemporalCamera(instance, out XRCamera? camera))
         {
@@ -723,6 +868,22 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             Debug.Rendering("[Temporal] Begin: no camera; resetting state.");
             return;
         }
+
+        XRCamera? rightEyeCamera = instance.RenderState.StereoRightEyeCamera
+            ?? RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera;
+        if (state.HistoryReady &&
+            (IsCameraCut(camera, state.LeftEye) ||
+             (rightEyeCamera is not null &&
+              !ReferenceEquals(rightEyeCamera, camera) &&
+              IsCameraCut(rightEyeCamera, state.RightEye))))
+        {
+            ResetHistory(state);
+        }
+
+        uint expectedHistoryLayers = historyPolicy == EVrTemporalHistoryPolicy.StereoArrayLayer ? 2u : 1u;
+        state.PendingHistoryCoverage.Begin(
+            expectedHistoryLayers,
+            requiresTsrColor: antiAliasingMode == EAntiAliasingMode.Tsr && !IsHistoryIsolationPolicyDisabled(historyPolicy));
 
         bool jitterEnabled = ShouldUseTemporalJitter(antiAliasingMode);
         Vector2 jitter = jitterEnabled ? GenerateJitter(state, antiAliasingMode) : Vector2.Zero;
@@ -736,6 +897,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
         Matrix4x4 viewMatrix = camera.Transform.InverseRenderMatrix;
         state.LeftEye.CurrViewMatrix = viewMatrix;
+        state.LeftEye.CurrentCameraPosition = camera.Transform.RenderTranslation;
+        state.LeftEye.CurrentCameraForward = NormalizeOrForward(camera.Transform.RenderForward);
         // Use Unjittered property to ensure we get a clean projection matrix, 
         // even if the jitter stack has leaked or is dirty from other passes.
         Matrix4x4 baseProjection = camera.ProjectionMatrixUnjittered;
@@ -752,7 +915,15 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         }
 
         if (jitterEnabled)
+        {
             state.ActiveJitterHandle = instance.RenderState.RequestCameraProjectionJitter(jitter);
+            if (rightEyeCamera is not null && !ReferenceEquals(rightEyeCamera, camera))
+            {
+                Vector2 resolution = new(Math.Max(1u, width), Math.Max(1u, height));
+                state.ActiveRightEyeJitterHandle = rightEyeCamera.PushProjectionJitter(
+                    ProjectionJitterRequest.TexelSpace(jitter, resolution));
+            }
+        }
 
         Matrix4x4 jitteredProjection = camera.ProjectionMatrix;
         Matrix4x4 jitteredViewProjection = viewMatrix * jitteredProjection;
@@ -764,8 +935,6 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         state.CurrInverseProjection = camera.InverseProjectionMatrix;
         state.CurrViewProjection = jitteredViewProjection;
         state.CurrInverseViewProjection = inverseViewProjection;
-        XRCamera? rightEyeCamera = instance.RenderState.StereoRightEyeCamera
-            ?? RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera;
         CaptureEyeTemporalState(rightEyeCamera ?? camera, state.RightEye, state.HistoryReady);
         //Debug.Out("[Temporal] Begin completed: VP/Jitter prepared.");
     }
@@ -785,6 +954,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             inverseViewProjection = Matrix4x4.Identity;
 
         eyeState.CurrViewMatrix = viewMatrix;
+        eyeState.CurrentCameraPosition = camera.Transform.RenderTranslation;
+        eyeState.CurrentCameraForward = NormalizeOrForward(camera.Transform.RenderForward);
         eyeState.CurrViewProjectionUnjittered = baseViewProjection;
         eyeState.CurrProjection = jitteredProjection;
         eyeState.CurrInverseProjection = camera.InverseProjectionMatrix;
@@ -792,22 +963,93 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         eyeState.CurrInverseViewProjection = inverseViewProjection;
     }
 
-    private static void FlagTemporalHistoryCaptured()
+    private static void RecordTemporalHistoryCaptured(
+        XRFrameBuffer colorSourceFbo,
+        XRFrameBuffer depthSourceFbo,
+        XRFrameBuffer historyDestinationFbo)
     {
         if (!TryGetActiveState(out var instance, out var state))
         {
-            Debug.Rendering("[Temporal] FlagHistoryCaptured skipped: no active state.");
+            Debug.Rendering("[Temporal] History coverage skipped: no active state.");
             return;
         }
 
         if (!TryResolveTemporalCamera(instance, out _))
         {
-            Debug.Rendering("[Temporal] FlagHistoryCaptured skipped: no camera.");
+            Debug.Rendering("[Temporal] History coverage skipped: no camera.");
             return;
         }
 
-        state.PendingHistoryReady = true;
+        uint colorSourceMask = ResolveAttachmentLayerMask(colorSourceFbo, color: true);
+        uint depthSourceMask = ResolveAttachmentLayerMask(depthSourceFbo, color: false);
+        uint colorDestinationMask = ResolveAttachmentLayerMask(historyDestinationFbo, color: true);
+        uint depthDestinationMask = ResolveAttachmentLayerMask(historyDestinationFbo, color: false);
+        state.PendingHistoryCoverage.RecordColorAndDepth(
+            colorSourceMask & colorDestinationMask,
+            depthSourceMask & depthDestinationMask);
+        state.PendingHistoryReady = state.PendingHistoryCoverage.IsComplete;
     }
+
+    private void MarkTsrHistoryColorCaptured()
+    {
+        if (!TryGetActiveState(out XRRenderPipelineInstance? instance, out TemporalState? state))
+            return;
+
+        XRFrameBuffer? source = instance.GetFBO<XRFrameBuffer>(TsrSourceFBOName);
+        XRFrameBuffer? destination = instance.GetFBO<XRFrameBuffer>(TsrHistoryColorFBOName);
+        if (source is null || destination is null)
+        {
+            state.PendingHistoryReady = false;
+            Debug.RenderingWarningEvery(
+                $"Temporal.TsrHistoryCoverage.MissingFbo.{instance.InstanceId}",
+                TimeSpan.FromSeconds(1),
+                "[Temporal] TSR history coverage incomplete. Pipeline={0} Source={1} Destination={2}",
+                instance.ProfilerKey,
+                source is null ? "missing" : "ready",
+                destination is null ? "missing" : "ready");
+            return;
+        }
+
+        uint sourceMask = ResolveAttachmentLayerMask(source, color: true);
+        uint destinationMask = ResolveAttachmentLayerMask(destination, color: true);
+        state.PendingHistoryCoverage.RecordTsrColor(sourceMask & destinationMask);
+        state.PendingHistoryReady = state.PendingHistoryCoverage.IsComplete;
+    }
+
+    private static uint ResolveAttachmentLayerMask(XRFrameBuffer frameBuffer, bool color)
+    {
+        if (frameBuffer.Targets is not { Length: > 0 } targets)
+            return 0u;
+
+        for (int i = 0; i < targets.Length; i++)
+        {
+            var (target, attachment, _, layerIndex) = targets[i];
+            bool matches = color
+                ? IsColorAttachment(attachment)
+                : attachment is EFrameBufferAttachment.DepthAttachment or EFrameBufferAttachment.DepthStencilAttachment;
+            if (!matches)
+                continue;
+
+            uint layerCount = layerIndex >= 0
+                ? 1u
+                : target switch
+                {
+                    XRTextureViewBase view => Math.Max(view.NumLayers, 1u),
+                    XRTexture2DArray array => Math.Max(array.Depth, 1u),
+                    _ => 1u,
+                };
+            uint clampedLayerCount = Math.Clamp(layerCount, 1u, 32u);
+            return clampedLayerCount == 32u
+                ? uint.MaxValue
+                : (1u << (int)clampedLayerCount) - 1u;
+        }
+
+        return 0u;
+    }
+
+    private static bool IsColorAttachment(EFrameBufferAttachment attachment)
+        => attachment >= EFrameBufferAttachment.ColorAttachment0
+            && attachment <= EFrameBufferAttachment.ColorAttachment31;
 
     /// <summary>
     /// Disposes the active jitter handle so transparent/masked passes render unjittered.
@@ -820,6 +1062,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
         state.ActiveJitterHandle?.Dispose();
         state.ActiveJitterHandle = null;
+        state.ActiveRightEyeJitterHandle?.Dispose();
+        state.ActiveRightEyeJitterHandle = null;
     }
 
     private static void CommitTemporalFrame()
@@ -832,12 +1076,31 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
         state.ActiveJitterHandle?.Dispose();
         state.ActiveJitterHandle = null;
+        state.ActiveRightEyeJitterHandle?.Dispose();
+        state.ActiveRightEyeJitterHandle = null;
 
-        // Always commit view-projection history for motion blur, even if TAA accumulation was skipped.
-        // Only skip if no history was captured this frame at all.
-        if (!state.PendingHistoryReady)
+        if (IsHistoryIsolationPolicyDisabled(state.HistoryIsolationPolicy))
         {
-            Debug.Rendering("[Temporal] Commit skipped: no pending history.");
+            state.PendingHistoryReady = false;
+            state.HistoryReady = false;
+            state.PendingHistoryCoverage.Clear();
+            return;
+        }
+
+        if (!state.PendingHistoryCoverage.IsComplete)
+        {
+            state.PendingHistoryReady = false;
+            state.HistoryReady = false;
+            TryResolveTemporalKey(instance, out TemporalViewKey temporalKey);
+            Debug.RenderingWarningEvery(
+                $"Temporal.HistoryCoverageIncomplete.{instance.InstanceId}",
+                TimeSpan.FromSeconds(1),
+                "[Temporal] History invalidated because the frame did not populate every required layer. Pipeline={0} Policy={1} Key={2} Coverage={3}",
+                instance.ProfilerKey,
+                state.HistoryIsolationPolicy,
+                temporalKey,
+                state.PendingHistoryCoverage);
+            state.PendingHistoryCoverage.Clear();
             return;
         }
 
@@ -845,6 +1108,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         state.LeftEye.CommitCurrentToPrevious();
         state.RightEye.CommitCurrentToPrevious();
         state.HistoryReady = true;
+        state.PendingHistoryCoverage.Clear();
         //Debug.Out("[Temporal] Commit completed: history stored.");
     }
 
@@ -864,6 +1128,28 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
                MathF.Abs(a.M21 - b.M21) < epsilon && MathF.Abs(a.M22 - b.M22) < epsilon && MathF.Abs(a.M23 - b.M23) < epsilon && MathF.Abs(a.M24 - b.M24) < epsilon &&
                MathF.Abs(a.M31 - b.M31) < epsilon && MathF.Abs(a.M32 - b.M32) < epsilon && MathF.Abs(a.M33 - b.M33) < epsilon && MathF.Abs(a.M34 - b.M34) < epsilon &&
                MathF.Abs(a.M41 - b.M41) < epsilon && MathF.Abs(a.M42 - b.M42) < epsilon && MathF.Abs(a.M43 - b.M43) < epsilon && MathF.Abs(a.M44 - b.M44) < epsilon;
+    }
+
+    private static bool IsCameraCut(XRCamera camera, TemporalEyeState eyeState)
+    {
+        float translationDeltaSq = Vector3.DistanceSquared(
+            camera.Transform.RenderTranslation,
+            eyeState.PreviousCameraPosition);
+        if (translationDeltaSq > CameraCutTranslationThreshold * CameraCutTranslationThreshold)
+            return true;
+
+        float directionDot = Vector3.Dot(
+            NormalizeOrForward(camera.Transform.RenderForward),
+            NormalizeOrForward(eyeState.PreviousCameraForward));
+        return directionDot < CameraCutRotationDotThreshold;
+    }
+
+    private static Vector3 NormalizeOrForward(Vector3 value)
+    {
+        float lengthSquared = value.LengthSquared();
+        return lengthSquared > 1e-8f
+            ? value / MathF.Sqrt(lengthSquared)
+            : Vector3.UnitZ;
     }
 
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)

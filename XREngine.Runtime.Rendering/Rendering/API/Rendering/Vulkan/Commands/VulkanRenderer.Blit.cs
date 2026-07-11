@@ -54,6 +54,21 @@ namespace XREngine.Rendering.Vulkan
                     AccessMask,
                     DescriptorSource,
                     RenderBufferSource);
+
+            public BlitImageInfo WithLayerCount(uint layerCount)
+                => new(
+                    Image,
+                    Format,
+                    AspectMask,
+                    BaseArrayLayer,
+                    Math.Max(layerCount, 1u),
+                    MipLevel,
+                    Extent,
+                    PreferredLayout,
+                    StageMask,
+                    AccessMask,
+                    DescriptorSource,
+                    RenderBufferSource);
         }
 
         // =========== Blit / Copy Operations ===========
@@ -316,6 +331,7 @@ namespace XREngine.Rendering.Vulkan
             uint descriptorLayers = Math.Max(source.DescriptorArrayLayers, 1u);
             if (baseArrayLayer >= descriptorLayers)
                 baseArrayLayer = descriptorLayers - 1u;
+            uint blitLayerCount = ResolveBlitLayerCount(texture, layerIndex, descriptorLayers, baseArrayLayer);
 
             uint mipLevels = Math.Max(source.DescriptorMipLevels, 1u);
             uint resolvedMipLevel = Math.Min((uint)Math.Max(mipLevel, 0), mipLevels - 1u);
@@ -326,7 +342,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 ImageLayout attachmentLayout = attachmentSource.GetAttachmentTrackedLayout(
                     checked((int)resolvedMipLevel),
-                    checked((int)baseArrayLayer));
+                    layerIndex < 0 ? -1 : checked((int)baseArrayLayer));
                 if (attachmentLayout != ImageLayout.Undefined)
                 {
                     effectiveLayout = attachmentLayout;
@@ -359,7 +375,7 @@ namespace XREngine.Rendering.Vulkan
                 format,
                 aspectMask,
                 baseArrayLayer,
-                1,
+                blitLayerCount,
                 resolvedMipLevel,
                 ResolveTextureBlitExtent(texture, source, mipLevel, layerIndex, resolvedMipLevel),
                 effectiveLayout,
@@ -404,12 +420,13 @@ namespace XREngine.Rendering.Vulkan
             uint layerCount = Math.Max(group.Template.Layers, 1u);
             if (baseArrayLayer >= layerCount)
                 baseArrayLayer = layerCount - 1u;
+            uint blitLayerCount = ResolveBlitLayerCount(texture, layerIndex, layerCount, baseArrayLayer);
 
             uint mipLevels = Math.Max(group.MipLevels, 1u);
             uint resolvedMipLevel = Math.Min((uint)Math.Max(mipLevel, 0), mipLevels - 1u);
             uint width = Math.Max(group.ResolvedExtent.Width >> (int)resolvedMipLevel, 1u);
             uint height = Math.Max(group.ResolvedExtent.Height >> (int)resolvedMipLevel, 1u);
-            ImageLayout layout = group.GetKnownLayout(resolvedMipLevel, 1, baseArrayLayer, 1);
+            ImageLayout layout = group.GetKnownLayout(resolvedMipLevel, 1, baseArrayLayer, blitLayerCount);
             if (layout == ImageLayout.Undefined)
                 layout = group.LastKnownLayout;
 
@@ -418,7 +435,7 @@ namespace XREngine.Rendering.Vulkan
                 group.Format,
                 aspectMask,
                 baseArrayLayer,
-                1,
+                blitLayerCount,
                 resolvedMipLevel,
                 new Extent2D(width, height),
                 layout,
@@ -681,6 +698,23 @@ namespace XREngine.Rendering.Vulkan
             };
         }
 
+        private static uint ResolveBlitLayerCount(
+            XRTexture texture,
+            int layerIndex,
+            uint availableLayers,
+            uint baseArrayLayer)
+        {
+            availableLayers = Math.Max(availableLayers, 1u);
+            if (layerIndex >= 0 || texture is XRTexture3D)
+                return 1u;
+
+            uint remainingLayers = Math.Max(availableLayers - Math.Min(baseArrayLayer, availableLayers - 1u), 1u);
+            uint requestedLayers = texture is XRTextureViewBase view
+                ? Math.Max(view.NumLayers, 1u)
+                : remainingLayers;
+            return Math.Max(Math.Min(requestedLayers, remainingLayers), 1u);
+        }
+
         private static uint ResolveViewBlitBaseLayer(XRTextureViewBase view, uint resolvedLayer)
             => view.TextureTarget switch
             {
@@ -745,6 +779,10 @@ namespace XREngine.Rendering.Vulkan
             if (srcX1 <= srcX0 || srcY1 <= srcY0 || dstX1 <= dstX0 || dstY1 <= dstY0)
                 return false;
 
+            uint commonLayerCount = Math.Min(source.LayerCount, destination.LayerCount);
+            if (commonLayerCount == 0)
+                return false;
+
             region = new ImageBlit
             {
                 SrcSubresource = new ImageSubresourceLayers
@@ -752,14 +790,14 @@ namespace XREngine.Rendering.Vulkan
                     AspectMask = source.AspectMask,
                     MipLevel = source.MipLevel,
                     BaseArrayLayer = source.BaseArrayLayer,
-                    LayerCount = source.LayerCount
+                    LayerCount = commonLayerCount
                 },
                 DstSubresource = new ImageSubresourceLayers
                 {
                     AspectMask = destination.AspectMask,
                     MipLevel = destination.MipLevel,
                     BaseArrayLayer = destination.BaseArrayLayer,
-                    LayerCount = destination.LayerCount
+                    LayerCount = commonLayerCount
                 }
             };
 

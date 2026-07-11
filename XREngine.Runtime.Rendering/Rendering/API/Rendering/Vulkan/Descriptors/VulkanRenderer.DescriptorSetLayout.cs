@@ -4,8 +4,15 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
+        /// <summary>
+        /// The Vulkan descriptor set layout associated with this renderer.
+        /// </summary>
         private DescriptorSetLayout descriptorSetLayout;
 
+        /// <summary>
+        /// Destroys the Vulkan descriptor set layout associated with this renderer, if it exists.
+        /// Ensures that the destruction process is properly tracked and the layout is no longer referenced.
+        /// </summary>
         private void DestroyDescriptorSetLayout()
         {
             if (TryBeginDestroyDescriptorSetLayout(descriptorSetLayout, "Swapchain.DescriptorSetLayout"))
@@ -13,6 +20,10 @@ namespace XREngine.Rendering.Vulkan
             descriptorSetLayout = default;
         }
 
+        /// <summary>
+        /// Creates the Vulkan descriptor set layout associated with this renderer, if it does not already exist.
+        /// </summary>
+        /// <exception cref="Exception">Thrown if the creation of the descriptor set layout fails.</exception>
         private void CreateDescriptorSetLayout()
         {
             DescriptorSetLayoutBinding uboLayoutBinding = new()

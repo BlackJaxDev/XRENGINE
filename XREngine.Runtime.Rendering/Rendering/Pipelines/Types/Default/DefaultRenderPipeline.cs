@@ -2722,7 +2722,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
         {
             c.Add<VPRC_RenderQuadToFBO>()
-                .SetTargets(PostProcessFBOName, PostProcessOutputFBOName)
+                .SetTargets(PostProcessFBOName, PostProcessOutputFBOName, matchDestinationRenderArea: true)
                 .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.PostProcess());
         }
 
@@ -2757,6 +2757,9 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
                         blitDepth: false,
                         blitStencil: false,
                         linearFilter: false);
+                    var markTsrHistory = tsrUpscale.Add<VPRC_TemporalAccumulationPass>();
+                    markTsrHistory.Phase = VPRC_TemporalAccumulationPass.EPhase.MarkTsrHistoryColor;
+                    markTsrHistory.ConfigureTsrHistoryTargets(TsrUpscaleFBOName, TsrHistoryColorFBOName);
                     tsrOrPostAa.TrueCommands = tsrUpscale;
                 }
                 {

@@ -22,6 +22,20 @@ public unsafe partial class OpenXRAPI
     private bool _apiOwnedByRenderer;
     private readonly HashSet<string> _availableInstanceExtensions = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _enabledInstanceExtensions = new(StringComparer.OrdinalIgnoreCase);
+    private string? _lastUnsupportedOptionalExtensionReportKey;
+
+    private readonly record struct OpenXrInstanceCreationAttempt(
+        bool Succeeded,
+        string Operation,
+        Result Result,
+        string FailureReason)
+    {
+        public static OpenXrInstanceCreationAttempt Success()
+            => new(true, "xrCreateInstance", Result.Success, string.Empty);
+
+        public static OpenXrInstanceCreationAttempt Failure(string operation, Result result, string failureReason)
+            => new(false, operation, result, failureReason);
+    }
 
     private void DestroyInstance()
     {
@@ -48,7 +62,7 @@ public unsafe partial class OpenXRAPI
         ClearInstanceExtensionState();
     }
 
-    private void CreateInstance()
+    private OpenXrInstanceCreationAttempt TryCreateInstance()
     {
         EnsureSteamVrRunningIfActiveRuntime();
 
@@ -72,10 +86,12 @@ public unsafe partial class OpenXRAPI
             _instance = rendererOwnedInstance;
             _instanceOwnedByRenderer = true;
             _apiOwnedByRenderer = true;
-            SetInstanceExtensionState(GetAvailableInstanceExtensions(), rendererOwnedExtensions);
+            if (!TryGetAvailableInstanceExtensions(out HashSet<string> rendererAvailableExtensions, out _))
+                rendererAvailableExtensions = new HashSet<string>(rendererOwnedExtensions, StringComparer.OrdinalIgnoreCase);
+            SetInstanceExtensionState(rendererAvailableExtensions, rendererOwnedExtensions);
             RecordSmokeInstanceCreated(renderer.ToString(), rendererOwnedExtensions);
             Debug.Vulkan("[OpenXR] Reusing renderer-owned XR_KHR_vulkan_enable2 instance for OpenXR session creation.");
-            return;
+            return OpenXrInstanceCreationAttempt.Success();
         }
 
         _instanceOwnedByRenderer = false;
@@ -83,29 +99,40 @@ public unsafe partial class OpenXRAPI
             Api = XR.GetApi();
 
         _apiOwnedByRenderer = false;
-        var requiredExtensions = GetRequiredExtensions(renderer);
+        string[] requiredRendererAlternatives = GetRequiredRendererExtensionAlternatives(renderer);
+        string[] requestedExtensions = GetRequestedExtensions(renderer);
 
-        var availableExtensions = GetAvailableInstanceExtensions();
+        if (!TryGetAvailableInstanceExtensions(out HashSet<string> availableExtensions, out Result enumerateResult))
+        {
+            return OpenXrInstanceCreationAttempt.Failure(
+                "xrEnumerateInstanceExtensionProperties",
+                enumerateResult,
+                $"xrEnumerateInstanceExtensionProperties failed: {enumerateResult}");
+        }
 
         // Filter out unsupported optional extensions so instance creation doesn't fail.
-        var filtered = requiredExtensions
+        string[] filtered = requestedExtensions
             .Where(e => availableExtensions.Contains(e))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        var dropped = requiredExtensions
+        string[] droppedOptional = requestedExtensions
             .Except(filtered, StringComparer.OrdinalIgnoreCase)
+            .Except(requiredRendererAlternatives, StringComparer.OrdinalIgnoreCase)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        if (dropped.Length > 0)
-            Console.WriteLine($"OpenXR instance extensions not supported by runtime and will be skipped: {string.Join(", ", dropped)}");
+        ReportUnsupportedOptionalExtensionsOnce(renderer, droppedOptional);
 
         // Fail fast if the renderer binding extension is missing; without it we cannot create a graphics-bound session.
-        var requiredForRenderer = renderer == ERenderer.Vulkan
-            ? new[] { "XR_KHR_vulkan_enable", "XR_KHR_vulkan_enable2" }
-            : new[] { "XR_KHR_opengl_enable" };
-
-        if (!filtered.Any(e => requiredForRenderer.Contains(e, StringComparer.OrdinalIgnoreCase)))
-            throw new Exception($"OpenXR runtime does not support required renderer extension(s): {string.Join(", ", requiredForRenderer)}");
+        if (!filtered.Any(e => requiredRendererAlternatives.Contains(e, StringComparer.OrdinalIgnoreCase)))
+        {
+            return OpenXrInstanceCreationAttempt.Failure(
+                "renderer-extension-negotiation",
+                Result.ErrorExtensionNotPresent,
+                "OpenXR runtime does not support any required renderer binding extension. " +
+                $"Renderer={renderer}; RequiredOneOf=[{string.Join(", ", requiredRendererAlternatives)}]");
+        }
 
         Debug.Vulkan("[OpenXR] Enabling OpenXR instance extensions: {0}", string.Join(", ", filtered));
 
@@ -122,10 +149,41 @@ public unsafe partial class OpenXRAPI
             : null;
 
         var createInfo = MakeCreateInfo(appInfo, filtered, enabledLayers, next);
-        MakeInstance(createInfo);
-        SetInstanceExtensionState(availableExtensions, filtered);
-        RecordSmokeInstanceCreated(renderer.ToString(), filtered);
-        Free(createInfo);
+        try
+        {
+            Result createResult = MakeInstance(createInfo);
+            if (createResult != Result.Success)
+            {
+                return OpenXrInstanceCreationAttempt.Failure(
+                    "xrCreateInstance",
+                    createResult,
+                    BuildCreateInstanceFailureMessage(createResult, createInfo));
+            }
+
+            SetInstanceExtensionState(availableExtensions, filtered);
+            RecordSmokeInstanceCreated(renderer.ToString(), filtered);
+            return OpenXrInstanceCreationAttempt.Success();
+        }
+        finally
+        {
+            Free(createInfo);
+        }
+    }
+
+    private void ReportUnsupportedOptionalExtensionsOnce(ERenderer renderer, string[] droppedOptional)
+    {
+        if (droppedOptional.Length == 0)
+            return;
+
+        Array.Sort(droppedOptional, StringComparer.OrdinalIgnoreCase);
+        string reportKey = $"{renderer}:{string.Join('|', droppedOptional)}";
+        if (string.Equals(_lastUnsupportedOptionalExtensionReportKey, reportKey, StringComparison.Ordinal))
+            return;
+
+        _lastUnsupportedOptionalExtensionReportKey = reportKey;
+        Debug.VR(
+            "[OpenXR] Runtime capability summary: optional instance extensions unavailable and disabled. " +
+            $"Renderer={renderer}; Extensions=[{string.Join(", ", droppedOptional)}]");
     }
 
     private static void EnsureSteamVrRunningIfActiveRuntime()
@@ -231,13 +289,16 @@ public unsafe partial class OpenXRAPI
         }
     }
 
-    private HashSet<string> GetAvailableInstanceExtensions()
+    private bool TryGetAvailableInstanceExtensions(out HashSet<string> extensions, out Result failureResult)
     {
+        extensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         uint count = 0;
-        Api!.EnumerateInstanceExtensionProperties((byte*)null, 0, ref count, null);
-        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        failureResult = Api!.EnumerateInstanceExtensionProperties((byte*)null, 0, ref count, null);
+        if (failureResult != Result.Success)
+            return false;
+
         if (count == 0)
-            return set;
+            return true;
 
         var props = new ExtensionProperties[count];
         for (int i = 0; i < props.Length; i++)
@@ -245,8 +306,10 @@ public unsafe partial class OpenXRAPI
 
         fixed (ExtensionProperties* propsPtr = props)
         {
-            Api!.EnumerateInstanceExtensionProperties((byte*)null, count, ref count, propsPtr);
+            failureResult = Api!.EnumerateInstanceExtensionProperties((byte*)null, count, ref count, propsPtr);
         }
+        if (failureResult != Result.Success)
+            return false;
 
         for (int i = 0; i < count; i++)
         {
@@ -254,11 +317,11 @@ public unsafe partial class OpenXRAPI
             {
                 var name = Marshal.PtrToStringAnsi((nint)namePtr);
                 if (!string.IsNullOrWhiteSpace(name))
-                    set.Add(name);
+                    extensions.Add(name);
             }
         }
 
-        return set;
+        return true;
     }
 
     private void SetInstanceExtensionState(IEnumerable<string> availableExtensions, IEnumerable<string> enabledExtensions)
@@ -296,13 +359,13 @@ public unsafe partial class OpenXRAPI
             : "runtime did not advertise the extension";
     }
 
-    private void MakeInstance(InstanceCreateInfo createInfo)
+    private Result MakeInstance(InstanceCreateInfo createInfo)
     {
         Instance i = default;
         Result result = Api!.CreateInstance(&createInfo, &i);
-        if (result != Result.Success)
-            throw new Exception(BuildCreateInstanceFailureMessage(result, createInfo));
-        _instance = i;
+        if (result == Result.Success)
+            _instance = i;
+        return result;
     }
 
     private static string BuildCreateInstanceFailureMessage(Result result, InstanceCreateInfo createInfo)

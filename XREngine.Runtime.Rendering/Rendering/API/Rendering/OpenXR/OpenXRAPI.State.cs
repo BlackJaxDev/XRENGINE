@@ -8,7 +8,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Input;
 using XREngine.Rendering;
-using XREngine.Rendering.Commands;
+using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.PostProcessing;
 using XREngine.Scene.Transforms;
 
@@ -18,71 +18,6 @@ public unsafe partial class OpenXRAPI
 {
     public const float OpenXrMinPoseTimeOffsetMs = -20.0f;
     public const float OpenXrMaxPoseTimeOffsetMs = 20.0f;
-
-    public enum OpenXrRuntimeState
-    {
-        DesktopOnly,
-        XrInstanceReady,
-        XrSystemReady,
-        SessionCreated,
-        SessionRunning,
-        SessionStopping,
-        SessionLost,
-        RecreatePending
-    }
-
-    public enum OpenXrRuntimeLossReason
-    {
-        None,
-        SessionExiting,
-        SessionLossPending,
-        SessionLostError,
-        InstanceLostError,
-        RuntimeUnavailable,
-        ShutdownRequested
-    }
-
-    public enum OpenXrPoseTiming
-    {
-        Predicted,
-        Late
-    }
-
-    public enum OpenXrCollectVisiblePosePolicy
-    {
-        Predicted,
-        RelocatePredicted,
-        PaddedFrustum
-    }
-
-    public enum OpenXrTrackingLossPolicy
-    {
-        FreezeLastValid,
-        Identity,
-        SkipFrame
-    }
-
-    public enum OpenXrActionSyncPolicy
-    {
-        PredictedOnly,
-        PredictedAndLate
-    }
-
-    /// <summary>
-    /// Controls where OpenXR's next-frame preparation (xrWaitFrame / xrBeginFrame / LocateViews(Predicted) /
-    /// UpdateActionPoseCaches(Predicted)) runs.
-    /// </summary>
-    public enum OpenXrRenderPacingMode
-    {
-        /// <summary>Run prep inline at the start of the render callback (legacy behavior).</summary>
-        InRenderCallback,
-        /// <summary>Run prep at the end of the render callback after desktop viewports finish (default).</summary>
-        PostRenderCallback,
-        /// <summary>Run prep on a dedicated OpenXR pacing thread; the render thread only signals after xrEndFrame.</summary>
-        DedicatedThread,
-        /// <summary>Run prep on the engine CollectVisible thread before building OpenXR visibility buffers.</summary>
-        CollectVisibleThread
-    }
 
     #region Core OpenXR state
 
@@ -304,7 +239,6 @@ public unsafe partial class OpenXRAPI
     private RenderPipeline? _openXrLeftRenderPipeline;
     private RenderPipeline? _openXrRightRenderPipeline;
     private RenderPipeline? _openXrStereoRenderPipeline;
-    private RenderCommandCollection? _openXrSharedMeshRenderCommands;
     private readonly Matrix4x4[] _openXrStereoCullProjections = new Matrix4x4[2];
     private readonly Matrix4x4[] _openXrStereoCullViews = new Matrix4x4[2];
     private Matrix4x4 _openXrCombinedProjectionMatrix = Matrix4x4.Identity;
@@ -330,6 +264,7 @@ public unsafe partial class OpenXRAPI
     private int _pendingXrFrame;
     private int _pendingXrFrameCollected;
     private int _pendingXrFrameUsesTrueSinglePassStereo;
+    private readonly int _openXrOcclusionPovId = OcclusionViewOwnership.AllocatePovId();
 
     private int _openXrPendingFrameNumber;
     private int _openXrLifecycleFrameIndex;
@@ -459,6 +394,10 @@ public unsafe partial class OpenXRAPI
     private OpenXrRuntimeLossReason _runtimeLossReason = OpenXrRuntimeLossReason.None;
     private DateTime _nextProbeUtc = DateTime.MinValue;
     private TimeSpan _probeInterval = TimeSpan.FromSeconds(1.5);
+    private readonly TimeSpan _maximumProbeRetryInterval = TimeSpan.FromSeconds(30);
+    private int _consecutiveInstanceProbeFailures;
+    private int _consecutiveSystemProbeFailures;
+    private string? _runtimeFailureReason;
     private readonly TimeSpan _graphicsDeviceFailureProbeInterval = TimeSpan.FromMinutes(1);
     private readonly TimeSpan _intentionalOpenXrRecreateBackoffBypassDuration = TimeSpan.FromSeconds(10);
     private readonly TimeSpan _intentionalOpenXrRecreateProbeInterval = TimeSpan.FromMilliseconds(250);
@@ -471,6 +410,7 @@ public unsafe partial class OpenXRAPI
 
     public OpenXrRuntimeState RuntimeState => _runtimeState;
     public bool IsSessionRunning => Volatile.Read(ref _sessionRunning) != 0;
+    public string? RuntimeFailureReason => _runtimeFailureReason;
 
     /// <summary>
     /// Configuration information for each view (eye).
@@ -622,18 +562,6 @@ public unsafe partial class OpenXRAPI
             return reflected;
 
         return RuntimeEngine.Rendering.NewRenderPipeline(stereo: true);
-    }
-
-    private RenderCommandCollection EnsureOpenXrSharedMeshRenderCommands(RenderPipeline pipeline)
-    {
-        RenderCommandCollection commands = _openXrSharedMeshRenderCommands ??= new RenderCommandCollection();
-        commands.SetRenderPasses(pipeline.PassIndicesAndSorters, pipeline.PassMetadata);
-        // The combined OpenXR eye visibility collection can be swapped before an
-        // independent desktop VR viewport publishes its own collected commands. If
-        // this collection yields snapshot publication to the desktop view, editor
-        // camera culling changes can leave eye rendering on stale command snapshots.
-        commands.IsRenderCommandSnapshotAuthority = true;
-        return commands;
     }
 
     /// <summary>

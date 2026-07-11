@@ -269,6 +269,7 @@ public unsafe partial class OpenXRAPI
         }
 
         Debug.Out($"OpenXR runtime service ensured. Reason={serviceReason}");
+        ResetOpenXrProbeFailureState();
         _nextProbeUtc = DateTime.UtcNow;
         SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
     }
