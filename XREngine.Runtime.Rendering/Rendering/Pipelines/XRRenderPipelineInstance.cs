@@ -10,6 +10,7 @@ using XREngine.Data.Geometry;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan;
@@ -43,8 +44,34 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// </summary>
     public int InstanceId { get; } = System.Threading.Interlocked.Increment(ref s_nextInstanceId);
 
+    private OcclusionViewOwnership _occlusionViewOwnership;
+
+    public OcclusionViewOwnership OcclusionViewOwnership
+        => _occlusionViewOwnership.HasScopeOverride
+            ? _occlusionViewOwnership
+            : _occlusionViewOwnership.WithResourceGeneration(ResourceGeneration);
+
     public XRRenderPipelineInstance()
     {
+        _occlusionViewOwnership = OcclusionViewOwnership.Independent(InstanceId);
+        MeshRenderCommands.SetOwnerPipeline(this);
+    }
+
+    /// <summary>
+    /// Assigns this physical pipeline to an output POV family. OpenXR uses this
+    /// to aggregate independently recorded eye queries without sharing command
+    /// collections or query objects.
+    /// </summary>
+    public void ConfigureOcclusionViewOwnership(OcclusionViewOwnership ownership)
+    {
+        if (!ownership.IsValid)
+            throw new ArgumentException("Occlusion ownership must identify a physical pipeline and non-empty POV coverage.", nameof(ownership));
+        if (ownership.PipelineInstanceId != InstanceId)
+            throw new ArgumentException($"Occlusion ownership pipeline {ownership.PipelineInstanceId} does not match instance {InstanceId}.", nameof(ownership));
+        if (_occlusionViewOwnership.Equals(ownership))
+            return;
+
+        _occlusionViewOwnership = ownership;
         MeshRenderCommands.SetOwnerPipeline(this);
     }
 

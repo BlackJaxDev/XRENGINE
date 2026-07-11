@@ -364,8 +364,8 @@ namespace XREngine.Rendering.Commands
             }
 
             // Pass-awareness: keep shadow/depth contributors out of occlusion hiding to avoid missing required passes.
-            if (RuntimeEngine.Rendering.State.IsShadowPass ||
-                (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState?.UseDepthNormalMaterialVariants ?? false))
+            if (_ownerPipeline?.IsShadowPipeline == true ||
+                ((_ownerPipeline as XRRenderPipelineInstance)?.RenderState.UseDepthNormalMaterialVariants ?? false))
             {
                 HiZStageStats.Record("Exit.ShadowOrDepthPass", 0.0);
                 RecordOcclusionFrameStats(0u, 0u, 0u, 0u);
@@ -440,7 +440,7 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            var pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            var pipeline = _ownerPipeline as XRRenderPipelineInstance;
             if (pipeline is null)
             {
                 RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
@@ -668,7 +668,7 @@ namespace XREngine.Rendering.Commands
             if (depthInput.History)
                 return false;
 
-            if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is not IForwardDepthNormalPrePassSettings { ForwardDepthPrePassEnabled: true })
+            if ((_ownerPipeline as XRRenderPipelineInstance)?.Pipeline is not IForwardDepthNormalPrePassSettings { ForwardDepthPrePassEnabled: true })
                 return false;
 
             return RenderPass == (int)EDefaultRenderPass.OpaqueForward ||
@@ -815,7 +815,7 @@ namespace XREngine.Rendering.Commands
         {
             input = default;
 
-            if (!VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData) ||
+            if (!VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(pipeline, out var temporalData) ||
                 !temporalData.HistoryReady)
                 return false;
 

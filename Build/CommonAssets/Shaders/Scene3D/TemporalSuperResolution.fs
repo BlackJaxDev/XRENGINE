@@ -261,8 +261,8 @@ void main()
     vec2 uv = ClampSourceUv(
         XRENGINE_FramebufferUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight)));
 
-    // MotionVectors.fs writes unjittered current-minus-previous NDC, so do
-    // not apply the temporal jitter delta again here.
+    // MotionVectors.fs writes unjittered current-minus-previous NDC. The
+    // projection-sample displacement is therefore applied exactly once below.
     float depthDiscontinuity = EvaluateDepthDiscontinuity(uv);
     vec2 velocity = texture(Velocity, uv).xy;
     if (depthDiscontinuity > 1e-4f)
@@ -277,13 +277,23 @@ void main()
     if (isPostTemporalForward)
         velocity = vec2(0.0f);
 
-    vec2 historyUV = uv - velocity * 0.5f;
+    // Velocity is encoded from unjittered NDC matrices. Convert it to UV and
+    // account for projection-sample displacement exactly once here.
+    vec2 historyUV = uv - velocity * 0.5f + PreviousJitterUv - CurrentJitterUv;
     vec2 sourceTexelSize = TextureTexelSize(PostProcessOutputTexture);
     vec2 historyTexelSize = TextureTexelSize(TsrHistoryColor);
+    bool nativeResolution = all(equal(
+        textureSize(PostProcessOutputTexture, 0),
+        textureSize(TsrHistoryColor, 0)));
 
     vec3 currentColorRaw = texture(PostProcessOutputTexture, uv).rgb;
     vec3 currentColorFiltered = SampleCurrentReconstruction(PostProcessOutputTexture, uv, sourceTexelSize);
-    vec3 currentColor = mix(currentColorRaw, currentColorFiltered, 0.25f);
+    // At 1:1 resolution retain the exact current sample and continue through
+    // temporal reprojection/history accumulation. Only the spatial upscale
+    // reconstruction is bypassed; TSR is not reduced to a spatial copy.
+    vec3 currentColor = nativeResolution
+        ? currentColorRaw
+        : mix(currentColorRaw, currentColorFiltered, 0.25f);
     vec3 currentYCoCg = RGBToYCoCg(currentColor);
     float currentLuma = currentYCoCg.x;
 
@@ -376,7 +386,9 @@ void main()
             texture(PostProcessOutputTexture, ClampSourceUv(uv + vec2(0.0f, -1.0f) * sourceTexelSize)).rgb +
             texture(PostProcessOutputTexture, ClampSourceUv(uv + vec2(0.0f,  1.0f) * sourceTexelSize)).rgb;
         vec3 highFreq = currentColorRaw - neighbors * 0.25f;
-        float sharpenStrength = 0.18f * (1.0f - historyWeight) * (1.0f - 0.5f * reactiveMask);
+        float sharpenStrength = (nativeResolution ? 0.08f : 0.18f)
+            * (1.0f - historyWeight)
+            * (1.0f - 0.5f * reactiveMask);
         result += highFreq * sharpenStrength;
     }
 

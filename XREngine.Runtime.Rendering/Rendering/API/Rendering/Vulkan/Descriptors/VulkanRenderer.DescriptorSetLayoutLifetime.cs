@@ -5,8 +5,16 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+    /// <summary>
+    /// Tracks the lifetime of Vulkan descriptor set layouts, ensuring proper destruction and avoiding stale resource usage.
+    /// </summary>
     private readonly ConcurrentDictionary<ulong, string> _liveDescriptorSetLayoutHandles = new();
 
+    /// <summary>
+    /// Tracks a Vulkan descriptor set layout as live, associating it with an owner for proper resource management.
+    /// </summary>
+    /// <param name="descriptorSetLayout">The Vulkan descriptor set layout to track as live.</param>
+    /// <param name="owner">The owner or context responsible for this descriptor set layout.</param>
     private void TrackLiveDescriptorSetLayout(
         DescriptorSetLayout descriptorSetLayout,
         string owner)
@@ -21,6 +29,12 @@ public unsafe partial class VulkanRenderer
             owner);
     }
 
+    /// <summary>
+    /// Attempts to begin the destruction of a Vulkan descriptor set layout, ensuring it is safe to do so and not stale.
+    /// </summary>
+    /// <param name="descriptorSetLayout">The Vulkan descriptor set layout to attempt to destroy.</param>
+    /// <param name="owner">The owner or context responsible for this descriptor set layout.</param>
+    /// <returns>True if the destruction process was successfully initiated; otherwise, false.</returns>
     private bool TryBeginDestroyDescriptorSetLayout(
         DescriptorSetLayout descriptorSetLayout,
         string owner)
@@ -59,6 +73,9 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
+    /// <summary>
+    /// Destroys all remaining tracked Vulkan descriptor set layouts, ensuring proper cleanup during shutdown.
+    /// </summary>
     private void DestroyRemainingTrackedDescriptorSetLayouts()
     {
         foreach ((ulong handle, string owner) in _liveDescriptorSetLayoutHandles.ToArray())

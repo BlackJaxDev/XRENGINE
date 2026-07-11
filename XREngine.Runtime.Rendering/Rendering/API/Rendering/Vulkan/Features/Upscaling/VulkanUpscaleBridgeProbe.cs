@@ -8,20 +8,10 @@ using System.Runtime.InteropServices;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed class VulkanUpscaleBridgeProbeResult
-{
-    public bool ProbeSucceeded { get; init; }
-    public bool HasVulkanExternalMemoryImport { get; init; }
-    public bool HasVulkanExternalSemaphoreImport { get; init; }
-    public string? SelectedDeviceName { get; init; }
-    public uint SelectedVendorId { get; init; }
-    public uint SelectedDeviceId { get; init; }
-    public bool? SamePhysicalGpu { get; init; }
-    public string? GpuIdentityReason { get; init; }
-    public string? ProbeFailureReason { get; init; }
-}
-
-internal static unsafe class VulkanUpscaleBridgeProbe
+/// <summary>
+/// Probes the system for Vulkan upscale bridge compatibility.
+/// </summary>
+internal static unsafe partial class VulkanUpscaleBridgeProbe
 {
     private const uint NvidiaVendorId = 0x10DE;
     private const uint IntelVendorId = 0x8086;
@@ -35,44 +25,12 @@ internal static unsafe class VulkanUpscaleBridgeProbe
         "VK_KHR_external_semaphore_win32",
     ];
 
-    private sealed class Candidate
-    {
-        public PhysicalDevice Device { get; init; }
-        public PhysicalDeviceProperties Properties { get; init; }
-        public required HashSet<string> ExtensionNames { get; init; }
-        public string DeviceName { get; init; } = string.Empty;
-        public uint VendorId { get; init; }
-        public uint DeviceId { get; init; }
-        public uint? GraphicsQueueFamilyIndex { get; init; }
-        public bool HasExternalMemory { get; init; }
-        public bool HasExternalSemaphore { get; init; }
-        public bool HasExternalMemoryWin32 { get; init; }
-        public bool HasExternalSemaphoreWin32 { get; init; }
-        public bool RendererMatches { get; init; }
-        public bool VendorMatches { get; init; }
-
-        public bool SupportsBridgeImport
-            => HasExternalMemory && HasExternalSemaphore && HasExternalMemoryWin32 && HasExternalSemaphoreWin32;
-    }
-
-    internal sealed class VulkanUpscaleBridgeSelectedDevice
-    {
-        public PhysicalDevice Device { get; init; }
-        public PhysicalDeviceProperties Properties { get; init; }
-        public required HashSet<string> ExtensionNames { get; init; }
-        public string DeviceName { get; init; } = string.Empty;
-        public uint VendorId { get; init; }
-        public uint DeviceId { get; init; }
-        public uint GraphicsQueueFamilyIndex { get; init; }
-        public bool HasExternalMemory { get; init; }
-        public bool HasExternalSemaphore { get; init; }
-        public bool HasExternalMemoryWin32 { get; init; }
-        public bool HasExternalSemaphoreWin32 { get; init; }
-        public bool? SamePhysicalGpu { get; init; }
-        public string? GpuIdentityReason { get; init; }
-        public bool SupportsBridgeImport { get; init; }
-    }
-
+    /// <summary>
+    /// Probes the system for Vulkan upscale bridge compatibility and returns the result.
+    /// </summary>
+    /// <param name="openGlVendor">The vendor string of the OpenGL context.</param>
+    /// <param name="openGlRenderer">The renderer string of the OpenGL context.</param>
+    /// <returns>A <see cref="VulkanUpscaleBridgeProbeResult"/> indicating the result of the probe.</returns>
     public static VulkanUpscaleBridgeProbeResult Probe(string? openGlVendor, string? openGlRenderer)
     {
         if (!OperatingSystem.IsWindows())
@@ -175,6 +133,12 @@ internal static unsafe class VulkanUpscaleBridgeProbe
         }
     }
 
+    /// <summary>
+    /// Enumerates the extension names supported by the specified Vulkan device.
+    /// </summary>
+    /// <param name="api">The Vulkan API instance.</param>
+    /// <param name="device">The Vulkan physical device.</param>
+    /// <returns>A set of extension names supported by the device.</returns>
     private static HashSet<string> EnumerateDeviceExtensionNames(Vk api, PhysicalDevice device)
     {
         uint extensionCount = 0;
@@ -194,6 +158,11 @@ internal static unsafe class VulkanUpscaleBridgeProbe
             .ToHashSet(StringComparer.Ordinal);
     }
 
+    /// <summary>
+    /// Selects the best candidate from the list of Vulkan device candidates based on predefined criteria.
+    /// </summary>
+    /// <param name="candidates">The list of Vulkan device candidates to evaluate.</param>
+    /// <returns>The best candidate if one is found; otherwise, <c>null</c>.</returns>
     private static Candidate? SelectBestCandidate(List<Candidate> candidates)
     {
         return candidates
@@ -205,6 +174,16 @@ internal static unsafe class VulkanUpscaleBridgeProbe
             .FirstOrDefault();
     }
 
+    /// <summary>
+    /// Attempts to select the most suitable Vulkan device based on the available physical devices and the provided OpenGL vendor and renderer information.
+    /// </summary>
+    /// <param name="api">The Vulkan API instance.</param>
+    /// <param name="instance">The Vulkan instance.</param>
+    /// <param name="openGlVendor">The OpenGL vendor string.</param>
+    /// <param name="openGlRenderer">The OpenGL renderer string.</param>
+    /// <param name="selectedDevice">The selected Vulkan device if one is found.</param>
+    /// <param name="failureReason">The reason for failure if no suitable device is found.</param>
+    /// <returns><c>true</c> if a suitable device was selected; otherwise, <c>false</c>.</returns>
     internal static bool TrySelectDevice(
         Vk api,
         Instance instance,
@@ -291,6 +270,12 @@ internal static unsafe class VulkanUpscaleBridgeProbe
         return true;
     }
 
+    /// <summary>
+    /// Evaluates the identity of the selected Vulkan device in relation to the available candidates and the OpenGL context.
+    /// </summary>
+    /// <param name="candidates">The list of Vulkan device candidates to evaluate.</param>
+    /// <param name="selected">The selected Vulkan device candidate.</param>
+    /// <returns>A tuple containing a nullable boolean indicating if the selected device is the same physical GPU as the OpenGL context, and a string providing the reason for the evaluation result.</returns>
     private static (bool? SamePhysicalGpu, string? Reason) EvaluateGpuIdentity(List<Candidate> candidates, Candidate selected)
     {
         List<Candidate> exactMatches = candidates.Where(static candidate => candidate.RendererMatches).ToList();
@@ -310,6 +295,11 @@ internal static unsafe class VulkanUpscaleBridgeProbe
         return (false, $"OpenGL renderer did not match the selected Vulkan device ('{selected.DeviceName}').");
     }
 
+    /// <summary>
+    /// Builds a reason string indicating which required Vulkan bridge extensions are missing from the specified candidate device.
+    /// </summary>
+    /// <param name="candidate">The Vulkan device candidate to evaluate for missing extensions.</param>
+    /// <returns>A string describing the missing extensions, or an empty string if all required extensions are present.</returns>
     private static string BuildMissingExtensionReason(VulkanUpscaleBridgeSelectedDevice candidate)
     {
         List<string> missing = new(RequiredBridgeDeviceExtensions.Length);
@@ -327,11 +317,21 @@ internal static unsafe class VulkanUpscaleBridgeProbe
             : $"Selected Vulkan device '{candidate.DeviceName}' is missing required bridge extensions: {string.Join(", ", missing)}.";
     }
 
+    /// <summary>
+    /// Reads the device name from the specified Vulkan physical device properties.
+    /// </summary>
+    /// <param name="properties">The Vulkan physical device properties from which to read the device name.</param>
+    /// <returns>The name of the Vulkan device as a string, or an empty string if it cannot be determined.</returns>
     private static string ReadDeviceName(PhysicalDeviceProperties properties)
-    {
-        return SilkMarshal.PtrToString((nint)properties.DeviceName) ?? string.Empty;
-    }
+        => SilkMarshal.PtrToString((nint)properties.DeviceName) ?? string.Empty;
 
+    /// <summary>
+    /// Attempts to find a graphics queue family index for the specified Vulkan physical device.
+    /// </summary>
+    /// <param name="api">The Vulkan API instance.</param>
+    /// <param name="device">The Vulkan physical device to query.</param>
+    /// <param name="queueFamilyIndex">Outputs the index of a graphics queue family if found.</param>
+    /// <returns>True if a graphics queue family was found; otherwise, false.</returns>
     private static bool TryFindGraphicsQueueFamily(Vk api, PhysicalDevice device, out uint queueFamilyIndex)
     {
         uint queueFamilyCount = 0;
@@ -361,6 +361,12 @@ internal static unsafe class VulkanUpscaleBridgeProbe
         return false;
     }
 
+    /// <summary>
+    /// Determines whether the specified OpenGL renderer name matches the Vulkan device name.
+    /// </summary>
+    /// <param name="openGlRenderer">The name of the OpenGL renderer.</param>
+    /// <param name="vulkanDeviceName">The name of the Vulkan device.</param>
+    /// <returns>True if the OpenGL renderer name matches the Vulkan device name; otherwise, false.</returns>
     private static bool RendererMatches(string? openGlRenderer, string? vulkanDeviceName)
     {
         if (string.IsNullOrWhiteSpace(openGlRenderer) || string.IsNullOrWhiteSpace(vulkanDeviceName))
@@ -374,12 +380,23 @@ internal static unsafe class VulkanUpscaleBridgeProbe
         return gl.Contains(vk, StringComparison.Ordinal) || vk.Contains(gl, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Determines whether the specified OpenGL vendor matches the Vulkan vendor ID.
+    /// </summary>
+    /// <param name="openGlVendor">The name of the OpenGL vendor.</param>
+    /// <param name="vulkanVendorId">The Vulkan vendor ID.</param>
+    /// <returns>True if the OpenGL vendor matches the Vulkan vendor ID; otherwise, false.</returns>
     private static bool VendorMatches(string? openGlVendor, uint vulkanVendorId)
     {
         uint? openGlVendorId = TryMapOpenGlVendor(openGlVendor);
         return openGlVendorId.HasValue && openGlVendorId.Value == vulkanVendorId;
     }
 
+    /// <summary>
+    /// Tries to map the specified OpenGL vendor name to a corresponding Vulkan vendor ID.
+    /// </summary>
+    /// <param name="openGlVendor">The name of the OpenGL vendor.</param>
+    /// <returns>The corresponding Vulkan vendor ID if a match is found; otherwise, null.</returns>
     private static uint? TryMapOpenGlVendor(string? openGlVendor)
     {
         if (string.IsNullOrWhiteSpace(openGlVendor))
@@ -395,15 +412,18 @@ internal static unsafe class VulkanUpscaleBridgeProbe
         return null;
     }
 
+    /// <summary>
+    /// Normalizes the specified GPU name by removing non-alphanumeric characters and converting to lowercase.
+    /// </summary>
+    /// <param name="value">The GPU name to normalize.</param>
+    /// <returns>The normalized GPU name.</returns>
     private static string NormalizeGpuName(string value)
     {
         Span<char> buffer = stackalloc char[value.Length];
         int index = 0;
         foreach (char c in value)
-        {
             if (char.IsLetterOrDigit(c))
                 buffer[index++] = char.ToLowerInvariant(c);
-        }
 
         return index == 0 ? string.Empty : new string(buffer[..index]);
     }

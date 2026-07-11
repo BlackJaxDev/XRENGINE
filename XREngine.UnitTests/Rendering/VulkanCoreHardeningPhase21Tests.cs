@@ -25,6 +25,44 @@ public sealed class VulkanCoreHardeningPhase21Tests
     }
 
     [Test]
+    public void MainViewportPlannerKey_IgnoresRotatingTargetSlotButPreservesOutputOwnership()
+    {
+        VulkanRenderer.FrameOpContext desktop = CreateContext(
+            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+            descriptorGeneration: 10) with
+        {
+            OutputFrameBufferIdentity = 700,
+            OutputTargetIdentity = 1,
+            OutputTargetName = "DesktopSwapchain[0]",
+        };
+        VulkanRenderer.FrameOpContext rotatedTarget = desktop with
+        {
+            OutputTargetIdentity = 2,
+            OutputTargetName = "DesktopSwapchain[1]",
+            RecordingFingerprint = desktop.RecordingFingerprint + 1,
+        };
+        VulkanRenderer.FrameOpContext anotherViewport = rotatedTarget with
+        {
+            ViewportIdentity = desktop.ViewportIdentity + 1,
+        };
+        VulkanRenderer.FrameOpContext captureTarget = desktop with
+        {
+            ContextKind = VulkanRenderer.EVulkanFrameOpContextKind.SceneCapture,
+        };
+        VulkanRenderer.FrameOpContext rotatedCaptureTarget = captureTarget with
+        {
+            OutputTargetIdentity = captureTarget.OutputTargetIdentity + 1,
+        };
+
+        VulkanRenderer.BuildFrameOpPlannerStateKey(desktop)
+            .ShouldBe(VulkanRenderer.BuildFrameOpPlannerStateKey(rotatedTarget));
+        VulkanRenderer.BuildFrameOpPlannerStateKey(desktop)
+            .ShouldNotBe(VulkanRenderer.BuildFrameOpPlannerStateKey(anotherViewport));
+        VulkanRenderer.BuildFrameOpPlannerStateKey(captureTarget)
+            .ShouldNotBe(VulkanRenderer.BuildFrameOpPlannerStateKey(rotatedCaptureTarget));
+    }
+
+    [Test]
     public void AlternatingPlannerContexts_RetainDistinctAllocatorOwners()
     {
         VulkanRenderer.FrameOpContext[] contexts =

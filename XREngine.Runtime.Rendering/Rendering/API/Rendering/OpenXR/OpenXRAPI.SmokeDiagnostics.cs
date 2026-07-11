@@ -8,81 +8,6 @@ using XREngine.Rendering;
 
 namespace XREngine.Rendering.API.Rendering.OpenXR;
 
-public sealed class OpenXrSmokeSwapchainSummary
-{
-    public int ViewIndex { get; set; }
-    public string Backend { get; set; } = string.Empty;
-    public uint Width { get; set; }
-    public uint Height { get; set; }
-    public long Format { get; set; }
-    public uint SampleCount { get; set; }
-    public uint ImageCount { get; set; }
-}
-
-public sealed class OpenXrSmokeSummary
-{
-    public const int CurrentSchemaVersion = 1;
-
-    public int SchemaVersion { get; set; } = CurrentSchemaVersion;
-    public DateTimeOffset CapturedAtUtc { get; set; } = DateTimeOffset.UtcNow;
-    public string? LogDirectory { get; set; }
-    public string? RuntimeManifestPath { get; set; }
-    public string? RuntimeName { get; set; }
-    public string? RuntimeVersion { get; set; }
-    public string RendererBackend { get; set; } = string.Empty;
-    public string RuntimeState { get; set; } = string.Empty;
-    public string SessionState { get; set; } = string.Empty;
-    public string ReferenceSpaceType { get; set; } = string.Empty;
-    public string ViewRenderModeRequested { get; set; } = string.Empty;
-    public string ViewRenderModeEffective { get; set; } = string.Empty;
-    public string ViewRenderImplementationPath { get; set; } = string.Empty;
-    public string ViewRenderTemporalHistoryPolicy { get; set; } = string.Empty;
-    public bool ViewRenderModeSupported { get; set; }
-    public string? ViewRenderModeDiagnostic { get; set; }
-    public string FoveationRequestedMode { get; set; } = string.Empty;
-    public string FoveationEffectiveMode { get; set; } = string.Empty;
-    public string FoveationQualityPreset { get; set; } = string.Empty;
-    public string FoveationCapabilityPath { get; set; } = string.Empty;
-    public bool FoveationSupported { get; set; }
-    public string? FoveationDiagnostic { get; set; }
-    public string[] FoveationBackendCapabilities { get; set; } = [];
-    public string[] EnabledExtensions { get; set; } = [];
-    public bool InstanceCreated { get; set; }
-    public bool SystemFound { get; set; }
-    public bool SessionCreated { get; set; }
-    public bool ReferenceSpaceCreated { get; set; }
-    public bool SwapchainsCreated { get; set; }
-    public bool SessionRunning { get; set; }
-    public bool TeardownCompleted { get; set; }
-    public long SubmittedFrameCount { get; set; }
-    public long NoLayerFrameCount { get; set; }
-    public long EndFrameFailureCount { get; set; }
-    public uint LocatedViewCount { get; set; }
-    public bool PredictedViewPoseCached { get; set; }
-    public bool LateViewPoseCached { get; set; }
-    public bool PredictedActionPoseCacheUpdated { get; set; }
-    public bool LateActionPoseCacheUpdated { get; set; }
-    public bool LeftControllerGripPoseAvailable { get; set; }
-    public bool RightControllerGripPoseAvailable { get; set; }
-    public bool LeftControllerAimPoseAvailable { get; set; }
-    public bool RightControllerAimPoseAvailable { get; set; }
-    public bool TrackerPoseAvailable { get; set; }
-    public string[] KnownTrackerUserPaths { get; set; } = [];
-    public bool LeftHandJointsActive { get; set; }
-    public bool RightHandJointsActive { get; set; }
-    public bool DesktopMirrorComposed { get; set; }
-    public long MissedDeadlineCount { get; set; }
-    public long[] PerEyeAcquireCounts { get; set; } = [];
-    public long[] PerEyeWaitCounts { get; set; } = [];
-    public long[] PerEyeReleaseCounts { get; set; } = [];
-    public long PerFrameAllocationsBytes { get; set; }
-    public OpenXrSmokeSwapchainSummary[] Swapchains { get; set; } = [];
-    public string[] RuntimeStateTransitions { get; set; } = [];
-    public string[] SessionStateTransitions { get; set; } = [];
-    public string[] Warnings { get; set; } = [];
-    public string[] Failures { get; set; } = [];
-}
-
 public unsafe partial class OpenXRAPI
 {
     private readonly object _smokeDiagnosticsLock = new();
@@ -93,7 +18,9 @@ public unsafe partial class OpenXRAPI
     private readonly List<OpenXrSmokeSwapchainSummary> _smokeSwapchains = [];
     private readonly long[] _smokePerEyeAcquireCounts = new long[RenderFrameViewSet.MaxViewCount];
     private readonly long[] _smokePerEyeWaitCounts = new long[RenderFrameViewSet.MaxViewCount];
+    private readonly long[] _smokePerEyePublishCounts = new long[RenderFrameViewSet.MaxViewCount];
     private readonly long[] _smokePerEyeReleaseCounts = new long[RenderFrameViewSet.MaxViewCount];
+    private readonly int[] _smokePerEyeLastImageSlots = new int[RenderFrameViewSet.MaxViewCount];
     private string[] _smokeEnabledExtensions = [];
     private VrViewRenderModeResolution _smokeViewRenderModeResolution;
     private VrFoveationResolution _smokeFoveationResolution;
@@ -116,12 +43,39 @@ public unsafe partial class OpenXRAPI
     private long _smokeNoLayerFrameCount;
     private long _smokeEndFrameFailureCount;
     private long _smokeMissedDeadlineCount;
+    private long _strictSinglePassStereoSequentialFallbackAttemptCount;
     private uint _smokeLocatedViewCount;
+    private int _smokeLastEndFrameResult;
+    private uint _smokeLastEndFrameLayerCount;
 
     public long SmokeSubmittedFrameCount => Volatile.Read(ref _smokeSubmittedFrameCount);
     public long SmokeNoLayerFrameCount => Volatile.Read(ref _smokeNoLayerFrameCount);
     public long SmokeCompletedFrameCount => SmokeSubmittedFrameCount + SmokeNoLayerFrameCount;
+    public long SmokeEndFrameFailureCount => Volatile.Read(ref _smokeEndFrameFailureCount);
+    public long StrictSinglePassStereoSequentialFallbackAttemptCount
+        => Volatile.Read(ref _strictSinglePassStereoSequentialFallbackAttemptCount);
     public bool SmokeTeardownCompleted => Volatile.Read(ref _smokeTeardownCompleted) != 0;
+    public event Action<long, long, long>? SmokeFrameCompleted;
+
+    public long GetSmokeEyeAcquireCount(uint viewIndex)
+        => ReadEyeCounter(_smokePerEyeAcquireCounts, viewIndex);
+
+    public long GetSmokeEyeWaitCount(uint viewIndex)
+        => ReadEyeCounter(_smokePerEyeWaitCounts, viewIndex);
+
+    public long GetSmokeEyePublishCount(uint viewIndex)
+        => ReadEyeCounter(_smokePerEyePublishCounts, viewIndex);
+
+    public long GetSmokeEyeReleaseCount(uint viewIndex)
+        => ReadEyeCounter(_smokePerEyeReleaseCounts, viewIndex);
+
+    public int GetSmokeEyeLastImageSlot(uint viewIndex)
+        => viewIndex < _smokePerEyeLastImageSlots.Length
+            ? Volatile.Read(ref _smokePerEyeLastImageSlots[viewIndex])
+            : -1;
+
+    public int SmokeLastEndFrameResult => Volatile.Read(ref _smokeLastEndFrameResult);
+    public uint SmokeLastEndFrameLayerCount => Volatile.Read(ref _smokeLastEndFrameLayerCount);
 
     public OpenXrSmokeSummary CreateSmokeSummary(string? logDirectory = null)
     {
@@ -169,6 +123,7 @@ public unsafe partial class OpenXRAPI
                 SubmittedFrameCount = Volatile.Read(ref _smokeSubmittedFrameCount),
                 NoLayerFrameCount = Volatile.Read(ref _smokeNoLayerFrameCount),
                 EndFrameFailureCount = Volatile.Read(ref _smokeEndFrameFailureCount),
+                StrictSinglePassStereoSequentialFallbackAttemptCount = Volatile.Read(ref _strictSinglePassStereoSequentialFallbackAttemptCount),
                 LocatedViewCount = Volatile.Read(ref _smokeLocatedViewCount),
                 PredictedViewPoseCached = Volatile.Read(ref _smokePredictedViewPoseCached) != 0,
                 LateViewPoseCached = Volatile.Read(ref _smokeLateViewPoseCached) != 0,
@@ -186,6 +141,7 @@ public unsafe partial class OpenXRAPI
                 MissedDeadlineCount = Volatile.Read(ref _smokeMissedDeadlineCount),
                 PerEyeAcquireCounts = CopyCounterArray(_smokePerEyeAcquireCounts),
                 PerEyeWaitCounts = CopyCounterArray(_smokePerEyeWaitCounts),
+                PerEyePublishCounts = CopyCounterArray(_smokePerEyePublishCounts),
                 PerEyeReleaseCounts = CopyCounterArray(_smokePerEyeReleaseCounts),
                 PerFrameAllocationsBytes = 0,
                 Swapchains = [.. _smokeSwapchains],
@@ -215,6 +171,14 @@ public unsafe partial class OpenXRAPI
             AddFailureIfMissing(
                 failures,
                 $"Unsupported VR.Foveation.Mode={_smokeFoveationResolution.RequestedMode}. {_smokeFoveationResolution.Diagnostic}");
+        }
+
+        long strictFallbackAttempts = Volatile.Read(ref _strictSinglePassStereoSequentialFallbackAttemptCount);
+        if (strictFallbackAttempts != 0)
+        {
+            AddFailureIfMissing(
+                failures,
+                $"Strict SinglePassStereo attempted sequential fallback {strictFallbackAttempts} time(s); expected exactly zero.");
         }
 
         return [.. failures];
@@ -267,7 +231,9 @@ public unsafe partial class OpenXRAPI
 
         Array.Clear(_smokePerEyeAcquireCounts);
         Array.Clear(_smokePerEyeWaitCounts);
+        Array.Clear(_smokePerEyePublishCounts);
         Array.Clear(_smokePerEyeReleaseCounts);
+        Array.Fill(_smokePerEyeLastImageSlots, -1);
         Volatile.Write(ref _smokeInstanceCreated, 0);
         Volatile.Write(ref _smokeSystemFound, 0);
         Volatile.Write(ref _smokeSessionCreated, 0);
@@ -284,7 +250,10 @@ public unsafe partial class OpenXRAPI
         Volatile.Write(ref _smokeNoLayerFrameCount, 0);
         Volatile.Write(ref _smokeEndFrameFailureCount, 0);
         Volatile.Write(ref _smokeMissedDeadlineCount, 0);
+        Volatile.Write(ref _strictSinglePassStereoSequentialFallbackAttemptCount, 0);
         Volatile.Write(ref _smokeLocatedViewCount, 0);
+        Volatile.Write(ref _smokeLastEndFrameResult, (int)Result.Success);
+        Volatile.Write(ref _smokeLastEndFrameLayerCount, 0u);
     }
 
     private void RecordSmokeInstanceCreated(string rendererBackend, string[] enabledExtensions)
@@ -394,17 +363,26 @@ public unsafe partial class OpenXRAPI
             Volatile.Write(ref _smokePredictedActionPoseCacheUpdated, 1);
     }
 
-    private void RecordSmokeEyeAcquire(uint viewIndex)
-        => IncrementEyeCounter(_smokePerEyeAcquireCounts, viewIndex);
+    private void RecordSmokeEyeAcquire(uint viewIndex, uint imageIndex)
+    {
+        IncrementEyeCounter(_smokePerEyeAcquireCounts, viewIndex);
+        if (viewIndex < _smokePerEyeLastImageSlots.Length)
+            Volatile.Write(ref _smokePerEyeLastImageSlots[viewIndex], checked((int)imageIndex));
+    }
 
     private void RecordSmokeEyeWait(uint viewIndex)
         => IncrementEyeCounter(_smokePerEyeWaitCounts, viewIndex);
+
+    private void RecordSmokeEyePublish(uint viewIndex)
+        => IncrementEyeCounter(_smokePerEyePublishCounts, viewIndex);
 
     private void RecordSmokeEyeRelease(uint viewIndex)
         => IncrementEyeCounter(_smokePerEyeReleaseCounts, viewIndex);
 
     private void RecordSmokeEndFrame(Result result, uint layerCount)
     {
+        Volatile.Write(ref _smokeLastEndFrameResult, (int)result);
+        Volatile.Write(ref _smokeLastEndFrameLayerCount, layerCount);
         if (result == Result.Success)
         {
             if (layerCount > 0)
@@ -416,6 +394,17 @@ public unsafe partial class OpenXRAPI
         {
             Interlocked.Increment(ref _smokeEndFrameFailureCount);
         }
+
+        long submitted = Volatile.Read(ref _smokeSubmittedFrameCount);
+        long noLayer = Volatile.Read(ref _smokeNoLayerFrameCount);
+        try
+        {
+            SmokeFrameCompleted?.Invoke(submitted + noLayer, submitted, noLayer);
+        }
+        catch (Exception ex)
+        {
+            RecordSmokeFailureOnce($"Smoke frame-ledger callback failed: {ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     private void RecordSmokeDesktopMirrorComposed()
@@ -423,6 +412,18 @@ public unsafe partial class OpenXRAPI
 
     private void RecordSmokeMissedDeadline()
         => Interlocked.Increment(ref _smokeMissedDeadlineCount);
+
+    private void RecordStrictSinglePassStereoSequentialFallbackAttempt(string stage, string reason)
+    {
+        Interlocked.Increment(ref _strictSinglePassStereoSequentialFallbackAttemptCount);
+        string message = $"Strict SinglePassStereo sequential fallback attempt blocked at stage={stage}: {reason}";
+        RecordSmokeFailureOnce(message);
+        Debug.RenderingWarningEvery(
+            $"OpenXR.StrictSps.SequentialFallbackBlocked.{stage}.{GetHashCode()}",
+            TimeSpan.FromSeconds(1),
+            "[OpenXR] {0}",
+            message);
+    }
 
     private void RecordSmokeTeardownCompleted()
         => Volatile.Write(ref _smokeTeardownCompleted, 1);
@@ -460,6 +461,9 @@ public unsafe partial class OpenXRAPI
 
         Interlocked.Increment(ref counters[viewIndex]);
     }
+
+    private static long ReadEyeCounter(long[] counters, uint viewIndex)
+        => viewIndex < counters.Length ? Volatile.Read(ref counters[viewIndex]) : 0;
 
     private static long[] CopyCounterArray(long[] source)
     {

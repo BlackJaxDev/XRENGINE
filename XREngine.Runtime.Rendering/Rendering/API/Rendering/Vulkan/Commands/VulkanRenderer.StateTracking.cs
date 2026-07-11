@@ -421,6 +421,11 @@ public unsafe partial class VulkanRenderer
     private XRFrameBuffer? _lastWindowPresentFallbackFrameBuffer;
     private FrameOpContext? _lastWindowPresentFrameOpContext;
     private VulkanPhysicalImageGroup? _retainedAutoExposureHistoryGroup;
+    private ulong _lastResourcePlanReplacementRevision;
+    private ulong _lastResourcePlanReplacementSignature;
+    private ulong _lastResourcePlanReplacementAllocationSignature;
+    private int _lastResourcePlanReplacementRetiredImageCount;
+    private int _lastResourcePlanReplacementRetiredBufferCount;
     private EReadBufferMode _readBufferMode = EReadBufferMode.ColorAttachment0;
     private EVulkanQueueOverlapMode _autoQueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly;
     private EVulkanQueueOverlapMode _lastResolvedQueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly;
@@ -470,14 +475,17 @@ public unsafe partial class VulkanRenderer
         int DescriptorSignature);
 
     private sealed class MergedFrameOpRegistryCacheEntry(
+        FrameOpPlannerStateKey ownerKey,
         RenderResourceRegistry? primaryRegistry,
         FrameOpRegistryCacheSource[] sources,
         RenderResourceRegistry mergedRegistry,
         ulong lastUsedFrameId)
     {
+        public FrameOpPlannerStateKey OwnerKey { get; } = ownerKey;
         public RenderResourceRegistry? PrimaryRegistry { get; } = primaryRegistry;
-        public FrameOpRegistryCacheSource[] Sources { get; } = sources;
-        public RenderResourceRegistry MergedRegistry { get; } = mergedRegistry;
+        public int PrimaryDescriptorSignature { get; set; } = primaryRegistry?.DescriptorSignature ?? 0;
+        public FrameOpRegistryCacheSource[] Sources { get; set; } = sources;
+        public RenderResourceRegistry MergedRegistry { get; set; } = mergedRegistry;
         public ulong LastUsedFrameId { get; set; } = lastUsedFrameId;
     }
 
@@ -694,7 +702,7 @@ public unsafe partial class VulkanRenderer
     private readonly record struct ResourcePlannerSignatureBreakdown(
         EVulkanFrameOpContextKind ContextKind,
         ulong ContextId,
-        ulong RecordingFingerprint,
+        ulong CompatibilityFingerprint,
         int Registry,
         int OutputFrameBuffer,
         int OutputTarget,
@@ -713,7 +721,7 @@ public unsafe partial class VulkanRenderer
         uint TransferQueueFamily)
     {
         public override string ToString()
-            => $"kind={ContextKind} contextId={ContextId} context=0x{RecordingFingerprint:X16} registry=0x{Registry:X8} outputFbo=0x{OutputFrameBuffer:X8} outputTarget=0x{OutputTarget:X8} dims={DisplayWidth}x{DisplayHeight}/{InternalWidth}x{InternalHeight} " +
+            => $"kind={ContextKind} contextId={ContextId} plan=0x{CompatibilityFingerprint:X16} registry=0x{Registry:X8} outputFbo=0x{OutputFrameBuffer:X8} outputTarget=0x{OutputTarget:X8} dims={DisplayWidth}x{DisplayHeight}/{InternalWidth}x{InternalHeight} " +
                $"passes=0x{PassMetadata:X8} batches=0x{GraphBatches:X8} edges=0x{GraphEdges:X8} resourceGen={ResourceGeneration} descriptorGen={DescriptorGeneration} submitQ={SubmissionQueueFamily} " +
                $"queues=g{GraphicsQueueFamily}/c{ComputeQueueFamily}/t{TransferQueueFamily}";
 
@@ -721,7 +729,7 @@ public unsafe partial class VulkanRenderer
         {
             StringBuilder builder = new();
             AppendDelta(builder, "context-kind", (int)previous.ContextKind, (int)ContextKind);
-            AppendDelta(builder, "context-fingerprint", previous.RecordingFingerprint, RecordingFingerprint, hexadecimal: true);
+            AppendDelta(builder, "plan-fingerprint", previous.CompatibilityFingerprint, CompatibilityFingerprint, hexadecimal: true);
             AppendDelta(builder, "resource-registry", previous.Registry, Registry, hexadecimal: true);
             AppendDelta(builder, "output-fbo", previous.OutputFrameBuffer, OutputFrameBuffer, hexadecimal: true);
             AppendDelta(builder, "output-target", previous.OutputTarget, OutputTarget, hexadecimal: true);

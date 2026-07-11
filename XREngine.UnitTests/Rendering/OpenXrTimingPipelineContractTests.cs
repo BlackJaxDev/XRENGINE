@@ -35,10 +35,9 @@ public sealed class OpenXrTimingPipelineContractTests
         environmentVariables.ShouldContain("XRE_OPENXR_VULKAN_MIRROR_FBO");
         environmentVariables.ShouldContain("XRE_OPENXR_VULKAN_PREWARM_EYES");
         environmentVariables.ShouldContain("XRE_OPENXR_VULKAN_SERIAL_EYE_SUBMIT");
-        environmentVariables.ShouldContain("XRE_OPENXR_VULKAN_TRUE_STEREO");
         vulkanOpenXr.ShouldContain("OpenXrVulkanPrewarmEyes");
-        vulkanOpenXr.ShouldContain("OpenXrVulkanTrueStereoOverride");
-        vulkanOpenXr.ShouldContain("IsSteamVrOpenXrRuntime");
+        vulkanOpenXr.ShouldNotContain("OpenXrVulkanTrueStereoOverride");
+        vulkanOpenXr.ShouldContain("Sequential/per-eye fallback is forbidden");
         vulkanOpenXr.ShouldContain("Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanMirrorFbo)");
         vulkanOpenXr.ShouldContain("\"1\"");
         vulkanOpenXr.ShouldContain("leave it unset for direct swapchain rendering");
@@ -58,7 +57,8 @@ public sealed class OpenXrTimingPipelineContractTests
         string frameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
         string vulkanOpenXrApi = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs");
         string vulkanRendererOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
-        string vulkanCommandBufferState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferState.cs");
+        string vulkanCommandBufferState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferState.cs")
+            + ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.OwnedCommandChainSecondaryPool.cs");
         string vulkanCommandChainLowering = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandChainLowering.cs");
         string vkDataBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
         string vulkanComputeDescriptors = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.ComputeDescriptors.cs");
@@ -80,8 +80,9 @@ public sealed class OpenXrTimingPipelineContractTests
         vulkanOpenXrApi.ShouldContain("AcquireAndWaitOpenXrEyeImage(0");
         vulkanOpenXrApi.ShouldContain("AcquireAndWaitOpenXrEyeImage(1");
         vulkanOpenXrApi.ShouldContain("TryRenderVulkanEyeBatchToSwapchains");
-        vulkanOpenXrApi.ShouldContain("bool allowSequentialFallback = false;");
-        vulkanOpenXrApi.ShouldContain("falling back to sequential eye rendering for this frame");
+        vulkanOpenXrApi.ShouldContain("bool permitSequentialFallback = modeResolution.RequestedMode != EVrViewRenderMode.SinglePassStereo;");
+        vulkanOpenXrApi.ShouldContain("requestSequentialFallback = permitSequentialFallback;");
+        vulkanOpenXrApi.ShouldContain("Sequential/per-eye fallback is forbidden");
         vulkanOpenXrApi.ShouldContain("handled = false;");
         vulkanOpenXrApi.ShouldContain("EnsureVulkanEyeMirrorTargets(renderer, width, height)");
         vulkanOpenXrApi.ShouldContain("OpenXrEyeMirrorRenderRequest");
@@ -116,8 +117,10 @@ public sealed class OpenXrTimingPipelineContractTests
         vulkanCommandBufferState.ShouldContain("XREngineEnvironmentVariables.OpenXrVulkanPrimaryReuse), \"1\"");
         vulkanRendererOpenXr.ShouldContain("OpenXrEyePreviewCopyRequest");
         vulkanRendererOpenXr.ShouldContain("RecordOpenXrEyeSwapchainPreviewCopy(scope.CommandBuffer, in plan)");
-        vulkanRendererOpenXr.ShouldContain("TryRecordOpenXrEyeSwapchainCommandBuffer(firstEye");
-        vulkanRendererOpenXr.ShouldContain("TryRecordOpenXrEyeSwapchainCommandBuffer(secondEye");
+        vulkanRendererOpenXr.ShouldContain("TryPrepareOpenXrEyeSwapchainCommandBuffer(firstEye");
+        vulkanRendererOpenXr.ShouldContain("TryPrepareOpenXrEyeSwapchainCommandBuffer(secondEye");
+        vulkanRendererOpenXr.ShouldContain("TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(in firstPrepared");
+        vulkanRendererOpenXr.ShouldContain("TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(in secondPrepared");
         vulkanRendererOpenXr.ShouldContain("CaptureFrameOpsExcludingTextureUploads(request.EmitFrameOps, out _)");
         vulkanRendererOpenXr.ShouldContain("CaptureFrameOpsExcludingTextureUploads(emitFrameOps, out _)");
         vulkanRendererOpenXr.ShouldContain("TryReuseOpenXrPrimaryCommandBuffer");
@@ -1048,7 +1051,15 @@ public sealed class OpenXrTimingPipelineContractTests
     public void OpenXrSmokeRun_UsesStableExitCodesAndSummaryContract()
     {
         string program = ReadWorkspaceFile("XREngine.Editor/Program.OpenXrSmokeRunController.cs");
-        string diagnostics = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.SmokeDiagnostics.cs");
+        string diagnostics = string.Concat(
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.SmokeDiagnostics.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXrSmokeSummary.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXrSmokeFrameLedgerEntry.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXrSmokeOcclusionViewLedgerEntry.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXrSmokeOutputLedgerEntry.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXrSmokeSwapchainSummary.cs"));
+        string monadoRunner = ReadWorkspaceFile("Tools/OpenXR/Run-OpenXrMonadoSmoke.ps1");
+        string phase524bValidator = ReadWorkspaceFile("Tools/Validate-VulkanPhase524b.ps1");
         string xrCalls = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.XrCalls.cs");
         string frameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
         string runtimeStateMachine = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.RuntimeStateMachine.cs");
@@ -1060,6 +1071,20 @@ public sealed class OpenXrTimingPipelineContractTests
         program.ShouldContain("ExitTeardownFailure = 24");
         program.ShouldContain("--openxr-smoke-summary");
         program.ShouldContain(nameof(XREngineEnvironmentVariables.OpenXrSmokeFrames));
+        program.ShouldContain(nameof(XREngineEnvironmentVariables.OpenXrSmokeWarmupFrames));
+        program.ShouldContain("--smoke-warmup-frames");
+        program.ShouldContain("OpenXrSmokeFrameLedgerEntry[] _frameLedger");
+        program.ShouldContain("SmokeFrameCompleted += RecordSmokeFrame");
+        program.ShouldContain("VulkanFrameTotalMs");
+        program.ShouldContain("OcclusionTelemetry.CpuQuerySubmittedTotal");
+        program.ShouldContain("CopyLastFrameCpuViewSnapshots");
+        program.ShouldContain("OpenXrSmokeOcclusionViewLedgerEntry");
+        program.ShouldContain("OpenXrSmokeOutputLedgerEntry[] _outputLedger");
+        program.ShouldContain("LeftAcquireDelta = leftAcquireDelta");
+        program.ShouldContain("LeftPublishDelta = leftPublishDelta");
+        program.ShouldContain("SubmissionRejectionCount = outputWork.SubmissionRejectionCount");
+        program.ShouldContain("GlobalInFlightWaitCount = outputWork.GlobalInFlightWaitCount");
+        program.ShouldContain("LayerCount = ResolveRequiredLayerCount(target.ViewMask)");
         program.ShouldContain("RequestSmokeSessionExit");
         program.ShouldContain("CompletedOpenXrFrameCount");
         program.ShouldContain("NoLayerFrameCount");
@@ -1074,12 +1099,37 @@ public sealed class OpenXrTimingPipelineContractTests
         diagnostics.ShouldContain("PredictedActionPoseCacheUpdated");
         diagnostics.ShouldContain("DesktopMirrorComposed");
         diagnostics.ShouldContain("PerFrameAllocationsBytes");
+        diagnostics.ShouldContain("CurrentSchemaVersion = 3");
+        diagnostics.ShouldContain("OpenXrSmokeFrameLedgerEntry");
+        diagnostics.ShouldContain("ProjectionLayerSubmitted");
+        diagnostics.ShouldContain("SmokeFrameCompleted?.Invoke");
+        diagnostics.ShouldContain("OcclusionViewLedger");
+        diagnostics.ShouldContain("OutputLedger");
+        diagnostics.ShouldContain("PerEyePublishCounts");
+
+        monadoRunner.ShouldContain("[int]$WarmupFrames = 0");
+        monadoRunner.ShouldContain("--smoke-warmup-frames");
+        phase524bValidator.ShouldContain("[int]$RetainedFrames = 300");
+        phase524bValidator.ShouldContain("XRE_VULKAN_DIAGNOSTIC_PRESET");
+        phase524bValidator.ShouldContain("SyncValidation");
+        phase524bValidator.ShouldContain("TrueSinglePassStereo");
+        phase524bValidator.ShouldContain("Resource-plan replacement occurred");
+        phase524bValidator.ShouldContain("CpuQueryAsync did not perform valid work");
+        phase524bValidator.ShouldContain("Desktop POV occlusion was not independently active");
+        phase524bValidator.ShouldContain("VR POV occlusion was not independently active");
+        phase524bValidator.ShouldContain("MinimumObservedFramesPerSecond = 30.0");
+        phase524bValidator.ShouldContain("Strict SPS attempted sequential fallback");
+        phase524bValidator.ShouldContain("did not complete exactly one acquire/wait/publish/release per eye");
+        phase524bValidator.ShouldContain("lacks a rendered desktop output or true-multiview external output");
+        phase524bValidator.ShouldContain("exceeded the bounded recovery age");
+        phase524bValidator.ShouldContain("exactly 300 retained frames");
 
         xrCalls.ShouldContain("RecordSmokeEndFrame");
         xrCalls.ShouldContain("RecordSmokeLocatedViews");
         xrCalls.ShouldContain("RecordSmokeSessionState");
         frameLifecycle.ShouldContain("RecordSmokeEyeAcquire");
         frameLifecycle.ShouldContain("RecordSmokeEyeWait");
+        frameLifecycle.ShouldContain("RecordSmokeEyePublish");
         frameLifecycle.ShouldContain("RecordSmokeEyeRelease");
         runtimeStateMachine.ShouldContain("_runtimeState != OpenXrRuntimeState.SessionRunning");
         runtimeStateMachine.ShouldContain("state == SessionState.Ready");
@@ -1195,6 +1245,7 @@ public sealed class OpenXrTimingPipelineContractTests
         string vrDeviceTransform = ReadWorkspaceFile("XREngine.Runtime.InputIntegration/Scene/Transforms/VR/VRDeviceTransformBase.cs");
         string openXrApi = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.OpenGL.cs");
         string openXrState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs");
+        string openXrFrameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
         string bootstrapPawns = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/BootstrapPawnFactory.cs");
         string editorUnitTestingPawns = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.Pawns.cs");
         string editorImGui = ReadWorkspaceFile("XREngine.Editor/IMGUI/EditorImGuiUI.ImGui.cs");
@@ -1218,7 +1269,11 @@ public sealed class OpenXrTimingPipelineContractTests
         vrDeviceTransform.ShouldNotContain("PropagateOpenXrHeadsetRenderMatrixToNonEyeChildren");
         vrDeviceTransform.ShouldNotContain("child.LocalMatrix * parentRenderMatrix");
         openXrApi.ShouldContain("camera.Transform.SetRenderMatrix(localPose * rootRender, recalcAllChildRenderMatrices: false);");
-        openXrState.ShouldContain("commands.IsRenderCommandSnapshotAuthority = true;");
+        openXrState.ShouldNotContain("_openXrSharedMeshRenderCommands");
+        openXrFrameLifecycle.ShouldContain("leftMeshCommands = _openXrLeftViewport.RenderPipelineInstance.MeshRenderCommands");
+        openXrFrameLifecycle.ShouldContain("rightMeshCommands = _openXrRightViewport.RenderPipelineInstance.MeshRenderCommands");
+        openXrFrameLifecycle.ShouldContain("_openXrLeftViewport.SwapBuffers(leftCommands");
+        openXrFrameLifecycle.ShouldContain("_openXrRightViewport.SwapBuffers(rightCommands");
         openXrState.ShouldNotContain("HasIndependentDesktopVrView");
         string editorUnitTestingWorld = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.cs");
         editorUnitTestingWorld.ShouldContain("s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR || requiresIndependentDesktopWindow || usesRuntimeDesktopCamera;");
@@ -1964,6 +2019,14 @@ public sealed class OpenXrTimingPipelineContractTests
             string fullPath = Path.Combine(dir.FullName, platformPath);
             if (File.Exists(fullPath))
                 return File.ReadAllText(fullPath).Replace("\r\n", "\n");
+
+            string marker = $"{Path.DirectorySeparatorChar}Commands{Path.DirectorySeparatorChar}VulkanRenderer.";
+            string relocatedPath = fullPath.Replace(
+                marker,
+                $"{Path.DirectorySeparatorChar}Commands{Path.DirectorySeparatorChar}CommandBuffers{Path.DirectorySeparatorChar}VulkanRenderer.",
+                StringComparison.Ordinal);
+            if (File.Exists(relocatedPath))
+                return File.ReadAllText(relocatedPath).Replace("\r\n", "\n");
 
             dir = dir.Parent;
         }

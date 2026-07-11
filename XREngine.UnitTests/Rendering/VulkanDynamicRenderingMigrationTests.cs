@@ -30,14 +30,17 @@ public sealed class VulkanDynamicRenderingMigrationTests
     public void DynamicCommandRecording_UsesDynamicRenderingAndKeepsLegacyCallsModeGated()
     {
         string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string extensions = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs");
         string frameBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Framebuffers/VulkanRenderer.SwapchainFramebuffers.cs");
         string renderPasses = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanRenderer.RenderPasses.cs");
 
         commandBuffers.ShouldContain("UseDynamicRenderingRenderTargets &&");
-        commandBuffers.ShouldContain("Api!.CmdBeginRendering(commandBuffer, &renderingInfo);");
-        commandBuffers.ShouldContain("Api!.CmdEndRendering(commandBuffer);");
+        commandBuffers.ShouldContain("CmdBeginDynamicRendering(commandBuffer, &renderingInfo);");
+        commandBuffers.ShouldContain("CmdEndDynamicRendering(commandBuffer);");
+        extensions.ShouldContain("Api!.CmdBeginRendering(commandBuffer, renderingInfo);");
+        extensions.ShouldContain("_khrDynamicRendering.CmdBeginRendering(commandBuffer, renderingInfo);");
         commandBuffers.ShouldContain("TransitionFboAttachmentsForDynamicRendering");
-        commandBuffers.ShouldContain("Api!.CmdBeginRenderPass(");
+        commandBuffers.ShouldContain("CmdBeginRenderPassTracked(");
         commandBuffers.ShouldContain("&fboPassInfo,");
         commandBuffers.ShouldContain("SubpassContents.Inline");
         frameBuffers.ShouldContain("if (UseDynamicRenderingRenderTargets)");
@@ -67,6 +70,21 @@ public sealed class VulkanDynamicRenderingMigrationTests
         commandBuffers.ShouldContain("BeginDynamicRenderingScope(in scopePlan, secondaryContents)");
         commandBuffers.ShouldContain("BeginDynamicRenderingScope(in scopePlan, secondaryContents: true)");
         commandBuffers.ShouldContain("TryResolveAttachmentImage(");
+    }
+
+    [Test]
+    public void DynamicRenderingFormatIdentity_UsesAllocationFreeInlineStorage()
+    {
+        string modeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanRenderTargetMode.cs");
+
+        modeSource.ShouldContain("[InlineArray(MaxColorAttachmentCount)]");
+        modeSource.ShouldContain("private readonly ColorFormatStorage _colorFormats;");
+        modeSource.ShouldContain("private readonly byte _colorAttachmentCount;");
+        modeSource.ShouldContain("stackalloc Format[colorCount]");
+        modeSource.ShouldNotContain("ReadOnlySpan<Format>.ToArray()");
+        modeSource.ShouldNotContain("colorFormats.ToArray()");
+        modeSource.ShouldNotContain("new Format[colorCount]");
+        modeSource.ShouldNotContain("Format[]? _colorFormats");
     }
 
     [Test]
@@ -165,7 +183,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
         gtao.ShouldContain("ResolveActiveRenderSize(instance, out int width, out int height);");
         gtao.ShouldContain("instance?.RenderState.CurrentRenderRegion");
 
-        string defaultPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
+        string defaultPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
         defaultPipeline.ShouldContain("activeState?.SceneCamera as XRCamera");
         defaultPipeline.ShouldContain("activeState?.RenderingCamera as XRCamera");
 
@@ -313,7 +331,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
     [Test]
     public void DescriptorHeapPhase13_DeclaresNativeInteropMappingPayloadsAndActiveBackend()
     {
-        string native = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorHeapNative.cs");
+        string native = ReadWorkspaceDirectory("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorHeapNative", "*.cs");
         string backend = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorHeap.cs");
         string bindings = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorHeapBindings.cs");
         string logicalDevice = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
@@ -356,6 +374,10 @@ public sealed class VulkanDynamicRenderingMigrationTests
         backend.ShouldContain("TryAppendDescriptorHeapInheritancePNext");
         backend.ShouldContain("_activeDescriptorBackend == EVulkanDescriptorBackend.DescriptorHeap");
         backend.ShouldContain("Descriptor heap is the active descriptor backend.");
+        backend.ShouldContain("DeviceLocalWithStaging");
+        backend.ShouldContain("FlushDescriptorHeapStagingCopies(commandBuffer)");
+        backend.ShouldContain("VulkanDescriptorHeapExt.ResourceHeapReadAccess2");
+        backend.ShouldContain("DescriptorHeapLastFrameCopies");
 
         bindings.ShouldContain("CreateDescriptorHeapProgramLayout");
         bindings.ShouldContain("VulkanDescriptorMappingSourceEXT.HeapWithPushIndex");
@@ -377,7 +399,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
         commandBuffers.ShouldContain("TryAppendDescriptorHeapInheritancePNext");
         commandBuffers.ShouldContain("TryBuildAndBindComputeDescriptorSets");
         secondaryBuffers.ShouldContain("TryAppendDescriptorHeapInheritancePNext");
-        featureProfile.ShouldContain(": EVulkanDescriptorBackend.DescriptorHeap");
+        featureProfile.ShouldContain(": EVulkanDescriptorBackend.DescriptorIndexing");
         program.ShouldContain("CreateDescriptorHeapProgramLayout");
         program.ShouldContain("ShaderDescriptorSetAndBindingMappingInfoEXTNative");
         program.ShouldContain("PipelineCreate2DescriptorHeapBit");
@@ -430,7 +452,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
 
         planner.ShouldContain("private readonly List<PlannedSwapchainBarrier> _swapchainBarriers");
         planner.ShouldContain("public IReadOnlyList<PlannedSwapchainBarrier> GetSwapchainBarriersForPass");
-        planner.ShouldContain("IsSwapchainTargetUsage(usage)");
+        planner.ShouldContain("IsSwapchainTargetUsage(usage, resourcePlanner)");
         planner.ShouldContain("TrackSwapchainUsage(pass, usage, edge, ownership)");
         planner.ShouldContain("PlannedImageState.FromSwapchainUsage");
         planner.ShouldContain("PlannedImageState.SwapchainPresentInitial()");
@@ -636,7 +658,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
         string blit = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Blit.cs");
 
         int getDepthIndex = readback.IndexOf("public override float GetDepth(int x, int y)", StringComparison.Ordinal);
-        int boundFramebufferIndex = readback.IndexOf("_boundReadFrameBuffer is not null", getDepthIndex, StringComparison.Ordinal);
+        int boundFramebufferIndex = readback.IndexOf("boundReadFrameBuffer is not null", getDepthIndex, StringComparison.Ordinal);
         int swapchainFallbackIndex = readback.IndexOf("TryReadSwapchainDepthPixel", getDepthIndex, StringComparison.Ordinal);
         int depthReadIndex = blit.IndexOf("private bool TryReadDepthPixel", StringComparison.Ordinal);
         int liveDepthIndex = blit.IndexOf("TryResolveLiveBlitImage(source, out BlitImageInfo liveSource)", depthReadIndex, StringComparison.Ordinal);
@@ -688,7 +710,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
     public void FboDepthStencilMetadata_PreservesStencilForOnTopAndPostProcessPasses()
     {
         string viewportCommand = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/ViewportRenderCommand.cs");
-        string quadBlit = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderQuadToFBO.cs");
+        string quadBlit = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderQuadToFBO.Internal.cs");
         string frameBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
         string bindFbo = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/State/VPRC_BindFBOByName.cs");
 
@@ -696,8 +718,10 @@ public sealed class VulkanDynamicRenderingMigrationTests
         viewportCommand.ShouldContain("builder.UseStencilAttachment(");
         viewportCommand.ShouldNotContain("RenderTargetHasStencilAttachment");
 
-        int sharedDepthIndex = quadBlit.IndexOf("if (SamplesSharedDepthView(SourceQuadFBOName, destination))", StringComparison.Ordinal);
-        int sharedStencilIndex = quadBlit.IndexOf("MakeFboStencilResource(destination)", sharedDepthIndex, StringComparison.Ordinal);
+        int sharedDepthIndex = quadBlit.IndexOf("if (resources?.UseDestinationDepthStencil == true)", StringComparison.Ordinal);
+        int sharedStencilIndex = sharedDepthIndex >= 0
+            ? quadBlit.IndexOf("MakeFboStencilResource(destination)", sharedDepthIndex, StringComparison.Ordinal)
+            : -1;
         sharedDepthIndex.ShouldBeGreaterThanOrEqualTo(0);
         sharedStencilIndex.ShouldBeGreaterThan(sharedDepthIndex);
         quadBlit.ShouldContain("ERenderGraphAccess.Read");
@@ -736,8 +760,28 @@ public sealed class VulkanDynamicRenderingMigrationTests
     {
         string repoRoot = ResolveRepoRoot();
         string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(path))
+        {
+            string marker = $"{Path.DirectorySeparatorChar}Commands{Path.DirectorySeparatorChar}VulkanRenderer.";
+            path = path.Replace(
+                marker,
+                $"{Path.DirectorySeparatorChar}Commands{Path.DirectorySeparatorChar}CommandBuffers{Path.DirectorySeparatorChar}VulkanRenderer.",
+                StringComparison.Ordinal);
+        }
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
         return File.ReadAllText(path);
+    }
+
+    private static string ReadWorkspaceDirectory(string relativePath, string searchPattern)
+    {
+        string repoRoot = ResolveRepoRoot();
+        string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.Exists(path).ShouldBeTrue($"Expected workspace directory '{path}' to exist.");
+
+        string[] files = Directory.GetFiles(path, searchPattern, SearchOption.AllDirectories);
+        files.Length.ShouldBeGreaterThan(0, $"Expected '{path}' to contain files matching '{searchPattern}'.");
+        Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+        return string.Join(Environment.NewLine, files.Select(File.ReadAllText));
     }
 
     private static string ResolveRepoRoot()

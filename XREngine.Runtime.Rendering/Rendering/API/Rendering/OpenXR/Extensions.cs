@@ -44,34 +44,35 @@ public unsafe partial class OpenXRAPI
         OpenGL,
         Vulkan,
     }
-    private string[] GetRequiredExtensions(ERenderer renderer, params string[] otherExtensions)
+    private string[] GetRequestedExtensions(ERenderer renderer, params string[] otherExtensions)
     {
-        string[] extensions = [];
+        string[] extensions = [.. GetRequiredRendererExtensionAlternatives(renderer)];
         if (EnableValidationLayers)
             extensions = [.. extensions, OxrExtDebugUtils.ExtensionName];
-        switch (renderer)
-        {
-            case ERenderer.Vulkan:
-                {
-                    extensions = [.. extensions, .. GetVulkanGraphicsBindingExtensions()];
-                }
-                break;
-            case ERenderer.OpenGL:
-                {
-                    extensions = [.. extensions, KhrOpenglEnable.ExtensionName];
-                }
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(nameof(renderer), renderer, null);
-        }
 
         if (otherExtensions.Length > 0)
             extensions = [.. extensions, .. otherExtensions];
 
         extensions = [.. extensions, KhrWin32ConvertPerformanceCounterTime.ExtensionName];
 
-        return [.. extensions, KhrVisibilityMaskExtensionName, ExtHandTrackingExtensionName, MsftControllerModelExtensionName, .. HTC_Extensions, .. Foveation_Extensions];
+        return
+        [
+            .. extensions,
+            KhrVisibilityMaskExtensionName,
+            ExtHandTrackingExtensionName,
+            MsftControllerModelExtensionName,
+            .. HTC_Extensions,
+            .. Foveation_Extensions
+        ];
     }
+
+    private string[] GetRequiredRendererExtensionAlternatives(ERenderer renderer)
+        => renderer switch
+        {
+            ERenderer.Vulkan => GetVulkanGraphicsBindingExtensions(),
+            ERenderer.OpenGL => [KhrOpenglEnable.ExtensionName],
+            _ => throw new ArgumentOutOfRangeException(nameof(renderer), renderer, null),
+        };
 
     private string[] GetVulkanGraphicsBindingExtensions()
     {

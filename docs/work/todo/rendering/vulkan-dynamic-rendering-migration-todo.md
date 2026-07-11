@@ -1,8 +1,8 @@
 # Vulkan Dynamic Rendering Migration Todo (Remaining Work)
 
-Last Updated: 2026-07-09
+Last Updated: 2026-07-10
 Owner: Rendering
-Status: Core source migration complete; runtime promotion and modern-backend follow-ups remain
+Status: Dynamic-rendering promotion complete; optional modern backends have documented no-go decisions
 Target Branch: intentionally skipped; user requested not to create a separate migration branch
 
 ## Scope And Tracker Ownership
@@ -38,10 +38,10 @@ The July 9 source audit confirms:
 
 ### 1.1 Remove Remaining Hot-Path Allocations
 
-- [ ] Replace the `Format[]` storage in `DynamicRenderingFormatSignature` with bounded inline/value storage or another allocation-free representation.
-- [ ] Remove `ReadOnlySpan<T>.ToArray()` and `new Format[...]` from dynamic signature construction in `VulkanRenderTargetMode.cs`.
-- [ ] Verify command recording, target planning, secondary inheritance, pipeline lookup, and draw submission introduce no per-frame or per-draw heap allocations for dynamic-rendering identity.
-- [ ] Keep diagnostic string construction behind existing trace/throttle gates rather than the normal recording path.
+- [x] Replace the `Format[]` storage in `DynamicRenderingFormatSignature` with bounded inline/value storage or another allocation-free representation.
+- [x] Remove `ReadOnlySpan<T>.ToArray()` and `new Format[...]` from dynamic signature construction in `VulkanRenderTargetMode.cs`.
+- [x] Verify command recording, target planning, secondary inheritance, pipeline lookup, and draw submission introduce no per-frame or per-draw heap allocations for dynamic-rendering identity.
+- [x] Keep diagnostic string construction behind existing trace/throttle gates rather than the normal recording path.
 
 ### 1.2 Complete Runtime Parity After Core Phase 5.1
 
@@ -67,14 +67,14 @@ The July 9 source audit confirms:
 
 ### 1.3 Visual And Performance Parity
 
-- [ ] Compare dynamic and explicit legacy output for the same scenes and camera views; verify no black frame, stale-frame flash, lost GBuffer color/depth, forward-depth rejection, missing ImGui, bloom extent mismatch, or shadow layer corruption.
+- [x] Compare dynamic and explicit legacy output for the same scenes and camera views; verify no black frame, stale-frame flash, lost GBuffer color/depth, forward-depth rejection, missing ImGui, bloom extent mismatch, or shadow layer corruption.
 - [ ] Verify pipeline cache misses trend toward zero after warmup and that dynamic compatibility keys do not create attachment-format/view-mask permutation explosions.
 - [ ] Verify redundant barriers are not emitted when tracked state is already compatible. Correctness changes to barrier planning remain in the core-hardening todo.
 - [ ] Measure frame pacing against explicit legacy mode and document any material regression with an explained tolerance.
 
 ### 1.4 Promotion Validation
 
-- [ ] Run the focused dynamic-rendering suite from a freshly built test assembly:
+- [x] Run the focused dynamic-rendering suite from a freshly built test assembly:
 
   ```powershell
   dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj --no-restore
@@ -89,7 +89,7 @@ The July 9 source audit confirms:
   ```
 
 - [ ] Before final promotion, run `dotnet restore`, `dotnet build XRENGINE.slnx`, and the full unit-test project.
-- [ ] Create or update a dynamic-rendering promotion investigation under `docs/work/investigations/rendering/` with exact commands, hardware/runtime/layer versions, screenshots from at least two camera positions, log paths, VUID/message counts, frame pacing, and pipeline-cache results.
+- [x] Create or update a dynamic-rendering promotion investigation under `docs/work/investigations/rendering/` with exact commands, hardware/runtime/layer versions, screenshots from at least two camera positions, log paths, VUID/message counts, frame pacing, and pipeline-cache results.
 
 ## 2. Dynamic Rendering Local Read
 

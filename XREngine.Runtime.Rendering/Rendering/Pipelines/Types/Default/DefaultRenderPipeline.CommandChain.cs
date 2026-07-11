@@ -1095,6 +1095,9 @@ public partial class DefaultRenderPipeline
                     blitDepth: false,
                     blitStencil: false,
                     linearFilter: false);
+                var markTsrHistory = tsrUpscale.Add<VPRC_TemporalAccumulationPass>();
+                markTsrHistory.Phase = VPRC_TemporalAccumulationPass.EPhase.MarkTsrHistoryColor;
+                markTsrHistory.ConfigureTsrHistoryTargets(TsrUpscaleFBOName, TsrHistoryColorFBOName);
                 AppendDiagnosticTextureCapture(tsrUpscale, "14b_TsrHistoryColor", TsrHistoryColorTextureName);
                 tsrOrPostAa.TrueCommands = tsrUpscale;
             }
@@ -1135,7 +1138,7 @@ public partial class DefaultRenderPipeline
         using (c.AddUsing<VPRC_PushProgramBindings>(t => t.ApplyUniforms = PostProcessFBO_SettingUniforms))
         {
             c.Add<VPRC_RenderQuadToFBO>()
-                .SetTargets(PostProcessFBOName, PostProcessOutputFBOName)
+                .SetTargets(PostProcessFBOName, PostProcessOutputFBOName, matchDestinationRenderArea: true)
                 .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.PostProcess());
         }
     }
@@ -1173,7 +1176,7 @@ public partial class DefaultRenderPipeline
         using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = FinalPostProcessFBO_SettingUniforms))
         {
             c.Add<VPRC_RenderQuadToFBO>()
-                .SetTargets(FinalPostProcessFBOName, FinalPostProcessOutputFBOName)
+                .SetTargets(FinalPostProcessFBOName, FinalPostProcessOutputFBOName, matchDestinationRenderArea: true)
                 .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.FinalPostProcess());
         }
 

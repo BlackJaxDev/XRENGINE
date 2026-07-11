@@ -386,13 +386,18 @@ public unsafe partial class VulkanRenderer
         return new OpenXrExternalSwapchainRenderScope(this, region, targetIdentity, targetName, contextKind);
     }
 
-    private static int BuildOpenXrExternalSwapchainTargetIdentity(uint openXrViewIndex, uint openXrImageIndex, Image image)
+    /// <summary>
+    /// Identifies the allocator-owned render plan for an OpenXR view family. The acquired runtime
+    /// image is deliberately excluded: runtime image handles, image-view handles, and frame-slot
+    /// identity belong to command-buffer and submission variants, while the engine-owned intermediate
+    /// resources remain compatible as the runtime rotates swapchain images.
+    /// </summary>
+    internal static int BuildOpenXrExternalSwapchainPlannerTargetIdentity(uint openXrViewIndex)
     {
         unchecked
         {
             int hash = 0x4F585254;
             hash = (hash * 397) ^ (int)openXrViewIndex;
-            hash = (hash * 397) ^ (int)openXrImageIndex;
             hash = (hash * 397) ^ 0x53494E54;
             return hash == 0 ? 1 : hash;
         }
@@ -538,6 +543,16 @@ public unsafe partial class VulkanRenderer
                     return false;
             }
 
+            // Preparing the second eye can grow shared mesh-renderer descriptor/
+            // uniform capacity. Re-prewarm both complete op streams only after
+            // both reservations are known and before either command buffer is
+            // recorded, so no recorded generation can retire between eyes.
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.FinalizeSharedCapacity"))
+            {
+                PrewarmOpenXrFrameOpResources(firstPrepared.Ops);
+                PrewarmOpenXrFrameOpResources(secondPrepared.Ops);
+            }
+
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.RecordLeftEye"))
                 hasFirst = TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(in firstPrepared, out firstRecorded);
             if (!hasFirst)
@@ -667,10 +682,8 @@ public unsafe partial class VulkanRenderer
         bool drainedFrameOps = false;
 
         int desktopSwapchainImageCount = swapChainImages?.Length ?? 0;
-        int externalTargetIdentity = BuildOpenXrExternalSwapchainTargetIdentity(
-            request.OpenXrViewIndex,
-            request.OpenXrImageIndex,
-            request.Image);
+        int externalTargetIdentity = BuildOpenXrExternalSwapchainPlannerTargetIdentity(
+            request.OpenXrViewIndex);
         using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(
             request.Extent.Width,
             request.Extent.Height,
@@ -864,10 +877,8 @@ public unsafe partial class VulkanRenderer
         using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(
             targetContext.Extent.Width,
             targetContext.Extent.Height,
-            BuildOpenXrExternalSwapchainTargetIdentity(
-                targetContext.OpenXrViewIndex,
-                targetContext.OpenXrImageIndex,
-                targetContext.Image),
+            BuildOpenXrExternalSwapchainPlannerTargetIdentity(
+                targetContext.OpenXrViewIndex),
             ResolveOpenXrExternalSwapchainTargetName(targetContext.OpenXrViewIndex));
         using ThreadRenderStateScope renderStateScope = EnterThreadRenderStateScope(
             CreateOpenXrEyeRenderStateTracker(in targetContext));
@@ -2167,10 +2178,8 @@ public unsafe partial class VulkanRenderer
             ? EnterOpenXrExternalSwapchainRenderScope(
                 request.Extent.Width,
                 request.Extent.Height,
-                BuildOpenXrExternalSwapchainTargetIdentity(
-                    request.OpenXrViewIndex,
-                    request.OpenXrImageIndex,
-                    default),
+                BuildOpenXrExternalSwapchainPlannerTargetIdentity(
+                    request.OpenXrViewIndex),
                 ResolveOpenXrExternalSwapchainTargetName(request.OpenXrViewIndex),
                 EVulkanFrameOpContextKind.OpenXrMirror)
             : null;
@@ -2247,6 +2256,10 @@ public unsafe partial class VulkanRenderer
                         refreshFailureReason);
                     return false;
                 }
+                // This is the render-to-array path used by strict SPS. Reserve
+                // every repeated direct and indirect use before command-chain
+                // workers or the primary command buffer record any dependency.
+                PrewarmOpenXrFrameOpResources(ops);
                 ulong plannerRevision = ResourcePlannerRevision;
                 ulong frameOpsSignature;
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordMirror.PlanAndSchedule.Signature"))
@@ -4199,10 +4212,7 @@ public unsafe partial class VulkanRenderer
         using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(
             extent.Width,
             extent.Height,
-            BuildOpenXrExternalSwapchainTargetIdentity(
-                prewarmViewIndex,
-                OpenXrExternalSwapchainTargetImageIndex,
-                default),
+            BuildOpenXrExternalSwapchainPlannerTargetIdentity(prewarmViewIndex),
             ResolveOpenXrExternalSwapchainTargetName(prewarmViewIndex));
         using ThreadRenderStateScope renderStateScope = EnterThreadRenderStateScope(
             CreateOpenXrPrewarmRenderStateTracker(extent));
@@ -4319,10 +4329,7 @@ public unsafe partial class VulkanRenderer
         using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(
             extent.Width,
             extent.Height,
-            BuildOpenXrExternalSwapchainTargetIdentity(
-                prewarmViewIndex,
-                OpenXrExternalSwapchainTargetImageIndex,
-                default),
+            BuildOpenXrExternalSwapchainPlannerTargetIdentity(prewarmViewIndex),
             ResolveOpenXrExternalSwapchainTargetName(prewarmViewIndex));
         _openXrExternalSwapchainPrewarmDepth++;
         int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(swapChainImages?.Length ?? 0);
@@ -4680,8 +4687,15 @@ public unsafe partial class VulkanRenderer
             return;
 
         Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = _refreshMeshDrawSlotsByRendererScratch;
-        meshDrawSlotsByRenderer.Clear();
         meshDrawSlotsByRenderer.EnsureCapacity(_refreshMeshDrawSlotCapacityHint);
+
+        // Capacity must be final before the first descriptor/uniform prewarm. Growing a renderer's
+        // draw-slot capacity destroys its old descriptors and uniform buffers; doing that midway
+        // through this loop can retire resources captured by an earlier draw in the same command
+        // buffer. Use the same count-then-reserve contract as normal Vulkan recording.
+        EnsureMeshDrawUniformSlotCapacityForRecording(ops, meshDrawSlotsByRenderer);
+        int rendererCount = meshDrawSlotsByRenderer.Count;
+        meshDrawSlotsByRenderer.Clear();
 
         static int GetMeshDrawUniformSlot(Dictionary<VkMeshRenderer, int> slots, VkMeshRenderer renderer)
         {
@@ -4703,7 +4717,7 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        _refreshMeshDrawSlotCapacityHint = Math.Max(1, meshDrawSlotsByRenderer.Count);
+        _refreshMeshDrawSlotCapacityHint = Math.Max(1, rendererCount);
 
         void PrewarmDraw(VkMeshRenderer renderer, in PendingMeshDraw draw)
         {

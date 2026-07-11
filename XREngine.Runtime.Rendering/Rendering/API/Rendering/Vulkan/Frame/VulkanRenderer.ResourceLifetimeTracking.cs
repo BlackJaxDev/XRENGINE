@@ -1313,6 +1313,7 @@ public unsafe partial class VulkanRenderer
 
     private bool ValidateVulkanSubmissionResourceLifetimes(
         ref SubmitInfo submitInfo,
+        in VulkanSubmissionDiagnosticContext diagnosticContext,
         out string failureReason)
     {
         for (int commandIndex = 0; commandIndex < submitInfo.CommandBufferCount; commandIndex++)
@@ -1366,14 +1367,18 @@ public unsafe partial class VulkanRenderer
                     if (resource.Generation != recordedGeneration)
                     {
                         failureReason =
-                            $"commandBuffer=0x{commandBufferHandle:X} references recycled {key}; recordedGeneration={recordedGeneration} currentGeneration={resource.Generation}";
+                            $"resource={key} owner={resource.Owner} oldGeneration={recordedGeneration} newGeneration={resource.Generation} " +
+                            $"output={diagnosticContext.OutputTargetName ?? "<unknown>"} commandBuffer=0x{commandBufferHandle:X} " +
+                            $"retirementTicket={DescribeVulkanRetirementTicket(resource.RetirementTicket)} state={resource.State}";
                         return false;
                     }
 
                     if ((resource.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) != 0)
                     {
                         failureReason =
-                            $"commandBuffer=0x{commandBufferHandle:X} references retired {key} generation={resource.Generation} owner={resource.Owner}";
+                            $"resource={key} owner={resource.Owner} oldGeneration={recordedGeneration} newGeneration={resource.Generation} " +
+                            $"output={diagnosticContext.OutputTargetName ?? "<unknown>"} commandBuffer=0x{commandBufferHandle:X} " +
+                            $"retirementTicket={DescribeVulkanRetirementTicket(resource.RetirementTicket)} state={resource.State}";
                         return false;
                     }
                 }
@@ -1383,6 +1388,9 @@ public unsafe partial class VulkanRenderer
         failureReason = string.Empty;
         return true;
     }
+
+    private static string DescribeVulkanRetirementTicket(in VulkanRetirementTicket ticket)
+        => $"gfx:{ticket.GraphicsSequence}/transfer:{ticket.TransferSequence}/other:{ticket.OtherSequence}/generation:{ticket.ResourceGeneration}/external:{ticket.ExternalOwnershipPending}";
 
     private void RefreshSubmittedDescriptorDependencies_NoLock(
         ulong commandBufferHandle,

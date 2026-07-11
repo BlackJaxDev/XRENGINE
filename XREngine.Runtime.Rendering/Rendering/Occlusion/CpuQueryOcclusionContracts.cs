@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using XREngine.Data.Geometry;
 
 namespace XREngine.Rendering.Occlusion;
@@ -21,6 +22,108 @@ public enum EOcclusionViewScope
 }
 
 /// <summary>
+/// Immutable ownership assigned by the output that publishes a render-command
+/// collection. A physical pipeline owns its query objects, while <see cref="PovId"/>
+/// groups every view that must contribute to one conservative visibility result.
+/// </summary>
+public readonly struct OcclusionViewOwnership : IEquatable<OcclusionViewOwnership>
+{
+    private static int s_nextPovId;
+
+    public OcclusionViewOwnership(
+        int pipelineInstanceId,
+        int povId,
+        EOcclusionViewScope scope,
+        uint coverageMask,
+        uint requiredCoverageMask,
+        int declaredViewCount,
+        int resourceGeneration = 0,
+        bool hasScopeOverride = true)
+    {
+        PipelineInstanceId = pipelineInstanceId;
+        PovId = povId;
+        Scope = scope;
+        CoverageMask = coverageMask;
+        RequiredCoverageMask = requiredCoverageMask;
+        DeclaredViewCount = Math.Clamp(declaredViewCount, 1, 32);
+        ResourceGeneration = resourceGeneration;
+        HasScopeOverride = hasScopeOverride;
+    }
+
+    public int PipelineInstanceId { get; }
+    public int PovId { get; }
+    public EOcclusionViewScope Scope { get; }
+    public uint CoverageMask { get; }
+    public uint RequiredCoverageMask { get; }
+    public int DeclaredViewCount { get; }
+    public int ResourceGeneration { get; }
+    public bool HasScopeOverride { get; }
+
+    public bool IsValid
+        => PipelineInstanceId > 0 &&
+           PovId != 0 &&
+           CoverageMask != 0u &&
+           RequiredCoverageMask != 0u &&
+           (CoverageMask & ~RequiredCoverageMask) == 0u;
+
+    public bool SharesConservativeResult
+        => IsValid && (RequiredCoverageMask & (RequiredCoverageMask - 1u)) != 0u;
+
+    /// <summary>
+    /// Allocates a process-stable family identity. Negative IDs cannot collide
+    /// with the positive, monotonically allocated pipeline-instance IDs.
+    /// </summary>
+    public static int AllocatePovId()
+        => -Interlocked.Increment(ref s_nextPovId);
+
+    public static OcclusionViewOwnership Independent(int pipelineInstanceId, int resourceGeneration = 0)
+        => new(
+            pipelineInstanceId,
+            pipelineInstanceId,
+            EOcclusionViewScope.MonoDesktop,
+            coverageMask: 0x1u,
+            requiredCoverageMask: 0x1u,
+            declaredViewCount: 1,
+            resourceGeneration,
+            hasScopeOverride: false);
+
+    public OcclusionViewOwnership WithResourceGeneration(int resourceGeneration)
+        => new(
+            PipelineInstanceId,
+            PovId,
+            Scope,
+            CoverageMask,
+            RequiredCoverageMask,
+            DeclaredViewCount,
+            resourceGeneration,
+            HasScopeOverride);
+
+    public bool Equals(OcclusionViewOwnership other)
+        => PipelineInstanceId == other.PipelineInstanceId &&
+           PovId == other.PovId &&
+           Scope == other.Scope &&
+           CoverageMask == other.CoverageMask &&
+           RequiredCoverageMask == other.RequiredCoverageMask &&
+           DeclaredViewCount == other.DeclaredViewCount &&
+           ResourceGeneration == other.ResourceGeneration &&
+           HasScopeOverride == other.HasScopeOverride;
+
+    public override bool Equals(object? obj)
+        => obj is OcclusionViewOwnership other && Equals(other);
+
+    public override int GetHashCode()
+        => HashCode.Combine(
+            PipelineInstanceId,
+            PovId,
+            Scope,
+            CoverageMask,
+            RequiredCoverageMask,
+            DeclaredViewCount,
+            ResourceGeneration,
+            HasScopeOverride);
+}
+
+/// <summary>
 /// Stable key for per-pass CPU occlusion state. It intentionally avoids camera
 /// object identity so recreated eye cameras do not look first-seen every frame.
 /// State is isolated per render pipeline instance so the desktop view, each VR
@@ -28,36 +131,84 @@ public enum EOcclusionViewScope
 /// </summary>
 public readonly struct OcclusionViewKey : IEquatable<OcclusionViewKey>
 {
-    public OcclusionViewKey(int renderPass, EOcclusionViewScope scope, int viewId = 0, int pipelineInstanceId = 0)
+    public OcclusionViewKey(
+        int renderPass,
+        EOcclusionViewScope scope,
+        int viewId = 0,
+        int pipelineInstanceId = 0,
+        int povId = 0,
+        uint coverageMask = 0x1u,
+        uint requiredCoverageMask = 0x1u,
+        int declaredViewCount = 1,
+        int resourceGeneration = 0)
     {
         RenderPass = renderPass;
         Scope = scope;
         ViewId = viewId;
         PipelineInstanceId = pipelineInstanceId;
+        PovId = povId != 0 ? povId : pipelineInstanceId;
+        CoverageMask = coverageMask;
+        RequiredCoverageMask = requiredCoverageMask;
+        DeclaredViewCount = declaredViewCount;
+        ResourceGeneration = resourceGeneration;
     }
 
     public int RenderPass { get; }
     public EOcclusionViewScope Scope { get; }
     public int ViewId { get; }
     public int PipelineInstanceId { get; }
+    public int PovId { get; }
+    public uint CoverageMask { get; }
+    public uint RequiredCoverageMask { get; }
+    public int DeclaredViewCount { get; }
+    public int ResourceGeneration { get; }
 
     public bool Equals(OcclusionViewKey other)
-        => RenderPass == other.RenderPass && Scope == other.Scope && ViewId == other.ViewId && PipelineInstanceId == other.PipelineInstanceId;
+        => RenderPass == other.RenderPass &&
+           Scope == other.Scope &&
+           ViewId == other.ViewId &&
+           PipelineInstanceId == other.PipelineInstanceId &&
+           PovId == other.PovId &&
+           CoverageMask == other.CoverageMask &&
+           RequiredCoverageMask == other.RequiredCoverageMask &&
+           DeclaredViewCount == other.DeclaredViewCount &&
+           ResourceGeneration == other.ResourceGeneration;
 
     public override bool Equals(object? obj)
         => obj is OcclusionViewKey other && Equals(other);
 
     public override int GetHashCode()
-        => HashCode.Combine(RenderPass, Scope, ViewId, PipelineInstanceId);
+        => HashCode.Combine(
+            RenderPass,
+            Scope,
+            ViewId,
+            PipelineInstanceId,
+            PovId,
+            CoverageMask,
+            RequiredCoverageMask,
+            HashCode.Combine(DeclaredViewCount, ResourceGeneration));
 
     public override string ToString()
-        => $"{Scope}:{RenderPass}:{ViewId}:pipe{PipelineInstanceId}";
+        => $"{Scope}:pass{RenderPass}:view{ViewId}:pipe{PipelineInstanceId}:pov{PovId}:coverage0x{CoverageMask:X}/0x{RequiredCoverageMask:X}:views{DeclaredViewCount}:gen{ResourceGeneration}";
 
     public bool IsSharedStereoScope
         => Scope is EOcclusionViewScope.VrStereoPair
             or EOcclusionViewScope.VrSinglePassStereo
             or EOcclusionViewScope.VrFoveatedView;
 }
+
+/// <summary>Per-output CPU-query statistics for the last completed frame.</summary>
+public readonly record struct CpuOcclusionViewTelemetrySnapshot(
+    OcclusionViewKey ViewKey,
+    int CandidateCount,
+    int Submissions,
+    int Resolutions,
+    int Skips,
+    int BudgetSkipped,
+    int ForcedVisible,
+    int CurrentResultAgeFrames,
+    int MaxResultAgeFrames,
+    int RecoveryLatencyFrames);
 
 public enum ECpuOcclusionMotionTier
 {
@@ -101,6 +252,9 @@ public enum ECpuOcclusionForceVisibleReason
     UnsupportedStereoMode,
     PendingTooOld,
     NoBounds,
+    MissingOwnership,
+    StaleResult,
+    ResourceGenerationChanged,
     Diagnostic,
 }
 

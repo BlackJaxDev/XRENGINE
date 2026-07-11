@@ -371,21 +371,22 @@ path so `SinglePassStereo` never implies a path that was not actually used.
 |---|---|---|---|
 | `SequentialViews` | Sequential per-eye swapchains | One runtime-owned 2D swapchain image per eye. | History-based TAA/TSR is disabled for external per-eye targets. |
 | `ParallelCommandBufferRecording` | Parallel per-eye command-buffer recording | Same rendered output as `SequentialViews`; safe eye command-buffer work is prepared concurrently, then submitted through serialized Vulkan queue sections. | Same per-eye external-swapchain history policy as sequential. |
-| `SinglePassStereo` | `TrueSinglePassStereo` when staged stereo is available | Engine-owned `XRTexture2DArray` color/depth staging target with layer 0 = left eye and layer 1 = right eye, then explicit layer publish/copy to OpenXR swapchains. | Stereo array-layer history is allowed for validated stereo-aware temporal resources. |
-| `SinglePassStereo` | `OpenXrSinglePassCompatibility` fallback | Per-eye swapchain rendering in a batch, not true multiview. | External per-eye history remains disabled. |
+| `SinglePassStereo` | `TrueSinglePassStereo` only | Engine-owned `XRTexture2DArray` color/depth staging target with layer 0 = left eye and layer 1 = right eye, then explicit layer publish/copy to OpenXR swapchains. | Stereo array-layer history is allowed for validated stereo-aware temporal resources. |
 
-SteamVR OpenXR Vulkan defaults to `OpenXrSinglePassCompatibility` even when the
-engine has multiview support, because the current true-stereo staging publish
-path blits into runtime-owned swapchain images and is not considered SteamVR
-stable. Set `XRE_OPENXR_VULKAN_TRUE_STEREO=1` only for focused diagnostics or
-RenderDoc work on that path.
+`SinglePassStereo` is a strict capability contract. It never resolves to
+sequential views or per-eye compatibility rendering. If dynamic rendering,
+Vulkan multiview, equal eye extents/formats, or the layered staging resources
+are unavailable, the mode-resolution log names the failed capability and the
+engine ends that OpenXR frame without projection layers. Select
+`SequentialViews` or `ParallelCommandBufferRecording` explicitly when per-eye
+rendering is desired.
 
-`SequentialViews`, `ParallelCommandBufferRecording`, and
-`OpenXrSinglePassCompatibility` all render the same external per-eye swapchain
-resource model. `ParallelCommandBufferRecording` changes how eye command-buffer
-work is prepared, not what the headset should see. If the SteamVR logs report
-`OpenXrSinglePassCompatibility`, changing between those modes is expected to
-look visually identical.
+Sequential and parallel-per-eye modes use distinct left/right pipeline
+instances and distinct command collections. Their visibility membership,
+buffer swaps, and CPU-query occlusion history are isolated by pipeline instance.
+True single-pass uses one stereo pipeline and one conservative multiview query:
+a mesh is considered occluded only when its proxy produces no samples in any
+rendered array layer.
 
 The Vulkan true-stereo path uses the engine stereo pipeline through
 `XRViewport.RenderStereo(...)`; it does not render multiview directly into an
@@ -428,8 +429,9 @@ Useful diagnostics:
 - View-mode logs from `OpenXRAPI.Vulkan.cs` report requested mode, effective
   path, temporal history policy, parallel gate state, swapchain formats, and
   true-stereo support.
-- `XRE_OPENXR_VULKAN_TRUE_STEREO=1` opts into the diagnostic true-stereo
-  staging path for runtimes where it is guarded off by default.
+- `SinglePassStereo` automatically selects the true-stereo staging path when
+  all required capabilities are present; there is no environment opt-in or
+  per-eye fallback.
 - `XRE_OPENXR_VULKAN_ENABLE2_BOOTSTRAP=Force` tests OpenXR-created Vulkan
   handles through `XR_KHR_vulkan_enable2`; `Disable` forces app-created Vulkan
   handles for comparison. SteamVR uses the app-created path in `Auto`.

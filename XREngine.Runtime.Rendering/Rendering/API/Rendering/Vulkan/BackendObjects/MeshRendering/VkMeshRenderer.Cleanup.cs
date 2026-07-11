@@ -31,6 +31,8 @@ public unsafe partial class VulkanRenderer
 					DestroyEngineUniformBufferArray(toDestroy);
 
 				_engineUniformBuffers.Remove(singleName);
+				while (_retainedEngineUniformBufferGenerations.TryTakeAny(singleName, out EngineUniformBuffer[] retained))
+					DestroyEngineUniformBufferArray(retained);
 				return;
 			}
 
@@ -38,6 +40,8 @@ public unsafe partial class VulkanRenderer
 				DestroyEngineUniformBufferArray(buffers);
 
 			_engineUniformBuffers.Clear();
+			while (_retainedEngineUniformBufferGenerations.TryTakeAny(out EngineUniformBuffer[] retained))
+				DestroyEngineUniformBufferArray(retained);
 		}
 
 		/// <summary>
@@ -52,6 +56,8 @@ public unsafe partial class VulkanRenderer
 					DestroyAutoUniformBufferArray(toDestroy);
 
 				_autoUniformBuffers.Remove(singleName);
+				while (_retainedAutoUniformBufferGenerations.TryTakeAny(singleName, out AutoUniformBuffer[] retained))
+					DestroyAutoUniformBufferArray(retained);
 				return;
 			}
 
@@ -59,6 +65,30 @@ public unsafe partial class VulkanRenderer
 				DestroyAutoUniformBufferArray(buffers);
 
 			_autoUniformBuffers.Clear();
+			while (_retainedAutoUniformBufferGenerations.TryTakeAny(out AutoUniformBuffer[] retained))
+				DestroyAutoUniformBufferArray(retained);
+		}
+
+		private void RetainEngineUniformBufferGeneration(string name, EngineUniformBuffer[] buffers)
+		{
+			if (buffers.Length == 0 || buffers[0].Buffer.Handle == 0 || buffers[0].MappedPtr == null)
+			{
+				DestroyEngineUniformBufferArray(buffers);
+				return;
+			}
+
+			_retainedEngineUniformBufferGenerations.Retain(name, buffers.Length, buffers[0].Size, buffers);
+		}
+
+		private void RetainAutoUniformBufferGeneration(string name, AutoUniformBuffer[] buffers)
+		{
+			if (buffers.Length == 0 || buffers[0].Buffer.Handle == 0 || buffers[0].MappedPtr == null)
+			{
+				DestroyAutoUniformBufferArray(buffers);
+				return;
+			}
+
+			_retainedAutoUniformBufferGenerations.Retain(name, buffers.Length, buffers[0].Size, buffers);
 		}
 
 		private void DestroyEngineUniformBufferArray(EngineUniformBuffer[] buffers)

@@ -157,15 +157,15 @@ public sealed class VulkanP1ValidationTests
             "private static ulong ComputeResourcePlannerSignature");
 
         plannerUpdate.ShouldContain("RecordVulkanRetiredResourcePlanReplacement");
-        plannerUpdate.ShouldContain("DestroyPhysicalImages(this)");
-        plannerUpdate.ShouldContain("DestroyPhysicalBuffers(this)");
+        plannerUpdate.ShouldContain("oldAllocator.TryRetirePhysicalResources");
         plannerUpdate.ShouldContain("LogDeferredResourcePlanReplacementRetirement");
-        stateSource.ShouldContain("Deferring replaced physical resource plan retirement through frame-slot queues");
+        stateSource.ShouldContain("Deferring replaced physical resource plan retirement through frame-slot/timeline completion");
         stateSource.ShouldContain("ShouldSkipAutoExposureHistoryPreserve");
         stateSource.ShouldContain("ActiveResourcePlannerRevision == 0");
         stateSource.ShouldContain("RuntimeRenderingHostServices.Current.IsInVR");
         plannerUpdate.ShouldNotContain("WaitForAllInFlightWork()");
         plannerUpdate.ShouldNotContain("DeviceWaitIdle()");
+        plannerUpdate.ShouldNotContain("ForceFlushAllRetiredResourcesAfterWaiting(\"ResourcePlanReplacement\")");
         plannerUpdate.ShouldNotContain("TransitionNewPhysicalImagesToInitialLayout");
         resourceRegistrationSource.ShouldNotContain("TransitionNewPhysicalImagesToInitialLayout");
         resourceRegistrationSource.ShouldContain("RetireBuffer(buffer, memory)");

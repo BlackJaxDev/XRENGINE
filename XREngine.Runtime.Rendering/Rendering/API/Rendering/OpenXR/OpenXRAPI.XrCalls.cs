@@ -93,19 +93,19 @@ public unsafe partial class OpenXRAPI
     /// <summary>
     /// Creates an OpenXR system for the specified form factor.
     /// </summary>
-    private void CreateSystem()
+    private Result CreateSystem()
     {
         var systemGetInfo = new SystemGetInfo
         {
             Type = StructureType.SystemGetInfo,
             FormFactor = FormFactor.HeadMountedDisplay
         };
-        var result = CheckResult(Api.GetSystem(_instance, in systemGetInfo, ref _systemId), "xrGetSystem");
-        if (result != Result.Success)
-        {
-            throw new Exception($"Failed to get system: {result}");
-        }
-        RecordSmokeSystemFound();
+        Result result = Api.GetSystem(_instance, in systemGetInfo, ref _systemId);
+        if (result == Result.Success)
+            RecordSmokeSystemFound();
+        else
+            _systemId = 0;
+        return result;
     }
 
     private void CreateReferenceSpace()

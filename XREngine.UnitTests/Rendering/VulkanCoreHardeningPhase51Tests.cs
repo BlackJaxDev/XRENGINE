@@ -88,6 +88,11 @@ public sealed class VulkanCoreHardeningPhase51Tests
 
         frameLoop.ShouldContain("else if (result == Result.SuboptimalKhr)");
         frameLoop.ShouldContain("TryPresentAbortedDirtyFrame");
+        frameLoop.ShouldContain("if (!imageWasEverPresented)");
+        frameLoop.ShouldContain("if (!imageHasValidPresentedContent)");
+        frameLoop.ShouldContain("Refusing skipped-frame present for unwritten swapchain image");
+        frameLoop.ShouldContain("PresentedWithoutValidFinalWrite");
+        frameLoop.ShouldNotContain("OldLayout = ImageLayout.Undefined,\n                            NewLayout = ImageLayout.PresentSrcKhr");
         lifetime.ShouldContain("_vulkanResourceCommandBufferDependencies");
         lifetime.ShouldContain("InvalidateCachedCommandBuffersForRetiringResource(");
         retirement.ShouldContain("TryBeginDestroyVulkanResourceGeneration(");
@@ -155,8 +160,21 @@ public sealed class VulkanCoreHardeningPhase51Tests
         string path = Path.Combine(
             ResolveRepoRoot(),
             relativePath.Replace('/', Path.DirectorySeparatorChar));
+        path = ResolveRelocatedCommandBufferPath(path);
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{relativePath}'.");
         return File.ReadAllText(path).Replace("\r\n", "\n");
+    }
+
+    private static string ResolveRelocatedCommandBufferPath(string path)
+    {
+        if (File.Exists(path))
+            return path;
+
+        string marker = $"{Path.DirectorySeparatorChar}Commands{Path.DirectorySeparatorChar}VulkanRenderer.";
+        return path.Replace(
+            marker,
+            $"{Path.DirectorySeparatorChar}Commands{Path.DirectorySeparatorChar}CommandBuffers{Path.DirectorySeparatorChar}VulkanRenderer.",
+            StringComparison.Ordinal);
     }
 
     private static string ResolveRepoRoot()

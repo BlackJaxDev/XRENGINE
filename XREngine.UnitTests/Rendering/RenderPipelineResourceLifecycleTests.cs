@@ -588,6 +588,94 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [Test]
+    public void DefaultRenderPipeline_StereoTsrLayout_DescriptorFactoriesAndFbosUseTwoLayerMultiviewShapes()
+    {
+        const ulong motionBlur = 1UL << 10;
+        const ulong depthOfField = 1UL << 11;
+        const ulong bloom = 1UL << 14;
+        const ulong temporal = 1UL << 15;
+        DefaultRenderPipeline pipeline = new(stereo: true);
+        RenderPipelineResourceLayout layout = pipeline.BuildResourceLayout(CreateProfile(
+            EAntiAliasingMode.Tsr,
+            msaaSamples: 1u,
+            featureMask: motionBlur | depthOfField | bloom | temporal,
+            stereo: true));
+
+        string[] stereoPostProcessTextures =
+        [
+            DefaultRenderPipeline.PostProcessOutputTextureName,
+            DefaultRenderPipeline.FinalPostProcessOutputTextureName,
+            DefaultRenderPipeline.BloomBlurTextureName,
+            DefaultRenderPipeline.VelocityTextureName,
+            DefaultRenderPipeline.HistoryColorTextureName,
+            DefaultRenderPipeline.HistoryDepthStencilTextureName,
+            DefaultRenderPipeline.TemporalColorInputTextureName,
+            DefaultRenderPipeline.TemporalExposureVarianceTextureName,
+            DefaultRenderPipeline.HistoryExposureVarianceTextureName,
+            DefaultRenderPipeline.MotionBlurTextureName,
+            DefaultRenderPipeline.DepthOfFieldTextureName,
+            DefaultRenderPipeline.TsrOutputTextureName,
+            DefaultRenderPipeline.TsrHistoryColorTextureName,
+        ];
+
+        foreach (string textureName in stereoPostProcessTextures)
+        {
+            TextureSpec spec = layout.ResourcesByName[textureName].ShouldBeOfType<TextureSpec>();
+            spec.Layers.ShouldBe(2u, textureName);
+            spec.StereoCompatible.ShouldBeTrue(textureName);
+            spec.Factory.ShouldNotBeNull(textureName);
+
+            XRTexture2DArray texture = spec.Factory!().ShouldBeOfType<XRTexture2DArray>(textureName);
+            texture.Depth.ShouldBe(2u, textureName);
+            texture.OVRMultiViewParameters.ShouldNotBeNull(textureName);
+            texture.OVRMultiViewParameters!.Offset.ShouldBe(0, textureName);
+            texture.OVRMultiViewParameters.NumViews.ShouldBe(2u, textureName);
+        }
+
+        TextureSpec bloomSpec = layout.ResourcesByName[DefaultRenderPipeline.BloomBlurTextureName]
+            .ShouldBeOfType<TextureSpec>();
+        bloomSpec.MipPolicy.MipLevelCount.ShouldBe(5u);
+
+        AssertStereoFramebufferAttachment(layout, DefaultRenderPipeline.PostProcessOutputFBOName, DefaultRenderPipeline.PostProcessOutputTextureName);
+        AssertStereoFramebufferAttachment(layout, DefaultRenderPipeline.FinalPostProcessOutputFBOName, DefaultRenderPipeline.FinalPostProcessOutputTextureName);
+        AssertStereoFramebufferAttachment(layout, DefaultRenderPipeline.HistoryCaptureFBOName, DefaultRenderPipeline.HistoryColorTextureName);
+        AssertStereoFramebufferAttachment(layout, DefaultRenderPipeline.TemporalInputFBOName, DefaultRenderPipeline.TemporalColorInputTextureName);
+        AssertStereoFramebufferAttachment(layout, DefaultRenderPipeline.TemporalAccumulationFBOName, DefaultRenderPipeline.TemporalExposureVarianceTextureName);
+        AssertStereoFramebufferAttachment(layout, DefaultRenderPipeline.HistoryExposureFBOName, DefaultRenderPipeline.HistoryExposureVarianceTextureName);
+        AssertStereoFramebufferAttachment(layout, DefaultRenderPipeline.TsrUpscaleFBOName, DefaultRenderPipeline.TsrOutputTextureName);
+        AssertStereoFramebufferAttachment(layout, DefaultRenderPipeline.TsrHistoryColorFBOName, DefaultRenderPipeline.TsrHistoryColorTextureName);
+    }
+
+    [Test]
+    public void DefaultRenderPipeline_StereoPostProcessFallbacksRemainArraySamplers()
+    {
+        const ulong openXrVulkanSafePath = 1UL << 12;
+        DefaultRenderPipeline pipeline = new(stereo: true);
+        RenderPipelineResourceLayout layout = pipeline.BuildResourceLayout(CreateProfile(
+            EAntiAliasingMode.Fxaa,
+            msaaSamples: 1u,
+            featureMask: openXrVulkanSafePath,
+            stereo: true));
+
+        string[] fallbackNames =
+        [
+            DefaultRenderPipeline.BloomBlurTextureName,
+            DefaultRenderPipeline.AtmosphereColorTextureName,
+            DefaultRenderPipeline.VolumetricFogColorTextureName,
+        ];
+        foreach (string name in fallbackNames)
+        {
+            TextureSpec spec = layout.ResourcesByName[name].ShouldBeOfType<TextureSpec>();
+            spec.Layers.ShouldBe(2u, name);
+            spec.StereoCompatible.ShouldBeTrue(name);
+            XRTexture2DArray texture = spec.Factory!().ShouldBeOfType<XRTexture2DArray>(name);
+            texture.Depth.ShouldBe(2u, name);
+            texture.OVRMultiViewParameters.ShouldNotBeNull(name);
+            texture.OVRMultiViewParameters!.NumViews.ShouldBe(2u, name);
+        }
+    }
+
+    [Test]
     public void DefaultRenderPipeline_LightCombineFbo_IsGenerationOwnedAfterAoMigration()
     {
         DefaultRenderPipeline pipeline = new();
@@ -700,7 +788,7 @@ public sealed class RenderPipelineResourceLifecycleTests
             .Replace("\r\n", "\n");
 
         pipelineSource.ShouldContain("private static XRCamera? ResolveCurrentSettingsCamera");
-        pipelineSource.ShouldContain("RuntimeEngine.Rendering.State.RenderingCamera");
+        pipelineSource.ShouldContain("?? RenderingCamera");
         pipelineSource.ShouldContain("var camera = ResolveCurrentSettingsCamera(currentPipeline);");
 
         postProcessSource.ShouldContain("ResolveCurrentSettingsCamera()?.GetPostProcessStageState<BloomSettings>()");
@@ -718,13 +806,13 @@ public sealed class RenderPipelineResourceLifecycleTests
         DefaultRenderPipeline pipeline = new();
 
         AssertGtaoScratchScale(
-            pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, msaaSamples: 1u)),
+            pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, msaaSamples: 1u, featureMask: 1UL << 13)),
             0.5f);
         AssertGtaoScratchScale(
-            pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, msaaSamples: 1u, featureMask: 1UL << 6)),
+            pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, msaaSamples: 1u, featureMask: (1UL << 13) | (1UL << 6))),
             1.0f);
         AssertGtaoScratchScale(
-            pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, msaaSamples: 1u, featureMask: 1UL << 7)),
+            pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, msaaSamples: 1u, featureMask: (1UL << 13) | (1UL << 7))),
             0.25f);
     }
 
@@ -917,6 +1005,91 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [Test]
+    public void ResourceManager_RejectsStereoTextureFactoryThatProducesOneLayer()
+    {
+        XRRenderPipelineInstance instance = new();
+        RenderPipelineResourceLayoutBuilder builder = new();
+        builder.Texture("StereoColor")
+            .Size(RenderResourceSizePolicy.Absolute(64u, 32u))
+            .Usage(RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment)
+            .Format(EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat)
+            .SizedFormat(ESizedInternalFormat.Rgba16f)
+            .Layers(2u)
+            .StereoCompatible()
+            .Factory(() => XRTexture2D.CreateFrameBufferTexture(
+                64u,
+                32u,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat,
+                EFrameBufferAttachment.ColorAttachment0))
+            .Add();
+
+        RenderResourceGeneration generation = new(CreateKey(), builder.Build(RenderPipelineResourceProfile.Empty));
+        try
+        {
+            new RenderPipelineResourceManager().Materialize(instance, generation).ShouldBeFalse();
+            generation.Status.ShouldBe(RenderResourceGenerationStatus.Failed);
+            generation.Diagnostics.ShouldContain(static x => x.Contains("layer mismatch", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            generation.Dispose();
+        }
+    }
+
+    [Test]
+    public void ResourceManager_RejectsStereoFramebufferThatSelectsOneArrayLayer()
+    {
+        XRRenderPipelineInstance instance = new();
+        RenderPipelineResourceLayoutBuilder builder = new();
+        builder.Texture("StereoColor")
+            .Size(RenderResourceSizePolicy.Absolute(64u, 32u))
+            .Usage(RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment)
+            .Format(EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat)
+            .SizedFormat(ESizedInternalFormat.Rgba16f)
+            .Layers(2u)
+            .StereoCompatible()
+            .Factory(() =>
+            {
+                XRTexture2DArray texture = XRTexture2DArray.CreateFrameBufferTexture(
+                    2u,
+                    64u,
+                    32u,
+                    EPixelInternalFormat.Rgba16f,
+                    EPixelFormat.Rgba,
+                    EPixelType.HalfFloat,
+                    EFrameBufferAttachment.ColorAttachment0);
+                texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+                texture.OVRMultiViewParameters = new(0, 2u);
+                return texture;
+            })
+            .Add();
+        builder.FrameBuffer("StereoFBO")
+            .Size(RenderResourceSizePolicy.Absolute(64u, 32u))
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .Color(0, "StereoColor", mipLevel: 0, layerIndex: 0)
+            .Factory(() =>
+            {
+                XRTexture2DArray texture = instance.GetTexture<XRTexture2DArray>("StereoColor")!;
+                return new XRFrameBuffer((texture, EFrameBufferAttachment.ColorAttachment0, 0, 0));
+            })
+            .Add();
+
+        RenderResourceGeneration generation = new(CreateKey(), builder.Build(RenderPipelineResourceProfile.Empty));
+        try
+        {
+            new RenderPipelineResourceManager().Materialize(instance, generation).ShouldBeFalse();
+            generation.Status.ShouldBe(RenderResourceGenerationStatus.Failed);
+            generation.Diagnostics.ShouldContain(static x => x.Contains("layerIndex=-1", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            generation.Dispose();
+        }
+    }
+
+    [Test]
     public void ResourceManager_RejectsTextureViewRangeMismatch()
     {
         XRRenderPipelineInstance instance = new();
@@ -1097,7 +1270,23 @@ public sealed class RenderPipelineResourceLifecycleTests
         intermediate.SizePolicy.ScaleY.ShouldBe(expectedScale, 0.0001f);
     }
 
-    private static RenderPipelineResourceProfile CreateProfile(EAntiAliasingMode aaMode, uint msaaSamples, ulong featureMask = 0UL)
+    private static void AssertStereoFramebufferAttachment(
+        RenderPipelineResourceLayout layout,
+        string frameBufferName,
+        string textureName)
+    {
+        FrameBufferSpec frameBuffer = layout.ResourcesByName[frameBufferName].ShouldBeOfType<FrameBufferSpec>();
+        FrameBufferAttachmentDescriptor attachment = frameBuffer.Attachments.Single(x =>
+            string.Equals(x.ResourceName, textureName, StringComparison.Ordinal));
+        attachment.MipLevel.ShouldBe(0);
+        attachment.LayerIndex.ShouldBe(-1);
+    }
+
+    private static RenderPipelineResourceProfile CreateProfile(
+        EAntiAliasingMode aaMode,
+        uint msaaSamples,
+        ulong featureMask = 0UL,
+        bool stereo = false)
         => new(
             DisplayWidth: 1280u,
             DisplayHeight: 720u,
@@ -1106,7 +1295,7 @@ public sealed class RenderPipelineResourceLifecycleTests
             OutputHDR: false,
             AntiAliasingMode: aaMode,
             MsaaSampleCount: msaaSamples,
-            Stereo: false,
+            Stereo: stereo,
             FeatureMask: featureMask);
 
     private static ResourceGenerationKey CreateKey()

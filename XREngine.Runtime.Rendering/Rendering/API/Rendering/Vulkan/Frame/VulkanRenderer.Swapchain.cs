@@ -60,6 +60,7 @@ public unsafe partial class VulkanRenderer
     private SwapchainKHR swapChain;
     private Image[]? swapChainImages;
     private bool[]? _swapchainImageEverPresented;
+    private bool[]? _swapchainImageHasValidPresentedContent;
     private uint _lastPresentedImageIndex;
     private bool _streamlineFrameGenerationSwapchainActive;
     private bool _streamlineFrameGenerationSwapchainIncludesDlss;
@@ -344,6 +345,7 @@ public unsafe partial class VulkanRenderer
         swapChain = default;
         swapChainImages = null;
         _swapchainImageEverPresented = null;
+        _swapchainImageHasValidPresentedContent = null;
         _streamlineFrameGenerationSwapchainActive = false;
         _streamlineFrameGenerationSwapchainIncludesDlss = false;
     }
@@ -440,6 +442,7 @@ public unsafe partial class VulkanRenderer
 
         swapChainImages = new Image[imageCount];
         _swapchainImageEverPresented = new bool[imageCount];
+        _swapchainImageHasValidPresentedContent = new bool[imageCount];
         fixed (Image* swapChainImagesPtr = swapChainImages)
         {
             if (_streamlineFrameGenerationSwapchainActive)

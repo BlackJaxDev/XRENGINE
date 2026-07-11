@@ -5,7 +5,9 @@
 #         Also prints per-pixel diagnostics to stdout.
 
 param(
-    [string]$OutPath = "$PSScriptRoot\..\Build\Logs\capture.png"
+    [string]$OutPath = "$PSScriptRoot\..\Build\Logs\capture.png",
+    [string]$ProcessName = "XREngine.Editor",
+    [string]$WindowTitlePattern = "*"
 )
 
 Add-Type -AssemblyName System.Drawing
@@ -77,15 +79,22 @@ public static class NativeCapture
 }
 '@
 
-# --- Find the XREngine.Editor process ---
-$procs = Get-Process -Name "XREngine.Editor" -ErrorAction SilentlyContinue
-if (-not $procs -or $procs.Count -eq 0) {
-    Write-Error "XREngine.Editor is not running."
-    exit 1
+# --- Find the editor window (apphost or dotnet-hosted) ---
+$procs = if ([string]::IsNullOrWhiteSpace($ProcessName) -or $ProcessName -eq "*") {
+    Get-Process -ErrorAction SilentlyContinue
 }
-$proc = $procs | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
+else {
+    @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue) +
+        @(Get-Process -Name "dotnet" -ErrorAction SilentlyContinue)
+}
+$proc = $procs |
+    Where-Object {
+        $_.MainWindowHandle -ne [IntPtr]::Zero -and
+        $_.MainWindowTitle -like $WindowTitlePattern
+    } |
+    Select-Object -First 1
 if (-not $proc) {
-    Write-Error "XREngine.Editor has no visible main window."
+    Write-Error "No visible editor window matched process '$ProcessName' and title '$WindowTitlePattern'."
     exit 1
 }
 

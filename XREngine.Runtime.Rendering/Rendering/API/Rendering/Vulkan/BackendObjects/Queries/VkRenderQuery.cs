@@ -10,7 +10,6 @@ namespace XREngine.Rendering.Vulkan
             private QueryPool _queryPool;
             private QueryType _queryType = QueryType.Occlusion;
             private bool _queryActive;
-            private static bool _loggedHostQueryResetUnsupported;
 
             public override VkObjectType Type => VkObjectType.Query;
             public override bool IsGenerated => IsActive;
@@ -52,40 +51,12 @@ namespace XREngine.Rendering.Vulkan
                 // it invalidates them (InvalidCommandBuffer-VkQueryPool validation errors
                 // followed by an access violation inside vkQueueSubmit2).
                 //
-                // Reuse is safe because the reset below happens on the HOST, immediately:
-                // the old hazard was that vkCmdResetQueryPool is queued on the GPU, letting
-                // a CPU poll observe a stale availability bit before the queued reset ran.
-                // vkResetQueryPool has no such window, and the CPU occlusion coordinator
-                // only re-begins a query after its prior result has resolved, so the pool
-                // has no pending GPU use when we reset it.
-                //
-                // Occlusion QueryOps are recorded while the target's render pass is
-                // active, and vkCmdResetQueryPool must only be recorded outside a
-                // render pass instance (VUID-vkCmdResetQueryPool-renderpass), so the
-                // host-side reset (core 1.2 hostQueryReset) is also the only valid
-                // reset point for this path.
-                if (!Renderer.SupportsHostQueryReset)
-                {
-                    if (!_loggedHostQueryResetUnsupported)
-                    {
-                        _loggedHostQueryResetUnsupported = true;
-                        Debug.VulkanWarning(
-                            "Occlusion query skipped: device does not support hostQueryReset (Vulkan 1.2), " +
-                            "and vkCmdResetQueryPool cannot be recorded inside an active render pass. " +
-                            "Occlusion candidates remain visible.");
-                    }
-
-                    return false;
-                }
-
+                // PrepareForRecording emits the reset before any render pass begins.
+                // Keeping reset/begin/end queue ordered also prevents another output's
+                // in-flight query epoch from racing a host-side reset.
                 if (!EnsureQueryPool(queryType))
                     return false;
 
-                Renderer.EnsureVulkanResourceMutationAllowed(
-                    ObjectType.QueryPool,
-                    _queryPool.Handle,
-                    "ResetQueryPool");
-                Api!.ResetQueryPool(Device, _queryPool, 0, 1);
                 Renderer.TrackVulkanCommandBufferResource(
                     commandBuffer,
                     ObjectType.QueryPool,
@@ -94,6 +65,27 @@ namespace XREngine.Rendering.Vulkan
                 Api.CmdBeginQuery(commandBuffer, _queryPool, 0, flags);
                 Data.CurrentQuery = target;
                 _queryActive = true;
+                return true;
+            }
+
+            /// <summary>
+            /// Records the required query reset before any render scope begins. Keeping
+            /// reset and begin in one queue-ordered command buffer avoids host resets
+            /// racing another output that still has the prior query epoch in flight.
+            /// </summary>
+            internal bool PrepareForRecording(CommandBuffer commandBuffer, EQueryTarget target)
+            {
+                if (!TryMapQueryType(target, out QueryType queryType, out bool isOcclusion) || !isOcclusion)
+                    return false;
+                if (!EnsureQueryPool(queryType))
+                    return false;
+
+                Renderer.TrackVulkanCommandBufferResource(
+                    commandBuffer,
+                    ObjectType.QueryPool,
+                    _queryPool.Handle,
+                    "Query.Reset");
+                Api!.CmdResetQueryPool(commandBuffer, _queryPool, 0, 1);
                 return true;
             }
 

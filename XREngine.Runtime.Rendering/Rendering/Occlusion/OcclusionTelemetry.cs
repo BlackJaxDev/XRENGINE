@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using XREngine.Data.Rendering;
 
@@ -19,6 +20,118 @@ namespace XREngine.Rendering.Occlusion
     /// </summary>
     public static class OcclusionTelemetry
     {
+        internal sealed class CpuViewCounters
+        {
+            public CpuViewCounters(OcclusionViewKey key)
+                => Key = key;
+
+            public OcclusionViewKey Key { get; }
+            public int CandidateCount;
+            public int Submissions;
+            public int Resolutions;
+            public int Skips;
+            public int BudgetSkipped;
+            public int ForcedVisible;
+            public int CurrentResultAgeFrames;
+            public int MaxResultAgeFrames;
+            public int RecoveryLatencyFrames;
+            public int LastTouchedEpoch;
+            public CpuOcclusionViewTelemetrySnapshot LastSnapshot;
+
+            public void SnapshotAndReset()
+            {
+                LastSnapshot = new CpuOcclusionViewTelemetrySnapshot(
+                    Key,
+                    Interlocked.Exchange(ref CandidateCount, 0),
+                    Interlocked.Exchange(ref Submissions, 0),
+                    Interlocked.Exchange(ref Resolutions, 0),
+                    Interlocked.Exchange(ref Skips, 0),
+                    Interlocked.Exchange(ref BudgetSkipped, 0),
+                    Interlocked.Exchange(ref ForcedVisible, 0),
+                    Interlocked.Exchange(ref CurrentResultAgeFrames, 0),
+                    Interlocked.Exchange(ref MaxResultAgeFrames, 0),
+                    Interlocked.Exchange(ref RecoveryLatencyFrames, 0));
+            }
+        }
+
+        internal readonly struct CpuViewTelemetryHandle
+        {
+            private readonly CpuViewCounters? _counters;
+
+            internal CpuViewTelemetryHandle(CpuViewCounters counters)
+                => _counters = counters;
+
+            public void RecordPassBegin(int candidateCount)
+            {
+                CpuViewCounters? counters = Touch();
+                if (counters is not null && candidateCount > 0)
+                    Interlocked.Add(ref counters.CandidateCount, candidateCount);
+            }
+
+            public void RecordSubmission()
+            {
+                CpuViewCounters? counters = Touch();
+                if (counters is not null)
+                    Interlocked.Increment(ref counters.Submissions);
+            }
+
+            public void RecordResolution(ulong submittedFrame, ulong resolvedFrame)
+            {
+                CpuViewCounters? counters = Touch();
+                if (counters is null)
+                    return;
+                Interlocked.Increment(ref counters.Resolutions);
+                ulong latency = resolvedFrame >= submittedFrame ? resolvedFrame - submittedFrame : 0UL;
+                int boundedLatency = latency > int.MaxValue ? int.MaxValue : (int)latency;
+                UpdateMax(ref counters.RecoveryLatencyFrames, boundedLatency);
+            }
+
+            public void RecordSkip()
+            {
+                CpuViewCounters? counters = Touch();
+                if (counters is not null)
+                    Interlocked.Increment(ref counters.Skips);
+            }
+
+            public void RecordBudgetSkipped(int count)
+            {
+                CpuViewCounters? counters = Touch();
+                if (counters is not null && count > 0)
+                    Interlocked.Add(ref counters.BudgetSkipped, count);
+            }
+
+            public void RecordForcedVisible()
+            {
+                CpuViewCounters? counters = Touch();
+                if (counters is not null)
+                    Interlocked.Increment(ref counters.ForcedVisible);
+            }
+
+            public void RecordResultAge(int ageFrames)
+            {
+                CpuViewCounters? counters = Touch();
+                if (counters is null)
+                    return;
+                int boundedAge = Math.Clamp(ageFrames, 0, 1_000_000);
+                Interlocked.Exchange(ref counters.CurrentResultAgeFrames, boundedAge);
+                UpdateMax(ref counters.MaxResultAgeFrames, boundedAge);
+            }
+
+            private CpuViewCounters? Touch()
+            {
+                CpuViewCounters? counters = _counters;
+                if (counters is not null)
+                    Volatile.Write(ref counters.LastTouchedEpoch, Volatile.Read(ref _cpuViewTelemetryEpoch));
+                return counters;
+            }
+
+        }
+
+        private static readonly object CpuViewCountersLock = new();
+        private static readonly Dictionary<OcclusionViewKey, CpuViewCounters> CpuViewCountersByKey = new();
+        private static readonly List<OcclusionViewKey> CpuViewStaleKeys = new(16);
+        private static int _cpuViewTelemetryEpoch;
+
         // CPU-query path (hardware AnySamplesPassedConservative, decision on CPU).
         private static int _cpuTested;
         private static int _cpuCulled;
@@ -266,6 +379,55 @@ namespace XREngine.Rendering.Occlusion
         public static int CpuQueryResolvedTotal => Sum(_lastFrameCpuQueryResolvedReasons);
         public static int CpuBudgetSkippedTotal => Sum(_lastFrameCpuBudgetSkippedReasons);
 
+        /// <summary>
+        /// Returns a diagnostic copy of the last completed frame's per-output
+        /// hardware-query telemetry. This is intentionally an on-demand allocation;
+        /// render-path recording updates cached counters without allocating.
+        /// </summary>
+        public static CpuOcclusionViewTelemetrySnapshot[] GetCpuViewSnapshots()
+        {
+            lock (CpuViewCountersLock)
+            {
+                var snapshots = new CpuOcclusionViewTelemetrySnapshot[CpuViewCountersByKey.Count];
+                int index = 0;
+                foreach (CpuViewCounters counters in CpuViewCountersByKey.Values)
+                    snapshots[index++] = counters.LastSnapshot;
+                return snapshots;
+            }
+        }
+
+        /// <summary>
+        /// Copies last-frame keyed telemetry into caller-owned storage without
+        /// allocating. Returns the number copied; <see cref="CpuViewSnapshotCount"/>
+        /// reports the capacity required for a complete copy.
+        /// </summary>
+        public static int CopyLastFrameCpuViewSnapshots(Span<CpuOcclusionViewTelemetrySnapshot> destination)
+        {
+            lock (CpuViewCountersLock)
+            {
+                int copied = 0;
+                foreach (CpuViewCounters counters in CpuViewCountersByKey.Values)
+                {
+                    if (copied >= destination.Length)
+                        break;
+                    destination[copied++] = counters.LastSnapshot;
+                }
+                return copied;
+            }
+        }
+
+        public static int CpuViewSnapshotCount
+        {
+            get
+            {
+                lock (CpuViewCountersLock)
+                    return CpuViewCountersByKey.Count;
+            }
+        }
+
+        internal static CpuViewTelemetryHandle GetCpuViewTelemetryHandle(OcclusionViewKey key)
+            => new(GetCpuViewCounters(key));
+
         /// <summary>Last completed frame: CpuQueryAsync GPU-dispatch proxy-AABB queries submitted.</summary>
         public static int CpuQueryAsyncSubmitted => _lastFrameCpuQueryAsyncSubmitted;
         /// <summary>Last completed frame: CpuQueryAsync GPU-dispatch queries whose results were resolved.</summary>
@@ -276,6 +438,20 @@ namespace XREngine.Rendering.Occlusion
         /// <summary>Called by RuntimeEngine.Rendering.Stats.BeginFrame to snapshot and reset counters.</summary>
         public static void BeginFrame()
         {
+            lock (CpuViewCountersLock)
+            {
+                int epoch = ++_cpuViewTelemetryEpoch;
+                CpuViewStaleKeys.Clear();
+                foreach (KeyValuePair<OcclusionViewKey, CpuViewCounters> pair in CpuViewCountersByKey)
+                {
+                    pair.Value.SnapshotAndReset();
+                    if (epoch - Volatile.Read(ref pair.Value.LastTouchedEpoch) > 240)
+                        CpuViewStaleKeys.Add(pair.Key);
+                }
+                foreach (OcclusionViewKey key in CpuViewStaleKeys)
+                    CpuViewCountersByKey.Remove(key);
+            }
+
             _lastFrameCpuTested = _cpuTested;
             _lastFrameCpuCulled = _cpuCulled;
             _lastFrameCpuPassesActive = _cpuPassesActive;
@@ -405,6 +581,59 @@ namespace XREngine.Rendering.Occlusion
 
         public static void RecordCpuMotionTier(ECpuOcclusionMotionTier tier)
             => Interlocked.Exchange(ref _currentCpuMotionTier, (int)tier);
+
+        public static void RecordCpuViewPassBegin(OcclusionViewKey key, int candidateCount)
+        {
+            CpuViewCounters counters = GetCpuViewCounters(key);
+            if (candidateCount > 0)
+                Interlocked.Add(ref counters.CandidateCount, candidateCount);
+        }
+
+        public static void RecordCpuViewSubmission(OcclusionViewKey key)
+            => Interlocked.Increment(ref GetCpuViewCounters(key).Submissions);
+
+        public static void RecordCpuViewResolution(OcclusionViewKey key, ulong submittedFrame, ulong resolvedFrame)
+        {
+            CpuViewCounters counters = GetCpuViewCounters(key);
+            Interlocked.Increment(ref counters.Resolutions);
+            ulong latency = resolvedFrame >= submittedFrame ? resolvedFrame - submittedFrame : 0UL;
+            int boundedLatency = latency > int.MaxValue ? int.MaxValue : (int)latency;
+            UpdateMax(ref counters.RecoveryLatencyFrames, boundedLatency);
+        }
+
+        public static void RecordCpuViewSkip(OcclusionViewKey key)
+            => Interlocked.Increment(ref GetCpuViewCounters(key).Skips);
+
+        public static void RecordCpuViewBudgetSkipped(OcclusionViewKey key, int count)
+        {
+            if (count > 0)
+                Interlocked.Add(ref GetCpuViewCounters(key).BudgetSkipped, count);
+        }
+
+        public static void RecordCpuViewForcedVisible(OcclusionViewKey key)
+            => Interlocked.Increment(ref GetCpuViewCounters(key).ForcedVisible);
+
+        public static void RecordCpuViewResultAge(OcclusionViewKey key, int ageFrames)
+        {
+            CpuViewCounters counters = GetCpuViewCounters(key);
+            int boundedAge = Math.Clamp(ageFrames, 0, 1_000_000);
+            Interlocked.Exchange(ref counters.CurrentResultAgeFrames, boundedAge);
+            UpdateMax(ref counters.MaxResultAgeFrames, boundedAge);
+        }
+
+        private static CpuViewCounters GetCpuViewCounters(OcclusionViewKey key)
+        {
+            lock (CpuViewCountersLock)
+            {
+                if (!CpuViewCountersByKey.TryGetValue(key, out CpuViewCounters? counters))
+                {
+                    counters = new CpuViewCounters(key);
+                    CpuViewCountersByKey.Add(key, counters);
+                }
+                Volatile.Write(ref counters.LastTouchedEpoch, _cpuViewTelemetryEpoch);
+                return counters;
+            }
+        }
 
         public static void RecordCpuActiveViewScope(EOcclusionViewScope scope)
             => Interlocked.Exchange(ref _currentCpuViewScope, (int)scope);

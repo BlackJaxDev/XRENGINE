@@ -222,6 +222,16 @@ namespace XREngine.Rendering.Pipelines.Commands
         private static int ResolveBloomMaxMip(uint width, uint height)
             => Math.Min(BloomMaxMipmapLevel, XRTexture.GetSmallestMipmapLevel(width, height));
 
+        internal static BoundingRectangle ResolveBloomMipRegion(uint width, uint height, int mipLevel)
+        {
+            int mip = Math.Clamp(mipLevel, 0, 30);
+            return new BoundingRectangle(
+                0,
+                0,
+                checked((int)Math.Max(width >> mip, 1u)),
+                checked((int)Math.Max(height >> mip, 1u)));
+        }
+
         private static string GetDownsampleFboName(int mipLevel)
             => mipLevel switch
             {
@@ -289,21 +299,19 @@ namespace XREngine.Rendering.Pipelines.Commands
             _lastHeight = height;
             _activeBloomMaxMip = ResolveBloomMaxMip(width, height);
 
-            // Mip render areas (half-size per level).
-            BloomRect1.Width = (int)(width * 0.5f);
-            BloomRect1.Height = (int)(height * 0.5f);
-            BloomRect2.Width = (int)(width * 0.25f);
-            BloomRect2.Height = (int)(height * 0.25f);
-            BloomRect3.Width = (int)(width * 0.125f);
-            BloomRect3.Height = (int)(height * 0.125f);
-            BloomRect4.Width = (int)(width * 0.0625f);
-            BloomRect4.Height = (int)(height * 0.0625f);
+            // Mip render areas use the same integer shift contract as the GPU image.
+            // This matters for odd and non-square eye extents such as 896x1007.
+            BloomRect1 = ResolveBloomMipRegion(width, height, 1);
+            BloomRect2 = ResolveBloomMipRegion(width, height, 2);
+            BloomRect3 = ResolveBloomMipRegion(width, height, 3);
+            BloomRect4 = ResolveBloomMipRegion(width, height, 4);
 
             (EPixelInternalFormat internalFormat, ESizedInternalFormat sizedInternalFormat, EPixelFormat pixelFormat, EPixelType pixelType) =
                 ResolveBloomTextureFormat(sourceTexture, instance);
 
             XRTexture outputTexture = ResolveOrCreateBloomTexture(instance, width, height, _activeBloomMaxMip,
                 internalFormat, sizedInternalFormat, pixelFormat, pixelType);
+            ValidateBloomTextureContract(outputTexture, width, height, _activeBloomMaxMip);
 
             _bloomSourceMipViews.Clear();
             _bloomSourceViewTexture = outputTexture;
@@ -318,6 +326,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             // --- Mip 0 write target (for initial HDR scene copy) ---
             var mip0 = new XRQuadFrameBuffer(CreateCopyMaterial(copyShader)) { Name = BloomMip0FBOName };
             mip0.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+            ValidateBloomWriteFboContract(mip0, outputTexture, 0);
             mip0.SettingUniforms += BloomCopy_SettingUniforms;
             instance.SetFBO(mip0);
 
@@ -326,6 +335,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 var downsampleFbo = new XRQuadFrameBuffer(CreateDownsampleMaterial(outputTexture, mipLevel - 1, downsampleShader)) { Name = GetDownsampleFboName(mipLevel) };
                 downsampleFbo.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, mipLevel, -1));
+                ValidateBloomWriteFboContract(downsampleFbo, outputTexture, mipLevel);
                 downsampleFbo.SettingUniforms += mipLevel == 1
                     ? DownsampleLevel1_SettingUniforms
                     : DownsampleLevelN_SettingUniforms;
@@ -338,6 +348,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 int sourceMipLevel = targetMipLevel + 1;
                 var upsampleFbo = new XRQuadFrameBuffer(CreateUpsampleMaterial(outputTexture, sourceMipLevel, upsampleShader)) { Name = GetUpsampleFboName(targetMipLevel) };
                 upsampleFbo.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, targetMipLevel, -1));
+                ValidateBloomWriteFboContract(upsampleFbo, outputTexture, targetMipLevel);
                 upsampleFbo.SettingUniforms += UpsampleFbo_SettingUniforms;
                 instance.SetFBO(upsampleFbo);
             }
@@ -473,15 +484,18 @@ namespace XREngine.Rendering.Pipelines.Commands
             // Step 1: Copy HDR scene into bloom texture mip 0.
             {
                 _bloomCopySourceTexture = inputTexture;
+                BoundingRectangle copyRegion = ResolveBloomMipRegion(_lastWidth, _lastHeight, 0);
+                ValidateBloomRenderRegion(mip0, copyRegion, 0);
                 int copyPassIndex = ResolvePassIndex(BloomCopyPassName);
                 using var copyPassScope = copyPassIndex != int.MinValue
                     ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(copyPassIndex)
                     : default;
                 using (RenderPipelineGpuProfiler.Instance.StartScope(BloomCopyScopeName))
+                using (instance.RenderState.PushRenderArea(copyRegion))
                 using (mip0.BindForWritingState())
                 {
                     bool rendered = mip0.Render();
-                    LogBloomRenderResult("CopyMip0", mip0, default, copyPassIndex, 0, rendered);
+                    LogBloomRenderResult("CopyMip0", mip0, copyRegion, copyPassIndex, 0, rendered);
                 }
             }
 
@@ -526,7 +540,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            int passIndex = ResolvePassIndex(GetDownsamplePassName(sourceMip + 1));
+            int targetMip = sourceMip + 1;
+            ValidateBloomRenderRegion(fbo, rect, targetMip);
+            int passIndex = ResolvePassIndex(GetDownsamplePassName(targetMip));
             using var passScope = passIndex != int.MinValue
                 ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
                 : default;
@@ -552,6 +568,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
+            int targetMip = sourceMip - 1;
+            ValidateBloomRenderRegion(fbo, rect, targetMip);
             int passIndex = ResolvePassIndex(GetUpsamplePassName(sourceMip));
             using var passScope = passIndex != int.MinValue
                 ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
@@ -629,7 +647,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             if (_bloomSourceMipViews.TryGetValue(mip, out XRTexture? cachedView))
+            {
+                ValidateBloomSourceViewContract(bloomTexture, cachedView, mip);
                 return cachedView;
+            }
 
             XRTexture view = bloomTexture switch
             {
@@ -638,8 +659,107 @@ namespace XREngine.Rendering.Pipelines.Commands
                 _ => bloomTexture
             };
 
+            ValidateBloomSourceViewContract(bloomTexture, view, mip);
             _bloomSourceMipViews[mip] = view;
             return view;
+        }
+
+        private void ValidateBloomTextureContract(XRTexture texture, uint width, uint height, int maxMipLevel)
+        {
+            Vector3 actualDimensions = texture.WidthHeightDepth;
+            uint actualWidth = (uint)Math.Max(1, (int)MathF.Round(actualDimensions.X));
+            uint actualHeight = (uint)Math.Max(1, (int)MathF.Round(actualDimensions.Y));
+            if (actualWidth != width || actualHeight != height)
+            {
+                throw new InvalidOperationException(
+                    $"Bloom texture '{BloomOutputTextureName}' extent mismatch. Expected={width}x{height} Actual={actualWidth}x{actualHeight}.");
+            }
+
+            if (texture.SmallestMipmapLevel < maxMipLevel)
+            {
+                throw new InvalidOperationException(
+                    $"Bloom texture '{BloomOutputTextureName}' mip range is incomplete. ExpectedMaxMip={maxMipLevel} ActualMaxMip={texture.SmallestMipmapLevel}.");
+            }
+
+            if (Stereo)
+            {
+                if (texture is not XRTexture2DArray array ||
+                    array.Depth != 2u ||
+                    array.OVRMultiViewParameters is not { Offset: 0, NumViews: 2u })
+                {
+                    throw new InvalidOperationException(
+                        $"Stereo bloom texture '{BloomOutputTextureName}' must be a two-layer multiview array. Actual={texture.GetType().Name}.");
+                }
+            }
+            else if (texture is not XRTexture2D)
+            {
+                throw new InvalidOperationException(
+                    $"Mono bloom texture '{BloomOutputTextureName}' must be XRTexture2D. Actual={texture.GetType().Name}.");
+            }
+        }
+
+        private void ValidateBloomWriteFboContract(XRQuadFrameBuffer fbo, XRTexture outputTexture, int targetMip)
+        {
+            if (fbo.Targets is not { Length: 1 } targets)
+                throw new InvalidOperationException($"Bloom FBO '{fbo.Name}' must have exactly one color attachment.");
+
+            var (target, attachment, mipLevel, layerIndex) = targets[0];
+            if (!ReferenceEquals(target, outputTexture) ||
+                attachment != EFrameBufferAttachment.ColorAttachment0 ||
+                mipLevel != targetMip ||
+                layerIndex != -1)
+            {
+                throw new InvalidOperationException(
+                    $"Bloom FBO '{fbo.Name}' attachment mismatch. Expected={BloomOutputTextureName}:Color0:mip{targetMip}:all-layers Actual={attachment}:mip{mipLevel}:layer{layerIndex}.");
+            }
+
+            if (Stereo && outputTexture is not XRTexture2DArray { Depth: 2u, OVRMultiViewParameters.NumViews: 2u })
+                throw new InvalidOperationException($"Stereo bloom FBO '{fbo.Name}' does not target a complete two-layer multiview array.");
+        }
+
+        private void ValidateBloomSourceViewContract(XRTexture sourceTexture, XRTexture view, int sourceMip)
+        {
+            if (view is not XRTextureViewBase viewBase ||
+                !ReferenceEquals(viewBase.GetViewedTexture(), sourceTexture) ||
+                viewBase.MinLevel != (uint)sourceMip ||
+                viewBase.NumLevels != 1u)
+            {
+                throw new InvalidOperationException(
+                    $"Bloom source mip {sourceMip} must use a one-mip view of '{BloomOutputTextureName}'. Actual={view.GetType().Name}.");
+            }
+
+            if (Stereo)
+            {
+                if (view is not XRTexture2DArrayView arrayView ||
+                    !arrayView.Array ||
+                    arrayView.MinLayer != 0u ||
+                    arrayView.NumLayers != 2u)
+                {
+                    throw new InvalidOperationException(
+                        $"Stereo bloom source mip {sourceMip} must remain a two-layer sampler2DArray view. Actual={view.GetType().Name}.");
+                }
+            }
+            else if (view is not XRTexture2DView textureView || textureView.Array)
+            {
+                throw new InvalidOperationException(
+                    $"Mono bloom source mip {sourceMip} must use a non-array sampler2D view. Actual={view.GetType().Name}.");
+            }
+        }
+
+        private void ValidateBloomRenderRegion(XRQuadFrameBuffer fbo, BoundingRectangle region, int targetMip)
+        {
+            BoundingRectangle expected = ResolveBloomMipRegion(_lastWidth, _lastHeight, targetMip);
+            if (region.X != expected.X ||
+                region.Y != expected.Y ||
+                region.Width != expected.Width ||
+                region.Height != expected.Height)
+            {
+                throw new InvalidOperationException(
+                    $"Bloom FBO '{fbo.Name}' render region mismatch for mip {targetMip}. Expected={expected} Actual={region}.");
+            }
+
+            if (fbo.Targets is not { Length: 1 } targets || targets[0].MipLevel != targetMip)
+                throw new InvalidOperationException($"Bloom FBO '{fbo.Name}' does not target mip {targetMip}.");
         }
 
         private XRTexture2DView CreateBloomSourceMipView(XRTexture2D texture, int mip)
@@ -796,7 +916,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), Math.Max(area.Width, 1));
             program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), Math.Max(area.Height, 1));
-            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
+            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), new Vector2(area.X, area.Y));
         }
 
         private void UpsampleFbo_SettingUniforms(XRRenderProgram program)

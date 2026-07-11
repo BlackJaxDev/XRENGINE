@@ -1,0 +1,34 @@
+using System.Text;
+using Silk.NET.Vulkan;
+
+namespace XREngine.Rendering.Vulkan
+{
+    public unsafe partial class VulkanRenderer
+    {
+        private sealed class CommandBufferRecordingScratch
+        {
+            public Dictionary<int, VulkanRenderGraphCompiler.SecondaryRecordingBucket> SecondaryBucketByStart { get; } = new();
+            public Dictionary<int, int> SwapchainWritesByPipeline { get; } = new();
+            public Dictionary<int, string> SwapchainWriterLabelByPipeline { get; } = new();
+            public Dictionary<int, string> SwapchainWriterDetailByPipeline { get; } = new();
+            public Dictionary<int, FrameOp> SwapchainWriterOpByPipeline { get; } = new();
+            public Dictionary<int, int> SwapchainWriterDynamicUiDrawCountByPipeline { get; } = new();
+            public HashSet<nint> ExecutedCommandChainSecondaryHandles { get; } = new();
+            public HashSet<VkRenderQuery> PreparedInlineQueries { get; } = new(ReferenceEqualityComparer.Instance);
+            public HashSet<VkRenderQuery> BegunInlineQueries { get; } = new(ReferenceEqualityComparer.Instance);
+            public Dictionary<int, int> SwapchainWriterPassByPipeline { get; } = new();
+            public Dictionary<int, int> SwapchainWriterOpIndexByPipeline { get; } = new();
+            public Dictionary<int, string> PipelineNameByIdentity { get; } = new();
+            public Dictionary<VkMeshRenderer, int> MeshDrawSlotsByRenderer { get; } = new(ReferenceEqualityComparer.Instance);
+            public Dictionary<XRFrameBuffer, ImageLayout[]> FboLayoutTracking { get; } = new(ReferenceEqualityComparer.Instance);
+            public List<KeyValuePair<int, int>> SwapchainWriterCountSort { get; } = new();
+            public StringBuilder SwapchainWriterSummaryBuilder { get; } = new(256);
+            public int SecondaryBucketByStartCapacityHint { get; set; } = 1;
+            public int RecordSwapchainWriterCapacityHint { get; set; } = 1;
+            public int RecordPipelineNameCapacityHint { get; set; } = 1;
+            public int RecordMeshDrawSlotCapacityHint { get; set; } = 1;
+            public int RecordFboLayoutCapacityHint { get; set; } = 1;
+        }
+
+    }
+}

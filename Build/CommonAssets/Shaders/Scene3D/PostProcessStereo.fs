@@ -349,11 +349,21 @@ void main()
     {
       int startMip = clamp(BloomStartMip, 0, 4);
       int endMip = clamp(BloomEndMip, startMip, 4);
-      for (int lod = startMip; lod <= endMip; ++lod)
+
+      // The upsample chain has already accumulated mips 4..1 into mip 1.
+      // Match the mono path and sample that result once for the default range.
+      if (startMip == 1 && endMip == 4)
       {
-        float w = BloomLodWeights[lod];
-        if (w > 0.0)
-          hdrSceneColor += SafeColor(textureLod(BloomBlurTexture, vec3(duv, gl_ViewID_OVR), float(lod)).rgb) * w * BloomStrength;
+        hdrSceneColor += SafeColor(textureLod(BloomBlurTexture, vec3(duv, gl_ViewID_OVR), 1.0).rgb) * BloomStrength;
+      }
+      else
+      {
+        for (int lod = startMip; lod <= endMip; ++lod)
+        {
+          float w = BloomLodWeights[lod];
+          if (w > 0.0)
+            hdrSceneColor += SafeColor(textureLod(BloomBlurTexture, vec3(duv, gl_ViewID_OVR), float(lod)).rgb) * w * BloomStrength;
+        }
       }
     }
     hdrSceneColor = SafeColor(hdrSceneColor);

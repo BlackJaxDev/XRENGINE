@@ -10,25 +10,16 @@ public unsafe partial class VulkanRenderer
     private readonly object _descriptorUpdateTemplateCacheLock = new();
     private readonly Dictionary<ulong, List<CachedDescriptorUpdateTemplate>> _descriptorUpdateTemplateCache = new();
 
-    private sealed class CachedDescriptorUpdateTemplate
-    {
-        public required DescriptorUpdateTemplate Template;
-        public required DescriptorUpdateTemplateSignature[] Signature;
-        public required ulong Hash;
-    }
-
-    private readonly record struct DescriptorUpdateTemplateSignature(
-        ulong DescriptorSetLayout,
-        ulong PipelineLayout,
-        int BindPoint,
-        uint SetIndex,
-        uint DstBinding,
-        uint DstArrayElement,
-        uint DescriptorCount,
-        DescriptorType DescriptorType,
-        nuint Offset,
-        nuint Stride);
-
+    /// <summary>
+    /// Attempts to update a Vulkan descriptor set using a descriptor update template.
+    /// </summary>
+    /// <param name="descriptorSet">The Vulkan descriptor set to update.</param>
+    /// <param name="descriptorSetLayout">The layout of the descriptor set.</param>
+    /// <param name="bindPoint">The pipeline bind point (graphics or compute).</param>
+    /// <param name="pipelineLayout">The pipeline layout associated with the descriptor set.</param>
+    /// <param name="setIndex">The index of the descriptor set within the pipeline layout.</param>
+    /// <param name="writes">The descriptor write operations to apply.</param>
+    /// <returns>True if the descriptor set was successfully updated, false otherwise.</returns>
     internal bool TryUpdateDescriptorSetWithTemplate(
         DescriptorSet descriptorSet,
         DescriptorSetLayout descriptorSetLayout,
@@ -103,9 +94,7 @@ public unsafe partial class VulkanRenderer
                 entries,
                 signature,
                 out DescriptorUpdateTemplate updateTemplate))
-            {
                 return false;
-            }
 
             if (!IsDeviceOperational)
                 return false;
@@ -119,6 +108,11 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Determines whether a given descriptor write has a source suitable for a descriptor update template.
+    /// </summary>
+    /// <param name="write">The descriptor write to check.</param>
+    /// <returns>True if the descriptor write has a source suitable for a descriptor update template; otherwise, false.</returns>
     private static bool HasDescriptorTemplateSource(in WriteDescriptorSet write)
         => write.DescriptorType switch
         {
@@ -131,17 +125,25 @@ public unsafe partial class VulkanRenderer
             _ => false,
         };
 
+    /// <summary>
+    /// Determines whether a collection of descriptor writes contains any image descriptor writes.
+    /// </summary>
+    /// <param name="writes">The collection of descriptor writes to check.</param>
+    /// <returns>True if any of the descriptor writes are image descriptor writes; otherwise, false.</returns>
     private static bool ContainsImageDescriptorWrites(ReadOnlySpan<WriteDescriptorSet> writes)
     {
         for (int i = 0; i < writes.Length; i++)
-        {
             if (IsImageDescriptorType(writes[i].DescriptorType))
                 return true;
-        }
 
         return false;
     }
 
+    /// <summary>
+    /// Determines whether a given descriptor type is an image descriptor type.
+    /// </summary>
+    /// <param name="descriptorType">The descriptor type to check.</param>
+    /// <returns>True if the descriptor type is an image descriptor type; otherwise, false.</returns>
     private static bool IsImageDescriptorType(DescriptorType descriptorType)
         => descriptorType is DescriptorType.CombinedImageSampler
             or DescriptorType.Sampler
@@ -149,6 +151,17 @@ public unsafe partial class VulkanRenderer
             or DescriptorType.StorageImage
             or DescriptorType.InputAttachment;
 
+    /// <summary>
+    /// Tries to get an existing descriptor update template from the cache or creates a new one if it doesn't exist.
+    /// </summary>
+    /// <param name="descriptorSetLayout">The descriptor set layout associated with the update template.</param>
+    /// <param name="bindPoint">The pipeline bind point (graphics or compute) for the update template.</param>
+    /// <param name="pipelineLayout">The pipeline layout associated with the update template.</param>
+    /// <param name="setIndex">The index of the descriptor set within the pipeline layout.</param>
+    /// <param name="entries">The array of descriptor update template entries.</param>
+    /// <param name="signature">The signature of the descriptor update template.</param>
+    /// <param name="updateTemplate">The resulting descriptor update template if found or created.</param>
+    /// <returns>True if an existing template was found or a new one was successfully created; otherwise, false.</returns>
     private bool TryGetOrCreateDescriptorUpdateTemplate(
         DescriptorSetLayout descriptorSetLayout,
         PipelineBindPoint bindPoint,
@@ -207,23 +220,28 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Destroys all cached descriptor update templates and clears the cache.
+    /// This should be called during cleanup to ensure that all Vulkan resources are properly released.
+    /// </summary>
     private void DestroyDescriptorUpdateTemplateCache()
     {
         lock (_descriptorUpdateTemplateCacheLock)
         {
             foreach (List<CachedDescriptorUpdateTemplate> bucket in _descriptorUpdateTemplateCache.Values)
-            {
                 foreach (CachedDescriptorUpdateTemplate cached in bucket)
-                {
                     if (cached.Template.Handle != 0)
                         Api!.DestroyDescriptorUpdateTemplate(device, cached.Template, null);
-                }
-            }
-
+            
             _descriptorUpdateTemplateCache.Clear();
         }
     }
 
+    /// <summary>
+    /// Computes a hash value for the given descriptor update template signature.
+    /// </summary>
+    /// <param name="signature">The descriptor update template signature to compute the hash for.</param>
+    /// <returns>The computed hash value.</returns>
     private static ulong ComputeDescriptorUpdateTemplateHash(ReadOnlySpan<DescriptorUpdateTemplateSignature> signature)
     {
         ulong hash = 1469598103934665603UL;
@@ -252,6 +270,12 @@ public unsafe partial class VulkanRenderer
         return hash;
     }
 
+    /// <summary>
+    /// Determines whether two descriptor update template signatures are equal.
+    /// </summary>
+    /// <param name="left">The first descriptor update template signature array to compare.</param>
+    /// <param name="right">The second descriptor update template signature array to compare.</param>
+    /// <returns>True if the two descriptor update template signatures are equal; otherwise, false.</returns>
     private static bool DescriptorUpdateTemplateSignaturesEqual(
         DescriptorUpdateTemplateSignature[] left,
         DescriptorUpdateTemplateSignature[] right)
@@ -260,14 +284,17 @@ public unsafe partial class VulkanRenderer
             return false;
 
         for (int i = 0; i < left.Length; i++)
-        {
             if (left[i] != right[i])
                 return false;
-        }
 
         return true;
     }
 
+    /// <summary>
+    /// Gets the size of a descriptor template element based on its descriptor type.
+    /// </summary>
+    /// <param name="descriptorType">The descriptor type to get the element size for.</param>
+    /// <returns>The size of the descriptor template element for the specified descriptor type.</returns>
     private static nuint GetDescriptorTemplateElementSize(DescriptorType descriptorType)
         => descriptorType switch
         {
@@ -280,6 +307,11 @@ public unsafe partial class VulkanRenderer
             _ => 0,
         };
 
+    /// <summary>
+    /// Copies the descriptor template data from the specified write descriptor set to the destination memory location.
+    /// </summary>
+    /// <param name="write">The write descriptor set containing the data to copy.</param>
+    /// <param name="destination">The destination memory location to copy the data to.</param>
     private static void CopyDescriptorTemplateData(in WriteDescriptorSet write, void* destination)
     {
         nuint bytes = GetDescriptorTemplateElementSize(write.DescriptorType) * write.DescriptorCount;
@@ -298,6 +330,12 @@ public unsafe partial class VulkanRenderer
             System.Buffer.MemoryCopy(source, destination, bytes, bytes);
     }
 
+    /// <summary>
+    /// Aligns the specified value up to the nearest multiple of the specified alignment.
+    /// </summary>
+    /// <param name="value">The value to align.</param>
+    /// <param name="alignment">The alignment to align the value to.</param>
+    /// <returns>The aligned value.</returns>
     private static nuint AlignUp(nuint value, nuint alignment)
     {
         if (alignment <= 1)

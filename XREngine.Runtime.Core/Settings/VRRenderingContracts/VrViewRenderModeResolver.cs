@@ -13,13 +13,15 @@ public static class VrViewRenderModeResolver
     /// <param name="enableOpenXrVulkanParallelRendering">Indicates whether OpenXR Vulkan parallel rendering is enabled.</param>
     /// <param name="trueSinglePassStereoAvailable">Indicates whether true single-pass stereo rendering is available.</param>
     /// <param name="rendersExternalSwapchainTargets">Indicates whether the application renders to external swapchain targets.</param>
+    /// <param name="trueSinglePassStereoUnavailableReason">The runtime capability reason when true single-pass stereo is unavailable.</param>
     /// <returns>A <see cref="VrViewRenderModeResolution"/> representing the resolved VR view render mode, implementation path, and temporal history policy.</returns>
     public static VrViewRenderModeResolution Resolve(
         ERenderLibrary backend,
         EVrViewRenderMode requestedMode,
         bool enableOpenXrVulkanParallelRendering = true,
         bool trueSinglePassStereoAvailable = false,
-        bool rendersExternalSwapchainTargets = true)
+        bool rendersExternalSwapchainTargets = true,
+        string? trueSinglePassStereoUnavailableReason = null)
     {
         // Handle the special case for ParallelCommandBufferRecording mode, which has specific requirements and limitations.
         if (requestedMode == EVrViewRenderMode.ParallelCommandBufferRecording)
@@ -50,6 +52,21 @@ public static class VrViewRenderModeResolver
             }
         }
 
+        if (requestedMode == EVrViewRenderMode.SinglePassStereo && !trueSinglePassStereoAvailable)
+        {
+            string reason = string.IsNullOrWhiteSpace(trueSinglePassStereoUnavailableReason)
+                ? "the active backend/runtime did not provide a true multiview stereo target"
+                : trueSinglePassStereoUnavailableReason;
+            return new(
+                requestedMode,
+                requestedMode,
+                EVrViewRenderImplementationPath.Unsupported,
+                EVrTemporalHistoryPolicy.Disabled,
+                false,
+                $"VR.ViewRenderMode=SinglePassStereo requires true single-pass multiview rendering, but {reason}. " +
+                "Sequential or per-eye compatibility fallback is forbidden for this mode; the XR frame will be submitted without projection layers.");
+        }
+
         // Resolve the implementation path based on the requested mode and runtime conditions.
         EVrViewRenderImplementationPath implementationPath = ResolveImplementationPath(
             requestedMode,
@@ -78,9 +95,7 @@ public static class VrViewRenderModeResolver
         {
             EVrViewRenderMode.SequentialViews => EVrViewRenderImplementationPath.SequentialViews,
             EVrViewRenderMode.ParallelCommandBufferRecording => EVrViewRenderImplementationPath.ParallelCommandBufferRecording,
-            EVrViewRenderMode.SinglePassStereo => trueSinglePassStereoAvailable
-                ? EVrViewRenderImplementationPath.TrueSinglePassStereo
-                : EVrViewRenderImplementationPath.OpenXrSinglePassCompatibility, // Fallback to OpenXR single-pass compatibility if true single-pass stereo is not available.
+            EVrViewRenderMode.SinglePassStereo when trueSinglePassStereoAvailable => EVrViewRenderImplementationPath.TrueSinglePassStereo,
             _ => EVrViewRenderImplementationPath.Unsupported,
         };
 
@@ -96,7 +111,6 @@ public static class VrViewRenderModeResolver
         => implementationPath switch
         {
             EVrViewRenderImplementationPath.TrueSinglePassStereo => EVrTemporalHistoryPolicy.StereoArrayLayer,
-            EVrViewRenderImplementationPath.OpenXrSinglePassCompatibility => EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain,
             EVrViewRenderImplementationPath.SequentialViews or EVrViewRenderImplementationPath.ParallelCommandBufferRecording =>
                 rendersExternalSwapchainTargets
                     ? EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain

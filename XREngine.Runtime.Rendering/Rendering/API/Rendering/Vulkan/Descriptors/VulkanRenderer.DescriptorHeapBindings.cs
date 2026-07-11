@@ -488,7 +488,7 @@ public unsafe partial class VulkanRenderer
             out size,
             out reason);
 
-    private static bool TryAllocateDescriptorHeapRange(
+    private bool TryAllocateDescriptorHeapRange(
         ref ulong cursor,
         DescriptorHeapStorage storage,
         ulong stride,
@@ -513,6 +513,15 @@ public unsafe partial class VulkanRenderer
         if (offset > storage.Size || size > storage.Size - offset)
         {
             reason = $"descriptor heap capacity exhausted (offset={offset}, size={size}, capacity={storage.Size}).";
+            _descriptorHeapAllocationFailureCount++;
+            Debug.VulkanWarningEvery(
+                "Vulkan.DescriptorHeap.CapacityExhausted",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan.DescriptorHeap.AllocationFailure] offset={0} bytes={1} capacity={2} failures={3}.",
+                offset,
+                size,
+                storage.Size,
+                _descriptorHeapAllocationFailureCount);
             return false;
         }
 

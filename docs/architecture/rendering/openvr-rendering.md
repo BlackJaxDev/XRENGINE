@@ -542,9 +542,9 @@ This means:
 Terminology note: OpenVR `SinglePassStereo` is the engine-owned stereo-array
 path described above. OpenXR uses the same requested `EVrViewRenderMode` enum,
 but reports a separate effective implementation path. On OpenXR Vulkan,
-`SinglePassStereo` means "request true stereo when available"; the runtime may
-fall back to `OpenXrSinglePassCompatibility`, which is still per-eye swapchain
-rendering and keeps unsafe temporal history disabled.
+`SinglePassStereo` strictly requires the engine-owned stereo-array/multiview
+path. If that path is unavailable, OpenXR logs the failed capability and submits
+no projection layer; it never silently changes to sequential eye rendering.
 
 Key architectural differences between the two paths:
 

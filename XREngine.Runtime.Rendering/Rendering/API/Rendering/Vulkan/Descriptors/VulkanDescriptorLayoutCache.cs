@@ -7,36 +7,45 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+    /// <summary>
+    /// The index of the global descriptor set.
+    /// </summary>
     internal const uint DescriptorSetGlobals = 0;
+    /// <summary>
+    /// The index of the compute descriptor set.
+    /// </summary>
     internal const uint DescriptorSetCompute = 1;
+    /// <summary>
+    /// The index of the material descriptor set.
+    /// </summary>
     internal const uint DescriptorSetMaterial = 2;
+    /// <summary>
+    /// The index of the per-pass descriptor set.
+    /// </summary>
     internal const uint DescriptorSetPerPass = 3;
+    /// <summary>
+    /// The total number of descriptor set tiers.
+    /// </summary>
     internal const uint DescriptorSetTierCount = 4;
 
     private readonly object _descriptorSetLayoutCacheLock = new();
     private readonly Dictionary<ulong, List<CachedDescriptorSetLayout>> _descriptorSetLayoutsByHash = new();
     private readonly Dictionary<ulong, CachedDescriptorSetLayout> _descriptorSetLayoutsByHandle = new();
 
-    private sealed class CachedDescriptorSetLayout
-    {
-        public required DescriptorSetLayout Layout;
-        public required DescriptorLayoutBindingSignature[] Signature;
-        public required ulong SchemaHash;
-        public required bool UsesUpdateAfterBind;
-        public required bool UsesVariableDescriptorCount;
-        public int RefCount;
-    }
-
-    private readonly record struct DescriptorLayoutBindingSignature(
-        uint Set,
-        uint Binding,
-        DescriptorType DescriptorType,
-        uint DescriptorCount,
-        ShaderStageFlags StageFlags,
-        bool VariableDescriptorCount);
-
+    /// <summary>
+    /// Indicates whether the Vulkan renderer supports descriptor indexing.
+    /// </summary>
     internal bool SupportsDescriptorIndexing => _supportsDescriptorIndexing;
 
+    /// <summary>
+    /// Tries to acquire a cached descriptor set layout for the specified set index and bindings.
+    /// </summary>
+    /// <param name="setIndex">The index of the descriptor set.</param>
+    /// <param name="bindings">The array of descriptor set layout bindings.</param>
+    /// <param name="layout">The acquired descriptor set layout if successful.</param>
+    /// <param name="usesUpdateAfterBind">Indicates whether the layout uses update-after-bind.</param>
+    /// <param name="usesVariableDescriptorCount">Indicates whether the layout uses variable descriptor count.</param>
+    /// <returns>True if a cached descriptor set layout was successfully acquired; otherwise, false.</returns>
     internal bool TryAcquireCachedDescriptorSetLayout(
         uint setIndex,
         DescriptorSetLayoutBinding[] bindings,
@@ -91,6 +100,10 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Releases a cached descriptor set layout, decrementing its reference count and destroying it if no longer in use.
+    /// </summary>
+    /// <param name="layout">The descriptor set layout to release.</param>
     internal void ReleaseCachedDescriptorSetLayout(DescriptorSetLayout layout)
     {
         if (layout.Handle == 0)
@@ -122,6 +135,9 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Destroys all cached descriptor set layouts, releasing their resources.
+    /// </summary>
     private void DestroyCachedDescriptorSetLayouts()
     {
         lock (_descriptorSetLayoutCacheLock)
@@ -140,6 +156,12 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Builds the layout signature for a descriptor set layout based on the set index and bindings.
+    /// </summary>
+    /// <param name="setIndex">The index of the descriptor set.</param>
+    /// <param name="bindings">The array of descriptor set layout bindings.</param>
+    /// <returns>An array of descriptor layout binding signatures representing the layout signature.</returns>
     private static DescriptorLayoutBindingSignature[] BuildLayoutSignature(uint setIndex, DescriptorSetLayoutBinding[] bindings)
     {
         DescriptorLayoutBindingSignature[] signature = new DescriptorLayoutBindingSignature[bindings.Length];
@@ -158,6 +180,11 @@ public unsafe partial class VulkanRenderer
         return signature;
     }
 
+    /// <summary>
+    /// Computes a hash value representing the layout schema for the given descriptor layout binding signature array.
+    /// </summary>
+    /// <param name="signature">The array of descriptor layout binding signatures to compute the hash for.</param>
+    /// <returns>The computed hash value representing the layout schema.</returns>
     private static ulong ComputeLayoutSchemaHash(DescriptorLayoutBindingSignature[] signature)
     {
         ulong hash = 1469598103934665603UL;
@@ -181,20 +208,33 @@ public unsafe partial class VulkanRenderer
         return hash;
     }
 
+    /// <summary>
+    /// Determines whether two descriptor layout binding signature arrays are equal.
+    /// </summary>
+    /// <param name="left">The first array of descriptor layout binding signatures to compare.</param>
+    /// <param name="right">The second array of descriptor layout binding signatures to compare.</param>
+    /// <returns>True if the two arrays are equal; otherwise, false.</returns>
     private static bool LayoutSignaturesEqual(DescriptorLayoutBindingSignature[] left, DescriptorLayoutBindingSignature[] right)
     {
         if (left.Length != right.Length)
             return false;
 
         for (int i = 0; i < left.Length; i++)
-        {
             if (left[i] != right[i])
                 return false;
-        }
 
         return true;
     }
 
+    /// <summary>
+    /// Attempts to create a descriptor set layout for the specified set index and bindings, taking into account update-after-bind and variable descriptor count usage.
+    /// </summary>
+    /// <param name="setIndex">The index of the descriptor set to create the layout for.</param>
+    /// <param name="bindings">The array of descriptor set layout bindings to include in the layout.</param>
+    /// <param name="layout">The resulting descriptor set layout if creation is successful.</param>
+    /// <param name="usesUpdateAfterBind">Indicates whether the created layout uses update-after-bind.</param>
+    /// <param name="usesVariableDescriptorCount">Indicates whether the created layout uses variable descriptor count.</param>
+    /// <returns>True if the descriptor set layout was successfully created; otherwise, false.</returns>
     private bool TryCreateDescriptorSetLayout(
         uint setIndex,
         DescriptorSetLayoutBinding[] bindings,
@@ -211,13 +251,9 @@ public unsafe partial class VulkanRenderer
             : [.. bindings];
         uint immutableSamplerCount = 0;
         for (int i = 0; i < layoutBindings.Length; i++)
-        {
             if (layoutBindings[i].DescriptorType == DescriptorType.Sampler &&
                 TryGetCanonicalImmutableSampler(VulkanCanonicalSampler.LinearClamp, out _))
-            {
                 immutableSamplerCount += Math.Max(layoutBindings[i].DescriptorCount, 1u);
-            }
-        }
 
         Sampler* immutableSamplers = immutableSamplerCount > 0
             ? (Sampler*)NativeMemory.Alloc((nuint)immutableSamplerCount, (nuint)sizeof(Sampler))
@@ -328,6 +364,11 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Determines whether the specified descriptor type can use the update-after-bind feature.
+    /// </summary>
+    /// <param name="descriptorType">The type of descriptor to check.</param>
+    /// <returns>True if the descriptor type can use the update-after-bind feature; otherwise, false.</returns>
     private bool CanUseUpdateAfterBind(DescriptorType descriptorType)
     {
         if (!_supportsDescriptorBindingUpdateAfterBind)

@@ -41,12 +41,6 @@ public unsafe partial class OpenXRAPI
             "1",
             StringComparison.Ordinal);
 
-    private static bool OpenXrVulkanTrueStereoOverride =>
-        string.Equals(
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanTrueStereo),
-            "1",
-            StringComparison.Ordinal);
-
     private static readonly long[] VulkanSwapchainFormatPreferences =
     [
         (long)VkFormat.R8G8B8A8Srgb,
@@ -169,31 +163,40 @@ public unsafe partial class OpenXRAPI
         // Check if multiple graphics queues are supported
         bool supportsMultiQueue = renderer.SupportsMultipleGraphicsQueues();
         bool projectAllowsParallel = RuntimeRenderingHostServices.Current.EnableOpenXrVulkanParallelRendering;
-        VrViewRenderModeResolution viewRenderMode = VrViewRenderModeResolver.Resolve(
-            ERenderLibrary.Vulkan,
-            RuntimeRenderingHostServices.Current.VrViewRenderMode,
-            projectAllowsParallel);
-        RecordSmokeViewRenderModeResolution(viewRenderMode);
-
-        if (!viewRenderMode.IsSupported)
+        EVrViewRenderMode requestedViewMode = RuntimeRenderingHostServices.Current.VrViewRenderMode;
+        if (requestedViewMode == EVrViewRenderMode.SinglePassStereo)
         {
-            Debug.VulkanWarningEvery(
-                $"OpenXR.Vulkan.ViewRenderMode.Unsupported.{viewRenderMode.RequestedMode}",
-                TimeSpan.FromSeconds(5),
-                "[OpenXR] {0}",
-                viewRenderMode.Diagnostic ?? $"Unsupported VR.ViewRenderMode={viewRenderMode.RequestedMode}.");
-        }
-        else if (viewRenderMode.EffectiveMode == EVrViewRenderMode.ParallelCommandBufferRecording && supportsMultiQueue)
-        {
-            Debug.Vulkan("VR.ViewRenderMode=ParallelCommandBufferRecording selected; Vulkan reports multiple graphics queues.");
+            Debug.Vulkan(
+                "[OpenXR] VR.ViewRenderMode=SinglePassStereo is strict. Multiview, eye extent/format, and layered-target capabilities will be validated after OpenXR swapchain creation; no sequential fallback is permitted.");
         }
         else
         {
-            Debug.Vulkan(
-                "VR.ViewRenderMode={0}; Vulkan multiple graphics queues supported={1}; OpenXR Vulkan parallel gate={2}.",
-                viewRenderMode.EffectiveMode,
-                supportsMultiQueue,
+            VrViewRenderModeResolution viewRenderMode = VrViewRenderModeResolver.Resolve(
+                ERenderLibrary.Vulkan,
+                requestedViewMode,
                 projectAllowsParallel);
+            RecordSmokeViewRenderModeResolution(viewRenderMode);
+
+            if (!viewRenderMode.IsSupported)
+            {
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.ViewRenderMode.Unsupported.{viewRenderMode.RequestedMode}",
+                    TimeSpan.FromSeconds(5),
+                    "[OpenXR] {0}",
+                    viewRenderMode.Diagnostic ?? $"Unsupported VR.ViewRenderMode={viewRenderMode.RequestedMode}.");
+            }
+            else if (viewRenderMode.EffectiveMode == EVrViewRenderMode.ParallelCommandBufferRecording && supportsMultiQueue)
+            {
+                Debug.Vulkan("VR.ViewRenderMode=ParallelCommandBufferRecording selected; Vulkan reports multiple graphics queues.");
+            }
+            else
+            {
+                Debug.Vulkan(
+                    "VR.ViewRenderMode={0}; Vulkan multiple graphics queues supported={1}; OpenXR Vulkan parallel gate={2}.",
+                    viewRenderMode.EffectiveMode,
+                    supportsMultiQueue,
+                    projectAllowsParallel);
+            }
         }
 
         _ = TryResolveOpenXrFoveation(ERenderLibrary.Vulkan, out _);
@@ -300,17 +303,26 @@ public unsafe partial class OpenXRAPI
             ? ERenderLibrary.Vulkan
             : ERenderLibrary.OpenGL;
 
+        string? trueSinglePassStereoUnavailableReason = null;
         bool trueSinglePassStereoAvailable =
             RuntimeRenderingHostServices.Current.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo &&
             backend == ERenderLibrary.Vulkan &&
-            CanUseOpenXrTrueSinglePassStereo(out _);
+            CanUseOpenXrTrueSinglePassStereo(out trueSinglePassStereoUnavailableReason);
+
+        if (RuntimeRenderingHostServices.Current.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo &&
+            backend != ERenderLibrary.Vulkan)
+        {
+            trueSinglePassStereoUnavailableReason =
+                $"OpenXR backend {backend} does not implement an engine-owned layered multiview target";
+        }
 
         resolution = VrViewRenderModeResolver.Resolve(
             backend,
             RuntimeRenderingHostServices.Current.VrViewRenderMode,
             RuntimeRenderingHostServices.Current.EnableOpenXrVulkanParallelRendering,
             trueSinglePassStereoAvailable,
-            rendersExternalSwapchainTargets: !trueSinglePassStereoAvailable);
+            rendersExternalSwapchainTargets: !trueSinglePassStereoAvailable,
+            trueSinglePassStereoUnavailableReason: trueSinglePassStereoUnavailableReason);
         RecordSmokeViewRenderModeResolution(resolution);
         LogOpenXrViewRenderModeResolution(backend, resolution);
 
@@ -349,18 +361,6 @@ public unsafe partial class OpenXRAPI
         if (OpenXrVulkanMirrorFbo)
         {
             reason = $"{XREngineEnvironmentVariables.OpenXrVulkanMirrorFbo}=1 forces per-eye mirror FBO compatibility";
-            return false;
-        }
-
-        if (!OpenXrVulkanTrueStereoOverride)
-        {
-            reason = $"OpenXR Vulkan true single-pass stereo is disabled by default while the multiview staging path is stabilized; set {XREngineEnvironmentVariables.OpenXrVulkanTrueStereo}=1 to opt in for diagnostics";
-            return false;
-        }
-
-        if (!OpenXrVulkanTrueStereoOverride && IsSteamVrOpenXrRuntime())
-        {
-            reason = $"SteamVR OpenXR Vulkan uses the per-eye compatibility path by default; the true-stereo publish path can be enabled for diagnostics with {XREngineEnvironmentVariables.OpenXrVulkanTrueStereo}=1";
             return false;
         }
 
@@ -504,19 +504,7 @@ public unsafe partial class OpenXRAPI
                $"isStereoPass={RuntimeEngine.Rendering.State.IsStereoPass}," +
                $"vulkanMultiview={RuntimeEngine.Rendering.State.HasVulkanMultiView}," +
                $"ovrMultiview={RuntimeEngine.Rendering.State.HasOvrMultiViewExtension}," +
-               $"dynamicRendering={(Window?.Renderer is VulkanRenderer renderer && renderer.UseDynamicRenderingRenderTargets)}," +
-               $"override={OpenXrVulkanTrueStereoOverride}";
-    }
-
-    private static bool IsSteamVrOpenXrRuntime()
-    {
-        string? runtimePath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
-        if (string.IsNullOrWhiteSpace(runtimePath))
-            runtimePath = TryGetOpenXRActiveRuntime();
-
-        return !string.IsNullOrWhiteSpace(runtimePath) &&
-               (runtimePath.Contains("steamvr", StringComparison.OrdinalIgnoreCase) ||
-                runtimePath.Contains("steamxr", StringComparison.OrdinalIgnoreCase));
+               $"dynamicRendering={(Window?.Renderer is VulkanRenderer renderer && renderer.UseDynamicRenderingRenderTargets)}";
     }
 
     /// <summary>
@@ -1097,10 +1085,33 @@ public unsafe partial class OpenXRAPI
             return false;
         if (Window?.Renderer is not VulkanRenderer renderer)
             return false;
+        bool strictSinglePassStereoRequested =
+            RuntimeRenderingHostServices.Current.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo;
+        if (strictSinglePassStereoRequested)
+            handled = true;
         if (_viewCount != 2)
+        {
+            if (strictSinglePassStereoRequested)
+            {
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.StrictSps.InvalidViewCount.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Strict SinglePassStereo cannot render viewCount={0}; expected exactly 2. Sequential fallback is forbidden; submitting no projection layer.",
+                    _viewCount);
+            }
             return false;
+        }
         if (OpenXrDebugRenderRightThenLeft || OpenXrVulkanSerialEyeSubmit)
+        {
+            if (strictSinglePassStereoRequested)
+            {
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.StrictSps.SequentialDebugModeForbidden.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Strict SinglePassStereo is incompatible with right-then-left or serial-eye debug submission. Sequential fallback is forbidden; submitting no projection layer.");
+            }
             return false;
+        }
 
         if (!TryResolveOpenXrViewRenderModeForCurrentBackend(out VrViewRenderModeResolution modeResolution))
         {
@@ -1109,21 +1120,43 @@ public unsafe partial class OpenXRAPI
         }
 
         if (modeResolution.EffectiveMode == EVrViewRenderMode.SequentialViews)
+        {
+            if (strictSinglePassStereoRequested)
+            {
+                RecordStrictSinglePassStereoSequentialFallbackAttempt(
+                    "VulkanBatch.ModeResolution",
+                    $"strict request resolved to illegal effective mode {modeResolution.EffectiveMode}");
+            }
             return false;
+        }
 
         uint leftWidth = GetOpenXrSwapchainWidth(0);
         uint leftHeight = GetOpenXrSwapchainHeight(0);
         uint rightWidth = GetOpenXrSwapchainWidth(1);
         uint rightHeight = GetOpenXrSwapchainHeight(1);
         if (leftWidth != rightWidth || leftHeight != rightHeight)
+        {
+            if (strictSinglePassStereoRequested)
+            {
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.StrictSps.ExtentMismatch.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Strict SinglePassStereo requires identical eye extents; left={0}x{1} right={2}x{3}. Sequential fallback is forbidden; submitting no projection layer.",
+                    leftWidth,
+                    leftHeight,
+                    rightWidth,
+                    rightHeight);
+            }
             return false;
+        }
 
         handled = true;
         uint leftImageIndex = 0;
         uint rightImageIndex = 0;
         bool leftAcquired = false;
         bool rightAcquired = false;
-        bool allowSequentialFallback = false;
+        bool permitSequentialFallback = modeResolution.RequestedMode != EVrViewRenderMode.SinglePassStereo;
+        bool requestSequentialFallback = false;
         int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
         bool trueSinglePassStereo =
             modeResolution.EffectiveImplementationPath == EVrViewRenderImplementationPath.TrueSinglePassStereo;
@@ -1163,7 +1196,7 @@ public unsafe partial class OpenXRAPI
             {
                 if (!AcquireAndWaitOpenXrEyeImage(0, ref leftImageIndex, ref leftAcquired, frameNo))
                 {
-                    allowSequentialFallback = true;
+                    requestSequentialFallback = permitSequentialFallback;
                     return false;
                 }
             }
@@ -1172,7 +1205,7 @@ public unsafe partial class OpenXRAPI
             {
                 if (!AcquireAndWaitOpenXrEyeImage(1, ref rightImageIndex, ref rightAcquired, frameNo))
                 {
-                    allowSequentialFallback = true;
+                    requestSequentialFallback = permitSequentialFallback;
                     return false;
                 }
             }
@@ -1199,17 +1232,29 @@ public unsafe partial class OpenXRAPI
 
                 if (!rendered)
                 {
-                    allowSequentialFallback = true;
-                    Debug.VulkanWarningEvery(
-                        $"OpenXR.Vulkan.Batch.SequentialFallback.{GetHashCode()}",
-                        TimeSpan.FromSeconds(1),
-                        "[OpenXR] Vulkan batched eye render returned false; releasing acquired images and falling back to sequential eye rendering for this frame.");
+                    requestSequentialFallback = permitSequentialFallback;
+                    if (requestSequentialFallback)
+                    {
+                        Debug.VulkanWarningEvery(
+                            $"OpenXR.Vulkan.Batch.SequentialFallback.{GetHashCode()}",
+                            TimeSpan.FromSeconds(1),
+                            "[OpenXR] Vulkan batched eye render returned false; releasing acquired images and retrying the explicitly selected non-single-pass mode sequentially for this frame.");
+                    }
+                    else
+                    {
+                        Debug.VulkanWarningEvery(
+                            $"OpenXR.Vulkan.SinglePassStereo.RenderFailureNoFallback.{GetHashCode()}",
+                            TimeSpan.FromSeconds(1),
+                            "[OpenXR] Strict SinglePassStereo render failed. Sequential/per-eye fallback is forbidden; this frame will be submitted without projection layers.");
+                    }
                     return false;
                 }
             }
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.FillProjectionViews"))
             {
+                RecordSmokeEyePublish(0);
+                RecordSmokeEyePublish(1);
                 FillProjectionView(0, projectionViews);
                 FillProjectionView(1, projectionViews);
             }
@@ -1221,12 +1266,23 @@ public unsafe partial class OpenXRAPI
         }
         catch (Exception ex)
         {
-            allowSequentialFallback = true;
-            Debug.VulkanWarningEvery(
-                $"OpenXR.Vulkan.Batch.ExceptionSequentialFallback.{GetHashCode()}",
-                TimeSpan.FromSeconds(1),
-                "[OpenXR] Vulkan batched eye render failed; releasing acquired images and falling back to sequential eye rendering for this frame. {0}",
-                ex.Message);
+            requestSequentialFallback = permitSequentialFallback;
+            if (requestSequentialFallback)
+            {
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.Batch.ExceptionSequentialFallback.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Vulkan batched eye render failed; releasing acquired images and retrying the explicitly selected non-single-pass mode sequentially for this frame. {0}",
+                    ex.Message);
+            }
+            else
+            {
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.SinglePassStereo.ExceptionNoFallback.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Strict SinglePassStereo render threw an exception. Sequential/per-eye fallback is forbidden; this frame will be submitted without projection layers. {0}",
+                    ex.Message);
+            }
             return false;
         }
         finally
@@ -1237,8 +1293,20 @@ public unsafe partial class OpenXRAPI
                 ReleaseOpenXrEyeImageIfAcquired(1, rightAcquired, frameNo);
             }
 
-            if (allowSequentialFallback)
-                handled = false;
+            if (requestSequentialFallback)
+            {
+                if (strictSinglePassStereoRequested)
+                {
+                    RecordStrictSinglePassStereoSequentialFallbackAttempt(
+                        "VulkanBatch.Finally",
+                        "a strict frame set requestSequentialFallback=true");
+                    handled = true;
+                }
+                else
+                {
+                    handled = false;
+                }
+            }
         }
     }
 
@@ -1258,7 +1326,7 @@ public unsafe partial class OpenXRAPI
             return false;
 
         acquired = true;
-        RecordSmokeEyeAcquire(viewIndex);
+        RecordSmokeEyeAcquire(viewIndex, imageIndex);
 
         if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
             Debug.Out($"OpenXR[{frameNo}] Eye{viewIndex}: Acquire(batch) => {acquireResult} imageIndex={imageIndex}");
@@ -1300,36 +1368,27 @@ public unsafe partial class OpenXRAPI
         uint rightImageIndex,
         VrViewRenderModeResolution modeResolution)
     {
-        if (modeResolution.EffectiveImplementationPath == EVrViewRenderImplementationPath.TrueSinglePassStereo)
+        if (modeResolution.EffectiveImplementationPath != EVrViewRenderImplementationPath.TrueSinglePassStereo)
         {
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.RenderAndPublish"))
-            {
-                if (TryRenderVulkanTrueSinglePassStereoToSwapchains(renderer, leftImageIndex, rightImageIndex))
-                    return true;
-            }
-
             Debug.VulkanWarningEvery(
-                $"OpenXR.Vulkan.TrueSinglePassStereo.Skipped.{GetHashCode()}",
-                TimeSpan.FromSeconds(2),
-                "[OpenXR] True SinglePassStereo did not render this frame; skipping eye submission instead of allocating per-eye fallback resources.");
+                $"OpenXR.Vulkan.SinglePassStereo.InvalidImplementationPath.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Strict SinglePassStereo resolved to invalid implementation path {0}. Sequential/per-eye fallback is forbidden; skipping XR projection-layer submission.",
+                modeResolution.EffectiveImplementationPath);
             return false;
         }
-        else
+
+        using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.RenderAndPublish"))
         {
-            _ = CanUseOpenXrTrueSinglePassStereo(out string unavailableReason);
-            Debug.VulkanEvery(
-                $"OpenXR.Vulkan.ViewRenderMode.SinglePassStereo.Compatibility.{GetHashCode()}",
-                TimeSpan.FromSeconds(2),
-                "[OpenXR] VR.ViewRenderMode=SinglePassStereo selected; using OpenXR per-eye swapchain compatibility path. TrueStereoUnavailable={0}",
-                string.IsNullOrWhiteSpace(unavailableReason) ? "not selected" : unavailableReason);
+            if (TryRenderVulkanTrueSinglePassStereoToSwapchains(renderer, leftImageIndex, rightImageIndex))
+                return true;
         }
 
-        using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.SinglePassStereo.RenderSwapchains"))
-            return TryRenderVulkanEyeBatchToSwapchains(
-                renderer,
-                leftImageIndex,
-                rightImageIndex,
-                EVrViewRenderMode.SinglePassStereo);
+        Debug.VulkanWarningEvery(
+            $"OpenXR.Vulkan.TrueSinglePassStereo.Skipped.{GetHashCode()}",
+            TimeSpan.FromSeconds(2),
+            "[OpenXR] True SinglePassStereo did not render this frame. Sequential/per-eye fallback is forbidden; skipping XR projection-layer submission.");
+        return false;
     }
 
     private bool TryRenderVulkanTrueSinglePassStereoToSwapchains(

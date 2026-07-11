@@ -59,7 +59,7 @@ public unsafe partial class VulkanRenderer
             }
 
             AttachmentBuildInfo[] attachments = BuildAttachmentInfos();
-            var (fbWidth, fbHeight) = ResolveFramebufferExtent();
+            var (fbWidth, fbHeight) = ResolveFramebufferExtent(attachments);
             if (AttachmentStateMatches(attachments, fbWidth, fbHeight))
                 return;
 
@@ -612,7 +612,7 @@ public unsafe partial class VulkanRenderer
         protected override uint CreateObjectInternal()
         {
             AttachmentBuildInfo[] attachments = BuildAttachmentInfos();
-            var (fbWidth, fbHeight) = ResolveFramebufferExtent();
+            var (fbWidth, fbHeight) = ResolveFramebufferExtent(attachments);
             CachedFrameBufferState state = CreateFrameBufferState(attachments, fbWidth, fbHeight);
             _cachedFrameBufferStates.Add(state);
             ActivateFrameBufferState(state);
@@ -815,6 +815,31 @@ public unsafe partial class VulkanRenderer
                 : (Math.Max(Data.Width, 1u), Math.Max(Data.Height, 1u));
         }
 
+        private (uint Width, uint Height) ResolveFramebufferExtent(ReadOnlySpan<AttachmentBuildInfo> attachments)
+        {
+            // The logical target can be resized before its Vulkan image/view replacement is
+            // ready. VkFramebuffer dimensions must describe the views supplied to this exact
+            // framebuffer, so use the resolved attachment extents rather than the requested
+            // target dimensions during that transition window.
+            uint fbWidth = uint.MaxValue;
+            uint fbHeight = uint.MaxValue;
+            bool found = false;
+            for (int i = 0; i < attachments.Length; i++)
+            {
+                Extent2D extent = attachments[i].Extent;
+                if (extent.Width == 0 || extent.Height == 0)
+                    continue;
+
+                fbWidth = Math.Min(fbWidth, extent.Width);
+                fbHeight = Math.Min(fbHeight, extent.Height);
+                found = true;
+            }
+
+            return found
+                ? (fbWidth, fbHeight)
+                : ResolveFramebufferExtent();
+        }
+
         private string DescribeFrameBuffer()
             => string.IsNullOrWhiteSpace(Data.Name)
                 ? $"FBO[{Data.GetHashCode()}]"
@@ -892,6 +917,18 @@ public unsafe partial class VulkanRenderer
                         updated,
                         ResolveAttachmentReferenceLayout(updated, usage, writeCapableDepthStencilAttachments.Contains(index)));
                     ImageLayout finalLayout = ResolveAttachmentFinalLayoutFromNextConsumer(synchronization, pass, usage, updated);
+                    // Quad-material inputs are represented as texture resources while
+                    // their producers are FBO attachment resources.  Until those aliases
+                    // are unified in the render graph, retain stored color outputs in a
+                    // sampled layout when no explicit consumer edge was found.  A later
+                    // attachment use transitions back at scope begin; this is preferable
+                    // to relying on undefined color-write visibility in dynamic rendering.
+                    if (finalLayout == ImageLayout.Undefined &&
+                        updated.Role == AttachmentRole.Color &&
+                        updated.StoreOp == AttachmentStoreOp.Store)
+                    {
+                        finalLayout = ImageLayout.ShaderReadOnlyOptimal;
+                    }
                     if (finalLayout != ImageLayout.Undefined)
                         updated = WithFinalLayout(updated, finalLayout);
 

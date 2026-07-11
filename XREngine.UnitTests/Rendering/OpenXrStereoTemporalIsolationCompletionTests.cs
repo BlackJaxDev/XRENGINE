@@ -110,10 +110,11 @@ public sealed class OpenXrStereoTemporalIsolationCompletionTests
         openXrDoc.ShouldContain("Vendor upscalers are intentionally unsupported for headset stereo today");
         openXrDoc.ShouldContain("Run-OpenXrModeProfileMatrix.ps1");
         openXrDoc.ShouldContain("DisabledExternalPerEyeSwapchain");
-        openXrDoc.ShouldContain("XRE_OPENXR_VULKAN_TRUE_STEREO");
+        openXrDoc.ShouldContain("`SinglePassStereo` is a strict capability contract");
+        openXrDoc.ShouldContain("there is no environment opt-in or");
 
         openVrDoc.ShouldContain("OpenVR `SinglePassStereo` is the engine-owned stereo-array");
-        openVrDoc.ShouldContain("OpenXrSinglePassCompatibility");
+        openVrDoc.ShouldContain("never silently changes to sequential eye rendering");
 
         pipelineDoc.ShouldContain("OpenXR Stereo Temporal Isolation");
         pipelineDoc.ShouldContain("Atmosphere and volumetric-fog temporal history stay mono-only");

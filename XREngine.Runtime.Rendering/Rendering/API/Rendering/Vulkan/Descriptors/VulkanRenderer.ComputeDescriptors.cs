@@ -7,24 +7,16 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private readonly object _computeDescriptorCacheLock = new();
+
+    /// <summary>
+    /// Represents the array of compute descriptor image caches, one for each swapchain image.
+    /// </summary>
     private ComputeDescriptorImageCache[]? _computeDescriptorCaches;
 
-    private sealed class ComputeDescriptorImageCache
-    {
-        public Dictionary<ComputeDescriptorCacheKey, DescriptorSet[]> CachedSets { get; } = new();
-        public Dictionary<ulong, List<ComputeDescriptorPoolBlock>> PoolsBySchema { get; } = new();
-    }
-
-    private sealed class ComputeDescriptorPoolBlock
-    {
-        public DescriptorPool Pool;
-        public uint MaxAllocations;
-        public uint AllocatedAllocations;
-        public bool UsesUpdateAfterBind;
-    }
-
-    private readonly record struct ComputeDescriptorCacheKey(ulong SchemaKey, ulong BindingKey);
-
+    /// <summary>
+    /// Initializes the compute descriptor caches for the specified number of images.
+    /// </summary>
+    /// <param name="imageCount">The number of images for which to initialize the compute descriptor caches.</param>
     private void InitializeComputeDescriptorCaches(int imageCount)
     {
         lock (_computeDescriptorCacheLock)
@@ -37,6 +29,10 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Ensures that the compute descriptor cache array has the specified capacity, resizing it if necessary.
+    /// </summary>
+    /// <param name="imageCount">The desired number of compute descriptor caches.</param>
     private void EnsureComputeDescriptorCacheCapacity(int imageCount)
     {
         if (imageCount <= 0)
@@ -62,12 +58,19 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Destroys all compute descriptor caches, releasing their associated resources.
+    /// </summary>
     private void DestroyComputeDescriptorCaches()
     {
         lock (_computeDescriptorCacheLock)
             DestroyComputeDescriptorCaches_NoLock();
     }
 
+    /// <summary>
+    /// Destroys all compute descriptor caches without acquiring the lock. 
+    /// This method should only be called from within a lock on _computeDescriptorCacheLock.
+    /// </summary>
     private void DestroyComputeDescriptorCaches_NoLock()
     {
         if (_computeDescriptorCaches is null)
@@ -91,6 +94,10 @@ public unsafe partial class VulkanRenderer
         _computeDescriptorCaches = null;
     }
 
+    /// <summary>
+    /// Releases references to compute descriptor sets that are associated with physical resources that are about to be destroyed.
+    /// </summary>
+    /// <returns>The number of compute descriptor pools that were retired as a result of this operation.</returns>
     internal int ReleaseComputeDescriptorReferencesForPhysicalResourceDestruction()
     {
         lock (_computeDescriptorCacheLock)
@@ -109,6 +116,11 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Retires all compute descriptor caches without acquiring the lock. 
+    /// This method should only be called from within a lock on _computeDescriptorCacheLock.
+    /// </summary>
+    /// <returns>The number of compute descriptor pools that were retired as a result of this operation.</returns>
     private int RetireComputeDescriptorCaches_NoLock()
     {
         if (_computeDescriptorCaches is null)
@@ -133,6 +145,18 @@ public unsafe partial class VulkanRenderer
         return retiredPools.Count;
     }
 
+    /// <summary>
+    /// Attempts to retrieve existing compute descriptor sets from the cache or create new ones if they do not exist.
+    /// </summary>
+    /// <param name="imageIndex">The index of the image for which to retrieve or create descriptor sets.</param>
+    /// <param name="schemaKey">The key representing the schema of the compute descriptor set.</param>
+    /// <param name="bindingKey">The key representing the binding within the compute descriptor set.</param>
+    /// <param name="layouts">An array of descriptor set layouts to be used for allocation if new descriptor sets are created.</param>
+    /// <param name="perAllocationPoolSizes">An array of descriptor pool sizes specifying the number of descriptors of each type to allocate per pool.</param>
+    /// <param name="usesUpdateAfterBind">Indicates whether the descriptor sets use the update-after-bind feature.</param>
+    /// <param name="descriptorSets">Outputs the retrieved or newly created descriptor sets.</param>
+    /// <param name="isNewAllocation">Outputs whether the descriptor sets were newly allocated.</param>
+    /// <returns>True if the descriptor sets were successfully retrieved or created; otherwise, false.</returns>
     internal bool TryGetOrCreateComputeDescriptorSets(
         uint imageIndex,
         ulong schemaKey,
@@ -177,6 +201,16 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Attempts to allocate a batch of compute descriptor sets from the available descriptor pool blocks, creating a new pool block if necessary.
+    /// </summary>
+    /// <param name="cache">The cache containing the descriptor pool blocks for the current image.</param>
+    /// <param name="schemaKey">The key representing the schema of the compute descriptor set.</param>
+    /// <param name="layouts">An array of descriptor set layouts to be used for allocation.</param>
+    /// <param name="perAllocationPoolSizes">An array of descriptor pool sizes specifying the number of descriptors of each type to allocate per pool.</param>
+    /// <param name="usesUpdateAfterBind">Indicates whether the descriptor sets use the update-after-bind feature.</param>
+    /// <param name="descriptorSets">Outputs the allocated descriptor sets if the allocation is successful.</param>
+    /// <returns>True if the descriptor sets were successfully allocated; otherwise, false.</returns>
     private bool TryAllocateDescriptorSetBatch(
         ComputeDescriptorImageCache cache,
         ulong schemaKey,
@@ -249,6 +283,15 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
+    /// <summary>
+    /// Attempts to create a new compute descriptor pool block with the specified allocation capacity and pool sizes.
+    /// </summary>
+    /// <param name="allocationCapacity">The number of descriptor sets the new pool block should be able to allocate.</param>
+    /// <param name="layouts">An array of descriptor set layouts to be used for the pool block.</param>
+    /// <param name="perAllocationPoolSizes">An array of descriptor pool sizes specifying the number of descriptors of each type to allocate per pool.</param>
+    /// <param name="usesUpdateAfterBind">Indicates whether the descriptor sets in the pool block use the update-after-bind feature.</param>
+    /// <param name="block">Outputs the newly created compute descriptor pool block if the creation is successful.</param>
+    /// <returns>True if the pool block was successfully created; otherwise, false.</returns>
     private bool TryCreateDescriptorPoolBlock(
         uint allocationCapacity,
         DescriptorSetLayout[] layouts,
@@ -300,6 +343,14 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Attempts to allocate descriptor sets from the specified compute descriptor pool.
+    /// </summary>
+    /// <param name="descriptorPool">The compute descriptor pool from which to allocate the descriptor sets.</param>
+    /// <param name="layouts">An array of descriptor set layouts specifying the layout of each descriptor set to allocate.</param>
+    /// <param name="usesUpdateAfterBind">Indicates whether the allocated descriptor sets use the update-after-bind feature.</param>
+    /// <param name="descriptorSets">Outputs the allocated descriptor sets if the allocation is successful.</param>
+    /// <returns>A Vulkan result indicating the success or failure of the allocation operation.</returns>
     private Result TryAllocateDescriptorSetsFromPool(
         DescriptorPool descriptorPool,
         DescriptorSetLayout[] layouts,

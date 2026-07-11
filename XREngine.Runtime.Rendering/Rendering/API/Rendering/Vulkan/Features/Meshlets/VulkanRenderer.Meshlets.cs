@@ -4,20 +4,46 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+    /// <summary>
+    /// Gets the mesh shader dialect supported by the Vulkan renderer.
+    /// </summary>
     public override EMeshShaderDialect MeshShaderDialect
         => IsDeviceExtensionSupported("VK_EXT_mesh_shader")
             ? EMeshShaderDialect.VulkanEXT
             : EMeshShaderDialect.None;
 
+    /// <summary>
+    /// Gets a value indicating whether the Vulkan renderer supports direct mesh task dispatch.
+    /// </summary>
+    /// <returns>True if direct mesh task dispatch is supported; otherwise, false.</returns>
     public override bool SupportsDirectMeshTaskDispatch()
         => false;
 
+    /// <summary>
+    /// Gets a value indicating whether the Vulkan renderer supports indirect-count mesh task dispatch.
+    /// </summary>
+    /// <returns>True if indirect-count mesh task dispatch is supported; otherwise, false.</returns>
     public override bool SupportsIndirectCountMeshTaskDispatch()
         => SupportsVulkanMeshTaskIndirectCount;
 
+    /// <summary>
+    /// Gets a value indicating whether the Vulkan renderer supports production meshlet shaders.
+    /// </summary>
+    /// <returns>True if production meshlet shaders are supported; otherwise, false.</returns>
     public override bool SupportsProductionMeshletShaders()
         => MeshShaderDialect == EMeshShaderDialect.VulkanEXT;
 
+    /// <summary>
+    /// Attempts to draw mesh tasks using indirect-count dispatch.
+    /// </summary>
+    /// <param name="indirectBuffer">The buffer containing the indirect draw commands.</param>
+    /// <param name="countBuffer">The buffer containing the draw count.</param>
+    /// <param name="maxDrawCount">The maximum number of draw calls to execute.</param>
+    /// <param name="stride">The stride between successive draw commands in the indirect buffer.</param>
+    /// <param name="failureReason">Outputs the reason for failure if the draw operation is not supported or fails.</param>
+    /// <param name="byteOffset">The byte offset into the indirect buffer where the draw commands start.</param>
+    /// <param name="countByteOffset">The byte offset into the count buffer where the draw count is stored.</param>
+    /// <returns>True if the draw operation was successfully enqueued; otherwise, false.</returns>
     public override bool TryDrawMeshTasksIndirectCount(
         XRDataBuffer indirectBuffer,
         XRDataBuffer countBuffer,
@@ -35,13 +61,11 @@ public unsafe partial class VulkanRenderer
             byteOffset,
             countByteOffset,
             out failureReason))
-        {
             return false;
-        }
 
         if (!SupportsIndirectCountMeshTaskDispatch())
         {
-            failureReason = MeshletDispatchUnsupportedReason;
+            failureReason = $"classification=explicit-request; {MeshletDispatchUnsupportedReason}";
             Debug.VulkanWarning(failureReason);
             return false;
         }
@@ -75,6 +99,9 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
+    /// <summary>
+    /// Gets a value indicating the reason why meshlet dispatch is unsupported.
+    /// </summary>
     public override string MeshletDispatchUnsupportedReason
         => MeshShaderDialect == EMeshShaderDialect.VulkanEXT
             ? SupportsIndirectCountMeshTaskDispatch()
@@ -82,6 +109,9 @@ public unsafe partial class VulkanRenderer
                 : "VK_EXT_mesh_shader is visible, but task/mesh shader features or vkCmdDrawMeshTasksIndirectCountEXT dispatch are unavailable."
             : "VK_EXT_mesh_shader is not available on the active Vulkan device.";
 
+    /// <summary>
+    /// Gets the descriptor backend used by the RVC (Retinal Visibility Cache) system.
+    /// </summary>
     public override ERvcDescriptorBackend RvcDescriptorBackend
         => ActiveDescriptorBackend switch
         {
@@ -90,18 +120,30 @@ public unsafe partial class VulkanRenderer
             _ => ERvcDescriptorBackend.None,
         };
 
+    /// <summary>
+    /// Gets a value indicating whether the RVC system supports the material resource table.
+    /// </summary>
     public override bool SupportsRvcMaterialResourceTable
         => RvcDescriptorBackend != ERvcDescriptorBackend.None;
 
+    /// <summary>
+    /// Gets a value indicating whether the RVC system supports visibility targets.
+    /// </summary>
     public override bool SupportsRvcVisibilityTargets
         => SupportsDynamicRendering &&
            SupportsSynchronization2 &&
            SupportsFragmentStoresAndAtomics &&
            SupportsRvcMaterialResourceTable;
 
+    /// <summary>
+    /// Gets a value indicating whether the RVC system supports the OpenXR visibility mask stencil feature.
+    /// </summary>
     public override bool SupportsRvcOpenXrVisibilityMaskStencil
         => SupportsRvcVisibilityTargets;
 
+    /// <summary>
+    /// Gets the Vulkan production features supported by the RVC (Retinal Visibility Cache) system.
+    /// </summary>
     public override ERvcVulkanProductionFeature RvcVulkanProductionFeatures
     {
         get

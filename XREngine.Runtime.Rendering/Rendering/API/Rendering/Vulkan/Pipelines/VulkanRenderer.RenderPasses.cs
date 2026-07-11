@@ -78,7 +78,9 @@ public unsafe partial class VulkanRenderer
             StoreOp = AttachmentStoreOp.DontCare,
             StencilLoadOp = AttachmentLoadOp.Clear,
             StencilStoreOp = AttachmentStoreOp.DontCare,
-            InitialLayout = ImageLayout.Undefined,
+            InitialLayout = colorLoadOp == AttachmentLoadOp.Load
+                ? ImageLayout.DepthStencilAttachmentOptimal
+                : ImageLayout.Undefined,
             FinalLayout = ImageLayout.DepthStencilAttachmentOptimal,
         };
 
@@ -106,6 +108,37 @@ public unsafe partial class VulkanRenderer
         attachmentsPtr[0] = colorAttachment;
         attachmentsPtr[1] = depthAttachment;
 
+        PipelineStageFlags attachmentStages =
+            PipelineStageFlags.ColorAttachmentOutputBit |
+            PipelineStageFlags.EarlyFragmentTestsBit |
+            PipelineStageFlags.LateFragmentTestsBit;
+        AccessFlags attachmentAccess =
+            AccessFlags.ColorAttachmentReadBit |
+            AccessFlags.ColorAttachmentWriteBit |
+            AccessFlags.DepthStencilAttachmentReadBit |
+            AccessFlags.DepthStencilAttachmentWriteBit;
+        SubpassDependency* dependencies = stackalloc SubpassDependency[2];
+        dependencies[0] = new SubpassDependency
+        {
+            SrcSubpass = Vk.SubpassExternal,
+            DstSubpass = 0,
+            SrcStageMask = PipelineStageFlags.AllCommandsBit,
+            DstStageMask = attachmentStages,
+            SrcAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+            DstAccessMask = attachmentAccess,
+            DependencyFlags = DependencyFlags.ByRegionBit,
+        };
+        dependencies[1] = new SubpassDependency
+        {
+            SrcSubpass = 0,
+            DstSubpass = Vk.SubpassExternal,
+            SrcStageMask = attachmentStages,
+            DstStageMask = PipelineStageFlags.AllCommandsBit,
+            SrcAccessMask = attachmentAccess,
+            DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+            DependencyFlags = DependencyFlags.ByRegionBit,
+        };
+
         RenderPassCreateInfo renderPassInfo = new()
         {
             SType = StructureType.RenderPassCreateInfo,
@@ -113,6 +146,8 @@ public unsafe partial class VulkanRenderer
             PAttachments = attachmentsPtr,
             SubpassCount = 1,
             PSubpasses = &subpass,
+            DependencyCount = 2,
+            PDependencies = dependencies,
         };
 
         if (Api!.CreateRenderPass(device, ref renderPassInfo, null, out RenderPass renderPass) != Result.Success)

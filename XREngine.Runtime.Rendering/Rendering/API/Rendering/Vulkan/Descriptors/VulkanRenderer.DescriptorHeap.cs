@@ -26,6 +26,18 @@ public unsafe partial class VulkanRenderer
     private ulong _descriptorHeapResourceWriteCount;
     private ulong _descriptorHeapSamplerBindCount;
     private ulong _descriptorHeapResourceBindCount;
+    private ulong _descriptorHeapCopyCount;
+    private ulong _descriptorHeapCopyBytes;
+    private ulong _descriptorHeapAllocationFailureCount;
+    private ulong _descriptorHeapSamplerDirtyStart = ulong.MaxValue;
+    private ulong _descriptorHeapSamplerDirtyEnd;
+    private ulong _descriptorHeapResourceDirtyStart = ulong.MaxValue;
+    private ulong _descriptorHeapResourceDirtyEnd;
+    private ulong _descriptorHeapFrameNumber;
+    private ulong _descriptorHeapFrameWrites;
+    private ulong _descriptorHeapFrameCopies;
+    private ulong _descriptorHeapLastFrameWrites;
+    private ulong _descriptorHeapLastFrameCopies;
 
     public EVulkanDescriptorBackend ActiveDescriptorBackend => _activeDescriptorBackend;
     public string DescriptorBackendFallbackReason => _descriptorBackendFallbackReason;
@@ -38,6 +50,13 @@ public unsafe partial class VulkanRenderer
     public ulong DescriptorHeapResourceWrites => _descriptorHeapResourceWriteCount;
     public ulong DescriptorHeapSamplerBinds => _descriptorHeapSamplerBindCount;
     public ulong DescriptorHeapResourceBinds => _descriptorHeapResourceBindCount;
+    public ulong DescriptorHeapCopies => _descriptorHeapCopyCount;
+    public ulong DescriptorHeapCopyBytes => _descriptorHeapCopyBytes;
+    public ulong DescriptorHeapAllocationFailures => _descriptorHeapAllocationFailureCount;
+    public ulong DescriptorHeapLastFrameWrites => _descriptorHeapLastFrameWrites;
+    public ulong DescriptorHeapLastFrameCopies => _descriptorHeapLastFrameCopies;
+    public bool DescriptorHeapUsesStagedGpuCopies =>
+        _descriptorHeapSamplerStorage.RequiresCopy || _descriptorHeapResourceStorage.RequiresCopy;
 
     private unsafe void QueryDescriptorHeapCapabilities(
         bool descriptorHeapExtensionAvailable,
@@ -97,13 +116,7 @@ public unsafe partial class VulkanRenderer
         _activeDescriptorBackend = EVulkanDescriptorBackend.DescriptorSets;
         _descriptorBackendFallbackReason = string.Empty;
 
-        bool descriptorHeapPreferred =
-            requestedBackend == EVulkanDescriptorBackend.DescriptorHeap ||
-            (!VulkanFeatureProfile.TryGetDescriptorBackendEnvOverride(out _) &&
-             descriptorHeapExtensionAvailable &&
-             descriptorHeapDependenciesReady &&
-             descriptorHeapFeatureSupported &&
-             descriptorHeapNativeApiAvailable);
+        bool descriptorHeapPreferred = requestedBackend == EVulkanDescriptorBackend.DescriptorHeap;
 
         if (descriptorHeapPreferred)
         {
@@ -250,26 +263,69 @@ public unsafe partial class VulkanRenderer
             BufferUsageFlags.ShaderDeviceAddressBit |
             BufferUsageFlags.TransferSrcBit |
             BufferUsageFlags.TransferDstBit;
-        MemoryPropertyFlags properties = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
-        (Buffer buffer, DeviceMemory memory) = CreateDedicatedBufferRaw(size, usage, properties, enableDeviceAddress: true);
+        Buffer buffer = default;
+        DeviceMemory memory = default;
+        Buffer stagingBuffer = default;
+        DeviceMemory stagingMemory = default;
+        void* mapped = null;
+        bool requiresCopy = false;
 
-        if (!TryMapBufferMemory(buffer, memory, 0, size, out void* mapped))
+        try
         {
-            DestroyBuffer(buffer, memory);
-            throw new InvalidOperationException($"Failed to map {name} descriptor heap storage.");
+            (buffer, memory) = CreateDedicatedBufferRaw(
+                size,
+                usage,
+                MemoryPropertyFlags.DeviceLocalBit,
+                enableDeviceAddress: true);
+
+            if (!TryMapBufferMemory(buffer, memory, 0, size, out mapped))
+            {
+                requiresCopy = true;
+                (stagingBuffer, stagingMemory) = CreateDedicatedBufferRaw(
+                    size,
+                    BufferUsageFlags.TransferSrcBit,
+                    MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
+                if (!TryMapBufferMemory(stagingBuffer, stagingMemory, 0, size, out mapped))
+                    throw new InvalidOperationException($"Failed to map {name} descriptor heap staging storage.");
+            }
+        }
+        catch
+        {
+            if (mapped is not null)
+                UnmapBufferMemory(requiresCopy ? stagingBuffer : buffer, requiresCopy ? stagingMemory : memory);
+            if (stagingBuffer.Handle != 0)
+                DestroyBuffer(stagingBuffer, stagingMemory);
+            if (buffer.Handle != 0)
+                DestroyBuffer(buffer, memory);
+            throw;
         }
 
         ulong address = GetBufferDeviceAddress(buffer);
         if (address == 0)
         {
-            UnmapBufferMemory(buffer, memory);
+            UnmapBufferMemory(requiresCopy ? stagingBuffer : buffer, requiresCopy ? stagingMemory : memory);
+            if (stagingBuffer.Handle != 0)
+                DestroyBuffer(stagingBuffer, stagingMemory);
             DestroyBuffer(buffer, memory);
             throw new InvalidOperationException($"{name} descriptor heap storage has no device address.");
         }
 
         RegisterVulkanDeviceAddressRange(buffer, address, size, $"DescriptorHeap.{name}");
         RecordVulkanDescriptorTableGeneration($"DescriptorHeapStorage.{name}");
-        return new DescriptorHeapStorage(buffer, memory, mapped, size, address);
+        Debug.Vulkan(
+            "[Vulkan.DescriptorHeap.Residency] heap={0} placement={1} size={2}.",
+            name,
+            requiresCopy ? "DeviceLocalWithStaging" : "HostVisibleDeviceLocal",
+            size);
+        return new DescriptorHeapStorage(
+            buffer,
+            memory,
+            mapped,
+            size,
+            address,
+            stagingBuffer,
+            stagingMemory,
+            requiresCopy);
     }
 
     private void DestroyDescriptorHeapBackend()
@@ -283,6 +339,13 @@ public unsafe partial class VulkanRenderer
         _descriptorHeapResourceWriteCount = 0;
         _descriptorHeapSamplerBindCount = 0;
         _descriptorHeapResourceBindCount = 0;
+        _descriptorHeapCopyCount = 0;
+        _descriptorHeapCopyBytes = 0;
+        _descriptorHeapAllocationFailureCount = 0;
+        _descriptorHeapSamplerDirtyStart = ulong.MaxValue;
+        _descriptorHeapSamplerDirtyEnd = 0;
+        _descriptorHeapResourceDirtyStart = ulong.MaxValue;
+        _descriptorHeapResourceDirtyEnd = 0;
     }
 
     private void DestroyDescriptorHeapStorage(ref DescriptorHeapStorage storage)
@@ -293,7 +356,11 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        UnmapBufferMemory(storage.Buffer, storage.Memory);
+        Buffer mappedBuffer = storage.RequiresCopy ? storage.StagingBuffer : storage.Buffer;
+        DeviceMemory mappedMemory = storage.RequiresCopy ? storage.StagingMemory : storage.Memory;
+        UnmapBufferMemory(mappedBuffer, mappedMemory);
+        if (storage.StagingBuffer.Handle != 0)
+            DestroyBuffer(storage.StagingBuffer, storage.StagingMemory);
         DestroyBuffer(storage.Buffer, storage.Memory);
         storage = default;
     }
@@ -309,6 +376,8 @@ public unsafe partial class VulkanRenderer
         {
             return false;
         }
+
+        FlushDescriptorHeapStagingCopies(commandBuffer);
 
         TrackVulkanCommandBufferResource(
             commandBuffer,
@@ -450,6 +519,13 @@ public unsafe partial class VulkanRenderer
         }
 
         _descriptorHeapSamplerWriteCount += samplerCount;
+        _descriptorHeapFrameWrites += samplerCount;
+        MarkDescriptorHeapDirty(
+            _descriptorHeapSamplerStorage,
+            destinationOffsetBytes,
+            destinationSizeBytes,
+            ref _descriptorHeapSamplerDirtyStart,
+            ref _descriptorHeapSamplerDirtyEnd);
         RecordVulkanDescriptorTableGeneration("DescriptorHeap.SamplerWrite");
         _descriptorHeapSamplerHighWaterBytes = Math.Max(_descriptorHeapSamplerHighWaterBytes, destinationOffsetBytes + destinationSizeBytes);
         return true;
@@ -487,9 +563,122 @@ public unsafe partial class VulkanRenderer
         }
 
         _descriptorHeapResourceWriteCount += resourceCount;
+        _descriptorHeapFrameWrites += resourceCount;
+        MarkDescriptorHeapDirty(
+            _descriptorHeapResourceStorage,
+            destinationOffsetBytes,
+            destinationSizeBytes,
+            ref _descriptorHeapResourceDirtyStart,
+            ref _descriptorHeapResourceDirtyEnd);
         RecordVulkanDescriptorTableGeneration("DescriptorHeap.ResourceWrite");
         _descriptorHeapResourceHighWaterBytes = Math.Max(_descriptorHeapResourceHighWaterBytes, destinationOffsetBytes + destinationSizeBytes);
         return true;
+    }
+
+    private static void MarkDescriptorHeapDirty(
+        DescriptorHeapStorage storage,
+        ulong offset,
+        ulong size,
+        ref ulong dirtyStart,
+        ref ulong dirtyEnd)
+    {
+        if (!storage.RequiresCopy)
+            return;
+
+        dirtyStart = Math.Min(dirtyStart, offset);
+        dirtyEnd = Math.Max(dirtyEnd, checked(offset + size));
+    }
+
+    private void FlushDescriptorHeapStagingCopies(CommandBuffer commandBuffer)
+    {
+        FlushDescriptorHeapStagingCopy(
+            commandBuffer,
+            _descriptorHeapSamplerStorage,
+            ref _descriptorHeapSamplerDirtyStart,
+            ref _descriptorHeapSamplerDirtyEnd,
+            (AccessFlags2)VulkanDescriptorHeapExt.SamplerHeapReadAccess2,
+            "Sampler");
+        FlushDescriptorHeapStagingCopy(
+            commandBuffer,
+            _descriptorHeapResourceStorage,
+            ref _descriptorHeapResourceDirtyStart,
+            ref _descriptorHeapResourceDirtyEnd,
+            (AccessFlags2)VulkanDescriptorHeapExt.ResourceHeapReadAccess2,
+            "Resource");
+    }
+
+    private void FlushDescriptorHeapStagingCopy(
+        CommandBuffer commandBuffer,
+        DescriptorHeapStorage storage,
+        ref ulong dirtyStart,
+        ref ulong dirtyEnd,
+        AccessFlags2 heapReadAccess,
+        string heapName)
+    {
+        if (!storage.RequiresCopy || dirtyStart == ulong.MaxValue || dirtyEnd <= dirtyStart)
+            return;
+
+        ulong copyStart = AlignDescriptorHeapDown(dirtyStart, sizeof(uint));
+        ulong copyEnd = AlignDescriptorHeapUp(dirtyEnd, sizeof(uint));
+        ulong copySize = copyEnd - copyStart;
+        BufferCopy copy = new()
+        {
+            SrcOffset = copyStart,
+            DstOffset = copyStart,
+            Size = copySize,
+        };
+        CmdCopyBufferTracked(commandBuffer, storage.StagingBuffer, storage.Buffer, 1, &copy);
+
+        BufferMemoryBarrier2 barrier = new()
+        {
+            SType = StructureType.BufferMemoryBarrier2,
+            SrcStageMask = PipelineStageFlags2.TransferBit,
+            SrcAccessMask = AccessFlags2.TransferWriteBit,
+            DstStageMask = PipelineStageFlags2.AllCommandsBit,
+            DstAccessMask = heapReadAccess,
+            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            Buffer = storage.Buffer,
+            Offset = copyStart,
+            Size = copySize,
+        };
+        DependencyInfo dependency = new()
+        {
+            SType = StructureType.DependencyInfo,
+            BufferMemoryBarrierCount = 1,
+            PBufferMemoryBarriers = &barrier,
+        };
+        CmdPipelineBarrier2Compat(commandBuffer, &dependency);
+
+        dirtyStart = ulong.MaxValue;
+        dirtyEnd = 0;
+        _descriptorHeapCopyCount++;
+        _descriptorHeapFrameCopies++;
+        _descriptorHeapCopyBytes += copySize;
+        if (VulkanFrameDiagnosticsTraceEnabled)
+        {
+            Debug.VulkanEvery(
+                $"Vulkan.DescriptorHeap.Copy.{heapName}",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan.DescriptorHeap.Copy] heap={0} offset={1} bytes={2} frameCopies={3} totalCopies={4}.",
+                heapName,
+                copyStart,
+                copySize,
+                _descriptorHeapFrameCopies,
+                _descriptorHeapCopyCount);
+        }
+    }
+
+    private void BeginDescriptorHeapFrame(ulong frameNumber)
+    {
+        if (_descriptorHeapFrameNumber == frameNumber)
+            return;
+
+        _descriptorHeapLastFrameWrites = _descriptorHeapFrameWrites;
+        _descriptorHeapLastFrameCopies = _descriptorHeapFrameCopies;
+        _descriptorHeapFrameWrites = 0;
+        _descriptorHeapFrameCopies = 0;
+        _descriptorHeapFrameNumber = frameNumber;
     }
 
     internal bool TryPushDescriptorHeapData(CommandBuffer commandBuffer, uint offset, void* data, uint byteCount, out string reason)
@@ -591,13 +780,19 @@ public unsafe partial class VulkanRenderer
         DeviceMemory memory,
         void* mapped,
         ulong size,
-        ulong deviceAddress)
+        ulong deviceAddress,
+        Buffer stagingBuffer,
+        DeviceMemory stagingMemory,
+        bool requiresCopy)
     {
         public Buffer Buffer { get; } = buffer;
         public DeviceMemory Memory { get; } = memory;
         public void* Mapped { get; } = mapped;
         public ulong Size { get; } = size;
         public ulong DeviceAddress { get; } = deviceAddress;
+        public Buffer StagingBuffer { get; } = stagingBuffer;
+        public DeviceMemory StagingMemory { get; } = stagingMemory;
+        public bool RequiresCopy { get; } = requiresCopy;
         public bool IsReady => Buffer.Handle != 0 && Memory.Handle != 0 && Mapped != null && Size > 0 && DeviceAddress != 0;
     }
 

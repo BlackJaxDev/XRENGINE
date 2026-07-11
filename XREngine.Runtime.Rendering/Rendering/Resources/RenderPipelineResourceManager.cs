@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Numerics;
 using System.Text;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Vulkan;
@@ -165,6 +166,7 @@ public sealed class RenderPipelineResourceManager
         texture.Name = spec.Name;
         if (string.IsNullOrWhiteSpace(texture.SamplerName))
             texture.SamplerName = spec.Name;
+        ValidateTextureInstance(generation, spec, texture);
         instance.SetTexture(texture, descriptor);
     }
 
@@ -381,6 +383,7 @@ public sealed class RenderPipelineResourceManager
 
                 ValidateAttachmentIdentity(generation, spec.Name, descriptorAttachment.ResourceName, target);
                 ValidateAttachmentFormat(generation, spec.Name, descriptorAttachment, target);
+                ValidateAttachmentSubresourceContract(generation, spec.Name, descriptorAttachment, target);
                 found = true;
                 break;
             }
@@ -497,6 +500,175 @@ public sealed class RenderPipelineResourceManager
         }
     }
 
+    private static void ValidateTextureInstance(
+        RenderResourceGeneration generation,
+        TextureSpec spec,
+        XRTexture texture)
+    {
+        if (texture is XRTextureViewBase)
+        {
+            throw new InvalidOperationException(
+                $"Texture '{spec.Name}' factory produced a texture view. Declare views with TextureViewSpec so their source and subresource range are explicit.");
+        }
+
+        (uint expectedWidth, uint expectedHeight) = ResolveExpectedExtent(spec.SizePolicy, generation.Key);
+        Vector3 actualDimensions = texture.WidthHeightDepth;
+        uint actualWidth = (uint)Math.Max(1, (int)MathF.Round(actualDimensions.X));
+        uint actualHeight = (uint)Math.Max(1, (int)MathF.Round(actualDimensions.Y));
+        if (actualWidth != expectedWidth || actualHeight != expectedHeight)
+        {
+            throw new InvalidOperationException(
+                $"Texture '{spec.Name}' extent mismatch. Expected={expectedWidth}x{expectedHeight} Actual={actualWidth}x{actualHeight}.");
+        }
+
+        uint expectedLayers = Math.Max(spec.Layers, 1u);
+        uint actualLayers = ResolveInstanceLayerCount(texture);
+        if (actualLayers != expectedLayers)
+        {
+            throw new InvalidOperationException(
+                $"Texture '{spec.Name}' layer mismatch. Expected={expectedLayers} Actual={actualLayers} Type={texture.GetType().Name}.");
+        }
+
+        bool actualStereoCompatible = IsStereoCompatibleInstance(texture);
+        if (actualStereoCompatible != spec.StereoCompatible)
+        {
+            throw new InvalidOperationException(
+                $"Texture '{spec.Name}' stereo shape mismatch. ExpectedStereo={spec.StereoCompatible} ActualStereo={actualStereoCompatible} Layers={actualLayers} Type={texture.GetType().Name}.");
+        }
+
+        uint expectedMipLevels = Math.Max(spec.MipPolicy.MipLevelCount, 1u);
+        uint actualMipLevels = ResolveMipLevelCount(texture);
+        if (actualMipLevels < expectedMipLevels)
+        {
+            throw new InvalidOperationException(
+                $"Texture '{spec.Name}' mip range mismatch. ExpectedAtLeast={expectedMipLevels} Actual={actualMipLevels}.");
+        }
+
+        uint expectedSamples = Math.Max(spec.Samples, 1u);
+        uint actualSamples = texture is IFrameBufferAttachement attachment
+            ? ResolveSampleCount(attachment)
+            : 1u;
+        if (actualSamples != expectedSamples)
+        {
+            throw new InvalidOperationException(
+                $"Texture '{spec.Name}' sample-count mismatch. Expected={expectedSamples} Actual={actualSamples}.");
+        }
+
+        if (spec.SizedInternalFormat is ESizedInternalFormat expectedFormat)
+        {
+            ESizedInternalFormat? actualFormat = texture is IFrameBufferAttachement formatAttachment
+                ? ResolveSizedInternalFormat(formatAttachment)
+                : null;
+            if (actualFormat is ESizedInternalFormat resolvedFormat && resolvedFormat != expectedFormat)
+            {
+                throw new InvalidOperationException(
+                    $"Texture '{spec.Name}' format mismatch. Expected={expectedFormat} Actual={resolvedFormat}.");
+            }
+        }
+    }
+
+    private static void ValidateAttachmentSubresourceContract(
+        RenderResourceGeneration generation,
+        string frameBufferName,
+        FrameBufferAttachmentDescriptor descriptorAttachment,
+        IFrameBufferAttachement target)
+    {
+        if (target is not XRTexture texture ||
+            !generation.Layout.TryGet(descriptorAttachment.ResourceName, out RenderPipelineResourceSpec? resourceSpec))
+        {
+            return;
+        }
+
+        uint availableMipLevels = texture is XRTextureViewBase view
+            ? Math.Max(view.NumLevels, 1u)
+            : ResolveMipLevelCount(texture);
+        if (descriptorAttachment.MipLevel < 0 || (uint)descriptorAttachment.MipLevel >= availableMipLevels)
+        {
+            throw new InvalidOperationException(
+                $"Framebuffer '{frameBufferName}' attachment '{descriptorAttachment.ResourceName}' mip {descriptorAttachment.MipLevel} exceeds the {availableMipLevels}-mip view.");
+        }
+
+        uint expectedLayers;
+        bool stereoCompatible;
+        switch (resourceSpec)
+        {
+            case TextureSpec textureSpec:
+                expectedLayers = Math.Max(textureSpec.Layers, 1u);
+                stereoCompatible = textureSpec.StereoCompatible;
+                break;
+            case TextureViewSpec textureViewSpec:
+                expectedLayers = Math.Max(textureViewSpec.LayerCount, 1u);
+                stereoCompatible = textureViewSpec.LayerCount > 1u;
+                break;
+            default:
+                return;
+        }
+
+        uint availableLayers = ResolveInstanceLayerCount(texture);
+        if (descriptorAttachment.LayerIndex >= 0 && (uint)descriptorAttachment.LayerIndex >= availableLayers)
+        {
+            throw new InvalidOperationException(
+                $"Framebuffer '{frameBufferName}' attachment '{descriptorAttachment.ResourceName}' layer {descriptorAttachment.LayerIndex} exceeds the {availableLayers}-layer view.");
+        }
+
+        if (!stereoCompatible)
+            return;
+
+        if (descriptorAttachment.LayerIndex != -1)
+        {
+            throw new InvalidOperationException(
+                $"Framebuffer '{frameBufferName}' stereo attachment '{descriptorAttachment.ResourceName}' selects layer {descriptorAttachment.LayerIndex}; true multiview attachments must bind the complete array with layerIndex=-1.");
+        }
+
+        if (availableLayers < expectedLayers || !IsStereoCompatibleInstance(texture))
+        {
+            throw new InvalidOperationException(
+                $"Framebuffer '{frameBufferName}' stereo attachment '{descriptorAttachment.ResourceName}' does not expose the declared multiview range. ExpectedLayers={expectedLayers} ActualLayers={availableLayers} Type={texture.GetType().Name}.");
+        }
+    }
+
+    private static (uint Width, uint Height) ResolveExpectedExtent(
+        RenderResourceSizePolicy sizePolicy,
+        ResourceGenerationKey key)
+    {
+        uint windowWidth = Math.Max(key.DisplayWidth, 1u);
+        uint windowHeight = Math.Max(key.DisplayHeight, 1u);
+        uint internalWidth = Math.Max(key.InternalWidth, 1u);
+        uint internalHeight = Math.Max(key.InternalHeight, 1u);
+
+        return sizePolicy.SizeClass switch
+        {
+            RenderResourceSizeClass.AbsolutePixels =>
+                (Math.Max(sizePolicy.Width, 1u), Math.Max(sizePolicy.Height, 1u)),
+            RenderResourceSizeClass.InternalResolution =>
+                (ScaleExtent(internalWidth, sizePolicy.ScaleX), ScaleExtent(internalHeight, sizePolicy.ScaleY)),
+            RenderResourceSizeClass.WindowResolution or RenderResourceSizeClass.Custom =>
+                (ScaleExtent(windowWidth, sizePolicy.ScaleX), ScaleExtent(windowHeight, sizePolicy.ScaleY)),
+            _ => (windowWidth, windowHeight),
+        };
+    }
+
+    private static uint ScaleExtent(uint extent, float scale)
+        => (uint)Math.Max(1, (int)MathF.Round(Math.Max(extent, 1u) * scale));
+
+    private static uint ResolveInstanceLayerCount(XRTexture texture)
+        => texture switch
+        {
+            XRTexture2DArray textureArray => Math.Max(textureArray.Depth, 1u),
+            XRTextureViewBase viewBase => Math.Max(viewBase.NumLayers, 1u),
+            _ => 1u,
+        };
+
+    private static bool IsStereoCompatibleInstance(XRTexture texture)
+    {
+        XRTexture viewedTexture = texture is XRTextureViewBase view
+            ? view.GetViewedTexture()
+            : texture;
+        return viewedTexture is XRTexture2DArray textureArray
+            && ResolveInstanceLayerCount(texture) > 1u
+            && textureArray.OVRMultiViewParameters is { NumViews: > 1u };
+    }
+
     private static void ValidateFrameBufferBackendCompleteness(string frameBufferName, XRFrameBuffer frameBuffer)
     {
         if (frameBuffer.IsLastCheckComplete)
@@ -582,9 +754,13 @@ public sealed class RenderPipelineResourceManager
     private static uint ResolveMipLevelCount(XRTexture texture)
         => texture switch
         {
+            XRTextureViewBase viewBase => Math.Max(viewBase.NumLevels, 1u),
+            XRTexture2D texture2D when texture2D.SmallestAllowedMipmapLevel < 1000 =>
+                (uint)Math.Max(1, texture2D.SmallestMipmapLevel + 1),
+            XRTexture2DArray textureArray when textureArray.SmallestAllowedMipmapLevel < 1000 =>
+                (uint)Math.Max(1, textureArray.SmallestMipmapLevel + 1),
             XRTexture2D texture2D => (uint)Math.Max(1, texture2D.Mipmaps.Length),
             XRTexture2DArray textureArray => (uint)Math.Max(1, textureArray.Mipmaps?.Length ?? 1),
-            XRTextureViewBase viewBase => ResolveMipLevelCount(viewBase.GetViewedTexture()),
             _ => 1u,
         };
 
@@ -592,7 +768,7 @@ public sealed class RenderPipelineResourceManager
         => texture switch
         {
             XRTexture2DArray textureArray => Math.Max(1u, textureArray.Depth),
-            XRTextureViewBase viewBase => ResolveLayerCount(viewBase.GetViewedTexture()),
+            XRTextureViewBase viewBase => Math.Max(viewBase.NumLayers, 1u),
             _ => 1u,
         };
 
