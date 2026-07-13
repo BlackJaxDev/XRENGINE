@@ -72,10 +72,11 @@ PhysX 5 is the primary, fully-featured integration. It lives in `XREngine.Render
 - `PhysxMaterial` inherits `AbstractPhysicsMaterial` and exposes PhysX 5 material flags (disable friction, improved patch friction, compliant contact) and combine modes. All materials live in a static registry for pointer resolution.
 
 ### Geometry Interop
-`IPhysicsGeometry` (in `Physx/Geometry/IPhysicsGeometry.cs`) provides value-type shapes that work with every backend:
-- Primitive types (`Sphere`, `Box`, `Capsule`, `Plane`) directly construct `Px*Geometry` structs and also expose `AsJoltShape()` where possible.
-- Mesh types (`ConvexMesh`, `TriangleMesh`, `HeightField`, `TetrahedronMesh`, `ParticleSystem`) wrap PhysX mesh pointers and expose transformation parameters (scale, rotation, flags). Jolt conversion is marked TODO for complex meshes.
-- Helper methods provide mass properties, Poisson sampling, and mesh overlap queries by forwarding to PhysX geometry utilities.
+`IPhysicsGeometry` is a backend-neutral marker contract in `Scene/Physics/IPhysicsGeometry.cs`:
+- Primitive authoring types (`Sphere`, `Box`, `Capsule`, `Plane`) contain only portable values.
+- `PhysicsConvexHullGeometry`, `PhysicsTriangleMeshGeometry`, and `PhysicsHeightFieldGeometry` contain serializable CPU-authored data consumed natively by both backends.
+- Jolt conversion is owned by `JoltShapeFactory`; PhysX conversion, cooking, mass-property helpers, and geometry queries are owned by `PhysxGeometryAdapter`.
+- Already-cooked PhysX pointers use explicitly named `Physx*GeometryExtension` types. They are backend extensions and are not portable collider authoring contracts.
 
 ### Scene Queries & Filtering
 PhysX exposes each query variant (`RaycastAny`, `RaycastMultiple`, `Sweep*`, `Overlap*`) via `PxQueryExt`. XREngine adds a thin layer that converts engine-specific masks and optional `PhysxQueryFilter` structs to the native filter callbacks:

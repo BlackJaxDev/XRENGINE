@@ -26,13 +26,16 @@ public sealed class PhysicsP0ApiContractTests
         source.ShouldContain("public IAbstractCharacterController? CharacterController => ActiveController;");
         source.ShouldContain("public IAbstractDynamicRigidBody? RigidBodyReference");
         source.ShouldContain("[Category(\"Physics / PhysX Extensions\")]");
-        source.ShouldContain("public PhysxCapsuleController? Controller => _physxController;");
+        source.ShouldContain("public PhysxCapsuleController? PhysxControllerExtension => _physxController;");
+        source.ShouldContain("physicsScene.BackendService.CreateCharacterController(");
+        source.ShouldNotContain("physicsScene is PhysxScene");
+        source.ShouldNotContain("physicsScene is JoltScene");
     }
 
     [Test]
     public void AbstractPhysicsScene_DefinesPortableQueryAndControllerContracts()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Scene/Physics/AbstractPhysicsScene.cs");
+        string source = ReadWorkspaceFile("XRENGINE/Scene/Physics/PhysicsContracts.cs");
 
         source.ShouldContain("public readonly struct PhysicsQueryFilter(");
         source.ShouldContain("public interface IAbstractCharacterController : IAbstractRigidPhysicsActor");
@@ -56,7 +59,7 @@ public sealed class PhysicsP0ApiContractTests
         string authoring = ReadWorkspaceFile("XRENGINE/Scene/Physics/PhysicsAuthoring.cs");
         string dynamicBody = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/DynamicRigidBodyComponent.cs");
 
-        controller.ShouldContain("public class CharacterControllerComponent : XRComponent");
+        controller.ShouldContain("public class CharacterControllerComponent : XRComponent, IPhysicsReplicationTarget");
         controller.ShouldContain("public event Action<CharacterControllerComponent, IAbstractCharacterController>? ControllerCreated;");
         controller.ShouldContain("public event Action<CharacterControllerComponent, CharacterControllerContactState>? ContactStateChanged;");
         authoring.ShouldContain("public class PhysicsMaterialDefinition : XRBase");

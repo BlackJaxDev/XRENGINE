@@ -413,9 +413,12 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
         if (_configuredRootsScratch.Count == 0)
         {
-            Transform fallbackRoot = SceneNode.GetTransformAs<Transform>(true)!;
-            _configuredRootSetScratch.Add(fallbackRoot);
-            _configuredRootsScratch.Add(fallbackRoot);
+            Transform? fallbackRoot = DefaultTransform;
+            if (fallbackRoot is not null)
+            {
+                _configuredRootSetScratch.Add(fallbackRoot);
+                _configuredRootsScratch.Add(fallbackRoot);
+            }
         }
 
         return _configuredRootsScratch;
@@ -592,12 +595,16 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
         _particleTrees.Clear();
 
+        Transform? componentTransform = DefaultTransform;
+        if (componentTransform is null)
+            return;
+
         List<Transform> roots = CollectConfiguredRoots();
         for (int i = 0; i < roots.Count; ++i)
             AppendParticleTree(roots[i]);
 
-        _objectScale = MathF.Abs(Transform.LossyWorldScale.X);
-        _objectPrevPosition = Transform.WorldTranslation;
+        _objectScale = MathF.Abs(componentTransform.LossyWorldScale.X);
+        _objectPrevPosition = componentTransform.WorldTranslation;
         _objectMove = Vector3.Zero;
 
         for (int i = 0; i < _particleTrees.Count; ++i)

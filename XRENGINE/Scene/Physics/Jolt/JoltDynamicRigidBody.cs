@@ -8,9 +8,13 @@ namespace XREngine.Scene.Physics.Jolt
     // Jolt Dynamic Rigid Body
     public class JoltDynamicRigidBody : JoltRigidActor, IAbstractDynamicRigidBody
     {
-        internal JoltDynamicRigidBody(BodyID bodyId)
+        private (Vector3 position, Quaternion rotation)? _kinematicTarget;
+        private bool _gravityEnabled;
+
+        internal JoltDynamicRigidBody(BodyID bodyId, bool gravityEnabled = true)
         {
             BodyID = bodyId;
+            _gravityEnabled = gravityEnabled;
         }
 
         private DynamicRigidBodyComponent? _owningComponent;
@@ -29,9 +33,8 @@ namespace XREngine.Scene.Physics.Jolt
                 if (Scene?.PhysicsSystem is null)
                     return (Vector3.Zero, Quaternion.Identity);
 
-                Matrix4x4 transform = Scene.PhysicsSystem.BodyInterface.GetWorldTransform(BodyID);
-                Matrix4x4.Decompose(transform, out _, out Quaternion rotation, out Vector3 position);
-                return (position, rotation);
+                BodyInterface bodies = Scene.PhysicsSystem.BodyInterface;
+                return (bodies.GetPosition(BodyID), bodies.GetRotation(BodyID));
             }
         }
 
@@ -40,7 +43,7 @@ namespace XREngine.Scene.Physics.Jolt
             if (Scene?.PhysicsSystem is null)
                 return;
 
-            Scene.PhysicsSystem.BodyInterface.SetRPositionAndRotation(BodyID, position, rotation, activation);
+            Scene.PhysicsSystem.BodyInterface.SetPositionAndRotation(BodyID, position, rotation, activation);
         }
 
         public override Vector3 LinearVelocity
@@ -90,8 +93,15 @@ namespace XREngine.Scene.Physics.Jolt
             }
         }
 
+        public bool GravityEnabled
+        {
+            get => _gravityEnabled;
+            set => SetGravityEnabled(value);
+        }
+
         public void SetGravityEnabled(bool enabled)
         {
+            _gravityEnabled = enabled;
             if (Scene?.PhysicsSystem is null)
                 return;
 
@@ -160,9 +170,42 @@ namespace XREngine.Scene.Physics.Jolt
             if (Scene?.PhysicsSystem is null)
                 return;
 
-            uint mask = groupsMaskWord0 == 0 ? uint.MaxValue : groupsMaskWord0;
-            ObjectLayer layer = ObjectLayerPairFilterMask.GetObjectLayer(collisionGroup, mask);
+            ObjectLayer layer = LayerMaskJoltExtensions.CreateObjectLayer(collisionGroup, groupsMaskWord0);
             Scene.PhysicsSystem.BodyInterface.SetObjectLayer(BodyID, layer);
         }
+
+        public (Vector3 position, Quaternion rotation)? KinematicTarget
+        {
+            get => _kinematicTarget;
+            set
+            {
+                _kinematicTarget = value;
+                if (value is { } target)
+                    SetTransform(target.position, target.rotation, Activation.Activate);
+            }
+        }
+
+        void IAbstractDynamicRigidBody.SetTransform(Vector3 position, Quaternion rotation, bool wake)
+            => SetTransform(position, rotation, wake ? Activation.Activate : Activation.DontActivate);
+
+        void IAbstractDynamicRigidBody.SetLinearVelocity(Vector3 velocity, bool wake)
+        {
+            SetLinearVelocity(velocity);
+            if (wake)
+                WakeUp();
+        }
+
+        void IAbstractDynamicRigidBody.SetAngularVelocity(Vector3 velocity, bool wake)
+        {
+            SetAngularVelocity(velocity);
+            if (wake)
+                WakeUp();
+        }
+
+        public void WakeUp()
+        {
+            if (Scene?.PhysicsSystem is not null)
+                Scene.PhysicsSystem.BodyInterface.ActivateBody(BodyID);
+        }
     }
-} 
+}

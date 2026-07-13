@@ -5,6 +5,7 @@ using System.Drawing.Drawing2D;
 using System.Numerics;
 using System.Threading;
 using XREngine.Components.Movement.Modules;
+using XREngine.Components.Physics;
 using XREngine.Core.Attributes;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
@@ -16,7 +17,6 @@ using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
-using XREngine.Scene.Physics.Jolt;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
 
@@ -29,61 +29,6 @@ namespace XREngine.Components.Movement
     [Description("Full-featured first/third-person character controller with jumping, crouching, and slope handling.")]
     public class CharacterMovement3DComponent : PlayerMovementComponentBase, IRenderable, IRuntimeCharacterMovementComponent
     {
-        private sealed class PhysxCharacterControllerAdapter(PhysxCapsuleController controller) : IAbstractCharacterController
-        {
-            public PhysxCapsuleController Controller { get; } = controller;
-
-            public Vector3 Position { get => Controller.Position; set => Controller.Position = value; }
-            public Vector3 FootPosition { get => Controller.FootPosition; set => Controller.FootPosition = value; }
-            public Vector3 UpDirection { get => Controller.UpDirection; set => Controller.UpDirection = value; }
-
-            public float Radius { get => Controller.Radius; set => Controller.Radius = value; }
-            public float Height => Controller.Height;
-            public float SlopeLimit { get => Controller.SlopeLimit; set => Controller.SlopeLimit = value; }
-            public float StepOffset { get => Controller.StepOffset; set => Controller.StepOffset = value; }
-            public float ContactOffset { get => Controller.ContactOffset; set => Controller.ContactOffset = value; }
-
-            public bool CollidingUp => Controller.CollidingUp;
-            public bool CollidingDown => Controller.CollidingDown;
-
-            public void Move(Vector3 delta, float minDist, float elapsedTime) => Controller.Move(delta, minDist, elapsedTime);
-            public void Resize(float height) => Controller.Resize(height);
-            public Vector3 LinearVelocity => Controller.Actor?.LinearVelocity ?? Vector3.Zero;
-            public Vector3 AngularVelocity => Controller.Actor?.AngularVelocity ?? Vector3.Zero;
-            public bool IsSleeping => Controller.Actor?.IsSleeping ?? false;
-            public (Vector3 position, Quaternion rotation) Transform => Controller.Actor?.Transform ?? (Position, Quaternion.Identity);
-
-            public void Destroy(bool wakeOnLostTouch = false) => RequestRelease();
-            public void RequestRelease() => Controller.RequestRelease();
-        }
-
-        private sealed class JoltCharacterControllerAdapter(IJoltCharacterController controller) : IAbstractCharacterController
-        {
-            public IJoltCharacterController Controller { get; } = controller;
-
-            public Vector3 Position { get => Controller.Position; set => Controller.Position = value; }
-            public Vector3 FootPosition { get => Controller.FootPosition; set => Controller.FootPosition = value; }
-            public Vector3 UpDirection { get => Controller.UpDirection; set => Controller.UpDirection = value; }
-
-            public float Radius { get => Controller.Radius; set => Controller.Radius = value; }
-            public float Height => Controller.Height;
-            public float SlopeLimit { get => Controller.SlopeLimit; set => Controller.SlopeLimit = value; }
-            public float StepOffset { get => Controller.StepOffset; set => Controller.StepOffset = value; }
-            public float ContactOffset { get => Controller.ContactOffset; set => Controller.ContactOffset = value; }
-
-            public bool CollidingUp => Controller.CollidingUp;
-            public bool CollidingDown => Controller.CollidingDown;
-
-            public void Move(Vector3 delta, float minDist, float elapsedTime) => Controller.Move(delta, minDist, elapsedTime);
-            public void Resize(float height) => Controller.Resize(height);
-            public Vector3 LinearVelocity => Controller.LinearVelocity;
-            public Vector3 AngularVelocity => Controller.AngularVelocity;
-            public bool IsSleeping => Controller.IsSleeping;
-            public (Vector3 position, Quaternion rotation) Transform => Controller.Transform;
-
-            public void Destroy(bool wakeOnLostTouch = false) => RequestRelease();
-            public void RequestRelease() => Controller.RequestRelease();
-        }
         private const int CapsuleRenderPointCountHalfCircle = 8;
 
         private readonly XRMaterial _capsuleRenderMaterial;
@@ -128,7 +73,12 @@ namespace XREngine.Components.Movement
         private float _invisibleWallHeight = 0.0f;
         private float _scaleCoeff = 0.8f;
         private float _volumeGrowth = 1.5f;
-        private PhysxMaterial _material = new(0.9f, 0.9f, 0.1f);
+        private readonly PhysicsMaterialDefinition _materialDefinition = new()
+        {
+            StaticFriction = 0.9f,
+            DynamicFriction = 0.9f,
+            Restitution = 0.1f,
+        };
         private float _radius = 0.6f;
         private float _standingHeight = new FeetInches(5, 2.0f).ToMeters();
         private float _crouchedHeight = new FeetInches(3, 0.0f).ToMeters();
@@ -136,8 +86,7 @@ namespace XREngine.Components.Movement
         private bool _constrainedClimbing = false;
         private IAbstractCharacterController? _controller;
         private PhysxCapsuleController? _physxController;
-        private IJoltCharacterController? _joltController;
-        private int _physxControllerInitVersion;
+        private int _controllerInitVersion;
 
         private AbstractPhysicsScene? _subscribedPhysicsScene;
         private CharacterControllerComponent? _externalControllerComponent;
@@ -455,7 +404,7 @@ namespace XREngine.Components.Movement
         /// <summary>
         /// The current height of the character controller, depending on the crouch state.
         /// </summary>
-        public float CurrentHeight => Controller?.Height ?? GetCurrentHeight();
+        public float CurrentHeight => ActiveController?.Height ?? GetCurrentHeight();
 
         private float GetCurrentHeight()
             => CrouchState switch
@@ -504,11 +453,11 @@ namespace XREngine.Components.Movement
 
         [Category("Physics / PhysX Extensions")]
         [Description("PhysX-only raw capsule controller. Prefer CharacterController for backend-neutral gameplay code.")]
-        public PhysxCapsuleController? Controller => _physxController;
+        public PhysxCapsuleController? PhysxControllerExtension => _physxController;
         
         [Category("Physics / PhysX Extensions")]
         [Description("PhysX-only controller state details. Backend-neutral movement should use CharacterController collision properties/events.")]
-        public void GetState(
+        public void GetPhysxStateExtension(
             out Vector3 deltaXP,
             out PhysxShape? touchedShape,
             out PhysxRigidActor? touchedActor,
@@ -666,32 +615,7 @@ namespace XREngine.Components.Movement
 
             _ownsActiveController = true;
             Vector3 pos = Transform.WorldTranslation;
-
-            if (physicsScene is PhysxScene physxScene)
-            {
-                QueuePhysxControllerCreation(physxScene, pos);
-            }
-            else if (physicsScene is JoltScene joltScene)
-            {
-                _joltController = new JoltCharacterVirtualController(joltScene, pos)
-                {
-                    Radius = Radius,
-                    Height = StandingHeight,
-                    ContactOffset = ContactOffset,
-                    StepOffset = MovementModule.StepOffset,
-                    SlopeLimit = MovementModule.SlopeLimitCosine,
-                    UpDirection = UpDirection,
-                };
-
-                ActiveController = new JoltCharacterControllerAdapter(_joltController);
-
-                // Drive transform from the controller directly.
-                RigidBodyTransform.PostRotationOffset = Quaternion.Identity;
-                _controllerActorProxy = _joltController;
-                RigidBodyTransform.RigidBody = _controllerActorProxy;
-                RigidBodyTransform.InterpolationMode = RigidBodyTransform.EInterpolationMode.Interpolate;
-                RigidBodyTransform.OnPhysicsStepped();
-            }
+            QueueControllerCreation(physicsScene, pos);
         }
 
         private void ExternalControllerCreated(CharacterControllerComponent component, IAbstractCharacterController controller)
@@ -700,11 +624,17 @@ namespace XREngine.Components.Movement
         private void ExternalControllerReleased(CharacterControllerComponent component)
         {
             if (ReferenceEquals(component, _externalControllerComponent))
+            {
                 ActiveController = null;
+                _controllerActorProxy = null;
+                _physxController = null;
+            }
         }
 
         private void BindExternalController(IAbstractCharacterController controller)
         {
+            _ownsActiveController = false;
+            _physxController = (controller as IPhysxCharacterControllerExtension)?.NativeController;
             ActiveController = controller;
             _controllerActorProxy = controller;
             RigidBodyTransform.PostRotationOffset = Quaternion.Identity;
@@ -713,97 +643,92 @@ namespace XREngine.Components.Movement
             RigidBodyTransform.OnPhysicsStepped();
         }
 
-        private void QueuePhysxControllerCreation(PhysxScene physxScene, Vector3 position)
+        private void QueueControllerCreation(AbstractPhysicsScene physicsScene, Vector3 position)
         {
-            if (_physxController is not null)
+            if (ActiveController is not null)
                 return;
 
-            int initVersion = Interlocked.Increment(ref _physxControllerInitVersion);
-            Engine.EnqueuePhysicsThreadTask(() => CreatePhysxControllerOnPhysicsThread(physxScene, position, initVersion));
+            int initVersion = Interlocked.Increment(ref _controllerInitVersion);
+            Engine.EnqueuePhysicsThreadTask(() => CreateControllerOnPhysicsThread(physicsScene, position, initVersion));
         }
 
-        private unsafe void CreatePhysxControllerOnPhysicsThread(PhysxScene physxScene, Vector3 position, int initVersion)
+        private void CreateControllerOnPhysicsThread(
+            AbstractPhysicsScene physicsScene,
+            Vector3 position,
+            int initVersion)
         {
-            if (initVersion != Volatile.Read(ref _physxControllerInitVersion))
+            if (initVersion != Volatile.Read(ref _controllerInitVersion))
                 return;
 
             if (!IsActiveInHierarchy)
                 return;
 
-            if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene != physxScene)
+            if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene != physicsScene)
                 return;
 
-            if (_physxController is not null)
+            if (ActiveController is not null)
                 return;
 
-            PhysxMaterial? material = ResolvePhysxMaterial();
-            if (material is null)
+            IAbstractCharacterController? controller = physicsScene.BackendService.CreateCharacterController(
+                new PhysicsCharacterControllerCreateInfo(
+                    position,
+                    UpDirection,
+                    Radius,
+                    GetCurrentHeight(),
+                    MovementModule.SlopeLimitCosine,
+                    ContactOffset,
+                    MovementModule.StepOffset,
+                    Density,
+                    _materialDefinition)
+                {
+                    InvisibleWallHeight = InvisibleWallHeight,
+                    MaxJumpHeight = MaxJumpHeight,
+                    ScaleCoefficient = ScaleCoeff,
+                    VolumeGrowth = VolumeGrowth,
+                    SlideOnSteepSlopes = SlideOnSteepSlopes,
+                    ConstrainedClimbing = ConstrainedClimbing,
+                });
+            if (controller is null)
                 return;
 
-            Vector3 up = Globals.Up;
-            ControllerManager manager = physxScene.GetOrCreateControllerManager();
-            PhysxCapsuleController controller = manager.CreateCapsuleController(
-                position,
-                up,
-                MovementModule.SlopeLimitCosine,
-                InvisibleWallHeight,
-                MaxJumpHeight,
-                ContactOffset,
-                MovementModule.StepOffset,
-                Density,
-                ScaleCoeff,
-                VolumeGrowth,
-                SlideOnSteepSlopes
-                    ? PxControllerNonWalkableMode.PreventClimbingAndForceSliding
-                    : PxControllerNonWalkableMode.PreventClimbing,
-                material,
-                0,
-                null,
-                Radius,
-                StandingHeight,
-                ConstrainedClimbing
-                    ? PxCapsuleClimbingMode.Constrained
-                    : PxCapsuleClimbingMode.Easy);
-            var controllerActorProxy = new PhysxControllerActorProxy(controller.ControllerPtr);
-
-            if (initVersion != Volatile.Read(ref _physxControllerInitVersion))
+            if (initVersion != Volatile.Read(ref _controllerInitVersion))
             {
                 controller.RequestRelease();
                 return;
             }
 
-            Engine.EnqueueUpdateThreadTask(() => BindPhysxController(physxScene, controller, controllerActorProxy, initVersion));
+            Engine.EnqueueUpdateThreadTask(() => BindOwnedController(physicsScene, controller, initVersion));
         }
 
-        private void BindPhysxController(
-            PhysxScene physxScene,
-            PhysxCapsuleController controller,
-            PhysxControllerActorProxy controllerActorProxy,
+        private void BindOwnedController(
+            AbstractPhysicsScene physicsScene,
+            IAbstractCharacterController controller,
             int initVersion)
         {
-            if (initVersion != Volatile.Read(ref _physxControllerInitVersion)
+            if (initVersion != Volatile.Read(ref _controllerInitVersion)
                 || !IsActiveInHierarchy
-                || WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene != physxScene)
+                || WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene != physicsScene)
             {
                 controller.RequestRelease();
                 return;
             }
 
-            _physxController = controller;
-            ActiveController = new PhysxCharacterControllerAdapter(controller);
+            _ownsActiveController = true;
+            _physxController = (controller as IPhysxCharacterControllerExtension)?.NativeController;
+            ActiveController = controller;
 
             // CCT doesn't have rotation like regular physics actors, so clear the default -90� Z offset
             // that RigidBodyTransform applies for normal PhysX actors.
-            _controllerActorProxy = controllerActorProxy;
+            _controllerActorProxy = controller;
             RigidBodyTransform.PostRotationOffset = Quaternion.Identity;
-            RigidBodyTransform.RigidBody = controllerActorProxy;
+            RigidBodyTransform.RigidBody = controller;
             RigidBodyTransform.InterpolationMode = RigidBodyTransform.EInterpolationMode.Interpolate;
             RigidBodyTransform.OnPhysicsStepped();
         }
 
         protected override void OnComponentDeactivated()
         {
-            Interlocked.Increment(ref _physxControllerInitVersion);
+            Interlocked.Increment(ref _controllerInitVersion);
             _subUpdateTick = null;
             _subscribedPhysicsScene?.OnSimulationStep -= OnPhysicsSimulationStep;
             _subscribedPhysicsScene = null;
@@ -814,19 +739,15 @@ namespace XREngine.Components.Movement
                 _externalControllerComponent = null;
             }
 
-            // Controller owns its internal actor via PxControllerManager; do not remove it as a normal actor.
+            // The controller owns its internal actor; do not remove it as a normal rigid body.
             var rigidBodyTransform = SceneNode?.GetTransformAs<RigidBodyTransform>(false);
             rigidBodyTransform?.RigidBody = null;
 
             _controllerActorProxy = null;
 
             if (_ownsActiveController)
-                _physxController?.RequestRelease();
+                ActiveController?.RequestRelease();
             _physxController = null;
-
-            if (_ownsActiveController)
-                _joltController?.RequestRelease();
-            _joltController = null;
             _ownsActiveController = false;
 
             ActiveController = null;
@@ -838,8 +759,7 @@ namespace XREngine.Components.Movement
             if (_controllerActorProxy is null)
                 return;
 
-            // IMPORTANT: refresh cached state only after FetchResults (PhysX).
-            (_controllerActorProxy as PhysxControllerActorProxy)?.RefreshFromNative();
+            ActiveController?.Synchronize();
 
             // Drive the transform update via the engine's standard rigid-body sync path.
             RigidBodyTransform.OnPhysicsStepped();
@@ -906,7 +826,7 @@ namespace XREngine.Components.Movement
         public void AddForce(Vector3 force)
         {
             //Calculate acceleration from force
-            float mass = RigidBodyReference?.Mass ?? 0.0f;
+            float mass = RigidBodyReference is PhysxRigidBody body ? body.Mass : 0.0f;
             if (mass > 0.0f)
                 Velocity += force / mass;
         }
@@ -1144,8 +1064,8 @@ namespace XREngine.Components.Movement
             if (!result.GravityApplied)
             {
                 Vector3 gravity = GravityOverride ?? scene.Gravity;
-                if (RotateGravityToMatchCharacterUp && Controller is not null)
-                    gravity = Vector3.Transform(gravity, XRMath.RotationBetweenVectors(Globals.Up, Controller.UpDirection));
+                if (RotateGravityToMatchCharacterUp && ActiveController is not null)
+                    gravity = Vector3.Transform(gravity, XRMath.RotationBetweenVectors(Globals.Up, ActiveController.UpDirection));
                 // Reduced gravity underwater for buoyancy effect
                 newVelocity += gravity * MovementModule.GravityScale * 0.25f * dt;
             }

@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Numerics;
 using JoltPhysicsSharp;
 using XREngine.Data.Core;
@@ -8,7 +7,12 @@ namespace XREngine.Scene.Physics.Jolt
 {
     public sealed class JoltCharacterVirtualController : IJoltCharacterController
     {
-        private readonly ConcurrentQueue<(Vector3 delta, float minDist, float elapsedTime)> _inputBuffer = new();
+        private const int MoveBufferCapacity = 64;
+
+        private readonly object _inputBufferLock = new();
+        private readonly ControllerMove[] _inputBuffer = new ControllerMove[MoveBufferCapacity];
+        private int _inputHead;
+        private int _inputCount;
 
         private int _released;
 
@@ -29,6 +33,8 @@ namespace XREngine.Scene.Physics.Jolt
 
         private CapsuleShape? _shape;
         private bool _shapeDirty = true;
+        private bool _recreateCharacter;
+        private float _lastFixedDelta = 1.0f / 60.0f;
 
         private CharacterVirtual? _character;
         private ObjectLayer _objectLayer;
@@ -59,7 +65,7 @@ namespace XREngine.Scene.Physics.Jolt
         {
             // Total extent from capsule center to foot = half cylinder height + hemisphere radius + skin padding
             get => _position - UpDirection * (Height * 0.5f + Radius + ContactOffset);
-            set => _position = value + UpDirection * (Height * 0.5f + Radius + ContactOffset);
+            set => Position = value + UpDirection * CapsuleExtent;
         }
 
         public Vector3 UpDirection
@@ -69,7 +75,18 @@ namespace XREngine.Scene.Physics.Jolt
             {
                 if (value.LengthSquared() < 1e-8f)
                     return;
-                _upDirection = Vector3.Normalize(value);
+                Vector3 normalized = Vector3.Normalize(value);
+                if (Vector3.DistanceSquared(_upDirection, normalized) < 1e-10f)
+                    return;
+
+                Vector3 footPosition = FootPosition;
+                _upDirection = normalized;
+                Position = footPosition + _upDirection * CapsuleExtent;
+                if (_character is not null)
+                {
+                    _character.Up = _upDirection;
+                    _character.Rotation = XRMath.RotationBetweenVectors(Globals.Up, _upDirection);
+                }
             }
         }
 
@@ -78,11 +95,17 @@ namespace XREngine.Scene.Physics.Jolt
             get => _radius;
             set
             {
-                float v = MathF.Max(0.0f, value);
+                float v = MathF.Max(0.001f, value);
                 if (MathF.Abs(_radius - v) < 1e-6f)
                     return;
+                Vector3 footPosition = FootPosition;
                 _radius = v;
                 _shapeDirty = true;
+                if (_character is not null)
+                {
+                    _recreateCharacter = true;
+                    Position = footPosition + UpDirection * CapsuleExtent;
+                }
             }
         }
 
@@ -94,15 +117,23 @@ namespace XREngine.Scene.Physics.Jolt
                 float v = MathF.Max(0.0f, value);
                 if (MathF.Abs(_height - v) < 1e-6f)
                     return;
+                Vector3 footPosition = FootPosition;
                 _height = v;
                 _shapeDirty = true;
+                if (_character is not null)
+                    Position = footPosition + UpDirection * CapsuleExtent;
             }
         }
 
         public float SlopeLimit
         {
             get => _slopeLimit;
-            set => _slopeLimit = value;
+            set
+            {
+                _slopeLimit = Math.Clamp(value, -1.0f, 1.0f);
+                if (_character is not null)
+                    _character.MaxSlopeAngle = MathF.Acos(_slopeLimit);
+            }
         }
 
         public float StepOffset
@@ -119,8 +150,14 @@ namespace XREngine.Scene.Physics.Jolt
                 float v = MathF.Max(0.0f, value);
                 if (MathF.Abs(_contactOffset - v) < 1e-6f)
                     return;
+                Vector3 footPosition = FootPosition;
                 _contactOffset = v;
                 _shapeDirty = true;
+                if (_character is not null)
+                {
+                    _recreateCharacter = true;
+                    Position = footPosition + UpDirection * CapsuleExtent;
+                }
             }
         }
 
@@ -128,9 +165,17 @@ namespace XREngine.Scene.Physics.Jolt
         public bool CollidingDown => _collidingDown;
         public bool CollidingSides => _collidingSides;
 
+        internal int ActiveContactCount => _character?.GetNumActiveContacts() ?? 0;
+        internal GroundState GroundState => _character?.GroundState ?? JoltPhysicsSharp.GroundState.InAir;
+        internal bool IsSupported => _character?.IsSupported ?? false;
+        internal Vector3 LastConsumedDisplacement { get; private set; }
+
+        private float CapsuleExtent => Height * 0.5f + Radius + ContactOffset;
+
         #region IAbstractRigidPhysicsActor
 
-        public (Vector3 position, Quaternion rotation) Transform => (Position, Quaternion.Identity);
+        public (Vector3 position, Quaternion rotation) Transform
+            => (Position, XRMath.RotationBetweenVectors(Globals.Up, UpDirection));
 
         public Vector3 LinearVelocity => _linearVelocity;
 
@@ -142,7 +187,12 @@ namespace XREngine.Scene.Physics.Jolt
 
         #endregion
 
-        public void Resize(float height) => Height = height;
+        public void Resize(float height)
+        {
+            Vector3 footPosition = FootPosition;
+            Height = height;
+            FootPosition = footPosition;
+        }
 
         public void Move(Vector3 delta, float minDist, float elapsedTime)
         {
@@ -154,7 +204,24 @@ namespace XREngine.Scene.Physics.Jolt
             if (!float.IsFinite(minDist) || !float.IsFinite(elapsedTime) || elapsedTime <= 0.0f)
                 return;
 
-            _inputBuffer.Enqueue((delta, minDist, elapsedTime));
+            lock (_inputBufferLock)
+            {
+                ControllerMove move = new(delta, MathF.Max(0.0f, minDist), elapsedTime);
+                if (_inputCount == MoveBufferCapacity)
+                {
+                    int tail = (_inputHead + _inputCount - 1) % MoveBufferCapacity;
+                    ControllerMove previous = _inputBuffer[tail];
+                    _inputBuffer[tail] = new ControllerMove(
+                        previous.Delta + move.Delta,
+                        MathF.Max(previous.MinDistance, move.MinDistance),
+                        previous.ElapsedTime + move.ElapsedTime);
+                    return;
+                }
+
+                int index = (_inputHead + _inputCount) % MoveBufferCapacity;
+                _inputBuffer[index] = move;
+                _inputCount++;
+            }
         }
 
         public void ConsumeInputBuffer(float fixedDelta)
@@ -163,6 +230,8 @@ namespace XREngine.Scene.Physics.Jolt
                 return;
             if (fixedDelta <= 0.0f)
                 return;
+
+            _lastFixedDelta = fixedDelta;
 
             EnsureCharacterExists();
             if (_character is null)
@@ -175,8 +244,28 @@ namespace XREngine.Scene.Physics.Jolt
             _collidingSides = false;
 
             Vector3 totalMove = Vector3.Zero;
-            while (_inputBuffer.TryDequeue(out var input))
-                totalMove += input.delta;
+            float minimumDistance = 0.0f;
+            lock (_inputBufferLock)
+            {
+                for (int index = 0; index < _inputCount; index++)
+                {
+                    ControllerMove input = _inputBuffer[(_inputHead + index) % MoveBufferCapacity];
+                    totalMove += input.Delta;
+                    minimumDistance = MathF.Max(minimumDistance, input.MinDistance);
+                }
+
+                _inputHead = 0;
+                _inputCount = 0;
+            }
+
+            LastConsumedDisplacement = totalMove;
+
+            if (totalMove.LengthSquared() <= minimumDistance * minimumDistance)
+            {
+                _linearVelocity = Vector3.Zero;
+                RefreshCollisionFlagsFromContacts();
+                return;
+            }
 
             var desiredVelocity = totalMove / fixedDelta;
             desiredVelocity = _character.CancelVelocityTowardsSteepSlopes(in desiredVelocity);
@@ -186,7 +275,7 @@ namespace XREngine.Scene.Physics.Jolt
             _character.Rotation = capsuleRotation;
             _character.Position = _position;
 
-            _character.HitReductionCosMaxAngle = SlopeLimit;
+            _character.MaxSlopeAngle = MathF.Acos(SlopeLimit);
 
             ExtendedUpdateSettings settings = new()
             {
@@ -199,7 +288,7 @@ namespace XREngine.Scene.Physics.Jolt
             BodyFilter? bodyFilter = null;
             ShapeFilter? shapeFilter = null;
 
-            _character.ExtendedUpdate(fixedDelta, settings, in layer, Scene.PhysicsSystem!, bodyFilter!, shapeFilter!);
+            _character.ExtendedUpdate(fixedDelta, settings, in layer, Scene.PhysicsSystem!, bodyFilter, shapeFilter);
 
             _position = _character.Position;
             RefreshCollisionFlagsFromContacts();
@@ -212,7 +301,11 @@ namespace XREngine.Scene.Physics.Jolt
             if (Interlocked.Exchange(ref _released, 1) != 0)
                 return;
 
-            while (_inputBuffer.TryDequeue(out _)) { }
+            lock (_inputBufferLock)
+            {
+                _inputHead = 0;
+                _inputCount = 0;
+            }
 
             _character?.Dispose();
             _character = null;
@@ -231,9 +324,15 @@ namespace XREngine.Scene.Physics.Jolt
             if (Scene.PhysicsSystem is null)
                 return;
 
-            UpdateShape();
-            if (_shape is null)
-                return;
+            if (_character is not null && _recreateCharacter)
+            {
+                _character.Dispose();
+                _character = null;
+                _shape?.Dispose();
+                _shape = null;
+            }
+
+            CapsuleShape replacementShape = new(Height * 0.5f, Radius);
 
             Quaternion capsuleRotation = XRMath.RotationBetweenVectors(Globals.Up, UpDirection);
 
@@ -241,18 +340,22 @@ namespace XREngine.Scene.Physics.Jolt
             {
                 CharacterVirtualSettings settings = new()
                 {
+                    Shape = replacementShape,
+                    Up = UpDirection,
+                    SupportingVolume = new Plane(Vector3.UnitY, -Radius),
+                    MaxSlopeAngle = MathF.Acos(SlopeLimit),
                     CharacterPadding = ContactOffset,
                     PredictiveContactDistance = ContactOffset,
                     CollisionTolerance = ContactOffset,
-                    InnerBodyShape = _shape,
-                    InnerBodyLayer = _objectLayer,
                     ShapeOffset = Vector3.Zero,
                 };
 
                 _character = new CharacterVirtual(settings, in _position, in capsuleRotation, 0, Scene.PhysicsSystem)
                 {
-                    HitReductionCosMaxAngle = SlopeLimit
+                    Up = UpDirection,
+                    MaxSlopeAngle = MathF.Acos(SlopeLimit),
                 };
+                _shape = replacementShape;
             }
             else
             {
@@ -260,19 +363,21 @@ namespace XREngine.Scene.Physics.Jolt
                 BodyFilter? bodyFilter = null;
                 ShapeFilter? shapeFilter = null;
 
-                _character.SetShape(ContactOffset, _shape, ContactOffset, in layer, Scene.PhysicsSystem, bodyFilter!, shapeFilter!);
+                if (_character.SetShape(_lastFixedDelta, replacementShape, ContactOffset, in layer, Scene.PhysicsSystem, bodyFilter, shapeFilter))
+                {
+                    CapsuleShape? previousShape = _shape;
+                    _shape = replacementShape;
+                    previousShape?.Dispose();
+                }
+                else
+                {
+                    replacementShape.Dispose();
+                    return;
+                }
             }
 
             _shapeDirty = false;
-        }
-
-        private void UpdateShape()
-        {
-            _shape?.Dispose();
-            _shape = null;
-
-            // Jolt capsule is oriented along +Y. Height is cylinder height (excludes hemispheres).
-            _shape = new CapsuleShape(Height * 0.5f, Radius);
+            _recreateCharacter = false;
         }
 
         private void RefreshCollisionFlagsFromContacts()
@@ -284,13 +389,14 @@ namespace XREngine.Scene.Physics.Jolt
             if (contactCount <= 0)
                 return;
 
-            foreach (var c in _character.GetActiveContacts())
+            for (int index = 0; index < contactCount; index++)
             {
+                CharacterVirtual.Contact c = _character.GetActiveContact(index);
                 if (!c.HadCollision || c.IsSensorB)
                     continue;
                 
                 float upDot = Vector3.Dot(c.ContactNormal, UpDirection);
-                if (upDot > 0.5f)
+                if (upDot >= SlopeLimit)
                     _collidingDown = true;
                 else if (upDot < -0.5f)
                     _collidingUp = true;
@@ -301,5 +407,10 @@ namespace XREngine.Scene.Physics.Jolt
                     break;
             }
         }
+
+        private readonly record struct ControllerMove(
+            Vector3 Delta,
+            float MinDistance,
+            float ElapsedTime);
     }
 }

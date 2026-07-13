@@ -121,6 +121,21 @@ public class XRDataBufferWriteModelTests
     }
 
     [Test]
+    public void CommitDirtyBytes_WarmPathDoesNotAllocateManagedState()
+    {
+        XRDataBuffer buffer = CreateIntBuffer("AllocationBoundedCommit");
+        buffer.SetDataRaw<int>([0]);
+        buffer.CommitDirtyBytes(0u, sizeof(int));
+
+        long beforeBytes = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < 8; i++)
+            buffer.CommitDirtyBytes(0u, sizeof(int));
+        long allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - beforeBytes;
+
+        allocatedBytes.ShouldBeLessThanOrEqualTo(128L);
+    }
+
+    [Test]
     public void AppendWrite_UploadsOnlyTailRange()
     {
         XRDataBuffer buffer = CreateIntBuffer("Append");

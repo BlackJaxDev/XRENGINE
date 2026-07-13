@@ -24,7 +24,18 @@ namespace XREngine.Components.Physics
             Progress: null,
             StartedAtUtc: null);
 
-        public IAbstractPhysicsActor? PhysicsActor { get; }
+        public abstract IAbstractPhysicsActor? PhysicsActor { get; }
+
+        /// <summary>
+        /// Raised after the backend actor reference changes, including creation and teardown.
+        /// Joint components use this to bind independently of component activation order.
+        /// </summary>
+        public event Action<PhysicsActorComponent, IAbstractPhysicsActor?, IAbstractPhysicsActor?>? PhysicsActorChanged;
+
+        protected void NotifyPhysicsActorChanged(
+            IAbstractPhysicsActor? previousActor,
+            IAbstractPhysicsActor? currentActor)
+            => PhysicsActorChanged?.Invoke(this, previousActor, currentActor);
 
         /// <summary>
         /// Resolves the ModelComponent to use for collision mesh extraction.
@@ -56,21 +67,6 @@ namespace XREngine.Components.Physics
                 ? modelComponent.GetType().Name
                 : modelComponent.Name;
             return $"{nodeLabel}/{componentLabel}#{modelComponent.GetHashCode():X8}";
-        }
-
-        protected override void OnComponentActivated()
-        {
-            base.OnComponentActivated();
-
-            if (World is not null && PhysicsActor is not null)
-                WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene.AddActor(PhysicsActor);
-        }
-        protected override void OnComponentDeactivated()
-        {
-            base.OnComponentDeactivated();
-
-            if (World is not null && PhysicsActor is not null)
-                WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene.RemoveActor(PhysicsActor);
         }
 
         protected (Vector3 position, Quaternion rotation) GetSpawnPose()
@@ -169,6 +165,45 @@ namespace XREngine.Components.Physics
             }
 
             return results;
+        }
+
+        /// <summary>
+        /// Converts convex-decomposition output into a reusable, backend-neutral collider asset.
+        /// The resulting CPU hull data can be cooked by PhysX or transferred directly to Jolt.
+        /// </summary>
+        public async Task<PhysicsColliderAsset> CreateConvexColliderAssetAsync(
+            string? assetName = null,
+            CoACD.CoACDParameters? parameters = null,
+            IProgress<ConvexHullGenerationProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            List<CoACD.ConvexHullMesh> hulls = await CreateConvexDecompositionAsync(
+                parameters,
+                progress,
+                cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            string resolvedName = string.IsNullOrWhiteSpace(assetName)
+                ? $"{SceneNode?.Name ?? GetType().Name} Convex Collider"
+                : assetName;
+            PhysicsColliderAsset asset = new(resolvedName);
+            for (int hullIndex = 0; hullIndex < hulls.Count; hullIndex++)
+            {
+                CoACD.ConvexHullMesh hull = hulls[hullIndex];
+                uint[] indices = new uint[hull.Indices.Length];
+                for (int index = 0; index < indices.Length; index++)
+                    indices[index] = checked((uint)hull.Indices[index]);
+
+                asset.Shapes.Add(new PhysicsColliderShape
+                {
+                    Name = $"Hull {hullIndex + 1}",
+                    Geometry = new PhysicsConvexHullGeometry(
+                        (Vector3[])hull.Vertices.Clone(),
+                        indices),
+                });
+            }
+
+            return asset;
         }
 
         private async Task<List<CoACD.ConvexHullMesh>> CreateConvexDecompositionForInputsAsync(

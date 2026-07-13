@@ -1,7 +1,7 @@
 using XREngine.Extensions;
-using MagicPhysX;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Components.Physics;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Attributes;
 using XREngine.Data.Colors;
@@ -14,9 +14,8 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.Physics.Physx;
-using XREngine.Rendering.Physics.Physx.Joints;
 using XREngine.Scene;
+using XREngine.Scene.Physics.Joints;
 using XREngine.Scene.Transforms;
 using XREngine.Components.Scene.Transforms;
 
@@ -539,6 +538,9 @@ namespace XREngine.Scene.Components.Editing
 
         protected override void OnComponentDeactivated()
         {
+            UnlinkDragJoint();
+            _linkRB?.Destroy();
+            _linkRB = null;
             base.OnComponentDeactivated();
             _displayTransformTickRegistered = false;
         }
@@ -549,7 +551,7 @@ namespace XREngine.Scene.Components.Editing
                 UpdateDisplayTransform();
         }
 
-        private PhysxDynamicRigidBody? _linkRB = null;
+        private IAbstractDynamicRigidBody? _linkRB;
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
@@ -561,6 +563,7 @@ namespace XREngine.Scene.Components.Editing
                     case nameof(TargetSocket):
                         if (_targetSocket != null)
                         {
+                            UnlinkDragJoint();
                             _targetSocket.WorldMatrixChanged -= SocketTransformChangedCallback;
                             _linkRB?.Destroy();
                             _linkRB = null;
@@ -593,61 +596,90 @@ namespace XREngine.Scene.Components.Editing
             if (_targetSocket is not RigidBodyTransform rbt)
                 return;
 
-            if ((rbt.World as XRWorldInstance)?.PhysicsScene is not PhysxScene phys)
+            AbstractPhysicsScene? physicsScene = (rbt.World as XRWorldInstance)?.PhysicsScene;
+            if (physicsScene is null)
                 return;
 
-            var rb = rbt.RigidBody as PhysxDynamicRigidBody;
+            IAbstractDynamicRigidBody? rb = rbt.RigidBody as IAbstractDynamicRigidBody;
             if (rb is not null && _linkRB is null)
-                phys.AddActor(_linkRB = new() { Flags = PxRigidBodyFlags.Kinematic, ActorFlags = PxActorFlags.DisableGravity });
+                _linkRB = CreateDragAnchor(physicsScene, rbt.WorldTranslation, rbt.WorldRotation);
         }
 
-        private void LinkPhysxJoint()
+        private void LinkDragJoint()
         {
             if (_targetSocket is not RigidBodyTransform rbt)
                 return;
 
-            if ((rbt.World as XRWorldInstance)?.PhysicsScene is not PhysxScene phys)
+            AbstractPhysicsScene? physicsScene = (rbt.World as XRWorldInstance)?.PhysicsScene;
+            if (physicsScene is null)
                 return;
 
-            var rb = rbt.RigidBody as PhysxDynamicRigidBody;
+            IAbstractDynamicRigidBody? rb = rbt.RigidBody as IAbstractDynamicRigidBody;
             if (rb is not null)
-                LinkJoint(phys, rb);
+                LinkJoint(physicsScene, rb);
         }
 
-        private PhysxJoint? _dragJoint = null;
-        private void LinkJoint(PhysxScene phys, PhysxDynamicRigidBody rb)
-            => _dragJoint = MakeDistanceJoint(phys, rb);
+        private readonly RuntimeDistanceConstraintOwner _dragConstraintOwner = new();
 
-        private PhysxJoint_Distance MakeDistanceJoint(PhysxScene phys, PhysxDynamicRigidBody rb)
+        private void LinkJoint(AbstractPhysicsScene physicsScene, IAbstractDynamicRigidBody rb)
         {
             if (_linkRB is null)
-                phys.AddActor(_linkRB = new() { Flags = PxRigidBodyFlags.Kinematic, ActorFlags = PxActorFlags.DisableGravity });
-
-            (Vector3 Zero, Quaternion Identity) identityTfm = (Vector3.Zero, Quaternion.Identity);
+            {
+                Vector3 position = _targetSocket?.WorldTranslation ?? Vector3.Zero;
+                Quaternion rotation = _targetSocket?.WorldRotation ?? Quaternion.Identity;
+                _linkRB = CreateDragAnchor(physicsScene, position, rotation)
+                    ?? throw new InvalidOperationException("The active physics backend could not create a transform-tool drag anchor.");
+            }
 
             if (_targetSocket is not null)
-                _linkRB.Transform = (_targetSocket.WorldTranslation, _targetSocket.WorldRotation);
-            
-            PhysxJoint_Distance? joint = phys.NewDistanceJoint(rb, identityTfm, _linkRB, identityTfm);
-            joint.MaxDistance = 0.0f;
-            joint.MinDistance = 0.0f;
-            joint.Stiffness = 10.0f;
-            joint.Damping = 0.1f;
-            joint.Tolerance = 0.1f;
-            joint.ContactDistance = 0.1f;
-            joint.DistanceFlags = PxDistanceJointFlags.MaxDistanceEnabled | PxDistanceJointFlags.SpringEnabled;
-            joint.Flags = PxConstraintFlags.CollisionEnabled;
-            return joint;
+                _linkRB.SetTransform(_targetSocket.WorldTranslation, _targetSocket.WorldRotation);
+
+            RuntimeDistanceConstraintSettings settings = new(
+                MinDistance: 0.0f,
+                MaxDistance: 0.0f,
+                EnableMinDistance: false,
+                EnableMaxDistance: true,
+                Stiffness: 10.0f,
+                Damping: 0.1f,
+                Tolerance: 0.1f,
+                EnableCollision: true);
+            _dragConstraintOwner.Bind(
+                physicsScene,
+                rb,
+                JointAnchor.Identity,
+                _linkRB,
+                JointAnchor.Identity,
+                settings);
         }
 
-        private void UnlinkPhysxJoint()
+        private static IAbstractDynamicRigidBody? CreateDragAnchor(
+            AbstractPhysicsScene physicsScene,
+            Vector3 position,
+            Quaternion rotation)
         {
-            if (_dragJoint is null)
-                return;
-            
-            _dragJoint.Release();
-            _dragJoint = null;
+            IAbstractDynamicRigidBody? anchor = physicsScene.BackendService.CreateDynamicRigidBody(
+                new PhysicsRigidBodyCreateInfo(
+                    [],
+                    new IPhysicsGeometry.Sphere(0.01f),
+                    null,
+                    null,
+                    (position, rotation),
+                    Vector3.Zero,
+                    Quaternion.Identity,
+                    1.0f,
+                    new LayerMask(1))
+                {
+                    GravityEnabled = false,
+                    BodyFlags = PhysicsRigidBodyFlags.Kinematic | PhysicsRigidBodyFlags.UseKinematicTargetForQueries,
+                });
+
+            if (anchor is not null)
+                physicsScene.AddActor(anchor);
+            return anchor;
         }
+
+        private void UnlinkDragJoint()
+            => _dragConstraintOwner.Release();
 
         private void ModeChanged()
         {
@@ -742,24 +774,24 @@ namespace XREngine.Scene.Components.Editing
 
         private void MouseUpTranslation()
         {
-            UnlinkPhysxJoint();
+            UnlinkDragJoint();
         }
 
         private void MouseDownTranslation()
         {
             StoreInitialLocalTransform();
-            LinkPhysxJoint();
+            LinkDragJoint();
         }
 
         private void MouseUpRotation()
         {
-            UnlinkPhysxJoint();
+            UnlinkDragJoint();
         }
 
         private void MouseDownRotation()
         {
             StoreInitialLocalTransform();
-            LinkPhysxJoint();
+            LinkDragJoint();
         }
 
         private Vector3 _localTranslationDragStart = Vector3.Zero;

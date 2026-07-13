@@ -11,6 +11,7 @@ using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
+using XREngine.Scene.Physics;
 using XREngine.Scene.Transforms;
 using static XREngine.Scene.Transforms.RigidBodyTransform;
 using Quaternion = System.Numerics.Quaternion;
@@ -38,7 +39,7 @@ public static partial class EditorUnitTests
 
             Random random = new();
             PhysxMaterial physMat = new(0.2f, 0.2f, 1.0f);
-            physMat.RestitutionCombineMode = ECombineMode.Max;
+            physMat.RestitutionCombineMode = PhysicsMaterialCombineMode.Max;
             for (int i = 0; i < count; i++)
                 AddBall(rootNode, physMat, radius, random);
         }
@@ -50,7 +51,7 @@ public static partial class EditorUnitTests
             var floorComp = floor.AddComponent<StaticRigidBodyComponent>()!;
 
             PhysxMaterial floorPhysMat = new(0.5f, 0.5f, 0.7f);
-            //floorPhysMat.RestitutionCombineMode = ECombineMode.Max;
+            //floorPhysMat.RestitutionCombineMode = PhysicsMaterialCombineMode.Max;
 
             Vector3 floorHalfExtents = new(5000.0f, 0.5f, 5000.0f);
             floorComp.Material = floorPhysMat;
