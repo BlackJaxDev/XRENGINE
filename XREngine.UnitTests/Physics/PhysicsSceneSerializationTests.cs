@@ -73,12 +73,17 @@ public sealed class PhysicsSceneSerializationTests
 
         CharacterControllerComponent controller = controllerNode.AddComponent<CharacterControllerComponent>()!;
         controller.Radius = 0.42f;
-        controller.Height = 1.3f;
+        controller.TotalHeight = 1.3f;
         controller.ContactOffset = 0.03f;
         controller.StepOffset = 0.27f;
         controller.SlopeLimit = 0.61f;
         controller.Density = 2.2f;
         controller.UpDirection = Vector3.UnitZ;
+        controller.MotionInputModel = CharacterMotionInputModel.Displacement;
+        controller.PredictiveContactDistance = 0.12f;
+        controller.CollisionTolerance = 0.002f;
+        controller.StickToFloorDistance = 0.16f;
+        controller.StepDownExtra = 0.04f;
         controller.ReplicationAuthority = PhysicsReplicationAuthority.SharedDeterministic;
 
         D6JointComponent joint = dynamicNode.AddComponent<D6JointComponent>()!;
@@ -134,7 +139,13 @@ public sealed class PhysicsSceneSerializationTests
         clonedDynamic.OwnerClientId.ShouldBe("physics-owner");
         clonedStatic.ActorName.ShouldBe("serialized-ground");
         clonedController.UpDirection.ShouldBe(Vector3.UnitZ);
+        clonedController.TotalHeight.ShouldBe(1.3f);
         clonedController.StepOffset.ShouldBe(0.27f);
+        clonedController.MotionInputModel.ShouldBe(CharacterMotionInputModel.Displacement);
+        clonedController.PredictiveContactDistance.ShouldBe(0.12f);
+        clonedController.CollisionTolerance.ShouldBe(0.002f);
+        clonedController.StickToFloorDistance.ShouldBe(0.16f);
+        clonedController.StepDownExtra.ShouldBe(0.04f);
         clonedController.ReplicationAuthority.ShouldBe(PhysicsReplicationAuthority.SharedDeterministic);
 
         clonedJoint.ConnectedBody.ShouldBeSameAs(clonedStatic);

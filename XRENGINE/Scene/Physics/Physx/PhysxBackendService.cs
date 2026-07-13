@@ -1,6 +1,7 @@
 using MagicPhysX;
 using System.Numerics;
 using XREngine.Components.Physics;
+using XREngine.Scene;
 using XREngine.Scene.Physics;
 
 namespace XREngine.Rendering.Physics.Physx;
@@ -16,32 +17,116 @@ internal interface IPhysxCharacterControllerExtension
 /// </summary>
 internal sealed class PhysxBackendService(PhysxScene scene) : IPhysicsBackendService
 {
+    public PhysicsCharacterControllerCapabilities CharacterControllerCapabilities
+        => PhysicsCharacterControllerCapabilities.DisplacementInput
+            | PhysicsCharacterControllerCapabilities.VelocityInput
+            | PhysicsCharacterControllerCapabilities.ArbitraryUp
+            | PhysicsCharacterControllerCapabilities.MovingGround
+            | PhysicsCharacterControllerCapabilities.DynamicBodyInteraction
+            | PhysicsCharacterControllerCapabilities.CharacterVsCharacter
+            | PhysicsCharacterControllerCapabilities.QueryVisibility
+            | PhysicsCharacterControllerCapabilities.Materials
+            | PhysicsCharacterControllerCapabilities.InvisibleWalls
+            | PhysicsCharacterControllerCapabilities.ConstrainedClimbing
+            | PhysicsCharacterControllerCapabilities.MaximumJumpHeight
+            | PhysicsCharacterControllerCapabilities.ScaleCoefficient
+            | PhysicsCharacterControllerCapabilities.VolumeGrowth
+            | PhysicsCharacterControllerCapabilities.SteepSlopeSliding
+            | PhysicsCharacterControllerCapabilities.CollisionFiltering;
+
     private sealed class CharacterControllerAdapter(
         PhysxCapsuleController controller,
-        PhysxControllerActorProxy actorProxy) : IAbstractCharacterController, IPhysxCharacterControllerExtension
+        PhysxControllerActorProxy actorProxy) : IAbstractCharacterController, IPhysxCharacterControllerExtension, ICharacterControllerCollisionSettings
     {
+        private CharacterMotionInputModel _motionInputModel = CharacterMotionInputModel.Velocity;
+        private LayerMask _collisionLayerMask = LayerMask.Everything;
+
         public PhysxCapsuleController NativeController => controller;
 
         public Vector3 Position { get => controller.Position; set => controller.Position = value; }
         public Vector3 FootPosition { get => controller.FootPosition; set => controller.FootPosition = value; }
         public Vector3 UpDirection { get => controller.UpDirection; set => controller.UpDirection = value; }
-        public float Radius { get => controller.Radius; set => controller.Radius = value; }
-        public float Height => controller.Height;
+        public float Radius
+        {
+            get => controller.Radius;
+            set
+            {
+                Vector3 foot = controller.FootPosition;
+                float totalHeight = TotalHeight;
+                controller.Radius = MathF.Max(0.001f, value);
+                controller.Height = MathF.Max(0.0f, totalHeight - 2.0f * controller.Radius);
+                controller.FootPosition = foot;
+            }
+        }
+        public float TotalHeight => controller.Height + 2.0f * controller.Radius;
         public float SlopeLimit { get => controller.SlopeLimit; set => controller.SlopeLimit = value; }
         public float StepOffset { get => controller.StepOffset; set => controller.StepOffset = value; }
         public float ContactOffset { get => controller.ContactOffset; set => controller.ContactOffset = value; }
+        public CharacterMotionInputModel MotionInputModel
+        {
+            get => _motionInputModel;
+            set => _motionInputModel = value;
+        }
+        public PhysicsCharacterControllerCapabilities Capabilities
+            => PhysicsCharacterControllerCapabilities.DisplacementInput
+                | PhysicsCharacterControllerCapabilities.VelocityInput
+                | PhysicsCharacterControllerCapabilities.ArbitraryUp
+                | PhysicsCharacterControllerCapabilities.MovingGround
+                | PhysicsCharacterControllerCapabilities.DynamicBodyInteraction
+                | PhysicsCharacterControllerCapabilities.CharacterVsCharacter
+                | PhysicsCharacterControllerCapabilities.QueryVisibility
+                | PhysicsCharacterControllerCapabilities.Materials
+                | PhysicsCharacterControllerCapabilities.InvisibleWalls
+                | PhysicsCharacterControllerCapabilities.ConstrainedClimbing
+                | PhysicsCharacterControllerCapabilities.MaximumJumpHeight
+                | PhysicsCharacterControllerCapabilities.ScaleCoefficient
+                | PhysicsCharacterControllerCapabilities.VolumeGrowth
+                | PhysicsCharacterControllerCapabilities.SteepSlopeSliding
+                | PhysicsCharacterControllerCapabilities.CollisionFiltering;
+        public LayerMask CollisionLayerMask
+        {
+            get => _collisionLayerMask;
+            set
+            {
+                _collisionLayerMask = value;
+                ConfigureControllerFiltering(controller, value);
+            }
+        }
+        public bool SlideOnSteepSlopes
+        {
+            get => controller.NonWalkableMode == PxControllerNonWalkableMode.PreventClimbingAndForceSliding;
+            set => controller.NonWalkableMode = value
+                ? PxControllerNonWalkableMode.PreventClimbingAndForceSliding
+                : PxControllerNonWalkableMode.PreventClimbing;
+        }
+        public CharacterSupportState SupportState => controller.SupportState;
+        public bool IsGrounded => controller.IsGrounded;
         public bool CollidingUp => controller.CollidingUp;
         public bool CollidingDown => controller.CollidingDown;
-        public Vector3 LinearVelocity => actorProxy.LinearVelocity;
+        public bool CollidingSides => controller.CollidingSides;
+        public Vector3 GroundNormal => controller.GroundNormal;
+        public Vector3 GroundVelocity => controller.GroundVelocity;
+        public IAbstractRigidPhysicsActor? GroundActor => controller.GroundActor;
+        public CharacterMotionCommand LastMotionCommand => controller.LastMotionCommand;
+        public Vector3 RequestedVelocity => controller.RequestedVelocity;
+        public Vector3 EffectiveVelocity => controller.EffectiveVelocity;
+        public Vector3 LinearVelocity => controller.EffectiveVelocity;
         public Vector3 AngularVelocity => actorProxy.AngularVelocity;
         public bool IsSleeping => actorProxy.IsSleeping;
         public (Vector3 position, Quaternion rotation) Transform => actorProxy.Transform;
 
-        public void Move(Vector3 delta, float minDist, float elapsedTime)
-            => controller.Move(delta, minDist, elapsedTime);
+        public void SubmitMotion(in CharacterMotionCommand command)
+            => controller.SubmitMotion(command);
 
-        public void Resize(float height)
-            => controller.Resize(height);
+        public void Move(Vector3 value, float minDist, float elapsedTime)
+            => SubmitMotion(new CharacterMotionCommand(
+                value,
+                MotionInputModel,
+                minDist,
+                elapsedTime));
+
+        public void Resize(float totalHeight)
+            => controller.Resize(MathF.Max(0.0f, totalHeight - 2.0f * controller.Radius));
 
         public void Synchronize()
             => actorProxy.RefreshFromNative();
@@ -136,6 +221,7 @@ internal sealed class PhysxBackendService(PhysxScene scene) : IPhysicsBackendSer
     public unsafe IAbstractCharacterController? CreateCharacterController(
         in PhysicsCharacterControllerCreateInfo createInfo)
     {
+        PhysicsCharacterControllerCreateInfoValidator.Validate(in createInfo);
         PhysxMaterial material = ResolveMaterial(null, createInfo.MaterialDefinition);
         ControllerManager manager = scene.GetOrCreateControllerManager();
         PhysxCapsuleController controller;
@@ -159,7 +245,7 @@ internal sealed class PhysxBackendService(PhysxScene scene) : IPhysicsBackendSer
                 0,
                 null,
                 createInfo.Radius,
-                createInfo.Height,
+                MathF.Max(0.0f, createInfo.TotalHeight - 2.0f * createInfo.Radius),
                 createInfo.ConstrainedClimbing
                     ? PxCapsuleClimbingMode.Constrained
                     : PxCapsuleClimbingMode.Easy);
@@ -169,7 +255,40 @@ internal sealed class PhysxBackendService(PhysxScene scene) : IPhysicsBackendSer
             material.Release();
         }
         var actorProxy = new PhysxControllerActorProxy(controller.ControllerPtr);
-        return new CharacterControllerAdapter(controller, actorProxy);
+        return new CharacterControllerAdapter(controller, actorProxy)
+        {
+            MotionInputModel = createInfo.MotionInputModel,
+            CollisionLayerMask = createInfo.CollisionLayerMask,
+            SlideOnSteepSlopes = createInfo.SlideOnSteepSlopes,
+        };
+    }
+
+    private static unsafe void ConfigureControllerFiltering(
+        PhysxCapsuleController controller,
+        LayerMask layerMask)
+    {
+        PxRigidActor* actor = (PxRigidActor*)controller.ControllerPtr->GetActor();
+        if (actor is null)
+            return;
+
+        int shapeCount = (int)actor->GetNbShapes();
+        if (shapeCount == 0)
+            return;
+
+        PxFilterData filterData = default;
+        filterData.word0 = unchecked((uint)layerMask.Value);
+        filterData.word1 = uint.MaxValue;
+
+        PxShape** shapes = stackalloc PxShape*[(int)shapeCount];
+        actor->GetShapes(shapes, (uint)shapeCount, 0);
+        for (int index = 0; index < shapeCount; index++)
+        {
+            PxShape* shape = shapes[index];
+            if (shape is null)
+                continue;
+            shape->SetSimulationFilterDataMut(&filterData);
+            shape->SetQueryFilterDataMut(&filterData);
+        }
     }
 
     public unsafe bool TryReplaceCollisionShapes(

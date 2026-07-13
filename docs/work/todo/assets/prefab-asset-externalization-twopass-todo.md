@@ -146,16 +146,16 @@ Keep the current four-condition gate. The refactor satisfies all four conditions
 
 ## 8. Implementation Checklist
 
-- [ ] Extend `IsRelevant` / `KindFolderName` / `KindOrder` for `AnimationClip`.
-- [ ] Reverse `KindOrder` to leaves-first.
-- [ ] Split externalizer into Discover / PreAssign / Write phases.
-- [ ] Add placeholder-file creation + abort cleanup.
-- [ ] Audit `AnimationClipYamlTypeConverter` for reference-emission path; fix if inlining unconditionally.
+- [x] Extend `IsRelevant` / `KindFolderName` / `KindOrder` for `AnimationClip`.
+- [x] Reverse `KindOrder` to leaves-first.
+- [x] Split externalizer into Discover / PreAssign / Write phases.
+- [x] Add placeholder-file creation + abort cleanup.
+- [x] Audit `AnimationClipYamlTypeConverter` for reference-emission path; fix if inlining unconditionally.
 - [ ] Sweep other `XRAsset`-derived types for the same pattern (font glyph sets, shaders, etc.).
 - [ ] Add FBX re-import regression test.
 - [ ] Add shared-asset dedup test.
 - [ ] Add failure-rollback test.
-- [ ] Update `docs/developer-guides/assets/model-import.md` on-disk layout section.
+- [x] Update `docs/developer-guides/assets/model-import.md` on-disk layout section.
 - [ ] Release note entry.
 
 ## 9. Out of Scope (Follow-ups)

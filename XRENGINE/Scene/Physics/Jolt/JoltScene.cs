@@ -1722,9 +1722,11 @@ namespace XREngine.Scene.Physics.Jolt
             foreach (IJoltCharacterController controller in _characterControllers)
             {
                 Vector3 up = controller.UpDirection;
-                float halfHeight = controller.Height * 0.5f;
-                Vector3 start = controller.Position - up * halfHeight;
-                Vector3 end = controller.Position + up * halfHeight;
+                float halfCylinderHeight = MathF.Max(
+                    0.0f,
+                    controller.TotalHeight - 2.0f * controller.Radius) * 0.5f;
+                Vector3 start = controller.Position - up * halfCylinderHeight;
+                Vector3 end = controller.Position + up * halfCylinderHeight;
                 Engine.Rendering.Debug.RenderCapsule(start, end, controller.Radius, false, ColorF4.Cyan);
             }
 
