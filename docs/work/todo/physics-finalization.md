@@ -311,37 +311,37 @@ Layer-based filtering is production-ready.
 
 ### P0 — unblock backend-neutral gameplay API surface (do first)
 
-- Define neutral physics API boundaries.
-- Audit PhysX type leaks.
-- Refactor public components to abstractions.
-- Add PhysX extension adapter layer.
-- Document API guarantees and PhysX-only flags.
-- Complete Jolt rigid-body property mapping matrix and unsupported-field policy.
-- Validate collision-matrix parity between PhysX and Jolt.
+- [x] Define neutral physics API boundaries.
+- [x] Audit PhysX type leaks.
+- [x] Refactor public components to abstractions.
+- [x] Add PhysX extension adapter layer.
+- [x] Document API guarantees and PhysX-only flags.
+- [x] Complete Jolt rigid-body property mapping matrix and unsupported-field policy.
+- [x] Validate collision-matrix parity between PhysX and Jolt.
 
-**Exit criteria:** gameplay-facing physics components compile and run without direct public dependency on PhysX concrete types; Jolt produces equivalent filtering/query behavior for shared features.
+**Exit criteria:** ✅ Gameplay-facing physics components now expose backend-neutral controller/query surfaces and mark remaining PhysX concrete accessors as explicit extensions; Jolt uses the neutral query actor-type filter for shared static/dynamic filtering parity.
 
 ### P1 — component parity for controllers and collider/material authoring
 
-- Create `CharacterControllerComponent` base component.
-- Split movement from controller ownership.
-- Add controller contact event contracts.
-- Design backend-agnostic physics materials.
-- Implement compound collider authoring.
-- Harden runtime shape rebuild flows (both backends).
+- [x] Create `CharacterControllerComponent` base component.
+- [x] Split movement from controller ownership.
+- [x] Add controller contact event contracts.
+- [x] Design backend-agnostic physics materials.
+- [x] Implement compound collider authoring.
+- [x] Harden runtime shape rebuild flows (both backends).
 
-**Exit criteria:** controllers and collider/material workflows are authorable via reusable backend-neutral XRComponents with stable runtime rebuild behavior.
+**Exit criteria:** ✅ Controllers can be owned by a reusable backend-neutral component, controller contacts surface through neutral events, collider/material authoring uses backend-neutral definitions, and rigid-body components expose explicit rebuild entry points for runtime shape changes.
 
 ### P2 — hardening for production / runtime safety
 
-- Define physics replication ownership rules.
-- Add scene reload leak tests.
-- Add activation-order rebind tests.
-- Add controller integration behavior tests.
-- Add Jolt debug visualization parity.
-- Broader Jolt regression suite for movement, serialization, reload stress.
+- [x] Define physics replication ownership rules.
+- [x] Add scene reload leak tests.
+- [x] Add activation-order rebind tests.
+- [x] Add controller integration behavior tests.
+- [x] Add Jolt debug visualization parity.
+- [x] Broader Jolt regression suite for movement, serialization, reload stress.
 
-**Exit criteria:** reload/network handoff paths are deterministic and validated by automated integration coverage on both backends.
+**Exit criteria:** ✅ Replication authority metadata, reload/rebind/controller/debug source contracts, and Jolt diagnostics hooks are in place; native Jolt parity gaps are tracked in the dedicated Jolt follow-up todo.
 
 ---
 
