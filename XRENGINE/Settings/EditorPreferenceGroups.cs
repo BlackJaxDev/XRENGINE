@@ -172,6 +172,12 @@ public sealed class EditorGeneralDiagnosticsPreferences(EditorDebugOptions owner
         set => owner.ModelRenderDiagEnabled = value;
     }
 
+    public bool JoltDebugRenderDiagnostics
+    {
+        get => owner.JoltDebugRenderDiagnostics;
+        set => owner.JoltDebugRenderDiagnostics = value;
+    }
+
     [EnvironmentVariablePreference(XREngineEnvironmentVariables.DirectionalShadowAudit)]
     [EnvironmentVariablePreference(XREngineEnvironmentVariables.ShadowAudit)]
     public bool DirectionalShadowAudit
@@ -204,6 +210,7 @@ public sealed class EditorGeneralDiagnosticsPreferences(EditorDebugOptions owner
     public void CopyFrom(EditorGeneralDiagnosticsPreferences source)
     {
         ModelRenderDiagnosticsEnabled = source.ModelRenderDiagnosticsEnabled;
+        JoltDebugRenderDiagnostics = source.JoltDebugRenderDiagnostics;
         DirectionalShadowAudit = source.DirectionalShadowAudit;
         SkinningPrepassDiagnostics = source.SkinningPrepassDiagnostics;
         ForceSkinnedUnbounded = source.ForceSkinnedUnbounded;

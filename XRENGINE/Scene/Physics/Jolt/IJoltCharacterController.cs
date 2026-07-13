@@ -2,7 +2,7 @@ using System.Numerics;
 
 namespace XREngine.Scene.Physics.Jolt
 {
-    public interface IJoltCharacterController : IAbstractRigidPhysicsActor
+    public interface IJoltCharacterController : IAbstractCharacterController
     {
         Vector3 Position { get; set; }
         Vector3 FootPosition { get; set; }

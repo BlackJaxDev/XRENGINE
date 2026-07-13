@@ -1506,6 +1506,7 @@ namespace XREngine
         private int _deferredDebugView = XREngine.Rendering.RenderDiagnosticsFlags.DeferredDebugView;
         private bool _diagDeferredLighting = XREngine.Rendering.RenderDiagnosticsFlags.DiagDeferredLighting;
         private bool _modelRenderDiagEnabled = XREngine.Rendering.RenderDiagnosticsFlags.ModelRenderDiagEnabled;
+        private bool _joltDebugRenderDiagnostics;
         private bool _directionalShadowAudit = XREngine.Rendering.RenderDiagnosticsFlags.DirectionalShadowAudit;
         private bool _skinningPrepassDiag = XREngine.Rendering.RenderDiagnosticsFlags.SkinningPrepassDiag;
         private bool _forceSkinnedUnbounded = XREngine.Rendering.RenderDiagnosticsFlags.ForceSkinnedUnbounded;
@@ -2083,6 +2084,16 @@ namespace XREngine
                 if (SetField(ref _modelRenderDiagEnabled, value))
                     XREngine.Rendering.RenderDiagnosticsFlags.SetModelRenderDiagEnabled(value);
             }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Jolt Debug Render Diagnostics")]
+        [Description("Log Jolt scene object counts whenever physics debug rendering runs. Defaults off; enable only while diagnosing Jolt scene population.")]
+        [DefaultValue(false)]
+        public bool JoltDebugRenderDiagnostics
+        {
+            get => _joltDebugRenderDiagnostics;
+            set => SetField(ref _joltDebugRenderDiagnostics, value);
         }
 
         [Category("Diagnostics")]
@@ -3247,6 +3258,7 @@ namespace XREngine
             DeferredDebugView = source.DeferredDebugView;
             DiagDeferredLighting = source.DiagDeferredLighting;
             ModelRenderDiagEnabled = source.ModelRenderDiagEnabled;
+            JoltDebugRenderDiagnostics = source.JoltDebugRenderDiagnostics;
             DirectionalShadowAudit = source.DirectionalShadowAudit;
             FirstChanceExceptionFilter = source.FirstChanceExceptionFilter;
             BypassVendorUpscale = source.BypassVendorUpscale;

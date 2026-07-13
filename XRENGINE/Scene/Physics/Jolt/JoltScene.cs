@@ -716,6 +716,23 @@ namespace XREngine.Scene.Physics.Jolt
             NotifySimulationStepped();
         }
 
+
+        private static void GetQueryActorTypeInclusion(
+            IAbstractQueryFilter? filter,
+            out bool includeStatic,
+            out bool includeDynamic)
+        {
+            PhysicsQueryActorTypes actorTypes = filter?.ActorTypes ?? PhysicsQueryActorTypes.All;
+            includeStatic = actorTypes.HasFlag(PhysicsQueryActorTypes.Static);
+            includeDynamic = actorTypes.HasFlag(PhysicsQueryActorTypes.Dynamic);
+
+            if (!includeStatic && !includeDynamic)
+            {
+                includeStatic = true;
+                includeDynamic = true;
+            }
+        }
+
         public override bool SweepAny(
             IPhysicsGeometry geometry,
             (Vector3 position, Quaternion rotation) pose,
@@ -735,14 +752,7 @@ namespace XREngine.Scene.Physics.Jolt
             if (shape is null)
                 return false;
 
-            // Parse query flags from PhysX filter for compatibility
-            bool includeStatic = true;
-            bool includeDynamic = true;
-            if (filter is PhysxScene.PhysxQueryFilter physxFilter)
-            {
-                includeStatic = (physxFilter.Flags & MagicPhysX.PxQueryFlags.Static) != 0;
-                includeDynamic = (physxFilter.Flags & MagicPhysX.PxQueryFlags.Dynamic) != 0;
-            }
+            GetQueryActorTypeInclusion(filter, out bool includeStatic, out bool includeDynamic);
 
             // Create world transform matrix from pose (positions shape at starting location)
             var worldTransform = Matrix4x4.CreateFromQuaternion(pose.rotation) * Matrix4x4.CreateTranslation(pose.position);
@@ -792,14 +802,7 @@ namespace XREngine.Scene.Physics.Jolt
             if (shape is null)
                 return false;
 
-            // Parse query flags from PhysX filter for compatibility
-            bool includeStatic = true;
-            bool includeDynamic = true;
-            if (filter is PhysxScene.PhysxQueryFilter physxFilter)
-            {
-                includeStatic = (physxFilter.Flags & MagicPhysX.PxQueryFlags.Static) != 0;
-                includeDynamic = (physxFilter.Flags & MagicPhysX.PxQueryFlags.Dynamic) != 0;
-            }
+            GetQueryActorTypeInclusion(filter, out bool includeStatic, out bool includeDynamic);
 
             // Create world transform matrix from pose (positions shape at starting location)
             var worldTransform = Matrix4x4.CreateFromQuaternion(pose.rotation) * Matrix4x4.CreateTranslation(pose.position);
@@ -866,14 +869,7 @@ namespace XREngine.Scene.Physics.Jolt
             if (shape is null)
                 return false;
 
-            // Parse query flags from PhysX filter for compatibility
-            bool includeStatic = true;
-            bool includeDynamic = true;
-            if (filter is PhysxScene.PhysxQueryFilter physxFilter)
-            {
-                includeStatic = (physxFilter.Flags & MagicPhysX.PxQueryFlags.Static) != 0;
-                includeDynamic = (physxFilter.Flags & MagicPhysX.PxQueryFlags.Dynamic) != 0;
-            }
+            GetQueryActorTypeInclusion(filter, out bool includeStatic, out bool includeDynamic);
 
             // Create world transform matrix from pose (positions shape at starting location)
             var worldTransform = Matrix4x4.CreateFromQuaternion(pose.rotation) * Matrix4x4.CreateTranslation(pose.position);
@@ -1153,6 +1149,37 @@ namespace XREngine.Scene.Physics.Jolt
             _joints.Remove(joint);
         }
 
+
+        public JoltPhysicsDiagnostics GetDiagnostics()
+            => new(
+                _actors.Count,
+                _rigidActors.Count,
+                _staticBodies.Count,
+                _dynamicBodies.Count,
+                _characterControllers.Count,
+                _joints.Count);
+
+        public override void DebugRenderCollect()
+        {
+            if (!Engine.EditorPreferences.Diagnostics.General.JoltDebugRenderDiagnostics)
+                return;
+
+            JoltPhysicsDiagnostics diagnostics = GetDiagnostics();
+            System.Diagnostics.Debug.WriteLine(
+                $"[JoltScene] DebugRenderCollect actors={diagnostics.ActorCount} rigid={diagnostics.RigidActorCount} static={diagnostics.StaticBodyCount} dynamic={diagnostics.DynamicBodyCount} controllers={diagnostics.CharacterControllerCount} joints={diagnostics.JointCount}");
+        }
+
+        public override void DebugRender()
+            => DebugRenderCollect();
+
         #endregion
     }
+
+    public readonly record struct JoltPhysicsDiagnostics(
+        int ActorCount,
+        int RigidActorCount,
+        int StaticBodyCount,
+        int DynamicBodyCount,
+        int CharacterControllerCount,
+        int JointCount);
 }
