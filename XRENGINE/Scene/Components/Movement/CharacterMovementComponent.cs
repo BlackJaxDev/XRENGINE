@@ -1059,7 +1059,7 @@ namespace XREngine.Components.Movement
             }
             else
             {
-                bool addingJumpForce = _isJumping && _jumpElapsed < MovementModule.MaxJumpDuration && !(ActiveActiveController?.CollidingUp ?? false);
+                bool addingJumpForce = _isJumping && _jumpElapsed < MovementModule.MaxJumpDuration && !(ActiveController?.CollidingUp ?? false);
                 if (!addingJumpForce)
                     return;
                 
