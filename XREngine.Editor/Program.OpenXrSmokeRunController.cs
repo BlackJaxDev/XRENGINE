@@ -5,8 +5,10 @@ using System.Diagnostics;
 using EngineDebug = XREngine.Debug;
 using XREngine;
 using XREngine.Editor;
+using XREngine.Rendering;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.API.Rendering.OpenXR;
+using XREngine.Rendering.Vulkan;
 using XREngine.Runtime.Bootstrap;
 
 internal partial class Program
@@ -22,6 +24,35 @@ internal partial class Program
         private const int DefaultTimeoutSeconds = 120;
         private const int MaxOcclusionViewSnapshotsPerFrame = 32;
         private const int MaxOutputSnapshotsPerFrame = 16;
+        private const int MaxOcclusionEvidenceSnapshotsPerFrame = CpuOcclusionValidationEvidence.MaximumEntriesPerFrame;
+        private const string ExternalValidationAllowlistEnvironmentVariable = "XRE_VULKAN_EXTERNAL_VALIDATION_ALLOWLIST";
+        private const string DesktopFinalCaptureStage = "15_FinalOutput";
+        private static readonly string[] RequiredPhase524bCaptureStages =
+        [
+            "07_Velocity",
+            "07b_VelocityFBO",
+            "08_BloomMip0",
+            "09_BloomMip1",
+            "09b_BloomMip2",
+            "09c_BloomMip3",
+            "10_BloomMip4",
+            "11_TemporalColorInput",
+            "11b_CurrentDepth",
+            "11c_HistoryDepth",
+            "12_PostProcessOutput",
+            "13_FinalPostProcessOutput",
+            "13b_PreTsrHistoryColor",
+            "13c_MonoTsrReference",
+            "14_TsrOutput",
+            "14b_TsrHistoryColor",
+        ];
+        private static readonly string[] TemporalScenarioCaptureStages =
+        [
+            "07_Velocity",
+            "09_BloomMip1",
+            "13c_MonoTsrReference",
+            "14_TsrOutput",
+        ];
         private static readonly JsonSerializerSettings SmokeJsonSettings = new()
         {
             Formatting = Formatting.Indented,
@@ -37,13 +68,19 @@ internal partial class Program
         private readonly OpenXrSmokeFrameLedgerEntry[] _frameLedger;
         private readonly OpenXrSmokeOcclusionViewLedgerEntry[] _occlusionViewLedger;
         private readonly OpenXrSmokeOutputLedgerEntry[] _outputLedger;
+        private readonly OpenXrSmokeOcclusionEvidenceLedgerEntry[] _occlusionEvidenceLedger;
+        private readonly CpuOcclusionValidationEvidenceSnapshot[] _occlusionEvidenceScratch;
+        private readonly Engine.Rendering.Stats.FrameOutputEntrySnapshot[] _currentOutputScratch;
+        private OpenXrSmokeCaptureLedgerEntry[] _strictSpsBoundaryCaptureLedger = [];
         private readonly object _ledgerLock = new();
         private readonly List<string> _failures = [];
         private readonly List<string> _warnings = [];
         private OpenXRAPI? _subscribedApi;
+        private OpenXrSmokeSummary? _preTeardownSmokeSummary;
         private int _frameLedgerCount;
         private int _occlusionViewLedgerCount;
         private int _outputLedgerCount;
+        private int _occlusionEvidenceLedgerCount;
         private bool _occlusionViewLedgerOverflow;
         private bool _outputLedgerOverflow;
         private long _lastObservedSubmittedFrames;
@@ -63,7 +100,16 @@ internal partial class Program
         private DateTimeOffset _sessionExitDeadlineUtc;
         private bool _shutdownRequested;
         private bool _finished;
+        private bool _validationLayersObserved;
+        private bool _synchronizationValidationObserved;
+        private string _vulkanRenderTargetModeEffective = string.Empty;
+        private string _vulkanDiagnosticPresetEffective = string.Empty;
+        private string _antiAliasingModeEffective = string.Empty;
+        private string _occlusionCullingModeEffective = string.Empty;
+        private string _mirrorModeEffective = string.Empty;
+        private double _tsrResolutionScaleRequested = 1.0;
         private int _exitCode = ExitStartupFailure;
+        private DateTimeOffset? _retainedCohortStartedAtUtc;
 
         private OpenXrSmokeRunController(int targetFrames, int warmupFrames, TimeSpan timeout, string? summaryPath)
         {
@@ -74,6 +120,10 @@ internal partial class Program
             _frameLedger = new OpenXrSmokeFrameLedgerEntry[targetFrames];
             _occlusionViewLedger = new OpenXrSmokeOcclusionViewLedgerEntry[targetFrames * MaxOcclusionViewSnapshotsPerFrame];
             _outputLedger = new OpenXrSmokeOutputLedgerEntry[targetFrames * MaxOutputSnapshotsPerFrame];
+            _occlusionEvidenceLedger = new OpenXrSmokeOcclusionEvidenceLedgerEntry[targetFrames * MaxOcclusionEvidenceSnapshotsPerFrame];
+            _occlusionEvidenceScratch = new CpuOcclusionValidationEvidenceSnapshot[MaxOcclusionEvidenceSnapshotsPerFrame];
+            _currentOutputScratch = new Engine.Rendering.Stats.FrameOutputEntrySnapshot[MaxOutputSnapshotsPerFrame];
+            Phase524bTemporalStateDiagnostics.Reset();
         }
 
         public bool Enabled => _targetFrames > 0;
@@ -108,6 +158,24 @@ internal partial class Program
             if (settings.SceneOnlyVRPawn)
                 _warnings.Add("SceneOnlyVRPawn is scene-only and does not emulate OpenXR API calls; Lane 2 smoke should normally set it to false.");
 
+            string? requestedScale = Environment.GetEnvironmentVariable(
+                XREngineEnvironmentVariables.VulkanPhase524bTsrResolutionScale);
+            if (!string.IsNullOrWhiteSpace(requestedScale))
+            {
+                if (!double.TryParse(
+                        requestedScale,
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out _tsrResolutionScaleRequested) ||
+                    !double.IsFinite(_tsrResolutionScaleRequested) ||
+                    _tsrResolutionScaleRequested < 0.5 ||
+                    _tsrResolutionScaleRequested > 1.0)
+                {
+                    _failures.Add($"Invalid Phase 5.2.4b TSR resolution scale '{requestedScale}'; expected 0.5..1.0.");
+                    _tsrResolutionScaleRequested = 1.0;
+                }
+            }
+
             EngineDebug.Out($"[OpenXRSmoke] Enabled warmupFrames={_warmupFrames}, retainedFrames={_targetFrames}, timeout={_timeout.TotalSeconds:F0}s, summary='{_summaryPath ?? "<log directory>"}'.");
         }
 
@@ -115,6 +183,11 @@ internal partial class Program
         {
             if (!Enabled || _installed)
                 return;
+
+            Engine.Rendering.Settings.TsrRenderScale = (float)_tsrResolutionScaleRequested;
+            bool injectDesktopRejection = ReadBooleanEnvironmentVariable(
+                XREngineEnvironmentVariables.VulkanPhase524bInjectDesktopRejection);
+            VulkanRenderer.ResetPhase524bDesktopRejectionEvidence(injectDesktopRejection);
 
             Engine.Time.Timer.UpdateFrame += Update;
             _installed = true;
@@ -136,7 +209,9 @@ internal partial class Program
 
             _finished = true;
             string? logDirectory = TryGetLogDirectory();
-            OpenXrSmokeSummary summary = Engine.VRState.OpenXRApi?.CreateSmokeSummary(logDirectory)
+            OpenXRAPI? summaryApi = Engine.VRState.OpenXRApi ?? _subscribedApi;
+            OpenXrSmokeSummary summary = summaryApi?.CreateSmokeSummary(logDirectory)
+                ?? _preTeardownSmokeSummary
                 ?? new OpenXrSmokeSummary
                 {
                     LogDirectory = logDirectory,
@@ -148,15 +223,27 @@ internal partial class Program
             {
                 summary.WarmupFrameCount = _warmupFrames;
                 summary.RetainedFrameCount = _frameLedgerCount;
+                summary.RetainedCohortStartedAtUtc = _retainedCohortStartedAtUtc;
                 summary.FrameLedger = new OpenXrSmokeFrameLedgerEntry[_frameLedgerCount];
                 Array.Copy(_frameLedger, summary.FrameLedger, _frameLedgerCount);
                 summary.OcclusionViewLedger = new OpenXrSmokeOcclusionViewLedgerEntry[_occlusionViewLedgerCount];
                 Array.Copy(_occlusionViewLedger, summary.OcclusionViewLedger, _occlusionViewLedgerCount);
                 summary.OcclusionViewLedgerOverflow = _occlusionViewLedgerOverflow;
+                summary.OcclusionEvidenceLedger = new OpenXrSmokeOcclusionEvidenceLedgerEntry[_occlusionEvidenceLedgerCount];
+                Array.Copy(
+                    _occlusionEvidenceLedger,
+                    summary.OcclusionEvidenceLedger,
+                    _occlusionEvidenceLedgerCount);
+                summary.OcclusionEvidenceOverflowCount = CpuOcclusionValidationEvidence.OverflowCount;
                 summary.OutputLedger = new OpenXrSmokeOutputLedgerEntry[_outputLedgerCount];
                 Array.Copy(_outputLedger, summary.OutputLedger, _outputLedgerCount);
                 summary.OutputLedgerOverflow = _outputLedgerOverflow;
             }
+
+            PopulateEffectiveConfiguration(summary);
+            CaptureDefaultPipelineArtifacts(summary, _strictSpsBoundaryCaptureLedger);
+            summary.TemporalStateLedger = Phase524bTemporalStateDiagnostics.Capture();
+            summary.TemporalStateLedgerOverflowCount = Phase524bTemporalStateDiagnostics.OverflowCount;
 
             List<string> validationFailures = ValidateSummary(summary);
             summary.Warnings = [.. summary.Warnings, .. _warnings];
@@ -205,8 +292,18 @@ internal partial class Program
                 return;
             }
 
-            OpenXRAPI? api = Engine.VRState.OpenXRApi;
-            EnsureSmokeFrameSubscription(api);
+            float requestedTsrScale = (float)_tsrResolutionScaleRequested;
+            if (Math.Abs(Engine.Rendering.Settings.TsrRenderScale - requestedTsrScale) > float.Epsilon)
+                Engine.Rendering.Settings.TsrRenderScale = requestedTsrScale;
+
+            OpenXRAPI? currentApi = Engine.VRState.OpenXRApi;
+            if (currentApi is not null)
+                EnsureSmokeFrameSubscription(currentApi);
+
+            // OpenXR teardown can clear the globally published API before the
+            // update loop observes its terminal diagnostics. Keep the subscribed
+            // instance alive until FinishAfterRun captures the completed summary.
+            OpenXRAPI? api = currentApi ?? _subscribedApi;
             long totalTargetFrames = (long)_warmupFrames + _targetFrames;
             if (api is not null && (_sessionExitRequested || api.SmokeCompletedFrameCount >= totalTargetFrames))
             {
@@ -214,6 +311,9 @@ internal partial class Program
                 _exitCode = ExitSummaryFailure;
                 if (!_sessionExitRequested)
                 {
+                    _preTeardownSmokeSummary ??= api.CreateSmokeSummary(TryGetLogDirectory());
+                    if (_strictSpsBoundaryCaptureLedger.Length == 0)
+                        _strictSpsBoundaryCaptureLedger = api.GetStrictSpsBoundaryCaptureLedger();
                     _sessionExitRequested = true;
                     _sessionExitDeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(5);
                     api.RequestSmokeSessionExit();
@@ -321,6 +421,10 @@ internal partial class Program
                 if (_frameLedgerCount >= _frameLedger.Length)
                     return;
 
+                _retainedCohortStartedAtUtc ??= DateTimeOffset.UtcNow;
+                if (_strictSpsBoundaryCaptureLedger.Length == 0)
+                    _strictSpsBoundaryCaptureLedger = api.GetStrictSpsBoundaryCaptureLedger();
+
                 int retiredResourceCount =
                     Engine.Rendering.Stats.Vulkan.VulkanRetiredDescriptorPoolCount +
                     Engine.Rendering.Stats.Vulkan.VulkanRetiredDescriptorSetCount +
@@ -338,6 +442,66 @@ internal partial class Program
                 Engine.Rendering.Stats.FrameOutputManifestSnapshot outputManifest =
                     Engine.Rendering.Stats.FrameOutputs.LastManifest;
                 Engine.Rendering.Stats.FrameOutputWorkSnapshot outputWork = outputManifest.Work;
+                Engine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs = outputManifest.Outputs;
+                ulong renderFrameId = api.SmokeLastRenderedFrameId;
+                if (renderFrameId == 0UL)
+                {
+                    renderFrameId = outputManifest.FrameId != 0UL
+                        ? outputManifest.FrameId
+                        : Engine.Rendering.State.RenderFrameId;
+                }
+                int currentOutputRequiredCount = Engine.Rendering.Stats.FrameOutputs.CopyCurrentOutputs(_currentOutputScratch);
+                int currentOutputCount = Math.Min(currentOutputRequiredCount, _currentOutputScratch.Length);
+                if (currentOutputRequiredCount > _currentOutputScratch.Length)
+                    _outputLedgerOverflow = true;
+                int currentOpenXrOutputCount = CountCurrentOpenXrOutputs(
+                    _currentOutputScratch,
+                    currentOutputCount,
+                    renderFrameId);
+                bool validationLayersEnabled = Engine.Rendering.Stats.Vulkan.VulkanValidationLayersEnabled;
+                bool synchronizationValidationEnabled = Engine.Rendering.Stats.Vulkan.VulkanSynchronizationValidationEnabled;
+                int validationErrorCount = Engine.Rendering.Stats.Vulkan.VulkanValidationErrorCount;
+                int queueSubmitCount = Engine.Rendering.Stats.Vulkan.VulkanQueueSubmitCount;
+                int presentAttemptCount = Engine.Rendering.Stats.Vulkan.VulkanPresentAttemptCount;
+                int presentAcceptedCount = Engine.Rendering.Stats.Vulkan.VulkanPresentAcceptedCount;
+                int lastPresentResult = Engine.Rendering.Stats.Vulkan.VulkanLastPresentResult;
+                bool lifetimeValidationPassed = validationLayersEnabled &&
+                    validationErrorCount == 0 &&
+                    outputWork.SubmissionRejectionCount == 0;
+                bool desktopFinalWriteObserved =
+                    (Engine.Rendering.Stats.Vulkan.VulkanSceneSwapchainWriters > 0 ||
+                     Engine.Rendering.Stats.Vulkan.VulkanFrameOpSwapchainWriteCount > 0) &&
+                    Engine.Rendering.Stats.Vulkan.VulkanMissingSceneSwapchainWriteFrames == 0;
+                bool desktopPresentPhaseObserved = HasDesktopPresentPhase(outputs);
+                bool desktopPresentAccepted = presentAttemptCount > 0 && presentAcceptedCount == presentAttemptCount;
+                int plannerStateCount = CountDistinctPlannerStates(
+                    outputs,
+                    _currentOutputScratch,
+                    currentOutputCount,
+                    renderFrameId);
+                int commandVariantCount = CountDistinctCommandVariants(
+                    outputs,
+                    _currentOutputScratch,
+                    currentOutputCount,
+                    renderFrameId);
+                ulong resourcePlanGeneration = ResolveMaximumResourcePlanGeneration(
+                    outputs,
+                    _currentOutputScratch,
+                    currentOutputCount,
+                    renderFrameId);
+                ulong commandGeneration = ResolveMaximumCommandGeneration(
+                    outputs,
+                    _currentOutputScratch,
+                    currentOutputCount,
+                    renderFrameId);
+
+                _validationLayersObserved |= validationLayersEnabled;
+                _synchronizationValidationObserved |= synchronizationValidationEnabled;
+                _vulkanRenderTargetModeEffective = Engine.EffectiveSettings.VulkanRenderTargetMode.ToString();
+                _vulkanDiagnosticPresetEffective = Engine.EffectiveSettings.VulkanDiagnosticPreset.ToString();
+                _occlusionCullingModeEffective = Engine.EffectiveSettings.GpuOcclusionCullingMode.ToString();
+                _mirrorModeEffective = outputManifest.MirrorMode.ToString();
+                _antiAliasingModeEffective = Engine.EffectiveSettings.AntiAliasingMode.ToString();
 
                 _frameLedger[_frameLedgerCount] = new OpenXrSmokeFrameLedgerEntry
                 {
@@ -348,7 +512,7 @@ internal partial class Program
                     ProjectionLayerSubmitted = projectionLayerSubmitted,
                     EndFrameResult = api.SmokeLastEndFrameResult,
                     EndFrameLayerCount = api.SmokeLastEndFrameLayerCount,
-                    RenderFrameId = Engine.Rendering.State.RenderFrameId,
+                    RenderFrameId = renderFrameId,
                     ElapsedMilliseconds = _stopwatch.Elapsed.TotalMilliseconds,
                     LeftAcquireCount = leftAcquireCount,
                     RightAcquireCount = rightAcquireCount,
@@ -376,7 +540,11 @@ internal partial class Program
                     FrameRecordMilliseconds = Engine.Rendering.Stats.Vulkan.VulkanFrameRecordCommandBufferMs,
                     FrameSubmitMilliseconds = Engine.Rendering.Stats.Vulkan.VulkanFrameSubmitMs,
                     FramePresentMilliseconds = Engine.Rendering.Stats.Vulkan.VulkanFramePresentMs,
-                    ValidationErrorCount = Engine.Rendering.Stats.Vulkan.VulkanValidationErrorCount,
+                    ValidationErrorCount = validationErrorCount,
+                    ValidationLayersEnabled = validationLayersEnabled,
+                    SynchronizationValidationEnabled = synchronizationValidationEnabled,
+                    LifetimeValidationEnabled = validationLayersEnabled,
+                    LifetimeValidationPassed = lifetimeValidationPassed,
                     DeviceLocalAllocationCount = Engine.Rendering.Stats.Vulkan.VulkanDeviceLocalAllocationCount,
                     DeviceLocalAllocatedBytes = Engine.Rendering.Stats.Vulkan.VulkanDeviceLocalAllocatedBytes,
                     UploadAllocationCount = Engine.Rendering.Stats.Vulkan.VulkanUploadAllocationCount,
@@ -393,7 +561,10 @@ internal partial class Program
                     RetiredResourceCount = retiredResourceCount,
                     LifetimeLiveResourceCount = Engine.Rendering.Stats.Vulkan.VulkanLifetimeLiveResourceCount,
                     TrackedDescriptorSetCount = Engine.Rendering.Stats.Vulkan.VulkanTrackedDescriptorSetCount,
-                    QueueSubmitCount = Engine.Rendering.Stats.Vulkan.VulkanQueueSubmitCount,
+                    QueueSubmitCount = queueSubmitCount,
+                    SubmitCompleted = projectionLayerSubmitted &&
+                        queueSubmitCount > 0 &&
+                        HasSubmittedVrEyes(_currentOutputScratch, currentOutputCount, renderFrameId),
                     SubmissionRejectionCount = outputWork.SubmissionRejectionCount,
                     GlobalInFlightWaitCount = outputWork.GlobalInFlightWaitCount,
                     ForceFlushCount = outputWork.ForceFlushCount,
@@ -401,12 +572,21 @@ internal partial class Program
                     PlannerPruneCount = outputWork.PlannerPruneCount,
                     OutputManifestFrameId = outputManifest.FrameId,
                     OutputWorkloadIdentityHash = outputManifest.WorkloadIdentityHash,
-                    OutputRequestCount = outputWork.OutputRequestCount,
+                    OutputRequestCount = outputWork.OutputRequestCount + currentOpenXrOutputCount,
+                    PlannerStateCount = plannerStateCount,
+                    CommandVariantCount = commandVariantCount,
+                    ResourcePlanGeneration = resourcePlanGeneration,
+                    CommandGeneration = commandGeneration,
                     MirrorMode = outputManifest.MirrorMode.ToString(),
                     VrActive = outputManifest.VrActive,
                     SceneSwapchainWriterCount = Engine.Rendering.Stats.Vulkan.VulkanSceneSwapchainWriters,
                     SwapchainWriteCount = Engine.Rendering.Stats.Vulkan.VulkanFrameOpSwapchainWriteCount,
                     MissingSceneSwapchainWriteCount = Engine.Rendering.Stats.Vulkan.VulkanMissingSceneSwapchainWriteFrames,
+                    DesktopFinalWriteObserved = desktopFinalWriteObserved,
+                    DesktopPresentObserved = desktopPresentPhaseObserved && presentAttemptCount > 0,
+                    DesktopPresentAttemptCount = presentAttemptCount,
+                    DesktopPresentAccepted = desktopPresentAccepted,
+                    DesktopPresentResult = lastPresentResult.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     CpuOcclusionTested = OcclusionTelemetry.CpuTested,
                     CpuOcclusionCulled = OcclusionTelemetry.CpuCulled,
                     CpuOcclusionPassesActive = OcclusionTelemetry.CpuPassesActive,
@@ -418,56 +598,39 @@ internal partial class Program
                     CpuOcclusionViewScope = (int)OcclusionTelemetry.CpuActiveViewScope,
                 };
 
-                Engine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs = outputManifest.Outputs;
-                if (outputs.Length > MaxOutputSnapshotsPerFrame)
+                if (outputs.Length + currentOpenXrOutputCount > MaxOutputSnapshotsPerFrame)
                     _outputLedgerOverflow = true;
+                int outputsWrittenThisFrame = 0;
                 int outputCount = Math.Min(outputs.Length, MaxOutputSnapshotsPerFrame);
                 for (int outputIndex = 0; outputIndex < outputCount; outputIndex++)
                 {
-                    if (_outputLedgerCount >= _outputLedger.Length)
-                    {
-                        _outputLedgerOverflow = true;
-                        break;
-                    }
+                    AppendOutputLedgerEntry(
+                        in outputs[outputIndex],
+                        outputManifest.FrameId,
+                        lifetimeValidationPassed,
+                        presentAttemptCount,
+                        desktopPresentAccepted,
+                        lastPresentResult,
+                        ref outputsWrittenThisFrame);
+                }
 
-                    Engine.Rendering.Stats.FrameOutputEntrySnapshot output = outputs[outputIndex];
-                    RenderOutputTargetDescriptor target = output.Request.Target;
-                    _outputLedger[_outputLedgerCount++] = new OpenXrSmokeOutputLedgerEntry
-                    {
-                        RetainedIndex = _frameLedgerCount,
-                        ManifestFrameId = outputManifest.FrameId,
-                        OutputId = output.Request.OutputId,
-                        ViewFamilyId = output.Request.ViewFamilyId,
-                        OutputKind = output.OutputKind.ToString(),
-                        ViewKind = output.ViewKind.ToString(),
-                        OutputClass = output.Request.OutputClass.ToString(),
-                        Name = output.Name,
-                        PipelineName = output.PipelineName,
-                        TargetClass = target.TargetClass.ToString(),
-                        StableTargetId = target.StableTargetId,
-                        TargetGeneration = target.TargetGeneration,
-                        DisplayWidth = target.DisplayWidth,
-                        DisplayHeight = target.DisplayHeight,
-                        InternalWidth = target.InternalWidth,
-                        InternalHeight = target.InternalHeight,
-                        LayerCount = ResolveRequiredLayerCount(target.ViewMask),
-                        ViewMask = target.ViewMask,
-                        ExternalImageSlot = target.ExternalImageSlot,
-                        TargetCompatibilityKey = target.CompatibilityKey,
-                        Active = output.Active,
-                        Rendered = output.Rendered,
-                        SceneRendered = output.SceneRendered,
-                        RenderPhaseSceneRendered = output.RenderPhaseSceneRendered,
-                        Due = output.Due,
-                        Skipped = output.Skipped,
-                        WorkDisposition = output.WorkDisposition.ToString(),
-                        ContentAgeFrames = output.ContentAgeFrames,
-                        PolicyAuthorized = output.PolicyAuthorized,
-                        CommandCount = output.CommandCount,
-                        DrawCalls = output.DrawCalls,
-                        SubmitCpuMilliseconds = output.SubmitCpuMs,
-                        PresentCpuMilliseconds = output.PresentCpuMs,
-                    };
+                for (int outputIndex = 0;
+                     outputIndex < currentOutputCount && outputsWrittenThisFrame < MaxOutputSnapshotsPerFrame;
+                     outputIndex++)
+                {
+                    ref readonly Engine.Rendering.Stats.FrameOutputEntrySnapshot output =
+                        ref _currentOutputScratch[outputIndex];
+                    if (!IsCurrentOpenXrOutput(in output, renderFrameId))
+                        continue;
+
+                    AppendOutputLedgerEntry(
+                        in output,
+                        outputManifest.FrameId,
+                        lifetimeValidationPassed,
+                        presentAttemptCount,
+                        desktopPresentAccepted,
+                        lastPresentResult,
+                        ref outputsWrittenThisFrame);
                 }
 
                 Span<CpuOcclusionViewTelemetrySnapshot> viewSnapshots =
@@ -493,6 +656,7 @@ internal partial class Program
                         Scope = key.Scope,
                         ViewId = key.ViewId,
                         PipelineInstanceId = key.PipelineInstanceId,
+                        OutputId = key.OutputId,
                         PovId = key.PovId,
                         CoverageMask = key.CoverageMask,
                         RequiredCoverageMask = key.RequiredCoverageMask,
@@ -504,13 +668,125 @@ internal partial class Program
                         Skips = snapshot.Skips,
                         BudgetSkipped = snapshot.BudgetSkipped,
                         ForcedVisible = snapshot.ForcedVisible,
+                        RecoveryStarts = snapshot.RecoveryStarts,
+                        RecoveryCompletions = snapshot.RecoveryCompletions,
+                        CurrentRecoveryAgeFrames = snapshot.CurrentRecoveryAgeFrames,
+                        MaxRecoveryAgeFrames = snapshot.MaxRecoveryAgeFrames,
                         CurrentResultAgeFrames = snapshot.CurrentResultAgeFrames,
                         MaxResultAgeFrames = snapshot.MaxResultAgeFrames,
                         RecoveryLatencyFrames = snapshot.RecoveryLatencyFrames,
                     };
                 }
+
+                Span<CpuOcclusionValidationEvidenceSnapshot> evidenceSnapshots = _occlusionEvidenceScratch;
+                int evidenceSnapshotCount = CpuOcclusionValidationEvidence.CopyFrame(
+                    renderFrameId,
+                    evidenceSnapshots);
+                for (int evidenceIndex = 0; evidenceIndex < evidenceSnapshotCount; evidenceIndex++)
+                {
+                    if (_occlusionEvidenceLedgerCount >= _occlusionEvidenceLedger.Length)
+                        break;
+
+                    CpuOcclusionValidationEvidenceSnapshot evidence = evidenceSnapshots[evidenceIndex];
+                    OcclusionViewKey key = evidence.ViewKey;
+                    _occlusionEvidenceLedger[_occlusionEvidenceLedgerCount++] =
+                        new OpenXrSmokeOcclusionEvidenceLedgerEntry
+                        {
+                            RetainedIndex = _frameLedgerCount,
+                            RenderFrameId = evidence.FrameId,
+                            RenderPass = key.RenderPass,
+                            Scope = key.Scope.ToString(),
+                            ViewId = key.ViewId,
+                            PipelineInstanceId = key.PipelineInstanceId,
+                            OutputId = key.OutputId,
+                            PovId = key.PovId,
+                            CoverageMask = key.CoverageMask,
+                            RequiredCoverageMask = key.RequiredCoverageMask,
+                            DeclaredViewCount = key.DeclaredViewCount,
+                            ResourceGeneration = key.ResourceGeneration,
+                            StableQueryKey = evidence.StableQueryKey,
+                            Role = evidence.Role.ToString(),
+                            Mode = evidence.Mode.ToString(),
+                            CandidateObserved = evidence.CandidateObserved,
+                            Rendered = evidence.Rendered,
+                            Culled = evidence.Culled,
+                            OcclusionProofCoverageMask = evidence.OcclusionProofCoverageMask,
+                            HasDecision = evidence.HasDecision,
+                            Decision = evidence.Decision.ToString(),
+                        };
+                }
                 _frameLedgerCount++;
             }
+        }
+
+        private void AppendOutputLedgerEntry(
+            in Engine.Rendering.Stats.FrameOutputEntrySnapshot output,
+            ulong manifestFrameId,
+            bool lifetimeValidationPassed,
+            int presentAttemptCount,
+            bool desktopPresentAccepted,
+            int lastPresentResult,
+            ref int outputsWrittenThisFrame)
+        {
+            if (_outputLedgerCount >= _outputLedger.Length ||
+                outputsWrittenThisFrame >= MaxOutputSnapshotsPerFrame)
+            {
+                _outputLedgerOverflow = true;
+                return;
+            }
+
+            RenderOutputTargetDescriptor target = output.Request.Target;
+            _outputLedger[_outputLedgerCount++] = new OpenXrSmokeOutputLedgerEntry
+            {
+                RetainedIndex = _frameLedgerCount,
+                ManifestFrameId = manifestFrameId,
+                RenderFrameId = output.FrameId,
+                OutputId = output.Request.OutputId,
+                ViewFamilyId = output.Request.ViewFamilyId,
+                OutputKind = output.OutputKind.ToString(),
+                ViewKind = output.ViewKind.ToString(),
+                OutputClass = output.Request.OutputClass.ToString(),
+                Name = output.Name,
+                PipelineName = output.PipelineName,
+                PipelineInstanceId = output.PipelineInstanceId,
+                ResourcePlanGeneration = unchecked((ulong)Math.Max(0, output.ResourcePlanGeneration)),
+                CommandGeneration = output.CommandGeneration,
+                AntiAliasingMode = output.AntiAliasingMode,
+                TargetClass = target.TargetClass.ToString(),
+                StableTargetId = target.StableTargetId,
+                TargetGeneration = target.TargetGeneration,
+                DisplayWidth = target.DisplayWidth,
+                DisplayHeight = target.DisplayHeight,
+                InternalWidth = target.InternalWidth,
+                InternalHeight = target.InternalHeight,
+                LayerCount = ResolveRequiredLayerCount(target.ViewMask),
+                ViewMask = target.ViewMask,
+                ExternalImageSlot = target.ExternalImageSlot,
+                TargetCompatibilityKey = target.CompatibilityKey,
+                Active = output.Active,
+                Rendered = output.Rendered,
+                SceneRendered = output.SceneRendered,
+                RenderPhaseSceneRendered = output.RenderPhaseSceneRendered,
+                LifetimeValidationPassed = lifetimeValidationPassed,
+                SubmitObserved = output.SubmitObserved,
+                FinalWriteObserved =
+                    target.TargetClass.ToString() == "DesktopSwapchain" && output.RenderPhaseSceneRendered,
+                PresentObserved = output.PresentObserved && presentAttemptCount > 0,
+                PresentAccepted = output.PresentObserved && desktopPresentAccepted,
+                PresentResult = output.PresentObserved
+                    ? lastPresentResult.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : null,
+                Due = output.Due,
+                Skipped = output.Skipped,
+                WorkDisposition = output.WorkDisposition.ToString(),
+                ContentAgeFrames = output.ContentAgeFrames,
+                PolicyAuthorized = output.PolicyAuthorized,
+                CommandCount = output.CommandCount,
+                DrawCalls = output.DrawCalls,
+                SubmitCpuMilliseconds = output.SubmitCpuMs,
+                PresentCpuMilliseconds = output.PresentCpuMs,
+            };
+            outputsWrittenThisFrame++;
         }
 
         private static uint ResolveRequiredLayerCount(uint viewMask)
@@ -525,6 +801,499 @@ internal partial class Program
                 viewMask >>= 1;
             }
             return layers;
+        }
+
+        private static bool IsCurrentOpenXrOutput(
+            in Engine.Rendering.Stats.FrameOutputEntrySnapshot output,
+            ulong renderFrameId)
+            => output.FrameId == renderFrameId &&
+                (output.OutputKind == EFrameOutputKind.OpenXREyeSubmit ||
+                 output.Request.Target.TargetClass == ERenderOutputTargetClass.RuntimeExternalImage);
+
+        private static int CountCurrentOpenXrOutputs(
+            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs,
+            int outputCount,
+            ulong renderFrameId)
+        {
+            int count = 0;
+            for (int i = 0; i < outputCount; i++)
+            {
+                if (IsCurrentOpenXrOutput(in outputs[i], renderFrameId))
+                    count++;
+            }
+            return count;
+        }
+
+        private static bool HasSubmittedVrEyes(
+            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs,
+            int outputCount,
+            ulong renderFrameId)
+        {
+            bool left = false;
+            bool right = false;
+            for (int i = 0; i < outputCount; i++)
+            {
+                ref readonly Engine.Rendering.Stats.FrameOutputEntrySnapshot output = ref outputs[i];
+                if (!IsCurrentOpenXrOutput(in output, renderFrameId))
+                    continue;
+                if (!output.SubmitObserved || output.OutputKind != EFrameOutputKind.OpenXREyeSubmit)
+                    continue;
+
+                left |= output.ViewKind == EVrOutputViewKind.LeftEye;
+                right |= output.ViewKind == EVrOutputViewKind.RightEye;
+            }
+            return left && right;
+        }
+
+        private static bool HasDesktopPresentPhase(Engine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs)
+        {
+            for (int i = 0; i < outputs.Length; i++)
+            {
+                Engine.Rendering.Stats.FrameOutputEntrySnapshot output = outputs[i];
+                if (output.PresentObserved && output.OutputKind == EFrameOutputKind.Present)
+                    return true;
+            }
+            return false;
+        }
+
+        private static int CountDistinctPlannerStates(
+            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] finalizedOutputs,
+            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] currentOutputs,
+            int currentOutputCount,
+            ulong renderFrameId)
+        {
+            Span<PlannerStateIdentity> identities =
+                stackalloc PlannerStateIdentity[MaxOutputSnapshotsPerFrame * 2];
+            int count = 0;
+            for (int i = 0; i < finalizedOutputs.Length; i++)
+            {
+                if (!TryAddPlannerState(in finalizedOutputs[i], identities, ref count))
+                    return identities.Length + 1;
+            }
+            for (int i = 0; i < currentOutputCount; i++)
+            {
+                if (!IsCurrentOpenXrOutput(in currentOutputs[i], renderFrameId))
+                    continue;
+                if (!TryAddPlannerState(in currentOutputs[i], identities, ref count))
+                    return identities.Length + 1;
+            }
+            return count;
+        }
+
+        private static bool TryAddPlannerState(
+            in Engine.Rendering.Stats.FrameOutputEntrySnapshot output,
+            Span<PlannerStateIdentity> identities,
+            ref int count)
+        {
+            if (output.PipelineInstanceId <= 0)
+                return true;
+
+            var identity = new PlannerStateIdentity(
+                output.PipelineInstanceId,
+                output.ResourcePlanGeneration);
+            for (int i = 0; i < count; i++)
+            {
+                if (identities[i] == identity)
+                    return true;
+            }
+            if (count >= identities.Length)
+                return false;
+
+            identities[count++] = identity;
+            return true;
+        }
+
+        private static int CountDistinctCommandVariants(
+            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] finalizedOutputs,
+            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] currentOutputs,
+            int currentOutputCount,
+            ulong renderFrameId)
+        {
+            Span<CommandVariantIdentity> identities =
+                stackalloc CommandVariantIdentity[MaxOutputSnapshotsPerFrame * 2];
+            int count = 0;
+            for (int i = 0; i < finalizedOutputs.Length; i++)
+            {
+                if (!TryAddCommandVariant(in finalizedOutputs[i], identities, ref count))
+                    return identities.Length + 1;
+            }
+            for (int i = 0; i < currentOutputCount; i++)
+            {
+                if (!IsCurrentOpenXrOutput(in currentOutputs[i], renderFrameId))
+                    continue;
+                if (!TryAddCommandVariant(in currentOutputs[i], identities, ref count))
+                    return identities.Length + 1;
+            }
+            return count;
+        }
+
+        private static bool TryAddCommandVariant(
+            in Engine.Rendering.Stats.FrameOutputEntrySnapshot output,
+            Span<CommandVariantIdentity> identities,
+            ref int count)
+        {
+            if (output.PipelineInstanceId <= 0 || output.CommandGeneration == 0UL)
+                return true;
+
+            var identity = new CommandVariantIdentity(
+                output.PipelineInstanceId,
+                output.CommandGeneration,
+                output.Request.Target.StableTargetId,
+                output.Request.Target.ExternalImageSlot);
+            for (int i = 0; i < count; i++)
+            {
+                if (identities[i] == identity)
+                    return true;
+            }
+            if (count >= identities.Length)
+                return false;
+
+            identities[count++] = identity;
+            return true;
+        }
+
+        private static ulong ResolveMaximumResourcePlanGeneration(
+            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] finalizedOutputs,
+            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] currentOutputs,
+            int currentOutputCount,
+            ulong renderFrameId)
+        {
+            ulong generation = 0UL;
+            for (int i = 0; i < finalizedOutputs.Length; i++)
+            {
+                int candidate = finalizedOutputs[i].ResourcePlanGeneration;
+                if (candidate > 0)
+                    generation = Math.Max(generation, unchecked((ulong)candidate));
+            }
+            for (int i = 0; i < currentOutputCount; i++)
+            {
+                if (!IsCurrentOpenXrOutput(in currentOutputs[i], renderFrameId))
+                    continue;
+                int candidate = currentOutputs[i].ResourcePlanGeneration;
+                if (candidate > 0)
+                    generation = Math.Max(generation, unchecked((ulong)candidate));
+            }
+            return generation;
+        }
+
+        private static ulong ResolveMaximumCommandGeneration(
+            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] finalizedOutputs,
+            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] currentOutputs,
+            int currentOutputCount,
+            ulong renderFrameId)
+        {
+            ulong generation = 0UL;
+            for (int i = 0; i < finalizedOutputs.Length; i++)
+                generation = Math.Max(generation, finalizedOutputs[i].CommandGeneration);
+            for (int i = 0; i < currentOutputCount; i++)
+            {
+                if (!IsCurrentOpenXrOutput(in currentOutputs[i], renderFrameId))
+                    continue;
+                generation = Math.Max(generation, currentOutputs[i].CommandGeneration);
+            }
+            return generation;
+        }
+
+        private readonly record struct PlannerStateIdentity(
+            int PipelineInstanceId,
+            int ResourcePlanGeneration);
+
+        private readonly record struct CommandVariantIdentity(
+            int PipelineInstanceId,
+            ulong CommandGeneration,
+            ulong StableTargetId,
+            int ExternalImageSlot);
+
+        private void PopulateEffectiveConfiguration(OpenXrSmokeSummary summary)
+        {
+            summary.VulkanRenderTargetModeRequested =
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VkRenderTargetMode) ?? string.Empty;
+            summary.VulkanRenderTargetModeEffective = _vulkanRenderTargetModeEffective;
+            summary.VulkanDiagnosticPresetRequested =
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDiagnosticPreset) ?? string.Empty;
+            summary.VulkanDiagnosticPresetEffective = _vulkanDiagnosticPresetEffective;
+            summary.VulkanValidationLayersEffective = _validationLayersObserved;
+            summary.VulkanSynchronizationValidationEffective = _synchronizationValidationObserved;
+            summary.VulkanValidationLayers = _validationLayersObserved
+                ? ["VK_LAYER_KHRONOS_validation"]
+                : [];
+            summary.VulkanValidationFeatures = _synchronizationValidationObserved
+                ? ["SynchronizationValidation"]
+                : [];
+            summary.ExternallyOwnedValidationAllowlist = ResolveExternalValidationAllowlist();
+            summary.AntiAliasingModeEffective = string.IsNullOrWhiteSpace(_antiAliasingModeEffective)
+                ? Engine.EffectiveSettings.AntiAliasingMode.ToString()
+                : _antiAliasingModeEffective;
+            summary.TsrResolutionScaleRequested = _tsrResolutionScaleRequested;
+            summary.TsrResolutionScaleEffective = _subscribedApi?.SmokeEffectiveTsrRenderScale
+                ?? Engine.Rendering.Settings.TsrRenderScale;
+            summary.DesktopRejectionEvidence = VulkanRenderer.CapturePhase524bDesktopRejectionEvidence();
+            summary.OcclusionCullingModeRequested =
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OcclusionCullingMode) ?? string.Empty;
+            summary.OcclusionCullingModeEffective = _occlusionCullingModeEffective;
+            summary.MirrorModeEffective = _mirrorModeEffective;
+        }
+
+        private static string[] ResolveExternalValidationAllowlist()
+        {
+            string? raw = Environment.GetEnvironmentVariable(ExternalValidationAllowlistEnvironmentVariable);
+            return string.IsNullOrWhiteSpace(raw)
+                ? []
+                : raw.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+
+        private static void CaptureDefaultPipelineArtifacts(
+            OpenXrSmokeSummary summary,
+            OpenXrSmokeCaptureLedgerEntry[] strictSpsBoundaryCaptures)
+        {
+            summary.DefaultPipelineCaptureEnabled = ReadBooleanEnvironmentVariable(
+                XREngineEnvironmentVariables.CaptureDefaultPipelineFbo);
+            summary.DefaultPipelineCaptureSkipFrames = int.TryParse(
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CaptureDefaultPipelineSkipFrames),
+                out int skipFrames)
+                    ? Math.Max(0, skipFrames)
+                    : 0;
+            summary.DefaultPipelineCaptureOutputDirectory = ResolveCaptureOutputDirectory();
+            summary.RequiredCaptureStages = [.. RequiredPhase524bCaptureStages];
+            summary.DesktopFinalCaptureStage = DesktopFinalCaptureStage;
+            summary.TemporalScenarioCaptureStages = [.. TemporalScenarioCaptureStages];
+            summary.TemporalScenarioMatrix = CreateTemporalScenarioMatrix();
+
+            if (!summary.DefaultPipelineCaptureEnabled ||
+                string.IsNullOrWhiteSpace(summary.DefaultPipelineCaptureOutputDirectory))
+            {
+                summary.CaptureLedger = [];
+                summary.TemporalScenarioCaptureLedger = [];
+                return;
+            }
+
+            var captures = new List<OpenXrSmokeCaptureLedgerEntry>(
+                (RequiredPhase524bCaptureStages.Length * 2) + 3 + strictSpsBoundaryCaptures.Length);
+            for (int stageIndex = 0; stageIndex < RequiredPhase524bCaptureStages.Length; stageIndex++)
+            {
+                string stage = RequiredPhase524bCaptureStages[stageIndex];
+                for (int layerIndex = 0; layerIndex < 2; layerIndex++)
+                {
+                    string path = Path.Combine(
+                        summary.DefaultPipelineCaptureOutputDirectory,
+                        $"DefaultPipelineSps_{stage}_layer{layerIndex}.png");
+                    if (!File.Exists(path))
+                        continue;
+
+                    FileInfo info = new(path);
+                    var entry = new OpenXrSmokeCaptureLedgerEntry
+                    {
+                        PipelineName = "DefaultPipelineSps",
+                        OutputRole = "StrictSinglePassStereo",
+                        Stage = stage,
+                        LayerIndex = layerIndex,
+                        ExpectedLayerCount = 2,
+                        ViewMask = 0x3u,
+                        AntiAliasingMode = "Tsr",
+                        Path = info.FullName,
+                        LengthBytes = info.Length,
+                        LastWriteTimeUtc = info.LastWriteTimeUtc,
+                    };
+                    PopulateCaptureMetrics(entry);
+                    captures.Add(entry);
+                }
+            }
+
+            string desktopPath = Path.Combine(
+                summary.DefaultPipelineCaptureOutputDirectory,
+                $"DefaultPipelineDesktop_{DesktopFinalCaptureStage}_layer0.png");
+            if (File.Exists(desktopPath))
+            {
+                FileInfo info = new(desktopPath);
+                var entry = new OpenXrSmokeCaptureLedgerEntry
+                {
+                    PipelineName = "DefaultPipelineDesktop",
+                    OutputRole = "DesktopFullIndependent",
+                    Stage = DesktopFinalCaptureStage,
+                    LayerIndex = 0,
+                    ExpectedLayerCount = 1,
+                    ViewMask = 0u,
+                    AntiAliasingMode = "Tsr",
+                    ViewKind = "Motion0",
+                    Path = info.FullName,
+                    LengthBytes = info.Length,
+                    LastWriteTimeUtc = info.LastWriteTimeUtc,
+                };
+                PopulateCaptureMetrics(entry);
+                captures.Add(entry);
+            }
+
+            for (int motionIndex = 1; motionIndex < 3; motionIndex++)
+            {
+                string motionPath = Path.Combine(
+                    summary.DefaultPipelineCaptureOutputDirectory,
+                    $"DefaultPipelineDesktop_{DesktopFinalCaptureStage}_motion{motionIndex}_layer0.png");
+                if (!File.Exists(motionPath))
+                    continue;
+
+                FileInfo info = new(motionPath);
+                var entry = new OpenXrSmokeCaptureLedgerEntry
+                {
+                    PipelineName = "DefaultPipelineDesktop",
+                    OutputRole = "DesktopMotionSequence",
+                    Stage = DesktopFinalCaptureStage,
+                    LayerIndex = 0,
+                    ExpectedLayerCount = 1,
+                    ViewMask = 0u,
+                    AntiAliasingMode = "Tsr",
+                    ViewKind = $"Motion{motionIndex}",
+                    Path = info.FullName,
+                    LengthBytes = info.Length,
+                    LastWriteTimeUtc = info.LastWriteTimeUtc,
+                };
+                PopulateCaptureMetrics(entry);
+                captures.Add(entry);
+            }
+
+            captures.AddRange(strictSpsBoundaryCaptures);
+            summary.CaptureLedger = [.. captures];
+            summary.TemporalScenarioCaptureLedger = CaptureTemporalScenarioArtifacts(
+                summary.DefaultPipelineCaptureOutputDirectory,
+                summary.TemporalScenarioMatrix);
+        }
+
+        private static OpenXrSmokeTemporalScenarioDefinition[] CreateTemporalScenarioMatrix()
+        {
+            ReadOnlySpan<Phase524bTemporalSampleDefinition> definitions =
+                Phase524bTemporalScenarioDiagnostics.Definitions;
+            var result = new OpenXrSmokeTemporalScenarioDefinition[definitions.Length];
+            for (int i = 0; i < definitions.Length; i++)
+            {
+                ref readonly Phase524bTemporalSampleDefinition definition = ref definitions[i];
+                result[i] = new OpenXrSmokeTemporalScenarioDefinition
+                {
+                    Scenario = definition.Scenario.ToString(),
+                    Sample = definition.Sample.ToString(),
+                    VelocityOracle = definition.VelocityOracle.ToString(),
+                    CaptureStartFrame = definition.CaptureStartFrame,
+                    CaptureEndFrame = definition.CaptureEndFrame,
+                    RequiresTemporalConvergence = definition.RequiresTemporalConvergence,
+                    IsDisocclusionBaseline = definition.IsDisocclusionBaseline,
+                    IsDisocclusionResult = definition.IsDisocclusionResult,
+                };
+            }
+            return result;
+        }
+
+        private static OpenXrSmokeCaptureLedgerEntry[] CaptureTemporalScenarioArtifacts(
+            string captureDirectory,
+            OpenXrSmokeTemporalScenarioDefinition[] scenarioMatrix)
+        {
+            var captures = new List<OpenXrSmokeCaptureLedgerEntry>(
+                scenarioMatrix.Length * TemporalScenarioCaptureStages.Length * 2);
+            for (int sampleIndex = 0; sampleIndex < scenarioMatrix.Length; sampleIndex++)
+            {
+                OpenXrSmokeTemporalScenarioDefinition definition = scenarioMatrix[sampleIndex];
+                for (int stageIndex = 0; stageIndex < TemporalScenarioCaptureStages.Length; stageIndex++)
+                {
+                    string stage = TemporalScenarioCaptureStages[stageIndex];
+                    for (int layerIndex = 0; layerIndex < 2; layerIndex++)
+                    {
+                        string path = Path.Combine(
+                            captureDirectory,
+                            $"DefaultPipelineSps_Temporal_{definition.Sample}_{stage}_layer{layerIndex}.png");
+                        if (!File.Exists(path))
+                            continue;
+
+                        FileInfo info = new(path);
+                        var entry = new OpenXrSmokeCaptureLedgerEntry
+                        {
+                            PipelineName = "DefaultPipelineSps",
+                            OutputRole = "TemporalScenarioRenderedOutput",
+                            Stage = stage,
+                            LayerIndex = layerIndex,
+                            ExpectedLayerCount = 2,
+                            ViewMask = 0x3u,
+                            AntiAliasingMode = "Tsr",
+                            ViewKind = definition.Sample,
+                            TemporalScenario = definition.Scenario,
+                            TemporalSample = definition.Sample,
+                            VelocityOracle = definition.VelocityOracle,
+                            Path = info.FullName,
+                            LengthBytes = info.Length,
+                            LastWriteTimeUtc = info.LastWriteTimeUtc,
+                        };
+                        PopulateCaptureMetrics(entry);
+                        captures.Add(entry);
+                    }
+                }
+            }
+            return [.. captures];
+        }
+
+        private static void PopulateCaptureMetrics(OpenXrSmokeCaptureLedgerEntry entry)
+        {
+            string metricsPath = entry.Path + ".metrics.json";
+            if (!File.Exists(metricsPath))
+                return;
+
+            RenderedOutputCaptureMetrics? metrics = JsonConvert.DeserializeObject<RenderedOutputCaptureMetrics>(
+                File.ReadAllText(metricsPath));
+            if (metrics is null)
+                return;
+
+            entry.Width = metrics.Width;
+            entry.Height = metrics.Height;
+            entry.NonBlackPixelCount = metrics.NonBlackPixelCount;
+            entry.NonBlackPixelRatio = metrics.NonBlackPixelRatio;
+            entry.MaximumLuminance = metrics.MaximumLuminance;
+            entry.LuminanceEnergy = metrics.LuminanceEnergy;
+            entry.BloomCentroidX = metrics.BloomCentroidX;
+            entry.BloomCentroidY = metrics.BloomCentroidY;
+            entry.VelocityMeanX = metrics.VelocityMeanX;
+            entry.VelocityMeanY = metrics.VelocityMeanY;
+            entry.VelocityMeanMagnitude = metrics.VelocityMeanMagnitude;
+            entry.VelocityMaxMagnitude = metrics.VelocityMaxMagnitude;
+            entry.VelocityNonZeroSampleCount = metrics.VelocityNonZeroSampleCount;
+            entry.EdgeMeanGradient = metrics.EdgeMeanGradient;
+            entry.EdgeMaxGradient = metrics.EdgeMaxGradient;
+            entry.TopBandRows = metrics.TopBandRows;
+            entry.TopBandNonBlackPixelCount = metrics.TopBandNonBlackPixelCount;
+            entry.TopBandNonBlackPixelRatio = metrics.TopBandNonBlackPixelRatio;
+            entry.TopBandMaximumLuminance = metrics.TopBandMaximumLuminance;
+            entry.TopBandMagentaPixelCount = metrics.TopBandMagentaPixelCount;
+            entry.LuminanceFingerprintWidth = metrics.LuminanceFingerprintWidth;
+            entry.LuminanceFingerprintHeight = metrics.LuminanceFingerprintHeight;
+            entry.LuminanceFingerprint = metrics.LuminanceFingerprint;
+            entry.VelocityMagnitudeFingerprintWidth = metrics.VelocityMagnitudeFingerprintWidth;
+            entry.VelocityMagnitudeFingerprintHeight = metrics.VelocityMagnitudeFingerprintHeight;
+            entry.VelocityMagnitudeFingerprint = metrics.VelocityMagnitudeFingerprint;
+            entry.TemporalScenario = metrics.TemporalScenario;
+            entry.TemporalSample = metrics.TemporalSample;
+            entry.VelocityOracle = metrics.VelocityOracle;
+            entry.TemporalSequenceFrame = metrics.TemporalSequenceFrame;
+            entry.RenderFrameId = metrics.RenderFrameId;
+            entry.Sha256 = metrics.CaptureSha256;
+            entry.MetricsCapturePath = metrics.CapturePath;
+            entry.MetricsCapturedAtUtc = metrics.CapturedAtUtc;
+        }
+
+        private static string ResolveCaptureOutputDirectory()
+        {
+            string? configured = Environment.GetEnvironmentVariable(
+                XREngineEnvironmentVariables.CaptureDefaultPipelineOutputDirectory);
+            if (!string.IsNullOrWhiteSpace(configured))
+                return Path.GetFullPath(configured);
+
+            string? runRoot = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.AgentValidationRunRoot);
+            string root = string.IsNullOrWhiteSpace(runRoot)
+                ? Path.Combine(Environment.CurrentDirectory, "Build", "_AgentValidation", "manual-default-pipeline-capture")
+                : Path.GetFullPath(runRoot);
+            return Path.Combine(root, "mcp-captures");
+        }
+
+        private static bool ReadBooleanEnvironmentVariable(string name)
+        {
+            string? value = Environment.GetEnvironmentVariable(name);
+            return string.Equals(value, "1", StringComparison.Ordinal) ||
+                string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(value, "on", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
         }
 
         private int ResolveExitCode(OpenXrSmokeSummary summary, List<string> validationFailures)
@@ -618,6 +1387,25 @@ internal partial class Program
             }
             if (!summary.TeardownCompleted)
                 failures.Add("OpenXR teardown did not complete before smoke summary was written.");
+
+            bool phase524bValidation = ReadBooleanEnvironmentVariable(
+                XREngineEnvironmentVariables.VulkanPhase524bValidation);
+            if (phase524bValidation)
+            {
+                failures.AddRange(OpenXrSmokePhase524bEvidenceValidator.ValidateDesktopRejection(
+                    summary.DesktopRejectionEvidence,
+                    required: ReadBooleanEnvironmentVariable(
+                        XREngineEnvironmentVariables.VulkanPhase524bInjectDesktopRejection)));
+                failures.AddRange(OpenXrSmokePhase524bEvidenceValidator.ValidateTsrResolutionCohort(
+                    summary.TsrResolutionScaleRequested,
+                    summary.TsrResolutionScaleEffective,
+                    summary.OutputLedger,
+                    expectSubNative: summary.TsrResolutionScaleRequested < 0.9999));
+                failures.AddRange(OpenXrSmokePhase524bEvidenceValidator.ValidateTemporalScenarioMatrix(
+                    summary.TemporalScenarioMatrix,
+                    summary.TemporalScenarioCaptureStages,
+                    summary.TemporalScenarioCaptureLedger));
+            }
 
             return failures;
         }

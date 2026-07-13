@@ -69,6 +69,29 @@ namespace XREngine
                         }
                     }
 
+                    /// <summary>
+                    /// Copies the output telemetry accumulated since the last frame snapshot without
+                    /// consuming it. The return value is the total number of current outputs, which can
+                    /// exceed <paramref name="destination"/> when the caller's bounded scratch buffer is
+                    /// too small.
+                    /// </summary>
+                    public static int CopyCurrentOutputs(Span<FrameOutputEntrySnapshot> destination)
+                    {
+                        lock (Sync)
+                        {
+                            int copied = 0;
+                            foreach (OutputAccumulator output in CurrentOutputs.Values)
+                            {
+                                if (copied >= destination.Length)
+                                    break;
+
+                                destination[copied++] = output.ToSnapshot();
+                            }
+
+                            return CurrentOutputs.Count;
+                        }
+                    }
+
                     public static double LastWholeFrameMs => _lastManifest.WholeFrameMs;
                     public static double LastFrameBudgetMs => _lastManifest.BudgetMs;
                     public static string LastBudgetBand => _lastManifest.BudgetBand;
@@ -560,6 +583,10 @@ namespace XREngine
                         public EVrOutputViewKind ViewKind { get; } = viewKind;
                         public string Name { get; } = name;
                         public string PipelineName = string.Empty;
+                        public int PipelineInstanceId;
+                        public int ResourcePlanGeneration;
+                        public ulong CommandGeneration;
+                        public string AntiAliasingMode = string.Empty;
                         public bool Active;
                         public bool Rendered;
                         public bool SceneRendered;
@@ -594,17 +621,29 @@ namespace XREngine
                         public bool DeadlineMissed;
                         public bool PolicyAuthorized = true;
                         public ERenderOutputPolicyReason PolicyReason;
+                        public bool SubmitObserved;
+                        public bool PresentObserved;
 
                         public void Apply(in FrameOutputTelemetry telemetry, in RenderOutputRequest request)
                         {
                             FrameId = telemetry.Pacing.FrameId != 0UL ? telemetry.Pacing.FrameId : FrameId;
                             if (!string.IsNullOrWhiteSpace(telemetry.PipelineName))
                                 PipelineName = telemetry.PipelineName!;
+                            if (telemetry.PipelineInstanceId > 0)
+                                PipelineInstanceId = telemetry.PipelineInstanceId;
+                            if (telemetry.ResourcePlanGeneration >= 0)
+                                ResourcePlanGeneration = telemetry.ResourcePlanGeneration;
+                            if (telemetry.CommandGeneration > 0UL)
+                                CommandGeneration = telemetry.CommandGeneration;
+                            if (!string.IsNullOrWhiteSpace(telemetry.AntiAliasingMode))
+                                AntiAliasingMode = telemetry.AntiAliasingMode!;
 
                             Active |= telemetry.Active;
                             Rendered |= telemetry.Rendered;
                             SceneRendered |= telemetry.SceneRendered;
                             RenderPhaseSceneRendered |= telemetry.Phase == EFrameOutputPhase.Render && telemetry.SceneRendered;
+                            SubmitObserved |= telemetry.Phase == EFrameOutputPhase.Submit && telemetry.Rendered;
+                            PresentObserved |= telemetry.Phase == EFrameOutputPhase.Present && telemetry.Rendered;
                             Mirror |= telemetry.Mirror;
                             SeparateSceneRender |= telemetry.SeparateSceneRender;
                             SharedVisibility |= telemetry.SharedVisibility;
@@ -673,6 +712,10 @@ namespace XREngine
                                 ViewKind,
                                 Name,
                                 PipelineName,
+                                PipelineInstanceId,
+                                ResourcePlanGeneration,
+                                CommandGeneration,
+                                AntiAliasingMode,
                                 Active,
                                 Rendered,
                                 SceneRendered,
@@ -696,6 +739,8 @@ namespace XREngine
                                 DeadlineMissed,
                                 PolicyAuthorized,
                                 PolicyReason,
+                                SubmitObserved,
+                                PresentObserved,
                                 CommandCount,
                                 DrawCalls,
                                 MultiDrawCalls,
@@ -807,6 +852,10 @@ namespace XREngine
                     EVrOutputViewKind ViewKind,
                     string Name,
                     string PipelineName,
+                    int PipelineInstanceId,
+                    int ResourcePlanGeneration,
+                    ulong CommandGeneration,
+                    string AntiAliasingMode,
                     bool Active,
                     bool Rendered,
                     bool SceneRendered,
@@ -830,6 +879,8 @@ namespace XREngine
                     bool DeadlineMissed,
                     bool PolicyAuthorized,
                     ERenderOutputPolicyReason PolicyReason,
+                    bool SubmitObserved,
+                    bool PresentObserved,
                     int CommandCount,
                     int DrawCalls,
                     int MultiDrawCalls,

@@ -1032,39 +1032,73 @@ namespace XREngine.Rendering.Vulkan
                         return 0;
                     }
 
-                    bool TryPresentAbortedDirtyFrame(bool commandBufferDirtyFlagSet, bool commandBuffersDirtiedAfterSceneRecord)
+                    bool TryPresentAbortedDirtyFrame(
+                        bool commandBufferDirtyFlagSet,
+                        bool commandBuffersDirtiedAfterSceneRecord,
+                        int recordedSwapchainWriteCount,
+                        string rejectionStage,
+                        Result? rejectedSubmitResult)
                     {
-                        if (acquireSemaphoreConsumed || acquireSemaphore.Handle == 0 || _deviceLost)
-                            return false;
-
-                        ReleaseUnsubmittedTextureUploadCommandBuffer("command buffer dirtied before submit");
-
                         bool imageWasEverPresented = IsSwapchainImageEverPresented(imageIndex);
-                        if (!imageWasEverPresented)
-                        {
-                            // Presenting an acquired-but-unwritten image whose previous layout is
-                            // Undefined exposes undefined/cleared contents as a black frame. The
-                            // caller will consume the acquire semaphore and recreate the swapchain,
-                            // leaving the compositor's last completed image visible instead.
-                            Debug.VulkanWarningEvery(
-                                $"Vulkan.Frame.{GetHashCode()}.DirtyAbortUninitializedImage",
-                                TimeSpan.FromSeconds(1),
-                                "[Vulkan] Refusing skipped-frame present for unwritten swapchain image {0}: the image has no completed presentation history. Recovering without publishing it.",
-                                imageIndex);
-                            return false;
-                        }
-
                         bool imageHasValidPresentedContent =
                             _swapchainImageHasValidPresentedContent is not null &&
                             imageIndex < _swapchainImageHasValidPresentedContent.Length &&
                             _swapchainImageHasValidPresentedContent[imageIndex];
-                        if (!imageHasValidPresentedContent)
+                        uint lastCompletedImageBeforeRejection = _lastPresentedImageIndex;
+                        bool acquireAvailable = !acquireSemaphoreConsumed && acquireSemaphore.Handle != 0;
+                        RejectedDesktopFramePolicyDecision policy = ResolveRejectedDesktopFramePolicy(
+                            acquireAvailable,
+                            _deviceLost,
+                            imageWasEverPresented,
+                            imageHasValidPresentedContent);
+                        bool isPhase524bInjectedRejection = string.Equals(
+                            rejectionStage,
+                            Phase524bInjectedDesktopRejectionStage,
+                            StringComparison.Ordinal);
+
+                        FrameOpContext? exposureContext =
+                            _lastWindowPresentFrameOpContext ?? ActiveLastActiveFrameOpContext;
+                        EVulkanFrameOpContextKind exposureOwnerKind =
+                            exposureContext?.ContextKind ?? EVulkanFrameOpContextKind.Unknown;
+                        int exposureOwnerPipelineIdentity = exposureContext?.PipelineIdentity ?? 0;
+                        bool exposureResourceRegistered =
+                            exposureContext?.ResourceRegistry?.TextureRecords.ContainsKey(
+                                DefaultRenderPipeline.AutoExposureTextureName) == true;
+                        bool exposurePhysicalAllocated =
+                            ResourceAllocator.TryGetPhysicalGroupForResource(
+                                DefaultRenderPipeline.AutoExposureTextureName,
+                                out VulkanPhysicalImageGroup? exposureGroup) &&
+                            exposureGroup?.IsAllocated == true;
+                        bool exposureOwnedByDesktop =
+                            exposureOwnerKind == EVulkanFrameOpContextKind.MainViewport &&
+                            exposureResourceRegistered;
+                        ulong exposureImageHandle = exposureGroup?.Image.Handle ?? 0UL;
+                        ImageLayout exposureLayout = exposureGroup?.LastKnownLayout ?? ImageLayout.Undefined;
+                        string submitResultLabel = rejectedSubmitResult?.ToString() ?? "not-submitted";
+
+                        if (acquireAvailable && !_deviceLost)
+                            ReleaseUnsubmittedTextureUploadCommandBuffer("desktop frame rejected before submit");
+
+                        if (!policy.ShouldPresent)
                         {
+                            // Publishing an acquired-but-unwritten image can expose undefined or
+                            // cleared contents. Returning false lets the caller consume/recreate the
+                            // acquired image while the compositor keeps its last completed image.
                             Debug.VulkanWarningEvery(
-                                $"Vulkan.Frame.{GetHashCode()}.DirtyAbortNoValidContent",
+                                $"Vulkan.Frame.{GetHashCode()}.RejectedDesktopFrame.{policy.Reason}",
                                 TimeSpan.FromSeconds(1),
-                                "[Vulkan] Refusing skipped-frame present for swapchain image {0}: no completed final write is recorded. plannerRev={1} plan=0x{2:X16} allocation=0x{3:X16} lastReplacementRev={4} lastReplacementPlan=0x{5:X16} lastReplacementAllocation=0x{6:X16} retiredImages={7} retiredBuffers={8} exposureHistoryRetained={9}",
+                                "[Vulkan][FrameFailure][RejectedDesktopFrame] policy=SkipPresent reason={0} frame={1} image={2} lastCompletedImageBeforeRejection={3} finalTargetValid={4} swapchainWrites={5} imageEverPresented={6} presentAttempted=false rejectionStage={7} submitResult={8} dirtyFlag={9} generationChanged={10} plannerRev={11} plan=0x{12:X16} allocation=0x{13:X16} lastReplacementRev={14} lastReplacementPlan=0x{15:X16} lastReplacementAllocation=0x{16:X16} retiredImages={17} retiredBuffers={18} exposureRegistered={19} exposurePhysicalAllocated={20} exposureOwnerKind={21} exposureOwnerPipeline={22} exposureOwnedByDesktop={23} exposureImage=0x{24:X} exposureLayout={25} exposureHistoryRetained={26}",
+                                policy.Reason,
+                                frameNumber,
                                 imageIndex,
+                                lastCompletedImageBeforeRejection,
+                                imageHasValidPresentedContent,
+                                recordedSwapchainWriteCount,
+                                imageWasEverPresented,
+                                rejectionStage,
+                                submitResultLabel,
+                                commandBufferDirtyFlagSet,
+                                commandBuffersDirtiedAfterSceneRecord,
                                 ResourcePlannerRevision,
                                 ActiveResourcePlannerSignature,
                                 ActiveResourceAllocationSignature,
@@ -1073,7 +1107,22 @@ namespace XREngine.Rendering.Vulkan
                                 _lastResourcePlanReplacementAllocationSignature,
                                 _lastResourcePlanReplacementRetiredImageCount,
                                 _lastResourcePlanReplacementRetiredBufferCount,
+                                exposureResourceRegistered,
+                                exposurePhysicalAllocated,
+                                exposureOwnerKind,
+                                exposureOwnerPipelineIdentity,
+                                exposureOwnedByDesktop,
+                                exposureImageHandle,
+                                exposureLayout,
                                 _retainedAutoExposureHistoryGroup is not null);
+                            if (isPhase524bInjectedRejection && exposureContext.HasValue)
+                            {
+                                RecordPhase524bInjectedDesktopRejection(
+                                    exposureContext.Value,
+                                    in policy,
+                                    presentAccepted: false,
+                                    renderFrameId: frameNumber);
+                            }
                             return false;
                         }
 
@@ -1192,6 +1241,7 @@ namespace XREngine.Rendering.Vulkan
                             presentQueueTime += Stopwatch.GetElapsedTime(presentStartTimestamp);
 
                             bool skippedPresentAccepted = result == Result.Success || result == Result.SuboptimalKhr;
+                            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPresentResult((int)result, skippedPresentAccepted);
                             if (skippedPresentAccepted)
                             {
                                 _lastPresentedImageIndex = imageIndex;
@@ -1213,8 +1263,17 @@ namespace XREngine.Rendering.Vulkan
                             Debug.VulkanWarningEvery(
                                 $"Vulkan.Frame.{GetHashCode()}.DirtyBeforeSubmit",
                                 TimeSpan.FromSeconds(1),
-                                "[Vulkan] Command buffer for image {0} was dirtied after recording and before submit. Re-presented previously completed content to release the acquired image. flag={1} generationChanged={2} clearedLayouts={3} plannerRev={4} plan=0x{5:X16} allocation=0x{6:X16} lastReplacementRev={7} lastReplacementPlan=0x{8:X16} lastReplacementAllocation=0x{9:X16} retiredImages={10} retiredBuffers={11} exposureHistoryRetained={12}",
+                                "[Vulkan][FrameFailure][RejectedDesktopFrame] policy=PresentLastCompletedContent reason={0} frame={1} image={2} lastCompletedImageBeforeRejection={3} finalTargetValid={4} swapchainWrites={5} imageEverPresented={6} presentAttempted=true presentResult={7} rejectionStage={8} submitResult={9} dirtyFlag={10} generationChanged={11} clearedLayouts={12} plannerRev={13} plan=0x{14:X16} allocation=0x{15:X16} lastReplacementRev={16} lastReplacementPlan=0x{17:X16} lastReplacementAllocation=0x{18:X16} retiredImages={19} retiredBuffers={20} exposureRegistered={21} exposurePhysicalAllocated={22} exposureOwnerKind={23} exposureOwnerPipeline={24} exposureOwnedByDesktop={25} exposureImage=0x{26:X} exposureLayout={27} exposureHistoryRetained={28} presentAccepted={29}. Attempted presentation of previously completed content to release the acquired image.",
+                                policy.Reason,
+                                frameNumber,
                                 imageIndex,
+                                lastCompletedImageBeforeRejection,
+                                imageHasValidPresentedContent,
+                                recordedSwapchainWriteCount,
+                                imageWasEverPresented,
+                                result,
+                                rejectionStage,
+                                submitResultLabel,
                                 commandBufferDirtyFlagSet,
                                 commandBuffersDirtiedAfterSceneRecord,
                                 clearedLayoutCount,
@@ -1226,7 +1285,24 @@ namespace XREngine.Rendering.Vulkan
                                 _lastResourcePlanReplacementAllocationSignature,
                                 _lastResourcePlanReplacementRetiredImageCount,
                                 _lastResourcePlanReplacementRetiredBufferCount,
-                                _retainedAutoExposureHistoryGroup is not null);
+                                exposureResourceRegistered,
+                                exposurePhysicalAllocated,
+                                exposureOwnerKind,
+                                exposureOwnerPipelineIdentity,
+                                exposureOwnedByDesktop,
+                                exposureImageHandle,
+                                exposureLayout,
+                                _retainedAutoExposureHistoryGroup is not null,
+                                skippedPresentAccepted);
+
+                            if (isPhase524bInjectedRejection && exposureContext.HasValue)
+                            {
+                                RecordPhase524bInjectedDesktopRejection(
+                                    exposureContext.Value,
+                                    in policy,
+                                    presentAccepted: skippedPresentAccepted,
+                                    renderFrameId: frameNumber);
+                            }
 
                             currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
                             _lastFrameCompletedTimestamp = Stopwatch.GetTimestamp();
@@ -1320,7 +1396,12 @@ namespace XREngine.Rendering.Vulkan
                             {
                                 recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
-                                if (TryPresentAbortedDirtyFrame(commandBufferDirtyFlagSet: false, commandBuffersDirtiedAfterSceneRecord: true))
+                                if (TryPresentAbortedDirtyFrame(
+                                        commandBufferDirtyFlagSet: false,
+                                        commandBuffersDirtiedAfterSceneRecord: true,
+                                        recordedSwapchainWriteCount: sceneSwapchainWriteCount,
+                                        rejectionStage: "RecordDeferred",
+                                        rejectedSubmitResult: null))
                                     return;
 
                                 currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -1477,6 +1558,27 @@ namespace XREngine.Rendering.Vulkan
                             dynamicTextOverlayElapsedTicks);
                     }
 
+                    FrameOpContext? phase524bDesktopContext =
+                        _lastWindowPresentFrameOpContext ?? ActiveLastActiveFrameOpContext;
+                    if (phase524bDesktopContext.HasValue &&
+                        TryPreparePhase524bInjectedDesktopRejection(
+                            phase524bDesktopContext.Value,
+                            imageIndex))
+                    {
+                        if (TryPresentAbortedDirtyFrame(
+                                commandBufferDirtyFlagSet: false,
+                                commandBuffersDirtiedAfterSceneRecord: false,
+                                recordedSwapchainWriteCount: sceneSwapchainWriteCount,
+                                rejectionStage: Phase524bInjectedDesktopRejectionStage,
+                                rejectedSubmitResult: null))
+                        {
+                            return;
+                        }
+
+                        throw new InvalidOperationException(
+                            "The controlled Phase 5.2.4b desktop rejection could not apply its last-completed-image policy.");
+                    }
+
                     bool commandBufferDirtyFlagSet =
                         _commandBufferDirtyFlags is not null &&
                         imageIndex < (uint)_commandBufferDirtyFlags.Length &&
@@ -1498,7 +1600,12 @@ namespace XREngine.Rendering.Vulkan
                     }
                     else if (commandBufferDirtyFlagSet || commandBuffersDirtiedAfterSceneRecord)
                     {
-                        if (TryPresentAbortedDirtyFrame(commandBufferDirtyFlagSet, commandBuffersDirtiedAfterSceneRecord))
+                        if (TryPresentAbortedDirtyFrame(
+                                commandBufferDirtyFlagSet,
+                                commandBuffersDirtiedAfterSceneRecord,
+                                recordedSwapchainWriteCount: sceneSwapchainWriteCount,
+                                rejectionStage: "CommandBufferDirtiedBeforeSubmit",
+                                rejectedSubmitResult: null))
                             return;
 
                         Debug.VulkanWarningEvery(
@@ -1607,7 +1714,10 @@ namespace XREngine.Rendering.Vulkan
                             MarkCommandBuffersDirty($"graphics frame submit rejected with {submitResult}");
                             if (TryPresentAbortedDirtyFrame(
                                     commandBufferDirtyFlagSet: true,
-                                    commandBuffersDirtiedAfterSceneRecord: true))
+                                    commandBuffersDirtiedAfterSceneRecord: true,
+                                    recordedSwapchainWriteCount: sceneSwapchainWriteCount,
+                                    rejectionStage: "DrawSubmitRejected",
+                                    rejectedSubmitResult: submitResult))
                                 return;
                         }
 
@@ -1691,6 +1801,7 @@ namespace XREngine.Rendering.Vulkan
                     }
                     presentQueueTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
                     bool presentAccepted = result == Result.Success || result == Result.SuboptimalKhr;
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPresentResult((int)result, presentAccepted);
                     if (presentAccepted)
                     {
                         _lastPresentedImageIndex = imageIndex;

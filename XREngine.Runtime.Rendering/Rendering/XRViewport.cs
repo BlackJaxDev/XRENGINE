@@ -1442,8 +1442,14 @@ namespace XREngine.Rendering
             XRFrameBuffer? targetFbo,
             XRCamera? leftCamera,
             XRCamera? rightCamera,
-            IRuntimeRenderWorld? worldOverride = null)
+            IRuntimeRenderWorld? worldOverride = null,
+            FrameOutputPacingDecision? frameOutputPacing = null)
         {
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.RenderStereo");
+
+            if (ShouldSuspendPipelineWork(nameof(RenderStereo)))
+                return;
+
             var world = worldOverride ?? World;
             if (world is null)
             {
@@ -1457,7 +1463,15 @@ namespace XREngine.Rendering
                 return;
             }
 
+            IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
+            FrameOutputPacingDecision pacing = frameOutputPacing ?? FrameOutputPacingDecision.Due(
+                EVrOutputViewKind.LeftEye,
+                hostServices.IsOpenXRActive
+                    ? EFrameOutputKind.OpenXREyeSubmit
+                    : EFrameOutputKind.OpenVRSubmit,
+                State.RenderFrameId);
             bool uiThroughPipeline = ResolveUiThroughPipeline(out var screenSpaceUI);
+            long renderStart = System.Diagnostics.Stopwatch.GetTimestamp();
 
             LastRenderedTargetFBO = targetFbo;
             _renderPipeline.Render(
@@ -1474,6 +1488,14 @@ namespace XREngine.Rendering
 
             if (!uiThroughPipeline)
                 RenderScreenSpaceUIOverlay(targetFbo);
+
+            RecordFrameOutput(
+                EFrameOutputPhase.Render,
+                pacing,
+                rendered: true,
+                sceneRendered: !Suppress3DSceneRendering,
+                commandCount: GetRenderingCommandCountForTelemetry(),
+                elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - renderStart);
         }
 
         private FrameOutputPacingDecision EvaluateFrameOutputPacing(EFrameOutputKind fallbackOutputKind)
@@ -1635,7 +1657,11 @@ namespace XREngine.Rendering
                 0,
                 cpuMs,
                 gpuMs,
-                request);
+                request,
+                PipelineInstanceId: _renderPipeline.InstanceId,
+                ResourcePlanGeneration: _renderPipeline.ResourceGeneration,
+                CommandGeneration: _renderPipeline.Pipeline?.CommandGeneration ?? 0UL,
+                AntiAliasingMode: (_renderPipeline.EffectiveAntiAliasingModeThisFrame ?? hostServices.DefaultAntiAliasingMode).ToString());
             hostServices.RecordRenderFrameOutput(telemetry);
         }
 

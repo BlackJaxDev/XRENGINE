@@ -196,7 +196,7 @@ public sealed class VulkanP1ValidationTests
     }
 
     [Test]
-    public void ExternalSwapchainPlannerExtents_AreAuthoritativeOverDesktopPipelineExtents()
+    public void ExternalSwapchainPlannerDisplayExtent_IsAuthoritativeWhileInternalExtentRemainsScaled()
     {
         string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs").Replace("\r\n", "\n");
         string stateTrackingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs").Replace("\r\n", "\n");
@@ -209,8 +209,8 @@ public sealed class VulkanP1ValidationTests
         string renderStateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/RenderingState.cs").Replace("\r\n", "\n");
         string renderToWindowSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderToWindow.cs").Replace("\r\n", "\n");
         string temporalSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_TemporalAccumulationPass.cs").Replace("\r\n", "\n");
-        string defaultPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
-        string defaultPipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
+        string defaultPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        string defaultPipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
         string pushMainAttributes = SliceBetween(
             renderStateSource,
             "public StateObject PushMainAttributes",
@@ -250,14 +250,16 @@ public sealed class VulkanP1ValidationTests
 
         stateSource.ShouldContain("private bool TryResolveExternalSwapchainTargetExtent(out Extent2D extent)");
         captureContext.ShouldContain("if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))");
-        captureContext.ShouldContain("displayWidth = externalExtent.Width;");
-        captureContext.ShouldContain("internalHeight = externalExtent.Height;");
+        captureContext.ShouldContain("ResolveExternalFrameOpResourceDimensions(");
+        captureContext.ShouldContain("displayWidth = dimensions.DisplayWidth;");
+        captureContext.ShouldContain("internalHeight = dimensions.InternalHeight;");
         resizeFreeze.ShouldContain("if (TryResolveExternalSwapchainTargetExtent(out _))\n            return context;");
-        refreshContext.ShouldContain("Forcing external swapchain frame-op planner extents");
-        refreshContext.ShouldContain("DisplayWidth = externalExtent.Width");
-        refreshContext.ShouldContain("InternalHeight = externalExtent.Height");
+        refreshContext.ShouldContain("Refreshing external swapchain frame-op planner extents");
+        refreshContext.ShouldContain("DisplayWidth = dimensions.DisplayWidth");
+        refreshContext.ShouldContain("InternalHeight = dimensions.InternalHeight");
         extentContext.ShouldContain("if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))");
-        extentContext.ShouldContain("return new VulkanResourceExtentContext(\n                externalExtent.Width,\n                externalExtent.Height,\n                externalExtent.Width,\n                externalExtent.Height);");
+        extentContext.ShouldContain("ResolveExternalFrameOpResourceDimensions(");
+        extentContext.ShouldContain("return new VulkanResourceExtentContext(\n                dimensions.DisplayWidth,\n                dimensions.DisplayHeight,\n                dimensions.InternalWidth,\n                dimensions.InternalHeight);");
         stateSource.ShouldContain("OpenXR external swapchain rendering is active, but no valid external target extent is bound.");
         stateTrackingSource.ShouldContain("if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))\n            return externalExtent;");
         initializationSource.ShouldContain("if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))\n                    ActiveState.SetCurrentTargetExtent(externalExtent);");

@@ -24,6 +24,7 @@ public unsafe partial class VulkanRenderer
         public int PublishedImageDeltaCount;
         public int ReportedDependencyBindCount;
         public int ReportedImageAccessWriteCount;
+        public int QueuedSubmissionCount;
 
         public void RecordDependency(VulkanResourceLifetimeKey key)
         {
@@ -125,30 +126,94 @@ public unsafe partial class VulkanRenderer
         if (handle == 0)
             return;
 
-        _commandBufferTrackingBatches[handle] = new VulkanCommandBufferTrackingBatch
+        ulong recordingGeneration = ResolveCommandBufferRecordingGeneration(commandBuffer);
+        lock (_vulkanResourceLifetimeLock)
         {
-            RecordingGeneration = ResolveCommandBufferRecordingGeneration(commandBuffer),
-        };
+            if (_vulkanCommandBufferLifetimes.TryGetValue(
+                    handle,
+                    out VulkanCommandBufferLifetimeRecord? lifetime) &&
+                lifetime.QueuedSubmissionCount != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Command buffer 0x{handle:X} cannot begin recording while queued for submission.");
+            }
+
+            if (_commandBufferTrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? existing))
+            {
+                lock (existing)
+                {
+                    if (existing.QueuedSubmissionCount != 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"Command buffer 0x{handle:X} cannot replace tracking while queued for submission.");
+                    }
+                }
+            }
+
+            _commandBufferTrackingBatches[handle] = new VulkanCommandBufferTrackingBatch
+            {
+                RecordingGeneration = recordingGeneration,
+            };
+        }
     }
 
     private void RemoveCommandBufferTrackingBatch(CommandBuffer commandBuffer)
     {
         ulong handle = unchecked((ulong)commandBuffer.Handle);
-        if (handle != 0)
-            _commandBufferTrackingBatches.TryRemove(handle, out _);
+        if (handle == 0)
+            return;
+
+        lock (_vulkanResourceLifetimeLock)
+        {
+            if (!_commandBufferTrackingBatches.TryGetValue(
+                    handle,
+                    out VulkanCommandBufferTrackingBatch? batch))
+            {
+                return;
+            }
+
+            lock (batch)
+            {
+                if (batch.QueuedSubmissionCount != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Command buffer 0x{handle:X} tracking cannot be removed while queued for submission.");
+                }
+
+                _commandBufferTrackingBatches.TryRemove(handle, out _);
+            }
+        }
     }
 
     private bool TryRecordCommandBufferDependency(CommandBuffer commandBuffer, ObjectType type, ulong handle)
     {
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
-        if (commandBufferHandle == 0 || handle == 0 ||
-            !_commandBufferTrackingBatches.TryGetValue(commandBufferHandle, out VulkanCommandBufferTrackingBatch? batch))
+        if (commandBufferHandle == 0 || handle == 0)
+            return false;
+
+        if (!_commandBufferTrackingBatches.TryGetValue(
+                commandBufferHandle,
+                out VulkanCommandBufferTrackingBatch? batch))
         {
             return false;
         }
 
-        batch.RecordDependency(ResourceKey(type, handle));
-        return true;
+        lock (batch)
+        {
+            if (!_commandBufferTrackingBatches.TryGetValue(commandBufferHandle, out var currentBatch) ||
+                !ReferenceEquals(batch, currentBatch))
+            {
+                return false;
+            }
+            if (batch.QueuedSubmissionCount != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Command buffer 0x{commandBufferHandle:X} cannot record resource dependencies while queued for submission.");
+            }
+
+            batch.RecordDependency(ResourceKey(type, handle));
+            return true;
+        }
     }
 
     private bool TryRecordImageAccessDelta(
@@ -161,31 +226,49 @@ public unsafe partial class VulkanRenderer
         uint queueFamilyIndex)
     {
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
-        if (commandBufferHandle == 0 || image.Handle == 0 ||
-            !_commandBufferTrackingBatches.TryGetValue(commandBufferHandle, out VulkanCommandBufferTrackingBatch? batch))
+        if (commandBufferHandle == 0 || image.Handle == 0)
+            return false;
+
+        if (!_commandBufferTrackingBatches.TryGetValue(
+                commandBufferHandle,
+                out VulkanCommandBufferTrackingBatch? batch))
         {
             return false;
         }
 
-        ImageAspectFlags primaryAspect = (range.AspectMask & ImageAspectFlags.ColorBit) != 0
-            ? ImageAspectFlags.ColorBit
-            : (range.AspectMask & ImageAspectFlags.DepthBit) != 0
-                ? ImageAspectFlags.DepthBit
-                : ImageAspectFlags.StencilBit;
-        ulong serial = unchecked((ulong)Interlocked.Increment(ref _vulkanImageLayoutTransitionSerial));
-        VulkanImageAccessState resolved = ResolveVulkanImageAccessState(
-            layout,
-            primaryAspect,
-            queueFamilyIndex,
-            serial,
-            GetCurrentVulkanResourceGeneration(ObjectType.Image, image.Handle));
-        resolved = resolved with
+        lock (batch)
         {
-            StageMask = stageMask == 0 ? resolved.StageMask : NormalizePipelineStages2(stageMask),
-            AccessMask = NormalizeAccessFlags2(accessMask),
-        };
-        batch.RecordImageAccess(new VulkanImageAccessRangeDelta(image.Handle, range, resolved));
-        return true;
+            if (!_commandBufferTrackingBatches.TryGetValue(commandBufferHandle, out var currentBatch) ||
+                !ReferenceEquals(batch, currentBatch))
+            {
+                return false;
+            }
+            if (batch.QueuedSubmissionCount != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Command buffer 0x{commandBufferHandle:X} cannot record image access while queued for submission.");
+            }
+
+            ImageAspectFlags primaryAspect = (range.AspectMask & ImageAspectFlags.ColorBit) != 0
+                ? ImageAspectFlags.ColorBit
+                : (range.AspectMask & ImageAspectFlags.DepthBit) != 0
+                    ? ImageAspectFlags.DepthBit
+                    : ImageAspectFlags.StencilBit;
+            ulong serial = unchecked((ulong)Interlocked.Increment(ref _vulkanImageLayoutTransitionSerial));
+            VulkanImageAccessState resolved = ResolveVulkanImageAccessState(
+                layout,
+                primaryAspect,
+                queueFamilyIndex,
+                serial,
+                GetCurrentVulkanResourceGeneration(ObjectType.Image, image.Handle));
+            resolved = resolved with
+            {
+                StageMask = stageMask == 0 ? resolved.StageMask : NormalizePipelineStages2(stageMask),
+                AccessMask = NormalizeAccessFlags2(accessMask),
+            };
+            batch.RecordImageAccess(new VulkanImageAccessRangeDelta(image.Handle, range, resolved));
+            return true;
+        }
     }
 
     private bool TryGetPendingImageAccessState(
@@ -196,23 +279,35 @@ public unsafe partial class VulkanRenderer
     {
         state = VulkanImageAccessState.Undefined;
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
-        if (commandBufferHandle == 0 || image.Handle == 0 ||
-            !_commandBufferTrackingBatches.TryGetValue(commandBufferHandle, out VulkanCommandBufferTrackingBatch? batch))
+        if (commandBufferHandle == 0 || image.Handle == 0)
+            return false;
+
+        if (!_commandBufferTrackingBatches.TryGetValue(
+                commandBufferHandle,
+                out VulkanCommandBufferTrackingBatch? batch))
         {
             return false;
         }
 
-        for (int i = batch.ImageAccessDeltas.Count - 1; i >= 0; i--)
+        lock (batch)
         {
-            VulkanImageAccessRangeDelta delta = batch.ImageAccessDeltas[i];
-            if (delta.ImageHandle != image.Handle || !Contains(delta.Range, range))
-                continue;
+            if (!_commandBufferTrackingBatches.TryGetValue(commandBufferHandle, out var currentBatch) ||
+                !ReferenceEquals(batch, currentBatch))
+            {
+                return false;
+            }
+            for (int i = batch.ImageAccessDeltas.Count - 1; i >= 0; i--)
+            {
+                VulkanImageAccessRangeDelta delta = batch.ImageAccessDeltas[i];
+                if (delta.ImageHandle != image.Handle || !Contains(delta.Range, range))
+                    continue;
 
-            state = delta.State;
-            return state.Layout != ImageLayout.Undefined;
+                state = delta.State;
+                return state.Layout != ImageLayout.Undefined;
+            }
+
+            return false;
         }
-
-        return false;
     }
 
     private static bool Contains(in ImageSubresourceRange outer, in ImageSubresourceRange inner)
@@ -267,7 +362,8 @@ public unsafe partial class VulkanRenderer
                     handle,
                     key,
                     "CommandBuffer.LocalBatch",
-                    out failureReason))
+                    out failureReason,
+                    allowQueuedSubmission: true))
                 {
                     return false;
                 }

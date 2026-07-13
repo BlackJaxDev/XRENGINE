@@ -38,7 +38,8 @@ public readonly struct OcclusionViewOwnership : IEquatable<OcclusionViewOwnershi
         uint requiredCoverageMask,
         int declaredViewCount,
         int resourceGeneration = 0,
-        bool hasScopeOverride = true)
+        bool hasScopeOverride = true,
+        ulong outputId = 0UL)
     {
         PipelineInstanceId = pipelineInstanceId;
         PovId = povId;
@@ -48,6 +49,7 @@ public readonly struct OcclusionViewOwnership : IEquatable<OcclusionViewOwnershi
         DeclaredViewCount = Math.Clamp(declaredViewCount, 1, 32);
         ResourceGeneration = resourceGeneration;
         HasScopeOverride = hasScopeOverride;
+        OutputId = outputId != 0UL ? outputId : unchecked((ulong)(uint)pipelineInstanceId);
     }
 
     public int PipelineInstanceId { get; }
@@ -58,6 +60,7 @@ public readonly struct OcclusionViewOwnership : IEquatable<OcclusionViewOwnershi
     public int DeclaredViewCount { get; }
     public int ResourceGeneration { get; }
     public bool HasScopeOverride { get; }
+    public ulong OutputId { get; }
 
     public bool IsValid
         => PipelineInstanceId > 0 &&
@@ -76,7 +79,10 @@ public readonly struct OcclusionViewOwnership : IEquatable<OcclusionViewOwnershi
     public static int AllocatePovId()
         => -Interlocked.Increment(ref s_nextPovId);
 
-    public static OcclusionViewOwnership Independent(int pipelineInstanceId, int resourceGeneration = 0)
+    public static OcclusionViewOwnership Independent(
+        int pipelineInstanceId,
+        int resourceGeneration = 0,
+        ulong outputId = 0UL)
         => new(
             pipelineInstanceId,
             pipelineInstanceId,
@@ -85,7 +91,8 @@ public readonly struct OcclusionViewOwnership : IEquatable<OcclusionViewOwnershi
             requiredCoverageMask: 0x1u,
             declaredViewCount: 1,
             resourceGeneration,
-            hasScopeOverride: false);
+            hasScopeOverride: false,
+            outputId: outputId);
 
     public OcclusionViewOwnership WithResourceGeneration(int resourceGeneration)
         => new(
@@ -96,7 +103,8 @@ public readonly struct OcclusionViewOwnership : IEquatable<OcclusionViewOwnershi
             RequiredCoverageMask,
             DeclaredViewCount,
             resourceGeneration,
-            HasScopeOverride);
+            HasScopeOverride,
+            OutputId);
 
     public bool Equals(OcclusionViewOwnership other)
         => PipelineInstanceId == other.PipelineInstanceId &&
@@ -106,21 +114,24 @@ public readonly struct OcclusionViewOwnership : IEquatable<OcclusionViewOwnershi
            RequiredCoverageMask == other.RequiredCoverageMask &&
            DeclaredViewCount == other.DeclaredViewCount &&
            ResourceGeneration == other.ResourceGeneration &&
-           HasScopeOverride == other.HasScopeOverride;
+           HasScopeOverride == other.HasScopeOverride &&
+           OutputId == other.OutputId;
 
     public override bool Equals(object? obj)
         => obj is OcclusionViewOwnership other && Equals(other);
 
     public override int GetHashCode()
         => HashCode.Combine(
-            PipelineInstanceId,
-            PovId,
-            Scope,
-            CoverageMask,
-            RequiredCoverageMask,
-            DeclaredViewCount,
-            ResourceGeneration,
-            HasScopeOverride);
+            HashCode.Combine(
+                PipelineInstanceId,
+                PovId,
+                Scope,
+                CoverageMask,
+                RequiredCoverageMask,
+                DeclaredViewCount,
+                ResourceGeneration,
+                HasScopeOverride),
+            OutputId);
 }
 
 /// <summary>
@@ -140,7 +151,8 @@ public readonly struct OcclusionViewKey : IEquatable<OcclusionViewKey>
         uint coverageMask = 0x1u,
         uint requiredCoverageMask = 0x1u,
         int declaredViewCount = 1,
-        int resourceGeneration = 0)
+        int resourceGeneration = 0,
+        ulong outputId = 0UL)
     {
         RenderPass = renderPass;
         Scope = scope;
@@ -151,6 +163,7 @@ public readonly struct OcclusionViewKey : IEquatable<OcclusionViewKey>
         RequiredCoverageMask = requiredCoverageMask;
         DeclaredViewCount = declaredViewCount;
         ResourceGeneration = resourceGeneration;
+        OutputId = outputId != 0UL ? outputId : unchecked((ulong)(uint)pipelineInstanceId);
     }
 
     public int RenderPass { get; }
@@ -162,6 +175,7 @@ public readonly struct OcclusionViewKey : IEquatable<OcclusionViewKey>
     public uint RequiredCoverageMask { get; }
     public int DeclaredViewCount { get; }
     public int ResourceGeneration { get; }
+    public ulong OutputId { get; }
 
     public bool Equals(OcclusionViewKey other)
         => RenderPass == other.RenderPass &&
@@ -172,24 +186,27 @@ public readonly struct OcclusionViewKey : IEquatable<OcclusionViewKey>
            CoverageMask == other.CoverageMask &&
            RequiredCoverageMask == other.RequiredCoverageMask &&
            DeclaredViewCount == other.DeclaredViewCount &&
-           ResourceGeneration == other.ResourceGeneration;
+           ResourceGeneration == other.ResourceGeneration &&
+           OutputId == other.OutputId;
 
     public override bool Equals(object? obj)
         => obj is OcclusionViewKey other && Equals(other);
 
     public override int GetHashCode()
         => HashCode.Combine(
-            RenderPass,
-            Scope,
-            ViewId,
-            PipelineInstanceId,
-            PovId,
-            CoverageMask,
-            RequiredCoverageMask,
-            HashCode.Combine(DeclaredViewCount, ResourceGeneration));
+            HashCode.Combine(
+                RenderPass,
+                Scope,
+                ViewId,
+                PipelineInstanceId,
+                PovId,
+                CoverageMask,
+                RequiredCoverageMask,
+                HashCode.Combine(DeclaredViewCount, ResourceGeneration)),
+            OutputId);
 
     public override string ToString()
-        => $"{Scope}:pass{RenderPass}:view{ViewId}:pipe{PipelineInstanceId}:pov{PovId}:coverage0x{CoverageMask:X}/0x{RequiredCoverageMask:X}:views{DeclaredViewCount}:gen{ResourceGeneration}";
+        => $"{Scope}:pass{RenderPass}:view{ViewId}:pipe{PipelineInstanceId}:output0x{OutputId:X}:pov{PovId}:coverage0x{CoverageMask:X}/0x{RequiredCoverageMask:X}:views{DeclaredViewCount}:gen{ResourceGeneration}";
 
     public bool IsSharedStereoScope
         => Scope is EOcclusionViewScope.VrStereoPair
@@ -206,6 +223,10 @@ public readonly record struct CpuOcclusionViewTelemetrySnapshot(
     int Skips,
     int BudgetSkipped,
     int ForcedVisible,
+    int RecoveryStarts,
+    int RecoveryCompletions,
+    int CurrentRecoveryAgeFrames,
+    int MaxRecoveryAgeFrames,
     int CurrentResultAgeFrames,
     int MaxResultAgeFrames,
     int RecoveryLatencyFrames);
@@ -255,6 +276,7 @@ public enum ECpuOcclusionForceVisibleReason
     MissingOwnership,
     StaleResult,
     ResourceGenerationChanged,
+    CommandSetChanged,
     Diagnostic,
 }
 

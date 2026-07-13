@@ -1181,10 +1181,10 @@ internal static partial class RuntimeEngine
                     RuntimeRenderingHostServices.Current.RecordRenderVrXrWaitFrameBlockTime(elapsed);
             }
 
-            public static void RecordVrXrEndFrameSubmitTime(TimeSpan elapsed)
+            public static void RecordVrXrEndFrameSubmitTime(TimeSpan elapsed, ulong renderFrameId = 0UL)
             {
                 if (HasHostStats)
-                    RuntimeRenderingHostServices.Current.RecordRenderVrXrEndFrameSubmitTime(elapsed);
+                    RuntimeRenderingHostServices.Current.RecordRenderVrXrEndFrameSubmitTime(elapsed, renderFrameId);
             }
 
             public static void RecordVrXrPredictedToLatePoseDelta(double millimeters, double degrees)
@@ -1653,6 +1653,12 @@ internal static partial class RuntimeEngine
                     RuntimeRenderingHostServices.Current.RecordRenderVulkanQueueSubmit();
             }
 
+            public static void RecordVulkanPresentResult(int result, bool accepted)
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVulkanPresentResult(result, accepted);
+            }
+
             public static void RecordVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount)
             {
                 if (HasHostStats)
@@ -1844,7 +1850,8 @@ internal static partial class RuntimeEngine
                     => Stats.RecordVrPerViewVisibleCounts(leftVisible, rightVisible);
                 public static void RecordVrRenderSubmitTime(TimeSpan elapsed) => Stats.RecordVrRenderSubmitTime(elapsed);
                 public static void RecordVrXrWaitFrameBlockTime(TimeSpan elapsed) => Stats.RecordVrXrWaitFrameBlockTime(elapsed);
-                public static void RecordVrXrEndFrameSubmitTime(TimeSpan elapsed) => Stats.RecordVrXrEndFrameSubmitTime(elapsed);
+                public static void RecordVrXrEndFrameSubmitTime(TimeSpan elapsed, ulong renderFrameId = 0UL)
+                    => Stats.RecordVrXrEndFrameSubmitTime(elapsed, renderFrameId);
                 public static void RecordVrXrPredictedToLatePoseDelta(double millimeters, double degrees)
                     => Stats.RecordVrXrPredictedToLatePoseDelta(millimeters, degrees);
                 public static void RecordVrXrPredictedDisplayLeadTime(double leadTimeMs)
@@ -2117,6 +2124,8 @@ internal static partial class RuntimeEngine
                 public static void RecordVulkanQueueOverlapWindow(int overlapCandidatePasses, int transferCost, TimeSpan frameDelta, bool promotedMode, bool demotedMode)
                     => Stats.RecordVulkanQueueOverlapWindow(overlapCandidatePasses, transferCost, frameDelta, promotedMode, demotedMode);
                 public static void RecordVulkanQueueSubmit() => Stats.RecordVulkanQueueSubmit();
+                public static void RecordVulkanPresentResult(int result, bool accepted)
+                    => Stats.RecordVulkanPresentResult(result, accepted);
                 public static void RecordVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount)
                     => Stats.RecordVulkanRetiredResourcePlanReplacement(imageCount, bufferCount);
                 public static void RecordVulkanRetiredResourceDrain(
@@ -2227,6 +2236,7 @@ internal static partial class RuntimeEngine
             public static bool IsIntel { get; internal set; }
             public static bool IsVulkan { get; internal set; }
             public static bool VulkanValidationLayersEnabled { get; internal set; }
+            public static bool VulkanSynchronizationValidationEnabled { get; internal set; }
             public static bool HasNvRayTracing { get; internal set; }
             public static bool HasVulkanRayTracing { get; internal set; }
             public static bool HasVulkanMemoryDecompression { get; internal set; }

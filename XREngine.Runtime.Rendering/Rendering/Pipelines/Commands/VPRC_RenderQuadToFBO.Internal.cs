@@ -202,7 +202,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             sourceFBO.Render(destFBO);
         }
 
-        private static void ValidateDestinationScreenRegionContract(
+        private void ValidateDestinationScreenRegionContract(
             XRRenderPipelineInstance activeInstance,
             XRQuadFrameBuffer sourceFbo,
             XRFrameBuffer destinationFbo,
@@ -235,6 +235,20 @@ namespace XREngine.Rendering.Pipelines.Commands
                     if (!stereo)
                         continue;
 
+                    if (IsolatedMonoReference)
+                    {
+                        if (layerIndex != -1 ||
+                            targetLayers != 1u ||
+                            target is not XRTexture2DArrayView { NumLayers: 1u })
+                        {
+                            throw new InvalidOperationException(
+                                $"Isolated mono reference pass '{sourceFbo.Name}' destination '{destinationLabel}' must bind exactly one complete array-view layer. " +
+                                $"Target={target.GetType().Name} Layers={targetLayers} LayerIndex={layerIndex}.");
+                        }
+
+                        continue;
+                    }
+
                     if (layerIndex != -1)
                     {
                         throw new InvalidOperationException(
@@ -257,7 +271,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     }
                 }
 
-                if (stereo)
+                if (stereo && !IsolatedMonoReference)
                     expectedViewMask = 0x3u;
             }
 

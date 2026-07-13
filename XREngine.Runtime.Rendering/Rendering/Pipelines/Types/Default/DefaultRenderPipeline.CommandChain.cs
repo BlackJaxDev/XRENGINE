@@ -851,6 +851,8 @@ public partial class DefaultRenderPipeline
 
         AppendDiagnosticTextureCapture(c, "08_BloomMip0", BloomBlurTextureName, mipLevel: 0);
         AppendDiagnosticTextureCapture(c, "09_BloomMip1", BloomBlurTextureName, mipLevel: 1);
+        AppendDiagnosticTextureCapture(c, "09b_BloomMip2", BloomBlurTextureName, mipLevel: 2);
+        AppendDiagnosticTextureCapture(c, "09c_BloomMip3", BloomBlurTextureName, mipLevel: 3);
         AppendDiagnosticTextureCapture(c, "10_BloomMip4", BloomBlurTextureName, mipLevel: 4);
     }
 
@@ -898,6 +900,8 @@ public partial class DefaultRenderPipeline
             VPRC_TemporalAccumulationPass.EPhase.PopJitter;
 
         AppendDiagnosticTextureCapture(temporalCommands, "11_TemporalColorInput", TemporalColorInputTextureName);
+        AppendDiagnosticTextureCapture(temporalCommands, "11b_CurrentDepth", DepthViewTextureName);
+        AppendDiagnosticTextureCapture(temporalCommands, "11c_HistoryDepth", HistoryDepthViewTextureName);
         temporalChoice.TrueCommands = temporalCommands;
     }
 
@@ -1083,6 +1087,21 @@ public partial class DefaultRenderPipeline
             tsrOrPostAa.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
             {
                 var tsrUpscale = new ViewportRenderCommandContainer(this);
+                AppendDiagnosticTextureCapture(tsrUpscale, "13b_PreTsrHistoryColor", TsrHistoryColorTextureName);
+                if (Stereo && IsPhase524bValidationEnabled())
+                {
+                    using (tsrUpscale.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = TsrUpscaleFBO_SettingUniforms))
+                        tsrUpscale.Add<VPRC_RenderQuadToFBO>()
+                            .SetTargets(TsrMonoReferenceLeftFBOName, TsrMonoReferenceLeftFBOName, matchDestinationRenderArea: true)
+                            .SetIsolatedMonoReference()
+                            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.TsrUpscale());
+                    using (tsrUpscale.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = TsrUpscaleFBO_SettingUniforms))
+                        tsrUpscale.Add<VPRC_RenderQuadToFBO>()
+                            .SetTargets(TsrMonoReferenceRightFBOName, TsrMonoReferenceRightFBOName, matchDestinationRenderArea: true)
+                            .SetIsolatedMonoReference()
+                            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.TsrUpscale());
+                    AppendDiagnosticTextureCapture(tsrUpscale, "13c_MonoTsrReference", TsrMonoReferenceTextureName);
+                }
                 using (tsrUpscale.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = TsrUpscaleFBO_SettingUniforms))
                     tsrUpscale.Add<VPRC_RenderQuadToFBO>()
                         .SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName, matchDestinationRenderArea: true)
@@ -1098,7 +1117,9 @@ public partial class DefaultRenderPipeline
                 var markTsrHistory = tsrUpscale.Add<VPRC_TemporalAccumulationPass>();
                 markTsrHistory.Phase = VPRC_TemporalAccumulationPass.EPhase.MarkTsrHistoryColor;
                 markTsrHistory.ConfigureTsrHistoryTargets(TsrUpscaleFBOName, TsrHistoryColorFBOName);
+                AppendDiagnosticTextureCapture(tsrUpscale, "14_TsrOutput", TsrOutputTextureName);
                 AppendDiagnosticTextureCapture(tsrUpscale, "14b_TsrHistoryColor", TsrHistoryColorTextureName);
+                AppendDiagnosticDesktopFinalCapture(tsrUpscale, "15_FinalOutput", TsrOutputTextureName);
                 tsrOrPostAa.TrueCommands = tsrUpscale;
             }
             {
@@ -1110,6 +1131,7 @@ public partial class DefaultRenderPipeline
                     var fxaa = fxaaUpscale.Add<VPRC_FXAA>();
                     fxaa.SourceFBOName = FinalPostProcessOutputFBOName;
                     fxaa.DestinationFBOName = FxaaFBOName;
+                    fxaa.Stereo = Stereo;
                     postAaChoice.TrueCommands = fxaaUpscale;
                 }
                 {
@@ -1118,6 +1140,7 @@ public partial class DefaultRenderPipeline
                     smaa.SourceFBOName = FinalPostProcessOutputFBOName;
                     smaa.OutputTextureName = SmaaOutputTextureName;
                     smaa.OutputFBOName = SmaaFBOName;
+                    smaa.Stereo = Stereo;
                     postAaChoice.FalseCommands = smaaUpscale;
                 }
                 tsrOrPostAa.FalseCommands = fxaaOrSmaa;
@@ -1125,8 +1148,6 @@ public partial class DefaultRenderPipeline
 
             upscaleChoice.TrueCommands = upscaleCmds;
         }
-
-        AppendDiagnosticTextureCapture(c, "14_TsrOutput", TsrOutputTextureName);
     }
 
     private void AppendExposureUpdate(ViewportRenderCommandContainer c)
@@ -1618,44 +1639,119 @@ public partial class DefaultRenderPipeline
     private static string? ResolveOutputSourceFboOverride()
         => RenderDiagnosticsFlags.OutputSourceFboOverride;
 
-    private static void AppendDiagnosticTextureCapture(
+    private void AppendDiagnosticTextureCapture(
         ViewportRenderCommandContainer c,
         string label,
         string textureName,
         int mipLevel = 0)
     {
-        if (!ShouldCaptureDefaultPipelineFbos())
+        if (!Stereo || !ShouldCaptureDefaultPipelineFbos())
             return;
 
-        var capture = c.Add<VPRC_CaptureFrame>();
-        capture.SourceTextureName = textureName;
-        capture.SourceMipLevel = mipLevel;
-        capture.MaxCaptures = 1;
-        capture.SkipFramesBeforeCapture = ResolveDefaultPipelineCaptureSkipFrames();
-        capture.OutputFilePath = Path.Combine("Build", "Diagnostics", "FrameCaptures", $"DefaultPipeline_{label}.png");
-        capture.FlipVertically = false;
+        int layerCount = DefaultPipelineDiagnosticCapture.ResolveLayerCount(stereo: true);
+        for (int layerIndex = 0; layerIndex < layerCount; layerIndex++)
+        {
+            var capture = c.Add<VPRC_CaptureFrame>();
+            capture.SourceTextureName = textureName;
+            capture.SourceMipLevel = mipLevel;
+            capture.SourceLayerIndex = layerIndex;
+            capture.MaxCaptures = 1;
+            capture.SkipFramesBeforeCapture = ResolveDefaultPipelineCaptureSkipFrames();
+            capture.OutputFilePath = DefaultPipelineDiagnosticCapture.ResolveOutputPath("DefaultPipelineSps", label, layerIndex);
+            capture.FlipVertically = false;
+            ConfigurePhase524bTemporalScenarioCapture(capture, label, layerIndex, layerCount);
+        }
     }
 
-    private static void AppendDiagnosticFboCapture(
+    private void AppendDiagnosticFboCapture(
         ViewportRenderCommandContainer c,
         string label,
         string fboName)
     {
-        if (!ShouldCaptureDefaultPipelineFbos())
+        if (!Stereo || !ShouldCaptureDefaultPipelineFbos())
+            return;
+
+        int layerCount = DefaultPipelineDiagnosticCapture.ResolveLayerCount(stereo: true);
+        for (int layerIndex = 0; layerIndex < layerCount; layerIndex++)
+        {
+            var capture = c.Add<VPRC_CaptureFrame>();
+            capture.SourceFBOName = fboName;
+            capture.SourceLayerIndex = layerIndex;
+            capture.MaxCaptures = 1;
+            capture.SkipFramesBeforeCapture = ResolveDefaultPipelineCaptureSkipFrames();
+            capture.OutputFilePath = DefaultPipelineDiagnosticCapture.ResolveOutputPath("DefaultPipelineSps", label, layerIndex);
+            capture.FlipVertically = false;
+        }
+    }
+
+    private void AppendDiagnosticDesktopFinalCapture(
+        ViewportRenderCommandContainer c,
+        string label,
+        string textureName)
+    {
+        if (Stereo || !ShouldCaptureDefaultPipelineFbos())
             return;
 
         var capture = c.Add<VPRC_CaptureFrame>();
-        capture.SourceFBOName = fboName;
+        capture.SourceTextureName = textureName;
+        capture.SourceLayerIndex = 0;
         capture.MaxCaptures = 1;
         capture.SkipFramesBeforeCapture = ResolveDefaultPipelineCaptureSkipFrames();
-        capture.OutputFilePath = Path.Combine("Build", "Diagnostics", "FrameCaptures", $"DefaultPipeline_{label}.png");
+        capture.OutputFilePath = DefaultPipelineDiagnosticCapture.ResolveOutputPath(
+            "DefaultPipelineDesktop",
+            label,
+            layerIndex: 0);
         capture.FlipVertically = false;
+
+        const int motionCaptureCount = 3;
+        const int motionCaptureIntervalFrames = 15;
+        for (int motionIndex = 1; motionIndex < motionCaptureCount; motionIndex++)
+        {
+            var motionCapture = c.Add<VPRC_CaptureFrame>();
+            motionCapture.SourceTextureName = textureName;
+            motionCapture.SourceLayerIndex = 0;
+            motionCapture.MaxCaptures = 1;
+            motionCapture.SkipFramesBeforeCapture = ResolveDefaultPipelineCaptureSkipFrames() +
+                (motionIndex * motionCaptureIntervalFrames);
+            motionCapture.OutputFilePath = DefaultPipelineDiagnosticCapture.ResolveOutputPath(
+                "DefaultPipelineDesktop",
+                $"{label}_motion{motionIndex}",
+                layerIndex: 0);
+            motionCapture.FlipVertically = false;
+        }
     }
 
     private static int ResolveDefaultPipelineCaptureSkipFrames()
     {
         string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CaptureDefaultPipelineSkipFrames);
         return int.TryParse(raw, out int skipFrames) ? Math.Max(0, skipFrames) : 120;
+    }
+
+    private static void ConfigurePhase524bTemporalScenarioCapture(
+        VPRC_CaptureFrame capture,
+        string label,
+        int layerIndex,
+        int layerCount)
+    {
+        if (!IsPhase524bTemporalScenarioStage(label) || !IsPhase524bValidationEnabled())
+            return;
+
+        capture.CapturePhase524bTemporalScenarios = true;
+        capture.TemporalScenarioPipelineName = "DefaultPipelineSps";
+        capture.TemporalScenarioStage = label;
+        capture.CompletesPhase524bTemporalScenarioFrame =
+            label == "14_TsrOutput" && layerIndex == layerCount - 1;
+    }
+
+    private static bool IsPhase524bTemporalScenarioStage(string label)
+        => label is "07_Velocity" or "09_BloomMip1" or "13c_MonoTsrReference" or "14_TsrOutput";
+
+    private static bool IsPhase524bValidationEnabled()
+    {
+        string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanPhase524bValidation);
+        return string.Equals(raw, "1", StringComparison.Ordinal) ||
+            string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(raw, "yes", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool ShouldCaptureDefaultPipelineFbos()

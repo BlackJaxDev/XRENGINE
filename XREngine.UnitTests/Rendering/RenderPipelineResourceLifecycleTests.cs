@@ -210,6 +210,34 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [Test]
+    public void Registry_ImplicitTextureRebindPreservesDeclaredScaledSizePolicy()
+    {
+        RenderResourceRegistry registry = new();
+        TextureResourceDescriptor declared = new(
+            "GTAORawTexture",
+            RenderResourceLifetime.Persistent,
+            RenderResourceSizePolicy.Internal(0.5f),
+            FormatLabel: ESizedInternalFormat.R16f.ToString(),
+            Usage: RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment,
+            SizedInternalFormat: ESizedInternalFormat.R16f);
+        registry.RegisterTextureDescriptor(declared);
+
+        XRTexture2D concrete = XRTexture2D.CreateFrameBufferTexture(
+            448u,
+            504u,
+            EPixelInternalFormat.R16f,
+            EPixelFormat.Red,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        concrete.Name = declared.Name;
+
+        registry.BindTexture(concrete);
+
+        TextureResourceDescriptor actual = registry.TextureRecords[declared.Name].Descriptor;
+        actual.ShouldBe(declared);
+    }
+
+    [Test]
     public void RenderPassMetadata_RevisionsAndCachedViewsChangeOnlyOnMutation()
     {
         RenderPassMetadataCollection collection = new();
@@ -647,6 +675,36 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [Test]
+    public void DefaultRenderPipeline_StereoFxaaLayout_DescriptorFactoryAndFboUseTwoLayerMultiviewShape()
+    {
+        DefaultRenderPipeline pipeline = new(stereo: true);
+        RenderPipelineResourceLayout layout = pipeline.BuildResourceLayout(CreateProfile(
+            EAntiAliasingMode.Fxaa,
+            msaaSamples: 1u,
+            stereo: true));
+
+        AssertStereoTextureFactory(layout, DefaultRenderPipeline.FxaaOutputTextureName);
+        AssertStereoFramebufferAttachment(layout, DefaultRenderPipeline.FxaaFBOName, DefaultRenderPipeline.FxaaOutputTextureName);
+    }
+
+    [Test]
+    public void DefaultRenderPipeline_StereoSmaaLayout_AllDescriptorsFactoriesAndFbosUseTwoLayerMultiviewShapes()
+    {
+        DefaultRenderPipeline pipeline = new(stereo: true);
+        RenderPipelineResourceLayout layout = pipeline.BuildResourceLayout(CreateProfile(
+            EAntiAliasingMode.Smaa,
+            msaaSamples: 1u,
+            stereo: true));
+
+        AssertStereoTextureFactory(layout, DefaultRenderPipeline.SmaaEdgeTextureName);
+        AssertStereoTextureFactory(layout, DefaultRenderPipeline.SmaaBlendTextureName);
+        AssertStereoTextureFactory(layout, DefaultRenderPipeline.SmaaOutputTextureName);
+        AssertStereoFramebufferAttachment(layout, DefaultRenderPipeline.SmaaEdgeFBOName, DefaultRenderPipeline.SmaaEdgeTextureName);
+        AssertStereoFramebufferAttachment(layout, DefaultRenderPipeline.SmaaBlendFBOName, DefaultRenderPipeline.SmaaBlendTextureName);
+        AssertStereoFramebufferAttachment(layout, DefaultRenderPipeline.SmaaFBOName, DefaultRenderPipeline.SmaaOutputTextureName);
+    }
+
+    [Test]
     public void DefaultRenderPipeline_StereoPostProcessFallbacksRemainArraySamplers()
     {
         const ulong openXrVulkanSafePath = 1UL << 12;
@@ -814,6 +872,14 @@ public sealed class RenderPipelineResourceLifecycleTests
         AssertGtaoScratchScale(
             pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, msaaSamples: 1u, featureMask: (1UL << 13) | (1UL << 7))),
             0.25f);
+    }
+
+    [Test]
+    public void DefaultRenderPipeline_GtaoScratchFactory_MatchesDescriptorRoundingForOddEyeExtent()
+    {
+        DefaultRenderPipeline.ScaleGtaoScratchExtent(896u, divisor: 2).ShouldBe(448u);
+        DefaultRenderPipeline.ScaleGtaoScratchExtent(1007u, divisor: 2).ShouldBe(504u);
+        DefaultRenderPipeline.ScaleGtaoScratchExtent(1007u, divisor: 4).ShouldBe(252u);
     }
 
     [Test]
@@ -1221,22 +1287,60 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [Test]
-    public void ExternalSwapchainViewportResourceDimensionsUseInternalEyeExtent()
+    public void ExternalSwapchainViewportResourceDimensionsPreserveDisplayAndScaledInternalEyeExtents()
     {
         XRViewport viewport = new(null)
         {
-            Width = 1920,
-            Height = 1080,
+            Width = 896,
+            Height = 1007,
             RendersToExternalSwapchainTarget = true
         };
-        viewport.SetInternalResolution(1512, 1680, correctAspect: false);
+        viewport.SetInternalResolution(600, 674, correctAspect: false);
 
         var dimensions = XRRenderPipelineInstance.ResolveViewportResourceDimensions(viewport);
 
-        dimensions.DisplayWidth.ShouldBe(1512);
-        dimensions.DisplayHeight.ShouldBe(1680);
-        dimensions.InternalWidth.ShouldBe(1512);
-        dimensions.InternalHeight.ShouldBe(1680);
+        dimensions.DisplayWidth.ShouldBe(896);
+        dimensions.DisplayHeight.ShouldBe(1007);
+        dimensions.InternalWidth.ShouldBe(600);
+        dimensions.InternalHeight.ShouldBe(674);
+    }
+
+    [Test]
+    public void ExternalSwapchainFrameOpResourceDimensionsPreserveSubNativeInternalExtent()
+    {
+        Extent2D externalExtent = new(896u, 1007u);
+
+        var dimensions = VulkanRenderer.ResolveExternalFrameOpResourceDimensions(
+            externalExtent,
+            pipelineInternalWidth: 600u,
+            pipelineInternalHeight: 674u,
+            viewportInternalWidth: 896,
+            viewportInternalHeight: 1007,
+            contextInternalWidth: 896u,
+            contextInternalHeight: 1007u);
+
+        dimensions.DisplayWidth.ShouldBe(896u);
+        dimensions.DisplayHeight.ShouldBe(1007u);
+        dimensions.InternalWidth.ShouldBe(600u);
+        dimensions.InternalHeight.ShouldBe(674u);
+    }
+
+    [Test]
+    public void ExternalSwapchainFrameOpResourceDimensionsFallBackToViewportInternalExtent()
+    {
+        Extent2D externalExtent = new(896u, 1007u);
+
+        var dimensions = VulkanRenderer.ResolveExternalFrameOpResourceDimensions(
+            externalExtent,
+            pipelineInternalWidth: null,
+            pipelineInternalHeight: null,
+            viewportInternalWidth: 600,
+            viewportInternalHeight: 674);
+
+        dimensions.DisplayWidth.ShouldBe(896u);
+        dimensions.DisplayHeight.ShouldBe(1007u);
+        dimensions.InternalWidth.ShouldBe(600u);
+        dimensions.InternalHeight.ShouldBe(674u);
     }
 
     [Test]
@@ -1268,6 +1372,25 @@ public sealed class RenderPipelineResourceLifecycleTests
         raw.SizePolicy.ScaleY.ShouldBe(expectedScale, 0.0001f);
         intermediate.SizePolicy.ScaleX.ShouldBe(expectedScale, 0.0001f);
         intermediate.SizePolicy.ScaleY.ShouldBe(expectedScale, 0.0001f);
+    }
+
+    private static void AssertStereoTextureFactory(RenderPipelineResourceLayout layout, string textureName)
+    {
+        TextureSpec spec = layout.ResourcesByName[textureName].ShouldBeOfType<TextureSpec>();
+        spec.Layers.ShouldBe(2u, textureName);
+        spec.StereoCompatible.ShouldBeTrue(textureName);
+        spec.Factory.ShouldNotBeNull(textureName);
+
+        XRTexture2DArray texture = spec.Factory!().ShouldBeOfType<XRTexture2DArray>(textureName);
+        texture.Depth.ShouldBe(2u, textureName);
+        texture.OVRMultiViewParameters.ShouldNotBeNull(textureName);
+        texture.OVRMultiViewParameters!.Offset.ShouldBe(0, textureName);
+        texture.OVRMultiViewParameters.NumViews.ShouldBe(2u, textureName);
+        texture.Mipmaps.ShouldNotBeEmpty(textureName);
+        texture.Mipmaps[0].InternalFormat.ShouldBe(spec.InternalFormat!.Value, textureName);
+        texture.Mipmaps[0].PixelFormat.ShouldBe(spec.PixelFormat!.Value, textureName);
+        texture.Mipmaps[0].PixelType.ShouldBe(spec.PixelType!.Value, textureName);
+        texture.SizedInternalFormat.ShouldBe(spec.SizedInternalFormat!.Value, textureName);
     }
 
     private static void AssertStereoFramebufferAttachment(

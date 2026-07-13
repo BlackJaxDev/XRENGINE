@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using Shouldly;
+using Silk.NET.Vulkan;
 using System.Text.RegularExpressions;
 using XREngine.Rendering.Vulkan;
 
@@ -17,14 +18,20 @@ public sealed class VulkanCoreHardeningPhase4Tests
             OtherSequence: 2,
             EnqueuedTimestamp: 200,
             ResourceGeneration: 7,
-            ExternalOwnershipPending: false);
+            ExternalOwnershipPending: false,
+            PinSet: VulkanRenderer.VulkanRetirementPinSet.Single(
+                new VulkanRenderer.VulkanResourceLifetimeKey(ObjectType.Buffer, 0xA),
+                7));
         VulkanRenderer.VulkanRetirementTicket second = new(
             GraphicsSequence: 9,
             TransferSequence: 3,
             OtherSequence: 5,
             EnqueuedTimestamp: 100,
             ResourceGeneration: 11,
-            ExternalOwnershipPending: true);
+            ExternalOwnershipPending: true,
+            PinSet: VulkanRenderer.VulkanRetirementPinSet.Single(
+                new VulkanRenderer.VulkanResourceLifetimeKey(ObjectType.ImageView, 0xB),
+                11));
 
         VulkanRenderer.VulkanRetirementTicket merged = first.Merge(second);
 
@@ -34,6 +41,7 @@ public sealed class VulkanCoreHardeningPhase4Tests
         merged.EnqueuedTimestamp.ShouldBe(100L);
         merged.ResourceGeneration.ShouldBe(11UL);
         merged.ExternalOwnershipPending.ShouldBeTrue();
+        merged.PinSet.ShouldNotBeNull().Count.ShouldBe(2);
     }
 
     [Test]
@@ -46,11 +54,43 @@ public sealed class VulkanCoreHardeningPhase4Tests
             VulkanRenderer.EVulkanResourceLifetimeState.Completed |
             VulkanRenderer.EVulkanResourceLifetimeState.External |
             VulkanRenderer.EVulkanResourceLifetimeState.PendingRetirement |
-            VulkanRenderer.EVulkanResourceLifetimeState.Destroyed;
+            VulkanRenderer.EVulkanResourceLifetimeState.Destroyed |
+            VulkanRenderer.EVulkanResourceLifetimeState.Queued;
 
         Enum.GetValues<VulkanRenderer.EVulkanResourceLifetimeState>()
             .Where(static value => value != VulkanRenderer.EVulkanResourceLifetimeState.None)
             .ShouldAllBe(value => values.HasFlag(value));
+    }
+
+    [Test]
+    public void LifetimeRejectionDiagnostic_NamesEveryRequiredRaceIdentity()
+    {
+        VulkanRenderer.VulkanRetirementTicket ticket = new(
+            GraphicsSequence: 13,
+            TransferSequence: 2,
+            OtherSequence: 0,
+            EnqueuedTimestamp: 100,
+            ResourceGeneration: 41,
+            ExternalOwnershipPending: false);
+        string text = VulkanRenderer.DescribeVulkanLifetimeRejection(
+            new VulkanRenderer.VulkanResourceLifetimeKey(ObjectType.Buffer, 0xCAFE),
+            "StrictStereo.UniformBuffer",
+            oldGeneration: 40,
+            newGeneration: 41,
+            output: "OpenXR.TrueSinglePassStereo",
+            commandBufferHandle: 0xBEEF,
+            in ticket,
+            state: VulkanRenderer.EVulkanResourceLifetimeState.PendingRetirement,
+            reason: "recorded dependency is pending retirement");
+        text.ShouldContain("resource=Buffer:0xCAFE");
+        text.ShouldContain("owner=StrictStereo.UniformBuffer");
+        text.ShouldContain("oldGeneration=40");
+        text.ShouldContain("newGeneration=41");
+        text.ShouldContain("output=OpenXR.TrueSinglePassStereo");
+        text.ShouldContain("commandBuffer=0xBEEF");
+        text.ShouldContain("retirementTicket=gfx:13/transfer:2/other:0/generation:41");
+        text.ShouldContain("state=PendingRetirement");
+        text.ShouldContain("reason=recorded dependency is pending retirement");
     }
 
     [Test]
@@ -146,7 +186,7 @@ public sealed class VulkanCoreHardeningPhase4Tests
         string descriptorSets = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorSets.cs");
         string commandState = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferState.cs");
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
 
         lifetime.ShouldContain("Cannot update in-flight Vulkan descriptor set");
         lifetime.ShouldContain("CaptureVulkanDescriptorPoolRetirementTicket");
@@ -192,7 +232,7 @@ public sealed class VulkanCoreHardeningPhase4Tests
         string lifetime = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
         string commandState = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferState.cs");
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
 
         lifetime.ShouldContain("CmdExecuteCommandsTracked");
         lifetime.ShouldContain("CmdCopyBufferTracked");
@@ -260,7 +300,8 @@ public sealed class VulkanCoreHardeningPhase4Tests
         AssertRawVulkanCallOnlyIn(
             "DestroyImage(device",
             "Frame/VulkanRenderer.ResourceLifetimeTracking.cs",
-            "Frame/VulkanRenderer.ResourceRetirement.cs");
+            "Frame/VulkanRenderer.ResourceRetirement.cs",
+            "Features/Upscaling/VulkanUpscaleBridgeSharedImage.cs");
     }
 
     [Test]

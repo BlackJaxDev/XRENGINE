@@ -1190,7 +1190,7 @@ public interface IRuntimeRenderingHostServices
     void RecordRenderVrPerViewVisibleCounts(uint leftVisible, uint rightVisible);
     void RecordRenderVrRenderSubmitTime(TimeSpan submitTime);
     void RecordRenderVrXrWaitFrameBlockTime(TimeSpan waitTime);
-    void RecordRenderVrXrEndFrameSubmitTime(TimeSpan submitTime);
+    void RecordRenderVrXrEndFrameSubmitTime(TimeSpan submitTime, ulong renderFrameId = 0UL);
     void RecordRenderVrXrPredictedToLatePoseDelta(double millimeters, double degrees);
     void RecordRenderVrXrPredictedDisplayLeadTime(double leadTimeMs);
     void RecordRenderVrXrMissedDeadlineFrame();
@@ -1337,6 +1337,7 @@ public interface IRuntimeRenderingHostServices
     void RecordRenderVulkanPipelineCacheMiss(string? summary);
     void RecordRenderVulkanQueueOverlapWindow(int overlapCandidatePasses, int transferCost, TimeSpan frameDelta, bool promotedMode, bool demotedMode);
     void RecordRenderVulkanQueueSubmit();
+    void RecordRenderVulkanPresentResult(int result, bool accepted);
     void RecordRenderVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount);
     void RecordRenderVulkanRetiredResourceDrain(
         int descriptorPools,

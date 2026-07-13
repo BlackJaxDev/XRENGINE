@@ -1,6 +1,7 @@
 #version 450 core
 
 #pragma snippet "ScreenSpaceUtils"
+#pragma snippet "TemporalSuperResolutionCore"
 
 layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
@@ -38,34 +39,9 @@ uniform float ScreenWidth;
 uniform float ScreenHeight;
 uniform vec2 ScreenOrigin;
 
-const vec3 LuminanceWeights = vec3(0.2126f, 0.7152f, 0.0722f);
-
-// ── YCoCg color space ─────────────────────────────────────────────
-vec3 RGBToYCoCg(vec3 rgb)
-{
-    float Y  = dot(rgb, vec3(0.25f, 0.5f, 0.25f));
-    float Co = dot(rgb, vec3(0.5f, 0.0f, -0.5f));
-    float Cg = dot(rgb, vec3(-0.25f, 0.5f, -0.25f));
-    return vec3(Y, Co, Cg);
-}
-
-vec3 YCoCgToRGB(vec3 ycocg)
-{
-    float Y  = ycocg.x;
-    float Co = ycocg.y;
-    float Cg = ycocg.z;
-    return vec3(Y + Co - Cg, Y + Cg, Y - Co - Cg);
-}
-
-bool IsValidUV(vec2 uv)
-{
-    return all(greaterThanEqual(uv, vec2(0.0f))) && all(lessThanEqual(uv, vec2(1.0f)));
-}
-
 vec2 ClampUvToTexels(vec2 uv, vec2 texelSize)
 {
-    vec2 halfTexel = texelSize * 0.5f;
-    return clamp(uv, halfTexel, vec2(1.0f) - halfTexel);
+    return TsrClampUvToTexels(uv, texelSize);
 }
 
 vec2 TextureTexelSize(sampler2D tex)
@@ -144,34 +120,6 @@ float SamplePostTemporalForwardMask(vec2 uv)
     return ((stencilBits & 0x80u) != 0u) ? 1.0f : 0.0f;
 }
 
-void ComputePostTemporalForwardAA(vec2 uv, out float centerMask, out float coverage, out vec3 overlayColor)
-{
-    centerMask = SamplePostTemporalForwardMask(uv);
-    if (centerMask <= 0.5f)
-    {
-        coverage = 0.0f;
-        overlayColor = vec3(0.0f);
-        return;
-    }
-
-    coverage = centerMask;
-    uv = ClampSourceUv(uv);
-    vec3 rawOverlay = texture(PostProcessOutputTexture, uv).rgb;
-    vec3 filteredOverlay = SampleCurrentReconstruction(PostProcessOutputTexture, uv, TextureTexelSize(PostProcessOutputTexture));
-    overlayColor = mix(rawOverlay, filteredOverlay, 0.25f);
-}
-
-// ── Clip toward AABB center (Karis 2014) ──────────────────────────
-vec3 ClipToAABB(vec3 color, vec3 aabbMin, vec3 aabbMax)
-{
-    vec3 center  = 0.5f * (aabbMin + aabbMax);
-    vec3 extents = 0.5f * (aabbMax - aabbMin) + 1e-5f;
-    vec3 offset  = color - center;
-    vec3 ts = abs(extents / max(abs(offset), vec3(1e-5f)));
-    float t = clamp(min(ts.x, min(ts.y, ts.z)), 0.0f, 1.0f);
-    return center + offset * t;
-}
-
 // ── Closest-depth velocity ────────────────────────────────────────
 vec2 FindClosestVelocity(vec2 uv)
 {
@@ -208,7 +156,7 @@ void ComputeNeighborhoodBounds(vec2 uv, out vec3 minColor, out vec3 maxColor, ou
         for (int y = -1; y <= 1; ++y)
         {
             vec2 sampleUv = ClampSourceUv(uv + vec2(float(x), float(y)) * sourceTexelSize);
-            vec3 s = RGBToYCoCg(texture(PostProcessOutputTexture, sampleUv).rgb);
+            vec3 s = TsrRgbToYCoCg(texture(PostProcessOutputTexture, sampleUv).rgb);
             m1 += s;
             m2 += s * s;
         }
@@ -239,13 +187,6 @@ float EvaluateDepthDiscontinuity(vec2 uv)
     return clamp((maxDepth - minDepth) * DepthDiscontinuityScale, 0.0f, 1.0f);
 }
 
-float ComputeMotionMask(vec2 velocity)
-{
-    float motionMagnitude = length(velocity);
-    float motionStart = max(ReactiveVelocityScale * 0.05f, 0.0005f);
-    return smoothstep(motionStart, ReactiveVelocityScale, motionMagnitude);
-}
-
 vec3 EncodeVelocityDebug(vec2 velocity)
 {
     float magnitude = clamp(length(velocity) / max(ReactiveVelocityScale, 1e-5f), 0.0f, 1.0f);
@@ -268,12 +209,8 @@ void main()
     if (depthDiscontinuity > 1e-4f)
         velocity = FindClosestVelocity(uv);
 
-    float postTemporalCenterMask;
-    float postTemporalCoverage;
-    vec3 postTemporalOverlayColor;
-    ComputePostTemporalForwardAA(uv, postTemporalCenterMask, postTemporalCoverage, postTemporalOverlayColor);
-
-    bool isPostTemporalForward = postTemporalCenterMask > 0.5f;
+    float postTemporalCoverage = SamplePostTemporalForwardMask(uv);
+    bool isPostTemporalForward = postTemporalCoverage > 0.5f;
     if (isPostTemporalForward)
         velocity = vec2(0.0f);
 
@@ -294,7 +231,7 @@ void main()
     vec3 currentColor = nativeResolution
         ? currentColorRaw
         : mix(currentColorRaw, currentColorFiltered, 0.25f);
-    vec3 currentYCoCg = RGBToYCoCg(currentColor);
+    vec3 currentYCoCg = TsrRgbToYCoCg(currentColor);
     float currentLuma = currentYCoCg.x;
 
     // Neighborhood in YCoCg at source resolution
@@ -303,17 +240,17 @@ void main()
 
     float currentDepth = texture(DepthView, uv).r;
     vec3 historyYCoCg = currentYCoCg;
-    bool canUseHistory = HistoryReady && IsValidUV(historyUV);
+    bool canUseHistory = TsrCanSampleHistory(HistoryReady, historyUV);
 
     if (canUseHistory)
     {
         vec2 historySampleUv = ClampHistoryUv(historyUV);
         float historyDepth = texture(HistoryDepth, historySampleUv).r;
-        if (abs(historyDepth - currentDepth) <= DepthRejectThreshold)
+        if (TsrDepthMatches(currentDepth, historyDepth, DepthRejectThreshold))
         {
             // Bicubic Catmull-Rom on full-resolution history
             vec3 historyRGB = SampleCatmullRom(TsrHistoryColor, historySampleUv, historyTexelSize);
-            historyYCoCg = RGBToYCoCg(historyRGB);
+            historyYCoCg = TsrRgbToYCoCg(historyRGB);
         }
         else
         {
@@ -322,26 +259,31 @@ void main()
     }
 
     // Clip toward AABB center
-    vec3 clippedHistory = ClipToAABB(historyYCoCg, minBound, maxBound);
+    vec3 clippedHistory = TsrClipHistoryToNeighborhood(historyYCoCg, minBound, maxBound);
     float historyLuma = clippedHistory.x;
 
-    float motionMask = ComputeMotionMask(velocity);
-    float geometryInstability = clamp(depthDiscontinuity * mix(0.2f, 1.0f, motionMask), 0.0f, 1.0f);
+    float motionMask = TsrComputeMotionMask(velocity, ReactiveVelocityScale);
+    float geometryInstability = TsrComputeGeometryInstability(depthDiscontinuity, motionMask);
 
     // Reactive mask
     vec4 currentSample = texture(PostProcessOutputTexture, uv);
-    float transparencyMask = smoothstep(ReactiveTransparencyRange.x, ReactiveTransparencyRange.y, 1.0f - clamp(currentSample.a, 0.0f, 1.0f)) * max(0.15f, motionMask);
-    float luminanceDelta = abs(currentLuma - historyLuma);
-    float luminanceMask = smoothstep(0.25f * ReactiveLumaThreshold, ReactiveLumaThreshold, luminanceDelta) * motionMask;
-    float reactiveMask = clamp(max(transparencyMask, max(motionMask, luminanceMask)), 0.0f, 1.0f);
-
-    float confidence = pow(clamp((1.0f - geometryInstability) * (1.0f - reactiveMask), 0.0f, 1.0f), ConfidencePower);
-    float staticConfidenceFloor = (1.0f - motionMask) * (1.0f - reactiveMask) * 0.5f;
-    confidence = max(confidence, staticConfidenceFloor);
-
-    float historyWeight = mix(FeedbackMin, FeedbackMax, confidence);
-    if (!canUseHistory)
-        historyWeight = 0.0f;
+    float reactiveMask = TsrComputeReactiveMask(
+        currentSample.a,
+        currentLuma,
+        historyLuma,
+        motionMask,
+        ReactiveTransparencyRange,
+        ReactiveLumaThreshold);
+    float confidence = TsrComputeConfidence(
+        geometryInstability,
+        reactiveMask,
+        motionMask,
+        ConfidencePower);
+    float historyWeight = TsrComputeHistoryWeight(
+        canUseHistory,
+        confidence,
+        FeedbackMin,
+        FeedbackMax);
     if (isPostTemporalForward)
         historyWeight = 0.0f;
 
@@ -373,7 +315,7 @@ void main()
 
     // Blend in YCoCg, convert back
     vec3 resolved = mix(currentYCoCg, clippedHistory, historyWeight);
-    vec3 result = YCoCgToRGB(resolved);
+    vec3 result = TsrYCoCgToRgb(resolved);
 
     // Post-resolve sharpening — stronger than TAA because we're upscaling from low res.
     // Uses current frame detail to restore high-frequency edges. Skip the
@@ -386,14 +328,12 @@ void main()
             texture(PostProcessOutputTexture, ClampSourceUv(uv + vec2(0.0f, -1.0f) * sourceTexelSize)).rgb +
             texture(PostProcessOutputTexture, ClampSourceUv(uv + vec2(0.0f,  1.0f) * sourceTexelSize)).rgb;
         vec3 highFreq = currentColorRaw - neighbors * 0.25f;
-        float sharpenStrength = (nativeResolution ? 0.08f : 0.18f)
-            * (1.0f - historyWeight)
-            * (1.0f - 0.5f * reactiveMask);
+        float sharpenStrength = TsrComputeSharpenStrength(
+            nativeResolution,
+            historyWeight,
+            reactiveMask);
         result += highFreq * sharpenStrength;
     }
-
-    if (postTemporalCoverage > 0.0f)
-        result = mix(result, postTemporalOverlayColor, postTemporalCoverage);
 
     OutColor = vec4(max(result, vec3(0.0f)), 1.0f);
 }
