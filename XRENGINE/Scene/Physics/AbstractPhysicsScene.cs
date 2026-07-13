@@ -30,11 +30,43 @@ namespace XREngine.Scene
         public uint FaceIndex;
     }
 
+
+    [Flags]
+    public enum PhysicsQueryActorTypes
+    {
+        None = 0,
+        Static = 1 << 0,
+        Dynamic = 1 << 1,
+        All = Static | Dynamic,
+    }
+
+    [Flags]
+    public enum PhysicsQueryHitDetail
+    {
+        Default = 0,
+        Position = 1 << 0,
+        Normal = 1 << 1,
+        UV = 1 << 2,
+        FaceIndex = 1 << 3,
+    }
+
+    public readonly struct PhysicsQueryFilter(
+        PhysicsQueryActorTypes actorTypes = PhysicsQueryActorTypes.All,
+        PhysicsQueryHitDetail hitDetail = PhysicsQueryHitDetail.Default,
+        float sweepInflation = 0.0f) : AbstractPhysicsScene.IAbstractQueryFilter
+    {
+        public PhysicsQueryActorTypes ActorTypes { get; } = actorTypes;
+        public PhysicsQueryHitDetail HitDetail { get; } = hitDetail;
+        public float SweepInflation { get; } = sweepInflation;
+    }
+
     public abstract class AbstractPhysicsScene : XRBase
     {
         public interface IAbstractQueryFilter
         {
-
+            PhysicsQueryActorTypes ActorTypes { get; }
+            PhysicsQueryHitDetail HitDetail { get; }
+            float SweepInflation { get; }
         }
         public event Action? OnSimulationStep;
 
@@ -247,6 +279,32 @@ namespace XREngine.Scene
         Vector3 AngularVelocity { get; }
         bool IsSleeping { get; }
     }
+
+    /// <summary>
+    /// Backend-neutral capsule character controller surface used by gameplay movement code.
+    /// Backend-specific controller objects may expose richer extension APIs, but shared gameplay
+    /// systems should depend on this contract.
+    /// </summary>
+    public interface IAbstractCharacterController : IAbstractRigidPhysicsActor
+    {
+        Vector3 Position { get; set; }
+        Vector3 FootPosition { get; set; }
+        Vector3 UpDirection { get; set; }
+
+        float Radius { get; set; }
+        float Height { get; }
+        float SlopeLimit { get; set; }
+        float StepOffset { get; set; }
+        float ContactOffset { get; set; }
+
+        bool CollidingUp { get; }
+        bool CollidingDown { get; }
+
+        void Move(Vector3 delta, float minDist, float elapsedTime);
+        void Resize(float height);
+        void RequestRelease();
+    }
+
     public interface IAbstractRigidBody : IAbstractRigidPhysicsActor
     {
 
