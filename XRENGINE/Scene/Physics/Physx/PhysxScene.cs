@@ -2756,7 +2756,7 @@ namespace XREngine.Rendering.Physics.Physx
                 d[x + 0] = p.pos.x;
                 d[x + 1] = p.pos.y;
                 d[x + 2] = p.pos.z;
-                ((uint*)d)[x + 3] = p.color; // RGBA8 packed uint  no conversion needed
+                ((uint*)d)[x + 3] = p.color; // RGBA8 packed uint - no conversion needed
             }
         }
 
