@@ -1161,6 +1161,9 @@ namespace XREngine.Scene.Physics.Jolt
 
         public override void DebugRenderCollect()
         {
+            if (!Engine.EditorPreferences.Diagnostics.General.JoltDebugRenderDiagnostics)
+                return;
+
             JoltPhysicsDiagnostics diagnostics = GetDiagnostics();
             System.Diagnostics.Debug.WriteLine(
                 $"[JoltScene] DebugRenderCollect actors={diagnostics.ActorCount} rigid={diagnostics.RigidActorCount} static={diagnostics.StaticBodyCount} dynamic={diagnostics.DynamicBodyCount} controllers={diagnostics.CharacterControllerCount} joints={diagnostics.JointCount}");
