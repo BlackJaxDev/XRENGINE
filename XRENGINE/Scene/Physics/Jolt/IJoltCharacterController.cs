@@ -1,8 +1,7 @@
 namespace XREngine.Scene.Physics.Jolt
 {
-    public interface IJoltCharacterController : IAbstractCharacterController
+    public interface IJoltCharacterController : IAbstractCharacterController, IAdvancedCharacterControllerSettings, ICharacterControllerCollisionSettings
     {
-        bool CollidingSides { get; }
         void ConsumeInputBuffer(float fixedDelta);
     }
 }

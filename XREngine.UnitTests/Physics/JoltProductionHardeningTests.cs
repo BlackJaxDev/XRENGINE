@@ -39,7 +39,7 @@ public sealed class JoltProductionHardeningTests
         _ = new JoltCharacterVirtualController(_scene, new Vector3(0.0f, 1.0f, 0.0f))
         {
             Radius = 0.25f,
-            Height = 1.0f,
+            TotalHeight = 1.0f,
         };
 
         _scene.GetDiagnostics().ShouldBe(new JoltPhysicsDiagnostics(2, 2, 0, 2, 1, 1));

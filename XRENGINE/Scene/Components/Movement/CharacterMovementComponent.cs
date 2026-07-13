@@ -79,7 +79,7 @@ namespace XREngine.Components.Movement
             DynamicFriction = 0.9f,
             Restitution = 0.1f,
         };
-        private float _radius = 0.6f;
+        private float _radius = 0.3f;
         private float _standingHeight = new FeetInches(5, 2.0f).ToMeters();
         private float _crouchedHeight = new FeetInches(3, 0.0f).ToMeters();
         private float _proneHeight = new FeetInches(1, 0.0f).ToMeters();
@@ -93,16 +93,25 @@ namespace XREngine.Components.Movement
         private bool _ownsActiveController;
         private IAbstractRigidPhysicsActor? _controllerActorProxy;
         private float _minMoveDistance = 0.00001f;
-        private float _contactOffset = 0.001f;
+        private float _contactOffset = 0.02f;
         private Vector3 _upDirection = Globals.Up;
         private Vector3 _spawnPosition = Vector3.Zero;
         private Vector3 _velocity = Vector3.Zero;
         private Vector3? _gravityOverride = null;
         private bool _rotateGravityToMatchCharacterUp = false;
+        private CharacterMotionInputModel _motionInputModel = CharacterMotionInputModel.Velocity;
+        private float _predictiveContactDistance = 0.1f;
+        private float _collisionTolerance = 0.001f;
+        private float _stickToFloorDistance = 0.1f;
+        private float _stepDownExtra;
+        private float _maxStrength = 100.0f;
 
         // Jump state (runtime only, not settings)
         private float _jumpElapsed = 0.0f;
         private bool _isJumping = false;
+        private int _jumpHeld;
+        private int _pendingJumpPresses;
+        private bool _jumpPressedThisProducerTick;
         private bool _canJumpState = true;
         private float _coyoteTimer = 0.0f;
 
@@ -151,7 +160,7 @@ namespace XREngine.Components.Movement
         /// Half the current height of the character controller, depending on standing, crouch or prone state.
         /// Also includes the radius and contact offset.
         /// </summary>
-        public float HalfHeight => CurrentHeight * 0.5f + Radius + ContactOffset;
+        public float HalfHeight => CurrentHeight * 0.5f + ContactOffset;
 
         /// <summary>
         /// The position of the character's feet.
@@ -188,7 +197,12 @@ namespace XREngine.Components.Movement
         public Vector3 UpDirection
         { 
             get => _upDirection;
-            set => SetField(ref _upDirection, value);
+            set
+            {
+                if (!IsFinite(value) || value.LengthSquared() < 1e-8f)
+                    return;
+                SetField(ref _upDirection, Vector3.Normalize(value));
+            }
         }
 
         /// <summary>
@@ -248,7 +262,11 @@ namespace XREngine.Components.Movement
         public float MaxJumpHeight
         {
             get => _maxJumpHeight;
-            set => SetField(ref _maxJumpHeight, value);
+            set
+            {
+                if (float.IsFinite(value))
+                    SetField(ref _maxJumpHeight, MathF.Max(0.0f, value));
+            }
         }
 
         /// <summary>
@@ -263,7 +281,99 @@ namespace XREngine.Components.Movement
         public float ContactOffset
         {
             get => _contactOffset;
-            set => SetField(ref _contactOffset, value);
+            set
+            {
+                if (float.IsFinite(value))
+                    SetField(ref _contactOffset, MathF.Max(0.0f, value));
+            }
+        }
+
+        [Category("Movement")]
+        [DisplayName("Motion Input Model")]
+        [Description("Whether processed movement is submitted as velocity or per-tick displacement.")]
+        public CharacterMotionInputModel MotionInputModel
+        {
+            get => _motionInputModel;
+            set
+            {
+                if (SetField(ref _motionInputModel, value) && ActiveController is not null)
+                    ActiveController.MotionInputModel = value;
+            }
+        }
+
+        [Category("Jolt Controller")]
+        public float PredictiveContactDistance
+        {
+            get => _predictiveContactDistance;
+            set
+            {
+                if (!float.IsFinite(value))
+                    return;
+                float sanitized = MathF.Max(0.0f, value);
+                if (SetField(ref _predictiveContactDistance, sanitized)
+                    && ActiveController is IAdvancedCharacterControllerSettings advanced)
+                    advanced.PredictiveContactDistance = sanitized;
+            }
+        }
+
+        [Category("Jolt Controller")]
+        public float CollisionTolerance
+        {
+            get => _collisionTolerance;
+            set
+            {
+                if (!float.IsFinite(value))
+                    return;
+                float sanitized = MathF.Max(0.000001f, value);
+                if (SetField(ref _collisionTolerance, sanitized)
+                    && ActiveController is IAdvancedCharacterControllerSettings advanced)
+                    advanced.CollisionTolerance = sanitized;
+            }
+        }
+
+        [Category("Jolt Controller")]
+        public float StickToFloorDistance
+        {
+            get => _stickToFloorDistance;
+            set
+            {
+                if (!float.IsFinite(value))
+                    return;
+                float sanitized = MathF.Max(0.0f, value);
+                if (SetField(ref _stickToFloorDistance, sanitized)
+                    && ActiveController is IAdvancedCharacterControllerSettings advanced)
+                    advanced.StickToFloorDistance = sanitized;
+            }
+        }
+
+        [Category("Jolt Controller")]
+        public float StepDownExtra
+        {
+            get => _stepDownExtra;
+            set
+            {
+                if (!float.IsFinite(value))
+                    return;
+                float sanitized = MathF.Max(0.0f, value);
+                if (SetField(ref _stepDownExtra, sanitized)
+                    && ActiveController is IAdvancedCharacterControllerSettings advanced)
+                    advanced.StepDownExtra = sanitized;
+            }
+        }
+
+        [Category("Physics")]
+        public float MaxStrength
+        {
+            get => _maxStrength;
+            set
+            {
+                if (!float.IsFinite(value))
+                    return;
+                float sanitized = MathF.Max(0.0f, value);
+                if (SetField(ref _maxStrength, sanitized)
+                    && ActiveController is IAdvancedCharacterControllerSettings advanced)
+                    advanced.MaxStrength = sanitized;
+            }
         }
 
         /// <summary>
@@ -353,7 +463,12 @@ namespace XREngine.Components.Movement
         public bool SlideOnSteepSlopes
         {
             get => MovementModule.SlideOnSteepSlopes;
-            set => MovementModule.SlideOnSteepSlopes = value;
+            set
+            {
+                MovementModule.SlideOnSteepSlopes = value;
+                if (ActiveController is ICharacterControllerCollisionSettings collisionSettings)
+                    collisionSettings.SlideOnSteepSlopes = value;
+            }
         }
 
         [Category("Capsule")]
@@ -362,7 +477,18 @@ namespace XREngine.Components.Movement
         public float Radius
         {
             get => _radius;
-            set => SetField(ref _radius, value);
+            set
+            {
+                if (!float.IsFinite(value))
+                    return;
+                float sanitized = MathF.Max(0.001f, value);
+                if (!SetField(ref _radius, sanitized))
+                    return;
+                float minimumHeight = 2.0f * sanitized;
+                StandingHeight = MathF.Max(StandingHeight, minimumHeight);
+                CrouchedHeight = MathF.Max(CrouchedHeight, minimumHeight);
+                ProneHeight = MathF.Max(ProneHeight, minimumHeight);
+            }
         }
 
         /// <summary>
@@ -370,11 +496,15 @@ namespace XREngine.Components.Movement
         /// </summary>
         [Category("Capsule")]
         [DisplayName("Standing Height")]
-        [Description("Character height when standing.")]
+        [Description("Total capsule height when standing, including both hemispheres.")]
         public float StandingHeight
         {
             get => _standingHeight;
-            set => SetField(ref _standingHeight, value);
+            set
+            {
+                if (float.IsFinite(value))
+                    SetField(ref _standingHeight, MathF.Max(2.0f * Radius, value));
+            }
         }
 
         /// <summary>
@@ -382,11 +512,15 @@ namespace XREngine.Components.Movement
         /// </summary>
         [Category("Crouch")]
         [DisplayName("Prone Height")]
-        [Description("Character height when prone.")]
+        [Description("Total capsule height when prone, including both hemispheres.")]
         public float ProneHeight
         {
             get => _proneHeight;
-            set => SetField(ref _proneHeight, value);
+            set
+            {
+                if (float.IsFinite(value))
+                    SetField(ref _proneHeight, MathF.Max(2.0f * Radius, value));
+            }
         }
 
         /// <summary>
@@ -394,17 +528,21 @@ namespace XREngine.Components.Movement
         /// </summary>
         [Category("Crouch")]
         [DisplayName("Crouched Height")]
-        [Description("Character height when crouched.")]
+        [Description("Total capsule height when crouched, including both hemispheres.")]
         public float CrouchedHeight
         {
             get => _crouchedHeight;
-            set => SetField(ref _crouchedHeight, value);
+            set
+            {
+                if (float.IsFinite(value))
+                    SetField(ref _crouchedHeight, MathF.Max(2.0f * Radius, value));
+            }
         }
 
         /// <summary>
         /// The current height of the character controller, depending on the crouch state.
         /// </summary>
-        public float CurrentHeight => ActiveController?.Height ?? GetCurrentHeight();
+        public float CurrentHeight => ActiveController?.TotalHeight ?? GetCurrentHeight();
 
         private float GetCurrentHeight()
             => CrouchState switch
@@ -435,7 +573,11 @@ namespace XREngine.Components.Movement
         public float MinMoveDistance
         {
             get => _minMoveDistance;
-            set => SetField(ref _minMoveDistance, value);
+            set
+            {
+                if (float.IsFinite(value))
+                    SetField(ref _minMoveDistance, MathF.Max(0.0f, value));
+            }
         }
 
         [Browsable(false)]
@@ -448,6 +590,10 @@ namespace XREngine.Components.Movement
 
         [Browsable(false)]
         public IAbstractCharacterController? CharacterController => ActiveController;
+
+        [Browsable(false)]
+        public PhysicsCharacterControllerCapabilities BackendCapabilities
+            => ActiveController?.Capabilities ?? PhysicsCharacterControllerCapabilities.None;
 
         public IAbstractDynamicRigidBody? RigidBodyReference => _physxController?.Actor;
 
@@ -539,11 +685,11 @@ namespace XREngine.Components.Movement
                 case nameof(UpDirection):
                     ActiveController?.UpDirection = UpDirection;
                     break;
-                case nameof(SlideOnSteepSlopes):
-                    if (_physxController is not null)
-                        _physxController.ClimbingMode = ConstrainedClimbing 
-                            ? PxCapsuleClimbingMode.Constrained
-                            : PxCapsuleClimbingMode.Easy;
+                case nameof(CollisionGroup):
+                    if (ActiveController is ICharacterControllerCollisionSettings collisionSettings)
+                        collisionSettings.CollisionLayerMask = CollisionGroup == 0
+                            ? new LayerMask(1)
+                            : new LayerMask(1 << CollisionGroup);
                     break;
             }
         }
@@ -558,23 +704,26 @@ namespace XREngine.Components.Movement
         private void UpdateCapsuleRenderMeshIfNeeded()
         {
             float radius = Radius;
-            float halfHeight = CurrentHeight * 0.5f;
+            float totalHeight = MathF.Max(CurrentHeight, 2.0f * radius);
+            float halfCylinderHeight = MathF.Max(0.0f, totalHeight - 2.0f * radius) * 0.5f;
 
-            if (!_capsuleMeshDirty && radius == _lastCapsuleRenderRadius && halfHeight == _lastCapsuleRenderHalfHeight)
+            if (!_capsuleMeshDirty
+                && radius == _lastCapsuleRenderRadius
+                && halfCylinderHeight == _lastCapsuleRenderHalfHeight)
                 return;
 
             _lastCapsuleRenderRadius = radius;
-            _lastCapsuleRenderHalfHeight = halfHeight;
+            _lastCapsuleRenderHalfHeight = halfCylinderHeight;
             _capsuleMeshDirty = false;
 
             _capsuleRenderMeshRenderer.Mesh = XRMesh.Shapes.WireframeCapsule(
                 Vector3.Zero,
                 Globals.Up,
                 radius,
-                halfHeight,
+                halfCylinderHeight,
                 CapsuleRenderPointCountHalfCircle);
 
-            float yHalfExtent = halfHeight + radius;
+            float yHalfExtent = totalHeight * 0.5f;
             _capsuleRenderInfo.LocalCullingVolume = AABB.FromSize(new Vector3(radius * 2.0f, yHalfExtent * 2.0f, radius * 2.0f));
         }
 
@@ -587,7 +736,7 @@ namespace XREngine.Components.Movement
             base.OnComponentActivated();
 
             _subUpdateTick = GroundMovementTick;
-            RegisterTick(TickInputWithPhysics ? ETickGroup.PrePhysics : ETickGroup.Late, (int)ETickOrder.Animation, MainUpdateTick);
+            RegisterMovementTick();
 
             var physicsScene = WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene;
             if (physicsScene is null)
@@ -635,6 +784,7 @@ namespace XREngine.Components.Movement
         {
             _ownsActiveController = false;
             _physxController = (controller as IPhysxCharacterControllerExtension)?.NativeController;
+            ApplyControllerSettings(controller);
             ActiveController = controller;
             _controllerActorProxy = controller;
             RigidBodyTransform.PostRotationOffset = Quaternion.Identity;
@@ -669,6 +819,7 @@ namespace XREngine.Components.Movement
             if (ActiveController is not null)
                 return;
 
+            ReportUnsupportedSettings(physicsScene.BackendService.CharacterControllerCapabilities);
             IAbstractCharacterController? controller = physicsScene.BackendService.CreateCharacterController(
                 new PhysicsCharacterControllerCreateInfo(
                     position,
@@ -681,6 +832,15 @@ namespace XREngine.Components.Movement
                     Density,
                     _materialDefinition)
                 {
+                    MotionInputModel = MotionInputModel,
+                    CollisionLayerMask = CollisionGroup == 0
+                        ? new LayerMask(1)
+                        : new LayerMask(1 << CollisionGroup),
+                    PredictiveContactDistance = PredictiveContactDistance,
+                    CollisionTolerance = CollisionTolerance,
+                    StickToFloorDistance = StickToFloorDistance,
+                    StepDownExtra = StepDownExtra,
+                    MaxStrength = MaxStrength,
                     InvisibleWallHeight = InvisibleWallHeight,
                     MaxJumpHeight = MaxJumpHeight,
                     ScaleCoefficient = ScaleCoeff,
@@ -700,6 +860,42 @@ namespace XREngine.Components.Movement
             Engine.EnqueueUpdateThreadTask(() => BindOwnedController(physicsScene, controller, initVersion));
         }
 
+        private void ReportUnsupportedSettings(PhysicsCharacterControllerCapabilities capabilities)
+        {
+            string controllerName = SceneNode?.Name ?? "<unnamed>";
+            if (_materialDefinition is not null
+                && !capabilities.HasFlag(PhysicsCharacterControllerCapabilities.Materials))
+                Debug.LogWarning($"[CharacterMovement] '{controllerName}' controller material is not supported by the active physics backend.");
+            if (InvisibleWallHeight > 0.0f
+                && !capabilities.HasFlag(PhysicsCharacterControllerCapabilities.InvisibleWalls))
+                Debug.LogWarning($"[CharacterMovement] '{controllerName}' invisible walls are not supported by the active physics backend.");
+            if (InvisibleWallHeight > 0.0f && MaxJumpHeight > 0.0f
+                && !capabilities.HasFlag(PhysicsCharacterControllerCapabilities.MaximumJumpHeight))
+                Debug.LogWarning($"[CharacterMovement] '{controllerName}' maximum jump height for invisible walls is not supported by the active physics backend.");
+            if (ConstrainedClimbing
+                && !capabilities.HasFlag(PhysicsCharacterControllerCapabilities.ConstrainedClimbing))
+                Debug.LogWarning($"[CharacterMovement] '{controllerName}' constrained capsule climbing is not supported by the active physics backend.");
+            if (!capabilities.HasFlag(PhysicsCharacterControllerCapabilities.ScaleCoefficient))
+                Debug.LogWarning($"[CharacterMovement] '{controllerName}' PhysX scale coefficient is not supported by the active physics backend.");
+            if (!capabilities.HasFlag(PhysicsCharacterControllerCapabilities.VolumeGrowth))
+                Debug.LogWarning($"[CharacterMovement] '{controllerName}' PhysX volume growth is not supported by the active physics backend.");
+            if (MathF.Abs(PredictiveContactDistance - 0.1f) > 1e-6f
+                && !capabilities.HasFlag(PhysicsCharacterControllerCapabilities.PredictiveContacts))
+                Debug.LogWarning($"[CharacterMovement] '{controllerName}' predictive contact distance is not supported by the active physics backend.");
+            if (MathF.Abs(CollisionTolerance - 0.001f) > 1e-6f
+                && !capabilities.HasFlag(PhysicsCharacterControllerCapabilities.IndependentCollisionTolerance))
+                Debug.LogWarning($"[CharacterMovement] '{controllerName}' independent collision tolerance is not supported by the active physics backend.");
+            if (MathF.Abs(StickToFloorDistance - 0.1f) > 1e-6f
+                && !capabilities.HasFlag(PhysicsCharacterControllerCapabilities.FloorStickDistance))
+                Debug.LogWarning($"[CharacterMovement] '{controllerName}' floor-stick distance is not supported by the active physics backend.");
+            if (StepDownExtra > 1e-6f
+                && !capabilities.HasFlag(PhysicsCharacterControllerCapabilities.IndependentStepDown))
+                Debug.LogWarning($"[CharacterMovement] '{controllerName}' independent step-down distance is not supported by the active physics backend.");
+            if (MathF.Abs(MaxStrength - 100.0f) > 1e-6f
+                && !capabilities.HasFlag(PhysicsCharacterControllerCapabilities.MaximumStrength))
+                Debug.LogWarning($"[CharacterMovement] '{controllerName}' maximum strength is not supported by the active physics backend.");
+        }
+
         private void BindOwnedController(
             AbstractPhysicsScene physicsScene,
             IAbstractCharacterController controller,
@@ -715,6 +911,7 @@ namespace XREngine.Components.Movement
 
             _ownsActiveController = true;
             _physxController = (controller as IPhysxCharacterControllerExtension)?.NativeController;
+            ApplyControllerSettings(controller);
             ActiveController = controller;
 
             // CCT doesn't have rotation like regular physics actors, so clear the default -90� Z offset
@@ -726,9 +923,30 @@ namespace XREngine.Components.Movement
             RigidBodyTransform.OnPhysicsStepped();
         }
 
+        private void ApplyControllerSettings(IAbstractCharacterController controller)
+        {
+            controller.MotionInputModel = MotionInputModel;
+            if (controller is ICharacterControllerCollisionSettings collisionSettings)
+            {
+                collisionSettings.CollisionLayerMask = CollisionGroup == 0
+                    ? new LayerMask(1)
+                    : new LayerMask(1 << CollisionGroup);
+                collisionSettings.SlideOnSteepSlopes = SlideOnSteepSlopes;
+            }
+            if (controller is not IAdvancedCharacterControllerSettings advanced)
+                return;
+
+            advanced.PredictiveContactDistance = PredictiveContactDistance;
+            advanced.CollisionTolerance = CollisionTolerance;
+            advanced.StickToFloorDistance = StickToFloorDistance;
+            advanced.StepDownExtra = StepDownExtra;
+            advanced.MaxStrength = MaxStrength;
+        }
+
         protected override void OnComponentDeactivated()
         {
             Interlocked.Increment(ref _controllerInitVersion);
+            UnregisterMovementTick();
             _subUpdateTick = null;
             _subscribedPhysicsScene?.OnSimulationStep -= OnPhysicsSimulationStep;
             _subscribedPhysicsScene = null;
@@ -769,22 +987,35 @@ namespace XREngine.Components.Movement
         {
             if (ActiveController is null)
                 return;
+            float dt = DeltaTime;
+            if (!float.IsFinite(dt) || dt <= 0.0f)
+                return;
 
-            // If no rigid body is bound (expected for CCT), keep our last computed Velocity.
-            Velocity = RigidBodyTransform.RigidBody?.LinearVelocity ?? Velocity;
-            Acceleration = (Velocity - LastVelocity) / DeltaTime;
+            Acceleration = (Velocity - LastVelocity) / dt;
 
             UpdateCapsuleRenderMeshIfNeeded();
 
             var rawInput = ConsumeInput();
-            var tickResult = _subUpdateTick?.Invoke(rawInput) ?? Vector3.Zero;
-            var literalInput = ConsumeLiteralInput();
-            var moveDelta = tickResult + literalInput;
+            _jumpPressedThisProducerTick = TryConsumeJumpPress();
+            bool wasJumping = _isJumping;
+            _isJumping = Volatile.Read(ref _jumpHeld) != 0;
+            if (wasJumping && !_isJumping)
+                _jumpElapsed = MovementModule.MaxJumpDuration;
+            Vector3 requestedVelocity = _subUpdateTick?.Invoke(rawInput) ?? Vector3.Zero;
+            Vector3 literalDisplacement = ConsumeLiteralInput();
+            if (literalDisplacement != Vector3.Zero)
+                requestedVelocity += literalDisplacement / dt;
 
-            if (moveDelta.LengthSquared() > MinMoveDistance * MinMoveDistance)
-                ActiveController?.Move(moveDelta, MinMoveDistance, DeltaTime);
+            Vector3 commandValue = MotionInputModel == CharacterMotionInputModel.Velocity
+                ? requestedVelocity
+                : requestedVelocity * dt;
+            ActiveController.SubmitMotion(new CharacterMotionCommand(
+                commandValue,
+                MotionInputModel,
+                MinMoveDistance,
+                dt));
 
-            if (ActiveController?.CollidingDown ?? false)
+            if (ActiveController.IsGrounded)
             {
                 if (_subUpdateTick == AirMovementTick)
                     _subUpdateTick = GroundMovementTick;
@@ -823,6 +1054,22 @@ namespace XREngine.Components.Movement
             set => SetField(ref _velocity, value);
         }
 
+        [Browsable(false)]
+        public Vector3 EffectiveVelocity
+            => ActiveController?.EffectiveVelocity ?? Vector3.Zero;
+
+        [Browsable(false)]
+        public Vector3 GroundVelocity
+            => ActiveController?.GroundVelocity ?? Vector3.Zero;
+
+        [Browsable(false)]
+        public Vector3 GroundNormal
+            => ActiveController?.GroundNormal ?? NormalizedUpDirection;
+
+        [Browsable(false)]
+        public CharacterSupportState SupportState
+            => ActiveController?.SupportState ?? CharacterSupportState.Unknown;
+
         public void AddForce(Vector3 force)
         {
             //Calculate acceleration from force
@@ -831,7 +1078,7 @@ namespace XREngine.Components.Movement
                 Velocity += force / mass;
         }
 
-        public bool IsJumping => _isJumping;
+        public bool IsJumping => Volatile.Read(ref _jumpHeld) != 0;
 
         private bool _tickInputWithPhysics = false; //Seems more responsive calculating on update, separate from physics
         /// <summary>
@@ -843,10 +1090,29 @@ namespace XREngine.Components.Movement
         public bool TickInputWithPhysics
         {
             get => _tickInputWithPhysics;
-            set => SetField(ref _tickInputWithPhysics, value);
+            set
+            {
+                if (_tickInputWithPhysics == value)
+                    return;
+
+                if (IsActiveInHierarchy)
+                    UnregisterMovementTick();
+                SetField(ref _tickInputWithPhysics, value);
+                if (IsActiveInHierarchy)
+                    RegisterMovementTick();
+            }
         }
 
         private float DeltaTime => TickInputWithPhysics ? Engine.FixedDelta : Engine.Delta;
+
+        private ETickGroup MovementTickGroup
+            => TickInputWithPhysics ? ETickGroup.PrePhysics : ETickGroup.Late;
+
+        private void RegisterMovementTick()
+            => RegisterTick(MovementTickGroup, (int)ETickOrder.Animation, MainUpdateTick);
+
+        private void UnregisterMovementTick()
+            => UnregisterTick(MovementTickGroup, (int)ETickOrder.Animation, MainUpdateTick);
 
         protected override float InputDeltaTime => DeltaTime;
 
@@ -856,17 +1122,18 @@ namespace XREngine.Components.Movement
                 return Vector3.Zero;
 
             float dt = DeltaTime;
+            Vector3 up = NormalizedUpDirection;
 
             Vector3 moveDirection = Vector3.Zero;
             if (posDelta != Vector3.Zero)
             {
-                // Get ground normal and align movement
-                Vector3 groundNormal = Globals.Up;
-                Vector3 up = Globals.Up;
-
-                // Project movement onto ground plane
-                Quaternion rotation = XRMath.RotationBetweenVectors(up, groundNormal);
-                moveDirection = Vector3.Transform(posDelta.Normalized(), rotation);
+                Vector3 groundNormal = ActiveController.IsGrounded
+                    ? ActiveController.GroundNormal
+                    : up;
+                Vector3 planarInput = ProjectOntoPlane(posDelta, up);
+                Vector3 alongGround = ProjectOntoPlane(planarInput, groundNormal);
+                if (alongGround.LengthSquared() > 1e-8f)
+                    moveDirection = Vector3.Normalize(alongGround);
             }
 
             // Process ground movement through the module
@@ -886,13 +1153,7 @@ namespace XREngine.Components.Movement
             // Update stored velocity
             Velocity = newVelocity;
 
-            // Convert to position delta
-            Vector3 delta = newVelocity * dt;
-
-            if (float.IsNaN(delta.X) || float.IsNaN(delta.Y) || float.IsNaN(delta.Z))
-                delta = Vector3.Zero;
-
-            return delta;
+            return IsFinite(newVelocity) ? newVelocity : Vector3.Zero;
         }
 
         /// <summary>
@@ -954,7 +1215,7 @@ namespace XREngine.Components.Movement
             if (!MovementModule.CanJump)
                 return;
 
-            if (ActiveController.CollidingDown)
+            if (ActiveController.IsGrounded)
             {
                 _canJumpState = true;
                 _coyoteTimer = MovementModule.CoyoteTime;
@@ -965,19 +1226,17 @@ namespace XREngine.Components.Movement
                 _canJumpState = _coyoteTimer > 0.0f;
             }
 
-            if (!_isJumping)
-                return;
-
-            if (CanPerformJump)
+            if (_jumpPressedThisProducerTick && CanPerformJump)
             {
                 // Apply jump as an impulse (direct velocity change), not scaled by dt
                 // The velocity will be converted to position delta later
-                delta.Y = MovementModule.JumpForce;
+                Vector3 up = NormalizedUpDirection;
+                delta = ProjectOntoPlane(delta, up) + up * MovementModule.JumpForce;
                 _jumpElapsed = 0.0f;
                 _canJumpState = false;
                 _subUpdateTick = AirMovementTick;
             }
-            else
+            else if (_isJumping)
             {
                 bool addingJumpForce = _isJumping && _jumpElapsed < MovementModule.MaxJumpDuration && !(ActiveController?.CollidingUp ?? false);
                 if (!addingJumpForce)
@@ -986,7 +1245,7 @@ namespace XREngine.Components.Movement
                 // Sustained jump hold adds a small amount of upward acceleration
                 // This is acceleration (m/s�), so multiply by dt to get velocity change
                 float jumpFactor = 1.0f - (_jumpElapsed / MovementModule.MaxJumpDuration);
-                delta.Y += MovementModule.JumpHoldForce * jumpFactor * dt;
+                delta += NormalizedUpDirection * MovementModule.JumpHoldForce * jumpFactor * dt;
                 _jumpElapsed += dt;
             }
         }
@@ -994,7 +1253,9 @@ namespace XREngine.Components.Movement
         /// <summary>
         /// Whether the character can currently perform a jump (grounded or in coyote time).
         /// </summary>
-        public bool CanPerformJump => MovementModule.CanJump && ((_canJumpState && _coyoteTimer > 0.0f) || (ActiveController?.CollidingDown ?? false));
+        public bool CanPerformJump => MovementModule.CanJump
+            && ((_canJumpState && _coyoteTimer > 0.0f)
+                || (ActiveController?.IsGrounded ?? false));
 
         protected virtual unsafe Vector3 AirMovementTick(Vector3 posDelta)
         {
@@ -1004,7 +1265,10 @@ namespace XREngine.Components.Movement
             float dt = DeltaTime;
 
             // Process air movement through the module
-            Vector3 inputDirection = posDelta != Vector3.Zero ? new Vector3(posDelta.X, 0, posDelta.Z).Normalized() : Vector3.Zero;
+            Vector3 planarInput = ProjectOntoPlane(posDelta, NormalizedUpDirection);
+            Vector3 inputDirection = planarInput.LengthSquared() > 1e-8f
+                ? Vector3.Normalize(planarInput)
+                : Vector3.Zero;
             var context = CreateMovementContext(inputDirection, dt, false);
             var result = MovementModule.ProcessAirMovement(in context);
             Vector3 newVelocity = result.NewVelocity;
@@ -1025,22 +1289,19 @@ namespace XREngine.Components.Movement
             // Update stored velocity
             Velocity = newVelocity;
 
-            // Convert to position delta
-            Vector3 delta = newVelocity * dt;
-
             // Apply landing friction when hitting ground
-            if (ActiveController.CollidingDown)
+            if (ActiveController.IsGrounded)
             {
-                // Reduce horizontal velocity on landing based on ground friction
+                Vector3 up = NormalizedUpDirection;
                 float frictionFactor = 1.0f - MovementModule.GroundFriction;
-                delta = new Vector3(delta.X * frictionFactor, delta.Y, delta.Z * frictionFactor);
+                float verticalSpeed = Vector3.Dot(newVelocity, up);
+                Vector3 tangentialVelocity = newVelocity - up * verticalSpeed;
+                newVelocity = tangentialVelocity * frictionFactor + up * verticalSpeed;
+                Velocity = newVelocity;
                 _subUpdateTick = GroundMovementTick;
             }
 
-            if (float.IsNaN(delta.X) || float.IsNaN(delta.Y) || float.IsNaN(delta.Z))
-                delta = Vector3.Zero;
-
-            return delta;
+            return IsFinite(newVelocity) ? newVelocity : Vector3.Zero;
         }
 
         protected virtual unsafe Vector3 SwimmingMovementTick(Vector3 posDelta)
@@ -1076,37 +1337,36 @@ namespace XREngine.Components.Movement
             // Update stored velocity
             Velocity = newVelocity;
 
-            // Convert to position delta
-            Vector3 delta = newVelocity * dt;
-
-            if (float.IsNaN(delta.X) || float.IsNaN(delta.Y) || float.IsNaN(delta.Z))
-                delta = Vector3.Zero;
-
-            return delta;
+            return IsFinite(newVelocity) ? newVelocity : Vector3.Zero;
         }
-
-        private Vector3 VelocityToPositionDelta(Vector3 velocity)
-            => velocity * DeltaTime;
-        private Vector3 AccelerationToVelocityDelta(Vector3 acceleration)
-            => acceleration * DeltaTime;
-
-        private Vector3 PositionDeltaToVelocity(Vector3 delta)
-            => delta / DeltaTime;
-        private Vector3 VelocityDeltaToAcceleration(Vector3 delta)
-            => delta / DeltaTime;
 
         private void ClampSpeed(ref Vector3 velocity)
         {
-            // Separate vertical and horizontal movement for clamping
-            float verticalDelta = velocity.Y;
-            velocity.Y = 0;
-
-            if (velocity.Length() > MovementModule.MaxSpeed)
-                velocity = velocity.Normalized() * MovementModule.MaxSpeed;
-            
-            // Restore vertical movement
-            velocity.Y = verticalDelta;
+            Vector3 up = NormalizedUpDirection;
+            float verticalSpeed = Vector3.Dot(velocity, up);
+            Vector3 tangentialVelocity = velocity - up * verticalSpeed;
+            float tangentialSpeed = tangentialVelocity.Length();
+            if (tangentialSpeed > MovementModule.MaxSpeed)
+                tangentialVelocity *= MovementModule.MaxSpeed / tangentialSpeed;
+            velocity = tangentialVelocity + up * verticalSpeed;
         }
+
+        private Vector3 NormalizedUpDirection
+        {
+            get
+            {
+                Vector3 up = ActiveController?.UpDirection ?? UpDirection;
+                return IsFinite(up) && up.LengthSquared() > 1e-8f
+                    ? Vector3.Normalize(up)
+                    : Globals.Up;
+            }
+        }
+
+        private static Vector3 ProjectOntoPlane(in Vector3 value, in Vector3 planeNormal)
+            => value - planeNormal * Vector3.Dot(value, planeNormal);
+
+        private static bool IsFinite(in Vector3 value)
+            => float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
 
         private void ApplyGravity(AbstractPhysicsScene scene, ref Vector3 delta)
         {
@@ -1120,12 +1380,41 @@ namespace XREngine.Components.Movement
         public void Jump(bool pressed)
         {
             if (pressed)
-                _isJumping = true;
+            {
+                if (Interlocked.Exchange(ref _jumpHeld, 1) == 0)
+                    QueueJumpPress();
+            }
             else
             {
-                _isJumping = false;
-                _jumpElapsed = MovementModule.MaxJumpDuration; // Cut the jump short when button is released
+                Volatile.Write(ref _jumpHeld, 0);
             }
+        }
+
+        private void QueueJumpPress()
+        {
+            int current = Volatile.Read(ref _pendingJumpPresses);
+            while (current < int.MaxValue)
+            {
+                int observed = Interlocked.CompareExchange(ref _pendingJumpPresses, current + 1, current);
+                if (observed == current)
+                    return;
+                current = observed;
+            }
+            // Saturation is deterministic: existing press edges are preserved and
+            // additional edges are ignored until the producer drains the counter.
+        }
+
+        private bool TryConsumeJumpPress()
+        {
+            int current = Volatile.Read(ref _pendingJumpPresses);
+            while (current > 0)
+            {
+                int observed = Interlocked.CompareExchange(ref _pendingJumpPresses, current - 1, current);
+                if (observed == current)
+                    return true;
+                current = observed;
+            }
+            return false;
         }
 
         /// <summary>

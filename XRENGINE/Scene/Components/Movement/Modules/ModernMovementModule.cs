@@ -90,7 +90,7 @@ namespace XREngine.Components.Movement.Modules
             {
                 // Apply stopping factor for slight slide, or instant stop if factor is 0
                 Vector3 horizontal = context.HorizontalVelocity;
-                horizontalVelocity = horizontal * StoppingFactor;
+                horizontalVelocity = horizontal * TimeScaledRetention(StoppingFactor, context.DeltaTime);
                 
                 // Snap to zero when very slow
                 if (horizontalVelocity.Length() < 0.1f)
@@ -116,7 +116,10 @@ namespace XREngine.Components.Movement.Modules
                 Vector3 targetVelocity = context.InputDirection * targetSpeed;
 
                 // Directly blend toward target based on air control factor
-                horizontal = Vector3.Lerp(horizontal, targetVelocity, AirControlFactor);
+                horizontal = Vector3.Lerp(
+                    horizontal,
+                    targetVelocity,
+                    TimeScaledBlend(AirControlFactor, context.DeltaTime));
             }
 
             // Clamp horizontal speed

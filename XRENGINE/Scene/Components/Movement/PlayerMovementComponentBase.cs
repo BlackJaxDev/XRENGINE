@@ -13,7 +13,9 @@ namespace XREngine.Components.Movement
         private Vector3 _currentFrameInputDirection = Vector3.Zero;
         private Vector3 _constantInputDirection = Vector3.Zero;
         private Vector3 _literalInputDirection = Vector3.Zero;
+        private Vector3 _continuousInputDirection = Vector3.Zero;
         private float? _inputLerpSpeed = null;
+        private readonly object _inputSync = new();
 
         public Vector3 CurrentFrameInputDirection
         {
@@ -43,9 +45,23 @@ namespace XREngine.Components.Movement
         }
 
         public void AddMovementInput(Vector3 offset)
-            => TargetFrameInputDirection += offset;
+        {
+            lock (_inputSync)
+                TargetFrameInputDirection += offset;
+        }
         public void AddMovementInput(float x, float y, float z)
             => AddMovementInput(new Vector3(x, y, z));
+
+        /// <summary>
+        /// Publishes the latest continuous movement-input snapshot. The value
+        /// remains active until replaced, so fixed-thread consumption is not
+        /// coupled to the number of Update ticks that occurred.
+        /// </summary>
+        public void SetMovementInput(Vector3 direction)
+        {
+            lock (_inputSync)
+                SetField(ref _continuousInputDirection, direction);
+        }
 
         /// <summary>
         /// Manually add input directly to the player movement component.
@@ -53,7 +69,10 @@ namespace XREngine.Components.Movement
         /// </summary>
         /// <param name="offset"></param>
         public void AddLiteralInputDelta(Vector3 offset)
-            => LiteralInputDirection += offset;
+        {
+            lock (_inputSync)
+                LiteralInputDirection += offset;
+        }
 
         /// <summary>
         /// Delta time to apply when consuming input.
@@ -63,25 +82,44 @@ namespace XREngine.Components.Movement
 
         protected virtual Vector3 ConsumeLiteralInput()
         {
-            var dir = _literalInputDirection;
-            _literalInputDirection = Vector3.Zero;
-            return dir;
+            lock (_inputSync)
+            {
+                var dir = _literalInputDirection;
+                SetField(ref _literalInputDirection, Vector3.Zero, nameof(LiteralInputDirection));
+                return dir;
+            }
         }
 
         protected virtual Vector3 ConsumeInput()
         {
+            Vector3 target;
+            lock (_inputSync)
+            {
+                target = _continuousInputDirection + TargetFrameInputDirection;
+                TargetFrameInputDirection = Vector3.Zero;
+            }
+
             if (InputLerpSpeed is not null)
             {
-                float speed = InputLerpSpeed.Value;
-                CurrentFrameInputDirection = Interp.Lerp(CurrentFrameInputDirection, TargetFrameInputDirection, speed);
+                float speed = Math.Clamp(InputLerpSpeed.Value, 0.0f, 1.0f);
+                float blend = TimeScaledBlend(speed, InputDeltaTime);
+                CurrentFrameInputDirection = Interp.Lerp(CurrentFrameInputDirection, target, blend);
             }
             else
             {
-                CurrentFrameInputDirection = TargetFrameInputDirection;
+                CurrentFrameInputDirection = target;
             }
 
-            TargetFrameInputDirection = Vector3.Zero;
             return (ConstantInputDirection + CurrentFrameInputDirection) * InputDeltaTime;
+        }
+
+        private static float TimeScaledBlend(float referenceStepBlend, float deltaTime)
+        {
+            if (referenceStepBlend <= 0.0f || deltaTime <= 0.0f)
+                return 0.0f;
+            if (referenceStepBlend >= 1.0f)
+                return 1.0f;
+            return 1.0f - MathF.Pow(1.0f - referenceStepBlend, deltaTime * 60.0f);
         }
     }
 }

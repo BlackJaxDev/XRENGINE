@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using XREngine.Data;
 using XREngine.Data.Core;
+using XREngine.Scene.Physics;
 using static MagicPhysX.NativeMethods;
 using static XREngine.Engine;
 
@@ -87,8 +88,23 @@ namespace XREngine.Rendering.Physics.Physx
         private readonly DataSource _controllerBehaviorCallbackSource;
         private readonly DataSource _controllerBehaviorCallbackVTableSource;
 
-        // Movement input queue for thread-safe operation
-        private readonly ConcurrentQueue<(Vector3 delta, float minDist, float elapsedTime)> _inputBuffer = new();
+        // Fixed-capacity movement handoff for thread-safe, allocation-free operation.
+        private readonly CharacterMotionBuffer _motionBuffer = new();
+        private CharacterMotionCommand _lastMotionCommand;
+        private Vector3 _requestedVelocity;
+        private Vector3 _effectiveVelocity;
+        private CharacterSupportState _supportState = CharacterSupportState.Unknown;
+        private Vector3 _groundNormal = Globals.Up;
+        private Vector3 _groundVelocity;
+        private IAbstractRigidPhysicsActor? _groundActor;
+        private Vector3 _lastGroundPoint;
+        private Vector3 _moveGroundNormal;
+        private Vector3 _moveGroundPoint;
+        private PhysxRigidActor? _moveGroundActor;
+        private bool _hasMoveGroundContact;
+        private bool _wasSupported;
+        private Vector3 _lastSupportedGroundVelocity;
+        private Vector3 _inheritedGroundVelocity;
 
         // Behavior callback delegates (per-instance)
         private DelGetBehaviorFlagsShape2? _behaviorCallbackShape;
@@ -111,6 +127,21 @@ namespace XREngine.Rendering.Physics.Physx
 
         /// <summary>Returns true if this controller has been released.</summary>
         public bool IsReleased => Volatile.Read(ref _released) != 0;
+
+        public CharacterMotionCommand LastMotionCommand => _lastMotionCommand;
+        public Vector3 RequestedVelocity => _requestedVelocity;
+        public Vector3 EffectiveVelocity => _effectiveVelocity;
+        public CharacterSupportState SupportState => _supportState;
+        public bool IsGrounded => _supportState == CharacterSupportState.Supported;
+        public Vector3 GroundNormal => _groundNormal;
+        public Vector3 GroundVelocity => _groundVelocity;
+        public IAbstractRigidPhysicsActor? GroundActor => _groundActor;
+
+        public PxControllerNonWalkableMode NonWalkableMode
+        {
+            get => ControllerPtr->GetNonWalkableMode();
+            set => ControllerPtr->SetNonWalkableModeMut(value);
+        }
 
         /// <summary>Gets the PhysX scene this controller belongs to.</summary>
         public PhysxScene Scene
@@ -380,22 +411,21 @@ namespace XREngine.Rendering.Physics.Physx
         /// <param name="delta">The displacement vector to move.</param>
         /// <param name="minDist">Minimum distance threshold for movement.</param>
         /// <param name="elapsedTime">Time elapsed since last move.</param>
-        public void Move(Vector3 delta, float minDist, float elapsedTime)
+        public void SubmitMotion(in CharacterMotionCommand command)
         {
             if (IsReleased)
                 return;
 
-            // Native safety: PhysX controllers are not tolerant of NaN/Inf inputs.
-            if (!float.IsFinite(delta.X) || 
-                !float.IsFinite(delta.Y) || 
-                !float.IsFinite(delta.Z) || 
-                !float.IsFinite(minDist) || 
-                !float.IsFinite(elapsedTime) || 
-                elapsedTime <= 0.0f)
-                return;
-            
-            _inputBuffer.Enqueue((delta, minDist, elapsedTime));
+            if (_motionBuffer.Enqueue(command))
+                _lastMotionCommand = command;
         }
+
+        public void Move(Vector3 delta, float minDist, float elapsedTime)
+            => SubmitMotion(new CharacterMotionCommand(
+                delta,
+                CharacterMotionInputModel.Displacement,
+                minDist,
+                elapsedTime));
 
         /// <summary>
         /// Consumes all queued movement inputs and applies them in a single move operation.
@@ -406,20 +436,44 @@ namespace XREngine.Rendering.Physics.Physx
         {
             if (IsReleased)
                 return;
-
-            if (_inputBuffer.IsEmpty)
+            if (!float.IsFinite(delta) || delta <= 0.0f)
                 return;
 
-            // Consume queued moves on the physics thread (PhysxScene.StepSimulation).
-            // We keep per-call elapsedTime to match the producer tick's integration.
-            float totalElapsed = 0.0f;
-            Vector3 totalMove = Vector3.Zero;
-            while (_inputBuffer.TryDequeue(out var input))
+            CharacterMotionStep motion = _motionBuffer.Consume(delta);
+            Vector3 requestedDisplacement = motion.Displacement;
+            if (requestedDisplacement.LengthSquared() <= motion.MinDistance * motion.MinDistance)
+                requestedDisplacement = Vector3.Zero;
+            _requestedVelocity = requestedDisplacement / delta;
+
+            bool supportedBeforeMove = IsGrounded;
+            if (supportedBeforeMove)
             {
-                totalElapsed += input.elapsedTime;
-                totalMove += input.delta;
+                _lastSupportedGroundVelocity = _groundVelocity;
+                _inheritedGroundVelocity = Vector3.Zero;
             }
-            ConsumeMove(totalMove, 0.001f, totalElapsed);
+            else if (_wasSupported)
+            {
+                _inheritedGroundVelocity = _lastSupportedGroundVelocity;
+            }
+
+            Vector3 platformVelocity = supportedBeforeMove
+                ? _groundVelocity
+                : _inheritedGroundVelocity;
+            Vector3 nativeDisplacement = requestedDisplacement + platformVelocity * delta;
+
+            Vector3 startPosition = Position;
+            _hasMoveGroundContact = false;
+            _moveGroundActor = null;
+            ConsumeMove(nativeDisplacement, motion.MinDistance, delta);
+            _effectiveVelocity = (Position - startPosition) / delta;
+            RefreshGroundState();
+
+            bool supportedAfterMove = IsGrounded;
+            if (supportedBeforeMove && !supportedAfterMove)
+                _inheritedGroundVelocity = _lastSupportedGroundVelocity;
+            else if (supportedAfterMove)
+                _inheritedGroundVelocity = Vector3.Zero;
+            _wasSupported = supportedAfterMove;
         }
 
         /// <summary>Resizes the controller to the specified height.</summary>
@@ -446,8 +500,7 @@ namespace XREngine.Rendering.Physics.Physx
 
             //Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller RequestRelease ptr=0x{0:X}", (nint)ControllerPtr);
 
-            // Clear the input buffer
-            while (_inputBuffer.TryDequeue(out _)) { }
+            _motionBuffer.Clear();
 
             // Prefer deferring to the physics thread.
             var scene = Manager?.Scene;
@@ -490,6 +543,60 @@ namespace XREngine.Rendering.Physics.Physx
         #endregion
 
         #region Private Methods
+
+        private void RefreshGroundState()
+        {
+            if (!CollidingDown)
+            {
+                _supportState = CollidingSides
+                    ? CharacterSupportState.NotSupported
+                    : CharacterSupportState.InAir;
+                _groundNormal = UpDirection;
+                _groundVelocity = Vector3.Zero;
+                _groundActor = null;
+                return;
+            }
+
+            _groundNormal = _hasMoveGroundContact
+                ? _moveGroundNormal
+                : UpDirection;
+            _supportState = Vector3.Dot(_groundNormal, UpDirection) + 1e-5f >= SlopeLimit
+                ? CharacterSupportState.Supported
+                : CharacterSupportState.TooSteep;
+            _lastGroundPoint = _hasMoveGroundContact
+                ? _moveGroundPoint
+                : FootPosition;
+
+            var state = State;
+            _groundActor = _hasMoveGroundContact
+                ? _moveGroundActor
+                : state.touchedActor;
+            if (_groundActor is null)
+            {
+                _groundVelocity = Vector3.Zero;
+                return;
+            }
+
+            Vector3 center = _groundActor.Transform.position;
+            _groundVelocity = _groundActor.LinearVelocity
+                + Vector3.Cross(_groundActor.AngularVelocity, _lastGroundPoint - center);
+        }
+
+        private void RecordShapeHit(PxControllerShapeHit* hit)
+        {
+            Vector3 normal = new(hit->worldNormal.x, hit->worldNormal.y, hit->worldNormal.z);
+            Vector3 up = UpDirection;
+            if (normal.LengthSquared() <= 1e-8f || Vector3.Dot(normal, up) <= 0.5f)
+                return;
+
+            _moveGroundNormal = Vector3.Normalize(normal);
+            _moveGroundPoint = new Vector3(
+                (float)hit->worldPos.x,
+                (float)hit->worldPos.y,
+                (float)hit->worldPos.z);
+            PhysxRigidActor.AllRigidActors.TryGetValue((nint)hit->actor, out _moveGroundActor);
+            _hasMoveGroundContact = true;
+        }
 
         private void ConsumeMove(Vector3 delta, float minDist, float elapsedTime)
         {
@@ -561,7 +668,10 @@ namespace XREngine.Rendering.Physics.Physx
         private static void OnShapeHitNative(PxUserControllerHitReport* self, PxControllerShapeHit* hit)
         {
             if (_hitReportToController.TryGetValue((nint)self, out var controller))
+            {
+                controller.RecordShapeHit(hit);
                 controller.ShapeHit?.Invoke(controller, hit);
+            }
         }
 
         /// <summary>

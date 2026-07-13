@@ -86,6 +86,88 @@ public interface IAbstractRigidPhysicsActor : IAbstractPhysicsActor
 }
 
 /// <summary>
+/// Units used by a character-controller motion command.
+/// </summary>
+public enum CharacterMotionInputModel
+{
+    /// <summary>The value is a world-space velocity in units per second.</summary>
+    Velocity = 0,
+
+    /// <summary>The value is a world-space displacement for the command duration.</summary>
+    Displacement = 1,
+}
+
+/// <summary>
+/// Backend-neutral support state. Contact-location flags are reported separately.
+/// </summary>
+public enum CharacterSupportState
+{
+    Unknown,
+    InAir,
+    Supported,
+    TooSteep,
+    NotSupported,
+}
+
+[Flags]
+public enum PhysicsCharacterControllerCapabilities
+{
+    None = 0,
+    DisplacementInput = 1 << 0,
+    VelocityInput = 1 << 1,
+    ArbitraryUp = 1 << 2,
+    MovingGround = 1 << 3,
+    DynamicBodyInteraction = 1 << 4,
+    CharacterVsCharacter = 1 << 5,
+    QueryVisibility = 1 << 6,
+    Materials = 1 << 7,
+    InvisibleWalls = 1 << 8,
+    ConstrainedClimbing = 1 << 9,
+    PredictiveContacts = 1 << 10,
+    IndependentCollisionTolerance = 1 << 11,
+    FloorStickDistance = 1 << 12,
+    IndependentStepDown = 1 << 13,
+    CollisionFiltering = 1 << 14,
+    SteepSlopeSliding = 1 << 15,
+    MaximumStrength = 1 << 16,
+    MaximumJumpHeight = 1 << 17,
+    ScaleCoefficient = 1 << 18,
+    VolumeGrowth = 1 << 19,
+}
+
+/// <summary>
+/// A tagged movement sample produced on either the Update or PrePhysics thread.
+/// </summary>
+public readonly record struct CharacterMotionCommand(
+    Vector3 Value,
+    CharacterMotionInputModel InputModel,
+    float MinDistance,
+    float ElapsedTime);
+
+/// <summary>
+/// Optional neutral settings exposed only by controller backends that support
+/// independent predictive contacts and extended stair/floor behavior.
+/// </summary>
+public interface IAdvancedCharacterControllerSettings
+{
+    float PredictiveContactDistance { get; set; }
+    float CollisionTolerance { get; set; }
+    float StickToFloorDistance { get; set; }
+    float StepDownExtra { get; set; }
+    float MaxStrength { get; set; }
+}
+
+/// <summary>
+/// Runtime collision policy shared by controller backends. Implementations
+/// apply changes on the next native physics step.
+/// </summary>
+public interface ICharacterControllerCollisionSettings
+{
+    LayerMask CollisionLayerMask { get; set; }
+    bool SlideOnSteepSlopes { get; set; }
+}
+
+/// <summary>
 /// Backend-neutral capsule character-controller surface used by gameplay code.
 /// Backend-specific controller objects may expose richer extension APIs.
 /// </summary>
@@ -96,16 +178,28 @@ public interface IAbstractCharacterController : IAbstractRigidPhysicsActor
     Vector3 UpDirection { get; set; }
 
     float Radius { get; set; }
-    float Height { get; }
+    float TotalHeight { get; }
     float SlopeLimit { get; set; }
     float StepOffset { get; set; }
     float ContactOffset { get; set; }
 
+    CharacterMotionInputModel MotionInputModel { get; set; }
+    PhysicsCharacterControllerCapabilities Capabilities { get; }
+    CharacterSupportState SupportState { get; }
+    bool IsGrounded { get; }
     bool CollidingUp { get; }
     bool CollidingDown { get; }
+    bool CollidingSides { get; }
+    Vector3 GroundNormal { get; }
+    Vector3 GroundVelocity { get; }
+    IAbstractRigidPhysicsActor? GroundActor { get; }
+    CharacterMotionCommand LastMotionCommand { get; }
+    Vector3 RequestedVelocity { get; }
+    Vector3 EffectiveVelocity { get; }
 
-    void Move(Vector3 delta, float minDist, float elapsedTime);
-    void Resize(float height);
+    void SubmitMotion(in CharacterMotionCommand command);
+    void Move(Vector3 value, float minDist, float elapsedTime);
+    void Resize(float totalHeight);
     void Synchronize() { }
     void RequestRelease();
 }
