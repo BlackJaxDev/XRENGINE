@@ -29,27 +29,7 @@ namespace XREngine.Components.Movement
     [Description("Full-featured first/third-person character controller with jumping, crouching, and slope handling.")]
     public class CharacterMovement3DComponent : PlayerMovementComponentBase, IRenderable, IRuntimeCharacterMovementComponent
     {
-        private interface ICharacterController
-        {
-            Vector3 Position { get; set; }
-            Vector3 FootPosition { get; set; }
-            Vector3 UpDirection { get; set; }
-
-            float Radius { get; set; }
-            float Height { get; }
-            float SlopeLimit { get; set; }
-            float StepOffset { get; set; }
-            float ContactOffset { get; set; }
-
-            bool CollidingUp { get; }
-            bool CollidingDown { get; }
-
-            void Move(Vector3 delta, float minDist, float elapsedTime);
-            void Resize(float height);
-            void RequestRelease();
-        }
-
-        private sealed class PhysxCharacterControllerAdapter(PhysxCapsuleController controller) : ICharacterController
+        private sealed class PhysxCharacterControllerAdapter(PhysxCapsuleController controller) : IAbstractCharacterController
         {
             public PhysxCapsuleController Controller { get; } = controller;
 
@@ -68,10 +48,16 @@ namespace XREngine.Components.Movement
 
             public void Move(Vector3 delta, float minDist, float elapsedTime) => Controller.Move(delta, minDist, elapsedTime);
             public void Resize(float height) => Controller.Resize(height);
+            public Vector3 LinearVelocity => Controller.Actor?.LinearVelocity ?? Vector3.Zero;
+            public Vector3 AngularVelocity => Controller.Actor?.AngularVelocity ?? Vector3.Zero;
+            public bool IsSleeping => Controller.Actor?.IsSleeping ?? false;
+            public (Vector3 position, Quaternion rotation) Transform => Controller.Actor?.Transform ?? (Position, Quaternion.Identity);
+
+            public void Destroy(bool wakeOnLostTouch = false) => RequestRelease();
             public void RequestRelease() => Controller.RequestRelease();
         }
 
-        private sealed class JoltCharacterControllerAdapter(IJoltCharacterController controller) : ICharacterController
+        private sealed class JoltCharacterControllerAdapter(IJoltCharacterController controller) : IAbstractCharacterController
         {
             public IJoltCharacterController Controller { get; } = controller;
 
@@ -90,6 +76,12 @@ namespace XREngine.Components.Movement
 
             public void Move(Vector3 delta, float minDist, float elapsedTime) => Controller.Move(delta, minDist, elapsedTime);
             public void Resize(float height) => Controller.Resize(height);
+            public Vector3 LinearVelocity => Controller.LinearVelocity;
+            public Vector3 AngularVelocity => Controller.AngularVelocity;
+            public bool IsSleeping => Controller.IsSleeping;
+            public (Vector3 position, Quaternion rotation) Transform => Controller.Transform;
+
+            public void Destroy(bool wakeOnLostTouch = false) => RequestRelease();
             public void RequestRelease() => Controller.RequestRelease();
         }
         private const int CapsuleRenderPointCountHalfCircle = 8;
@@ -142,12 +134,14 @@ namespace XREngine.Components.Movement
         private float _crouchedHeight = new FeetInches(3, 0.0f).ToMeters();
         private float _proneHeight = new FeetInches(1, 0.0f).ToMeters();
         private bool _constrainedClimbing = false;
-        private ICharacterController? _controller;
+        private IAbstractCharacterController? _controller;
         private PhysxCapsuleController? _physxController;
         private IJoltCharacterController? _joltController;
         private int _physxControllerInitVersion;
 
         private AbstractPhysicsScene? _subscribedPhysicsScene;
+        private CharacterControllerComponent? _externalControllerComponent;
+        private bool _ownsActiveController;
         private IAbstractRigidPhysicsActor? _controllerActorProxy;
         private float _minMoveDistance = 0.00001f;
         private float _contactOffset = 0.001f;
@@ -497,17 +491,23 @@ namespace XREngine.Components.Movement
 
         [Browsable(false)]
         [YamlIgnore]
-        private ICharacterController? ActiveController
+        private IAbstractCharacterController? ActiveController
         {
             get => _controller;
             set => SetField(ref _controller, value);
         }
 
         [Browsable(false)]
-        public PhysxCapsuleController? Controller => _physxController;
+        public IAbstractCharacterController? CharacterController => ActiveController;
 
-        public PhysxDynamicRigidBody? RigidBodyReference => _physxController?.Actor;
+        public IAbstractDynamicRigidBody? RigidBodyReference => _physxController?.Actor;
+
+        [Category("Physics / PhysX Extensions")]
+        [Description("PhysX-only raw capsule controller. Prefer CharacterController for backend-neutral gameplay code.")]
+        public PhysxCapsuleController? Controller => _physxController;
         
+        [Category("Physics / PhysX Extensions")]
+        [Description("PhysX-only controller state details. Backend-neutral movement should use CharacterController collision properties/events.")]
         public void GetState(
             out Vector3 deltaXP,
             out PhysxShape? touchedShape,
@@ -653,6 +653,18 @@ namespace XREngine.Components.Movement
                 _subscribedPhysicsScene = sceneForEvents;
             }
 
+            CharacterControllerComponent? reusableController = GetSiblingComponent<CharacterControllerComponent>();
+            if (reusableController is not null)
+            {
+                _externalControllerComponent = reusableController;
+                reusableController.ControllerCreated += ExternalControllerCreated;
+                reusableController.ControllerReleased += ExternalControllerReleased;
+                if (reusableController.Controller is not null)
+                    BindExternalController(reusableController.Controller);
+                return;
+            }
+
+            _ownsActiveController = true;
             Vector3 pos = Transform.WorldTranslation;
 
             if (physicsScene is PhysxScene physxScene)
@@ -680,6 +692,25 @@ namespace XREngine.Components.Movement
                 RigidBodyTransform.InterpolationMode = RigidBodyTransform.EInterpolationMode.Interpolate;
                 RigidBodyTransform.OnPhysicsStepped();
             }
+        }
+
+        private void ExternalControllerCreated(CharacterControllerComponent component, IAbstractCharacterController controller)
+            => BindExternalController(controller);
+
+        private void ExternalControllerReleased(CharacterControllerComponent component)
+        {
+            if (ReferenceEquals(component, _externalControllerComponent))
+                ActiveController = null;
+        }
+
+        private void BindExternalController(IAbstractCharacterController controller)
+        {
+            ActiveController = controller;
+            _controllerActorProxy = controller;
+            RigidBodyTransform.PostRotationOffset = Quaternion.Identity;
+            RigidBodyTransform.RigidBody = controller;
+            RigidBodyTransform.InterpolationMode = RigidBodyTransform.EInterpolationMode.Interpolate;
+            RigidBodyTransform.OnPhysicsStepped();
         }
 
         private void QueuePhysxControllerCreation(PhysxScene physxScene, Vector3 position)
@@ -776,6 +807,12 @@ namespace XREngine.Components.Movement
             _subUpdateTick = null;
             _subscribedPhysicsScene?.OnSimulationStep -= OnPhysicsSimulationStep;
             _subscribedPhysicsScene = null;
+            if (_externalControllerComponent is not null)
+            {
+                _externalControllerComponent.ControllerCreated -= ExternalControllerCreated;
+                _externalControllerComponent.ControllerReleased -= ExternalControllerReleased;
+                _externalControllerComponent = null;
+            }
 
             // Controller owns its internal actor via PxControllerManager; do not remove it as a normal actor.
             var rigidBodyTransform = SceneNode?.GetTransformAs<RigidBodyTransform>(false);
@@ -783,11 +820,14 @@ namespace XREngine.Components.Movement
 
             _controllerActorProxy = null;
 
-            _physxController?.RequestRelease();
+            if (_ownsActiveController)
+                _physxController?.RequestRelease();
             _physxController = null;
 
-            _joltController?.RequestRelease();
+            if (_ownsActiveController)
+                _joltController?.RequestRelease();
             _joltController = null;
+            _ownsActiveController = false;
 
             ActiveController = null;
         }
@@ -807,7 +847,7 @@ namespace XREngine.Components.Movement
 
         private unsafe void MainUpdateTick()
         {
-            if (Controller is null)
+            if (ActiveController is null)
                 return;
 
             // If no rigid body is bound (expected for CCT), keep our last computed Velocity.
@@ -892,7 +932,7 @@ namespace XREngine.Components.Movement
 
         protected virtual Vector3 GroundMovementTick(Vector3 posDelta)
         {
-            if (Controller is null)
+            if (ActiveController is null)
                 return Vector3.Zero;
 
             float dt = DeltaTime;
@@ -951,7 +991,7 @@ namespace XREngine.Components.Movement
                 MovementModule.MaxSpeed,
                 dt,
                 isGrounded,
-                Controller?.CollidingUp ?? false,
+                ActiveController?.CollidingUp ?? false,
                 UpDirection,
                 gravity);
         }
@@ -987,14 +1027,14 @@ namespace XREngine.Components.Movement
 
         private void HandleJumping(float dt, ref Vector3 delta)
         {
-            if (Controller is null)
+            if (ActiveController is null)
                 return;
 
             // Don't process jumping if the module doesn't allow it
             if (!MovementModule.CanJump)
                 return;
 
-            if (Controller.CollidingDown)
+            if (ActiveController.CollidingDown)
             {
                 _canJumpState = true;
                 _coyoteTimer = MovementModule.CoyoteTime;
@@ -1019,7 +1059,7 @@ namespace XREngine.Components.Movement
             }
             else
             {
-                bool addingJumpForce = _isJumping && _jumpElapsed < MovementModule.MaxJumpDuration && !Controller.CollidingUp;
+                bool addingJumpForce = _isJumping && _jumpElapsed < MovementModule.MaxJumpDuration && !(ActiveController?.CollidingUp ?? false);
                 if (!addingJumpForce)
                     return;
                 
@@ -1034,11 +1074,11 @@ namespace XREngine.Components.Movement
         /// <summary>
         /// Whether the character can currently perform a jump (grounded or in coyote time).
         /// </summary>
-        public bool CanPerformJump => MovementModule.CanJump && ((_canJumpState && _coyoteTimer > 0.0f) || (Controller?.CollidingDown ?? false));
+        public bool CanPerformJump => MovementModule.CanJump && ((_canJumpState && _coyoteTimer > 0.0f) || (ActiveController?.CollidingDown ?? false));
 
         protected virtual unsafe Vector3 AirMovementTick(Vector3 posDelta)
         {
-            if (Controller is null || WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is not { } scene)
+            if (ActiveController is null || WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is not { } scene)
                 return Vector3.Zero;
 
             float dt = DeltaTime;
@@ -1069,7 +1109,7 @@ namespace XREngine.Components.Movement
             Vector3 delta = newVelocity * dt;
 
             // Apply landing friction when hitting ground
-            if (Controller.CollidingDown)
+            if (ActiveController.CollidingDown)
             {
                 // Reduce horizontal velocity on landing based on ground friction
                 float frictionFactor = 1.0f - MovementModule.GroundFriction;
@@ -1085,7 +1125,7 @@ namespace XREngine.Components.Movement
 
         protected virtual unsafe Vector3 SwimmingMovementTick(Vector3 posDelta)
         {
-            if (Controller is null || WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is not { } scene)
+            if (ActiveController is null || WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is not { } scene)
                 return Vector3.Zero;
 
             float dt = DeltaTime;
