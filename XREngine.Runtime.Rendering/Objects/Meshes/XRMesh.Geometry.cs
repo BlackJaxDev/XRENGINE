@@ -115,6 +115,9 @@ public partial class XRMesh
     {
         get
         {
+            if (!AllowBVHGeneration)
+                return _bvhTree;
+
             if (_bvhTree is null && Interlocked.CompareExchange(ref _generatingBvh, 1, 0) == 0)
             {
                 try

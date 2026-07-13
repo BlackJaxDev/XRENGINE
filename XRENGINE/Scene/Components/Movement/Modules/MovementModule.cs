@@ -2,7 +2,6 @@ using MemoryPack;
 using System.ComponentModel;
 using System.Numerics;
 using XREngine.Core.Files;
-using XREngine.Rendering.Physics.Physx;
 
 namespace XREngine.Components.Movement.Modules
 {

@@ -1,9 +1,8 @@
 using System.ComponentModel;
 using System.Numerics;
 using XREngine.Data.Core;
-using XREngine.Rendering.Physics.Physx;
 
-namespace XREngine.Scene
+namespace XREngine.Scene.Physics
 {
     public enum PhysicsReplicationAuthority
     {

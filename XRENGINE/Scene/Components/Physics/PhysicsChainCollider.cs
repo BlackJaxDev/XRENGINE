@@ -4,6 +4,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Components;
 
@@ -45,7 +46,7 @@ public class PhysicsChainCollider : PhysicsChainColliderBase, IRenderable
 
     public override void Prepare()
     {
-        if (Transform is null)
+        if (!TryResolveEffectiveTransform(null, out TransformBase effectiveTransform))
         {
             _scaledRadius = 0.0f;
             _scaledRadius2 = 0.0f;
@@ -56,7 +57,7 @@ public class PhysicsChainCollider : PhysicsChainColliderBase, IRenderable
             return;
         }
 
-        float scale = MathF.Abs(Transform.LossyWorldScale.X);
+        float scale = MathF.Abs(effectiveTransform.LossyWorldScale.X);
         float halfHeight = _height * 0.5f;
 
         if (_radius2 <= 0 || MathF.Abs(_radius - _radius2) < 0.01f)
@@ -66,7 +67,7 @@ public class PhysicsChainCollider : PhysicsChainColliderBase, IRenderable
             float h = halfHeight - _radius;
             if (h <= 0)
             {
-                _center0 = Transform.TransformPoint(_center);
+                _center0 = effectiveTransform.TransformPoint(_center);
                 _collideType = _bound switch
                 {
                     EBound.Outside => 0,
@@ -93,8 +94,8 @@ public class PhysicsChainCollider : PhysicsChainColliderBase, IRenderable
                         break;
                 }
 
-                _center0 = Transform.TransformPoint(c0);
-                _center1 = Transform.TransformPoint(c1);
+                _center0 = effectiveTransform.TransformPoint(c0);
+                _center1 = effectiveTransform.TransformPoint(c1);
                 _centersDistance = (_center1 - _center0).Length();
                 _collideType = _bound == EBound.Outside ? 2 : 3;
             }
@@ -105,7 +106,7 @@ public class PhysicsChainCollider : PhysicsChainColliderBase, IRenderable
             if (halfHeight - r <= 0)
             {
                 _scaledRadius = r * scale;
-                _center0 = Transform.TransformPoint(_center);
+                _center0 = effectiveTransform.TransformPoint(_center);
                 _collideType = _bound == EBound.Outside ? 0 : 1;
             }
             else
@@ -134,8 +135,8 @@ public class PhysicsChainCollider : PhysicsChainColliderBase, IRenderable
                         break;
                 }
 
-                _center0 = Transform.TransformPoint(c0);
-                _center1 = Transform.TransformPoint(c1);
+                _center0 = effectiveTransform.TransformPoint(c0);
+                _center1 = effectiveTransform.TransformPoint(c1);
                 _centersDistance = (_center1 - _center0).Length();
                 _collideType = _bound == EBound.Outside ? 4 : 5;
             }

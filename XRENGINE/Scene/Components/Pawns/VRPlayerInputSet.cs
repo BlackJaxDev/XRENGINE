@@ -3,6 +3,7 @@ using MagicPhysX;
 using System.Numerics;
 using XREngine.Core;
 using XREngine.Core.Attributes;
+using XREngine.Components.Physics;
 using XREngine.Data.Components.Scene;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -12,6 +13,8 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Physics.Physx.Joints;
+using XREngine.Scene;
+using XREngine.Scene.Physics.Joints;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components
@@ -60,53 +63,45 @@ namespace XREngine.Components
             set => SetField(ref _releaseForceThreshold, value);
         }
 
-        private PhysxDynamicRigidBody? _leftHandOverlap = null;
+        private IAbstractDynamicRigidBody? _leftHandOverlap;
         [RuntimeOnly]
-        public PhysxDynamicRigidBody? LeftHandOverlap
+        public IAbstractDynamicRigidBody? LeftHandOverlap
         {
             get => _leftHandOverlap;
             set => SetField(ref _leftHandOverlap, value);
         }
 
-        private PhysxDynamicRigidBody? _rightHandOverlap = null;
+        private IAbstractDynamicRigidBody? _rightHandOverlap;
         [RuntimeOnly]
-        public PhysxDynamicRigidBody? RightHandOverlap
+        public IAbstractDynamicRigidBody? RightHandOverlap
         {
             get => _rightHandOverlap;
             set => SetField(ref _rightHandOverlap, value);
         }
 
-        private PhysxDynamicRigidBody? _rightHandBody = null;
+        private IAbstractDynamicRigidBody? _rightHandBody;
         [RuntimeOnly]
-        public PhysxDynamicRigidBody? RightHandRigidBody
+        public IAbstractDynamicRigidBody? RightHandRigidBody
         {
             get => _rightHandBody;
             set => SetField(ref _rightHandBody, value);
         }
 
-        private PhysxDynamicRigidBody? _leftHandBody = null;
+        private IAbstractDynamicRigidBody? _leftHandBody;
         [RuntimeOnly]
-        public PhysxDynamicRigidBody? LeftHandRigidBody
+        public IAbstractDynamicRigidBody? LeftHandRigidBody
         {
             get => _leftHandBody;
             set => SetField(ref _leftHandBody, value);
         }
 
-        private PhysxJoint_Distance? _leftHandConstraint;
+        private readonly RuntimeDistanceConstraintOwner _leftHandConstraintOwner = new();
         [RuntimeOnly]
-        public PhysxJoint_Distance? LeftHandConstraint
-        {
-            get => _leftHandConstraint;
-            set => SetField(ref _leftHandConstraint, value);
-        }
+        public IAbstractDistanceJoint? LeftHandConstraint => _leftHandConstraintOwner.Constraint;
 
-        private PhysxJoint_Distance? _rightHandConstraint;
+        private readonly RuntimeDistanceConstraintOwner _rightHandConstraintOwner = new();
         [RuntimeOnly]
-        public PhysxJoint_Distance? RightHandConstraint
-        {
-            get => _rightHandConstraint;
-            set => SetField(ref _rightHandConstraint, value);
-        }
+        public IAbstractDistanceJoint? RightHandConstraint => _rightHandConstraintOwner.Constraint;
 
         private float _damping = 0.5f;
         public float Damping
@@ -291,20 +286,23 @@ namespace XREngine.Components
 
         private void Release(bool left)
         {
-            //Destroy constraint between hand and object
+            RuntimeDistanceConstraintOwner owner = left
+                ? _leftHandConstraintOwner
+                : _rightHandConstraintOwner;
+            if (!owner.Release())
+                return;
+
+            IAbstractDynamicRigidBody? item = left ? LeftHandOverlap : RightHandOverlap;
+            if (item is null)
+                return;
+
             if (left)
-            {
-                LeftHandConstraint?.Release();
-                LeftHandConstraint = null;
-            }
+                LeftHandReleased?.Invoke(this, item);
             else
-            {
-                RightHandConstraint?.Release();
-                RightHandConstraint = null;
-            }
+                RightHandReleased?.Invoke(this, item);
         }
 
-        private unsafe void Grab(bool left)
+        private void Grab(bool left)
         {
             //Attach constraint between hand and object
 
@@ -324,7 +322,8 @@ namespace XREngine.Components
                     return;
             }
 
-            if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is not PhysxScene px)
+            AbstractPhysicsScene? physicsScene = WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene;
+            if (physicsScene is null)
                 return;
 
             var handRB = left ? LeftHandRigidBody : RightHandRigidBody;
@@ -338,37 +337,46 @@ namespace XREngine.Components
             var (handPos, handRot) = handRB.Transform;
             var localFrameHand = (Vector3.Zero, Quaternion.Identity);
             //The item's local frame is the hand transform in the item's local space
-            var localFrameItem = itemRB.WorldToLocal(handPos, handRot);
-            var joint = CreateGrabConstraint(px, itemRB, localFrameItem, handRB, localFrameHand);
+            var (itemPosition, itemRotation) = itemRB.Transform;
+            Quaternion inverseItemRotation = Quaternion.Inverse(itemRotation);
+            var localFrameItem = (
+                Vector3.Transform(handPos - itemPosition, inverseItemRotation),
+                Quaternion.Multiply(inverseItemRotation, handRot));
+            RuntimeDistanceConstraintOwner owner = left
+                ? _leftHandConstraintOwner
+                : _rightHandConstraintOwner;
+            CreateGrabConstraint(owner, physicsScene, itemRB, localFrameItem, handRB, localFrameHand);
+
             if (left)
-                LeftHandConstraint = joint;
+                LeftHandGrabbed?.Invoke(this, itemRB);
             else
-                RightHandConstraint = joint;
+                RightHandGrabbed?.Invoke(this, itemRB);
+            HandGrabbed?.Invoke(this, itemRB, left);
         }
 
-        private unsafe PhysxJoint_Distance CreateGrabConstraint(
-            PhysxScene px,
-            PhysxDynamicRigidBody item,
+        private void CreateGrabConstraint(
+            RuntimeDistanceConstraintOwner owner,
+            AbstractPhysicsScene physicsScene,
+            IAbstractDynamicRigidBody item,
             (Vector3 Zero, Quaternion Identity) localFrameItem,
-            PhysxDynamicRigidBody hand,
+            IAbstractDynamicRigidBody hand,
             (Vector3 Zero, Quaternion Identity) localFrameHand)
         {
-            var joint = px.NewDistanceJoint(item, localFrameItem, hand, localFrameHand);
-            joint.Damping = Damping;
-            joint.Stiffness = Stiffness;
-            joint.MinDistance = MinDistance ?? 0.0f;
-            joint.MaxDistance = MaxDistance ?? 0.0f;
-            joint.Tolerance = Tolerance;
-            joint.ContactDistance = ContactDistance;
-            PxDistanceJointFlags flags = 0;
-            if (SpringEnabled)
-                flags |= PxDistanceJointFlags.SpringEnabled;
-            if (MinDistance.HasValue)
-                flags |= PxDistanceJointFlags.MinDistanceEnabled;
-            if (MaxDistance.HasValue)
-                flags |= PxDistanceJointFlags.MaxDistanceEnabled;
-            joint.DistanceFlags = flags;
-            return joint;
+            RuntimeDistanceConstraintSettings settings = new(
+                MinDistance: MinDistance ?? 0.0f,
+                MaxDistance: MaxDistance ?? 0.0f,
+                EnableMinDistance: MinDistance.HasValue,
+                EnableMaxDistance: MaxDistance.HasValue,
+                Stiffness: Stiffness,
+                Damping: Damping,
+                Tolerance: Tolerance);
+            owner.Bind(
+                physicsScene,
+                item,
+                new JointAnchor(localFrameItem.Zero, localFrameItem.Identity),
+                hand,
+                new JointAnchor(localFrameHand.Zero, localFrameHand.Identity),
+                settings);
         }
 
         protected override void OnComponentActivated()
@@ -382,6 +390,8 @@ namespace XREngine.Components
 
         protected override void OnComponentDeactivated()
         {
+            Release(left: true);
+            Release(left: false);
             base.OnComponentDeactivated();
             if (RightHandRigidBody is not null)
                 DeinitRightHandBody();
@@ -391,6 +401,7 @@ namespace XREngine.Components
 
         private void DeinitRightHandBody()
         {
+            Release(left: false);
             var tfm = RightHandTransform;
             if (tfm is not null)
                 tfm.WorldMatrixChanged -= RightHandTransform_WorldMatrixChanged;
@@ -400,6 +411,7 @@ namespace XREngine.Components
 
         private void DeinitLeftHandBody()
         {
+            Release(left: true);
             var tfm = LeftHandTransform;
             if (tfm is not null)
                 tfm.WorldMatrixChanged -= LeftHandTransform_WorldMatrixChanged;
@@ -414,10 +426,10 @@ namespace XREngine.Components
                 return;
 
             tfm.WorldMatrixChanged += LeftHandTransform_WorldMatrixChanged;
-            if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is PhysxScene px)
+            if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is { } physicsScene)
             {
                 LeftHandRigidBody?.Destroy();
-                LeftHandRigidBody = NewHandRigidBody(tfm);
+                LeftHandRigidBody = NewHandRigidBody(physicsScene, tfm);
             }
         }
 
@@ -428,22 +440,34 @@ namespace XREngine.Components
                 return;
 
             tfm.WorldMatrixChanged += RightHandTransform_WorldMatrixChanged;
-            if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is PhysxScene px)
+            if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is { } physicsScene)
             {
                 RightHandRigidBody?.Destroy();
-                RightHandRigidBody = NewHandRigidBody(tfm);
+                RightHandRigidBody = NewHandRigidBody(physicsScene, tfm);
             }
         }
 
-        private static PhysxDynamicRigidBody NewHandRigidBody(VRControllerTransform tfm)
-            => new()
-            {
-                ActorFlags = PxActorFlags.DisableGravity,
-                Flags = PxRigidBodyFlags.Kinematic | PxRigidBodyFlags.UseKinematicTargetForSceneQueries,
-                //CollisionGroup = 1,
-                //GroupsMask = ,
-                //KinematicTarget = (tfm.WorldTranslation, tfm.WorldRotation)
-            };
+        private static IAbstractDynamicRigidBody? NewHandRigidBody(
+            AbstractPhysicsScene physicsScene,
+            VRControllerTransform tfm)
+        {
+            IAbstractDynamicRigidBody? body = physicsScene.BackendService.CreateDynamicRigidBody(
+                new PhysicsRigidBodyCreateInfo(
+                    [],
+                    null,
+                    null,
+                    null,
+                    (tfm.WorldTranslation, tfm.WorldRotation),
+                    Vector3.Zero,
+                    Quaternion.Identity,
+                    1.0f,
+                    new LayerMask(1))
+                {
+                    GravityEnabled = false,
+                    BodyFlags = PhysicsRigidBodyFlags.Kinematic | PhysicsRigidBodyFlags.UseKinematicTargetForQueries,
+                });
+            return body;
+        }
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
@@ -462,23 +486,17 @@ namespace XREngine.Components
                         break;
                     case nameof(RightHandRigidBody):
                         {
-                            if (RightHandRigidBody is not null && WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is PhysxScene px)
-                                px.RemoveActor(RightHandRigidBody);
+                            Release(left: false);
+                            if (RightHandRigidBody is not null)
+                                WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene.RemoveActor(RightHandRigidBody);
                         }
                         break;
                     case nameof(LeftHandRigidBody):
                         {
-                            if (LeftHandRigidBody is not null && WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is PhysxScene px)
-                                px.RemoveActor(LeftHandRigidBody);
+                            Release(left: true);
+                            if (LeftHandRigidBody is not null)
+                                WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene.RemoveActor(LeftHandRigidBody);
                         }
-                        break;
-                    case nameof(LeftHandConstraint):
-                        if (LeftHandConstraint is not null && LeftHandOverlap is not null)
-                            LeftHandReleased?.Invoke(this, LeftHandOverlap);
-                        break;
-                    case nameof(RightHandConstraint):
-                        if (RightHandConstraint is not null && RightHandOverlap is not null)
-                            RightHandReleased?.Invoke(this, RightHandOverlap);
                         break;
                 }
             }
@@ -502,50 +520,34 @@ namespace XREngine.Components
                     {
                         if (RightHandRigidBody is null)
                             break;
-                        if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is PhysxScene px)
-                            px.AddActor(RightHandRigidBody);
-                        RightHandRigidBody.KinematicTarget = (RightHandTransform?.WorldTranslation ?? Vector3.Zero, RightHandTransform?.WorldRotation ?? Quaternion.Identity);
+                        WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene.AddActor(RightHandRigidBody);
+                        SetHandKinematicTarget(RightHandRigidBody, RightHandTransform);
                     }
                     break;
                 case nameof(LeftHandRigidBody):
                     {
                         if (LeftHandRigidBody is null)
                             break;
-                        if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is PhysxScene px)
-                            px.AddActor(LeftHandRigidBody);
-                        LeftHandRigidBody.KinematicTarget = (LeftHandTransform?.WorldTranslation ?? Vector3.Zero, LeftHandTransform?.WorldRotation ?? Quaternion.Identity);
+                        WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene.AddActor(LeftHandRigidBody);
+                        SetHandKinematicTarget(LeftHandRigidBody, LeftHandTransform);
                     }
                     break;
                 case nameof(LeftHandOverlap):
-                    LeftHandOverlapChanged?.Invoke(this, prev as PhysxDynamicRigidBody, LeftHandOverlap);
+                    LeftHandOverlapChanged?.Invoke(this, prev as IAbstractDynamicRigidBody, LeftHandOverlap);
                     break;
                 case nameof(RightHandOverlap):
-                    RightHandOverlapChanged?.Invoke(this, prev as PhysxDynamicRigidBody, RightHandOverlap);
-                    break;
-                case nameof(LeftHandConstraint):
-                    if (LeftHandConstraint is not null && LeftHandOverlap is not null)
-                    {
-                        LeftHandGrabbed?.Invoke(this, LeftHandOverlap);
-                        HandGrabbed?.Invoke(this, LeftHandOverlap, true);
-                    }
-                    break;
-                case nameof(RightHandConstraint):
-                    if (RightHandConstraint is not null && RightHandOverlap is not null)
-                    {
-                        RightHandGrabbed?.Invoke(this, RightHandOverlap);
-                        HandGrabbed?.Invoke(this, RightHandOverlap, false);
-                    }
+                    RightHandOverlapChanged?.Invoke(this, prev as IAbstractDynamicRigidBody, RightHandOverlap);
                     break;
             }
         }
 
-        public delegate void DelHandGrabbed(VRPlayerInputSet sender, PhysxDynamicRigidBody item, bool left);
-        public delegate void DelLeftHandGrabbed(VRPlayerInputSet sender, PhysxDynamicRigidBody item);
-        public delegate void DelRightHandGrabbed(VRPlayerInputSet sender, PhysxDynamicRigidBody item);
-        public delegate void DelLeftHandReleased(VRPlayerInputSet sender, PhysxDynamicRigidBody item);
-        public delegate void DelRightHandReleased(VRPlayerInputSet sender, PhysxDynamicRigidBody item);
-        public delegate void DelLeftHandOverlapChanged(VRPlayerInputSet sender, PhysxDynamicRigidBody? previous, PhysxDynamicRigidBody? current);
-        public delegate void DelRightHandOverlapChanged(VRPlayerInputSet sender, PhysxDynamicRigidBody? previous, PhysxDynamicRigidBody? current);
+        public delegate void DelHandGrabbed(VRPlayerInputSet sender, IAbstractDynamicRigidBody item, bool left);
+        public delegate void DelLeftHandGrabbed(VRPlayerInputSet sender, IAbstractDynamicRigidBody item);
+        public delegate void DelRightHandGrabbed(VRPlayerInputSet sender, IAbstractDynamicRigidBody item);
+        public delegate void DelLeftHandReleased(VRPlayerInputSet sender, IAbstractDynamicRigidBody item);
+        public delegate void DelRightHandReleased(VRPlayerInputSet sender, IAbstractDynamicRigidBody item);
+        public delegate void DelLeftHandOverlapChanged(VRPlayerInputSet sender, IAbstractDynamicRigidBody? previous, IAbstractDynamicRigidBody? current);
+        public delegate void DelRightHandOverlapChanged(VRPlayerInputSet sender, IAbstractDynamicRigidBody? previous, IAbstractDynamicRigidBody? current);
 
         public event DelHandGrabbed? HandGrabbed;
         public event DelLeftHandGrabbed? LeftHandGrabbed;
@@ -561,7 +563,7 @@ namespace XREngine.Components
             if (RightHandRigidBody is null || RightHandConstraint is not null)
                 return;
 
-            RightHandRigidBody.KinematicTarget = (tfm.WorldTranslation, tfm.WorldRotation);
+            SetHandKinematicTarget(RightHandRigidBody, tfm);
 
             //if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is PhysxScene px)
             //    RightHandOverlap = OverlapTest(tfm, px);
@@ -573,13 +575,20 @@ namespace XREngine.Components
             if (LeftHandRigidBody is null || LeftHandConstraint is not null)
                 return;
 
-            LeftHandRigidBody.KinematicTarget = (tfm.WorldTranslation, tfm.WorldRotation);
+            SetHandKinematicTarget(LeftHandRigidBody, tfm);
 
             //if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is PhysxScene px)
             //    LeftHandOverlap = OverlapTest(tfm, px);
         }
 
-        private unsafe PhysxDynamicRigidBody? OverlapTest(TransformBase tfm, PhysxScene px)
+        private static void SetHandKinematicTarget(
+            IAbstractDynamicRigidBody body,
+            TransformBase? transform)
+            => body.KinematicTarget = (
+                transform?.WorldTranslation ?? Vector3.Zero,
+                transform?.WorldRotation ?? Quaternion.Identity);
+
+        private unsafe PhysxDynamicRigidBody? OverlapTestPhysxExtension(TransformBase tfm, PhysxScene px)
         {
             var handPos = tfm.WorldTranslation;
             var sphere = new IPhysicsGeometry.Sphere(GrabRadius);

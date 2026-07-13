@@ -60,7 +60,13 @@ public class PhysxHeightFieldComponent : XRComponent
             return;
         
         var mat = new PhysxMaterial(0.5f, 0.5f, 0.1f);
-        IPhysicsGeometry.HeightField hf = new(HeightField.HeightFieldPtr, HeightScale, RowScale, ColumnScale, TightBounds, DoubleSided);
+        PhysxHeightFieldGeometryExtension hf = new(
+            HeightField.HeightFieldPtr,
+            HeightScale,
+            RowScale,
+            ColumnScale,
+            TightBounds,
+            DoubleSided);
         RigidBodyComponent.RigidBody = new PhysxDynamicRigidBody(mat, hf, 1.0f);
     }
     protected override void OnComponentDeactivated()

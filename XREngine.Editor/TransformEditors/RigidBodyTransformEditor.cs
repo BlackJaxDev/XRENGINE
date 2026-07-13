@@ -6,6 +6,7 @@ using MagicPhysX;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
+using XREngine.Scene.Physics;
 using XREngine.Scene.Transforms;
 using XREngine.Editor;
 using static XREngine.Editor.EditorImGuiUI;

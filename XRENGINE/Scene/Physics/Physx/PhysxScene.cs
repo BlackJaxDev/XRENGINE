@@ -20,6 +20,11 @@ namespace XREngine.Rendering.Physics.Physx
 {
     public unsafe partial class PhysxScene : AbstractPhysicsScene
     {
+        private IPhysicsBackendService? _backendService;
+
+        public override IPhysicsBackendService BackendService
+            => _backendService ??= new PhysxBackendService(this);
+
         private static PxFoundation* _foundationPtr;
         public static PxFoundation* FoundationPtr => _foundationPtr;
 
@@ -152,6 +157,8 @@ namespace XREngine.Rendering.Physics.Physx
                 var actor = PhysxActor.Get(ptrs[i]);
                 if (actor is not null && !actor.IsReleased)
                 {
+                    if (actor is PhysxRigidActor rigidActor)
+                        rigidActor.ReleaseOwnedShapeReferences();
                     actor.IsReleased = true;
                     actor.RemoveFromCaches();
                     marked++;
@@ -1629,7 +1636,7 @@ namespace XREngine.Rendering.Physics.Physx
             PxVec3 d = unitDir;
             var t = MakeTransform(pose.position, pose.rotation);
             PxQueryHit hit_;
-            using var structObj = geometry.GetPhysxStruct();
+            using var structObj = geometry.CreatePhysxGeometryData();
             bool hasHit = _scene->QueryExtSweepAny(
                 structObj.Address.As<PxGeometry>(),
                 &t,
@@ -1665,7 +1672,7 @@ namespace XREngine.Rendering.Physics.Physx
             PxVec3 d = unitDir;
             var t = MakeTransform(pose.position, pose.rotation);
             PxSweepHit hit_;
-            using var structObj = geometry.GetPhysxStruct();
+            using var structObj = geometry.CreatePhysxGeometryData();
             bool hasHit = _scene->QueryExtSweepSingle(
                 structObj.Address.As<PxGeometry>(),
                 &t,
@@ -1705,7 +1712,7 @@ namespace XREngine.Rendering.Physics.Physx
             var t = MakeTransform(pose.position, pose.rotation);
             bool blockingHit_;
             PxSweepHit* hitBuffer_ = stackalloc PxSweepHit[maxHitCapacity];
-            using var structObj = geometry.GetPhysxStruct();
+            using var structObj = geometry.CreatePhysxGeometryData();
             int hitCount = _scene->QueryExtSweepMultiple(
                 structObj.Address.As<PxGeometry>(),
                 &t,
@@ -1739,7 +1746,7 @@ namespace XREngine.Rendering.Physics.Physx
             var filterData = filterMask != null ? PxQueryFilterData_new_1(filterMask, queryFlags) : PxQueryFilterData_new_2(queryFlags);
             var t = MakeTransform(pose.position, pose.rotation);
             PxOverlapHit* hitBuffer = stackalloc PxOverlapHit[maxHitCapacity];
-            using var structObj = geometry.GetPhysxStruct();
+            using var structObj = geometry.CreatePhysxGeometryData();
             int hitCount = _scene->QueryExtOverlapMultiple(
                 structObj.Address.As<PxGeometry>(),
                 &t,
@@ -1764,7 +1771,7 @@ namespace XREngine.Rendering.Physics.Physx
             var filterData = filterMask != null ? PxQueryFilterData_new_1(filterMask, queryFlags) : PxQueryFilterData_new_2(queryFlags);
             var t = MakeTransform(pose.position, pose.rotation);
             PxOverlapHit hit_;
-            using var structObj = geometry.GetPhysxStruct();
+            using var structObj = geometry.CreatePhysxGeometryData();
             bool hasHit = _scene->QueryExtOverlapAny(
                 structObj.Address.As<PxGeometry>(),
                 &t,

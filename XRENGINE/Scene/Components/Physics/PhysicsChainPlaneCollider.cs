@@ -6,6 +6,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Components;
 
@@ -24,7 +25,7 @@ public class PhysicsChainPlaneCollider : PhysicsChainColliderBase, IRenderable
 
     public override void Prepare()
     {
-        if (Transform is null)
+        if (!TryResolveEffectiveTransform(null, out TransformBase effectiveTransform))
         {
             _plane = default;
             return;
@@ -34,23 +35,23 @@ public class PhysicsChainPlaneCollider : PhysicsChainColliderBase, IRenderable
         switch (_direction)
         {
             case Direction.X:
-                normal = Transform.WorldRight;
+                normal = effectiveTransform.WorldRight;
                 break;
             case Direction.Y:
-                normal = Transform.WorldUp;
+                normal = effectiveTransform.WorldUp;
                 break;
             case Direction.Z:
-                normal = Transform.WorldForward;
+                normal = effectiveTransform.WorldForward;
                 break;
         }
 
-        Vector3 p = Transform.TransformPoint(_center);
+        Vector3 p = effectiveTransform.TransformPoint(_center);
         _plane = XRMath.CreatePlaneFromPointAndNormal(p, normal);
     }
 
     public override bool Collide(ref Vector3 particlePosition, float particleRadius)
     {
-        if (Transform is null)
+        if (!TryResolveEffectiveTransform(null, out _))
             return false;
 
         float d = GeoUtil.DistanceFrom.PlaneToPoint(_plane, particlePosition);

@@ -20,6 +20,8 @@ public class XRMeshRendererTests
     {
         var meshA = CreateSingleTriangleMesh();
         var meshB = CreateOffsetTriangleMesh();
+        meshA.AllowBVHGeneration = true;
+        meshB.AllowBVHGeneration = true;
 
         meshA.GenerateBVH();
         meshB.GenerateBVH();

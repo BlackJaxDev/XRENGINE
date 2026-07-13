@@ -2,8 +2,8 @@ using XREngine.Extensions;
 using System.Numerics;
 using XREngine.Components.Physics;
 using XREngine.Data;
-using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
+using XREngine.Scene.Physics;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Scene.Transforms
@@ -84,11 +84,8 @@ namespace XREngine.Components.Scene.Transforms
         protected override Matrix4x4 CreateLocalMatrix()
             => Matrix4x4.CreateTranslation(0.0f, 0.0f, _currentLength);
 
-        private PhysxScene.PhysxQueryFilter _queryFilter = new()
-        {
-            Flags = MagicPhysX.PxQueryFlags.Static,
-        };
-        public PhysxScene.PhysxQueryFilter QueryFilter
+        private PhysicsQueryFilter _queryFilter = new(PhysicsQueryActorTypes.Static);
+        public PhysicsQueryFilter QueryFilter
         {
             get => _queryFilter;
             set => SetField(ref _queryFilter, value);
@@ -105,7 +102,7 @@ namespace XREngine.Components.Scene.Transforms
         /// <summary>
         /// Components whose physics bodies should be ignored during the boom trace.
         /// Use this for explicit filtering when QueryFilter flags aren't sufficient.
-        /// By default, QueryFilter.Flags = PxQueryFlags.Static ensures only static geometry is hit.
+        /// By default, the query filter only accepts static geometry.
         /// </summary>
         public HashSet<XRComponent> IgnoredComponents => _ignoredComponents;
 

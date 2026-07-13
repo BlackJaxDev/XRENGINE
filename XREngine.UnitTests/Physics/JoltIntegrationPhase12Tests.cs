@@ -4,6 +4,7 @@ using System.Numerics;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
+using XREngine.Scene.Physics;
 using XREngine.Scene.Physics.Joints;
 using XREngine.Scene.Physics.Jolt;
 using JoltPhysicsSharp;
@@ -63,7 +64,7 @@ public unsafe class JoltIntegrationPhase12Tests
 
         ObjectLayer layer = mask.AsJoltObjectLayer();
 
-        ObjectLayerPairFilterMask.GetGroup(layer).ShouldBe((uint)5);
+        ObjectLayerPairFilterMask.GetGroup(layer).ShouldBe(1u << 5);
         ObjectLayerPairFilterMask.GetMask(layer).ShouldBe((uint)(1 << 5));
     }
 
@@ -74,7 +75,7 @@ public unsafe class JoltIntegrationPhase12Tests
 
         ObjectLayer layer = mask.AsJoltObjectLayer();
 
-        ObjectLayerPairFilterMask.GetGroup(layer).ShouldBe(0u);
+        ObjectLayerPairFilterMask.GetGroup(layer).ShouldBe(1u);
         ObjectLayerPairFilterMask.GetMask(layer).ShouldBe(0xFFFFu);
     }
 

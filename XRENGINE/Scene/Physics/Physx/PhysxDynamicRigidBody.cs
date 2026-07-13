@@ -209,7 +209,7 @@ namespace XREngine.Rendering.Physics.Physx
         {
             var tfm = PhysxScene.MakeTransform(position, rotation);
             var shapeTfm = PhysxScene.MakeTransform(shapeOffsetTranslation, shapeOffsetRotation);
-            using var structObj = geometry.GetPhysxStruct();
+            using var structObj = geometry.CreatePhysxGeometryData();
             _obj = PhysxScene.PhysicsPtr->PhysPxCreateDynamic(&tfm, structObj.ToStructPtr<PxGeometry>(), material.MaterialPtr, density, &shapeTfm);
             CachePtr();
             PhysxObjectLog.Created(this, (nint)_obj, $"density={density}");

@@ -1,12 +1,10 @@
 using System.ComponentModel;
 using System.Numerics;
 using System.Threading;
-using MagicPhysX;
 using XREngine;
 using XREngine.Core.Attributes;
-using XREngine.Rendering.Physics.Physx;
+using XREngine.Networking;
 using XREngine.Scene;
-using XREngine.Scene.Physics.Jolt;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Physics
@@ -15,40 +13,18 @@ namespace XREngine.Components.Physics
     [Category("Physics")]
     [DisplayName("Character Controller")]
     [Description("Reusable backend-neutral capsule character controller owner for movement and gameplay components.")]
-    public class CharacterControllerComponent : XRComponent
+    public class CharacterControllerComponent : XRComponent, IPhysicsReplicationTarget
     {
-        private sealed class PhysxAdapter(PhysxCapsuleController controller) : IAbstractCharacterController
-        {
-            public PhysxCapsuleController Controller { get; } = controller;
-            public Vector3 Position { get => Controller.Position; set => Controller.Position = value; }
-            public Vector3 FootPosition { get => Controller.FootPosition; set => Controller.FootPosition = value; }
-            public Vector3 UpDirection { get => Controller.UpDirection; set => Controller.UpDirection = value; }
-            public float Radius { get => Controller.Radius; set => Controller.Radius = value; }
-            public float Height => Controller.Height;
-            public float SlopeLimit { get => Controller.SlopeLimit; set => Controller.SlopeLimit = value; }
-            public float StepOffset { get => Controller.StepOffset; set => Controller.StepOffset = value; }
-            public float ContactOffset { get => Controller.ContactOffset; set => Controller.ContactOffset = value; }
-            public bool CollidingUp => Controller.CollidingUp;
-            public bool CollidingDown => Controller.CollidingDown;
-            public Vector3 LinearVelocity => Controller.Actor?.LinearVelocity ?? Vector3.Zero;
-            public Vector3 AngularVelocity => Controller.Actor?.AngularVelocity ?? Vector3.Zero;
-            public bool IsSleeping => Controller.Actor?.IsSleeping ?? false;
-            public (Vector3 position, Quaternion rotation) Transform => Controller.Actor?.Transform ?? (Position, Quaternion.Identity);
-            public void Move(Vector3 delta, float minDist, float elapsedTime) => Controller.Move(delta, minDist, elapsedTime);
-            public void Resize(float height) => Controller.Resize(height);
-            public void Destroy(bool wakeOnLostTouch = false) => RequestRelease();
-            public void RequestRelease() => Controller.RequestRelease();
-        }
-
         private int _initVersion;
         private IAbstractCharacterController? _controller;
-        private IAbstractRigidPhysicsActor? _controllerActorProxy;
-        private PhysxCapsuleController? _physxController;
-        private IJoltCharacterController? _joltController;
         private AbstractPhysicsScene? _subscribedPhysicsScene;
         private bool _wasCollidingUp;
         private bool _wasCollidingDown;
         private PhysicsMaterialDefinition? _materialDefinition;
+        private PhysicsReplicationAuthority _replicationAuthority = PhysicsReplicationAuthority.LocalSimulation;
+        private NetworkEntityId _networkEntityId;
+        private string? _ownerClientId;
+        private int _ownerServerPlayerIndex = -1;
         private Vector3 _upDirection = Globals.Up;
         private float _radius = 0.6f;
         private float _height = 1.5748f;
@@ -79,42 +55,94 @@ namespace XREngine.Components.Physics
         public Vector3 UpDirection
         {
             get => _upDirection;
-            set => SetField(ref _upDirection, value);
+            set
+            {
+                if (SetField(ref _upDirection, value) && Controller is not null)
+                    Controller.UpDirection = value;
+            }
+        }
+
+        [Category("Networking")]
+        public PhysicsReplicationAuthority ReplicationAuthority
+        {
+            get => _replicationAuthority;
+            set => SetField(ref _replicationAuthority, value);
+        }
+
+        [Category("Networking")]
+        public NetworkEntityId NetworkEntityId
+        {
+            get => _networkEntityId;
+            set => SetField(ref _networkEntityId, value);
+        }
+
+        [Category("Networking")]
+        public string? OwnerClientId
+        {
+            get => _ownerClientId;
+            set => SetField(ref _ownerClientId, value);
+        }
+
+        [Category("Networking")]
+        public int OwnerServerPlayerIndex
+        {
+            get => _ownerServerPlayerIndex;
+            set => SetField(ref _ownerServerPlayerIndex, value);
         }
 
         [Category("Controller")]
         public float Radius
         {
             get => _radius;
-            set => SetField(ref _radius, value);
+            set
+            {
+                if (SetField(ref _radius, value) && Controller is not null)
+                    Controller.Radius = value;
+            }
         }
 
         [Category("Controller")]
         public float Height
         {
             get => _height;
-            set => SetField(ref _height, value);
+            set
+            {
+                if (SetField(ref _height, value))
+                    Controller?.Resize(value);
+            }
         }
 
         [Category("Controller")]
         public float ContactOffset
         {
             get => _contactOffset;
-            set => SetField(ref _contactOffset, value);
+            set
+            {
+                if (SetField(ref _contactOffset, value) && Controller is not null)
+                    Controller.ContactOffset = value;
+            }
         }
 
         [Category("Controller")]
         public float StepOffset
         {
             get => _stepOffset;
-            set => SetField(ref _stepOffset, value);
+            set
+            {
+                if (SetField(ref _stepOffset, value) && Controller is not null)
+                    Controller.StepOffset = value;
+            }
         }
 
         [Category("Controller")]
         public float SlopeLimit
         {
             get => _slopeLimit;
-            set => SetField(ref _slopeLimit, value);
+            set
+            {
+                if (SetField(ref _slopeLimit, value) && Controller is not null)
+                    Controller.SlopeLimit = value;
+            }
         }
 
         [Category("Controller")]
@@ -130,7 +158,6 @@ namespace XREngine.Components.Physics
         public void Resize(float height)
         {
             Height = height;
-            Controller?.Resize(height);
         }
 
         protected override void OnComponentActivated()
@@ -143,11 +170,7 @@ namespace XREngine.Components.Physics
             physicsScene.OnSimulationStep += OnPhysicsSimulationStep;
             _subscribedPhysicsScene = physicsScene;
 
-            Vector3 position = Transform.WorldTranslation;
-            if (physicsScene is PhysxScene physxScene)
-                QueuePhysxControllerCreation(physxScene, position);
-            else if (physicsScene is JoltScene joltScene)
-                BindJoltController(new JoltCharacterVirtualController(joltScene, position));
+            QueueControllerCreation(physicsScene, Transform.WorldTranslation);
         }
 
         protected override void OnComponentDeactivated()
@@ -159,80 +182,55 @@ namespace XREngine.Components.Physics
             var rigidBodyTransform = SceneNode?.GetTransformAs<RigidBodyTransform>(false);
             if (rigidBodyTransform is not null)
                 rigidBodyTransform.RigidBody = null;
-            _controllerActorProxy = null;
-            _physxController?.RequestRelease();
-            _physxController = null;
-            _joltController?.RequestRelease();
-            _joltController = null;
+            Controller?.RequestRelease();
             if (Controller is not null)
                 ControllerReleased?.Invoke(this);
             Controller = null;
             base.OnComponentDeactivated();
         }
 
-        private void QueuePhysxControllerCreation(PhysxScene physxScene, Vector3 position)
+        private void QueueControllerCreation(AbstractPhysicsScene physicsScene, Vector3 position)
         {
             int version = Interlocked.Increment(ref _initVersion);
-            Engine.EnqueuePhysicsThreadTask(() => CreatePhysxController(physxScene, position, version));
+            Engine.EnqueuePhysicsThreadTask(() => CreateController(physicsScene, position, version));
         }
 
-        private unsafe void CreatePhysxController(PhysxScene physxScene, Vector3 position, int version)
+        private void CreateController(AbstractPhysicsScene physicsScene, Vector3 position, int version)
         {
             if (version != Volatile.Read(ref _initVersion) || !IsActiveInHierarchy)
                 return;
 
-            var material = ResolvePhysxMaterial();
-            ControllerManager manager = physxScene.GetOrCreateControllerManager();
-            PhysxCapsuleController controller = manager.CreateCapsuleController(
-                position,
-                UpDirection,
-                SlopeLimit,
-                0.0f,
-                1.0f,
-                ContactOffset,
-                StepOffset,
-                Density,
-                0.8f,
-                1.5f,
-                PxControllerNonWalkableMode.PreventClimbing,
-                material,
-                0,
-                null,
-                Radius,
-                Height,
-                PxCapsuleClimbingMode.Easy);
-            var proxy = new PhysxControllerActorProxy(controller.ControllerPtr);
-            Engine.EnqueueUpdateThreadTask(() => BindPhysxController(physxScene, controller, proxy, version));
+            IAbstractCharacterController? controller = physicsScene.BackendService.CreateCharacterController(
+                new PhysicsCharacterControllerCreateInfo(
+                    position,
+                    UpDirection,
+                    Radius,
+                    Height,
+                    SlopeLimit,
+                    ContactOffset,
+                    StepOffset,
+                    Density,
+                    MaterialDefinition));
+            if (controller is not null)
+                Engine.EnqueueUpdateThreadTask(() => BindController(physicsScene, controller, version));
         }
 
-        private void BindPhysxController(PhysxScene physxScene, PhysxCapsuleController controller, PhysxControllerActorProxy proxy, int version)
+        private void BindController(
+            AbstractPhysicsScene physicsScene,
+            IAbstractCharacterController controller,
+            int version)
         {
-            if (version != Volatile.Read(ref _initVersion) || !IsActiveInHierarchy || WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene != physxScene)
+            if (version != Volatile.Read(ref _initVersion)
+                || !IsActiveInHierarchy
+                || WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene != physicsScene)
             {
                 controller.RequestRelease();
                 return;
             }
 
-            _physxController = controller;
-            _controllerActorProxy = proxy;
-            Controller = new PhysxAdapter(controller);
-            BindRigidBodyTransform(proxy);
-            ControllerCreated?.Invoke(this, Controller);
-        }
-
-        private void BindJoltController(IJoltCharacterController controller)
-        {
-            controller.Radius = Radius;
-            controller.Height = Height;
-            controller.ContactOffset = ContactOffset;
-            controller.StepOffset = StepOffset;
-            controller.SlopeLimit = SlopeLimit;
-            controller.UpDirection = UpDirection;
-            _joltController = controller;
-            _controllerActorProxy = controller;
             Controller = controller;
             BindRigidBodyTransform(controller);
-            ControllerCreated?.Invoke(this, Controller);
+            ControllerCreated?.Invoke(this, controller);
         }
 
         private void BindRigidBodyTransform(IAbstractRigidPhysicsActor proxy)
@@ -246,7 +244,7 @@ namespace XREngine.Components.Physics
 
         private void OnPhysicsSimulationStep()
         {
-            (_controllerActorProxy as PhysxControllerActorProxy)?.RefreshFromNative();
+            Controller?.Synchronize();
             SceneNode?.GetTransformAs<RigidBodyTransform>(false)?.OnPhysicsStepped();
 
             if (Controller is null)
@@ -262,16 +260,6 @@ namespace XREngine.Components.Physics
             }
         }
 
-        private PhysxMaterial ResolvePhysxMaterial()
-        {
-            var definition = MaterialDefinition;
-            return definition is null
-                ? new PhysxMaterial(0.5f, 0.5f, 0.1f)
-                : new PhysxMaterial(definition.StaticFriction, definition.DynamicFriction, definition.Restitution)
-                {
-                    Damping = definition.Damping,
-                };
-        }
     }
 
     public readonly record struct CharacterControllerContactState(bool CollidingUp, bool CollidingDown);

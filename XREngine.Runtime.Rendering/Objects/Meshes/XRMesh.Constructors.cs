@@ -182,6 +182,17 @@ public partial class XRMesh
             dataTransform,
             RuntimeRenderingHostServices.Current.PopulateVertexDataInParallel);
 
-        Vertices = sourceList;
+        if (remapper?.ImplementationTable is null)
+        {
+            Vertices = sourceList;
+        }
+        else
+        {
+            Vertex[] compactVertices = new Vertex[firstAppearanceArray.Length];
+            for (int i = 0; i < firstAppearanceArray.Length; i++)
+                compactVertices[i] = sourceList[firstAppearanceArray[i]];
+
+            Vertices = compactVertices;
+        }
     }
 }

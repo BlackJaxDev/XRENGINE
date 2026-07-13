@@ -1,7 +1,6 @@
 ﻿using System.Numerics;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Components.Physics;
-using XREngine.Rendering.Physics.Physx;
 using System.ComponentModel;
 
 namespace XREngine.Components.Scene.Volumes

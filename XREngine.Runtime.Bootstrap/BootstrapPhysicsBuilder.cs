@@ -10,6 +10,7 @@ using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
+using XREngine.Scene.Physics;
 using XREngine.Scene.Transforms;
 using static XREngine.Scene.Transforms.RigidBodyTransform;
 using Quaternion = System.Numerics.Quaternion;
@@ -34,7 +35,7 @@ public static class BootstrapPhysicsBuilder
 
         Random random = new();
         PhysxMaterial physMat = new(0.2f, 0.2f, 1.0f);
-        physMat.RestitutionCombineMode = ECombineMode.Max;
+        physMat.RestitutionCombineMode = PhysicsMaterialCombineMode.Max;
         for (int i = 0; i < count; i++)
             AddBall(rootNode, physMat, radius, random);
     }
