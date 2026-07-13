@@ -36,9 +36,12 @@ namespace XREngine.Components.Physics
         private PhysicsGroupsMask _groupsMask = PhysicsGroupsMask.Empty;
         private byte _dominanceGroup;
         private byte _ownerClient;
+        private PhysicsReplicationAuthority _replicationAuthority = PhysicsReplicationAuthority.LocalSimulation;
         private string? _actorName;
         private AbstractPhysicsMaterial? _material;
+        private PhysicsMaterialDefinition? _materialDefinition;
         private IPhysicsGeometry? _geometry;
+        private List<PhysicsColliderShape> _colliderShapes = [];
         private Vector3 _shapeOffsetTranslation = Vector3.Zero;
         private Quaternion _shapeOffsetRotation = Quaternion.Identity;
         private float _density = DefaultDensity;
@@ -109,8 +112,26 @@ namespace XREngine.Components.Physics
         }
 
         [Category("Shape")]
+        [DisplayName("Material Definition")]
+        [Description("Backend-neutral authored material settings. Native backend materials are generated from this definition when needed.")]
+        public PhysicsMaterialDefinition? MaterialDefinition
+        {
+            get => _materialDefinition;
+            set => SetField(ref _materialDefinition, value);
+        }
+
+        [Category("Shape")]
+        [DisplayName("Compound Colliders")]
+        [Description("Backend-neutral collider shape list. The first enabled shape is the primary shape; PhysX attaches additional enabled shapes as a compound actor.")]
+        public List<PhysicsColliderShape> ColliderShapes
+        {
+            get => _colliderShapes;
+            set => SetField(ref _colliderShapes, value ?? []);
+        }
+
+        [Category("Shape")]
         [DisplayName("Geometry")]
-        [Description("The collision geometry shape.")]
+        [Description("The legacy single collision geometry shape. Used when Compound Colliders is empty.")]
         public IPhysicsGeometry? Geometry
         {
             get => _geometry;
@@ -288,6 +309,16 @@ namespace XREngine.Components.Physics
                         physx.OwnerClient = value;
                 }
             }
+        }
+
+
+        [Category("Networking")]
+        [DisplayName("Replication Authority")]
+        [Description("Defines which peer is authoritative for replicated physics state. This is metadata for networking handoff and does not change local simulation by itself.")]
+        public PhysicsReplicationAuthority ReplicationAuthority
+        {
+            get => _replicationAuthority;
+            set => SetField(ref _replicationAuthority, value);
         }
 
         [Category("Debug")]
@@ -739,10 +770,11 @@ namespace XREngine.Components.Physics
         private PhysxDynamicRigidBody? CreatePhysxDynamicRigidBody()
         {
             var (position, rotation) = GetSpawnPose();
-            var geometry = Geometry;
+            var primaryShape = ResolvePrimaryColliderShape();
+            var geometry = primaryShape?.Geometry ?? Geometry;
             if (geometry is not null)
             {
-                var mat = ResolvePhysxMaterial();
+                var mat = ResolvePhysxMaterial(primaryShape?.Material);
                 if (mat is null)
                     return null;
                 var created = new PhysxDynamicRigidBody(
@@ -751,8 +783,9 @@ namespace XREngine.Components.Physics
                     Density,
                     position,
                     rotation,
-                    ShapeOffsetTranslation,
-                    ShapeOffsetRotation);
+                    primaryShape?.LocalPosition ?? ShapeOffsetTranslation,
+                    primaryShape?.LocalRotation ?? ShapeOffsetRotation);
+                AttachAdditionalPhysxColliderShapes(created, primaryShape);
                 return created;
             }
 
@@ -761,7 +794,8 @@ namespace XREngine.Components.Physics
 
         private JoltDynamicRigidBody? CreateJoltDynamicRigidBody(JoltScene scene)
         {
-            var geometry = Geometry;
+            var primaryShape = ResolvePrimaryColliderShape();
+            var geometry = primaryShape?.Geometry ?? Geometry;
             if (geometry is null)
                 return null;
 
@@ -773,21 +807,91 @@ namespace XREngine.Components.Physics
             var body = scene.CreateDynamicRigidBody(
                 geometry,
                 pose,
-                ShapeOffsetTranslation,
-                ShapeOffsetRotation,
+                primaryShape?.LocalPosition ?? ShapeOffsetTranslation,
+                primaryShape?.LocalRotation ?? ShapeOffsetRotation,
                 layerMask);
 
             return body;
         }
 
-        protected PhysxMaterial? ResolvePhysxMaterial()
+        protected PhysxMaterial? ResolvePhysxMaterial(PhysicsMaterialDefinition? authoredMaterial = null)
         {
-            if (Material is PhysxMaterial physxMaterial)
+            if (Material is PhysxMaterial physxMaterial && authoredMaterial is null)
                 return physxMaterial;
 
-            var created = new PhysxMaterial(0.5f, 0.5f, 0.1f);
-            Material = created;
+            var definition = authoredMaterial ?? MaterialDefinition;
+            var created = definition is null
+                ? new PhysxMaterial(0.5f, 0.5f, 0.1f)
+                : new PhysxMaterial(
+                    definition.StaticFriction,
+                    definition.DynamicFriction,
+                    definition.Restitution)
+                {
+                    Damping = definition.Damping,
+                };
+
+            if (authoredMaterial is null)
+                Material = created;
             return created;
+        }
+
+        private PhysicsColliderShape? ResolvePrimaryColliderShape()
+        {
+            for (int i = 0; i < ColliderShapes.Count; i++)
+            {
+                PhysicsColliderShape shape = ColliderShapes[i];
+                if (shape.Enabled && shape.Geometry is not null)
+                    return shape;
+            }
+
+            return null;
+        }
+
+        private void AttachAdditionalPhysxColliderShapes(PhysxRigidActor actor, PhysicsColliderShape? primaryShape)
+        {
+            if (ColliderShapes.Count == 0)
+                return;
+
+            for (int i = 0; i < ColliderShapes.Count; i++)
+            {
+                PhysicsColliderShape shapeEntry = ColliderShapes[i];
+                if (!shapeEntry.Enabled || shapeEntry.Geometry is null || ReferenceEquals(shapeEntry, primaryShape))
+                    continue;
+
+                PhysxMaterial? material = ResolvePhysxMaterial(shapeEntry.Material);
+                if (material is null)
+                    continue;
+
+                var shape = new PhysxShape(
+                    shapeEntry.Geometry,
+                    material,
+                    PxShapeFlags.SimulationShape | PxShapeFlags.SceneQueryShape | PxShapeFlags.Visualization,
+                    true);
+                shape.LocalPose = (shapeEntry.LocalPosition, shapeEntry.LocalRotation);
+                actor.AttachShape(shape);
+            }
+        }
+
+
+        public void RebuildCollisionShapes(bool wakeOnLostTouch = true)
+        {
+            IAbstractDynamicRigidBody? oldBody = RigidBody;
+            Vector3 linearVelocity = oldBody?.LinearVelocity ?? _cachedLinearVelocity;
+            Vector3 angularVelocity = oldBody?.AngularVelocity ?? _cachedAngularVelocity;
+            RigidBody = null;
+            oldBody?.Destroy(wakeOnLostTouch);
+            EnsureRigidBodyConstructed();
+
+            if (RigidBody is PhysxDynamicRigidBody physx)
+            {
+                physx.SetLinearVelocity(linearVelocity, true);
+                physx.SetAngularVelocity(angularVelocity, true);
+            }
+            else if (RigidBody is JoltDynamicRigidBody jolt)
+            {
+                jolt.SetLinearVelocity(linearVelocity);
+                jolt.SetAngularVelocity(angularVelocity);
+            }
         }
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
@@ -819,6 +923,16 @@ namespace XREngine.Components.Physics
                 RigidBodyTransform.RigidBody = RigidBody;
                 ApplyAllCachedProperties();
                 TryRegisterRigidBodyWithScene();
+                return;
+            }
+
+            if (RigidBody is not null
+                && (propName == nameof(Geometry)
+                    || propName == nameof(Material)
+                    || propName == nameof(MaterialDefinition)
+                    || propName == nameof(ColliderShapes)))
+            {
+                RebuildCollisionShapes();
                 return;
             }
 
