@@ -324,14 +324,10 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            uint baseArrayLayer = ResolveBlitBaseArrayLayer(texture, layerIndex);
-            if (texture is XRTexture3D)
-                baseArrayLayer = 0;
-
-            uint descriptorLayers = Math.Max(source.DescriptorArrayLayers, 1u);
-            if (baseArrayLayer >= descriptorLayers)
-                baseArrayLayer = descriptorLayers - 1u;
-            uint blitLayerCount = ResolveBlitLayerCount(texture, layerIndex, descriptorLayers, baseArrayLayer);
+            (uint baseArrayLayer, uint blitLayerCount) = ResolveDescriptorTextureBlitLayerRange(
+                texture,
+                layerIndex,
+                source.DescriptorArrayLayers);
 
             uint mipLevels = Math.Max(source.DescriptorMipLevels, 1u);
             uint resolvedMipLevel = Math.Min((uint)Math.Max(mipLevel, 0), mipLevels - 1u);
@@ -698,6 +694,47 @@ namespace XREngine.Rendering.Vulkan
             };
         }
 
+        /// <summary>
+        /// Resolves an image subresource range from a texture descriptor. A texture-view
+        /// descriptor reports its view-local layer count, while <see cref="BlitImageInfo"/>
+        /// addresses layers in the backing image. Preserve the view's absolute base layer
+        /// before applying the descriptor-layer bound so a one-layer view of backing layer
+        /// one cannot be silently collapsed to backing layer zero.
+        /// </summary>
+        internal static (uint BaseArrayLayer, uint LayerCount) ResolveDescriptorTextureBlitLayerRange(
+            XRTexture texture,
+            int layerIndex,
+            uint descriptorArrayLayers)
+        {
+            uint baseArrayLayer = texture is XRTexture3D
+                ? 0u
+                : ResolveBlitBaseArrayLayer(texture, layerIndex);
+            uint addressableLayerLimit = ResolveDescriptorAddressableLayerLimit(
+                texture,
+                descriptorArrayLayers);
+            if (baseArrayLayer >= addressableLayerLimit)
+                baseArrayLayer = addressableLayerLimit - 1u;
+
+            uint layerCount = ResolveBlitLayerCount(
+                texture,
+                layerIndex,
+                addressableLayerLimit,
+                baseArrayLayer);
+            return (baseArrayLayer, layerCount);
+        }
+
+        private static uint ResolveDescriptorAddressableLayerLimit(
+            XRTexture texture,
+            uint descriptorArrayLayers)
+        {
+            uint localLayerCount = Math.Max(descriptorArrayLayers, 1u);
+            if (texture is not XRTextureViewBase view)
+                return localLayerCount;
+
+            ulong exclusiveEnd = (ulong)view.MinLayer + localLayerCount;
+            return (uint)Math.Min(Math.Max(exclusiveEnd, 1UL), uint.MaxValue);
+        }
+
         private static uint ResolveBlitLayerCount(
             XRTexture texture,
             int layerIndex,
@@ -942,26 +979,65 @@ namespace XREngine.Rendering.Vulkan
 
         private static ImageLayout ResolvePostTransferReadLayout(in BlitImageInfo info)
         {
-            if (info.DescriptorSource is { } descriptorSource)
-            {
-                ImageUsageFlags usage = descriptorSource.DescriptorUsage;
-                if ((usage & ImageUsageFlags.StorageBit) != 0)
-                    return ImageLayout.General;
+            ImageUsageFlags usage = info.DescriptorSource?.DescriptorUsage ?? ImageUsageFlags.None;
+            return ResolveReadbackRestoreLayout(
+                info.PreferredLayout,
+                usage,
+                IsDepthOrStencilAspect(info.AspectMask));
+        }
 
-                if ((usage & (ImageUsageFlags.SampledBit | ImageUsageFlags.InputAttachmentBit)) != 0)
-                {
-                    return IsDepthOrStencilAspect(info.AspectMask)
-                        ? ImageLayout.DepthStencilReadOnlyOptimal
-                        : ImageLayout.ShaderReadOnlyOptimal;
-                }
+        /// <summary>
+        /// Readback is observational: when the pre-transfer layout is known, restore that
+        /// exact layout instead of selecting a new steady-state layout from usage flags.
+        /// Usage-based selection is only a fallback for genuinely untracked images.
+        /// </summary>
+        internal static ImageLayout ResolveReadbackRestoreLayout(
+            ImageLayout preTransferLayout,
+            ImageUsageFlags usage,
+            bool depthOrStencil)
+        {
+            if (preTransferLayout != ImageLayout.Undefined)
+                return preTransferLayout;
+
+            if ((usage & ImageUsageFlags.StorageBit) != 0)
+                return ImageLayout.General;
+
+            if ((usage & (ImageUsageFlags.SampledBit | ImageUsageFlags.InputAttachmentBit)) != 0)
+            {
+                return depthOrStencil
+                    ? ImageLayout.DepthStencilReadOnlyOptimal
+                    : ImageLayout.ShaderReadOnlyOptimal;
             }
 
-            if (info.PreferredLayout != ImageLayout.Undefined)
-                return info.PreferredLayout;
-
-            return IsDepthOrStencilAspect(info.AspectMask)
+            return depthOrStencil
                 ? ImageLayout.DepthStencilAttachmentOptimal
                 : ImageLayout.ColorAttachmentOptimal;
+        }
+
+        private static void UpdateReadbackRestoredAttachmentLayout(
+            in BlitImageInfo info,
+            ImageLayout restoredLayout)
+        {
+            if (info.DescriptorSource is not IVkFrameBufferAttachmentSource attachmentSource)
+                return;
+
+            int mipLevel = checked((int)info.MipLevel);
+            uint descriptorBaseArrayLayer = info.BaseArrayLayer;
+            if (info.DescriptorSource is VkTextureView textureView)
+            {
+                descriptorBaseArrayLayer -= Math.Min(
+                    descriptorBaseArrayLayer,
+                    textureView.Data.MinLayer);
+            }
+
+            uint layerCount = Math.Max(info.LayerCount, 1u);
+            for (uint layerOffset = 0; layerOffset < layerCount; layerOffset++)
+            {
+                attachmentSource.UpdateAttachmentTrackedLayout(
+                    restoredLayout,
+                    mipLevel,
+                    checked((int)(descriptorBaseArrayLayer + layerOffset)));
+            }
         }
 
         private static int ResolveBlitInfoLayerIndex(in BlitImageInfo info)
@@ -1094,13 +1170,13 @@ namespace XREngine.Rendering.Vulkan
 
             ulong rawByteCount = (ulong)(width * height) * sourcePixelSize;
             var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(rawByteCount);
+            ImageLayout postTransferLayout = ResolvePostTransferReadLayout(liveSource);
 
             try
             {
                 using var scope = NewCommandScope();
 
                 ImageLayout preTransferLayout = liveSource.PreferredLayout;
-                ImageLayout postTransferLayout = ResolvePostTransferReadLayout(liveSource);
 
                 TransitionForBlit(
                     scope.CommandBuffer,
@@ -1151,6 +1227,8 @@ namespace XREngine.Rendering.Vulkan
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 return false;
             }
+
+            UpdateReadbackRestoredAttachmentLayout(liveSource, postTransferLayout);
 
             if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, rawByteCount, out void* mappedPtr))
             {
@@ -1187,13 +1265,13 @@ namespace XREngine.Rendering.Vulkan
 
             ulong rawByteCount = (ulong)(width * height) * sourcePixelSize;
             var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(rawByteCount);
+            ImageLayout postTransferLayout = ResolvePostTransferReadLayout(liveSource);
 
             try
             {
                 using var scope = NewCommandScope();
 
                 ImageLayout preTransferLayout = liveSource.PreferredLayout;
-                ImageLayout postTransferLayout = ResolvePostTransferReadLayout(liveSource);
 
                 TransitionForBlit(
                     scope.CommandBuffer,
@@ -1244,6 +1322,8 @@ namespace XREngine.Rendering.Vulkan
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 return false;
             }
+
+            UpdateReadbackRestoredAttachmentLayout(liveSource, postTransferLayout);
 
             if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, rawByteCount, out void* mappedPtr))
             {

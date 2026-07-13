@@ -32,15 +32,20 @@ namespace XREngine.Rendering.Occlusion
             public int Skips;
             public int BudgetSkipped;
             public int ForcedVisible;
+            public int RecoveryStarts;
+            public int RecoveryCompletions;
+            public int CurrentRecoveryAgeFrames;
+            public int MaxRecoveryAgeFrames;
             public int CurrentResultAgeFrames;
             public int MaxResultAgeFrames;
             public int RecoveryLatencyFrames;
             public int LastTouchedEpoch;
+            public int LastSnapshotEpoch = -1;
             public CpuOcclusionViewTelemetrySnapshot LastSnapshot;
 
-            public void SnapshotAndReset()
+            public void SnapshotAndReset(int completedEpoch)
             {
-                LastSnapshot = new CpuOcclusionViewTelemetrySnapshot(
+                var snapshot = new CpuOcclusionViewTelemetrySnapshot(
                     Key,
                     Interlocked.Exchange(ref CandidateCount, 0),
                     Interlocked.Exchange(ref Submissions, 0),
@@ -48,9 +53,23 @@ namespace XREngine.Rendering.Occlusion
                     Interlocked.Exchange(ref Skips, 0),
                     Interlocked.Exchange(ref BudgetSkipped, 0),
                     Interlocked.Exchange(ref ForcedVisible, 0),
+                    Interlocked.Exchange(ref RecoveryStarts, 0),
+                    Interlocked.Exchange(ref RecoveryCompletions, 0),
+                    Interlocked.Exchange(ref CurrentRecoveryAgeFrames, 0),
+                    Interlocked.Exchange(ref MaxRecoveryAgeFrames, 0),
                     Interlocked.Exchange(ref CurrentResultAgeFrames, 0),
                     Interlocked.Exchange(ref MaxResultAgeFrames, 0),
                     Interlocked.Exchange(ref RecoveryLatencyFrames, 0));
+
+                // Desktop and XR outputs can publish their frame boundaries at
+                // different times. Preserve each output's newest completed sample
+                // when this boundary belongs to another output instead of replacing
+                // it with an all-zero snapshot.
+                if (Volatile.Read(ref LastTouchedEpoch) == completedEpoch)
+                {
+                    LastSnapshot = snapshot;
+                    LastSnapshotEpoch = completedEpoch;
+                }
             }
         }
 
@@ -81,9 +100,40 @@ namespace XREngine.Rendering.Occlusion
                 if (counters is null)
                     return;
                 Interlocked.Increment(ref counters.Resolutions);
-                ulong latency = resolvedFrame >= submittedFrame ? resolvedFrame - submittedFrame : 0UL;
+                _ = submittedFrame;
+                _ = resolvedFrame;
+            }
+
+            public void RecordRecoveryCompleted(ulong recoveryStartedFrame, ulong resolvedFrame)
+            {
+                CpuViewCounters? counters = Touch();
+                if (counters is null)
+                    return;
+
+                Interlocked.Increment(ref counters.RecoveryCompletions);
+                ulong latency = resolvedFrame >= recoveryStartedFrame
+                    ? resolvedFrame - recoveryStartedFrame
+                    : 0UL;
                 int boundedLatency = latency > int.MaxValue ? int.MaxValue : (int)latency;
                 UpdateMax(ref counters.RecoveryLatencyFrames, boundedLatency);
+            }
+
+            public void RecordRecoveryStarted()
+            {
+                CpuViewCounters? counters = Touch();
+                if (counters is not null)
+                    Interlocked.Increment(ref counters.RecoveryStarts);
+            }
+
+            public void RecordRecoveryAge(int ageFrames)
+            {
+                CpuViewCounters? counters = Touch();
+                if (counters is null)
+                    return;
+
+                int boundedAge = Math.Clamp(ageFrames, 0, 1_000_000);
+                UpdateMax(ref counters.CurrentRecoveryAgeFrames, boundedAge);
+                UpdateMax(ref counters.MaxRecoveryAgeFrames, boundedAge);
             }
 
             public void RecordSkip()
@@ -113,7 +163,7 @@ namespace XREngine.Rendering.Occlusion
                 if (counters is null)
                     return;
                 int boundedAge = Math.Clamp(ageFrames, 0, 1_000_000);
-                Interlocked.Exchange(ref counters.CurrentResultAgeFrames, boundedAge);
+                UpdateMax(ref counters.CurrentResultAgeFrames, boundedAge);
                 UpdateMax(ref counters.MaxResultAgeFrames, boundedAge);
             }
 
@@ -388,10 +438,21 @@ namespace XREngine.Rendering.Occlusion
         {
             lock (CpuViewCountersLock)
             {
-                var snapshots = new CpuOcclusionViewTelemetrySnapshot[CpuViewCountersByKey.Count];
+                int completedEpoch = _cpuViewTelemetryEpoch - 1;
+                int count = 0;
+                foreach (CpuViewCounters counters in CpuViewCountersByKey.Values)
+                {
+                    if (counters.LastSnapshotEpoch == completedEpoch)
+                        count++;
+                }
+
+                var snapshots = new CpuOcclusionViewTelemetrySnapshot[count];
                 int index = 0;
                 foreach (CpuViewCounters counters in CpuViewCountersByKey.Values)
-                    snapshots[index++] = counters.LastSnapshot;
+                {
+                    if (counters.LastSnapshotEpoch == completedEpoch)
+                        snapshots[index++] = counters.LastSnapshot;
+                }
                 return snapshots;
             }
         }
@@ -406,8 +467,11 @@ namespace XREngine.Rendering.Occlusion
             lock (CpuViewCountersLock)
             {
                 int copied = 0;
+                int completedEpoch = _cpuViewTelemetryEpoch - 1;
                 foreach (CpuViewCounters counters in CpuViewCountersByKey.Values)
                 {
+                    if (counters.LastSnapshotEpoch != completedEpoch)
+                        continue;
                     if (copied >= destination.Length)
                         break;
                     destination[copied++] = counters.LastSnapshot;
@@ -421,7 +485,16 @@ namespace XREngine.Rendering.Occlusion
             get
             {
                 lock (CpuViewCountersLock)
-                    return CpuViewCountersByKey.Count;
+                {
+                    int count = 0;
+                    int completedEpoch = _cpuViewTelemetryEpoch - 1;
+                    foreach (CpuViewCounters counters in CpuViewCountersByKey.Values)
+                    {
+                        if (counters.LastSnapshotEpoch == completedEpoch)
+                            count++;
+                    }
+                    return count;
+                }
             }
         }
 
@@ -441,10 +514,11 @@ namespace XREngine.Rendering.Occlusion
             lock (CpuViewCountersLock)
             {
                 int epoch = ++_cpuViewTelemetryEpoch;
+                int completedEpoch = epoch - 1;
                 CpuViewStaleKeys.Clear();
                 foreach (KeyValuePair<OcclusionViewKey, CpuViewCounters> pair in CpuViewCountersByKey)
                 {
-                    pair.Value.SnapshotAndReset();
+                    pair.Value.SnapshotAndReset(completedEpoch);
                     if (epoch - Volatile.Read(ref pair.Value.LastTouchedEpoch) > 240)
                         CpuViewStaleKeys.Add(pair.Key);
                 }

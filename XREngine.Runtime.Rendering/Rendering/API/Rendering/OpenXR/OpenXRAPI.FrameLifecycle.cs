@@ -1331,6 +1331,12 @@ public unsafe partial class OpenXRAPI
         float? tsrRenderScaleOverride = antiAliasingOverride is EAntiAliasingMode.Tsr
             ? sourceCamera.TsrRenderScaleOverride ?? secondaryCamera.TsrRenderScaleOverride
             : null;
+        float? phase524bTsrRenderScale = _phase524bTsrRenderScaleOverride;
+        if (antiAliasingMode == EAntiAliasingMode.Tsr && phase524bTsrRenderScale.HasValue)
+        {
+            antiAliasingOverride = EAntiAliasingMode.Tsr;
+            tsrRenderScaleOverride = phase524bTsrRenderScale;
+        }
         bool? outputHdrOverride = sourceCamera.OutputHDROverride;
 
         try
@@ -1384,6 +1390,25 @@ public unsafe partial class OpenXRAPI
         => policy is EVrTemporalHistoryPolicy.Disabled
             or EVrTemporalHistoryPolicy.DisabledPerEyeSwapchain
             or EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain;
+
+    internal static float? ResolvePhase524bTsrRenderScaleOverride()
+    {
+        string? value = Environment.GetEnvironmentVariable(
+            XREngineEnvironmentVariables.VulkanPhase524bTsrResolutionScale);
+        if (!float.TryParse(
+                value,
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out float scale) ||
+            !float.IsFinite(scale) ||
+            scale < 0.5f ||
+            scale > 1.0f)
+        {
+            return null;
+        }
+
+        return scale;
+    }
 
     private void ReleaseOpenXrExternalEyeViewportPipelinesForTrueStereo()
     {

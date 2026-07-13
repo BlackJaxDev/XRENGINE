@@ -175,6 +175,7 @@ public static class XREngineEnvironmentVariables
     public const string SkinningPrepassDiag = "XRE_SKINNING_PREPASS_DIAG";
     public const string SkinCullRejectDiag = "XRE_SKIN_CULL_REJECT_DIAG";
     public const string FirstChanceExceptions = "XRE_FIRST_CHANCE_EXCEPTIONS";
+    public const string OpenXrStrictSpsFailureStage = "XRE_OPENXR_STRICT_SPS_FAILURE_STAGE";
     public const string BypassVendorUpscale = "XRE_BYPASS_VENDOR_UPSCALE";
     public const string GlDebug = "XRE_GL_DEBUG";
     public const string GlSubmitTrace = "XRE_GL_SUBMIT_TRACE";
@@ -272,11 +273,16 @@ public static class XREngineEnvironmentVariables
     public const string VulkanAllowCpuMeshSafetyNet = "XRE_VULKAN_ALLOW_CPU_MESH_SAFETY_NET";
     public const string VulkanParallelRecordingValidate = "XRE_VULKAN_PARALLEL_RECORDING_VALIDATE";
     public const string VulkanCaptureEyeOutputs = "XRE_VULKAN_CAPTURE_EYE_OUTPUTS";
+    public const string VulkanPhase524bValidation = "XRE_VULKAN_PHASE524B_VALIDATION";
+    public const string VulkanPhase524bInjectDesktopRejection = "XRE_VULKAN_PHASE524B_INJECT_DESKTOP_REJECTION";
+    public const string VulkanPhase524bTsrResolutionScale = "XRE_VULKAN_PHASE524B_TSR_RESOLUTION_SCALE";
     public const string VulkanGpuBvhCulling = "XRE_VULKAN_GPU_BVH_CULLING";
     public const string VulkanDirectionalCascades = "XRE_VULKAN_DIRECTIONAL_CASCADES";
 
     public const string CaptureDefaultPipelineSkipFrames = "XRE_CAPTURE_DEFAULT_PIPELINE_SKIP_FRAMES";
     public const string CaptureDefaultPipelineFbo = "XRE_CAPTURE_DEFAULT_PIPELINE_FBO";
+    public const string CaptureDefaultPipelineOutputDirectory = "XRE_CAPTURE_DEFAULT_PIPELINE_OUTPUT_DIR";
+    public const string AgentValidationRunRoot = "XRE_AGENT_VALIDATION_RUN_ROOT";
     public const string P3Logging = "XRE_P3_LOGGING";
     public const string BucketLoopDryRun = "XRE_BUCKET_LOOP_DRY_RUN";
     public const string SkipCommandSwapIfClean = "XRE_SKIP_COMMAND_SWAP_IF_CLEAN";

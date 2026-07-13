@@ -1893,6 +1893,13 @@ namespace XREngine.Rendering.Vulkan
             if (uploads.Count == 0)
                 return;
 
+            // Recorded primary/secondary command buffers may contain copies from
+            // these staging resources. They cannot remain reusable after the
+            // canceled upload retires those buffers, images, or descriptors.
+            _ = InvalidateCommandChainSecondaryCommandBuffersForDescriptorReferenceRelease();
+            MarkOpenXrPrimaryCommandBufferVariantsDirty();
+            MarkCommandBuffersDirty(reason);
+
             for (int i = 0; i < uploads.Count; i++)
                 CancelRecordedTextureUpload(uploads[i], reason);
 
@@ -5695,7 +5702,13 @@ namespace XREngine.Rendering.Vulkan
                                 activeInlineQuery.EndQuery(commandBuffer);
                             if (recordingScratch.BegunInlineQueries.Add(queryOp.Query))
                             {
-                                activeInlineQuery = queryOp.Query.BeginQuery(commandBuffer, queryOp.QueryTarget)
+                                uint queryViewMask = activeDynamicRendering
+                                    ? activeDynamicRenderingFormats.ViewMask
+                                    : 0u;
+                                activeInlineQuery = queryOp.Query.BeginQuery(
+                                    commandBuffer,
+                                    queryOp.QueryTarget,
+                                    viewMask: queryViewMask)
                                     ? queryOp.Query
                                     : null;
                             }
@@ -5935,8 +5948,13 @@ namespace XREngine.Rendering.Vulkan
                 else
                 {
                     EndActiveRenderPass();
-                    if (!TryRefreshUnwrittenSwapchainFromLastWindowPresentSource())
+                    if (ShouldRefreshUnwrittenSwapchainForPresent(
+                            touchSwapchainForFinalOverlay,
+                            transitionSwapchainToPresent) &&
+                        !TryRefreshUnwrittenSwapchainFromLastWindowPresentSource())
+                    {
                         TransitionUnwrittenSwapchainToPresent();
+                    }
                 }
 
                 bool hasSceneFrameWork = clearCount > 0 || drawCount > 0 || blitCount > 0 || computeCount > 0;
@@ -6121,6 +6139,11 @@ namespace XREngine.Rendering.Vulkan
             recordedSwapchainWriteCount = actualSwapchainWriteCount;
             return swapchainFinalLayout;
         }
+
+        internal static bool ShouldRefreshUnwrittenSwapchainForPresent(
+            bool touchedSwapchain,
+            bool transitionSwapchainToPresent)
+            => !touchedSwapchain && transitionSwapchainToPresent;
 
         private void RecordClearOp(
             CommandBuffer commandBuffer,

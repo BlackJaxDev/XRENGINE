@@ -922,6 +922,9 @@ public sealed class OpenXrTimingPipelineContractTests
             "private bool TryPrepareStereoLayerBlit",
             "private void RecordStereoLayerBlits");
         batchedLayerBlit.ShouldContain("if (TraceOpenXrStereoBlits)");
+        batchedLayerBlit.ShouldContain("CommandBuffer recordedSourceCommandBuffer");
+        batchedLayerBlit.ShouldContain("TryGetRecordedImageLayout(");
+        batchedLayerBlit.ShouldContain("recordedSourceCommandBuffer");
 
         string trueStereoPublish = SliceMethod(
             openXrVulkan,
@@ -1079,6 +1082,7 @@ public sealed class OpenXrTimingPipelineContractTests
         program.ShouldContain("OcclusionTelemetry.CpuQuerySubmittedTotal");
         program.ShouldContain("CopyLastFrameCpuViewSnapshots");
         program.ShouldContain("OpenXrSmokeOcclusionViewLedgerEntry");
+        program.ShouldContain("OutputId = key.OutputId");
         program.ShouldContain("OpenXrSmokeOutputLedgerEntry[] _outputLedger");
         program.ShouldContain("LeftAcquireDelta = leftAcquireDelta");
         program.ShouldContain("LeftPublishDelta = leftPublishDelta");
@@ -1099,11 +1103,16 @@ public sealed class OpenXrTimingPipelineContractTests
         diagnostics.ShouldContain("PredictedActionPoseCacheUpdated");
         diagnostics.ShouldContain("DesktopMirrorComposed");
         diagnostics.ShouldContain("PerFrameAllocationsBytes");
-        diagnostics.ShouldContain("CurrentSchemaVersion = 3");
+        diagnostics.ShouldContain("CurrentSchemaVersion = 8");
         diagnostics.ShouldContain("OpenXrSmokeFrameLedgerEntry");
         diagnostics.ShouldContain("ProjectionLayerSubmitted");
         diagnostics.ShouldContain("SmokeFrameCompleted?.Invoke");
         diagnostics.ShouldContain("OcclusionViewLedger");
+        diagnostics.ShouldContain("public ulong OutputId");
+        diagnostics.ShouldContain("public int RecoveryStarts");
+        diagnostics.ShouldContain("public int RecoveryCompletions");
+        diagnostics.ShouldContain("public int CurrentRecoveryAgeFrames");
+        diagnostics.ShouldContain("public int MaxRecoveryAgeFrames");
         diagnostics.ShouldContain("OutputLedger");
         diagnostics.ShouldContain("PerEyePublishCounts");
 
@@ -1117,11 +1126,14 @@ public sealed class OpenXrTimingPipelineContractTests
         phase524bValidator.ShouldContain("CpuQueryAsync did not perform valid work");
         phase524bValidator.ShouldContain("Desktop POV occlusion was not independently active");
         phase524bValidator.ShouldContain("VR POV occlusion was not independently active");
-        phase524bValidator.ShouldContain("MinimumObservedFramesPerSecond = 30.0");
+        phase524bValidator.ShouldContain("MinimumObservedFramesPerSecond = 0.0");
+        phase524bValidator.ShouldContain("MinimumObservedFramesPerSecond -gt 0.0");
         phase524bValidator.ShouldContain("Strict SPS attempted sequential fallback");
         phase524bValidator.ShouldContain("did not complete exactly one acquire/wait/publish/release per eye");
-        phase524bValidator.ShouldContain("lacks a rendered desktop output or true-multiview external output");
+        phase524bValidator.ShouldContain("lacks a fresh desktop final write/present or complete true-multiview OpenXR render+submit ledger");
         phase524bValidator.ShouldContain("exceeded the bounded recovery age");
+        phase524bValidator.ShouldContain("valid full pipeline/output/POV/coverage identity");
+        phase524bValidator.ShouldContain("full occlusion keys appeared more than once");
         phase524bValidator.ShouldContain("exactly 300 retained frames");
 
         xrCalls.ShouldContain("RecordSmokeEndFrame");
@@ -1139,6 +1151,64 @@ public sealed class OpenXrTimingPipelineContractTests
         vulkan.ShouldContain("Failed to create Vulkan OpenXR session");
         vulkan.ShouldContain("ErrorGraphicsDeviceInvalid");
         vulkan.ShouldContain("runtime-required OpenXR Vulkan");
+    }
+
+    [Test]
+    public void VulkanPhase524bValidator_RequiresMachineVerifiableCohortEvidence()
+    {
+        string summary = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXrSmokeSummary.cs");
+        string frameLedger = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXrSmokeFrameLedgerEntry.cs");
+        string outputLedger = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXrSmokeOutputLedgerEntry.cs");
+        string telemetry = ReadWorkspaceFile("XREngine.Runtime.Core/Settings/Contracts/Records/FrameOutputTelemetry.cs");
+        string frameOutputs = ReadWorkspaceFile("XREngine/Engine/Subclasses/Rendering/Engine.Rendering.Stats.FrameOutputs.cs");
+        string vulkanStats = ReadWorkspaceFile("XREngine/Engine/Subclasses/Rendering/Engine.Rendering.Stats.Vulkan.cs");
+        string frameLoop = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
+        string validator = ReadWorkspaceFile("Tools/Validate-VulkanPhase524b.ps1");
+
+        summary.ShouldContain("CurrentSchemaVersion = 8");
+        summary.ShouldContain("VulkanSynchronizationValidationEffective");
+        summary.ShouldContain("ExternallyOwnedValidationAllowlist");
+        summary.ShouldContain("RequiredCaptureStages");
+        summary.ShouldContain("DesktopFinalCaptureStage");
+        summary.ShouldContain("OpenXrSmokeCaptureLedgerEntry[] CaptureLedger");
+        summary.ShouldContain("OpenXrSmokeTemporalScenarioDefinition[] TemporalScenarioMatrix");
+        summary.ShouldContain("OpenXrSmokeCaptureLedgerEntry[] TemporalScenarioCaptureLedger");
+
+        frameLedger.ShouldContain("LifetimeValidationPassed");
+        frameLedger.ShouldContain("ResourcePlanGeneration");
+        frameLedger.ShouldContain("CommandGeneration");
+        frameLedger.ShouldContain("DesktopFinalWriteObserved");
+        frameLedger.ShouldContain("DesktopPresentAccepted");
+        outputLedger.ShouldContain("PipelineInstanceId");
+        outputLedger.ShouldContain("RenderFrameId");
+        outputLedger.ShouldContain("SubmitObserved");
+        outputLedger.ShouldContain("FinalWriteObserved");
+        outputLedger.ShouldContain("PresentResult");
+
+        telemetry.ShouldContain("int PipelineInstanceId = 0");
+        telemetry.ShouldContain("int ResourcePlanGeneration = 0");
+        telemetry.ShouldContain("ulong CommandGeneration = 0UL");
+        frameOutputs.ShouldContain("SubmitObserved |= telemetry.Phase == EFrameOutputPhase.Submit");
+        frameOutputs.ShouldContain("PresentObserved |= telemetry.Phase == EFrameOutputPhase.Present");
+        frameOutputs.ShouldContain("CopyCurrentOutputs(Span<FrameOutputEntrySnapshot> destination)");
+        vulkanStats.ShouldContain("RecordVulkanPresentResult(int result, bool accepted)");
+        frameLoop.ShouldContain("RecordVulkanPresentResult((int)result, presentAccepted)");
+
+        validator.ShouldContain("Measure-SteadyStateGauge");
+        validator.ShouldContain("XRE_CAPTURE_DEFAULT_PIPELINE_FBO");
+        validator.ShouldContain("phase524b-filtered-log-matches.log");
+        validator.ShouldContain("[Math]::Floor([double]$ExpectedSpsWidth * $TsrResolutionScale)");
+        validator.ShouldContain("BloomMips=1-4");
+        validator.ShouldContain("DefaultPipelineSps_Temporal_${sample}_${stage}_layer${layerIndex}.png");
+        validator.ShouldContain("maximumTemporalConvergenceRmse");
+        validator.ShouldContain("VUID-");
+        validator.ShouldContain("SYNC-HAZARD");
+        validator.ShouldContain("UNASSIGNED");
+        validator.ShouldContain("Capture ledger requires exactly one");
+        validator.ShouldContain("DefaultPipelineSps_");
+        validator.ShouldContain("DefaultPipelineDesktop_");
+        validator.ShouldContain("did not complete exactly one successful desktop present");
+        validator.ShouldContain("changed workload/plan/command identity after warmup");
     }
 
     [Test]

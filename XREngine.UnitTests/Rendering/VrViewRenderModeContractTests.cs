@@ -10,6 +10,51 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class VrViewRenderModeContractTests
 {
+    [TestCase(OpenXrStrictSpsFailureStage.Capability)]
+    [TestCase(OpenXrStrictSpsFailureStage.Target)]
+    [TestCase(OpenXrStrictSpsFailureStage.Recording)]
+    [TestCase(OpenXrStrictSpsFailureStage.LifetimeValidation)]
+    [TestCase(OpenXrStrictSpsFailureStage.Submit)]
+    [TestCase(OpenXrStrictSpsFailureStage.Publish)]
+    public void StrictSinglePassStereo_AllFailureStagesAreHandledWithoutProjectionOrFallback(
+        OpenXrStrictSpsFailureStage stage)
+    {
+        OpenXrStrictSpsFailureResolution resolution = OpenXrStrictSpsFailurePolicy.Resolve(stage);
+
+        resolution.Handled.ShouldBeTrue();
+        resolution.ProjectionLayerCount.ShouldBe(0u);
+        resolution.SequentialFallbackRequested.ShouldBeFalse();
+        resolution.SequentialFallbackAttemptDelta.ShouldBe(0L);
+    }
+
+    [TestCase(null, 0L)]
+    [TestCase("invalid", 0L)]
+    [TestCase("-4", 0L)]
+    [TestCase("4", 4L)]
+    [NonParallelizable]
+    public void StrictSinglePassStereo_InjectedFailureDefersUntilSmokeWarmupCompletes(
+        string? configuredWarmupFrames,
+        long expectedWarmupFrames)
+    {
+        string? previous = Environment.GetEnvironmentVariable(
+            XREngineEnvironmentVariables.OpenXrSmokeWarmupFrames);
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                XREngineEnvironmentVariables.OpenXrSmokeWarmupFrames,
+                configuredWarmupFrames);
+
+            OpenXrStrictSpsFailurePolicy.ResolveInjectedFailureWarmupFrameCount()
+                .ShouldBe(expectedWarmupFrames);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                XREngineEnvironmentVariables.OpenXrSmokeWarmupFrames,
+                previous);
+        }
+    }
+
     [TestCase(true, false, false, true)]
     [TestCase(true, false, true, false)]
     [TestCase(true, true, false, false)]

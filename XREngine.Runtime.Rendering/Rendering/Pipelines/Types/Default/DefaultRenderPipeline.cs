@@ -1549,10 +1549,15 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     public const string SmaaEdgeFBOName = SmaaFBOName + "_EdgeFBO";
     public const string SmaaBlendFBOName = SmaaFBOName + "_BlendFBO";
     public const string TsrOutputTextureName = "TsrOutputTexture";
+    public const string TsrMonoReferenceTextureName = "TsrMonoReferenceTexture";
+    public const string TsrMonoReferenceLeftTextureViewName = "TsrMonoReferenceLeftTextureView";
+    public const string TsrMonoReferenceRightTextureViewName = "TsrMonoReferenceRightTextureView";
     public const string TsrHistoryColorFBOName = "TsrHistoryColorFBO";
     public const string RadianceCascadeCompositeFBOName = "RadianceCascadeCompositeFBO";
     public const string SurfelGICompositeFBOName = "SurfelGICompositeFBO";
     public const string TsrUpscaleFBOName = "TsrUpscaleFBO";
+    public const string TsrMonoReferenceLeftFBOName = "TsrMonoReferenceLeftFBO";
+    public const string TsrMonoReferenceRightFBOName = "TsrMonoReferenceRightFBO";
 
     //Textures
     public const string AmbientOcclusionNoiseTextureName = "AmbientOcclusionNoiseTexture";
@@ -2772,6 +2777,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
                         var fxaa = fxaaUpscale.Add<VPRC_FXAA>();
                         fxaa.SourceFBOName = FinalPostProcessOutputFBOName;
                         fxaa.DestinationFBOName = FxaaFBOName;
+                        fxaa.Stereo = Stereo;
                         postAaChoice.TrueCommands = fxaaUpscale;
                     }
                     {
@@ -2780,6 +2786,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
                         smaa.SourceFBOName = FinalPostProcessOutputFBOName;
                         smaa.OutputTextureName = SmaaOutputTextureName;
                         smaa.OutputFBOName = SmaaFBOName;
+                        smaa.Stereo = Stereo;
                         postAaChoice.FalseCommands = smaaUpscale;
                     }
                     tsrOrPostAa.FalseCommands = fxaaOrSmaa;

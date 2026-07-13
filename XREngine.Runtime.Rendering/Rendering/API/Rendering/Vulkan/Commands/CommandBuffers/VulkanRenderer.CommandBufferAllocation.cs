@@ -86,9 +86,7 @@ namespace XREngine.Rendering.Vulkan
 
             InitializeCommandBufferVariants();
             AllocateCommandBufferDirtyFlags();
-            _computeTransientResources = new ComputeTransientResources[_commandBuffers.Length];
-            _deferredSecondaryCommandBuffers = new List<DeferredSecondaryCommandBuffer>[_commandBuffers.Length];
-            InitializeComputeDescriptorCaches(_commandBuffers.Length);
+            EnsureCommandBufferFrameDataSlotCapacity(_commandBuffers.Length);
         }
 
         private void InitializeCommandBufferVariants()
@@ -152,7 +150,7 @@ namespace XREngine.Rendering.Vulkan
                 return true;
 
             if (_commandBuffers is not null)
-                DestroyCommandBuffers();
+                DestroySwapchainCommandBuffers();
 
             CreateCommandBuffers();
 
@@ -194,23 +192,17 @@ namespace XREngine.Rendering.Vulkan
                         variant.DynamicUiSignature == dynamicUiBatchTextSignature &&
                         variant.PreserveSwapchainForOverlay == preserveSwapchainForOverlay &&
                         (variant.DynamicUiOpCount > 0) == hasDynamicUiBatchTextOverlay)
-                    {
                         return variant;
-                    }
                 }
                 else if (variant.FrameOpsSignature == frameOpsSignature &&
                     variant.DynamicUiSignature == dynamicUiBatchTextSignature &&
                     variant.PreserveSwapchainForOverlay == preserveSwapchainForOverlay)
-                {
                     return variant;
-                }
 
                 if (reusableDirtyMatch is null &&
                     variant.Dirty &&
                     variant.FrameOpsSignature == ulong.MaxValue)
-                {
                     reusableDirtyMatch = variant;
-                }
             }
 
             if (reusableDirtyMatch is not null)
@@ -236,11 +228,9 @@ namespace XREngine.Rendering.Vulkan
 
             CommandBufferCacheVariant evicted = variants[0];
             for (int i = 1; i < variants.Count; i++)
-            {
                 if (variants[i].LastUsedFrameId < evicted.LastUsedFrameId)
                     evicted = variants[i];
-            }
-
+            
             LogFrameOpSignatureVariantEvictionDiff(imageIndex, evicted, frameOpsSignature, frameOpsForDiagnostics);
             evicted.Dirty = true;
             evicted.DirtyReason = "variant eviction";

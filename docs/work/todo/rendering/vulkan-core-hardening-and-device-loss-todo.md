@@ -1,6 +1,6 @@
 # Vulkan Core Hardening And Device-Loss TODO
 
-Last Updated: 2026-07-10
+Last Updated: 2026-07-13
 Owner: Rendering
 Status: Phase 5.2.4b Correctness Remediation Gate Open; Phase 5.2.5 Blocked
 Execution: Current worktree only; do not create or switch branches for this effort.
@@ -248,6 +248,168 @@ strip is approximately 111 pixels, the same numerical difference as
 this diagnosis and subsequent evidence in the
 [dynamic rendering/OpenXR investigation](../../investigations/rendering/vulkan-dynamic-rendering-promotion-2026-07-10.md).
 
+#### 2026-07-13 implementation handoff
+
+The implementation is substantially advanced but this gate is not closed. Keep
+all unchecked acceptance criteria below open until the exact 300-frame cohorts
+and visual review pass. Current evidence and the shortest remaining path are:
+
+- The strict injected-failure matrix is green for all six boundaries
+  (`Capability`, `Target`, `Recording`, `LifetimeValidation`, `Submit`, and
+  `Publish`) with zero sequential-fallback attempts. The durable results are
+  embedded below; the optional local raw artifact is
+  `Build/_AgentValidation/20260710-openxr-strict-stereo/phase524b-final-20260713/strict-failures-rerun3/reports/openxr-strict-sps-failure-matrix.json`.
+- The OpenXR resource graph now uses registered persistent per-eye mono-reference
+  texture views, generic all-layer copies publish every copied layer, strict SPS
+  same-batch publish state is propagated, unsubmitted occlusion queries are not
+  polled, recording abort invalidates unsafe cache entries, and the Monado
+  service teardown script no longer assigns the read-only PowerShell `$PID`
+  variable.
+- Motion-vector material callbacks no longer retain an ambient/creation-time
+  pipeline. `PendingMeshDraw` captures immutable current/previous unjittered
+  left/right view-projection matrices from its command collection, and Vulkan
+  writes them directly into the mapped uniform block without boxing or temporary
+  arrays. The editor build completed with 0 errors (216 pre-existing NuGet
+  advisory warnings), and the focused Vulkan/stereo contract cohort passed
+  104/104 tests.
+- The latest short occlusion-off probe completed 78 strict-SPS submissions,
+  8 retained frames, true multiview, synchronization validation enabled, zero
+  sequential fallback, and clean teardown. It proves the prior all-zero velocity
+  defect is fixed. It still reports ten rendered-output failures: settled static,
+  disocclusion, and motion-stop samples retain excessive velocity; moving-object
+  X velocity has the opposite sign from the declared `PositiveX` oracle; and
+  right-eye mono-equivalent sharpness/convergence fails in `StaticPoseSettled`,
+  `DisocclusionRevealed`, and `MotionStopSettled`. The durable measurements are
+  embedded below; the optional local raw artifact is
+  `Build/_AgentValidation/20260710-openxr-strict-stereo/phase524b-final-20260713/native-occlusion-off-probe5/reports/openxr-smoke-summary.json`.
+- First, reconcile the velocity sign convention and scenario settle/capture
+  timing, then fix the layer-1 mono-reference source/layer selection or TSR drift.
+  Re-run the short occlusion-off probe until every temporal and bloom oracle is
+  green; do not weaken thresholds merely to accept the current output. The
+  diagnostic command is:
+
+  ```powershell
+  & Tools/OpenXR/Run-OpenXrPhase524bOcclusionOff.ps1 `
+    -WarmupFrames 72 -RetainedFrames 8 -CaptureSkipFrames 2 `
+    -FoveationMode Off -TsrResolutionScale 1.0 -TimeoutSeconds 900 `
+    -RunRoot Build/_AgentValidation/20260710-openxr-strict-stereo/phase524b-final-20260713/native-occlusion-off-probe-next `
+    -NoBuild -StartService
+  ```
+- Next, finish the still-unchecked lifetime regression/pinning, stable desktop
+  plan/presentation, stereo descriptor/FBO/fullscreen-region audit, and
+  per-`OcclusionViewKey` recovery/telemetry/parity items below. Extend the linked
+  investigation with the original `14-20-29` baseline and the new probe evidence.
+- Then run the exact native occlusion-off reference cohort:
+
+  ```powershell
+  & Tools/OpenXR/Run-OpenXrPhase524bOcclusionOff.ps1 `
+    -WarmupFrames 100 -RetainedFrames 300 -CaptureSkipFrames 10 `
+    -FoveationMode Off -TsrResolutionScale 1.0 -TimeoutSeconds 900 `
+    -RunRoot Build/_AgentValidation/20260710-openxr-strict-stereo/phase524b-final-20260713/native-occlusion-off `
+    -NoBuild -StartService
+  ```
+
+- Finally, run the exact enabled-occlusion gate (including its required
+  sub-native TSR companion), inspect desktop and both-eye captures, and update
+  the tracked validation JSON before checking the remaining boxes:
+
+  ```powershell
+  & Tools/Validate-VulkanPhase524b.ps1 `
+    -WarmupFrames 100 -CaptureSkipFrames 10 -CaptureSettleFrames 50 `
+    -RetainedFrames 300 -TimeoutSeconds 900 -SteadyStateWindowFrames 30 `
+    -TsrResolutionScale 1.0 -SubNativeTsrResolutionScale 0.67 `
+    -RunRoot Build/_AgentValidation/20260710-openxr-strict-stereo/phase524b-final-exact `
+    -StrictFailureReportPath Build/_AgentValidation/20260710-openxr-strict-stereo/phase524b-final-20260713/strict-failures-rerun3/reports/openxr-strict-sps-failure-matrix.json `
+    -OcclusionOffSummaryPath Build/_AgentValidation/20260710-openxr-strict-stereo/phase524b-final-20260713/native-occlusion-off/reports/openxr-smoke-summary.json `
+    -NoBuild -StartService
+  ```
+
+##### Durable strict-SPS failure evidence
+
+Captured 2026-07-13 22:42:49 UTC with matrix schema 1. The aggregate result was
+`passed=true`, all six expected stages were present, and the aggregate failure
+count was zero. Each row requested and effectively used `SinglePassStereo` via
+`TrueSinglePassStereo`; each injected failure was handled, ended with zero
+projection layers, requested no sequential fallback, changed neither the local
+nor global fallback counter, matched no forbidden fallback log, and matched no
+engine validation error. Each stage ran 12 completed frames: 4 warmup, 8
+retained, 9 successful SPS submissions, and one retained injected zero-layer
+frame.
+
+| Injected stage | Passed | Queue disposition | Projection layers | Fallback attempt delta | Global fallback count | Engine validation matches |
+|---|---:|---|---:|---:|---:|---:|
+| Capability | yes | `NotSubmitted` | 0 | 0 | 0 | 0 |
+| Target | yes | `NotSubmitted` | 0 | 0 | 0 | 0 |
+| Recording | yes | `NotSubmitted` | 0 | 0 | 0 | 0 |
+| Lifetime validation | yes | `NotSubmitted` | 0 | 0 | 0 | 0 |
+| Submit | yes | `NotSubmitted` | 0 | 0 | 0 | 0 |
+| Publish | yes | `Completed` | 0 | 0 | 0 | 0 |
+
+##### Durable occlusion-off probe-5 evidence
+
+Captured 2026-07-13 23:39:10 UTC with smoke-summary schema 8. This was a short
+diagnostic probe, not the required 300-retained-frame acceptance cohort.
+
+| Setting or result | Recorded value |
+|---|---|
+| Runtime | Monado; runtime version field was empty |
+| Renderer / target mode | Vulkan / `DynamicRendering` |
+| Requested / effective view mode | `SinglePassStereo` / `SinglePassStereo` |
+| Implementation path | `TrueSinglePassStereo` |
+| Diagnostic preset / sync validation | `SyncValidation` / enabled |
+| AA / TSR scale | TSR / 1.0 |
+| Occlusion / mirror mode | disabled / `FullIndependentRender` |
+| Submitted / successful SPS frames | 78 / 78 |
+| Retained / no-layer / end-frame failures | 8 / 2 / 0 |
+| Sequential fallback attempts | 0 |
+| Missed deadlines | 18; unacceptable as final evidence, retained here for follow-up |
+| Teardown | completed |
+| Rendered-output oracle failures | 10 |
+
+The deterministic temporal sequence used these predeclared capture windows:
+
+| Sample | Frames | Velocity oracle | Convergence required |
+|---|---:|---|---:|
+| `ObjectMotionActive` | 8-10 | `PositiveX` | no |
+| `StaticPoseSettled` | 16-18 | zero | yes |
+| `HeadRotationActive` | 24-26 | `PositiveX` | no |
+| `HeadTranslationActive` | 32-34 | `NegativeX` | no |
+| `DisocclusionOccluded` | 38-40 | zero | no |
+| `DisocclusionRevealed` | 48-50 | zero | yes |
+| `MotionStopMoving` | 56-58 | `PositiveX` | no |
+| `MotionStopSettled` | 68-70 | zero | yes |
+
+All ten probe failures, preserved with their exact numeric measurements rather
+than only in the ignored JSON, were:
+
+1. `StaticPoseSettled` exceeded the static-zero velocity limit: left
+   `0.05611562`, right `0.055833787`.
+2. `StaticPoseSettled` layer 1 lost edge sharpness against its mono-equivalent
+   input; the required ratio was `0.95`.
+3. `StaticPoseSettled` layer 1 mono-equivalent RMSE was
+   `0.017435264254259057` and did not converge.
+4. `DisocclusionOccluded` exceeded the static-zero velocity limit: left
+   `0.8377893`, right `0.82758254`.
+5. `DisocclusionRevealed` exceeded the static-zero velocity limit: left
+   `1.856543`, right `2.04671`.
+6. `DisocclusionRevealed` layer 1 mono-equivalent RMSE was
+   `0.013945151576911428` and did not converge.
+7. `MotionStopMoving` did not match its declared `PositiveX` direction: left X
+   `-0.11223021`, right X `-0.11242089`.
+8. `MotionStopSettled` exceeded the static-zero velocity limit: left
+   `0.96484417`, right `0.9278758`.
+9. `MotionStopSettled` layer 1 lost edge sharpness against its mono-equivalent
+   input; the required ratio was `0.95`.
+10. `MotionStopSettled` layer 1 mono-equivalent RMSE was
+    `0.035811131840869946` and did not converge.
+
+The significant before/after result is that probe 4 bound identical current and
+previous stereo view-projection matrices for every observed motion draw and
+therefore produced all-zero velocity. Probe 5, after moving temporal matrices
+into the immutable draw snapshot, produced nonzero per-eye velocity. The
+remaining failures are now convention, capture-settle, and right-eye
+mono-reference/TSR-correctness failures rather than missing temporal bindings.
+
 - [ ] Extend that investigation with the `14-20-29` session manifest, the
   6/38/47/18/182 baseline counters, the supplied screenshot, exact reproduction
   settings/commands, and the user's observed bloom, blur, top-strip, occlusion,
@@ -272,7 +434,7 @@ this diagnosis and subsequent evidence in the
   sequential. Capability, target, recording, validation, submit, or publish
   failure logs the exact stage and reason and ends a begun OpenXR frame without
   projection layers. A separately selected sequential mode remains legal.
-- [ ] Add a zero-tolerance sequential-fallback counter and behavioral tests for
+- [x] Add a zero-tolerance sequential-fallback counter and behavioral tests for
   each strict-SPS failure boundary.
 
 #### 5.2.4b.2 - Stabilize Desktop Planning And Presentation

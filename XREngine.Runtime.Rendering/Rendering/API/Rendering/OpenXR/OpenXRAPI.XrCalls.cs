@@ -292,7 +292,9 @@ public unsafe partial class OpenXRAPI
         }
         long end = Stopwatch.GetTimestamp();
         long ticks = end - start;
-        RuntimeEngine.Rendering.Stats.Vr.RecordVrXrEndFrameSubmitTime(TimeSpan.FromSeconds(ticks / (double)Stopwatch.Frequency));
+        RuntimeEngine.Rendering.Stats.Vr.RecordVrXrEndFrameSubmitTime(
+            TimeSpan.FromSeconds(ticks / (double)Stopwatch.Frequency),
+            Volatile.Read(ref _openXrLastRenderedFrameId));
         RecordDeadlineStatus(frameEndInfo.DisplayTime, end, frameEndInfo.LayerCount);
         RecordSmokeEndFrame(result, frameEndInfo.LayerCount);
         return result;

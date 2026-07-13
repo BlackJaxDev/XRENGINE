@@ -56,6 +56,7 @@ public unsafe partial class VulkanRenderer
     private void DestroyInstance()
     {
         RuntimeEngine.Rendering.State.VulkanValidationLayersEnabled = false;
+        RuntimeEngine.Rendering.State.VulkanSynchronizationValidationEnabled = false;
 
         if (instance.Handle != 0)
         {
@@ -188,6 +189,8 @@ public unsafe partial class VulkanRenderer
             SilkMarshal.Free((nint)createInfo.PpEnabledLayerNames);
 
         RuntimeEngine.Rendering.State.VulkanValidationLayersEnabled = EnableValidationLayers;
+        RuntimeEngine.Rendering.State.VulkanSynchronizationValidationEnabled =
+            EnableValidationLayers && _diagnosticOptions.EnableSynchronizationValidation;
     }
 
     private static uint ResolveRequestedVulkanInstanceApiVersion()

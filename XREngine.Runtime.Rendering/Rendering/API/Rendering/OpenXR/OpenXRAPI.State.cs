@@ -270,6 +270,9 @@ public unsafe partial class OpenXRAPI
     private int _openXrLifecycleFrameIndex;
     private int _openXrRenderThreadId;
     private int _openXrActionsSyncedFrameNumber;
+    private ulong _openXrLastRenderedFrameId;
+    private readonly float? _phase524bTsrRenderScaleOverride =
+        ResolvePhase524bTsrRenderScaleOverride();
 
     // Dedicated OpenXR pacing thread (only used when OpenXrRenderPacingHandling == DedicatedThread).
     private Thread? _openXrPacingThread;

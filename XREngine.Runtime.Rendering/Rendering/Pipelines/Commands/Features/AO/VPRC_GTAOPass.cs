@@ -298,7 +298,10 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         private static void SetDynamicTexture(XRRenderPipelineInstance instance, XRTexture texture)
-            => instance.SetTexture(texture, RenderResourceDescriptorFactory.FromTexture(texture));
+            // The declared pipeline descriptor carries the scaled internal-resolution
+            // policy. Binding without an override preserves that descriptor while
+            // replacing only the live texture instance.
+            => instance.SetTexture(texture);
 
         private static void SetDynamicFBO(
             XRRenderPipelineInstance instance,

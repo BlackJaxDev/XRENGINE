@@ -1040,7 +1040,7 @@ public sealed class RuntimeRenderingHostServicesTests
         {
         }
 
-        public void RecordRenderVrXrEndFrameSubmitTime(TimeSpan submitTime)
+        public void RecordRenderVrXrEndFrameSubmitTime(TimeSpan submitTime, ulong renderFrameId = 0UL)
         {
         }
 
@@ -1284,6 +1284,10 @@ public sealed class RuntimeRenderingHostServicesTests
         }
 
         public void RecordRenderVulkanQueueSubmit()
+        {
+        }
+
+        public void RecordRenderVulkanPresentResult(int result, bool accepted)
         {
         }
 

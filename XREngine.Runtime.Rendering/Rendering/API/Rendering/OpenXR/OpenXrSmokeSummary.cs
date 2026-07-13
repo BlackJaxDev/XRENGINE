@@ -2,7 +2,7 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 
 public sealed class OpenXrSmokeSummary
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 8;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public DateTimeOffset CapturedAtUtc { get; set; } = DateTimeOffset.UtcNow;
@@ -17,9 +17,25 @@ public sealed class OpenXrSmokeSummary
     public string ViewRenderModeRequested { get; set; } = string.Empty;
     public string ViewRenderModeEffective { get; set; } = string.Empty;
     public string ViewRenderImplementationPath { get; set; } = string.Empty;
+    public bool ViewRenderModeResolutionObserved { get; set; }
     public string ViewRenderTemporalHistoryPolicy { get; set; } = string.Empty;
     public bool ViewRenderModeSupported { get; set; }
     public string? ViewRenderModeDiagnostic { get; set; }
+    public string VulkanRenderTargetModeRequested { get; set; } = string.Empty;
+    public string VulkanRenderTargetModeEffective { get; set; } = string.Empty;
+    public string VulkanDiagnosticPresetRequested { get; set; } = string.Empty;
+    public string VulkanDiagnosticPresetEffective { get; set; } = string.Empty;
+    public bool VulkanValidationLayersEffective { get; set; }
+    public bool VulkanSynchronizationValidationEffective { get; set; }
+    public string[] VulkanValidationLayers { get; set; } = [];
+    public string[] VulkanValidationFeatures { get; set; } = [];
+    public string[] ExternallyOwnedValidationAllowlist { get; set; } = [];
+    public string AntiAliasingModeEffective { get; set; } = string.Empty;
+    public double TsrResolutionScaleRequested { get; set; }
+    public double TsrResolutionScaleEffective { get; set; }
+    public string OcclusionCullingModeRequested { get; set; } = string.Empty;
+    public string OcclusionCullingModeEffective { get; set; } = string.Empty;
+    public string MirrorModeEffective { get; set; } = string.Empty;
     public string FoveationRequestedMode { get; set; } = string.Empty;
     public string FoveationEffectiveMode { get; set; } = string.Empty;
     public string FoveationQualityPreset { get; set; } = string.Empty;
@@ -60,15 +76,39 @@ public sealed class OpenXrSmokeSummary
     public long PerFrameAllocationsBytes { get; set; }
     public int WarmupFrameCount { get; set; }
     public int RetainedFrameCount { get; set; }
+    public DateTimeOffset? RetainedCohortStartedAtUtc { get; set; }
     public OpenXrSmokeFrameLedgerEntry[] FrameLedger { get; set; } = [];
     public OpenXrSmokeOcclusionViewLedgerEntry[] OcclusionViewLedger { get; set; } = [];
     public bool OcclusionViewLedgerOverflow { get; set; }
+    public OpenXrSmokeOcclusionEvidenceLedgerEntry[] OcclusionEvidenceLedger { get; set; } = [];
+    public long OcclusionEvidenceOverflowCount { get; set; }
     public OpenXrSmokeOutputLedgerEntry[] OutputLedger { get; set; } = [];
     public bool OutputLedgerOverflow { get; set; }
+    public bool DefaultPipelineCaptureEnabled { get; set; }
+    public int DefaultPipelineCaptureSkipFrames { get; set; }
+    public string? DefaultPipelineCaptureOutputDirectory { get; set; }
+    public string[] RequiredCaptureStages { get; set; } = [];
+    public string DesktopFinalCaptureStage { get; set; } = string.Empty;
+    public OpenXrSmokeCaptureLedgerEntry[] CaptureLedger { get; set; } = [];
+    public string[] TemporalScenarioCaptureStages { get; set; } = [];
+    public OpenXrSmokeTemporalScenarioDefinition[] TemporalScenarioMatrix { get; set; } = [];
+    public OpenXrSmokeCaptureLedgerEntry[] TemporalScenarioCaptureLedger { get; set; } = [];
+    public OpenXrSmokeTemporalStateLedgerEntry[] TemporalStateLedger { get; set; } = [];
+    public long TemporalStateLedgerOverflowCount { get; set; }
+    public OpenXrSmokeDesktopRejectionEvidence DesktopRejectionEvidence { get; set; } = new();
     public OpenXrSmokeSwapchainSummary[] Swapchains { get; set; } = [];
     public string[] RuntimeStateTransitions { get; set; } = [];
     public string[] SessionStateTransitions { get; set; } = [];
     public string[] Warnings { get; set; } = [];
     public string[] Failures { get; set; } = [];
     public long StrictSinglePassStereoSequentialFallbackAttemptCount { get; set; }
+    public string StrictSpsInjectedFailureStage { get; set; } = string.Empty;
+    public long StrictSpsInjectedFailureCount { get; set; }
+    public bool StrictSpsInjectedFailureHandled { get; set; }
+    public uint StrictSpsInjectedProjectionLayerCount { get; set; }
+    public bool StrictSpsInjectedSequentialFallbackRequested { get; set; }
+    public long StrictSpsInjectedSequentialFallbackAttemptDelta { get; set; }
+    public long StrictSpsInjectedCompletedFrameCount { get; set; }
+    public string StrictSpsInjectedQueueDisposition { get; set; } = string.Empty;
+    public long StrictSpsSuccessfulSubmissionCount { get; set; }
 }

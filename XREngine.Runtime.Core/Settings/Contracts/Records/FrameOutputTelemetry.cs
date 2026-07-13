@@ -24,4 +24,8 @@ public readonly record struct FrameOutputTelemetry(
     uint ContentAgeFrames = 0u,
     bool DeadlineMissed = false,
     bool PolicyAuthorized = true,
-    ERenderOutputPolicyReason PolicyReason = ERenderOutputPolicyReason.None);
+    ERenderOutputPolicyReason PolicyReason = ERenderOutputPolicyReason.None,
+    int PipelineInstanceId = 0,
+    int ResourcePlanGeneration = 0,
+    ulong CommandGeneration = 0UL,
+    string? AntiAliasingMode = null);

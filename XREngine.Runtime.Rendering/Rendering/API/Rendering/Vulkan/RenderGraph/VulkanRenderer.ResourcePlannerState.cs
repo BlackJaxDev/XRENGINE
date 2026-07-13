@@ -90,10 +90,16 @@ public unsafe partial class VulkanRenderer
         string? outputTargetName = null;
         if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
         {
-            displayWidth = externalExtent.Width;
-            displayHeight = externalExtent.Height;
-            internalWidth = externalExtent.Width;
-            internalHeight = externalExtent.Height;
+            var dimensions = ResolveExternalFrameOpResourceDimensions(
+                externalExtent,
+                pipeline?.ResourceInternalWidth,
+                pipeline?.ResourceInternalHeight,
+                viewport?.InternalWidth,
+                viewport?.InternalHeight);
+            displayWidth = dimensions.DisplayWidth;
+            displayHeight = dimensions.DisplayHeight;
+            internalWidth = dimensions.InternalWidth;
+            internalHeight = dimensions.InternalHeight;
             TryGetExternalSwapchainTargetIdentity(out outputTargetIdentity, out outputTargetName);
         }
         else
@@ -246,10 +252,16 @@ public unsafe partial class VulkanRenderer
         string? outputTargetName = null;
         if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
         {
-            displayWidth = externalExtent.Width;
-            displayHeight = externalExtent.Height;
-            internalWidth = externalExtent.Width;
-            internalHeight = externalExtent.Height;
+            var dimensions = ResolveExternalFrameOpResourceDimensions(
+                externalExtent,
+                pipeline.ResourceInternalWidth,
+                pipeline.ResourceInternalHeight,
+                viewport?.InternalWidth,
+                viewport?.InternalHeight);
+            displayWidth = dimensions.DisplayWidth;
+            displayHeight = dimensions.DisplayHeight;
+            internalWidth = dimensions.InternalWidth;
+            internalHeight = dimensions.InternalHeight;
             TryGetExternalSwapchainTargetIdentity(out outputTargetIdentity, out outputTargetName);
         }
         else
@@ -372,7 +384,7 @@ public unsafe partial class VulkanRenderer
         return MixSignature(descriptorTableGeneration, unchecked((uint)ComputeResourceRegistrySignature(registry)));
     }
 
-    private static ulong ComputeFrameOpContextRecordingFingerprint(in FrameOpContext context)
+    internal static ulong ComputeFrameOpContextRecordingFingerprint(in FrameOpContext context)
     {
         FrameOpSignatureHasher hash = new();
         hash.Add(0x46524D4F50435458UL);
@@ -1474,10 +1486,18 @@ public unsafe partial class VulkanRenderer
     {
         if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
         {
-            if (context.DisplayWidth == externalExtent.Width &&
-                context.DisplayHeight == externalExtent.Height &&
-                context.InternalWidth == externalExtent.Width &&
-                context.InternalHeight == externalExtent.Height)
+            var dimensions = ResolveExternalFrameOpResourceDimensions(
+                externalExtent,
+                context.PipelineInstance?.ResourceInternalWidth,
+                context.PipelineInstance?.ResourceInternalHeight,
+                viewportInternalWidth: null,
+                viewportInternalHeight: null,
+                contextInternalWidth: context.InternalWidth,
+                contextInternalHeight: context.InternalHeight);
+            if (context.DisplayWidth == dimensions.DisplayWidth &&
+                context.DisplayHeight == dimensions.DisplayHeight &&
+                context.InternalWidth == dimensions.InternalWidth &&
+                context.InternalHeight == dimensions.InternalHeight)
             {
                 return context;
             }
@@ -1485,20 +1505,22 @@ public unsafe partial class VulkanRenderer
             Debug.VulkanEvery(
                 $"Vulkan.ResourcePlanner.ExternalFrameOpExtents.{context.PipelineIdentity}.{context.ViewportIdentity}",
                 TimeSpan.FromSeconds(1),
-                "[VulkanResourcePlanner] Forcing external swapchain frame-op planner extents. Old={0}x{1}/{2}x{3} External={4}x{5}.",
+                "[VulkanResourcePlanner] Refreshing external swapchain frame-op planner extents. Old={0}x{1}/{2}x{3} New={4}x{5}/{6}x{7}.",
                 context.DisplayWidth,
                 context.DisplayHeight,
                 context.InternalWidth,
                 context.InternalHeight,
-                externalExtent.Width,
-                externalExtent.Height);
+                dimensions.DisplayWidth,
+                dimensions.DisplayHeight,
+                dimensions.InternalWidth,
+                dimensions.InternalHeight);
 
-        return RefreshFrameOpContextRecordingFingerprint(context with
+            return RefreshFrameOpContextRecordingFingerprint(context with
             {
-                DisplayWidth = externalExtent.Width,
-                DisplayHeight = externalExtent.Height,
-                InternalWidth = externalExtent.Width,
-                InternalHeight = externalExtent.Height
+                DisplayWidth = dimensions.DisplayWidth,
+                DisplayHeight = dimensions.DisplayHeight,
+                InternalWidth = dimensions.InternalWidth,
+                InternalHeight = dimensions.InternalHeight
             });
         }
 
@@ -1713,6 +1735,31 @@ public unsafe partial class VulkanRenderer
         return tertiary > 0 ? tertiary : fallback;
     }
 
+    internal static (uint DisplayWidth, uint DisplayHeight, uint InternalWidth, uint InternalHeight) ResolveExternalFrameOpResourceDimensions(
+        in Extent2D externalExtent,
+        uint? pipelineInternalWidth,
+        uint? pipelineInternalHeight,
+        int? viewportInternalWidth,
+        int? viewportInternalHeight,
+        uint contextInternalWidth = 0u,
+        uint contextInternalHeight = 0u)
+    {
+        uint displayWidth = Math.Max(externalExtent.Width, 1u);
+        uint displayHeight = Math.Max(externalExtent.Height, 1u);
+        uint internalWidth = ResolvePositiveDimension(
+            pipelineInternalWidth,
+            viewportInternalWidth,
+            contextInternalWidth,
+            displayWidth);
+        uint internalHeight = ResolvePositiveDimension(
+            pipelineInternalHeight,
+            viewportInternalHeight,
+            contextInternalHeight,
+            displayHeight);
+
+        return (displayWidth, displayHeight, internalWidth, internalHeight);
+    }
+
     private Extent2D ResolveFrameOpContextFallbackExtent()
     {
         if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
@@ -1725,11 +1772,19 @@ public unsafe partial class VulkanRenderer
     {
         if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
         {
+            var dimensions = ResolveExternalFrameOpResourceDimensions(
+                externalExtent,
+                context.PipelineInstance?.ResourceInternalWidth,
+                context.PipelineInstance?.ResourceInternalHeight,
+                viewportInternalWidth: null,
+                viewportInternalHeight: null,
+                contextInternalWidth: context.InternalWidth,
+                contextInternalHeight: context.InternalHeight);
             return new VulkanResourceExtentContext(
-                externalExtent.Width,
-                externalExtent.Height,
-                externalExtent.Width,
-                externalExtent.Height);
+                dimensions.DisplayWidth,
+                dimensions.DisplayHeight,
+                dimensions.InternalWidth,
+                dimensions.InternalHeight);
         }
 
         Extent2D fallbackExtent = ResolveFrameOpContextFallbackExtent();
@@ -2093,7 +2148,7 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
-    private static void AddRegistryDescriptors(
+    internal static void AddRegistryDescriptors(
         RenderResourceRegistry destination,
         RenderResourceRegistry source,
         bool overwrite)

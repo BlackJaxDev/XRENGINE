@@ -17,6 +17,7 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
     public string? SourceTextureName { get; set; }
     public string? SourceFBOName { get; set; }
     public string? DestinationFBOName { get; set; }
+    public bool Stereo { get; set; }
 
     public override string GpuProfilingName
         => string.IsNullOrWhiteSpace(SourceTextureName) && string.IsNullOrWhiteSpace(SourceFBOName)
@@ -28,7 +29,8 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
         if (_quad is not null)
             return;
 
-        _material = new(Array.Empty<XRTexture?>(), XRShader.EngineShader(Path.Combine(SceneShaderPath, "FXAA.fs"), EShaderType.Fragment))
+        string shaderName = Stereo ? "FXAAStereo.fs" : "FXAA.fs";
+        _material = new(Array.Empty<XRTexture?>(), XRShader.EngineShader(Path.Combine(SceneShaderPath, shaderName), EShaderType.Fragment))
         {
             RenderOptions = new RenderingParameters()
             {
@@ -38,7 +40,8 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
-                BlendModeAllDrawBuffers = BlendMode.Disabled()
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
+                RequiredEngineUniforms = EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy
             }
         };
 
@@ -101,6 +104,9 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
         using var renderAreaScope = destination is { Width: > 0, Height: > 0 }
             ? instance.RenderState.PushRenderArea((int)destination.Width, (int)destination.Height)
             : default;
+
+        if (destination is not null)
+            VPRCFullscreenPassContract.ValidateAndLog(instance, nameof(VPRC_FXAA), destination, sourceTexture, Stereo);
 
         _quad.Render(destination);
     }

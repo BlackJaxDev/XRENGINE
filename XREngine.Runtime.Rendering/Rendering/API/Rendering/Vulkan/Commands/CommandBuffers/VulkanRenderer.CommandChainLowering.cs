@@ -869,10 +869,7 @@ public unsafe partial class VulkanRenderer
             return;
 
         if (_commandChainCaches is not null)
-        {
-            DestroyCommandChainCaches();
-            MarkOpenXrPrimaryCommandBufferVariantsDirty();
-        }
+            DestroyIndexedCommandChainCaches();
 
         _commandChainCaches = new Dictionary<CommandChainKey, CommandChain>[count];
         for (int i = 0; i < count; i++)

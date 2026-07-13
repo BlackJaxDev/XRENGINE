@@ -37,6 +37,7 @@ namespace XREngine.Rendering.Occlusion
             public bool DiscardPendingResult;
             public bool PendingQueryWasVisibleDraw;
             public ECpuOcclusionQueryReason PendingReason;
+            public ulong RecoveryStartedFrame = ulong.MaxValue;
 
             public ulong LastDecidedFrameId = ulong.MaxValue;
             public ECpuOcclusionDecision LastDecision = ECpuOcclusionDecision.Visible;
@@ -85,6 +86,8 @@ namespace XREngine.Rendering.Occlusion
             public int VisibleBudgetUsed;
             public int RecoveryBudgetUsed;
             public uint LastSceneCommandCount;
+            public ulong CommandSetSignature;
+            public bool HasCommandSetSignature;
             public ulong LastTouchedFrame;
         }
 
@@ -173,12 +176,29 @@ namespace XREngine.Rendering.Occlusion
             XRCamera camera,
             uint sceneCommandCount,
             OcclusionViewOwnership ownership)
+            => BeginPass(
+                renderPass,
+                camera,
+                sceneCommandCount,
+                BuildFallbackCommandSetSignature(sceneCommandCount),
+                ownership);
+
+        public bool BeginPass(
+            int renderPass,
+            XRCamera camera,
+            uint sceneCommandCount,
+            ulong commandSetSignature,
+            OcclusionViewOwnership ownership)
         {
             lock (_lock)
             {
                 PassState state = GetPassStateForOwnership(renderPass, camera, ownership);
                 ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+                bool commandSetChanged = state.HasCommandSetSignature &&
+                    state.CommandSetSignature != commandSetSignature;
                 state.LastSceneCommandCount = sceneCommandCount;
+                state.CommandSetSignature = commandSetSignature;
+                state.HasCommandSetSignature = true;
                 state.LastTouchedFrame = frameId;
                 state.Pov.LastTouchedFrame = frameId;
                 state.ForceVisibleThisFrame = false;
@@ -189,6 +209,11 @@ namespace XREngine.Rendering.Occlusion
 
                 if (!ownership.IsValid)
                     ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.MissingOwnership);
+                else if (commandSetChanged)
+                {
+                    InvalidateForCommandSetChange(state, frameId);
+                    ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.CommandSetChanged);
+                }
                 else if (tier == ECpuOcclusionMotionTier.CameraCut)
                 {
                     InvalidatePov(state.Pov);
@@ -315,6 +340,26 @@ namespace XREngine.Rendering.Occlusion
                     return SetDecision(state, queryState, ECpuOcclusionDecision.Visible, request, ECpuDecisionKind.Seed, out probeRequest);
                 }
 
+                if (queryState.RecoveryStartedFrame != ulong.MaxValue)
+                {
+                    // A forced-visible transition must not strand the command in
+                    // visible hysteresis. Re-probe every eligible frame until a
+                    // fresh result completes the recovery interval.
+                    var request = new CpuOcclusionProbeRequest(
+                        true,
+                        ECpuOcclusionQueryReason.StaleStateRefresh,
+                        recoveryProbe: false,
+                        priorityBias: 4.0f);
+                    state.Telemetry.RecordRecoveryAge(GetFrameAge(queryState.RecoveryStartedFrame, frameId));
+                    return SetDecision(
+                        state,
+                        queryState,
+                        ECpuOcclusionDecision.Visible,
+                        request,
+                        ECpuDecisionKind.ForcedVisible,
+                        out probeRequest);
+                }
+
                 bool anySamplesPassed = GetConservativeAnySamplesPassed(state, sourceCommandIndex, queryState, frameId, out bool staleOrIncomplete);
                 if (anySamplesPassed)
                 {
@@ -337,6 +382,13 @@ namespace XREngine.Rendering.Occlusion
                             recoveryProbe: false,
                             priorityBias: GetMotionPriorityBias(state.MotionTier))
                         : CpuOcclusionProbeRequest.None;
+
+                    if (staleOrIncomplete)
+                    {
+                        BeginRecovery(state, queryState, frameId);
+                        OcclusionTelemetry.RecordCpuForcedVisible(ECpuOcclusionForceVisibleReason.StaleResult);
+                        state.Telemetry.RecordForcedVisible();
+                    }
 
                     return SetDecision(
                         state,
@@ -361,6 +413,7 @@ namespace XREngine.Rendering.Occlusion
 
                 if (ShouldForceVisibleForStaleOcclusion(queryState, frameId, state.MotionTier))
                 {
+                    BeginRecovery(state, queryState, frameId);
                     OcclusionTelemetry.RecordCpuForcedVisible(ECpuOcclusionForceVisibleReason.StaleResult);
                     state.Telemetry.RecordForcedVisible();
                     var request = new CpuOcclusionProbeRequest(true, ECpuOcclusionQueryReason.StaleStateRefresh, recoveryProbe: false, priorityBias: 4.0f);
@@ -428,6 +481,50 @@ namespace XREngine.Rendering.Occlusion
                     return true;
 
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Returns the exact currently valid coverage bits proving that a command
+        /// is occluded. Callers use this immediately after a Skip/ProbeOnly decision
+        /// to persist Phase 5.2.4b owning-view evidence; it never manufactures proof
+        /// for pending, visible, or incomplete shared-view results.
+        /// </summary>
+        internal uint GetOccludedProofCoverageMask(
+            int renderPass,
+            XRCamera? camera,
+            uint sourceCommandIndex,
+            OcclusionViewOwnership ownership)
+        {
+            lock (_lock)
+            {
+                OcclusionViewKey key = CreatePassKey(renderPass, camera, ownership);
+                if (!_passStates.TryGetValue(key, out PassState? state))
+                    return 0u;
+
+                uint required = state.Pov.RequiredCoverageMask;
+                if ((required & (required - 1u)) != 0u &&
+                    state.Pov.Queries.TryGetValue(sourceCommandIndex, out PovQueryState? povQuery))
+                {
+                    return povQuery.ValidCoverageMask &
+                           ~povQuery.VisibleCoverageMask &
+                           ~povQuery.PendingCoverageMask &
+                           required;
+                }
+
+                if (state.Queries.TryGetValue(sourceCommandIndex, out QueryState? query) &&
+                    !query.QueryPending &&
+                    !query.LastAnySamplesPassed)
+                {
+                    return state.ViewKey.CoverageMask & required;
+                }
+
+                return IsHierarchyFreshOccluded(
+                    state,
+                    sourceCommandIndex,
+                    RuntimeEngine.Rendering.State.RenderFrameId)
+                    ? state.ViewKey.CoverageMask & required
+                    : 0u;
             }
         }
 
@@ -595,7 +692,56 @@ namespace XREngine.Rendering.Occlusion
                 if (!state.HierarchyGroups.TryGetValue(hierarchyGroupKey, out HierarchyGroupState? group))
                     return;
 
-                _ = EndQueryCore(group.Query, new CpuOcclusionProbeRequest(true, ECpuOcclusionQueryReason.OccludedRecovery, recoveryProbe: true));
+                if (EndQueryCore(
+                    group.Query,
+                    new CpuOcclusionProbeRequest(
+                        true,
+                        ECpuOcclusionQueryReason.OccludedRecovery,
+                        recoveryProbe: true)))
+                {
+                    state.Telemetry.RecordSubmission();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Keeps a validation sentinel fail-visible while still requesting a real
+        /// individual proxy query. A pending result remains consumable; this never
+        /// manufactures a visible result or converts the request into hierarchy work.
+        /// </summary>
+        internal CpuOcclusionProbeRequest ForceVisibleForValidation(
+            int renderPass,
+            XRCamera? camera,
+            uint sourceCommandIndex,
+            OcclusionViewOwnership ownership)
+        {
+            lock (_lock)
+            {
+                PassState state = GetPassStateForOwnership(renderPass, camera, ownership);
+                QueryState queryState = GetOrCreateQueryState(state, sourceCommandIndex);
+                ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+
+                queryState.LastTouchedFrame = frameId;
+                queryState.LastDecision = ECpuOcclusionDecision.Visible;
+                queryState.LastDecidedFrameId = frameId;
+
+                CpuOcclusionProbeRequest request = CpuOcclusionProbeRequest.None;
+                if (!state.ForceVisibleThisFrame &&
+                    !queryState.QueryPending &&
+                    queryState.QueryIssuedFrameId != frameId)
+                {
+                    BeginRecovery(state, queryState, frameId);
+                    request = new CpuOcclusionProbeRequest(
+                        true,
+                        ECpuOcclusionQueryReason.DiagnosticForcedQuery,
+                        recoveryProbe: false,
+                        priorityBias: 8.0f);
+                    queryState.LastProbeRequest = request;
+                }
+
+                OcclusionTelemetry.RecordCpuForcedVisible(ECpuOcclusionForceVisibleReason.Diagnostic);
+                state.Telemetry.RecordForcedVisible();
+                return request;
             }
         }
 
@@ -629,7 +775,12 @@ namespace XREngine.Rendering.Occlusion
             {
                 PassState state = GetPassStateForOwnership(renderPass, camera, ownership);
                 QueryState queryState = GetOrCreateQueryState(state, sourceCommandIndex);
-                ForceQueryStateVisible(queryState, RuntimeEngine.Rendering.State.RenderFrameId);
+                ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+                if (ShouldTrackRecovery(reason))
+                    BeginRecovery(state, queryState, frameId);
+                else
+                    CancelRecovery(queryState);
+                ForceQueryStateVisible(queryState, frameId);
                 InvalidatePovQuery(state.Pov, sourceCommandIndex, state.ViewKey.CoverageMask);
                 OcclusionTelemetry.RecordCpuForcedVisible(reason);
                 state.Telemetry.RecordForcedVisible();
@@ -789,7 +940,8 @@ namespace XREngine.Rendering.Occlusion
                 coverageMask,
                 requiredCoverageMask,
                 declaredViewCount,
-                ownership.ResourceGeneration);
+                ownership.ResourceGeneration,
+                ownership.OutputId);
         }
 
         internal static bool IsUnsupportedSharedStereoScope(OcclusionViewKey key)
@@ -940,6 +1092,7 @@ namespace XREngine.Rendering.Occlusion
                     ApplyResolvedCommandResult(state, key, queryState, frameId, anySamplesPassed);
                     ApplyResolvedPovResult(state, key, frameId, anySamplesPassed);
                     state.Telemetry.RecordResolution(queryState.PendingSinceFrame, frameId);
+                    CompleteRecovery(state, queryState, frameId);
                 }
 
                 if (!queryState.QueryPending &&
@@ -964,6 +1117,8 @@ namespace XREngine.Rendering.Occlusion
                 ResolveQueryState(group.Query, frameId, out bool resolved, out bool anySamplesPassed);
                 if (!resolved)
                     continue;
+
+                state.Telemetry.RecordResolution(group.Query.PendingSinceFrame, frameId);
 
                 group.LastAnySamplesPassed = anySamplesPassed;
                 group.LastQueryFrame = frameId;
@@ -1071,6 +1226,7 @@ namespace XREngine.Rendering.Occlusion
             queryState.QueryPending = false;
             queryState.DiscardPendingResult = true;
             InvalidatePovQuery(state.Pov, sourceCommandIndex, state.ViewKey.CoverageMask);
+            BeginRecovery(state, queryState, frameId);
             ForceQueryStateVisible(queryState, frameId);
             OcclusionTelemetry.RecordCpuForcedVisible(ECpuOcclusionForceVisibleReason.PendingTooOld);
             state.Telemetry.RecordForcedVisible();
@@ -1291,6 +1447,13 @@ namespace XREngine.Rendering.Occlusion
                     continue;
                 if (IsHierarchyFreshOccluded(group, frameId, state.MotionTier))
                     continue;
+                if (group.LastQueryFrame != 0UL && group.LastAnySamplesPassed)
+                {
+                    // A visible group is only a broad-phase answer. Expand back
+                    // to individual members so one visible child cannot make the
+                    // group query starve every recovery probe indefinitely.
+                    continue;
+                }
 
                 group.ScheduledFrameId = frameId;
                 scheduled.Add(new CpuOcclusionScheduledProbe(0u, scratch.Bounds, isHierarchyGroup: true, groupKey));
@@ -1501,6 +1664,74 @@ namespace XREngine.Rendering.Occlusion
             }
         }
 
+        private static ulong BuildFallbackCommandSetSignature(uint commandCount)
+            => 0x9E3779B97F4A7C15UL ^ commandCount;
+
+        private static void InvalidateForCommandSetChange(PassState state, ulong frameId)
+        {
+            InvalidatePov(state.Pov);
+            foreach (QueryState query in state.Queries.Values)
+            {
+                BeginRecovery(state, query, frameId);
+                query.StateKind = ECpuOcclusionQueryStateKind.Unknown;
+                query.LastAnySamplesPassed = true;
+                query.ConsecutiveVisibleFrames = 0;
+                query.ConsecutiveOccludedFrames = 0;
+                query.LastDecidedFrameId = ulong.MaxValue;
+                query.QueryIssuedFrameId = ulong.MaxValue;
+                query.LastProbeRequest = CpuOcclusionProbeRequest.None;
+                if (query.QueryPending)
+                    query.DiscardPendingResult = true;
+            }
+
+            foreach (HierarchyGroupState group in state.HierarchyGroups.Values)
+            {
+                group.LastAnySamplesPassed = true;
+                group.LastQueryFrame = 0UL;
+                group.LastVisibleFrame = frameId;
+                group.LastOccludedFrame = 0UL;
+                group.ScheduledFrameId = ulong.MaxValue;
+                group.ChildProbeCount = 0;
+                if (group.Query.QueryPending)
+                    group.Query.DiscardPendingResult = true;
+            }
+        }
+
+        private static void BeginRecovery(PassState state, QueryState queryState, ulong frameId)
+        {
+            if (queryState.RecoveryStartedFrame != ulong.MaxValue)
+                return;
+
+            queryState.RecoveryStartedFrame = frameId;
+            state.Telemetry.RecordRecoveryStarted();
+        }
+
+        private static void CancelRecovery(QueryState queryState)
+            => queryState.RecoveryStartedFrame = ulong.MaxValue;
+
+        private static bool ShouldTrackRecovery(ECpuOcclusionForceVisibleReason reason)
+            => reason is ECpuOcclusionForceVisibleReason.CameraCut
+                or ECpuOcclusionForceVisibleReason.ProjectionDiscontinuity
+                or ECpuOcclusionForceVisibleReason.PendingTooOld
+                or ECpuOcclusionForceVisibleReason.StaleResult
+                or ECpuOcclusionForceVisibleReason.ResourceGenerationChanged
+                or ECpuOcclusionForceVisibleReason.CommandSetChanged;
+
+        private static int GetFrameAge(ulong startFrame, ulong currentFrame)
+        {
+            ulong age = currentFrame >= startFrame ? currentFrame - startFrame : 0UL;
+            return age > int.MaxValue ? int.MaxValue : (int)age;
+        }
+
+        private static void CompleteRecovery(PassState state, QueryState queryState, ulong frameId)
+        {
+            if (queryState.RecoveryStartedFrame == ulong.MaxValue)
+                return;
+
+            state.Telemetry.RecordRecoveryCompleted(queryState.RecoveryStartedFrame, frameId);
+            queryState.RecoveryStartedFrame = ulong.MaxValue;
+        }
+
         private static void InvalidatePovQuery(PovState pov, uint sourceCommandIndex, uint coverageMask)
         {
             if (!pov.Queries.TryGetValue(sourceCommandIndex, out PovQueryState? query))
@@ -1616,7 +1847,17 @@ namespace XREngine.Rendering.Occlusion
             ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
             foreach (QueryState queryState in state.Queries.Values)
             {
-                queryState.StateKind = ECpuOcclusionQueryStateKind.ForcedVisible;
+                if (ShouldTrackRecovery(reason))
+                {
+                    BeginRecovery(state, queryState, frameId);
+                    state.Telemetry.RecordRecoveryAge(GetFrameAge(queryState.RecoveryStartedFrame, frameId));
+                }
+                else
+                {
+                    CancelRecovery(queryState);
+                }
+                if (queryState.StateKind != ECpuOcclusionQueryStateKind.Unknown)
+                    queryState.StateKind = ECpuOcclusionQueryStateKind.ForcedVisible;
                 queryState.LastDecidedFrameId = ulong.MaxValue;
                 queryState.QueryIssuedFrameId = ulong.MaxValue;
                 queryState.LastProbeRequest = CpuOcclusionProbeRequest.None;

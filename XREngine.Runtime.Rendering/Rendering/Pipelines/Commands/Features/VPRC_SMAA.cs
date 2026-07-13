@@ -17,13 +17,32 @@ public sealed class VPRC_SMAA : ViewportRenderCommand
 {
     private const string EdgeDetectionShaderCode = """
 #version 450
+#ifdef XRE_STEREO
+#extension GL_OVR_multiview2 : require
+#endif
 
 layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
+#ifdef XRE_STEREO
+uniform sampler2DArray SourceTexture;
+#else
 uniform sampler2D SourceTexture;
+#endif
 uniform vec2 TexelSize;
 uniform float EdgeThreshold;
+uniform float ScreenWidth;
+uniform float ScreenHeight;
+uniform vec2 ScreenOrigin;
+
+vec4 SampleSource(vec2 uv)
+{
+#ifdef XRE_STEREO
+    return texture(SourceTexture, vec3(uv, float(gl_ViewID_OVR)));
+#else
+    return texture(SourceTexture, uv);
+#endif
+}
 
 float Luma(vec3 color)
 {
@@ -32,14 +51,14 @@ float Luma(vec3 color)
 
 void main()
 {
-    vec2 uv = FragPos.xy * 0.5 + 0.5;
+    vec2 uv = (gl_FragCoord.xy - ScreenOrigin) / vec2(ScreenWidth, ScreenHeight);
 
-    float center = Luma(texture(SourceTexture, uv).rgb);
+    float center = Luma(SampleSource(uv).rgb);
     // SMAA convention: compare only with top and left neighbors.
     // This stores each edge at exactly one pixel, enabling proper
     // asymmetric blending in the neighborhood pass.
-    float top  = Luma(texture(SourceTexture, uv + vec2(0.0, TexelSize.y)).rgb);
-    float left = Luma(texture(SourceTexture, uv - vec2(TexelSize.x, 0.0)).rgb);
+    float top  = Luma(SampleSource(uv + vec2(0.0, TexelSize.y)).rgb);
+    float left = Luma(SampleSource(uv - vec2(TexelSize.x, 0.0)).rgb);
 
     float deltaH = abs(center - top);
     float deltaV = abs(center - left);
@@ -55,14 +74,33 @@ void main()
 
     private const string BlendWeightShaderCode = """
 #version 450
+#ifdef XRE_STEREO
+#extension GL_OVR_multiview2 : require
+#endif
 
 layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
+#ifdef XRE_STEREO
+uniform sampler2DArray EdgeTexture;
+#else
 uniform sampler2D EdgeTexture;
+#endif
 uniform vec2 TexelSize;
 uniform int MaxSearchSteps;
 uniform float EdgeSharpness;
+uniform float ScreenWidth;
+uniform float ScreenHeight;
+uniform vec2 ScreenOrigin;
+
+vec4 SampleEdge(vec2 uv)
+{
+#ifdef XRE_STEREO
+    return texture(EdgeTexture, vec3(uv, float(gl_ViewID_OVR)));
+#else
+    return texture(EdgeTexture, uv);
+#endif
+}
 
 float SearchSpan(vec2 uv, vec2 direction, int channelIndex)
 {
@@ -75,7 +113,7 @@ float SearchSpan(vec2 uv, vec2 direction, int channelIndex)
             break;
 
         sampleUv += direction * TexelSize;
-        vec4 edge = texture(EdgeTexture, sampleUv);
+        vec4 edge = SampleEdge(sampleUv);
         float value = channelIndex == 0 ? edge.r : edge.g;
         if (value < 0.5)
             break;
@@ -88,9 +126,9 @@ float SearchSpan(vec2 uv, vec2 direction, int channelIndex)
 
 void main()
 {
-    vec2 uv = FragPos.xy * 0.5 + 0.5;
+    vec2 uv = (gl_FragCoord.xy - ScreenOrigin) / vec2(ScreenWidth, ScreenHeight);
 
-    vec4 edge = texture(EdgeTexture, uv);
+    vec4 edge = SampleEdge(uv);
     vec4 weights = vec4(0.0);
 
     // Horizontal edge: between this pixel and its top neighbor.
@@ -129,30 +167,59 @@ void main()
 
     private const string NeighborhoodBlendShaderCode = """
 #version 450
+#ifdef XRE_STEREO
+#extension GL_OVR_multiview2 : require
+#endif
 
 layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
+#ifdef XRE_STEREO
+uniform sampler2DArray SourceTexture;
+uniform sampler2DArray BlendTexture;
+#else
 uniform sampler2D SourceTexture;
 uniform sampler2D BlendTexture;
+#endif
 uniform vec2 TexelSize;
+uniform float ScreenWidth;
+uniform float ScreenHeight;
+uniform vec2 ScreenOrigin;
+
+vec4 SampleSource(vec2 uv)
+{
+#ifdef XRE_STEREO
+    return texture(SourceTexture, vec3(uv, float(gl_ViewID_OVR)));
+#else
+    return texture(SourceTexture, uv);
+#endif
+}
+
+vec4 SampleBlend(vec2 uv)
+{
+#ifdef XRE_STEREO
+    return texture(BlendTexture, vec3(uv, float(gl_ViewID_OVR)));
+#else
+    return texture(BlendTexture, uv);
+#endif
+}
 
 void main()
 {
-    vec2 uv = FragPos.xy * 0.5 + 0.5;
+    vec2 uv = (gl_FragCoord.xy - ScreenOrigin) / vec2(ScreenWidth, ScreenHeight);
 
-    vec4 center = texture(SourceTexture, uv);
+    vec4 center = SampleSource(uv);
 
     // This pixel's own blend weights.
-    vec4 blend = texture(BlendTexture, uv);
+    vec4 blend = SampleBlend(uv);
 
     // Read complementary blend weights from adjacent pixels.
     // The pixel BELOW us may have a horizontal edge with us (we are its top),
     // so its R channel tells us how much to blend downward.
-    float blendDown  = texture(BlendTexture, uv - vec2(0.0, TexelSize.y)).r;
+    float blendDown  = SampleBlend(uv - vec2(0.0, TexelSize.y)).r;
     // The pixel to the RIGHT may have a vertical edge with us (we are its left),
     // so its G channel tells us how much to blend rightward.
-    float blendRight = texture(BlendTexture, uv + vec2(TexelSize.x, 0.0)).g;
+    float blendRight = SampleBlend(uv + vec2(TexelSize.x, 0.0)).g;
 
     // Compose per-direction weights:
     float bTop    = blend.r;      // this pixel has horizontal edge with top → blend up
@@ -168,19 +235,19 @@ void main()
     }
     total = min(total, 1.0);
 
-    vec4 top    = texture(SourceTexture, uv + vec2(0.0, TexelSize.y));
-    vec4 bottom = texture(SourceTexture, uv - vec2(0.0, TexelSize.y));
-    vec4 left   = texture(SourceTexture, uv - vec2(TexelSize.x, 0.0));
-    vec4 right  = texture(SourceTexture, uv + vec2(TexelSize.x, 0.0));
+    vec4 top    = SampleSource(uv + vec2(0.0, TexelSize.y));
+    vec4 bottom = SampleSource(uv - vec2(0.0, TexelSize.y));
+    vec4 left   = SampleSource(uv - vec2(TexelSize.x, 0.0));
+    vec4 right  = SampleSource(uv + vec2(TexelSize.x, 0.0));
 
     vec4 blended = top * bTop + bottom * bBottom + left * bLeft + right * bRight;
     OutColor = center * (1.0 - total) + blended;
 }
 """;
 
-    private XRTexture2D? _edgeTexture;
-    private XRTexture2D? _blendTexture;
-    private XRTexture2D? _outputTexture;
+    private XRTexture? _edgeTexture;
+    private XRTexture? _blendTexture;
+    private XRTexture? _outputTexture;
     private XRFrameBuffer? _edgeFbo;
     private XRFrameBuffer? _blendFbo;
     private XRFrameBuffer? _outputFbo;
@@ -197,6 +264,7 @@ void main()
     private ESizedInternalFormat _cachedOutputSizedFormat;
     private EPixelFormat _cachedOutputPixelFormat;
     private EPixelType _cachedOutputPixelType;
+    private bool _cachedStereo;
     private bool _ownsResources;
 
     public string? SourceTextureName { get; set; }
@@ -206,6 +274,7 @@ void main()
     public float EdgeThreshold { get; set; } = 0.08f;
     public int MaxSearchSteps { get; set; } = 16;
     public float EdgeSharpness { get; set; } = 2.0f;
+    public bool Stereo { get; set; }
 
     private string ResolvedOutputFboName
         => string.IsNullOrWhiteSpace(OutputFBOName) ? $"{OutputTextureName}FBO" : OutputFBOName!;
@@ -224,15 +293,15 @@ void main()
         if (_edgeQuad is not null && _blendQuad is not null && _neighborhoodQuad is not null)
             return;
 
-        _edgeMaterial = new(Array.Empty<XRTexture?>(), new XRShader(EShaderType.Fragment, EdgeDetectionShaderCode))
+        _edgeMaterial = new(Array.Empty<XRTexture?>(), new XRShader(EShaderType.Fragment, ResolveShaderCode(EdgeDetectionShaderCode, Stereo)))
         {
             RenderOptions = CreateRenderOptions()
         };
-        _blendMaterial = new(Array.Empty<XRTexture?>(), new XRShader(EShaderType.Fragment, BlendWeightShaderCode))
+        _blendMaterial = new(Array.Empty<XRTexture?>(), new XRShader(EShaderType.Fragment, ResolveShaderCode(BlendWeightShaderCode, Stereo)))
         {
             RenderOptions = CreateRenderOptions()
         };
-        _neighborhoodMaterial = new(Array.Empty<XRTexture?>(), new XRShader(EShaderType.Fragment, NeighborhoodBlendShaderCode))
+        _neighborhoodMaterial = new(Array.Empty<XRTexture?>(), new XRShader(EShaderType.Fragment, ResolveShaderCode(NeighborhoodBlendShaderCode, Stereo)))
         {
             RenderOptions = CreateRenderOptions()
         };
@@ -284,6 +353,7 @@ void main()
         _cachedOutputSizedFormat = default;
         _cachedOutputPixelFormat = default;
         _cachedOutputPixelType = default;
+        _cachedStereo = false;
     }
 
     protected override void Execute()
@@ -306,7 +376,7 @@ void main()
             _resolvedSourceTexture = sourceTexture;
             using var renderAreaScope = instance.RenderState.PushRenderArea((int)targetWidth, (int)targetHeight);
 
-            if (sourceTexture is XRTexture2D)
+            if (CanRunShaderChain(sourceTexture))
             {
                 if (_edgeFbo is null || _blendFbo is null)
                     return;
@@ -320,6 +390,7 @@ void main()
                     ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(edgePassIndex)
                     : default)
                 {
+                    VPRCFullscreenPassContract.ValidateAndLog(instance, BuildEdgePassName(), _edgeFbo, sourceTexture, Stereo);
                     _edgeQuad.Render(_edgeFbo);
                 }
 
@@ -327,6 +398,7 @@ void main()
                     ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(blendPassIndex)
                     : default)
                 {
+                    VPRCFullscreenPassContract.ValidateAndLog(instance, BuildBlendPassName(), _blendFbo, _edgeTexture!, Stereo);
                     _blendQuad.Render(_blendFbo);
                 }
 
@@ -334,6 +406,7 @@ void main()
                     ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(neighborhoodPassIndex)
                     : default)
                 {
+                    VPRCFullscreenPassContract.ValidateAndLog(instance, BuildNeighborhoodPassName(), _outputFbo, sourceTexture, Stereo);
                     _neighborhoodQuad.Render(_outputFbo);
                 }
                 return;
@@ -431,8 +504,14 @@ void main()
             UpdateDepth = false,
             Function = EComparison.Always,
         },
-        BlendModeAllDrawBuffers = BlendMode.Disabled()
+        BlendModeAllDrawBuffers = BlendMode.Disabled(),
+        RequiredEngineUniforms = EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy
     };
+
+    internal static string ResolveShaderCode(string shaderCode, bool stereo)
+        => stereo
+            ? shaderCode.Replace("#version 450", "#version 450\n#define XRE_STEREO 1", StringComparison.Ordinal)
+            : shaderCode;
 
     private void EnsureResources(XRRenderPipelineInstance instance, XRTexture sourceTexture, uint width, uint height)
     {
@@ -468,6 +547,7 @@ void main()
             _cachedOutputSizedFormat == sourceSizedFormat &&
             _cachedOutputPixelFormat == sourcePixelFormat &&
             _cachedOutputPixelType == sourcePixelType &&
+            _cachedStereo == Stereo &&
             resourcesRegistered &&
             _edgeTexture is not null &&
             _blendTexture is not null &&
@@ -479,45 +559,48 @@ void main()
 
         ReleaseRenderTargets(instance);
 
-        _edgeTexture = XRTexture2D.CreateFrameBufferTexture(width, height, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte);
-        _edgeTexture.Name = ResolvedEdgeTextureName;
-        _edgeTexture.SamplerName = ResolvedEdgeTextureName;
-        _edgeTexture.SizedInternalFormat = ESizedInternalFormat.Rgba8;
-        _edgeTexture.Resizable = false;
-        _edgeTexture.MagFilter = ETexMagFilter.Nearest;
-        _edgeTexture.MinFilter = ETexMinFilter.Nearest;
-        _edgeTexture.UWrap = ETexWrapMode.ClampToEdge;
-        _edgeTexture.VWrap = ETexWrapMode.ClampToEdge;
+        _edgeTexture = CreateRenderTargetTexture(
+            ResolvedEdgeTextureName,
+            width,
+            height,
+            EPixelInternalFormat.Rgba8,
+            ESizedInternalFormat.Rgba8,
+            EPixelFormat.Rgba,
+            EPixelType.UnsignedByte,
+            ETexMinFilter.Nearest,
+            ETexMagFilter.Nearest);
 
-        _blendTexture = XRTexture2D.CreateFrameBufferTexture(width, height, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte);
-        _blendTexture.Name = ResolvedBlendTextureName;
-        _blendTexture.SamplerName = ResolvedBlendTextureName;
-        _blendTexture.SizedInternalFormat = ESizedInternalFormat.Rgba8;
-        _blendTexture.Resizable = false;
-        _blendTexture.MagFilter = ETexMagFilter.Nearest;
-        _blendTexture.MinFilter = ETexMinFilter.Nearest;
-        _blendTexture.UWrap = ETexWrapMode.ClampToEdge;
-        _blendTexture.VWrap = ETexWrapMode.ClampToEdge;
+        _blendTexture = CreateRenderTargetTexture(
+            ResolvedBlendTextureName,
+            width,
+            height,
+            EPixelInternalFormat.Rgba8,
+            ESizedInternalFormat.Rgba8,
+            EPixelFormat.Rgba,
+            EPixelType.UnsignedByte,
+            ETexMinFilter.Nearest,
+            ETexMagFilter.Nearest);
 
-        _outputTexture = XRTexture2D.CreateFrameBufferTexture(width, height, sourceInternalFormat, sourcePixelFormat, sourcePixelType);
-        _outputTexture.Name = OutputTextureName;
-        _outputTexture.SamplerName = OutputTextureName;
-        _outputTexture.SizedInternalFormat = sourceSizedFormat;
-        _outputTexture.Resizable = false;
-        _outputTexture.MagFilter = ETexMagFilter.Linear;
-        _outputTexture.MinFilter = ETexMinFilter.Linear;
-        _outputTexture.UWrap = ETexWrapMode.ClampToEdge;
-        _outputTexture.VWrap = ETexWrapMode.ClampToEdge;
+        _outputTexture = CreateRenderTargetTexture(
+            OutputTextureName,
+            width,
+            height,
+            sourceInternalFormat,
+            sourceSizedFormat,
+            sourcePixelFormat,
+            sourcePixelType,
+            ETexMinFilter.Linear,
+            ETexMagFilter.Linear);
 
-        _edgeFbo = new XRFrameBuffer((_edgeTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        _edgeFbo = new XRFrameBuffer((RequireAttachment(_edgeTexture), EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
             Name = ResolvedEdgeFboName
         };
-        _blendFbo = new XRFrameBuffer((_blendTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        _blendFbo = new XRFrameBuffer((RequireAttachment(_blendTexture), EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
             Name = ResolvedBlendFboName
         };
-        _outputFbo = new XRFrameBuffer((_outputTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        _outputFbo = new XRFrameBuffer((RequireAttachment(_outputTexture), EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
             Name = ResolvedOutputFboName
         };
@@ -538,6 +621,7 @@ void main()
         _cachedOutputSizedFormat = sourceSizedFormat;
         _cachedOutputPixelFormat = sourcePixelFormat;
         _cachedOutputPixelType = sourcePixelType;
+        _cachedStereo = Stereo;
     }
 
     private bool TryUseDeclaredResources(
@@ -550,12 +634,12 @@ void main()
         EPixelFormat sourcePixelFormat,
         EPixelType sourcePixelType)
     {
-        if (!instance.Resources.TryGetTexture(ResolvedEdgeTextureName, out XRTexture? edgeTexture) ||
-            edgeTexture is not XRTexture2D declaredEdgeTexture ||
+        if (!instance.Resources.TryGetTexture(ResolvedEdgeTextureName, out XRTexture? declaredEdgeTexture) ||
+            declaredEdgeTexture is null ||
             !instance.Resources.TryGetTexture(ResolvedBlendTextureName, out XRTexture? blendTexture) ||
-            blendTexture is not XRTexture2D declaredBlendTexture ||
+            blendTexture is not XRTexture declaredBlendTexture ||
             !instance.Resources.TryGetTexture(OutputTextureName, out XRTexture? outputTexture) ||
-            outputTexture is not XRTexture2D declaredOutputTexture ||
+            outputTexture is not XRTexture declaredOutputTexture ||
             !instance.Resources.TryGetFrameBuffer(ResolvedEdgeFboName, out XRFrameBuffer? declaredEdgeFbo) ||
             !instance.Resources.TryGetFrameBuffer(ResolvedBlendFboName, out XRFrameBuffer? declaredBlendFbo) ||
             !instance.Resources.TryGetFrameBuffer(ResolvedOutputFboName, out XRFrameBuffer? declaredOutputFbo))
@@ -565,7 +649,16 @@ void main()
 
         if (!MatchesSize(declaredEdgeTexture, width, height) ||
             !MatchesSize(declaredBlendTexture, width, height) ||
-            !MatchesSize(declaredOutputTexture, width, height))
+            !MatchesSize(declaredOutputTexture, width, height) ||
+            !MatchesStereoShape(declaredEdgeTexture) ||
+            !MatchesStereoShape(declaredBlendTexture) ||
+            !MatchesStereoShape(declaredOutputTexture) ||
+            ResolveSourceFormat(declaredEdgeTexture) != (EPixelInternalFormat.Rgba8, ESizedInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte) ||
+            ResolveSourceFormat(declaredBlendTexture) != (EPixelInternalFormat.Rgba8, ESizedInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte) ||
+            ResolveSourceFormat(declaredOutputTexture) != (sourceInternalFormat, sourceSizedFormat, sourcePixelFormat, sourcePixelType) ||
+            !MatchesFboAttachment(declaredEdgeFbo, declaredEdgeTexture) ||
+            !MatchesFboAttachment(declaredBlendFbo, declaredBlendTexture) ||
+            !MatchesFboAttachment(declaredOutputFbo, declaredOutputTexture))
         {
             return false;
         }
@@ -589,8 +682,104 @@ void main()
         _cachedOutputSizedFormat = sourceSizedFormat;
         _cachedOutputPixelFormat = sourcePixelFormat;
         _cachedOutputPixelType = sourcePixelType;
+        _cachedStereo = Stereo;
         return true;
     }
+
+    private XRTexture CreateRenderTargetTexture(
+        string name,
+        uint width,
+        uint height,
+        EPixelInternalFormat internalFormat,
+        ESizedInternalFormat sizedInternalFormat,
+        EPixelFormat pixelFormat,
+        EPixelType pixelType,
+        ETexMinFilter minFilter,
+        ETexMagFilter magFilter)
+    {
+        XRTexture texture;
+        if (Stereo)
+        {
+            XRTexture2DArray array = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                width,
+                height,
+                internalFormat,
+                pixelFormat,
+                pixelType);
+            array.OVRMultiViewParameters = new(0, 2u);
+            texture = array;
+        }
+        else
+        {
+            texture = XRTexture2D.CreateFrameBufferTexture(
+                width,
+                height,
+                internalFormat,
+                pixelFormat,
+                pixelType);
+        }
+
+        texture.Name = name;
+        texture.SamplerName = name;
+        switch (texture)
+        {
+            case XRTexture2D texture2D:
+                texture2D.SizedInternalFormat = sizedInternalFormat;
+                texture2D.Resizable = false;
+                texture2D.MagFilter = magFilter;
+                texture2D.MinFilter = minFilter;
+                texture2D.UWrap = ETexWrapMode.ClampToEdge;
+                texture2D.VWrap = ETexWrapMode.ClampToEdge;
+                break;
+            case XRTexture2DArray textureArray:
+                textureArray.SizedInternalFormat = sizedInternalFormat;
+                textureArray.Resizable = false;
+                textureArray.MagFilter = magFilter;
+                textureArray.MinFilter = minFilter;
+                textureArray.UWrap = ETexWrapMode.ClampToEdge;
+                textureArray.VWrap = ETexWrapMode.ClampToEdge;
+                break;
+            default:
+                throw new InvalidOperationException($"Unsupported SMAA render-target texture type '{texture.GetType().Name}'.");
+        }
+        return texture;
+    }
+
+    private static IFrameBufferAttachement RequireAttachment(XRTexture texture)
+        => texture as IFrameBufferAttachement
+            ?? throw new InvalidOperationException($"SMAA render target '{texture.Name}' is not framebuffer-attachable.");
+
+    private bool CanRunShaderChain(XRTexture sourceTexture)
+        => Stereo
+            ? sourceTexture is XRTexture2DArray { Depth: 2u, OVRMultiViewParameters: { Offset: 0, NumViews: 2u } }
+                || sourceTexture is XRTexture2DArrayView { NumLayers: 2u }
+            : sourceTexture is XRTexture2D or XRTexture2DView;
+
+    private bool MatchesStereoShape(XRTexture texture)
+    {
+        if (!Stereo)
+            return texture is XRTexture2D;
+
+        XRTexture viewedTexture = texture is XRTextureViewBase view
+            ? view.GetViewedTexture()
+            : texture;
+        uint layerCount = texture is XRTextureViewBase textureView
+            ? Math.Max(textureView.NumLayers, 1u)
+            : viewedTexture is XRTexture2DArray arrayTexture
+                ? Math.Max(arrayTexture.Depth, 1u)
+                : 1u;
+        return layerCount == 2u &&
+            viewedTexture is XRTexture2DArray array &&
+            array.Depth == 2u &&
+            array.OVRMultiViewParameters is { Offset: 0, NumViews: 2u };
+    }
+
+    private static bool MatchesFboAttachment(XRFrameBuffer frameBuffer, XRTexture texture)
+        => frameBuffer.Targets is
+        [
+            (var target, EFrameBufferAttachment.ColorAttachment0, 0, -1)
+        ] && ReferenceEquals(target, texture);
 
     private static bool MatchesSize(XRTexture texture, uint width, uint height)
     {
@@ -635,13 +824,23 @@ void main()
         {
             return ResolveSourceFormat(view.ViewedTexture);
         }
-        else if (sourceTexture is XRTexture2DArray array && array.Textures.Length > 0)
+        else if (sourceTexture is XRTexture2DArray array && array.Mipmaps is { Length: > 0 } arrayMips)
         {
-            return ResolveSourceFormat(array.Textures[0]);
+            var mip = arrayMips[0];
+            return (mip.InternalFormat, array.SizedInternalFormat, mip.PixelFormat, mip.PixelType);
         }
-        else if (sourceTexture is XRTexture2DArrayView arrayView && arrayView.ViewedTexture.Textures.Length > 0)
+        else if (sourceTexture is XRTexture2DArray arrayWithTextures && arrayWithTextures.Textures.Length > 0)
         {
-            return ResolveSourceFormat(arrayView.ViewedTexture.Textures[0]);
+            return ResolveSourceFormat(arrayWithTextures.Textures[0]);
+        }
+        else if (sourceTexture is XRTexture2DArrayView arrayView && arrayView.ViewedTexture.Mipmaps is { Length: > 0 } viewedMips)
+        {
+            var mip = viewedMips[Math.Min((int)arrayView.MinLevel, viewedMips.Length - 1)];
+            return (mip.InternalFormat, arrayView.ViewedTexture.SizedInternalFormat, mip.PixelFormat, mip.PixelType);
+        }
+        else if (sourceTexture is XRTexture2DArrayView arrayTextureView && arrayTextureView.ViewedTexture.Textures.Length > 0)
+        {
+            return ResolveSourceFormat(arrayTextureView.ViewedTexture.Textures[0]);
         }
 
         if (RuntimeEngine.Rendering.Settings.OutputHDR)

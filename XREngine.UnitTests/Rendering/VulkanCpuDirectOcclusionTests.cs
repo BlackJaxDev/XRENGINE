@@ -15,8 +15,9 @@ public sealed class VulkanCpuDirectOcclusionTests
         string cpuDirect = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs");
         string gpuOcclusion = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Occlusion.cs");
         string frameOps = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
-        string recorder = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string recorder = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string query = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Queries/VkRenderQuery.cs");
+        string resourceLifetime = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
         string renderGraph = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderGraphCompiler.cs");
 
         coordinator.ShouldContain("using XREngine.Rendering.Vulkan;");
@@ -56,13 +57,19 @@ public sealed class VulkanCpuDirectOcclusionTests
         recorder.ShouldNotContain("(!VulkanPrimaryCommandBufferReuseEnabled || hasQueryFrameOps)");
         recorder.ShouldContain("private static bool HasQueryFrameOps(FrameOp[] ops)");
         recorder.ShouldContain("case QueryOp queryOp:");
-        recorder.ShouldContain("queryOp.Query.BeginQuery(commandBuffer, queryOp.QueryTarget);");
+        recorder.ShouldContain("activeInlineQuery = queryOp.Query.BeginQuery(");
+        recorder.ShouldContain("queryOp.QueryTarget,");
         recorder.ShouldContain("queryOp.Query.EndQuery(commandBuffer);");
 
-        query.ShouldContain("vkCmdResetQueryPool is queued on the GPU");
+        query.ShouldContain("Api!.CmdResetQueryPool(commandBuffer, _queryPool, 0, _queryPoolCapacity);");
         query.ShouldContain("PrepareForCommandBufferReuse(EQueryTarget target)");
         query.ShouldContain("ResetQueryPoolForCommandBufferReuse");
         query.ShouldContain("DestroyQueryPool();");
+        query.ShouldContain("_hasSubmittedResultEpoch");
+        query.ShouldContain("Volatile.Read(ref _hasSubmittedResultEpoch) == 0");
+        query.ShouldContain("Renderer.RegisterVulkanRenderQuery(_queryPool, this);");
+        resourceLifetime.ShouldContain("key.Type == ObjectType.QueryPool");
+        resourceLifetime.ShouldContain("query.MarkResultEpochSubmitted();");
 
         renderGraph.ShouldContain("op is MeshDrawOp or QueryOp or BlitOp");
         renderGraph.ShouldContain("QueryOp q => q.Target is null");

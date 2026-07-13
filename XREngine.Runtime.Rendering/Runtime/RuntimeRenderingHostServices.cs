@@ -763,7 +763,7 @@ public static class RuntimeRenderingHostServices
         {
         }
 
-        public void RecordRenderVrXrEndFrameSubmitTime(TimeSpan submitTime)
+        public void RecordRenderVrXrEndFrameSubmitTime(TimeSpan submitTime, ulong renderFrameId = 0UL)
         {
         }
 
@@ -1007,6 +1007,10 @@ public static class RuntimeRenderingHostServices
         }
 
         public void RecordRenderVulkanQueueSubmit()
+        {
+        }
+
+        public void RecordRenderVulkanPresentResult(int result, bool accepted)
         {
         }
 

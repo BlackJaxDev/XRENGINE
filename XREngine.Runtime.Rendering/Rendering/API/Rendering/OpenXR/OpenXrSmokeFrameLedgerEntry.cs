@@ -38,6 +38,10 @@ public struct OpenXrSmokeFrameLedgerEntry
     public double FrameSubmitMilliseconds { get; set; }
     public double FramePresentMilliseconds { get; set; }
     public int ValidationErrorCount { get; set; }
+    public bool ValidationLayersEnabled { get; set; }
+    public bool SynchronizationValidationEnabled { get; set; }
+    public bool LifetimeValidationEnabled { get; set; }
+    public bool LifetimeValidationPassed { get; set; }
     public int DeviceLocalAllocationCount { get; set; }
     public long DeviceLocalAllocatedBytes { get; set; }
     public int UploadAllocationCount { get; set; }
@@ -55,6 +59,7 @@ public struct OpenXrSmokeFrameLedgerEntry
     public int LifetimeLiveResourceCount { get; set; }
     public int TrackedDescriptorSetCount { get; set; }
     public int QueueSubmitCount { get; set; }
+    public bool SubmitCompleted { get; set; }
     public int SubmissionRejectionCount { get; set; }
     public int GlobalInFlightWaitCount { get; set; }
     public int ForceFlushCount { get; set; }
@@ -63,11 +68,20 @@ public struct OpenXrSmokeFrameLedgerEntry
     public ulong OutputManifestFrameId { get; set; }
     public ulong OutputWorkloadIdentityHash { get; set; }
     public int OutputRequestCount { get; set; }
+    public int PlannerStateCount { get; set; }
+    public int CommandVariantCount { get; set; }
+    public ulong ResourcePlanGeneration { get; set; }
+    public ulong CommandGeneration { get; set; }
     public string? MirrorMode { get; set; }
     public bool VrActive { get; set; }
     public int SceneSwapchainWriterCount { get; set; }
     public int SwapchainWriteCount { get; set; }
     public int MissingSceneSwapchainWriteCount { get; set; }
+    public bool DesktopFinalWriteObserved { get; set; }
+    public bool DesktopPresentObserved { get; set; }
+    public int DesktopPresentAttemptCount { get; set; }
+    public bool DesktopPresentAccepted { get; set; }
+    public string? DesktopPresentResult { get; set; }
     public int CpuOcclusionTested { get; set; }
     public int CpuOcclusionCulled { get; set; }
     public int CpuOcclusionPassesActive { get; set; }

@@ -67,18 +67,18 @@ function Stop-OwnedService {
         return
     }
 
-    $pid = [int]$markerData.pid
-    $process = Get-Process -Id $pid -ErrorAction SilentlyContinue
+    $processId = [int]$markerData.pid
+    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
     if ($null -ne $process -and (Test-SameProcessStart -Process $process -StartedAtUtc ([string]$markerData.startedAtUtc))) {
-        Stop-Process -Id $pid -Force
+        Stop-Process -Id $processId -Force
         $process.WaitForExit(5000)
         Remove-Item -LiteralPath $Marker -Force -ErrorAction SilentlyContinue
-        [pscustomobject]@{ Stopped = $true; Pid = $pid; MarkerPath = $Marker }
+        [pscustomobject]@{ Stopped = $true; Pid = $processId; MarkerPath = $Marker }
         return
     }
 
     Remove-Item -LiteralPath $Marker -Force -ErrorAction SilentlyContinue
-    [pscustomobject]@{ Stopped = $false; Reason = "Owned process was already gone or no longer matched the marker."; Pid = $pid; MarkerPath = $Marker }
+    [pscustomobject]@{ Stopped = $false; Reason = "Owned process was already gone or no longer matched the marker."; Pid = $processId; MarkerPath = $Marker }
 }
 
 function Find-ServiceExe {

@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -10,9 +9,6 @@ namespace XREngine.Rendering;
 
 public partial class DefaultRenderPipeline2
 {
-    private readonly Matrix4x4[] _motionVectorCurrViewProjectionStereo = new Matrix4x4[2];
-    private readonly Matrix4x4[] _motionVectorPrevViewProjectionStereo = new Matrix4x4[2];
-
     //private XRFrameBuffer CreateUserInterfaceFBO()
     //{
     //    var hudTexture = GetTexture<XRTexture>(UserInterfaceTextureName)!;
@@ -368,7 +364,8 @@ public partial class DefaultRenderPipeline2
                     Enabled = ERenderParamUsage.Disabled,
                 },
                 BlendModeAllDrawBuffers = BlendMode.Disabled(),
-                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
+                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy
+                    | EUniformRequirements.ViewportDimensions,
             }
         };
         var fbo = new XRQuadFrameBuffer(upscaleMaterial, deriveRenderTargetsFromMaterial: false)
@@ -789,81 +786,6 @@ public partial class DefaultRenderPipeline2
                 RequiredEngineUniforms = EUniformRequirements.None
             }
         };
-    }
-
-    private void ApplyMotionVectorsProgramBindings(XRRenderProgram program)
-    {
-        if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporal))
-        {
-            //Debug.Out($"[Velocity] Using temporal uniforms. HistoryReady={temporal.HistoryReady}, ExposureReady={temporal.HistoryExposureReady}, Size={temporal.Width}x{temporal.Height}");
-            if (Stereo)
-            {
-                _motionVectorCurrViewProjectionStereo[0] = temporal.CurrViewProjectionUnjittered;
-                _motionVectorCurrViewProjectionStereo[1] = temporal.RightEyeCurrViewProjectionUnjittered;
-                _motionVectorPrevViewProjectionStereo[0] = temporal.HistoryReady
-                    ? temporal.PrevViewProjectionUnjittered
-                    : temporal.CurrViewProjectionUnjittered;
-                _motionVectorPrevViewProjectionStereo[1] = temporal.HistoryReady
-                    ? temporal.RightEyePrevViewProjectionUnjittered
-                    : temporal.RightEyeCurrViewProjectionUnjittered;
-                program.Uniform("CurrViewProjectionStereo", _motionVectorCurrViewProjectionStereo);
-                program.Uniform("PrevViewProjectionStereo", _motionVectorPrevViewProjectionStereo);
-                return;
-            }
-
-            program.Uniform("CurrViewProjection", temporal.CurrViewProjectionUnjittered);
-            program.Uniform(
-                "PrevViewProjection",
-                temporal.HistoryReady
-                    ? temporal.PrevViewProjectionUnjittered
-                    : temporal.CurrViewProjectionUnjittered);
-            return;
-        }
-
-        var camera = RuntimeEngine.Rendering.State.RenderingCamera;
-        if (camera is not null)
-        {
-            Matrix4x4 viewMatrix = camera.Transform.InverseRenderMatrix;
-            Matrix4x4 projMatrix = camera.ProjectionMatrix;
-            Matrix4x4 viewProj = viewMatrix * projMatrix;
-            Debug.RenderingEvery(
-                "Velocity.V2.NoTemporalData",
-                TimeSpan.FromSeconds(2),
-                "[Velocity] Temporal data unavailable; using current camera matrices for motion vectors.");
-            if (Stereo)
-            {
-                _motionVectorCurrViewProjectionStereo[0] = viewProj;
-                _motionVectorCurrViewProjectionStereo[1] = viewProj;
-                _motionVectorPrevViewProjectionStereo[0] = viewProj;
-                _motionVectorPrevViewProjectionStereo[1] = viewProj;
-                program.Uniform("CurrViewProjectionStereo", _motionVectorCurrViewProjectionStereo);
-                program.Uniform("PrevViewProjectionStereo", _motionVectorPrevViewProjectionStereo);
-                return;
-            }
-
-            program.Uniform("CurrViewProjection", viewProj);
-            program.Uniform("PrevViewProjection", viewProj);
-        }
-        else
-        {
-            Debug.RenderingEvery(
-                "Velocity.V2.NoCamera",
-                TimeSpan.FromSeconds(2),
-                "[Velocity] No camera available; motion vectors will be zeroed.");
-            if (Stereo)
-            {
-                _motionVectorCurrViewProjectionStereo[0] = Matrix4x4.Identity;
-                _motionVectorCurrViewProjectionStereo[1] = Matrix4x4.Identity;
-                _motionVectorPrevViewProjectionStereo[0] = Matrix4x4.Identity;
-                _motionVectorPrevViewProjectionStereo[1] = Matrix4x4.Identity;
-                program.Uniform("CurrViewProjectionStereo", _motionVectorCurrViewProjectionStereo);
-                program.Uniform("PrevViewProjectionStereo", _motionVectorPrevViewProjectionStereo);
-                return;
-            }
-
-            program.Uniform("CurrViewProjection", Matrix4x4.Identity);
-            program.Uniform("PrevViewProjection", Matrix4x4.Identity);
-        }
     }
 
     private IFrameBufferAttachement EnsureTextureAttachment(string textureName, Func<XRTexture> factory)
