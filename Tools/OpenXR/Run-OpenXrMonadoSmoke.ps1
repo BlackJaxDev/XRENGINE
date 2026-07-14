@@ -29,10 +29,20 @@ param(
     [string]$SummaryPath,
 
     [Parameter()]
+    [string]$EditorDll,
+
+    [Parameter()]
     [switch]$NoBuild,
 
     [Parameter()]
     [switch]$StartService,
+
+    [Parameter()]
+    [ValidateSet("wobble", "rotate", "stationary", "user_input")]
+    [string]$SimulatedHmdPoseMode = "stationary",
+
+    [Parameter()]
+    [switch]$RequireOwnedService,
 
     [Parameter()]
     [string]$ServiceExe,
@@ -46,6 +56,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$LASTEXITCODE = 0
 
 # First-chance tracing is an editor diagnostic. Do not expose it to this
 # PowerShell host while the native OpenXR loader is loaded; pass it explicitly
@@ -117,18 +128,6 @@ function New-AgentRunRoot {
     [System.IO.Directory]::CreateDirectory($agentRoot) | Out-Null
     $agentRootFull = [System.IO.Path]::GetFullPath($agentRoot)
 
-    $existingRuns = Get-ChildItem -LiteralPath $agentRootFull -Directory -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTimeUtc
-    $removeCount = [Math]::Max(0, ($existingRuns.Count + 1) - 10)
-    foreach ($oldRun in ($existingRuns | Select-Object -First $removeCount)) {
-        $oldRunFull = [System.IO.Path]::GetFullPath($oldRun.FullName)
-        if (-not $oldRunFull.StartsWith($agentRootFull, [StringComparison]::OrdinalIgnoreCase)) {
-            throw "Refusing to delete path outside Build/_AgentValidation: $oldRunFull"
-        }
-
-        Remove-Item -LiteralPath $oldRunFull -Recurse -Force
-    }
-
     if (-not [string]::IsNullOrWhiteSpace($RequestedRunRoot)) {
         $resolved = Resolve-FullPath $RequestedRunRoot
     }
@@ -137,12 +136,43 @@ function New-AgentRunRoot {
         $resolved = Join-Path $agentRootFull "$stamp-openxr-monado-smoke"
     }
 
-    [System.IO.Directory]::CreateDirectory($resolved) | Out-Null
-    foreach ($child in @("logs", "reports", "temp-build", "scratch")) {
-        [System.IO.Directory]::CreateDirectory((Join-Path $resolved $child)) | Out-Null
+    $resolvedFull = [System.IO.Path]::GetFullPath($resolved)
+    $agentRootPrefix = $agentRootFull + [System.IO.Path]::DirectorySeparatorChar
+    $relativeRunPath = if ($resolvedFull.StartsWith($agentRootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        $resolvedFull.Substring($agentRootPrefix.Length)
+    }
+    else {
+        $null
+    }
+    $firstRunSegment = if (-not [string]::IsNullOrWhiteSpace($relativeRunPath)) {
+        ($relativeRunPath -split '[\\/]', 2)[0]
+    }
+    else {
+        $null
+    }
+    $createsImmediateRun = -not [string]::IsNullOrWhiteSpace($firstRunSegment) -and
+        -not (Test-Path -LiteralPath (Join-Path $agentRootFull $firstRunSegment) -PathType Container)
+
+    if ($createsImmediateRun) {
+        $existingRuns = Get-ChildItem -LiteralPath $agentRootFull -Directory -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTimeUtc
+        $removeCount = [Math]::Max(0, ($existingRuns.Count + 1) - 10)
+        foreach ($oldRun in ($existingRuns | Select-Object -First $removeCount)) {
+            $oldRunFull = [System.IO.Path]::GetFullPath($oldRun.FullName)
+            if (-not $oldRunFull.StartsWith($agentRootFull, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Refusing to delete path outside Build/_AgentValidation: $oldRunFull"
+            }
+
+            Remove-Item -LiteralPath $oldRunFull -Recurse -Force
+        }
     }
 
-    return [System.IO.Path]::GetFullPath($resolved)
+    [System.IO.Directory]::CreateDirectory($resolvedFull) | Out-Null
+    foreach ($child in @("logs", "reports", "temp-build", "scratch")) {
+        [System.IO.Directory]::CreateDirectory((Join-Path $resolvedFull $child)) | Out-Null
+    }
+
+    return $resolvedFull
 }
 
 function Find-OpenXrLoaderPath {
@@ -236,7 +266,11 @@ public static class OpenXrLoaderPreflight
     // builds during teardown. The smoke tooling is Windows-x64 only, so use the
     // ABI-defined offsets and copy the fixed UTF-8 name fields explicitly.
     private const int XR_PROPERTY_NAME_OFFSET_X64 = 16;
-    private const int XR_API_LAYER_PROPERTIES_SIZE_X64 = 536;
+    // type (4) + padding (4) + next (8) + layerName (256) +
+    // specVersion (8) + layerVersion (4) + description (256) + tail padding (4).
+    // Using 536 under-allocates this buffer and lets the loader overwrite the
+    // PowerShell host heap when it writes XrApiLayerProperties on Windows x64.
+    private const int XR_API_LAYER_PROPERTIES_SIZE_X64 = 544;
     private const int XR_EXTENSION_PROPERTIES_SIZE_X64 = 152;
 
     [DllImport("openxr_loader.dll", EntryPoint = "xrEnumerateApiLayerProperties", CallingConvention = CallingConvention.Winapi)]
@@ -604,13 +638,24 @@ try {
         $serviceResult = & $serviceScript `
             -RuntimeJson $runtimeJsonFullPath `
             -ServiceExe $ServiceExe `
+            -SimulatedHmdPoseMode $SimulatedHmdPoseMode `
             -MarkerPath $serviceMarker `
             -LogDirectory (Join-Path $logs "monado-service")
         $serviceResult | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $reports "monado-service-start.json") -Encoding UTF8
+        if ($RequireOwnedService -and
+            (-not $serviceResult.OwnedByRunner -or
+             [string]$serviceResult.SimulatedHmdPoseMode -cne $SimulatedHmdPoseMode)) {
+            throw "Deterministic Monado validation requires a runner-owned service with simulated HMD pose mode '$SimulatedHmdPoseMode'. Stop the existing monado-service and retry."
+        }
         $serviceStarted = $true
     }
 
-    $editorDll = Join-Path $repoRoot "Build\Editor\$Configuration\$Platform\$Configuration\net10.0-windows7.0\XREngine.Editor.dll"
+    $editorDll = if ([string]::IsNullOrWhiteSpace($EditorDll)) {
+        Join-Path $repoRoot "Build\Editor\$Configuration\$Platform\$Configuration\net10.0-windows7.0\XREngine.Editor.dll"
+    }
+    else {
+        Resolve-FullPath $EditorDll
+    }
     if (-not (Test-Path -LiteralPath $editorDll -PathType Leaf)) {
         throw "Editor DLL does not exist: $editorDll"
     }
@@ -627,6 +672,7 @@ try {
         XRE_SMOKE_WARMUP_FRAMES                 = [string]$WarmupFrames
         XRE_OPENXR_SMOKE_SUMMARY                = $summaryFullPath
         XRE_SMOKE_TIMEOUT_SECONDS               = [string]$TimeoutSeconds
+        XRE_AGENT_VALIDATION_RUN_ROOT            = $RunRoot
     }
     if (-not [string]::IsNullOrWhiteSpace($openXrLoaderPath)) {
         $environment["PATH"] = "$(Split-Path -Parent $openXrLoaderPath)$([System.IO.Path]::PathSeparator)$env:PATH"
@@ -644,10 +690,29 @@ try {
     $exitCode = [int]$smokeResult.ExitCode
 
     if (-not (Test-Path -LiteralPath $summaryFullPath -PathType Leaf)) {
-        throw "OpenXR smoke summary was not written: $summaryFullPath"
+        throw "OpenXR smoke summary was not written before editor exit code $exitCode`: $summaryFullPath"
     }
 
     $summary = Get-Content -LiteralPath $summaryFullPath -Raw | ConvertFrom-Json
+    $durableEngineLogDirectory = Join-Path $logs "engine"
+    [System.IO.Directory]::CreateDirectory($durableEngineLogDirectory) | Out-Null
+    $sourceEngineLogDirectory = [string]$summary.logDirectory
+    $copiedEngineLogs = [System.Collections.Generic.List[string]]::new()
+    if (-not [string]::IsNullOrWhiteSpace($sourceEngineLogDirectory) -and
+        (Test-Path -LiteralPath $sourceEngineLogDirectory -PathType Container)) {
+        foreach ($sourceLog in (Get-ChildItem -LiteralPath $sourceEngineLogDirectory -File -Filter "*.log" -ErrorAction SilentlyContinue)) {
+            $destination = Join-Path $durableEngineLogDirectory $sourceLog.Name
+            Copy-Item -LiteralPath $sourceLog.FullName -Destination $destination -Force
+            $copiedEngineLogs.Add($destination)
+        }
+    }
+    [pscustomobject]@{
+        capturedAtUtc = [DateTimeOffset]::UtcNow
+        sourceDirectory = $sourceEngineLogDirectory
+        durableDirectory = $durableEngineLogDirectory
+        copiedFiles = @($copiedEngineLogs)
+    } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $reports "openxr-engine-log-copy.json") -Encoding UTF8
+
     $summary | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $reports "openxr-smoke-summary.normalized.json") -Encoding UTF8
     $failures = @(Get-JsonArrayValues $summary.failures)
     $summaryPassed = $failures.Count -eq 0 -and [bool]$summary.teardownCompleted

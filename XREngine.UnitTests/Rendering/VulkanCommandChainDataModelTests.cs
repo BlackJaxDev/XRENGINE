@@ -16,6 +16,21 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class VulkanCommandChainDataModelTests
 {
+    [TestCase(0u, 1u)]
+    [TestCase(1u, 1u)]
+    [TestCase(3u, 2u)]
+    [TestCase(10u, 2u)]
+    [TestCase(0x80000000u, 1u)]
+    public void OcclusionQueryViewSlots_MatchActiveMultiviewViewCount(uint viewMask, uint expectedSlots)
+    {
+        var resolver = typeof(VulkanRenderer.VkRenderQuery).GetMethod(
+            "ResolveOcclusionQueryViewSlotCount",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        resolver.ShouldNotBeNull();
+        resolver.Invoke(null, [viewMask]).ShouldBe(expectedSlots);
+    }
+
     [Test]
     public void RenderViewKey_EqualityAndHash_AreStable()
     {
@@ -230,7 +245,8 @@ public sealed class VulkanCommandChainDataModelTests
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
 
         commandBufferSource.ShouldContain("OpenXrEyeRenderTargetContext? openXrTargetContext = null");
-        commandBufferSource.ShouldContain("SwapchainRecordingTarget swapchainTarget = ResolveSwapchainRecordingTarget(imageIndex, openXrTargetContext);");
+        commandBufferSource.ShouldContain("IsRenderingExternalSwapchainTarget && openXrTargetContext is null");
+        commandBufferSource.ShouldContain(": ResolveSwapchainRecordingTarget(imageIndex, openXrTargetContext);");
         commandBufferSource.ShouldContain("CreateSwapchainDynamicRenderingFormatSignature(swapchainTarget.ImageFormat, swapchainTarget.DepthFormat)");
         commandBufferSource.ShouldContain("openXrTarget.Image");
         commandBufferSource.ShouldContain("openXrTarget.ImageView");
@@ -753,8 +769,7 @@ public sealed class VulkanCommandChainDataModelTests
         foreach (string source in new[] { texturesSource, textures2Source })
         {
             source.ShouldContain("XRTexture2DArray stereoTexture = XRTexture2DArray.CreateFrameBufferTexture");
-            source.ShouldContain("stereoTexture.SamplerName = TsrOutputTextureName;");
-            source.ShouldContain("stereoTexture.SamplerName = TsrHistoryColorTextureName;");
+            source.ShouldContain("stereoTexture.SamplerName = textureName;");
             source.ShouldContain("stereoTexture.OVRMultiViewParameters = new(0, 2u);");
         }
 
@@ -776,15 +791,19 @@ public sealed class VulkanCommandChainDataModelTests
         motionVectorStereoShader.ShouldContain("int eyeIndex = int(gl_ViewID_OVR);");
 
         meshSource.ShouldContain("Matrix4x4 PreviousRightEyeViewMatrix");
+        meshSource.ShouldContain("Matrix4x4 ViewProjectionMatrixUnjittered");
+        meshSource.ShouldContain("Matrix4x4 RightEyeViewProjectionMatrixUnjittered");
         meshSource.ShouldContain("previousRightEyeProjectionMatrixSnapshot = temporalData.RightEyePrevProjection;");
         meshUniformsSource.ShouldContain("case nameof(EEngineUniform.PrevRightEyeViewMatrix):\n\t\t\t\t\tvalue = draw.PreviousRightEyeViewMatrix;");
         meshUniformsSource.ShouldContain("case nameof(EEngineUniform.PrevRightEyeProjMatrix):\n\t\t\t\t\treturn UploadUniform(buffer, draw.PreviousRightEyeProjectionMatrix);");
+        meshUniformsSource.ShouldContain("TryWriteTemporalViewProjectionUniform(data, member, draw, out wrote)");
+        meshUniformsSource.ShouldContain("draw.RightEyeViewProjectionMatrixUnjittered");
+        meshUniformsSource.ShouldContain("draw.PreviousRightEyeViewProjectionMatrixUnjittered");
 
         fboSource.ShouldContain("Stereo ? \"MotionVectorsStereo.fs\" : \"MotionVectors.fs\"");
-        fboSource.ShouldContain("TryGetTemporalUniformData(ownerPipeline, out var temporal)");
-        fboSource.ShouldContain("program.Uniform(\"CurrViewProjectionStereo\", _motionVectorCurrViewProjectionStereo);");
+        fboSource.ShouldNotContain("MotionVectorsMaterial_SettingUniforms");
         fbo2Source.ShouldContain("Stereo ? \"MotionVectorsStereo.fs\" : \"MotionVectors.fs\"");
-        fbo2Source.ShouldContain("program.Uniform(\"PrevViewProjectionStereo\", _motionVectorPrevViewProjectionStereo);");
+        fbo2Source.ShouldNotContain("ApplyMotionVectorsProgramBindings");
     }
 
     [Test]
@@ -895,7 +914,7 @@ public sealed class VulkanCommandChainDataModelTests
     }
 
     [Test]
-    public void RepeatedRendererReservation_CountsDirectAndIndirectUsesBeforeRecording()
+    public void RepeatedRendererReservation_StrictSpsCommandPinsReferencedGenerationsUntilCompletion()
     {
         var renderer = (VulkanRenderer.VkMeshRenderer)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
             typeof(VulkanRenderer.VkMeshRenderer));
@@ -936,6 +955,73 @@ public sealed class VulkanCommandChainDataModelTests
         VulkanRenderer.EnsureMeshDrawUniformSlotCapacityForRecording(ops, requirements);
         requirements[renderer].ShouldBe(3);
         capacityField.GetValue(renderer).ShouldBe(4);
+
+        ResourcePlanSnapshot physicalPlanGeneration = new(
+            Revision: 23,
+            PhysicalImageSignature: 0xA100,
+            FramebufferSignature: 0xB200,
+            PipelineGeneration: 17);
+        VulkanRenderer.VulkanResourceLifetimeRecord[] resources =
+        [
+            CreateLifetimeRecord(ObjectType.Buffer, 0x1001, 101, "StrictSps.Mesh.UniformBuffer"),
+            CreateLifetimeRecord(ObjectType.DescriptorSet, 0x1002, 102, "StrictSps.Mesh.DescriptorSet"),
+            CreateLifetimeRecord(ObjectType.ImageView, 0x1003, 103, "StrictSps.Color.ImageView"),
+            CreateLifetimeRecord(ObjectType.Framebuffer, 0x1004, 104, "StrictSps.Multiview.Framebuffer"),
+            CreateLifetimeRecord(
+                ObjectType.Image,
+                0x1005,
+                105,
+                $"StrictSps.PhysicalPlan.r{physicalPlanGeneration.Revision}.ColorImage"),
+        ];
+
+        // Model the exact production command-buffer dependency set. Repeating a
+        // renderer in one command must not multiply the command-level pin, but
+        // every referenced generation must be present before publication.
+        var commandLifetime = new VulkanRenderer.VulkanCommandBufferLifetimeRecord();
+        for (int useIndex = 0; useIndex < 3; useIndex++)
+        {
+            for (int resourceIndex = 0; resourceIndex < resources.Length; resourceIndex++)
+            {
+                VulkanRenderer.AddVulkanRecordedGenerationPin(commandLifetime, resources[resourceIndex])
+                    .ShouldBe(useIndex == 0);
+            }
+        }
+
+        commandLifetime.RefreshTouchedDependencies();
+        commandLifetime.Dependencies.Count.ShouldBe(resources.Length);
+        commandLifetime.TouchedDependencies.Count.ShouldBe(resources.Length);
+        resources.ShouldAllBe(static resource => resource.Pins.RecordedReferenceCount == 1);
+        AssertGenerationSetRetirementReady(resources, completedGraphicsSequence: ulong.MaxValue, expected: false);
+
+        // The validation-to-dispatch gateway adds a separate queue pin without
+        // dropping the recorded dependency.
+        for (int i = 0; i < resources.Length; i++)
+            VulkanRenderer.AddVulkanQueuedGenerationPin_NoLock(resources[i]);
+        resources.ShouldAllBe(static resource => resource.Pins.RecordedReferenceCount == 1);
+        resources.ShouldAllBe(static resource => resource.Pins.QueuedReferenceCount == 1);
+        AssertGenerationSetRetirementReady(resources, completedGraphicsSequence: ulong.MaxValue, expected: false);
+
+        // Successful submit transfers queue protection to an exact completion
+        // sequence. Releasing the recorded command later must still leave every
+        // physical-plan generation pinned until that sequence completes.
+        for (int i = 0; i < resources.Length; i++)
+        {
+            VulkanRenderer.MarkVulkanResourceSubmitted_NoLock(
+                resources[i],
+                VulkanRenderer.EVulkanLifetimeQueueDomain.Graphics,
+                queueSequence: 7,
+                submissionSerial: 31,
+                frameOpContextId: 41,
+                frameOpKind: "OpenXR.TrueSinglePassStereo");
+            VulkanRenderer.ReleaseVulkanQueuedGenerationPin_NoLock(resources[i]);
+            VulkanRenderer.ReleaseVulkanRecordedGenerationPin(resources[i]);
+        }
+
+        resources.ShouldAllBe(static resource => resource.Pins.RecordedReferenceCount == 0);
+        resources.ShouldAllBe(static resource => resource.Pins.QueuedReferenceCount == 0);
+        resources.ShouldAllBe(static resource => resource.Pins.LastGraphicsSequence == 7);
+        AssertGenerationSetRetirementReady(resources, completedGraphicsSequence: 6, expected: false);
+        AssertGenerationSetRetirementReady(resources, completedGraphicsSequence: 7, expected: true);
     }
 
     [Test]
@@ -1792,6 +1878,35 @@ public sealed class VulkanCommandChainDataModelTests
                 singleThread: false,
                 parallelDisabled: false)
             .ShouldBe(1);
+    }
+
+    private static VulkanRenderer.VulkanResourceLifetimeRecord CreateLifetimeRecord(
+        ObjectType type,
+        ulong handle,
+        ulong generation,
+        string owner)
+        => new()
+        {
+            Key = new VulkanRenderer.VulkanResourceLifetimeKey(type, handle),
+            Generation = generation,
+            Owner = owner,
+            State = VulkanRenderer.EVulkanResourceLifetimeState.CpuOwned,
+        };
+
+    private static void AssertGenerationSetRetirementReady(
+        IReadOnlyList<VulkanRenderer.VulkanResourceLifetimeRecord> resources,
+        ulong completedGraphicsSequence,
+        bool expected)
+    {
+        for (int i = 0; i < resources.Count; i++)
+        {
+            VulkanRenderer.VulkanResourceLifetimeRecord resource = resources[i];
+            resource.Pins.IsRetirementReady(
+                    completedGraphicsSequence,
+                    completedTransferSequence: 0,
+                    completedOtherSequence: 0)
+                .ShouldBe(expected, $"retirement readiness mismatch for {resource.Owner} generation {resource.Generation}");
+        }
     }
 
     private static CommandChain CreateRecordedChain()

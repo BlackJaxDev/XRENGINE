@@ -3,6 +3,7 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine.Components.Physics;
 using XREngine.Scene;
+using XREngine.Scene.Physics;
 using XREngine.Scene.Physics.Joints;
 using XREngine.Scene.Transforms;
 
@@ -29,11 +30,118 @@ public sealed class PhysicsJointComponentTests
         return node;
     }
 
+    private sealed class TestDynamicRigidBodyComponent : DynamicRigidBodyComponent
+    {
+        private IAbstractPhysicsActor? _testActor;
+
+        public override IAbstractPhysicsActor? PhysicsActor => _testActor;
+
+        public void SetTestActor(IAbstractPhysicsActor? actor)
+        {
+            IAbstractPhysicsActor? previousActor = _testActor;
+            _testActor = actor;
+            NotifyPhysicsActorChanged(previousActor, actor);
+        }
+    }
+
+    private sealed class ActivationOrderJointComponent : PhysicsJointComponent
+    {
+        public int RebindCount { get; private set; }
+
+        public void ActivateBindingsForTest()
+            => base.OnComponentActivated();
+
+        public void DeactivateBindingsForTest()
+            => base.OnComponentDeactivated();
+
+        protected override void RebindJoint()
+            => RebindCount++;
+
+        protected override IAbstractJoint? CreateJointImpl(
+            AbstractPhysicsScene scene,
+            IAbstractPhysicsActor? actorA,
+            JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB,
+            JointAnchor localFrameB)
+            => null;
+
+        protected override void ApplyJointProperties(IAbstractJoint joint)
+        {
+        }
+    }
+
+    private sealed class StubPhysicsActor : IAbstractPhysicsActor
+    {
+        public void Destroy(bool wakeOnLostTouch = false)
+        {
+        }
+    }
+
+    private static (
+        TestDynamicRigidBodyComponent localBody,
+        ActivationOrderJointComponent joint,
+        TestDynamicRigidBodyComponent connectedBody) CreateActivationOrderFixture()
+    {
+        var localNode = new SceneNode("LocalBody");
+        localNode.SetTransform(new Transform());
+        TestDynamicRigidBodyComponent localBody = localNode.AddComponent<TestDynamicRigidBodyComponent>()!;
+        ActivationOrderJointComponent joint = localNode.AddComponent<ActivationOrderJointComponent>()!;
+
+        var connectedNode = new SceneNode("ConnectedBody");
+        connectedNode.SetTransform(new Transform());
+        TestDynamicRigidBodyComponent connectedBody = connectedNode.AddComponent<TestDynamicRigidBodyComponent>()!;
+        joint.ConnectedBody = connectedBody;
+
+        return (localBody, joint, connectedBody);
+    }
+
     #endregion
 
     // ─────────────────────────────────────────────────────────────────────
     // PhysicsJointComponent (base) defaults
     // ─────────────────────────────────────────────────────────────────────
+
+    #region Activation Order
+
+    [Test]
+    public void ActivationBeforeActorsExist_RebindsAsActorsAppearAndUnsubscribesOnDeactivation()
+    {
+        var (localBody, joint, connectedBody) = CreateActivationOrderFixture();
+
+        joint.ActivateBindingsForTest();
+        joint.RebindCount.ShouldBe(0);
+
+        localBody.SetTestActor(new StubPhysicsActor());
+        connectedBody.SetTestActor(new StubPhysicsActor());
+        localBody.SetTestActor(new StubPhysicsActor());
+        joint.RebindCount.ShouldBe(3);
+
+        joint.DeactivateBindingsForTest();
+        localBody.SetTestActor(new StubPhysicsActor());
+        connectedBody.SetTestActor(new StubPhysicsActor());
+        joint.RebindCount.ShouldBe(3);
+    }
+
+    [Test]
+    public void ActorsAvailableBeforeActivation_SubscribeForChangesAndUnsubscribeOnDeactivation()
+    {
+        var (localBody, joint, connectedBody) = CreateActivationOrderFixture();
+        localBody.SetTestActor(new StubPhysicsActor());
+        connectedBody.SetTestActor(new StubPhysicsActor());
+        joint.RebindCount.ShouldBe(0);
+
+        joint.ActivateBindingsForTest();
+        localBody.SetTestActor(new StubPhysicsActor());
+        connectedBody.SetTestActor(new StubPhysicsActor());
+        joint.RebindCount.ShouldBe(2);
+
+        joint.DeactivateBindingsForTest();
+        localBody.SetTestActor(new StubPhysicsActor());
+        connectedBody.SetTestActor(new StubPhysicsActor());
+        joint.RebindCount.ShouldBe(2);
+    }
+
+    #endregion
 
     #region Base Defaults
 

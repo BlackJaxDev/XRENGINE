@@ -52,7 +52,7 @@ namespace XREngine.Rendering.Physics.Physx
         {
             var tfm = PhysxScene.MakeTransform(position, rotation);
             var shapeTfm = PhysxScene.MakeTransform(shapeOffsetTranslation, shapeOffsetRotation);
-            using var structObj = geometry.GetPhysxStruct();
+            using var structObj = geometry.CreatePhysxGeometryData();
             _obj = PhysxScene.PhysicsPtr->PhysPxCreateStatic(&tfm, structObj.ToStructPtr<PxGeometry>(), material.MaterialPtr, &shapeTfm);
             CachePtr("from-geometry");
         }

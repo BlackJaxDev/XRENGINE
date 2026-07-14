@@ -1255,10 +1255,17 @@ public partial class DefaultRenderPipeline
             profile.AntiAliasingMode == EAntiAliasingMode.Smaa;
         RenderPipelineResourcePredicate tsr = static profile =>
             UsesTemporalResources(profile) && profile.AntiAliasingMode == EAntiAliasingMode.Tsr;
+        RenderPipelineResourcePredicate phase524bMonoReference = static profile =>
+            profile.Stereo &&
+            UsesTemporalResources(profile) &&
+            profile.AntiAliasingMode == EAntiAliasingMode.Tsr &&
+            IsPhase524bValidationEnabled();
 
         Texture(builder, FxaaOutputTextureName, windowSize, SampledColorAttachment,
             ResolvePostProcessIntermediateInternalFormat(), EPixelFormat.Rgba, ResolvePostProcessIntermediatePixelType(), ResolvePostProcessIntermediateSizedInternalFormat(),
             CreateFxaaOutputTexture)
+            .Layers(layerCount)
+            .StereoCompatible(builder.Profile.Stereo)
             .When(fxaa)
             .Add();
 
@@ -1274,18 +1281,24 @@ public partial class DefaultRenderPipeline
         Texture(builder, SmaaEdgeTextureName, windowSize, SampledColorAttachment,
             EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8,
             CreateSmaaEdgeTexture)
+            .Layers(layerCount)
+            .StereoCompatible(builder.Profile.Stereo)
             .When(smaa)
             .Add();
 
         Texture(builder, SmaaBlendTextureName, windowSize, SampledColorAttachment,
             EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8,
             CreateSmaaBlendTexture)
+            .Layers(layerCount)
+            .StereoCompatible(builder.Profile.Stereo)
             .When(smaa)
             .Add();
 
         Texture(builder, SmaaOutputTextureName, windowSize, SampledColorAttachment,
             ResolvePostProcessIntermediateInternalFormat(), EPixelFormat.Rgba, ResolvePostProcessIntermediatePixelType(), ResolvePostProcessIntermediateSizedInternalFormat(),
             CreateSmaaOutputTexture)
+            .Layers(layerCount)
+            .StereoCompatible(builder.Profile.Stereo)
             .When(smaa)
             .Add();
 
@@ -1326,6 +1339,36 @@ public partial class DefaultRenderPipeline
             .When(tsr)
             .Add();
 
+        Texture(builder, TsrMonoReferenceTextureName, windowSize, SampledColorAttachment,
+            ResolvePostProcessIntermediateInternalFormat(), EPixelFormat.Rgba, ResolvePostProcessIntermediatePixelType(), ResolvePostProcessIntermediateSizedInternalFormat(),
+            CreateTsrMonoReferenceTexture)
+            .Layers(layerCount)
+            .StereoCompatible(builder.Profile.Stereo)
+            .When(phase524bMonoReference)
+            .Add();
+
+        builder.TextureView(TsrMonoReferenceLeftTextureViewName, TsrMonoReferenceTextureName)
+            .Size(windowSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(SampledColorAttachment)
+            .SizedFormat(ResolvePostProcessIntermediateSizedInternalFormat())
+            .LayerRange(0u, 1u)
+            .Target(array: false, multisample: false)
+            .Factory(() => CreateTsrMonoLayerView(TsrMonoReferenceTextureName, 0u))
+            .When(phase524bMonoReference)
+            .Add();
+
+        builder.TextureView(TsrMonoReferenceRightTextureViewName, TsrMonoReferenceTextureName)
+            .Size(windowSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(SampledColorAttachment)
+            .SizedFormat(ResolvePostProcessIntermediateSizedInternalFormat())
+            .LayerRange(1u, 1u)
+            .Target(array: false, multisample: false)
+            .Factory(() => CreateTsrMonoLayerView(TsrMonoReferenceTextureName, 1u))
+            .When(phase524bMonoReference)
+            .Add();
+
         Texture(builder, TsrHistoryColorTextureName, windowSize, SampledColorAttachment,
             ResolvePostProcessIntermediateInternalFormat(), EPixelFormat.Rgba, ResolvePostProcessIntermediatePixelType(), ResolvePostProcessIntermediateSizedInternalFormat(),
             CreateTsrHistoryColorTexture)
@@ -1352,6 +1395,26 @@ public partial class DefaultRenderPipeline
             .Color(0, TsrOutputTextureName)
             .Factory(CreateTsrUpscaleFBO)
             .When(tsr)
+            .Add();
+
+        builder.FrameBuffer(TsrMonoReferenceLeftFBOName)
+            .Size(windowSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName)
+            .Color(0, TsrMonoReferenceLeftTextureViewName)
+            .Factory(() => CreateTsrMonoReferenceFBO(0))
+            .When(phase524bMonoReference)
+            .Add();
+
+        builder.FrameBuffer(TsrMonoReferenceRightFBOName)
+            .Size(windowSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName)
+            .Color(0, TsrMonoReferenceRightTextureViewName)
+            .Factory(() => CreateTsrMonoReferenceFBO(1))
+            .When(phase524bMonoReference)
             .Add();
     }
 
@@ -1906,10 +1969,21 @@ public partial class DefaultRenderPipeline
     private (uint Width, uint Height) GetDesiredGtaoScratchSize()
     {
         int divisor = GtaoResolutionDivisor(ResolveGtaoResolutionForTextureFactory());
+        uint internalWidth = InternalWidth;
+        uint internalHeight = InternalHeight;
+        if (TryResolveCurrentResourceBuildKey(out ResourceGenerationKey key))
+        {
+            internalWidth = key.InternalWidth;
+            internalHeight = key.InternalHeight;
+        }
+
         return (
-            ScaleInternalExtent(InternalWidth, (uint)divisor),
-            ScaleInternalExtent(InternalHeight, (uint)divisor));
+            ScaleGtaoScratchExtent(internalWidth, divisor),
+            ScaleGtaoScratchExtent(internalHeight, divisor));
     }
+
+    internal static uint ScaleGtaoScratchExtent(uint extent, int divisor)
+        => (uint)Math.Max(1, (int)MathF.Round(Math.Max(extent, 1u) / (float)Math.Max(divisor, 1)));
 
     private GroundTruthAmbientOcclusionSettings.EResolution ResolveGtaoResolutionForGenerationKey()
         => ResolveAmbientOcclusionSettings()?.GroundTruth.Resolution
@@ -1925,16 +1999,28 @@ public partial class DefaultRenderPipeline
 
     private static bool TryResolveCurrentResourceFeatureMask(out ulong featureMask)
     {
+        if (TryResolveCurrentResourceBuildKey(out ResourceGenerationKey key))
+        {
+            featureMask = key.FeatureMask;
+            return true;
+        }
+
+        featureMask = 0UL;
+        return false;
+    }
+
+    private static bool TryResolveCurrentResourceBuildKey(out ResourceGenerationKey key)
+    {
         XRRenderPipelineInstance? pipeline = RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext as XRRenderPipelineInstance
             ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
 
         if (pipeline?.CurrentResourceBuildContext is XRRenderPipelineInstance.ResourceBuildContext context)
         {
-            featureMask = context.Key.FeatureMask;
+            key = context.Key;
             return true;
         }
 
-        featureMask = 0UL;
+        key = default;
         return false;
     }
 

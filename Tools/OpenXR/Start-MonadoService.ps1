@@ -13,6 +13,10 @@ param(
     [string]$LogDirectory = "Build\_AgentValidation\monado-service-logs",
 
     [Parameter()]
+    [ValidateSet("wobble", "rotate", "stationary", "user_input")]
+    [string]$SimulatedHmdPoseMode = "stationary",
+
+    [Parameter()]
     [switch]$Stop
 )
 
@@ -67,18 +71,18 @@ function Stop-OwnedService {
         return
     }
 
-    $pid = [int]$markerData.pid
-    $process = Get-Process -Id $pid -ErrorAction SilentlyContinue
+    $processId = [int]$markerData.pid
+    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
     if ($null -ne $process -and (Test-SameProcessStart -Process $process -StartedAtUtc ([string]$markerData.startedAtUtc))) {
-        Stop-Process -Id $pid -Force
+        Stop-Process -Id $processId -Force
         $process.WaitForExit(5000)
         Remove-Item -LiteralPath $Marker -Force -ErrorAction SilentlyContinue
-        [pscustomobject]@{ Stopped = $true; Pid = $pid; MarkerPath = $Marker }
+        [pscustomobject]@{ Stopped = $true; Pid = $processId; MarkerPath = $Marker }
         return
     }
 
     Remove-Item -LiteralPath $Marker -Force -ErrorAction SilentlyContinue
-    [pscustomobject]@{ Stopped = $false; Reason = "Owned process was already gone or no longer matched the marker."; Pid = $pid; MarkerPath = $Marker }
+    [pscustomobject]@{ Stopped = $false; Reason = "Owned process was already gone or no longer matched the marker."; Pid = $processId; MarkerPath = $Marker }
 }
 
 function Find-ServiceExe {
@@ -147,6 +151,7 @@ if ($null -ne $existing) {
         Started       = $false
         OwnedByRunner = $false
         Pid           = $existing.Id
+        SimulatedHmdPoseMode = "unknown-existing-process"
         Reason        = "monado-service is already running; this script will not stop it."
         RuntimeJson   = $runtimeInfo.RuntimeJson
         MarkerPath    = $markerFullPath
@@ -160,18 +165,35 @@ $logDirectoryFullPath = Resolve-FullPath $LogDirectory
 $stdout = Join-Path $logDirectoryFullPath "monado-service.stdout.log"
 $stderr = Join-Path $logDirectoryFullPath "monado-service.stderr.log"
 
-$process = Start-Process `
-    -FilePath $servicePath `
-    -WorkingDirectory (Split-Path -Parent $servicePath) `
-    -WindowStyle Hidden `
-    -RedirectStandardOutput $stdout `
-    -RedirectStandardError $stderr `
-    -PassThru
+$previousPoseMode = [Environment]::GetEnvironmentVariable("SIMULATED_HMD_POSE_MODE", "Process")
+try {
+    # The simulated driver otherwise defaults to a time-based wobble. Acceptance
+    # runs need a stationary runtime pose so only the scripted validation scene
+    # drives head rotation/translation and the static-pose oracle is meaningful.
+    [Environment]::SetEnvironmentVariable(
+        "SIMULATED_HMD_POSE_MODE",
+        $SimulatedHmdPoseMode,
+        "Process")
+    $process = Start-Process `
+        -FilePath $servicePath `
+        -WorkingDirectory (Split-Path -Parent $servicePath) `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $stdout `
+        -RedirectStandardError $stderr `
+        -PassThru
+}
+finally {
+    [Environment]::SetEnvironmentVariable(
+        "SIMULATED_HMD_POSE_MODE",
+        $previousPoseMode,
+        "Process")
+}
 
 [pscustomobject]@{
     pid           = $process.Id
     startedAtUtc  = $process.StartTime.ToUniversalTime().ToString("O")
     ownedByRunner = $true
+    simulatedHmdPoseMode = $SimulatedHmdPoseMode
     serviceExe    = $servicePath
     runtimeJson   = $runtimeInfo.RuntimeJson
     stdout        = $stdout
@@ -182,6 +204,7 @@ $process = Start-Process `
     Started       = $true
     OwnedByRunner = $true
     Pid           = $process.Id
+    SimulatedHmdPoseMode = $SimulatedHmdPoseMode
     RuntimeJson   = $runtimeInfo.RuntimeJson
     ServiceExe    = $servicePath
     MarkerPath    = $markerFullPath

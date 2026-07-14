@@ -99,6 +99,7 @@ namespace XREngine.Rendering.Vulkan
             DrainVulkanPipelineCompileQueueForShutdown();
             WaitForPendingReadbackTasks(TimeSpan.FromSeconds(6));
             DestroyComputeTransientResources();
+            DestroyComputeDescriptorCaches();
             DestroyDanglingMaterialWrappers();
             DestroyDanglingMeshRendererWrappers();
             DestroyDanglingRenderProgramPipelineWrappers();

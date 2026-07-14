@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -62,6 +63,17 @@ public sealed class RuntimeRenderWorldInstance : XRObjectBase, IRuntimeRenderWor
 
     public ColorF3 GetEffectiveAmbientColor()
         => Settings.AmbientLightColor * Settings.AmbientLightIntensity;
+
+    public void GlobalPreCollectVisible()
+    {
+        // Runtime-host scene transforms can be mutated by the simulation thread. RenderableMesh
+        // queues those matrix changes until the render synchronization point so command snapshots
+        // never observe a torn current/previous transform pair. The full engine world drains the
+        // same queue before visible collection; the standalone runtime host must do so here too or
+        // moving meshes collect with a permanently stale model matrix.
+        RenderableMesh.ProcessPendingRenderMatrixUpdates();
+        VisualScene.GlobalCollectVisible();
+    }
 
     public void GlobalPreRender()
     {

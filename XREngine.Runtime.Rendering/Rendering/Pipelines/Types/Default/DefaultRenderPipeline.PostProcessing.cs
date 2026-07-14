@@ -2224,17 +2224,39 @@ public partial class DefaultRenderPipeline
         if (source is not null)
             program.Sampler(PostProcessOutputTextureName, source, 0);
 
+        TsrResolveFBO_SettingUniforms(program);
+    }
+
+    /// <summary>
+    /// Applies the TSR parameters without replacing the source sampler selected by
+    /// the mono-reference material. The production SPS resolve deliberately binds
+    /// the complete array; each mono oracle must retain its one-layer texture view.
+    /// </summary>
+    private void TsrMonoReferenceFBO_SettingUniforms(XRRenderProgram program)
+        => TsrResolveFBO_SettingUniforms(program);
+
+    private void TsrResolveFBO_SettingUniforms(XRRenderProgram program)
+    {
         var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         TemporalResolveSettings temporalSettings = ResolveTemporalSettings(state);
         bool historyReady = false;
         Vector2 currentJitterUv = Vector2.Zero;
         Vector2 previousJitterUv = Vector2.Zero;
-        if (!DisableHistoryBasedVrEffects() && VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
+        bool temporalHistoryAllowed = !DisableHistoryBasedVrEffects();
+        if (temporalHistoryAllowed && VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
         {
             // TSR owns a full-resolution color history; the exposure-variance history is only produced by the TAA resolve.
             historyReady = temporalData.HistoryReady;
             currentJitterUv = new Vector2(temporalData.CurrentJitter.X / Math.Max(1u, InternalWidth), temporalData.CurrentJitter.Y / Math.Max(1u, InternalHeight));
             previousJitterUv = new Vector2(temporalData.PreviousJitter.X / Math.Max(1u, InternalWidth), temporalData.PreviousJitter.Y / Math.Max(1u, InternalHeight));
+        }
+        else if (temporalHistoryAllowed)
+        {
+            VPRC_TemporalAccumulationPass.ReportMissingTemporalSnapshot(
+                CurrentRenderingPipeline,
+                "Default.TSR",
+                currentMatrixLayerMask: 0u,
+                expectedLayerMask: Stereo ? 0b11u : 0b01u);
         }
 
         float sourceWidth = Math.Max(1u, InternalWidth);
@@ -2329,7 +2351,8 @@ public partial class DefaultRenderPipeline
     {
         var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         TemporalResolveSettings temporalSettings = ResolveTemporalSettings(state);
-        if (!DisableHistoryBasedVrEffects() && VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
+        bool temporalHistoryAllowed = !DisableHistoryBasedVrEffects();
+        if (temporalHistoryAllowed && VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
         {
             float width = Math.Max(1u, temporalData.Width);
             float height = Math.Max(1u, temporalData.Height);
@@ -2345,6 +2368,14 @@ public partial class DefaultRenderPipeline
             program.Uniform("TexelSize", Vector2.Zero);
             program.Uniform("CurrentJitterUv", Vector2.Zero);
             program.Uniform("PreviousJitterUv", Vector2.Zero);
+            if (temporalHistoryAllowed)
+            {
+                VPRC_TemporalAccumulationPass.ReportMissingTemporalSnapshot(
+                    CurrentRenderingPipeline,
+                    "Default.TemporalAccumulation",
+                    currentMatrixLayerMask: 0u,
+                    expectedLayerMask: Stereo ? 0b11u : 0b01u);
+            }
         }
 
         program.Uniform("FeedbackMin", temporalSettings.FeedbackMin);

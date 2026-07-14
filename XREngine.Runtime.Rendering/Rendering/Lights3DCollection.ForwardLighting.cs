@@ -966,7 +966,7 @@ namespace XREngine.Scene
 
                 if (firstDirLight.CastsShadows)
                 {
-                    XRTexture2DArray? firstCascadeReceiverTexture = firstDirLight.GetCascadedShadowReceiverTexture(directionalShadowCamera);
+                    XRTexture2DArray? firstCascadeReceiverTexture = firstDirLight.GetSampleableCascadedShadowReceiverTexture(directionalShadowCamera);
                     int firstActiveCascadeCount = firstDirLight.GetActiveCascadeCount(directionalShadowCamera);
                     // 2D shadow map (non-cascaded / fallback path).
                     forwardShadowTex = FindDirectionalShadowReceiverTexture(firstDirLight);
@@ -1097,7 +1097,7 @@ namespace XREngine.Scene
 
                     if (dirLight.CastsShadows)
                     {
-                        XRTexture2DArray? perLightCascadeReceiverTexture = dirLight.GetCascadedShadowReceiverTexture(directionalShadowCamera);
+                        XRTexture2DArray? perLightCascadeReceiverTexture = dirLight.GetSampleableCascadedShadowReceiverTexture(directionalShadowCamera);
                         int perLightActiveCascadeCount = dirLight.GetActiveCascadeCount(directionalShadowCamera);
                         perLightShadowTex = FindDirectionalShadowReceiverTexture(dirLight);
                         perLightUseCascades =
@@ -1238,7 +1238,8 @@ namespace XREngine.Scene
             }
             XRTexture2DArray? directionalAtlas = null;
             bool directionalAtlasTextureAvailable = useDirectionalShadowAtlas &&
-                ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, directionalAtlasEncoding, 0, out directionalAtlas);
+                ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, directionalAtlasEncoding, 0, out directionalAtlas) &&
+                IsTextureReadyForShadowSampling(directionalAtlas);
             XRTexture2DArray directionalAtlasTexture = directionalAtlasTextureAvailable && directionalAtlas is not null ? directionalAtlas : DummyShadowMapArray;
             int directionalAtlasLayerCount = checked((int)Math.Max(1u, directionalAtlasTexture.Depth));
             program.Sampler(DirectionalShadowAtlasName, directionalAtlasTexture, directionalShadowAtlasStartUnit);
@@ -1445,7 +1446,19 @@ namespace XREngine.Scene
         }
 
         private static XRTexture? FindDirectionalShadowReceiverTexture(DirectionalLightComponent light)
-            => light.PrimaryShadowReceiverTexture ?? FindShadowMapTexture(light);
+        {
+            XRTexture? texture = light.PrimaryShadowReceiverTexture ?? FindShadowMapTexture(light);
+            return IsTextureReadyForShadowSampling(texture) ? texture : null;
+        }
+
+        private static bool IsTextureReadyForShadowSampling(XRTexture? texture)
+        {
+            if (texture is null)
+                return false;
+
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            return renderer is null || renderer.IsTextureReadyForShaderSampling(texture);
+        }
 
         private CameraComponent? ResolveForwardDirectionalShadowCameraComponent(out XRCamera? camera)
         {

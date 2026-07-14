@@ -10,7 +10,7 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void RecordingUsesCapacityBackedCommandLocalDependencyAndLayoutStorage()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferTrackingBatch.cs");
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
 
         source.ShouldContain("HashSet<VulkanResourceLifetimeKey> Dependencies = new(64)");
         source.ShouldContain("List<VulkanImageAccessRangeDelta> ImageAccessDeltas = new(32)");
@@ -46,7 +46,7 @@ public sealed class VulkanCoreHardeningPhase524Tests
         string lifetime = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
         string batch = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferTrackingBatch.cs");
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
 
         lifetime.ShouldContain("VulkanPublishedDescriptorSetSnapshot");
         lifetime.ShouldContain("PublishVulkanDescriptorSetSnapshot_NoLock");
@@ -63,7 +63,7 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void DebugDescriptorValidationCachesDescriptorAndLayoutGenerations()
     {
         string batch = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferTrackingBatch.cs");
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
         string lifetime = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
 
@@ -77,7 +77,7 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void ImageRangesCoalesceBeforeOneBulkPublication()
     {
         string batch = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferTrackingBatch.cs");
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
         string layouts = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
 

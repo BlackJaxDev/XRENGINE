@@ -150,6 +150,7 @@ public unsafe partial class VulkanRenderer
                     return false;
                 }
 
+                PublishPlannerBackedDescriptorIfReadyNoLock();
                 return IsDescriptorReadyNoLock();
             }
         }
@@ -167,8 +168,32 @@ public unsafe partial class VulkanRenderer
                 if (!RefreshPhysicalGroupImageIfStaleNoLock())
                     return false;
 
+                PublishPlannerBackedDescriptorIfReadyNoLock();
                 return IsDescriptorReadyNoLock();
             }
+        }
+
+        private void PublishPlannerBackedDescriptorIfReadyNoLock()
+        {
+            if (_physicalGroup is null || !IsDescriptorDirty)
+                return;
+
+            bool handlesReady =
+                _image.Handle != 0 &&
+                _view.Handle != 0 &&
+                IsImageViewBackedByCurrentImage(_view) &&
+                (!CreateSampler || _sampler.Handle != 0);
+            if (!handlesReady)
+                return;
+
+            // Planner-backed render targets already contain their GPU storage. A
+            // dirty descriptor here means that consumers need the current
+            // image/view/sampler generation, not that texture data must be
+            // uploaded. Publishing it is therefore safe even in recording
+            // scopes that intentionally forbid synchronous uploads.
+            HasUploadedData = true;
+            IsInvalidated = false;
+            MarkDescriptorPublished();
         }
 
         private bool TryEnsureDescriptorReadyForVulkanUseNoThrow(string reason)
@@ -181,6 +206,7 @@ public unsafe partial class VulkanRenderer
                     if (!RefreshPhysicalGroupImageIfStaleNoLock())
                         return false;
 
+                    PublishPlannerBackedDescriptorIfReadyNoLock();
                     if (IsDescriptorReadyNoLock())
                         return true;
 

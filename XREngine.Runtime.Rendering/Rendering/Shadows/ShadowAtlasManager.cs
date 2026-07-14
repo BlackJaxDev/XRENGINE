@@ -2984,6 +2984,23 @@ public sealed partial class ShadowAtlasManager
         ShadowAtlasAllocation allocation,
         int recordIndex)
     {
+        ShadowTileCompletion completion = CreateTileCompletion(
+            frameId,
+            planId,
+            request,
+            allocation,
+            recordIndex);
+        CommitRenderedTileToLightSlot(completion);
+        EnqueueTileCompletion(completion);
+    }
+
+    private static ShadowTileCompletion CreateTileCompletion(
+        ulong frameId,
+        ulong planId,
+        in ShadowMapRequest request,
+        in ShadowAtlasAllocation allocation,
+        int recordIndex)
+    {
         DirectionalCascadeSampleState sample = request.DirectionalCascadeSample;
         if (sample.IsValid)
         {
@@ -3014,9 +3031,7 @@ public sealed partial class ShadowAtlasManager
             request.FarPlane,
             request.DesiredResolution,
             sample);
-
-        CommitRenderedTileToLightSlot(completion);
-        EnqueueTileCompletion(completion);
+        return completion;
     }
 
     private void EnqueueTileCompletion(in ShadowTileCompletion completion)
@@ -3329,7 +3344,7 @@ public sealed partial class ShadowAtlasManager
             }
         }
 
-        EnqueuePlanMemberCompletions(plan, entry);
+        EnqueueDirectionalCascadePlanMemberCompletions(plan, entry, light);
 
         elapsedMs = ElapsedMilliseconds(start);
         double slowThresholdMs = Math.Max(16.0, _settings.MaxRenderMilliseconds * 4.0);
@@ -3402,6 +3417,66 @@ public sealed partial class ShadowAtlasManager
                 return;
 
             MarkTileRendered(plan, member.Request, member.Allocation, member.RecordIndex);
+        }
+    }
+
+    private void EnqueueDirectionalCascadePlanMemberCompletions(
+        ShadowAtlasRenderPlan plan,
+        in ShadowAtlasRenderPlanEntry entry,
+        DirectionalLightComponent light)
+    {
+        if (!TryValidatePlanMemberRange(plan, entry, "enqueue-directional-cascade-completions"))
+            return;
+
+        Span<DirectionalCascadeAtlasRenderCommit> commits = stackalloc DirectionalCascadeAtlasRenderCommit[8];
+        if (entry.MemberCount > commits.Length)
+            return;
+
+        int commitCount = 0;
+        for (int i = 0; i < entry.MemberCount; i++)
+        {
+            if (!plan.TryGetMember(entry.MemberStart + i, out ShadowAtlasRenderPlanMember member))
+                return;
+
+            ShadowTileCompletion completion = CreateTileCompletion(
+                plan.FrameId,
+                plan.PlanId,
+                member.Request,
+                member.Allocation,
+                member.RecordIndex);
+
+            if (completion.Key.ProjectionType != EShadowProjectionType.DirectionalCascade ||
+                !completion.DirectionalCascadeSample.IsValid)
+            {
+                continue;
+            }
+
+            commits[commitCount++] = new DirectionalCascadeAtlasRenderCommit(
+                completion.Key.Source,
+                completion.Key.FaceOrCascadeIndex,
+                completion.Allocation,
+                completion.RecordIndex,
+                completion.NearPlane,
+                completion.FarPlane,
+                completion.DesiredResolution,
+                completion.DirectionalCascadeSample);
+        }
+
+        if (commitCount == entry.MemberCount && commitCount > 0)
+            light.CommitRenderedCascadeAtlasSlots(commits[..commitCount]);
+
+        for (int i = 0; i < entry.MemberCount; i++)
+        {
+            if (!plan.TryGetMember(entry.MemberStart + i, out ShadowAtlasRenderPlanMember member))
+                return;
+
+            ShadowTileCompletion completion = CreateTileCompletion(
+                plan.FrameId,
+                plan.PlanId,
+                member.Request,
+                member.Allocation,
+                member.RecordIndex);
+            EnqueueTileCompletion(completion);
         }
     }
 

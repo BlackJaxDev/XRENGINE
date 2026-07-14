@@ -10,6 +10,7 @@ using XREngine.Data.Tools;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Scene;
+using XREngine.Scene.Physics;
 
 namespace XREngine.UnitTests.Physics;
 
@@ -45,7 +46,7 @@ public sealed class ConvexHullUtilityTests
         var inputs = ConvexHullUtility.CollectCollisionInputs(modelComponent);
 
         inputs.ShouldNotBeEmpty();
-        inputs[0].Positions.Length.ShouldBe(6);
+        inputs[0].Positions.Length.ShouldBe(4);
         inputs[0].Indices.Length.ShouldBe(6);
     }
 
@@ -59,7 +60,7 @@ public sealed class ConvexHullUtilityTests
         var inputs = ConvexHullUtility.CollectCollisionInputs(modelComponent);
 
         inputs.ShouldHaveSingleItem();
-        inputs[0].Positions.Length.ShouldBe(6);
+        inputs[0].Positions.Length.ShouldBe(4);
         inputs[0].Indices.Length.ShouldBe(6);
     }
 
@@ -86,6 +87,29 @@ public sealed class ConvexHullUtilityTests
     }
 
     [Test]
+    public async Task CreateConvexColliderAssetAsync_ProducesReusableBackendNeutralHullData()
+    {
+        var (physicsComponent, modelComponent) = CreateComponentPair();
+        AttachModel(modelComponent);
+        var expectedHull = new CoACD.ConvexHullMesh(
+            new[] { Vector3.Zero, Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ },
+            new[] { 0, 1, 2, 0, 2, 3 });
+        physicsComponent.SetRunnerResult([expectedHull]);
+
+        PhysicsColliderAsset asset = await physicsComponent
+            .CreateConvexColliderAssetAsync("Reusable Collider")
+            .ConfigureAwait(false);
+
+        asset.Name.ShouldBe("Reusable Collider");
+        PhysicsColliderShape shape = asset.Shapes.ShouldHaveSingleItem();
+        shape.Name.ShouldBe("Hull 1");
+        PhysicsConvexHullGeometry geometry = shape.Geometry.ShouldBeOfType<PhysicsConvexHullGeometry>();
+        geometry.Vertices.ShouldBe(expectedHull.Vertices);
+        geometry.Indices.ShouldBe(new uint[] { 0, 1, 2, 0, 2, 3 });
+        asset.CreateRuntimeShapes()[0].Geometry.ShouldNotBeSameAs(geometry);
+    }
+
+    [Test]
     public async Task CreateConvexDecompositionAsync_UsesAssetMeshesWhenRuntimeMeshesMissing()
     {
         var (physicsComponent, modelComponent) = CreateComponentPair();
@@ -103,7 +127,7 @@ public sealed class ConvexHullUtilityTests
         hulls.ShouldHaveSingleItem();
         physicsComponent.RunnerCallCount.ShouldBe(1);
         physicsComponent.LastRunnerPositions.ShouldNotBeNull();
-        physicsComponent.LastRunnerPositions!.Length.ShouldBe(6);
+        physicsComponent.LastRunnerPositions!.Length.ShouldBe(4);
     }
 
     [Test]
@@ -269,6 +293,8 @@ public sealed class ConvexHullUtilityTests
     {
         private readonly StubRunner _runner = new();
 
+        public override IAbstractPhysicsActor? PhysicsActor => null;
+
         public int RunnerCallCount => _runner.CallCount;
         public Vector3[]? LastRunnerPositions => _runner.LastPositions;
 
@@ -299,6 +325,8 @@ public sealed class ConvexHullUtilityTests
     private sealed class SequencedPhysicsActorComponent : PhysicsActorComponent
     {
         private readonly SequencedRunner _runner = new();
+
+        public override IAbstractPhysicsActor? PhysicsActor => null;
 
         protected override IConvexDecompositionRunner ConvexDecompositionRunner => _runner;
 

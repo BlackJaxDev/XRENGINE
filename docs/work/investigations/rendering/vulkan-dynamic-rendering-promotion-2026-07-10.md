@@ -162,6 +162,58 @@ reported broken bloom, blurry TSR/motion, missing desktop meshes, and extended
 desktop black flicker. The numerical strip height matches `1007 - 896`, making a
 width-as-height or stale destination-region contract the initial extent hypothesis.
 
+### Baseline manifest and exact reproduction
+
+The source screenshot was supplied in the investigation conversation rather than
+written as a repository file. Its durable observation record is: both stereo eyes
+contained the same sharp horizontal corruption at the top of the `896x1007` eye
+image, beginning approximately 111 pixels from the top edge; bloom was displaced,
+the remaining image was temporally soft during motion, and the independent desktop
+window intermittently presented black. This is the baseline image observation used
+below; later retained PNG captures replace it as the acceptance evidence.
+
+| Baseline field | Recorded value |
+| --- | --- |
+| Session | `xrengine_2026-07-10_14-20-29_pid22804` |
+| Renderer / target path | Vulkan / `DynamicRendering` |
+| Runtime / requested view mode | Monado OpenXR / `SinglePassStereo` |
+| Effective output set | strict stereo plus `FullIndependentRender` desktop |
+| Eye extent | `896x1007`, two layers, expected `viewMask=0x3` |
+| Post processing | bloom enabled; `Tsr` camera anti-aliasing |
+| Occlusion | `CpuQueryAsync` |
+| Retired-uniform-buffer submit rejections | 6 |
+| `MainViewport` signature changes | 38 |
+| Physical-plan changes | 47 |
+| Forced waits | 18 |
+| Retirement-backlog reports | 182 |
+
+Reproduction settings are the Unit Testing World values in
+`Assets/UnitTestingWorldSettings.jsonc`: Vulkan with `RequireRequested`, dynamic
+rendering, `MonadoOpenXR`, `SinglePassStereo`, stereo preview, desktop editing,
+desktop rendering while VR is active, and `CameraAntiAliasingModeOverride=Tsr`.
+Set the editor preference mirror mode to `FullIndependentRender`, leave bloom
+enabled, and launch from the repository root with the following process settings:
+
+```powershell
+$env:XRE_UNIT_TEST_RENDER_API = "Vulkan"
+$env:XRE_UNIT_TEST_VR_MODE = "MonadoOpenXR"
+$env:XRE_UNIT_TEST_VR_VIEW_RENDER_MODE = "SinglePassStereo"
+$env:XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR = "1"
+$env:XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS = "1"
+$env:XRE_OCCLUSION_CULLING_MODE = "CpuQueryAsync"
+$env:XRE_VK_RENDER_TARGET_MODE = "DynamicRendering"
+dotnet .\Build\Editor\Debug\AnyCPU\Debug\net10.0-windows7.0\XREngine.Editor.dll --unit-testing --mcp --mcp-allow-all --mcp-port 5467
+```
+
+Observed symptom inventory for that exact cohort:
+
+- both stereo layers: approximately 111-pixel top-strip corruption;
+- bloom: shifted/incorrect accumulation and blur;
+- temporal output: persistent softness and motion blur;
+- occlusion: meshes missing from independently owned desktop/eye views;
+- desktop presentation: intermittent extended black/stale frames;
+- lifetime/planning: the 6/38/47/18/182 rejection/churn/wait/backlog counters above.
+
 Implementation checkpoints completed during remediation:
 
 - OpenXR prewarm now reserves final per-renderer slot capacity in a first pass,
@@ -194,12 +246,14 @@ Fresh sync-validation runs:
   boundary after planner/context activation; the next run must prove the VUID is
   gone before the cross-output swapchain barrier is isolated.
 
+### 2026-07-13 lifecycle-branch probes
+
 Later Phase 5.2.4b probes used the installed `K:\VulkanSDK\1.4.350.0`
 SDK and its Vulkan 1.4.350 Khronos validation layer. They established the
 following additional root causes and fixes:
 
 - A Vulkan multiview occlusion query consumes one consecutive query index per
-  active view. The pool and reset/result ranges now cover two queries for
+  active view. The bounded pool and active result range now cover both queries for
   `viewMask=0x3`; both availability values must complete and the result is the
   conservative OR of both eyes. The modern validation layer then completed the
   short strict-SPS probes without the former unreset-query VUID.
@@ -226,3 +280,44 @@ frames with zero Vulkan validation errors, zero submission rejection, zero
 retirement, and zero global waits. GPU time was 7.56 ms p50 / 10.42 ms p95.
 It is not acceptance evidence: model uploads were still active, CPU frame p95
 was 124.42 ms, and the required SPS sentinel queries were not submitted.
+
+### 2026-07-13 multiview-query isolation and clean short cohort
+
+The rebuilt strict-SPS path eliminated the earlier descriptor-layout and GTAO
+extent failures. A five-frame probe then isolated the last engine-owned Vulkan
+message to `VUID-vkCmdBeginQuery-None-00807`: the occlusion pool reset only query
+index 0, but the active dynamic-rendering scope used `viewMask=0x3`. Vulkan
+multiview queries consume one consecutive pool index for every set view-mask bit,
+so the implicit right-eye query index had never been reset.
+
+The Vulkan query wrapper now keeps a bounded 32-slot occlusion pool, resets the
+complete pool before recording/reuse, records the active render-scope view mask,
+and reads the `popcount(viewMask)` result span. It treats the conservative query
+as visible when any returned view result is nonzero and waits for availability of
+every active-view result. The sparse-mask behavior follows the Vulkan Queries
+specification: <https://docs.vulkan.org/spec/latest/chapters/queries.html>.
+
+Short verification cohort:
+
+| Field | Result |
+| --- | --- |
+| Run root | `Build/_AgentValidation/20260710-openxr-strict-stereo/phase524b-current-short5/` |
+| Engine session | `xrengine_2026-07-13_12-10-24_pid51988` |
+| Warmup / retained | 5 / 5 |
+| Requested / effective path | `SinglePassStereo` / `TrueSinglePassStereo` |
+| Validation | `SyncValidation`; validation and synchronization validation effective |
+| Eye lifecycle | exactly one acquire, wait, publish, and release per eye per retained frame |
+| `xrEndFrame` | five successes, one valid projection layer each |
+| Sequential fallback | zero |
+| Plan/command identity | one stable plan generation and one stable command generation |
+| Rejections / waits / flushes | zero / zero / zero |
+| Raw-log forbidden scan | zero `VUID-`, `SYNC-HAZARD`, `UNASSIGNED`, validation rejection, first-chance rendering exception, or device-loss matches |
+
+This short run is a blocker probe, not final acceptance. Its schema-v4 ledger
+also exposed two evidence gaps before the exact 300-frame cohort: eye render and
+submit rows were not yet represented in the generic output manifest, and the
+ordinary bootstrap world produced tested candidates but no deterministic
+query-eligible occlusion work. The final validator must synthesize/record the
+strict eye lifecycle at its true frame boundary and launch a synchronous,
+validation-only visible/occluded sentinel cohort. The final 300-frame report and
+retained captures supersede this short-run evidence.

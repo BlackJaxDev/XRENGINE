@@ -308,7 +308,43 @@ public unsafe partial class VulkanRenderer
         Fence fence,
         VulkanSubmissionDiagnosticContext diagnosticContext = default,
         [CallerMemberName] string? caller = null)
+        => SubmitToQueueTrackedCore(
+            queue,
+            ref submitInfo,
+            fence,
+            diagnosticContext,
+            out _,
+            out _,
+            caller);
+
+    private Result SubmitToQueueTrackedWithDisposition(
+        Queue queue,
+        ref SubmitInfo submitInfo,
+        Fence fence,
+        VulkanSubmissionDiagnosticContext diagnosticContext,
+        out bool queueDispatchAttempted,
+        out EOpenXrStrictSpsFaultInjectionStage injectedFailureStage,
+        [CallerMemberName] string? caller = null)
+        => SubmitToQueueTrackedCore(
+            queue,
+            ref submitInfo,
+            fence,
+            diagnosticContext,
+            out queueDispatchAttempted,
+            out injectedFailureStage,
+            caller);
+
+    private Result SubmitToQueueTrackedCore(
+        Queue queue,
+        ref SubmitInfo submitInfo,
+        Fence fence,
+        VulkanSubmissionDiagnosticContext diagnosticContext,
+        out bool queueDispatchAttempted,
+        out EOpenXrStrictSpsFaultInjectionStage injectedFailureStage,
+        string? caller)
     {
+        queueDispatchAttempted = false;
+        injectedFailureStage = EOpenXrStrictSpsFaultInjectionStage.None;
         using VulkanQueueOperationLease queueOperation =
             VulkanQueueOperationLease.TryEnter(_oneTimeSubmitLock, _deviceStateMachine);
         if (!queueOperation.Acquired)
@@ -340,8 +376,23 @@ public unsafe partial class VulkanRenderer
             return Result.ErrorValidationFailedExt;
         }
 
-        if (!ValidateVulkanSubmissionResourceLifetimes(ref submitInfo, in diagnosticContext, out string lifetimeFailure))
+        if (!ValidateVulkanSubmissionResourceLifetimes(
+                ref submitInfo,
+                in diagnosticContext,
+                out string lifetimeFailure,
+                out injectedFailureStage))
         {
+            if (injectedFailureStage != EOpenXrStrictSpsFaultInjectionStage.None)
+            {
+                RecordVulkanQueueOperation(
+                    "submit-injected-before-dispatch",
+                    queue,
+                    Result.ErrorValidationFailedExt,
+                    diagnosticContext.SubmissionSerial,
+                    caller);
+                return Result.ErrorValidationFailedExt;
+            }
+
             RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
                 new FrameOutputWorkTelemetry(SubmissionRejections: 1));
             Debug.VulkanWarning(
@@ -357,25 +408,47 @@ public unsafe partial class VulkanRenderer
             return Result.ErrorValidationFailedExt;
         }
 
-        Result result = UsesSynchronization2
-            ? SubmitToQueueSync2(queue, ref submitInfo, fence)
-            : Api!.QueueSubmit(queue, 1, ref submitInfo, fence);
+        Result result;
+        try
+        {
+            if (diagnosticContext.OpenXrStrictSpsFaultInjectionStage ==
+                EOpenXrStrictSpsFaultInjectionStage.Submit)
+            {
+                injectedFailureStage = EOpenXrStrictSpsFaultInjectionStage.Submit;
+                RecordVulkanQueueOperation(
+                    "submit-injected-before-dispatch",
+                    queue,
+                    Result.ErrorValidationFailedExt,
+                    diagnosticContext.SubmissionSerial,
+                    caller);
+                return Result.ErrorValidationFailedExt;
+            }
 
-        RecordVulkanQueueOperation("submit", queue, result, diagnosticContext.SubmissionSerial, caller);
-        if (result == Result.Success)
-        {
-            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanQueueSubmit();
-            VulkanLifetimeSubmission lifetimeSubmission =
-                RecordSuccessfulVulkanSubmissionLifetime(queue, ref submitInfo, fence, diagnosticContext);
-            PublishRecordedImageLayouts(ref submitInfo, lifetimeSubmission);
-            AdvanceCompletedImageLayouts();
+            queueDispatchAttempted = true;
+            result = UsesSynchronization2
+                ? SubmitToQueueSync2(queue, ref submitInfo, fence)
+                : Api!.QueueSubmit(queue, 1, ref submitInfo, fence);
+
+            RecordVulkanQueueOperation("submit", queue, result, diagnosticContext.SubmissionSerial, caller);
+            if (result == Result.Success)
+            {
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanQueueSubmit();
+                VulkanLifetimeSubmission lifetimeSubmission =
+                    RecordSuccessfulVulkanSubmissionLifetime(queue, ref submitInfo, fence, diagnosticContext);
+                PublishRecordedImageLayouts(ref submitInfo, lifetimeSubmission);
+                AdvanceCompletedImageLayouts();
+            }
+            else if (result == Result.ErrorDeviceLost)
+            {
+                RecordFirstFailingVulkanApi($"vkQueueSubmit:{caller ?? "<unknown>"}:{result}");
+                MarkDeviceLost(
+                    $"QueueSubmit returned ErrorDeviceLost in {caller ?? "<unknown>"} " +
+                    $"(waits={submitInfo.WaitSemaphoreCount}, signals={submitInfo.SignalSemaphoreCount}, commandBuffers={submitInfo.CommandBufferCount}, fence=0x{fence.Handle:X})");
+            }
         }
-        else if (result == Result.ErrorDeviceLost)
+        finally
         {
-            RecordFirstFailingVulkanApi($"vkQueueSubmit:{caller ?? "<unknown>"}:{result}");
-            MarkDeviceLost(
-                $"QueueSubmit returned ErrorDeviceLost in {caller ?? "<unknown>"} " +
-                $"(waits={submitInfo.WaitSemaphoreCount}, signals={submitInfo.SignalSemaphoreCount}, commandBuffers={submitInfo.CommandBufferCount}, fence=0x{fence.Handle:X})");
+            ReleaseVulkanSubmissionResourceLifetimePins(ref submitInfo);
         }
 
         return result;

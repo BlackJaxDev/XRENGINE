@@ -1644,7 +1644,7 @@ public unsafe partial class VulkanRenderer
             multiview = texture switch
             {
                 XRTexture2DArray textureArray => textureArray.OVRMultiViewParameters,
-                XRTexture2DArrayView textureArrayView => textureArrayView.ViewedTexture.OVRMultiViewParameters,
+                XRTexture2DArrayView { NumLayers: > 1u } textureArrayView => textureArrayView.ViewedTexture.OVRMultiViewParameters,
                 _ => null
             };
 

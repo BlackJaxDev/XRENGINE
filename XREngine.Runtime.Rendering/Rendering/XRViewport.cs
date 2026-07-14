@@ -30,6 +30,7 @@ namespace XREngine.Rendering
 
         private static long _nextFrameOutputIdentity;
         private readonly ulong _frameOutputIdentity = unchecked((ulong)Interlocked.Increment(ref _nextFrameOutputIdentity));
+        private ulong _sceneRenderSequenceId;
 
         /// <summary>
         /// The standalone camera instance used for rendering when no CameraComponent is assigned.
@@ -219,6 +220,13 @@ namespace XREngine.Rendering
         /// instead of presenting directly through <see cref="Window"/>.
         /// </summary>
         public bool RendersToExternalSwapchainTarget { get; set; }
+
+        /// <summary>
+        /// Monotonic sequence for full scene renders issued by this viewport. Render commands use
+        /// this output-local counter for temporal model history so an independently scheduled
+        /// desktop, mirror, or XR viewport cannot consume another output's previous transform.
+        /// </summary>
+        internal ulong SceneRenderSequenceId => _sceneRenderSequenceId;
 
         WindowInputSnapshot IRuntimeLocalPlayerViewport.InputSnapshot
             => Window?.LatestWindowInputSnapshot ?? default;
@@ -1382,6 +1390,7 @@ namespace XREngine.Rendering
                     SkinningPrepassDispatcher.Instance.RunVisible(activeCommands);
 
                 LastRenderedTargetFBO = targetFbo;
+                unchecked { _sceneRenderSequenceId++; }
                 _renderPipeline.Render(
                     world.VisualScene,
                     camera,
@@ -1442,8 +1451,14 @@ namespace XREngine.Rendering
             XRFrameBuffer? targetFbo,
             XRCamera? leftCamera,
             XRCamera? rightCamera,
-            IRuntimeRenderWorld? worldOverride = null)
+            IRuntimeRenderWorld? worldOverride = null,
+            FrameOutputPacingDecision? frameOutputPacing = null)
         {
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.RenderStereo");
+
+            if (ShouldSuspendPipelineWork(nameof(RenderStereo)))
+                return;
+
             var world = worldOverride ?? World;
             if (world is null)
             {
@@ -1457,9 +1472,18 @@ namespace XREngine.Rendering
                 return;
             }
 
+            IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
+            FrameOutputPacingDecision pacing = frameOutputPacing ?? FrameOutputPacingDecision.Due(
+                EVrOutputViewKind.LeftEye,
+                hostServices.IsOpenXRActive
+                    ? EFrameOutputKind.OpenXREyeSubmit
+                    : EFrameOutputKind.OpenVRSubmit,
+                State.RenderFrameId);
             bool uiThroughPipeline = ResolveUiThroughPipeline(out var screenSpaceUI);
+            long renderStart = System.Diagnostics.Stopwatch.GetTimestamp();
 
             LastRenderedTargetFBO = targetFbo;
+            unchecked { _sceneRenderSequenceId++; }
             _renderPipeline.Render(
                 world.VisualScene,
                 leftCamera,
@@ -1474,6 +1498,14 @@ namespace XREngine.Rendering
 
             if (!uiThroughPipeline)
                 RenderScreenSpaceUIOverlay(targetFbo);
+
+            RecordFrameOutput(
+                EFrameOutputPhase.Render,
+                pacing,
+                rendered: true,
+                sceneRendered: !Suppress3DSceneRendering,
+                commandCount: GetRenderingCommandCountForTelemetry(),
+                elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - renderStart);
         }
 
         private FrameOutputPacingDecision EvaluateFrameOutputPacing(EFrameOutputKind fallbackOutputKind)
@@ -1635,7 +1667,11 @@ namespace XREngine.Rendering
                 0,
                 cpuMs,
                 gpuMs,
-                request);
+                request,
+                PipelineInstanceId: _renderPipeline.InstanceId,
+                ResourcePlanGeneration: _renderPipeline.ResourceGeneration,
+                CommandGeneration: _renderPipeline.Pipeline?.CommandGeneration ?? 0UL,
+                AntiAliasingMode: (_renderPipeline.EffectiveAntiAliasingModeThisFrame ?? hostServices.DefaultAntiAliasingMode).ToString());
             hostServices.RecordRenderFrameOutput(telemetry);
         }
 

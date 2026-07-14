@@ -1,6 +1,8 @@
 using ImageMagick;
 using System;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text.Json;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands;
@@ -25,17 +27,61 @@ public sealed class VPRC_CaptureFrame : ViewportRenderCommand
     public string? SuccessVariableName { get; set; }
     public int MaxCaptures { get; set; }
     public int SkipFramesBeforeCapture { get; set; }
+    public bool CapturePhase524bTemporalScenarios { get; set; }
+    public bool CompletesPhase524bTemporalScenarioFrame { get; set; }
+    public bool RequireStableImportedTextureStreaming { get; set; }
+    public string? TemporalScenarioPipelineName { get; set; }
+    public string? TemporalScenarioStage { get; set; }
 
     private int _captureCount;
     private int _framesSkipped;
+    private ulong _temporalScenarioCaptureMask;
 
     protected override void Execute()
     {
-        if (MaxCaptures > 0 && _captureCount >= MaxCaptures)
-            return;
-        if (_framesSkipped < SkipFramesBeforeCapture)
+        bool standardCaptureDue = false;
+        if (MaxCaptures <= 0 || _captureCount < MaxCaptures)
         {
-            _framesSkipped++;
+            if (_framesSkipped < SkipFramesBeforeCapture)
+                _framesSkipped++;
+            else
+                standardCaptureDue = true;
+        }
+
+        bool temporalCaptureDue = false;
+        int temporalSampleIndex = -1;
+        Phase524bTemporalSampleDefinition temporalDefinition = default;
+        int temporalSequenceFrame = -1;
+        if (CapturePhase524bTemporalScenarios &&
+            Phase524bTemporalScenarioDiagnostics.TryGetActiveCaptureSample(
+                out temporalSampleIndex,
+                out temporalDefinition))
+        {
+            ulong sampleBit = 1UL << temporalSampleIndex;
+            temporalCaptureDue = (_temporalScenarioCaptureMask & sampleBit) == 0UL;
+            temporalSequenceFrame = Phase524bTemporalScenarioDiagnostics.SequenceFrame;
+        }
+
+        // The one-shot stage captures validate the settled rendered image, not
+        // transient preview mips. Temporal scenario captures must keep advancing
+        // on consecutive strict-SPS frames, however, or a paused moving pose
+        // becomes a false zero-velocity sample. Gate only the standard capture
+        // and latch readiness for the remainder of this validation run.
+        if (standardCaptureDue &&
+            RequireStableImportedTextureStreaming &&
+            !Phase524bCaptureReadinessDiagnostics.IsReady(out string readinessReason))
+        {
+            standardCaptureDue = false;
+            Debug.RenderingEvery(
+                "Phase524b.CaptureReadiness.Waiting",
+                TimeSpan.FromSeconds(2),
+                "[Phase524bCapture] Waiting for stable imported textures before one-shot capture: {0}",
+                readinessReason);
+        }
+
+        if (!standardCaptureDue && !temporalCaptureDue)
+        {
+            CompleteTemporalScenarioFrameIfNeeded();
             return;
         }
 
@@ -58,30 +104,54 @@ public sealed class VPRC_CaptureFrame : ViewportRenderCommand
                 destinationBuffer.PushData();
         }
 
-        bool wroteFile = false;
-        if (!string.IsNullOrWhiteSpace(OutputFilePath))
+        bool wroteStandardFile = false;
+        if (standardCaptureDue && !string.IsNullOrWhiteSpace(OutputFilePath))
         {
-            string filePath = Path.GetFullPath(OutputFilePath!);
-            string? directory = Path.GetDirectoryName(filePath);
-            if (!string.IsNullOrWhiteSpace(directory))
-                Directory.CreateDirectory(directory);
-
-            using MagickImage image = CreateImage(rgbaFloats, width, height);
-            if (FlipVertically)
-                image.Flip();
-
-            image.Write(filePath);
-            wroteFile = true;
+            RenderedOutputCaptureMetrics metrics = StereoRenderedOutputMetrics.MeasureCapture(
+                rgbaFloats,
+                width,
+                height);
+            WriteCapture(OutputFilePath!, rgbaFloats, width, height, metrics);
+            wroteStandardFile = true;
         }
 
-        if (!string.IsNullOrWhiteSpace(WidthVariableName))
-            instance.Variables.Set(WidthVariableName!, width);
-        if (!string.IsNullOrWhiteSpace(HeightVariableName))
-            instance.Variables.Set(HeightVariableName!, height);
-        if (!string.IsNullOrWhiteSpace(SuccessVariableName))
-            instance.Variables.Set(SuccessVariableName!, wroteFile || !string.IsNullOrWhiteSpace(DestinationBufferName));
+        if (temporalCaptureDue)
+        {
+            if (string.IsNullOrWhiteSpace(TemporalScenarioPipelineName) ||
+                string.IsNullOrWhiteSpace(TemporalScenarioStage))
+            {
+                throw new InvalidOperationException(
+                    "Phase 5.2.4b temporal capture requires pipeline and stage names.");
+            }
 
-        _captureCount++;
+            string temporalPath = DefaultPipelineDiagnosticCapture.ResolveTemporalScenarioOutputPath(
+                TemporalScenarioPipelineName!,
+                temporalDefinition.Sample,
+                TemporalScenarioStage!,
+                SourceLayerIndex);
+            RenderedOutputCaptureMetrics temporalMetrics = StereoRenderedOutputMetrics.MeasureCapture(
+                rgbaFloats,
+                width,
+                height);
+            temporalMetrics.TemporalScenario = temporalDefinition.Scenario.ToString();
+            temporalMetrics.TemporalSample = temporalDefinition.Sample.ToString();
+            temporalMetrics.VelocityOracle = temporalDefinition.VelocityOracle.ToString();
+            temporalMetrics.TemporalSequenceFrame = temporalSequenceFrame;
+            temporalMetrics.RenderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            WriteCapture(temporalPath, rgbaFloats, width, height, temporalMetrics);
+            _temporalScenarioCaptureMask |= 1UL << temporalSampleIndex;
+        }
+
+        if (standardCaptureDue && !string.IsNullOrWhiteSpace(WidthVariableName))
+            instance.Variables.Set(WidthVariableName!, width);
+        if (standardCaptureDue && !string.IsNullOrWhiteSpace(HeightVariableName))
+            instance.Variables.Set(HeightVariableName!, height);
+        if (standardCaptureDue && !string.IsNullOrWhiteSpace(SuccessVariableName))
+            instance.Variables.Set(SuccessVariableName!, wroteStandardFile || !string.IsNullOrWhiteSpace(DestinationBufferName));
+
+        if (standardCaptureDue)
+            _captureCount++;
+        CompleteTemporalScenarioFrameIfNeeded();
     }
 
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)
@@ -109,6 +179,41 @@ public sealed class VPRC_CaptureFrame : ViewportRenderCommand
             ?? SourceFBOName
             ?? ActivePipelineInstance.RenderState.OutputFBO?.Name
             ?? "Output";
+
+    private void CompleteTemporalScenarioFrameIfNeeded()
+    {
+        if (CompletesPhase524bTemporalScenarioFrame)
+        {
+            Phase524bTemporalScenarioDiagnostics.CompleteStrictSpsFrame(
+                RuntimeEngine.Rendering.State.RenderFrameId);
+        }
+    }
+
+    private void WriteCapture(
+        string outputFilePath,
+        float[] rgbaFloats,
+        int width,
+        int height,
+        RenderedOutputCaptureMetrics metrics)
+    {
+        string filePath = Path.GetFullPath(outputFilePath);
+        string? directory = Path.GetDirectoryName(filePath);
+        if (!string.IsNullOrWhiteSpace(directory))
+            Directory.CreateDirectory(directory);
+
+        using MagickImage image = CreateImage(rgbaFloats, width, height);
+        if (FlipVertically)
+            image.Flip();
+
+        image.Write(filePath);
+        using (FileStream captureStream = File.OpenRead(filePath))
+            metrics.CaptureSha256 = Convert.ToHexString(SHA256.HashData(captureStream));
+        metrics.CapturePath = filePath;
+        metrics.CapturedAtUtc = DateTimeOffset.UtcNow;
+        File.WriteAllText(
+            filePath + ".metrics.json",
+            JsonSerializer.Serialize(metrics, new JsonSerializerOptions { WriteIndented = true }));
+    }
 
     private static MagickImage CreateImage(float[] rgbaFloats, int width, int height)
     {

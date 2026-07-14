@@ -95,9 +95,11 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
                 : default;
             using var overrideTicket = rs.PushOverrideMaterial(material);
-            // Rasterize the motion-vector pass against the same unjittered projection
-            // used for the reprojection uniforms so coverage and depth testing line up.
-            using var unjitteredProjectionTicket = rs.PushUnjitteredProjection();
+            // Keep raster coverage on the active jittered projection so it exactly
+            // matches the depth attachment produced earlier in this frame. The
+            // fragment shader still encodes motion from the unjittered current and
+            // previous matrices, so jitter is accounted for only by the temporal
+            // resolve and never baked into the velocity field.
             // Request shader pipeline mode when enabled; combined mode builds an override-specific program.
             using var pipelineTicket = rs.PushForceShaderPipelines();
             // Motion vectors require the engine-generated mesh vertex varyings (notably FragPosLocal).

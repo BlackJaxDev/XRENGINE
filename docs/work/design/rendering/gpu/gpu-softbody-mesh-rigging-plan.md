@@ -104,7 +104,7 @@ Relevant code:
 
 - [XRENGINE/Scene/Physics/Physx/PhysxTetrahedronMesh.cs](../../../XRENGINE/Scene/Physics/Physx/PhysxTetrahedronMesh.cs)
 - [XRENGINE/Scene/Physics/Physx/PhysxScene.cs](../../../XRENGINE/Scene/Physics/Physx/PhysxScene.cs)
-- [XRENGINE/Scene/Physics/Physx/Geometry/IPhysicsGeometry.cs](../../../XRENGINE/Scene/Physics/Physx/Geometry/IPhysicsGeometry.cs)
+- [XRENGINE/Scene/Physics/Physx/Geometry/PhysxNativeGeometryExtensions.cs](../../../../../XRENGINE/Scene/Physics/Physx/Geometry/PhysxNativeGeometryExtensions.cs)
 
 The repository exposes tetrahedron mesh access and low-level PhysX softbody copy/apply hooks, but there is no discovered `SoftBodyComponent` or engine-facing authoring/runtime wrapper on top of those bindings.
 
@@ -112,7 +112,7 @@ This means the repo has low-level hooks that could become a future backend, but 
 
 #### 5. Jolt has no softbody path in the current repo binding
 
-Jolt is present as a rigid-body and character-controller backend. The geometry conversion layer in [XRENGINE/Scene/Physics/Physx/Geometry/IPhysicsGeometry.cs](../../../XRENGINE/Scene/Physics/Physx/Geometry/IPhysicsGeometry.cs) falls back to dummy shapes for both `TetrahedronMesh` and `ParticleSystem` geometry types when converting to Jolt, confirming that no softbody or deformable-body API is available through the current Jolt integration.
+Jolt is present as a rigid-body and character-controller backend. PhysX tetrahedron-mesh and particle-system geometry now live only behind explicitly named [PhysX native geometry extensions](../../../../../XRENGINE/Scene/Physics/Physx/Geometry/PhysxNativeGeometryExtensions.cs); the portable Jolt geometry adapter has no tetrahedron, particle-system, softbody, or deformable-body contract.
 
 ### Existing code that is especially relevant to the requested direction
 

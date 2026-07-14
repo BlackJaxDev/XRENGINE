@@ -228,6 +228,7 @@ namespace XREngine.Rendering.Commands
 
                 _renderingPasses = [];
                 _renderingPassCommandCounts = [];
+                _renderingPassCommandSetSignatures.Clear();
                 _renderingCommandCount = 0;
                 _gpuPasses = [];
 
@@ -364,6 +365,7 @@ namespace XREngine.Rendering.Commands
         private Dictionary<int, ICollection<RenderCommand>> _updatingPasses = [];
         private Dictionary<int, ICollection<RenderCommand>> _renderingPasses = [];
         private Dictionary<int, int> _renderingPassCommandCounts = [];
+        private readonly Dictionary<int, ulong> _renderingPassCommandSetSignatures = [];
         private int _renderingCommandCount = 0;
         private Dictionary<int, GPURenderPassCollection> _gpuPasses = [];
         private Dictionary<int, RenderPassMetadata> _passMetadata = [];
@@ -674,6 +676,9 @@ namespace XREngine.Rendering.Commands
                     renderPass,
                     camera!,
                     (uint)list.Count,
+                    _renderingPassCommandSetSignatures.TryGetValue(renderPass, out ulong commandSetSignature)
+                        ? commandSetSignature
+                        : ComputeOcclusionCommandSetSignature(list),
                     occlusionOwnership);
                 if (!occlusionOwnership.IsValid)
                 {
@@ -685,6 +690,20 @@ namespace XREngine.Rendering.Commands
                         renderPass);
                 }
                 XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuPassBegin(list.Count);
+
+                if (!XREngine.Rendering.Occlusion.CpuOcclusionProxyRenderer.TryPrepare(out string proxyPrepareReason))
+                {
+                    s_cpuOcclusionCoordinator.ForceVisibleForPass(
+                        renderPass,
+                        camera,
+                        ECpuOcclusionForceVisibleReason.ResourceGenerationChanged,
+                        occlusionOwnership);
+                    Debug.RenderingWarningEvery(
+                        "CpuOcclusion.ProxyPreparePending",
+                        TimeSpan.FromSeconds(2),
+                        "CPU occlusion proxy preparation is pending ({0}); the pass is fail-visible for this frame.",
+                        proxyPrepareReason);
+                }
             }
             else
             {
@@ -731,6 +750,48 @@ namespace XREngine.Rendering.Commands
                     }
                 }
 
+                ECpuOcclusionValidationRole validationRole = ECpuOcclusionValidationRole.None;
+                OcclusionViewKey validationViewKey = default;
+                bool recordValidationEvidence = false;
+                if (camera is not null &&
+                    !suppressOcclusion &&
+                    RenderPassIsOcclusionTestable(renderPass) &&
+                    cmd is IRenderCommandMesh validationMesh &&
+                    !CpuSoftwareOcclusionCuller.IsCpuOcclusionExcluded(validationMesh))
+                {
+                    validationRole = CpuOcclusionValidationEvidence.ResolveRole(validationMesh);
+                    validationViewKey = CpuRenderOcclusionCoordinator.CreatePassKey(
+                        renderPass,
+                        camera,
+                        occlusionOwnership);
+                    bool validationScopeApplicable =
+                        CpuOcclusionValidationEvidence.IsApplicableToScope(
+                            validationMesh,
+                            validationViewKey.Scope);
+                    if (!CpuOcclusionValidationEvidence.ShouldRenderInScope(
+                        validationRole,
+                        validationScopeApplicable))
+                    {
+                        // The desktop and SPS motion/top-edge sentinels are
+                        // camera-relative output oracles. Rendering one through
+                        // the other camera makes cross-run parity depend on the
+                        // unrelated camera basis, so exclude it from that output
+                        // before either the normal draw or occlusion query path.
+                        cpuCmdIndex++;
+                        continue;
+                    }
+
+                    if (validationScopeApplicable)
+                    {
+                        CpuOcclusionValidationEvidence.RecordCandidate(
+                            validationViewKey,
+                            cmd.StableQueryKey,
+                            validationRole,
+                            appliedOcclusionMode);
+                        recordValidationEvidence = true;
+                    }
+                }
+
                 if (useCpuQueryOcclusion && cmd is IRenderCommandMesh occlMesh)
                 {
                     // Explicit per-material opt-out (skybox, fullscreen overlays, gizmos
@@ -738,6 +799,15 @@ namespace XREngine.Rendering.Commands
                     if (CpuSoftwareOcclusionCuller.IsCpuOcclusionExcluded(occlMesh))
                     {
                         LogSponzaCpuDiag("draw-cpu-query-excluded", renderPass, cmd, camera, "cpu-query-occlusion-excluded");
+                        if (recordValidationEvidence)
+                        {
+                            CpuOcclusionValidationEvidence.RecordRendered(
+                                validationViewKey,
+                                cmd.StableQueryKey,
+                                validationRole,
+                                appliedOcclusionMode,
+                                ECpuOcclusionDecision.Visible);
+                        }
                         RenderWithGpuScope(cmd, renderPass);
                         cpuCmdIndex++;
                         continue;
@@ -747,12 +817,32 @@ namespace XREngine.Rendering.Commands
                     // cpuCmdIndex shifts on every list mutation; StableQueryKey is assigned
                     // at command construction and never changes.
                     uint queryKey = cmd.StableQueryKey;
-                    var decision = s_cpuOcclusionCoordinator.ShouldRender(
-                        renderPass,
-                        camera,
-                        queryKey,
-                        out CpuOcclusionProbeRequest probeRequest,
-                        occlusionOwnership);
+                    // Scope-specific sentinels can still enter another output's
+                    // render list because they are ordinary scene meshes. Keep
+                    // evidence scoped to its owning output, but never let an
+                    // output where the sentinel is visible query-cull it.
+                    bool validationKnownVisible =
+                        CpuOcclusionValidationEvidence.IsKnownVisibleRole(validationRole);
+                    CpuOcclusionProbeRequest probeRequest;
+                    ECpuOcclusionDecision decision;
+                    if (validationKnownVisible)
+                    {
+                        probeRequest = s_cpuOcclusionCoordinator.ForceVisibleForValidation(
+                            renderPass,
+                            camera,
+                            queryKey,
+                            occlusionOwnership);
+                        decision = ECpuOcclusionDecision.Visible;
+                    }
+                    else
+                    {
+                        decision = s_cpuOcclusionCoordinator.ShouldRender(
+                            renderPass,
+                            camera,
+                            queryKey,
+                            out probeRequest,
+                            occlusionOwnership);
+                    }
                     bool needsHardwareQuery = probeRequest.Requested;
 
                     if (decision == XREngine.Rendering.Occlusion.ECpuOcclusionDecision.Skip)
@@ -760,11 +850,27 @@ namespace XREngine.Rendering.Commands
                         if (ShouldLogSponzaCpuDiag(cmd))
                             LogSponzaCpuDiag("skip-cpu-query", renderPass, cmd, camera, $"queryKey={queryKey}");
                         XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuCulledOne();
+                        if (recordValidationEvidence)
+                        {
+                            uint proofCoverageMask = s_cpuOcclusionCoordinator.GetOccludedProofCoverageMask(
+                                renderPass,
+                                camera,
+                                queryKey,
+                                occlusionOwnership);
+                            CpuOcclusionValidationEvidence.RecordCulled(
+                                validationViewKey,
+                                queryKey,
+                                validationRole,
+                                appliedOcclusionMode,
+                                proofCoverageMask,
+                                decision);
+                        }
                         cpuCmdIndex++;
                         continue;
                     }
 
-                    bool cpuSocCull = decision == XREngine.Rendering.Occlusion.ECpuOcclusionDecision.Visible &&
+                    bool cpuSocCull =
+                        decision == XREngine.Rendering.Occlusion.ECpuOcclusionDecision.Visible &&
                         needsHardwareQuery &&
                         useCpuSocOcclusion &&
                         cmd.CullingVolume is AABB cpuSocBounds &&
@@ -783,6 +889,21 @@ namespace XREngine.Rendering.Commands
                             if (ShouldLogSponzaCpuDiag(cmd))
                                 LogSponzaCpuDiag("skip-cpu-query-cached", renderPass, cmd, camera, $"queryKey={queryKey}, cpuSocCull={cpuSocCull}");
                             XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuCulledOne();
+                            if (recordValidationEvidence)
+                            {
+                                uint proofCoverageMask = s_cpuOcclusionCoordinator.GetOccludedProofCoverageMask(
+                                    renderPass,
+                                    camera,
+                                    queryKey,
+                                    occlusionOwnership);
+                                CpuOcclusionValidationEvidence.RecordCulled(
+                                    validationViewKey,
+                                    queryKey,
+                                    validationRole,
+                                    appliedOcclusionMode,
+                                    proofCoverageMask,
+                                    decision);
+                            }
                             cpuCmdIndex++;
                             continue;
                         }
@@ -794,6 +915,15 @@ namespace XREngine.Rendering.Commands
                                 s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey, ECpuOcclusionForceVisibleReason.NearPlaneUnsafe, occlusionOwnership);
                                 if (ShouldLogSponzaCpuDiag(cmd))
                                     LogSponzaCpuDiag("draw-cpu-query-near-plane", renderPass, cmd, camera, $"queryKey={queryKey}");
+                                if (recordValidationEvidence)
+                                {
+                                    CpuOcclusionValidationEvidence.RecordRendered(
+                                        validationViewKey,
+                                        queryKey,
+                                        validationRole,
+                                        appliedOcclusionMode,
+                                        ECpuOcclusionDecision.Visible);
+                                }
                                 RenderWithGpuScope(cmd, renderPass);
                                 cpuCmdIndex++;
                                 continue;
@@ -804,6 +934,21 @@ namespace XREngine.Rendering.Commands
                             // partial depth that would exist at this command's iteration
                             // point. This eliminates render-order false positives.
                             XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuCulledOne();
+                            if (recordValidationEvidence)
+                            {
+                                uint proofCoverageMask = s_cpuOcclusionCoordinator.GetOccludedProofCoverageMask(
+                                    renderPass,
+                                    camera,
+                                    queryKey,
+                                    occlusionOwnership);
+                                CpuOcclusionValidationEvidence.RecordCulled(
+                                    validationViewKey,
+                                    queryKey,
+                                    validationRole,
+                                    appliedOcclusionMode,
+                                    proofCoverageMask,
+                                    decision);
+                            }
                             if (ShouldLogSponzaCpuDiag(cmd))
                                 LogSponzaCpuDiag("skip-cpu-query-probe", renderPass, cmd, camera, $"queryKey={queryKey}, cpuSocCull={cpuSocCull}");
                             probeCandidates.Add(CreateCpuOcclusionProbeCandidate(queryKey, probeBounds.Value, probeRequest, camera!));
@@ -835,6 +980,15 @@ namespace XREngine.Rendering.Commands
 
                         if (ShouldLogSponzaCpuDiag(cmd))
                             LogSponzaCpuDiag("draw-cpu-query-visible", renderPass, cmd, camera, $"queryKey={queryKey}, needsHardwareQuery=True");
+                        if (recordValidationEvidence)
+                        {
+                            CpuOcclusionValidationEvidence.RecordRendered(
+                                validationViewKey,
+                                queryKey,
+                                validationRole,
+                                appliedOcclusionMode,
+                                decision);
+                        }
                         RenderWithGpuScope(cmd, renderPass);
                     }
                     else
@@ -848,6 +1002,15 @@ namespace XREngine.Rendering.Commands
 
                         if (ShouldLogSponzaCpuDiag(cmd))
                             LogSponzaCpuDiag("draw-cpu-query-direct", renderPass, cmd, camera, $"queryKey={queryKey}, needsHardwareQuery={needsHardwareQuery}");
+                        if (recordValidationEvidence)
+                        {
+                            CpuOcclusionValidationEvidence.RecordRendered(
+                                validationViewKey,
+                                queryKey,
+                                validationRole,
+                                appliedOcclusionMode,
+                                decision);
+                        }
                         RenderWithGpuScope(cmd, renderPass);
                     }
 
@@ -863,6 +1026,16 @@ namespace XREngine.Rendering.Commands
                     if (ShouldLogSponzaCpuDiag(cmd))
                         LogSponzaCpuDiag("skip-cpu-soc", renderPass, cmd, camera, $"queryKey={cmd.StableQueryKey}");
                     XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuCulledOne();
+                    if (recordValidationEvidence)
+                    {
+                        CpuOcclusionValidationEvidence.RecordCulled(
+                            validationViewKey,
+                            cmd.StableQueryKey,
+                            validationRole,
+                            appliedOcclusionMode,
+                            proofCoverageMask: 0u,
+                            decision: ECpuOcclusionDecision.Skip);
+                    }
                     cpuCmdIndex++;
                     continue;
                 }
@@ -870,6 +1043,15 @@ namespace XREngine.Rendering.Commands
                 cpuCmdIndex++;
 
                 LogSponzaCpuDiag("draw-cpu", renderPass, cmd, camera, "occlusion=Disabled");
+                if (recordValidationEvidence)
+                {
+                    CpuOcclusionValidationEvidence.RecordRendered(
+                        validationViewKey,
+                        cmd.StableQueryKey,
+                        validationRole,
+                        appliedOcclusionMode,
+                        ECpuOcclusionDecision.Visible);
+                }
                 RenderWithGpuScope(cmd, renderPass);
             }
 
@@ -886,6 +1068,26 @@ namespace XREngine.Rendering.Commands
 
             if (deferredProbes is { Count: > 0 })
             {
+                if (!XREngine.Rendering.Occlusion.CpuOcclusionProxyRenderer.TryPrepare(out string proxyPrepareReason))
+                {
+                    // An occlusion optimization may be unavailable while its GPU
+                    // resources are generated, but it must never turn that temporary
+                    // state into an empty query and then suppress visible geometry.
+                    s_cpuOcclusionCoordinator.ForceVisibleForPass(
+                        renderPass,
+                        camera,
+                        ECpuOcclusionForceVisibleReason.ResourceGenerationChanged,
+                        occlusionOwnership);
+                    Debug.RenderingWarningEvery(
+                        "CpuOcclusion.ProxyPreparePending",
+                        TimeSpan.FromSeconds(2),
+                        "CPU occlusion proxy preparation is pending ({0}); queries were skipped fail-visible for this frame.",
+                        proxyPrepareReason);
+                    deferredProbes.Clear();
+                    probeCandidates?.Clear();
+                    return;
+                }
+
                 foreach (var probe in deferredProbes)
                 {
                     if (probe.IsHierarchyGroup)
@@ -1665,16 +1867,44 @@ namespace XREngine.Rendering.Commands
         private void PublishRenderingCommandCountsNoLock()
         {
             Dictionary<int, int> counts = new(_renderingPasses.Count);
+            _renderingPassCommandSetSignatures.Clear();
             int total = 0;
             foreach ((int passIndex, ICollection<RenderCommand> pass) in _renderingPasses)
             {
                 int count = pass.Count;
                 counts[passIndex] = count;
+                _renderingPassCommandSetSignatures[passIndex] = ComputeOcclusionCommandSetSignature(pass);
                 total += count;
             }
 
             Volatile.Write(ref _renderingPassCommandCounts, counts);
             Volatile.Write(ref _renderingCommandCount, total);
+        }
+
+        private static ulong ComputeOcclusionCommandSetSignature(ICollection<RenderCommand> commands)
+        {
+            // Membership is what invalidates keyed query history. Sort order is
+            // intentionally ignored because normal camera motion can reorder an
+            // otherwise identical set without changing StableQueryKey ownership.
+            ulong xor = 0UL;
+            ulong sum = 0x9E3779B97F4A7C15UL;
+            foreach (RenderCommand command in commands)
+            {
+                ulong mixed = MixOcclusionCommandKey(command.StableQueryKey);
+                xor ^= mixed;
+                sum += mixed;
+            }
+
+            return MixOcclusionCommandKey(xor ^ BitOperations.RotateLeft(sum, 23) ^ (uint)commands.Count);
+        }
+
+        private static ulong MixOcclusionCommandKey(ulong value)
+        {
+            value ^= value >> 30;
+            value *= 0xBF58476D1CE4E5B9UL;
+            value ^= value >> 27;
+            value *= 0x94D049BB133111EBUL;
+            return value ^ (value >> 31);
         }
 
         public IEnumerable<IRenderCommandMesh> EnumerateRenderingMeshCommands()

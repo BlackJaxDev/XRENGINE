@@ -515,14 +515,18 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     effectiveAntiAliasingCamera,
                     effectiveAntiAliasingMode);
 
-                // Avoid redundant resets: only touch the viewport when the requested scale changes.
+                // Avoid redundant resets, while still reapplying the scale after a display resize.
                 if (requestedScale.HasValue)
                 {
                     float scale = Math.Clamp(requestedScale.Value, 0.25f, 1.25f);
-                    if (_appliedInternalResolutionScale != scale)
+                    int expectedWidth = Math.Max(1, (int)(scale * viewport.Width));
+                    int expectedHeight = Math.Max(1, (int)(scale * viewport.Height));
+                    if (_appliedInternalResolutionScale != scale ||
+                        viewport.InternalWidth != expectedWidth ||
+                        viewport.InternalHeight != expectedHeight)
                     {
                         _appliedInternalResolutionScale = scale;
-                        viewport.SetInternalResolutionPercentage(scale, scale);
+                        viewport.SetInternalResolution(expectedWidth, expectedHeight, correctAspect: false);
                     }
                 }
                 else if (_appliedInternalResolutionScale.HasValue)
@@ -790,9 +794,6 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         int resolvedDisplayHeight = Math.Max(1, displayHeight);
         int resolvedInternalWidth = Math.Max(1, internalWidth > 0 ? internalWidth : resolvedDisplayWidth);
         int resolvedInternalHeight = Math.Max(1, internalHeight > 0 ? internalHeight : resolvedDisplayHeight);
-
-        if (viewport?.RendersToExternalSwapchainTarget == true)
-            return (resolvedInternalWidth, resolvedInternalHeight, resolvedInternalWidth, resolvedInternalHeight);
 
         return (
             resolvedDisplayWidth,

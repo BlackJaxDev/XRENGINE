@@ -136,7 +136,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            if (ActivePipelineInstance.RenderState.Scene is null)
+            XRViewport? viewport = ActivePipelineInstance.RenderState.WindowViewport
+                ?? ActivePipelineInstance.LastWindowViewport;
+            IRuntimeRenderWorld? world = viewport?.World;
+            if (ActivePipelineInstance.RenderState.Scene is null && world is null)
                 return;
 
             int passIndex = ResolvePassIndex(nameof(VPRC_LightCombinePass), out bool hasRenderGraphMetadata);
@@ -149,9 +152,6 @@ namespace XREngine.Rendering.Pipelines.Commands
                     nameof(VPRC_LightCombinePass));
                 return;
             }
-
-            var viewport = ActivePipelineInstance.RenderState.WindowViewport;
-            var world = viewport?.World;
 
             var albOpacTex = ActivePipelineInstance.GetTexture<XRTexture>(AlbedoOpacityTexture);
             var normTex = ActivePipelineInstance.GetTexture<XRTexture>(NormalTexture);
@@ -422,7 +422,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 ShadowMapFormatSelection directionalShadowFormat = directionalLight.ResolveShadowMapFormat(preferredStorageFormat: null);
                 XRCamera? activeRenderingCamera = ResolveActiveRenderingCamera();
-                XRTexture2DArray? directionalCascadeReceiverTexture = directionalLight.GetCascadedShadowReceiverTexture(activeRenderingCamera);
+                XRTexture2DArray? directionalCascadeReceiverTexture = directionalLight.GetSampleableCascadedShadowReceiverTexture(activeRenderingCamera);
                 int activeCascadeCount = directionalLight.GetActiveCascadeCount(activeRenderingCamera);
                 useDirectionalShadowAtlas = directionalLight.UsesDirectionalShadowAtlasForCurrentEncoding && directionalLight.CastsShadows;
                 bool viewportPrefersCascades = ActiveViewportPrefersCascadedDirectionalShadows(activeRenderingCamera);
@@ -487,8 +487,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (_currentLightComponent is DirectionalLightComponent selectedDirectionalLight)
             {
                 selectedShadowMap = selectedDirectionalLight.PrimaryShadowReceiverTexture;
-                if (selectedShadowMap is not null)
-                    materialProgram.Sampler("ShadowMap", selectedShadowMap, 4);
             }
             else if (_currentLightComponent.CastsShadows && _currentLightComponent.ShadowMap?.Material?.Textures is { Count: > 0 } shadowTextures)
             {
@@ -503,9 +501,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                     }
                 }
                 selectedShadowMap ??= shadowTextures[0];
-                if (selectedShadowMap != null)
-                    materialProgram.Sampler("ShadowMap", selectedShadowMap, 4);
             }
+
+            if (!IsTextureReadyForShadowSampling(selectedShadowMap))
+                selectedShadowMap = null;
 
             bool hasShadowMap = _currentLightComponent.CastsShadows && selectedShadowMap is not null;
             bool directionalHasShadowMap = directionalAtlasUsable ||
@@ -604,7 +603,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private bool ActiveViewportPrefersCascadedDirectionalShadows(XRCamera? renderingCamera)
         {
-            XRViewport? viewport = ActivePipelineInstance.RenderState.WindowViewport;
+            XRViewport? viewport = ActivePipelineInstance.RenderState.WindowViewport
+                ?? ActivePipelineInstance.LastWindowViewport;
             if (viewport is null)
                 return false;
 
@@ -790,7 +790,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (lightWorldLights is not null)
                 return lightWorldLights;
 
-            return ActivePipelineInstance.RenderState.WindowViewport?.World?.Lights;
+            return (ActivePipelineInstance.RenderState.WindowViewport
+                ?? ActivePipelineInstance.LastWindowViewport)?.World?.Lights;
         }
 
         private static bool BindDirectionalAtlasShadows(
@@ -834,6 +835,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     ShadowMapFormatSelection shadowFormat = directionalLight.ResolveShadowMapFormat(preferredStorageFormat: null);
                     hasUsableAtlasState =
                         lights!.ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, shadowFormat.Encoding, 0, out atlasTexture) &&
+                        IsTextureReadyForShadowSampling(atlasTexture) &&
                         AreRequiredDirectionalAtlasSlotsUsable(
                             directionalShadowAtlasPacked0,
                             requiredAtlasSlotCount,
@@ -856,6 +858,15 @@ namespace XREngine.Rendering.Pipelines.Commands
             materialProgram.Uniform("DirectionalShadowAtlasUvScaleBias", directionalShadowAtlasUvScaleBias);
             materialProgram.Uniform("DirectionalShadowAtlasDepthParams", directionalShadowAtlasDepthParams);
             return hasUsableAtlasState;
+        }
+
+        private static bool IsTextureReadyForShadowSampling(XRTexture? texture)
+        {
+            if (texture is null)
+                return false;
+
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            return renderer is null || renderer.IsTextureReadyForShaderSampling(texture);
         }
 
         private static bool AreRequiredDirectionalAtlasSlotsUsable(IVector4[] packed0, int count)

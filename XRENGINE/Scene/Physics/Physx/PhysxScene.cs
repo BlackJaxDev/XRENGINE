@@ -20,6 +20,11 @@ namespace XREngine.Rendering.Physics.Physx
 {
     public unsafe partial class PhysxScene : AbstractPhysicsScene
     {
+        private IPhysicsBackendService? _backendService;
+
+        public override IPhysicsBackendService BackendService
+            => _backendService ??= new PhysxBackendService(this);
+
         private static PxFoundation* _foundationPtr;
         public static PxFoundation* FoundationPtr => _foundationPtr;
 
@@ -152,6 +157,8 @@ namespace XREngine.Rendering.Physics.Physx
                 var actor = PhysxActor.Get(ptrs[i]);
                 if (actor is not null && !actor.IsReleased)
                 {
+                    if (actor is PhysxRigidActor rigidActor)
+                        rigidActor.ReleaseOwnedShapeReferences();
                     actor.IsReleased = true;
                     actor.RemoveFromCaches();
                     marked++;
@@ -1629,7 +1636,7 @@ namespace XREngine.Rendering.Physics.Physx
             PxVec3 d = unitDir;
             var t = MakeTransform(pose.position, pose.rotation);
             PxQueryHit hit_;
-            using var structObj = geometry.GetPhysxStruct();
+            using var structObj = geometry.CreatePhysxGeometryData();
             bool hasHit = _scene->QueryExtSweepAny(
                 structObj.Address.As<PxGeometry>(),
                 &t,
@@ -1665,7 +1672,7 @@ namespace XREngine.Rendering.Physics.Physx
             PxVec3 d = unitDir;
             var t = MakeTransform(pose.position, pose.rotation);
             PxSweepHit hit_;
-            using var structObj = geometry.GetPhysxStruct();
+            using var structObj = geometry.CreatePhysxGeometryData();
             bool hasHit = _scene->QueryExtSweepSingle(
                 structObj.Address.As<PxGeometry>(),
                 &t,
@@ -1705,7 +1712,7 @@ namespace XREngine.Rendering.Physics.Physx
             var t = MakeTransform(pose.position, pose.rotation);
             bool blockingHit_;
             PxSweepHit* hitBuffer_ = stackalloc PxSweepHit[maxHitCapacity];
-            using var structObj = geometry.GetPhysxStruct();
+            using var structObj = geometry.CreatePhysxGeometryData();
             int hitCount = _scene->QueryExtSweepMultiple(
                 structObj.Address.As<PxGeometry>(),
                 &t,
@@ -1739,7 +1746,7 @@ namespace XREngine.Rendering.Physics.Physx
             var filterData = filterMask != null ? PxQueryFilterData_new_1(filterMask, queryFlags) : PxQueryFilterData_new_2(queryFlags);
             var t = MakeTransform(pose.position, pose.rotation);
             PxOverlapHit* hitBuffer = stackalloc PxOverlapHit[maxHitCapacity];
-            using var structObj = geometry.GetPhysxStruct();
+            using var structObj = geometry.CreatePhysxGeometryData();
             int hitCount = _scene->QueryExtOverlapMultiple(
                 structObj.Address.As<PxGeometry>(),
                 &t,
@@ -1764,7 +1771,7 @@ namespace XREngine.Rendering.Physics.Physx
             var filterData = filterMask != null ? PxQueryFilterData_new_1(filterMask, queryFlags) : PxQueryFilterData_new_2(queryFlags);
             var t = MakeTransform(pose.position, pose.rotation);
             PxOverlapHit hit_;
-            using var structObj = geometry.GetPhysxStruct();
+            using var structObj = geometry.CreatePhysxGeometryData();
             bool hasHit = _scene->QueryExtOverlapAny(
                 structObj.Address.As<PxGeometry>(),
                 &t,
@@ -1910,6 +1917,39 @@ namespace XREngine.Rendering.Physics.Physx
                 queryFlags = physxFilter.Flags;
                 sweepInflation = physxFilter.SweepInflation;
             }
+            else if (filter is not null)
+            {
+                hitFlags = ToPhysxHitFlags(filter.HitDetail);
+                queryFlags = ToPhysxQueryFlags(filter.ActorTypes);
+                sweepInflation = filter.SweepInflation;
+            }
+        }
+
+        private static PxQueryFlags ToPhysxQueryFlags(PhysicsQueryActorTypes actorTypes)
+        {
+            PxQueryFlags flags = 0;
+            if (actorTypes.HasFlag(PhysicsQueryActorTypes.Static))
+                flags |= PxQueryFlags.Static;
+            if (actorTypes.HasFlag(PhysicsQueryActorTypes.Dynamic))
+                flags |= PxQueryFlags.Dynamic;
+            return flags == 0 ? PxQueryFlags.Static | PxQueryFlags.Dynamic : flags;
+        }
+
+        private static PxHitFlags ToPhysxHitFlags(PhysicsQueryHitDetail hitDetail)
+        {
+            if (hitDetail == PhysicsQueryHitDetail.Default)
+                return PxHitFlags.Default;
+
+            PxHitFlags flags = 0;
+            if (hitDetail.HasFlag(PhysicsQueryHitDetail.Position))
+                flags |= PxHitFlags.Position;
+            if (hitDetail.HasFlag(PhysicsQueryHitDetail.Normal))
+                flags |= PxHitFlags.Normal;
+            if (hitDetail.HasFlag(PhysicsQueryHitDetail.UV))
+                flags |= PxHitFlags.Uv;
+            if (hitDetail.HasFlag(PhysicsQueryHitDetail.FaceIndex))
+                flags |= PxHitFlags.FaceIndex;
+            return flags == 0 ? PxHitFlags.Default : flags;
         }
 
         public delegate PxQueryHitType DelPreFilter(PxFilterData filterData, PhysxShape? shape, PhysxRigidActor? actor, PxHitFlags queryFlags);
@@ -1921,12 +1961,49 @@ namespace XREngine.Rendering.Physics.Physx
             public DelPostFilter? PostFilter = null;
             public PxQueryFlags Flags = PxQueryFlags.Static | PxQueryFlags.Dynamic;
             public PxHitFlags HitFlags = PxHitFlags.Default;
-            public float SweepInflation = 0.0f;
+            public float SweepInflation { get; set; } = 0.0f;
+            public PhysicsQueryActorTypes ActorTypes
+            {
+                get => FromPhysxQueryFlags(Flags);
+                set => Flags = ToPhysxQueryFlags(value);
+            }
+            public PhysicsQueryHitDetail HitDetail
+            {
+                get => FromPhysxHitFlags(HitFlags);
+                set => HitFlags = ToPhysxHitFlags(value);
+            }
 
             public PhysxQueryFilter()
             {
 
             }
+        }
+
+        private static PhysicsQueryActorTypes FromPhysxQueryFlags(PxQueryFlags flags)
+        {
+            PhysicsQueryActorTypes actorTypes = PhysicsQueryActorTypes.None;
+            if (flags.HasFlag(PxQueryFlags.Static))
+                actorTypes |= PhysicsQueryActorTypes.Static;
+            if (flags.HasFlag(PxQueryFlags.Dynamic))
+                actorTypes |= PhysicsQueryActorTypes.Dynamic;
+            return actorTypes == PhysicsQueryActorTypes.None ? PhysicsQueryActorTypes.All : actorTypes;
+        }
+
+        private static PhysicsQueryHitDetail FromPhysxHitFlags(PxHitFlags flags)
+        {
+            if (flags == PxHitFlags.Default)
+                return PhysicsQueryHitDetail.Default;
+
+            PhysicsQueryHitDetail detail = PhysicsQueryHitDetail.Default;
+            if (flags.HasFlag(PxHitFlags.Position))
+                detail |= PhysicsQueryHitDetail.Position;
+            if (flags.HasFlag(PxHitFlags.Normal))
+                detail |= PhysicsQueryHitDetail.Normal;
+            if (flags.HasFlag(PxHitFlags.Uv))
+                detail |= PhysicsQueryHitDetail.UV;
+            if (flags.HasFlag(PxHitFlags.FaceIndex))
+                detail |= PhysicsQueryHitDetail.FaceIndex;
+            return detail;
         }
 
         private static RaycastHit ToRaycastHit(PxRaycastHit hit)
@@ -2686,7 +2763,7 @@ namespace XREngine.Rendering.Physics.Physx
                 d[x + 0] = p.pos.x;
                 d[x + 1] = p.pos.y;
                 d[x + 2] = p.pos.z;
-                ((uint*)d)[x + 3] = p.color; // RGBA8 packed uint — no conversion needed
+                ((uint*)d)[x + 3] = p.color; // RGBA8 packed uint - no conversion needed
             }
         }
 

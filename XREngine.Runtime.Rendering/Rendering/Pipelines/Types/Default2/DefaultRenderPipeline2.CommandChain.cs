@@ -815,22 +815,19 @@ public partial class DefaultRenderPipeline2
             // honor, so velocity would only be written where the gizmo is unoccluded, while motion blur
             // and TAA reprojection would still rely on those values for on-top pixels and produce smears
             // / ghosting. TAA sharpness for gizmos is handled in the TAA/TSR shader via the gizmo stencil bit.
-            using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyMotionVectorsProgramBindings))
-            {
-                c.Add<VPRC_RenderMotionVectorsPass>().SetOptions(false,
-                    new[]
-                    {
-                        (int)EDefaultRenderPass.OpaqueDeferred,
-                        (int)EDefaultRenderPass.DeferredDecals,
-                        (int)EDefaultRenderPass.OpaqueForward,
-                        (int)EDefaultRenderPass.MaskedForward,
-                        (int)EDefaultRenderPass.WeightedBlendedOitForward,
-                        (int)EDefaultRenderPass.PerPixelLinkedListForward,
-                        (int)EDefaultRenderPass.DepthPeelingForward,
-                        // TransparentForward is omitted: it renders after temporal
-                        // accumulation to avoid TAA smearing artifacts.
-                    });
-            }
+            c.Add<VPRC_RenderMotionVectorsPass>().SetOptions(false,
+                new[]
+                {
+                    (int)EDefaultRenderPass.OpaqueDeferred,
+                    (int)EDefaultRenderPass.DeferredDecals,
+                    (int)EDefaultRenderPass.OpaqueForward,
+                    (int)EDefaultRenderPass.MaskedForward,
+                    (int)EDefaultRenderPass.WeightedBlendedOitForward,
+                    (int)EDefaultRenderPass.PerPixelLinkedListForward,
+                    (int)EDefaultRenderPass.DepthPeelingForward,
+                    // TransparentForward is omitted: it renders after temporal
+                    // accumulation to avoid TAA smearing artifacts.
+                });
             c.Add<VPRC_DepthWrite>().Allow = true;
         }
         // Restore clears for subsequent passes to the pipeline defaults.
@@ -1011,6 +1008,7 @@ public partial class DefaultRenderPipeline2
                         var fxaa = fxaaUpscale.Add<VPRC_FXAA>();
                         fxaa.SourceFBOName = FinalPostProcessOutputFBOName;
                         fxaa.DestinationFBOName = FxaaFBOName;
+                        fxaa.Stereo = Stereo;
                         postAaChoice.TrueCommands = fxaaUpscale;
                     }
                     {
@@ -1019,6 +1017,7 @@ public partial class DefaultRenderPipeline2
                         smaa.SourceFBOName = FinalPostProcessOutputFBOName;
                         smaa.OutputTextureName = SmaaOutputTextureName;
                         smaa.OutputFBOName = SmaaFBOName;
+                        smaa.Stereo = Stereo;
                         postAaChoice.FalseCommands = smaaUpscale;
                     }
                     tsrOrPostAa.FalseCommands = fxaaOrSmaa;
@@ -1360,7 +1359,7 @@ public partial class DefaultRenderPipeline2
     private static string? ResolveOutputSourceFboOverride()
         => RenderDiagnosticsFlags.OutputSourceFboOverride;
 
-    private static void AppendDiagnosticTextureCapture(
+    private void AppendDiagnosticTextureCapture(
         ViewportRenderCommandContainer c,
         string label,
         string textureName,
@@ -1369,16 +1368,21 @@ public partial class DefaultRenderPipeline2
         if (!ShouldCaptureDefaultPipelineFbos())
             return;
 
-        var capture = c.Add<VPRC_CaptureFrame>();
-        capture.SourceTextureName = textureName;
-        capture.SourceMipLevel = mipLevel;
-        capture.MaxCaptures = 1;
-        capture.SkipFramesBeforeCapture = ResolveDefaultPipelineCaptureSkipFrames();
-        capture.OutputFilePath = Path.Combine("Build", "Diagnostics", "FrameCaptures", $"DefaultPipeline2_{label}.png");
-        capture.FlipVertically = false;
+        int layerCount = DefaultPipelineDiagnosticCapture.ResolveLayerCount(Stereo);
+        for (int layerIndex = 0; layerIndex < layerCount; layerIndex++)
+        {
+            var capture = c.Add<VPRC_CaptureFrame>();
+            capture.SourceTextureName = textureName;
+            capture.SourceMipLevel = mipLevel;
+            capture.SourceLayerIndex = layerIndex;
+            capture.MaxCaptures = 1;
+            capture.SkipFramesBeforeCapture = ResolveDefaultPipelineCaptureSkipFrames();
+            capture.OutputFilePath = DefaultPipelineDiagnosticCapture.ResolveOutputPath("DefaultPipeline2", label, layerIndex);
+            capture.FlipVertically = false;
+        }
     }
 
-    private static void AppendDiagnosticFboCapture(
+    private void AppendDiagnosticFboCapture(
         ViewportRenderCommandContainer c,
         string label,
         string fboName)
@@ -1386,12 +1390,17 @@ public partial class DefaultRenderPipeline2
         if (!ShouldCaptureDefaultPipelineFbos())
             return;
 
-        var capture = c.Add<VPRC_CaptureFrame>();
-        capture.SourceFBOName = fboName;
-        capture.MaxCaptures = 1;
-        capture.SkipFramesBeforeCapture = ResolveDefaultPipelineCaptureSkipFrames();
-        capture.OutputFilePath = Path.Combine("Build", "Diagnostics", "FrameCaptures", $"DefaultPipeline2_{label}.png");
-        capture.FlipVertically = false;
+        int layerCount = DefaultPipelineDiagnosticCapture.ResolveLayerCount(Stereo);
+        for (int layerIndex = 0; layerIndex < layerCount; layerIndex++)
+        {
+            var capture = c.Add<VPRC_CaptureFrame>();
+            capture.SourceFBOName = fboName;
+            capture.SourceLayerIndex = layerIndex;
+            capture.MaxCaptures = 1;
+            capture.SkipFramesBeforeCapture = ResolveDefaultPipelineCaptureSkipFrames();
+            capture.OutputFilePath = DefaultPipelineDiagnosticCapture.ResolveOutputPath("DefaultPipeline2", label, layerIndex);
+            capture.FlipVertically = false;
+        }
     }
 
     private static int ResolveDefaultPipelineCaptureSkipFrames()

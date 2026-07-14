@@ -130,7 +130,8 @@ namespace XREngine.Components.Lights
             public readonly ShadowRequestSource Source = source;
             public readonly List<CascadedShadowAabb> Aabbs = new(4);
             public readonly List<CascadeShadowSlice> Slices = new(MaxCascadeRenderCount);
-            public readonly DirectionalCascadeAtlasSlot[] AtlasSlots = new DirectionalCascadeAtlasSlot[MaxCascadeRenderCount];
+            public DirectionalCascadeAtlasSlot[] AtlasSlots = new DirectionalCascadeAtlasSlot[MaxCascadeRenderCount];
+            public DirectionalCascadeAtlasSlot[] PendingAtlasSlots = new DirectionalCascadeAtlasSlot[MaxCascadeRenderCount];
             public readonly DirectionalCascadeAtlasSlot[] PreviousAtlasSlots = new DirectionalCascadeAtlasSlot[MaxCascadeRenderCount];
             public readonly DirectionalCascadeSampleState[] RenderedSamples = new DirectionalCascadeSampleState[MaxCascadeRenderCount];
             public readonly ulong[] AtlasRequestContentHashes = new ulong[MaxCascadeRenderCount];
@@ -150,6 +151,10 @@ namespace XREngine.Components.Lights
             public XRViewport[] Viewports = [];
             public Transform[] Transforms = [];
             public XRCamera[] Cameras = [];
+            public ulong ContentRevision;
+            public ulong LegacyRenderedContentRevision;
+            public int LegacyRenderedCascadeCount;
+            public XRTexture2DArray? LegacyRenderedReceiverTexture;
         }
 
         /// <summary>
@@ -226,6 +231,8 @@ namespace XREngine.Components.Lights
         private readonly CascadeAabbView _cascadeAabbView;
         private readonly BoundingRectangle[] _groupedAtlasClearRects = new BoundingRectangle[MaxCascadeRenderCount];
         private DirectionalCascadeAtlasSlot _primaryAtlasSlot;
+        private DirectionalCascadeAtlasSlot _pendingPrimaryAtlasSlot;
+        private bool _directionalAtlasSlotPublishInProgress;
         private readonly Frustum[] _cascadeSourceFrusta = new Frustum[MaxCascadeSourceFrustumCount];
         private readonly XRCamera?[] _cascadeSourceCameras = new XRCamera?[MaxCascadeSourceFrustumCount];
         private XRMaterial? _shadowAtlasMaterial;
@@ -418,6 +425,34 @@ namespace XREngine.Components.Lights
 
         internal XRTexture2DArray? GetCascadedShadowReceiverTexture(XRCamera? camera)
             => GetCascadedShadowReceiverTexture(GetCascadeSourceForCamera(camera));
+
+        internal XRTexture2DArray? GetSampleableCascadedShadowReceiverTexture(XRCamera? camera)
+            => GetSampleableCascadedShadowReceiverTexture(GetCascadeSourceForCamera(camera));
+
+        internal XRTexture2DArray? GetSampleableCascadedShadowReceiverTexture(ShadowRequestSource source)
+        {
+            XRTexture2DArray? receiverTexture;
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(source);
+                int activeCascadeCount = state.Slices.Count;
+                receiverTexture = SelectCascadeReceiverTexture(state);
+                if (activeCascadeCount <= 0 ||
+                    receiverTexture is null ||
+                    state.ContentRevision == 0u ||
+                    state.LegacyRenderedContentRevision != state.ContentRevision ||
+                    state.LegacyRenderedCascadeCount < activeCascadeCount ||
+                    !ReferenceEquals(state.LegacyRenderedReceiverTexture, receiverTexture))
+                {
+                    return null;
+                }
+            }
+
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            return renderer is null || renderer.IsTextureReadyForShaderSampling(receiverTexture)
+                ? receiverTexture
+                : null;
+        }
 
         internal XRTexture2DArray? GetCascadedShadowReceiverTexture(ShadowRequestSource source)
         {
@@ -1165,17 +1200,48 @@ namespace XREngine.Components.Lights
         {
             lock (_cascadeDataLock)
             {
+                if (_directionalAtlasSlotPublishInProgress)
+                    return;
+
                 CopyAtlasSlotsForPublish(_desktopCascadeState);
                 CopyAtlasSlotsForPublish(_hmdCascadeState);
-
-                _primaryAtlasSlot = default;
+                _pendingPrimaryAtlasSlot = default;
+                _directionalAtlasSlotPublishInProgress = true;
             }
         }
 
         private static void CopyAtlasSlotsForPublish(DirectionalCascadeSourceState state)
         {
             Array.Copy(state.AtlasSlots, state.PreviousAtlasSlots, state.AtlasSlots.Length);
-            Array.Clear(state.AtlasSlots);
+            Array.Clear(state.PendingAtlasSlots);
+        }
+
+        internal void CompleteDirectionalAtlasSlotPublish(bool publish)
+        {
+            lock (_cascadeDataLock)
+            {
+                if (!_directionalAtlasSlotPublishInProgress)
+                    return;
+
+                if (publish)
+                {
+                    PublishPendingAtlasSlots(_desktopCascadeState);
+                    PublishPendingAtlasSlots(_hmdCascadeState);
+                    _primaryAtlasSlot = _pendingPrimaryAtlasSlot;
+                }
+
+                Array.Clear(_desktopCascadeState.PendingAtlasSlots);
+                Array.Clear(_hmdCascadeState.PendingAtlasSlots);
+                _pendingPrimaryAtlasSlot = default;
+                _directionalAtlasSlotPublishInProgress = false;
+            }
+        }
+
+        private static void PublishPendingAtlasSlots(DirectionalCascadeSourceState state)
+        {
+            DirectionalCascadeAtlasSlot[] previouslyPublished = state.AtlasSlots;
+            state.AtlasSlots = state.PendingAtlasSlots;
+            state.PendingAtlasSlots = previouslyPublished;
         }
 
         internal bool TryCreateDirectionalCascadeSampleState(
@@ -1411,13 +1477,17 @@ namespace XREngine.Components.Lights
             lock (_cascadeDataLock)
             {
                 _primaryAtlasSlot = default;
+                _pendingPrimaryAtlasSlot = default;
+                _directionalAtlasSlotPublishInProgress = false;
                 Array.Clear(_desktopCascadeState.AtlasSlots);
+                Array.Clear(_desktopCascadeState.PendingAtlasSlots);
                 Array.Clear(_desktopCascadeState.PreviousAtlasSlots);
                 Array.Clear(_desktopCascadeState.RenderedSamples);
                 Array.Clear(_desktopCascadeState.PreviousAtlasRequestContentHashes);
                 Array.Clear(_desktopCascadeState.StableAtlasRequestFrameCounts);
                 Array.Clear(_desktopCascadeState.AtlasCascadeVisibleSetCached);
                 Array.Clear(_hmdCascadeState.AtlasSlots);
+                Array.Clear(_hmdCascadeState.PendingAtlasSlots);
                 Array.Clear(_hmdCascadeState.PreviousAtlasSlots);
                 Array.Clear(_hmdCascadeState.RenderedSamples);
                 Array.Clear(_hmdCascadeState.PreviousAtlasRequestContentHashes);
@@ -1431,7 +1501,10 @@ namespace XREngine.Components.Lights
             ClearDirectionalAtlasSlots();
 
             if (!useDirectionalShadowAtlas)
+            {
                 EnsureShadowMapForActiveDynamicLight();
+                EnsureCascadeShadowResources();
+            }
         }
 
         internal void ClearCascadeAtlasSlots()
@@ -1439,12 +1512,14 @@ namespace XREngine.Components.Lights
             lock (_cascadeDataLock)
             {
                 Array.Clear(_desktopCascadeState.AtlasSlots);
+                Array.Clear(_desktopCascadeState.PendingAtlasSlots);
                 Array.Clear(_desktopCascadeState.PreviousAtlasSlots);
                 Array.Clear(_desktopCascadeState.RenderedSamples);
                 Array.Clear(_desktopCascadeState.PreviousAtlasRequestContentHashes);
                 Array.Clear(_desktopCascadeState.StableAtlasRequestFrameCounts);
                 Array.Clear(_desktopCascadeState.AtlasCascadeVisibleSetCached);
                 Array.Clear(_hmdCascadeState.AtlasSlots);
+                Array.Clear(_hmdCascadeState.PendingAtlasSlots);
                 Array.Clear(_hmdCascadeState.PreviousAtlasSlots);
                 Array.Clear(_hmdCascadeState.RenderedSamples);
                 Array.Clear(_hmdCascadeState.PreviousAtlasRequestContentHashes);
@@ -1452,6 +1527,11 @@ namespace XREngine.Components.Lights
                 Array.Clear(_hmdCascadeState.AtlasCascadeVisibleSetCached);
             }
         }
+
+        private DirectionalCascadeAtlasSlot[] GetAtlasSlotWriteTarget(DirectionalCascadeSourceState state)
+            => _directionalAtlasSlotPublishInProgress
+                ? state.PendingAtlasSlots
+                : state.AtlasSlots;
 
         private static DirectionalCascadeAtlasSlot CreateAtlasSlot(
             ShadowAtlasAllocation allocation,
@@ -1674,6 +1754,7 @@ namespace XREngine.Components.Lights
             lock (_cascadeDataLock)
             {
                 DirectionalCascadeSourceState state = GetCascadeSourceState(source);
+                DirectionalCascadeAtlasSlot[] targetSlots = GetAtlasSlotWriteTarget(state);
                 DirectionalCascadeSampleState renderedSample = state.RenderedSamples[index];
                 if (DoesRenderedSampleMatchAllocation(renderedSample, allocation))
                 {
@@ -1685,7 +1766,7 @@ namespace XREngine.Components.Lights
                         farPlane,
                         desiredResolution,
                         renderedSample);
-                    state.AtlasSlots[index] = slot;
+                    targetSlots[index] = slot;
                     LogDirectionalCascadeProvenance(state, index, allocation, requestSample, renderedSample, slot, "RenderedSample");
                     return;
                 }
@@ -1700,7 +1781,7 @@ namespace XREngine.Components.Lights
                         farPlane,
                         desiredResolution,
                         renderedSample);
-                    state.AtlasSlots[index] = slot;
+                    targetSlots[index] = slot;
                     LogDirectionalCascadeProvenance(state, index, allocation, requestSample, renderedSample, slot, "RenderedSampleStale");
                     return;
                 }
@@ -1716,7 +1797,7 @@ namespace XREngine.Components.Lights
                         farPlane,
                         desiredResolution,
                         requestSample);
-                    state.AtlasSlots[index] = slot;
+                    targetSlots[index] = slot;
                     LogDirectionalCascadeProvenance(state, index, allocation, requestSample, requestSample, slot, "RequestSample");
                     return;
                 }
@@ -1731,7 +1812,7 @@ namespace XREngine.Components.Lights
                         nearPlane,
                         farPlane,
                         desiredResolution);
-                    state.AtlasSlots[index] = slot;
+                    targetSlots[index] = slot;
                     LogDirectionalCascadeProvenance(state, index, allocation, requestSample, default, slot, "PreservedPrevious");
                     return;
                 }
@@ -1742,7 +1823,7 @@ namespace XREngine.Components.Lights
                     nearPlane,
                     farPlane,
                     desiredResolution);
-                state.AtlasSlots[index] = unsampledSlot;
+                targetSlots[index] = unsampledSlot;
                 LogDirectionalCascadeProvenance(state, index, allocation, requestSample, default, unsampledSlot, "MixedGenerationPrevented");
             }
         }
@@ -1859,15 +1940,39 @@ namespace XREngine.Components.Lights
             uint desiredResolution,
             DirectionalCascadeSampleState renderedSample)
         {
-            if ((uint)index >= (uint)MaxCascadeRenderCount ||
-                !renderedSample.IsValid)
-            {
-                return;
-            }
+            DirectionalCascadeAtlasRenderCommit commit = new(
+                source,
+                index,
+                allocation,
+                recordIndex,
+                nearPlane,
+                farPlane,
+                desiredResolution,
+                renderedSample);
+            Span<DirectionalCascadeAtlasRenderCommit> commits = stackalloc DirectionalCascadeAtlasRenderCommit[1];
+            commits[0] = commit;
+            CommitRenderedCascadeAtlasSlots(commits);
+        }
 
-            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+        internal void CommitRenderedCascadeAtlasSlots(ReadOnlySpan<DirectionalCascadeAtlasRenderCommit> commits)
+        {
+            lock (_cascadeDataLock)
+            {
+                for (int i = 0; i < commits.Length; i++)
+                    CommitRenderedCascadeAtlasSlotNoLock(commits[i]);
+            }
+        }
+
+        private void CommitRenderedCascadeAtlasSlotNoLock(in DirectionalCascadeAtlasRenderCommit commit)
+        {
+            int index = commit.CascadeIndex;
+            DirectionalCascadeSampleState renderedSample = commit.RenderedSample;
+            if ((uint)index >= (uint)MaxCascadeRenderCount || !renderedSample.IsValid)
+                return;
+
+            ShadowRequestSource resolvedSource = commit.Source == ShadowRequestSource.Default
                 ? ShadowRequestSource.Desktop
-                : source;
+                : commit.Source;
             DirectionalCascadeSampleState sample = renderedSample with
             {
                 IsValid = true,
@@ -1875,12 +1980,12 @@ namespace XREngine.Components.Lights
                 CascadeIndex = index,
                 ContentHash = renderedSample.ContentHash != 0u
                     ? renderedSample.ContentHash
-                    : allocation.ContentVersion,
+                    : commit.Allocation.ContentVersion,
                 RenderedFrame = renderedSample.RenderedFrame != 0u
                     ? renderedSample.RenderedFrame
-                    : allocation.LastRenderedFrame,
+                    : commit.Allocation.LastRenderedFrame,
             };
-            ShadowAtlasAllocation renderedAllocation = allocation with
+            ShadowAtlasAllocation renderedAllocation = commit.Allocation with
             {
                 ContentVersion = sample.ContentHash,
                 LastRenderedFrame = sample.RenderedFrame,
@@ -1888,17 +1993,25 @@ namespace XREngine.Components.Lights
                 SkipReason = SkipReason.None,
             };
 
-            lock (_cascadeDataLock)
+            DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
+            state.RenderedSamples[index] = sample;
+            DirectionalCascadeAtlasSlot renderedSlot = CreateAtlasSlot(
+                renderedAllocation,
+                commit.RecordIndex,
+                commit.NearPlane,
+                commit.FarPlane,
+                commit.DesiredResolution,
+                sample);
+            state.AtlasSlots[index] = renderedSlot;
+
+            // A render completion can race metadata publication for the next frame.
+            // Carry it into the staged generation only when that generation still
+            // requests the exact rendered content; otherwise its newer request must
+            // remain authoritative.
+            if (_directionalAtlasSlotPublishInProgress &&
+                state.AtlasRequestContentHashes[index] == sample.ContentHash)
             {
-                DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
-                state.RenderedSamples[index] = sample;
-                state.AtlasSlots[index] = CreateAtlasSlot(
-                    renderedAllocation,
-                    recordIndex,
-                    nearPlane,
-                    farPlane,
-                    desiredResolution,
-                    sample);
+                state.PendingAtlasSlots[index] = renderedSlot;
             }
         }
 
@@ -1919,7 +2032,8 @@ namespace XREngine.Components.Lights
             uint desiredResolution)
         {
             lock (_cascadeDataLock)
-                _primaryAtlasSlot = CreateAtlasSlot(
+            {
+                DirectionalCascadeAtlasSlot slot = CreateAtlasSlot(
                     allocation,
                     recordIndex,
                     nearPlane,
@@ -1932,6 +2046,11 @@ namespace XREngine.Components.Lights
                     biasMax: ShadowSlopeBiasTexels,
                     receiverOffset: 0.0f,
                     worldToLightSpaceMatrix: Matrix4x4.Identity);
+                if (_directionalAtlasSlotPublishInProgress)
+                    _pendingPrimaryAtlasSlot = slot;
+                else
+                    _primaryAtlasSlot = slot;
+            }
         }
 
         /// <summary>
@@ -2254,6 +2373,7 @@ namespace XREngine.Components.Lights
 
             if (recreateTexture)
             {
+                InvalidateLegacyCascadeRender(state);
                 state.ShadowMapTexture?.Destroy();
                 state.ShadowMapTexture = null;
                 state.RasterDepthTexture?.Destroy();
@@ -2452,6 +2572,7 @@ namespace XREngine.Components.Lights
 
         private static void ReleaseCascadeReceiverResources(DirectionalCascadeSourceState state)
         {
+            InvalidateLegacyCascadeRender(state);
             state.ShadowMapTexture?.Destroy();
             state.ShadowMapTexture = null;
             state.RasterDepthTexture?.Destroy();
@@ -2459,6 +2580,31 @@ namespace XREngine.Components.Lights
             state.LayeredFrameBuffer?.Destroy();
             state.LayeredFrameBuffer = null;
             state.FrameBuffers = [];
+        }
+
+        private static void InvalidateLegacyCascadeRender(DirectionalCascadeSourceState state)
+        {
+            state.LegacyRenderedContentRevision = 0u;
+            state.LegacyRenderedCascadeCount = 0;
+            state.LegacyRenderedReceiverTexture = null;
+        }
+
+        private void MarkLegacyCascadeRenderComplete(ShadowRequestSource source, int cascadeCount)
+        {
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(source);
+                XRTexture2DArray? receiverTexture = SelectCascadeReceiverTexture(state);
+                if (receiverTexture is null || cascadeCount <= 0 || cascadeCount < state.Slices.Count)
+                {
+                    InvalidateLegacyCascadeRender(state);
+                    return;
+                }
+
+                state.LegacyRenderedContentRevision = state.ContentRevision;
+                state.LegacyRenderedCascadeCount = cascadeCount;
+                state.LegacyRenderedReceiverTexture = receiverTexture;
+            }
         }
 
         private static void UpdateCascadeShadowCamera(Transform transform, XRCamera camera, Vector3 center, Vector3 halfExtents, Quaternion orientation, Vector3 lightDirection, float nearZ)
@@ -2696,8 +2842,11 @@ namespace XREngine.Components.Lights
                 state.Aabbs.Clear();
                 state.Slices.Clear();
                 Array.Clear(state.AtlasSlots);
+                Array.Clear(state.PendingAtlasSlots);
                 state.RangeNear = 0.0f;
                 state.RangeFar = 0.0f;
+                unchecked { state.ContentRevision++; }
+                InvalidateLegacyCascadeRender(state);
             }
         }
 
@@ -2863,6 +3012,9 @@ namespace XREngine.Components.Lights
 
                     state.RangeNear = cameraNear;
                     state.RangeFar = effectiveCascadeFar;
+                    unchecked { state.ContentRevision++; }
+                    if (state.ContentRevision == 0u)
+                        state.ContentRevision = 1u;
                 }
 
                 LogCascadeUpdate(source, playerCamera, resourceSlot, cameraNear, effectiveCascadeFar, totalDepth, nextShadowSlices.AsSpan(0, resourceSlot));
@@ -3785,6 +3937,7 @@ namespace XREngine.Components.Lights
                 using var directionalCascadePass = cascadeShadowViewports[0].RenderPipelineInstance.RenderState
                     .PushDirectionalCascadeLayeredShadowPass(plan.IsInstancedLayered, cascadeMatrices[..layerCount]);
                 cascadeShadowViewports[0].Render(plan.LayeredFrameBuffer, null, null, true, layeredShadowMaterial);
+                MarkLegacyCascadeRenderComplete(source, layerCount);
                 return;
             }
 
@@ -3793,6 +3946,7 @@ namespace XREngine.Components.Lights
                 cascadeShadowViewports[i].Render(cascadeShadowFrameBuffers[i], null, null, true, sequentialShadowMaterial);
 
             GenerateCascadeMomentShadowMipmapsIfNeeded(source);
+            MarkLegacyCascadeRenderComplete(source, cascadeCount);
         }
 
         private int CopyPublishedCascadeMatrices(Span<Matrix4x4> matrices)

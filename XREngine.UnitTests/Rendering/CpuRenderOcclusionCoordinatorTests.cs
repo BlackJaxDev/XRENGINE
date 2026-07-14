@@ -62,10 +62,11 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         const uint queryKey = 44u;
 
         BeginPassForPolicyTest(coordinator, camera);
-        SeedOccludedQuery(coordinator, camera, queryKey, TestFrameId - 3UL);
+        object queryState = SeedOccludedQuery(coordinator, camera, queryKey, TestFrameId - 3UL);
 
         camera.Transform.SetRenderMatrix(Matrix4x4.CreateTranslation(0.5f, 0.0f, 0.0f)).GetAwaiter().GetResult();
         BeginPassForPolicyTest(coordinator, camera);
+        GetNonPublicField(queryState, "RecoveryStartedFrame").ShouldBe(ulong.MaxValue);
 
         ECpuOcclusionDecision decision = coordinator.ShouldRender(RenderPass, camera, queryKey, out CpuOcclusionProbeRequest request);
 
@@ -106,10 +107,11 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         const uint queryKey = 45u;
 
         BeginPassForPolicyTest(coordinator, camera);
-        SeedOccludedQuery(coordinator, camera, queryKey, TestFrameId - 1UL);
+        object queryState = SeedOccludedQuery(coordinator, camera, queryKey, TestFrameId - 1UL);
 
         camera.Transform.SetRenderMatrix(Matrix4x4.CreateTranslation(3.0f, 0.0f, 0.0f)).GetAwaiter().GetResult();
         BeginPassForPolicyTest(coordinator, camera);
+        GetNonPublicField(queryState, "RecoveryStartedFrame").ShouldBe(ulong.MaxValue);
 
         ECpuOcclusionDecision decision = coordinator.ShouldRender(RenderPass, camera, queryKey, out CpuOcclusionProbeRequest request);
 
@@ -125,18 +127,38 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         CpuRenderOcclusionCoordinator coordinator = new();
         XRCamera camera = new();
         const uint queryKey = 46u;
+        OcclusionViewOwnership ownership = OcclusionViewOwnership.Independent(502);
 
-        BeginPassForPolicyTest(coordinator, camera);
-        SeedOccludedQuery(coordinator, camera, queryKey, TestFrameId - 1UL);
+        BeginPassForPolicyTest(coordinator, camera, ownership);
+        SeedOccludedQuery(coordinator, camera, ownership, queryKey, TestFrameId - 1UL);
 
         camera.Transform.SetRenderMatrix(Matrix4x4.CreateTranslation(20.0f, 0.0f, 0.0f)).GetAwaiter().GetResult();
-        coordinator.BeginPass(RenderPass, camera, sceneCommandCount: 1u).ShouldBeTrue();
+        coordinator.BeginPass(RenderPass, camera, sceneCommandCount: 1u, ownership).ShouldBeTrue();
 
-        ECpuOcclusionDecision decision = coordinator.ShouldRender(RenderPass, camera, queryKey, out CpuOcclusionProbeRequest request);
+        ECpuOcclusionDecision decision = coordinator.ShouldRender(
+            RenderPass,
+            camera,
+            queryKey,
+            out CpuOcclusionProbeRequest request,
+            ownership);
 
-        GetMotionTier(coordinator, camera).ShouldBe(ECpuOcclusionMotionTier.CameraCut);
+        GetMotionTier(coordinator, camera, ownership).ShouldBe(ECpuOcclusionMotionTier.CameraCut);
         decision.ShouldBe(ECpuOcclusionDecision.Visible);
         request.Requested.ShouldBeFalse();
+
+        _host.CurrentRenderFrameId++;
+        BeginPassForPolicyTest(coordinator, camera, ownership, preserveForcedRecovery: true);
+
+        ECpuOcclusionDecision recoveryDecision = coordinator.ShouldRender(
+            RenderPass,
+            camera,
+            queryKey,
+            out CpuOcclusionProbeRequest recoveryRequest,
+            ownership);
+
+        recoveryDecision.ShouldBe(ECpuOcclusionDecision.Visible);
+        recoveryRequest.Requested.ShouldBeTrue();
+        recoveryRequest.Reason.ShouldBe(ECpuOcclusionQueryReason.StaleStateRefresh);
     }
 
     [Test]
@@ -206,6 +228,48 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         firstPipeline.PipelineInstanceId.ShouldBe(41);
         secondPipeline.PipelineInstanceId.ShouldBe(42);
         firstPipeline.ShouldNotBe(secondPipeline);
+    }
+
+    [Test]
+    public void CreatePassKey_OutputIdentityIsolatesTelemetryForOnePipeline()
+    {
+        XRCamera camera = new();
+        OcclusionViewOwnership firstOutput = OcclusionViewOwnership.Independent(43, resourceGeneration: 7, outputId: 0xA001UL);
+        OcclusionViewOwnership secondOutput = OcclusionViewOwnership.Independent(43, resourceGeneration: 7, outputId: 0xA002UL);
+
+        OcclusionViewKey firstKey = CpuRenderOcclusionCoordinator.CreatePassKey(RenderPass, camera, firstOutput);
+        OcclusionViewKey secondKey = CpuRenderOcclusionCoordinator.CreatePassKey(RenderPass, camera, secondOutput);
+
+        firstKey.PipelineInstanceId.ShouldBe(secondKey.PipelineInstanceId);
+        firstKey.OutputId.ShouldBe(0xA001UL);
+        secondKey.OutputId.ShouldBe(0xA002UL);
+        firstKey.ShouldNotBe(secondKey);
+    }
+
+    [Test]
+    public void BeginPass_DifferentOutputDoesNotReuseNegativeHistory()
+    {
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        const uint queryKey = 186u;
+        OcclusionViewOwnership firstOutput = OcclusionViewOwnership.Independent(44, outputId: 0xA101UL);
+        OcclusionViewOwnership secondOutput = OcclusionViewOwnership.Independent(44, outputId: 0xA102UL);
+
+        BeginPassForPolicyTest(coordinator, camera, firstOutput);
+        SeedOccludedQuery(coordinator, camera, firstOutput, queryKey, TestFrameId - 1UL);
+
+        _host.CurrentRenderFrameId++;
+        BeginPassForPolicyTest(coordinator, camera, secondOutput);
+        coordinator.ShouldRender(
+                RenderPass,
+                camera,
+                queryKey,
+                out CpuOcclusionProbeRequest request,
+                secondOutput)
+            .ShouldBe(ECpuOcclusionDecision.Visible);
+
+        request.Requested.ShouldBeTrue();
+        request.Reason.ShouldBe(ECpuOcclusionQueryReason.InitialSeed);
     }
 
     [Test]
@@ -294,6 +358,8 @@ public sealed class CpuRenderOcclusionCoordinatorTests
 
         coordinator.ShouldRender(RenderPass, leftCamera, queryKey, out _, ownership)
             .ShouldBe(ECpuOcclusionDecision.Skip);
+        coordinator.GetOccludedProofCoverageMask(RenderPass, leftCamera, queryKey, ownership)
+            .ShouldBe(0x3u);
         OcclusionViewKey key = CpuRenderOcclusionCoordinator.CreatePassKey(RenderPass, leftCamera, ownership);
         key.CoverageMask.ShouldBe(0x3u);
         key.RequiredCoverageMask.ShouldBe(0x3u);
@@ -375,25 +441,217 @@ public sealed class CpuRenderOcclusionCoordinatorTests
     }
 
     [Test]
-    public void BeginPass_SceneCountChangeDoesNotInvalidateExistingState()
+    public void BeginPass_CommandSetChangeFailsVisibleAndRequiresReseed()
     {
         CpuRenderOcclusionCoordinator coordinator = new();
         XRCamera camera = new();
         const uint existingKey = 49u;
-        const uint newKey = 50u;
+        OcclusionViewOwnership ownership = OcclusionViewOwnership.Independent(301);
 
-        BeginPassForPolicyTest(coordinator, camera, sceneCommandCount: 1u);
-        SeedOccludedQuery(coordinator, camera, existingKey, TestFrameId - 1UL);
+        coordinator.BeginPass(RenderPass, camera, 1u, 0x1111UL, ownership);
+        object passState = GetPassState(coordinator, camera, ownership);
+        SetNonPublicField(passState, "ForceVisibleThisFrame", false);
+        SetNonPublicField(passState, "ForceVisibleReason", ECpuOcclusionForceVisibleReason.None);
+        object queryState = SeedOccludedQuery(coordinator, camera, ownership, existingKey, TestFrameId - 1UL);
 
-        BeginPassForPolicyTest(coordinator, camera, sceneCommandCount: 2u);
-        ECpuOcclusionDecision existingDecision = coordinator.ShouldRender(RenderPass, camera, existingKey, out CpuOcclusionProbeRequest existingRequest);
-        ECpuOcclusionDecision newDecision = coordinator.ShouldRender(RenderPass, camera, newKey, out CpuOcclusionProbeRequest newRequest);
+        coordinator.BeginPass(RenderPass, camera, 2u, 0x2222UL, ownership);
+        ECpuOcclusionDecision changedDecision = coordinator.ShouldRender(
+            RenderPass,
+            camera,
+            existingKey,
+            out CpuOcclusionProbeRequest changedRequest,
+            ownership);
 
-        existingDecision.ShouldBe(ECpuOcclusionDecision.Skip);
-        existingRequest.Requested.ShouldBeFalse();
-        newDecision.ShouldBe(ECpuOcclusionDecision.Visible);
-        newRequest.Requested.ShouldBeTrue();
-        newRequest.Reason.ShouldBe(ECpuOcclusionQueryReason.InitialSeed);
+        changedDecision.ShouldBe(ECpuOcclusionDecision.Visible);
+        changedRequest.Requested.ShouldBeFalse();
+        GetNonPublicField(passState, "ForceVisibleReason")
+            .ShouldBe(ECpuOcclusionForceVisibleReason.CommandSetChanged);
+        GetNonPublicField(queryState, "RecoveryStartedFrame").ShouldBe(TestFrameId);
+
+        _host.CurrentRenderFrameId++;
+        coordinator.BeginPass(RenderPass, camera, 2u, 0x2222UL, ownership);
+        SetNonPublicField(passState, "ForceVisibleThisFrame", false);
+        SetNonPublicField(passState, "ForceVisibleReason", ECpuOcclusionForceVisibleReason.None);
+        ECpuOcclusionDecision reseedDecision = coordinator.ShouldRender(
+            RenderPass,
+            camera,
+            existingKey,
+            out CpuOcclusionProbeRequest reseedRequest,
+            ownership);
+
+        reseedDecision.ShouldBe(ECpuOcclusionDecision.Visible);
+        reseedRequest.Requested.ShouldBeTrue();
+        reseedRequest.Reason.ShouldBe(ECpuOcclusionQueryReason.InitialSeed);
+    }
+
+    [Test]
+    public void BeginPass_SameCountReplacementSignatureInvalidatesNegativeHistory()
+    {
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        const uint queryKey = 51u;
+        OcclusionViewOwnership ownership = OcclusionViewOwnership.Independent(302);
+
+        coordinator.BeginPass(RenderPass, camera, 2u, 0xAAAAUL, ownership);
+        object passState = GetPassState(coordinator, camera, ownership);
+        SetNonPublicField(passState, "ForceVisibleThisFrame", false);
+        SeedOccludedQuery(coordinator, camera, ownership, queryKey, TestFrameId - 1UL);
+
+        coordinator.BeginPass(RenderPass, camera, 2u, 0xBBBBUL, ownership);
+
+        coordinator.ShouldRender(RenderPass, camera, queryKey, out _, ownership)
+            .ShouldBe(ECpuOcclusionDecision.Visible);
+        GetNonPublicField(passState, "ForceVisibleReason")
+            .ShouldBe(ECpuOcclusionForceVisibleReason.CommandSetChanged);
+    }
+
+    [Test]
+    public void BeginPass_MissingOwnershipFailsVisibleThenValidOwnershipSeedsProbe()
+    {
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        const uint queryKey = 52u;
+
+        coordinator.BeginPass(RenderPass, camera, sceneCommandCount: 1u, ownership: default);
+        coordinator.ShouldRender(
+                RenderPass,
+                camera,
+                queryKey,
+                out CpuOcclusionProbeRequest missingRequest,
+                default(OcclusionViewOwnership))
+            .ShouldBe(ECpuOcclusionDecision.Visible);
+        missingRequest.Requested.ShouldBeFalse();
+
+        _host.CurrentRenderFrameId++;
+        OcclusionViewOwnership validOwnership = OcclusionViewOwnership.Independent(401, outputId: 0xB001UL);
+        BeginPassForPolicyTest(coordinator, camera, validOwnership);
+
+        coordinator.ShouldRender(RenderPass, camera, queryKey, out CpuOcclusionProbeRequest seedRequest, validOwnership)
+            .ShouldBe(ECpuOcclusionDecision.Visible);
+        seedRequest.Requested.ShouldBeTrue();
+        seedRequest.Reason.ShouldBe(ECpuOcclusionQueryReason.InitialSeed);
+    }
+
+    [Test]
+    public void BeginPass_ResourceGenerationChangeDoesNotReuseNegativeHistory()
+    {
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        const uint queryKey = 53u;
+        OcclusionViewOwnership initialOwnership = OcclusionViewOwnership.Independent(
+            402,
+            resourceGeneration: 11,
+            outputId: 0xB002UL);
+        OcclusionViewOwnership recreatedExtentOwnership = initialOwnership.WithResourceGeneration(12);
+
+        BeginPassForPolicyTest(coordinator, camera, initialOwnership);
+        SeedOccludedQuery(coordinator, camera, initialOwnership, queryKey, TestFrameId - 1UL);
+
+        _host.CurrentRenderFrameId++;
+        BeginPassForPolicyTest(coordinator, camera, recreatedExtentOwnership);
+        coordinator.ShouldRender(
+                RenderPass,
+                camera,
+                queryKey,
+                out CpuOcclusionProbeRequest request,
+                recreatedExtentOwnership)
+            .ShouldBe(ECpuOcclusionDecision.Visible);
+
+        request.Requested.ShouldBeTrue();
+        request.Reason.ShouldBe(ECpuOcclusionQueryReason.InitialSeed);
+        CpuRenderOcclusionCoordinator.CreatePassKey(RenderPass, camera, initialOwnership)
+            .ShouldNotBe(CpuRenderOcclusionCoordinator.CreatePassKey(RenderPass, camera, recreatedExtentOwnership));
+    }
+
+    [Test]
+    public void BeginPass_PipelineRecreationDoesNotReuseNegativeHistory()
+    {
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        const uint queryKey = 54u;
+        OcclusionViewOwnership initialOwnership = OcclusionViewOwnership.Independent(403, outputId: 0xB003UL);
+        OcclusionViewOwnership recreatedPipelineOwnership = OcclusionViewOwnership.Independent(404, outputId: 0xB003UL);
+
+        BeginPassForPolicyTest(coordinator, camera, initialOwnership);
+        SeedOccludedQuery(coordinator, camera, initialOwnership, queryKey, TestFrameId - 1UL);
+
+        _host.CurrentRenderFrameId++;
+        BeginPassForPolicyTest(coordinator, camera, recreatedPipelineOwnership);
+        coordinator.ShouldRender(
+                RenderPass,
+                camera,
+                queryKey,
+                out CpuOcclusionProbeRequest request,
+                recreatedPipelineOwnership)
+            .ShouldBe(ECpuOcclusionDecision.Visible);
+
+        request.Requested.ShouldBeTrue();
+        request.Reason.ShouldBe(ECpuOcclusionQueryReason.InitialSeed);
+        CpuRenderOcclusionCoordinator.CreatePassKey(RenderPass, camera, initialOwnership)
+            .ShouldNotBe(CpuRenderOcclusionCoordinator.CreatePassKey(RenderPass, camera, recreatedPipelineOwnership));
+    }
+
+    [Test]
+    public void OcclusionTelemetry_ReportsAllCountersPerFullOutputKey()
+    {
+        var key = new OcclusionViewKey(
+            RenderPass,
+            EOcclusionViewScope.VrSinglePassStereo,
+            viewId: -1,
+            pipelineInstanceId: 405,
+            povId: -405,
+            coverageMask: 0x3u,
+            requiredCoverageMask: 0x3u,
+            declaredViewCount: 2,
+            resourceGeneration: 13,
+            outputId: 0xB004UL);
+
+        OcclusionTelemetry.BeginFrame();
+        OcclusionTelemetry.RecordCpuViewPassBegin(key, candidateCount: 7);
+        OcclusionTelemetry.RecordCpuViewSubmission(key);
+        OcclusionTelemetry.RecordCpuViewResolution(key, submittedFrame: TestFrameId - 4UL, resolvedFrame: TestFrameId);
+        OcclusionTelemetry.RecordCpuViewSkip(key);
+        OcclusionTelemetry.RecordCpuViewBudgetSkipped(key, count: 2);
+        OcclusionTelemetry.RecordCpuViewForcedVisible(key);
+        OcclusionTelemetry.RecordCpuViewResultAge(key, ageFrames: 3);
+        var telemetry = OcclusionTelemetry.GetCpuViewTelemetryHandle(key);
+        telemetry.RecordRecoveryStarted();
+        telemetry.RecordRecoveryAge(ageFrames: 4);
+        telemetry.RecordRecoveryCompleted(TestFrameId - 4UL, TestFrameId);
+        OcclusionTelemetry.BeginFrame();
+
+        CpuOcclusionViewTelemetrySnapshot snapshot = OcclusionTelemetry.GetCpuViewSnapshots()
+            .Single(value => value.ViewKey.Equals(key));
+        snapshot.ViewKey.OutputId.ShouldBe(0xB004UL);
+        snapshot.CandidateCount.ShouldBe(7);
+        snapshot.Submissions.ShouldBe(1);
+        snapshot.Resolutions.ShouldBe(1);
+        snapshot.Skips.ShouldBe(1);
+        snapshot.BudgetSkipped.ShouldBe(2);
+        snapshot.ForcedVisible.ShouldBe(1);
+        snapshot.RecoveryStarts.ShouldBe(1);
+        snapshot.RecoveryCompletions.ShouldBe(1);
+        snapshot.CurrentRecoveryAgeFrames.ShouldBe(4);
+        snapshot.MaxRecoveryAgeFrames.ShouldBe(4);
+        snapshot.CurrentResultAgeFrames.ShouldBe(3);
+        snapshot.MaxResultAgeFrames.ShouldBe(3);
+        snapshot.RecoveryLatencyFrames.ShouldBe(4);
+
+        OcclusionTelemetry.GetCpuViewTelemetryHandle(default).RecordSubmission();
+        var activeSnapshots = new CpuOcclusionViewTelemetrySnapshot[
+            OcclusionTelemetry.CpuActiveViewSnapshotCount];
+        int activeCount = OcclusionTelemetry.CopyLastActiveCpuViewSnapshots(activeSnapshots);
+        activeSnapshots.AsSpan(0, activeCount).ToArray()
+            .Any(value => value.ViewKey.Equals(key))
+            .ShouldBeTrue();
+        activeSnapshots.AsSpan(0, activeCount).ToArray()
+            .All(value => value.ViewKey.IsValid)
+            .ShouldBeTrue();
+
+        OcclusionTelemetry.BeginFrame();
+        OcclusionTelemetry.GetCpuViewSnapshots()
+            .Any(value => value.ViewKey.Equals(key))
+            .ShouldBeFalse();
     }
 
     [Test]
@@ -454,24 +712,109 @@ public sealed class CpuRenderOcclusionCoordinatorTests
     }
 
     [Test]
-    public void ShouldRender_OverduePendingQueryForcesVisible()
+    public void SelectProbeCandidates_VisibleHierarchyResultExpandsToIndividualProbes()
+    {
+        _host.CpuQueryOcclusionMaxQueriesPerFrame = 4;
+        _host.CpuQueryOcclusionVisibleDemotionBudgetFraction = 0.25f;
+
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        BeginPassForPolicyTest(coordinator, camera);
+
+        object passState = GetPassState(coordinator, camera);
+        object group = InvokeNonPublic(coordinator, "GetOrCreateHierarchyGroup", passState, 2u)
+            .ShouldNotBeNull();
+        SetNonPublicField(group, "LastQueryFrame", TestFrameId - 1UL);
+        SetNonPublicField(group, "LastAnySamplesPassed", true);
+
+        List<CpuOcclusionProbeCandidate> candidates = [];
+        for (uint key = 64u; key < 68u; key++)
+        {
+            SeedOccludedQuery(coordinator, camera, key, TestFrameId - 8UL);
+            candidates.Add(new CpuOcclusionProbeCandidate(
+                key,
+                UnitBounds(),
+                new CpuOcclusionProbeRequest(
+                    true,
+                    ECpuOcclusionQueryReason.OccludedRecovery,
+                    recoveryProbe: true),
+                screenPriority: key,
+                distanceMeters: 1.0f));
+        }
+
+        List<CpuOcclusionScheduledProbe> scheduled = [];
+        coordinator.SelectProbeCandidates(RenderPass, camera, candidates, scheduled);
+
+        scheduled.ShouldNotBeEmpty();
+        scheduled.ShouldAllBe(probe => !probe.IsHierarchyGroup);
+    }
+
+    [Test]
+    public void ShouldRender_OverduePendingQueryForcesVisibleAndReprobesNextFrame()
     {
         CpuRenderOcclusionCoordinator coordinator = new();
         XRCamera camera = new();
         const uint queryKey = 78u;
+        OcclusionViewOwnership ownership = OcclusionViewOwnership.Independent(503);
 
-        BeginPassForPolicyTest(coordinator, camera);
-        object queryState = SeedOccludedQuery(coordinator, camera, queryKey, TestFrameId - 8UL);
+        BeginPassForPolicyTest(coordinator, camera, ownership);
+        object queryState = SeedOccludedQuery(
+            coordinator,
+            camera,
+            ownership,
+            queryKey,
+            TestFrameId - 8UL);
         SetNonPublicField(queryState, "QueryPending", true);
         SetNonPublicField(queryState, "PendingSinceFrame", 1UL);
         SetNonPublicField(queryState, "PendingQueryWasVisibleDraw", false);
 
-        ECpuOcclusionDecision decision = coordinator.ShouldRender(RenderPass, camera, queryKey, out CpuOcclusionProbeRequest request);
+        ECpuOcclusionDecision decision = coordinator.ShouldRender(
+            RenderPass,
+            camera,
+            queryKey,
+            out CpuOcclusionProbeRequest request,
+            ownership);
 
         decision.ShouldBe(ECpuOcclusionDecision.Visible);
         request.Requested.ShouldBeFalse();
         GetNonPublicField(queryState, "QueryPending").ShouldBe(false);
         GetNonPublicField(queryState, "StateKind").ShouldBe(ECpuOcclusionQueryStateKind.ForcedVisible);
+
+        _host.CurrentRenderFrameId++;
+        BeginPassForPolicyTest(coordinator, camera, ownership, preserveForcedRecovery: true);
+        coordinator.ShouldRender(RenderPass, camera, queryKey, out CpuOcclusionProbeRequest recoveryRequest, ownership)
+            .ShouldBe(ECpuOcclusionDecision.Visible);
+        recoveryRequest.Requested.ShouldBeTrue();
+        recoveryRequest.Reason.ShouldBe(ECpuOcclusionQueryReason.StaleStateRefresh);
+    }
+
+    [Test]
+    public void PendingMonoRecoveryProbeRetainsTheNegativeResultUsedBySkipDecision()
+    {
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        const uint queryKey = 178u;
+        OcclusionViewOwnership ownership = OcclusionViewOwnership.Independent(504);
+
+        BeginPassForPolicyTest(coordinator, camera, ownership);
+        object queryState = SeedOccludedQuery(
+            coordinator,
+            camera,
+            ownership,
+            queryKey,
+            TestFrameId - 1UL);
+        SetNonPublicField(queryState, "QueryPending", true);
+        SetNonPublicField(queryState, "PendingSinceFrame", TestFrameId);
+        SetNonPublicField(queryState, "PendingQueryWasVisibleDraw", false);
+
+        coordinator.ShouldRender(RenderPass, camera, queryKey, out _, ownership)
+            .ShouldBe(ECpuOcclusionDecision.Skip);
+        coordinator.GetOccludedProofCoverageMask(RenderPass, camera, queryKey, ownership)
+            .ShouldBe(0x1u);
+
+        SetNonPublicField(queryState, "PendingQueryWasVisibleDraw", true);
+        coordinator.GetOccludedProofCoverageMask(RenderPass, camera, queryKey, ownership)
+            .ShouldBe(0u);
     }
 
     [Test]
@@ -482,13 +825,46 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         const uint queryKey = 79u;
 
         BeginPassForPolicyTest(coordinator, camera);
-        SeedOccludedQuery(coordinator, camera, queryKey, TestFrameId - 1UL);
+        object queryState = SeedOccludedQuery(coordinator, camera, queryKey, TestFrameId - 1UL);
+        SetNonPublicField(queryState, "RecoveryStartedFrame", TestFrameId - 32UL);
 
         coordinator.ForceVisible(RenderPass, camera, queryKey, ECpuOcclusionForceVisibleReason.NearPlaneUnsafe);
         ECpuOcclusionDecision decision = coordinator.ShouldRender(RenderPass, camera, queryKey, out CpuOcclusionProbeRequest request);
 
         decision.ShouldBe(ECpuOcclusionDecision.Visible);
         request.Requested.ShouldBeFalse();
+        GetNonPublicField(queryState, "RecoveryStartedFrame").ShouldBe(ulong.MaxValue);
+    }
+
+    [Test]
+    public void ForceVisibleForValidation_RequestsIndividualProbeWithoutCulling()
+    {
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        const uint queryKey = 81u;
+        OcclusionViewOwnership ownership = OcclusionViewOwnership.Independent(501);
+
+        BeginPassForPolicyTest(coordinator, camera, ownership);
+        object queryState = SeedOccludedQuery(
+            coordinator,
+            camera,
+            ownership,
+            queryKey,
+            TestFrameId - 1UL);
+
+        CpuOcclusionProbeRequest request = coordinator.ForceVisibleForValidation(
+            RenderPass,
+            camera,
+            queryKey,
+            ownership);
+
+        request.Requested.ShouldBeTrue();
+        request.RecoveryProbe.ShouldBeFalse();
+        request.Reason.ShouldBe(ECpuOcclusionQueryReason.DiagnosticForcedQuery);
+        coordinator.ShouldRender(RenderPass, camera, queryKey, out CpuOcclusionProbeRequest cachedRequest, ownership)
+            .ShouldBe(ECpuOcclusionDecision.Visible);
+        cachedRequest.Requested.ShouldBeTrue();
+        GetNonPublicField(queryState, "RecoveryStartedFrame").ShouldBe(TestFrameId);
     }
 
     [Test]
@@ -510,24 +886,68 @@ public sealed class CpuRenderOcclusionCoordinatorTests
     private static void BeginPassForPolicyTest(
         CpuRenderOcclusionCoordinator coordinator,
         XRCamera camera,
-        uint sceneCommandCount = 1u)
+        uint sceneCommandCount = 1u,
+        bool preserveForcedRecovery = false)
     {
+        Dictionary<object, ulong>? recoveryStarts = preserveForcedRecovery
+            ? CaptureRecoveryStarts(GetPassState(coordinator, camera))
+            : null;
         coordinator.BeginPass(RenderPass, camera, sceneCommandCount);
         object passState = GetPassState(coordinator, camera);
+        RestoreRecoveryStarts(recoveryStarts);
         SetNonPublicField(passState, "ForceVisibleThisFrame", false);
         SetNonPublicField(passState, "ForceVisibleReason", ECpuOcclusionForceVisibleReason.None);
+        ClearPolicyTestRecovery(passState, clearRecovery: !preserveForcedRecovery);
     }
 
     private static void BeginPassForPolicyTest(
         CpuRenderOcclusionCoordinator coordinator,
         XRCamera camera,
         OcclusionViewOwnership ownership,
-        uint sceneCommandCount = 1u)
+        uint sceneCommandCount = 1u,
+        bool preserveForcedRecovery = false)
     {
+        Dictionary<object, ulong>? recoveryStarts = preserveForcedRecovery
+            ? CaptureRecoveryStarts(GetPassState(coordinator, camera, ownership))
+            : null;
         coordinator.BeginPass(RenderPass, camera, sceneCommandCount, ownership);
         object passState = GetPassState(coordinator, camera, ownership);
+        RestoreRecoveryStarts(recoveryStarts);
         SetNonPublicField(passState, "ForceVisibleThisFrame", false);
         SetNonPublicField(passState, "ForceVisibleReason", ECpuOcclusionForceVisibleReason.None);
+        ClearPolicyTestRecovery(passState, clearRecovery: !preserveForcedRecovery);
+    }
+
+    private static Dictionary<object, ulong> CaptureRecoveryStarts(object passState)
+    {
+        Dictionary<object, ulong> recoveryStarts = [];
+        IDictionary queries = (IDictionary)GetNonPublicField(passState, "Queries");
+        foreach (object queryState in queries.Values)
+        {
+            ulong recoveryStartedFrame = (ulong)GetNonPublicField(queryState, "RecoveryStartedFrame");
+            if (recoveryStartedFrame != ulong.MaxValue)
+                recoveryStarts.Add(queryState, recoveryStartedFrame);
+        }
+        return recoveryStarts;
+    }
+
+    private static void RestoreRecoveryStarts(Dictionary<object, ulong>? recoveryStarts)
+    {
+        if (recoveryStarts is null)
+            return;
+
+        foreach ((object queryState, ulong recoveryStartedFrame) in recoveryStarts)
+            SetNonPublicField(queryState, "RecoveryStartedFrame", recoveryStartedFrame);
+    }
+
+    private static void ClearPolicyTestRecovery(object passState, bool clearRecovery)
+    {
+        if (!clearRecovery)
+            return;
+
+        IDictionary queries = (IDictionary)GetNonPublicField(passState, "Queries");
+        foreach (object queryState in queries.Values)
+            SetNonPublicField(queryState, "RecoveryStartedFrame", ulong.MaxValue);
     }
 
     private static object SeedOccludedQuery(
@@ -625,6 +1045,14 @@ public sealed class CpuRenderOcclusionCoordinatorTests
 
     private static ECpuOcclusionMotionTier GetMotionTier(CpuRenderOcclusionCoordinator coordinator, XRCamera camera)
         => (ECpuOcclusionMotionTier)GetNonPublicField(GetPassState(coordinator, camera), "MotionTier");
+
+    private static ECpuOcclusionMotionTier GetMotionTier(
+        CpuRenderOcclusionCoordinator coordinator,
+        XRCamera camera,
+        OcclusionViewOwnership ownership)
+        => (ECpuOcclusionMotionTier)GetNonPublicField(
+            GetPassState(coordinator, camera, ownership),
+            "MotionTier");
 
     private static object GetPassState(CpuRenderOcclusionCoordinator coordinator, XRCamera camera)
         => InvokeNonPublic(coordinator, "GetPassState", RenderPass, camera).ShouldNotBeNull();

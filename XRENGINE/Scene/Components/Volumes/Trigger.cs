@@ -1,7 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Numerics;
 using XREngine.Data.Core;
-using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
 
 namespace XREngine.Components.Scene.Volumes

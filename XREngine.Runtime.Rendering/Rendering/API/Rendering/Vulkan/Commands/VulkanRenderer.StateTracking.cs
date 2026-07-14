@@ -697,6 +697,7 @@ public unsafe partial class VulkanRenderer
         uint InternalHeight,
         int OutputFrameBufferIdentity,
         int OutputTargetIdentity,
+        int ResourceRegistrySignature,
         int PassMetadataSignature,
         ulong ResourceGeneration,
         uint SubmissionQueueFamily);
@@ -867,8 +868,6 @@ public unsafe partial class VulkanRenderer
         private readonly VulkanRenderer _renderer;
         private readonly FrameOpResourcePlannerSwitchingState? _switchingState;
         private readonly ResourcePlannerRuntimeState _previousState;
-        private readonly FrameOpPlannerStateKey _singleKey;
-        private readonly bool _singleContext;
         private readonly bool _active;
 
         public FrameOpResourcePlannerPreparationScope(VulkanRenderer renderer, FrameOp[] ops)
@@ -876,8 +875,6 @@ public unsafe partial class VulkanRenderer
             _renderer = renderer;
             _switchingState = null;
             _previousState = default;
-            _singleKey = default;
-            _singleContext = false;
             _active = false;
 
             if (!renderer.IsDeviceOperational ||
@@ -886,25 +883,14 @@ public unsafe partial class VulkanRenderer
                 return;
 
             bool found = false;
-            bool multiple = false;
-            FrameOpPlannerStateKey firstKey = default;
             for (int i = 0; i < ops.Length; i++)
             {
                 FrameOpContext context = ops[i].Context;
                 if (!FrameOpContextHasPlannerResources(context))
                     continue;
 
-                FrameOpPlannerStateKey key = BuildFrameOpPlannerStateKey(context);
-                if (!found)
-                {
-                    firstKey = key;
-                    found = true;
-                }
-                else if (!key.Equals(firstKey))
-                {
-                    multiple = true;
-                    break;
-                }
+                found = true;
+                break;
             }
 
             if (!found)
@@ -913,22 +899,22 @@ public unsafe partial class VulkanRenderer
             FrameOpResourcePlannerSwitchingState switchingState = renderer.ActiveFrameOpResourcePlannerSwitchingState;
             _switchingState = switchingState;
             _previousState = renderer.CaptureResourcePlannerRuntimeState();
-            _singleKey = firstKey;
-            _singleContext = !multiple;
             _active = true;
 
-            ResourcePlannerRuntimeState state;
-            if (_singleContext)
+            ResourcePlannerRuntimeState state = switchingState.HasPreparationState
+                ? switchingState.PreparationState
+                : ResourcePlannerRuntimeState.CreateEmpty();
+
+            if (VulkanFrameDiagnosticsTraceEnabled)
             {
-                state = switchingState.States.TryGetValue(firstKey, out ResourcePlannerRuntimeState cachedState)
-                    ? cachedState
-                    : ResourcePlannerRuntimeState.CreateEmpty();
-            }
-            else
-            {
-                state = switchingState.HasPreparationState
-                    ? switchingState.PreparationState
-                    : ResourcePlannerRuntimeState.CreateEmpty();
+                Debug.VulkanEvery(
+                    $"Vulkan.ResourcePlanner.PreparationState.{renderer.GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[VulkanResourcePlanner] Restoring merged preparation state cached={0} owner={1} revision={2} signature=0x{3:X16}.",
+                    switchingState.HasPreparationState,
+                    state.AllocatorOwnershipId,
+                    state.ResourcePlannerRevision,
+                    state.ResourcePlannerSignature);
             }
 
             renderer.RestoreResourcePlannerRuntimeState(state);
@@ -965,16 +951,8 @@ public unsafe partial class VulkanRenderer
                 return default;
 
             ResourcePlannerRuntimeState state = _renderer.CaptureResourcePlannerRuntimeState();
-            if (_singleContext)
-            {
-                _switchingState.States[_singleKey] = state;
-                _renderer.MarkFrameOpResourcePlannerStateUsed(_switchingState, _singleKey);
-            }
-            else
-            {
-                _switchingState.PreparationState = state;
-                _switchingState.HasPreparationState = true;
-            }
+            _switchingState.PreparationState = state;
+            _switchingState.HasPreparationState = true;
 
             return state;
         }

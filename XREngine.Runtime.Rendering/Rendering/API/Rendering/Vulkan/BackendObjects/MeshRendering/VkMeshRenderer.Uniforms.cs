@@ -389,6 +389,8 @@ public unsafe partial class VulkanRenderer
 				return TryWriteStructUniformValue(data, member, member.Name, member.Offset);
 
 			bool wrote;
+			if (TryWriteTemporalViewProjectionUniform(data, member, draw, out wrote))
+				return wrote;
 
 			if (TryResolveEngineUniformValue(member.Name, draw, out object? engineValue, out EShaderVarType engineType))
 			{
@@ -440,6 +442,73 @@ public unsafe partial class VulkanRenderer
 			return false;
 		}
 
+		private bool TryWriteTemporalViewProjectionUniform(
+			Span<byte> data,
+			AutoUniformMember member,
+			in PendingMeshDraw draw,
+			out bool wrote)
+		{
+			wrote = false;
+			switch (member.Name)
+			{
+				case "CurrViewProjection":
+					wrote = TryWriteTemporalMatrix(data, member, draw.ViewProjectionMatrixUnjittered);
+					return true;
+				case "PrevViewProjection":
+					wrote = TryWriteTemporalMatrix(data, member, draw.PreviousViewProjectionMatrixUnjittered);
+					return true;
+				case "CurrViewProjectionStereo":
+					wrote = TryWriteTemporalStereoViewProjectionUniform(
+						data,
+						member,
+						draw.ViewProjectionMatrixUnjittered,
+						draw.RightEyeViewProjectionMatrixUnjittered);
+					return true;
+				case "PrevViewProjectionStereo":
+					wrote = TryWriteTemporalStereoViewProjectionUniform(
+						data,
+						member,
+						draw.PreviousViewProjectionMatrixUnjittered,
+						draw.PreviousRightEyeViewProjectionMatrixUnjittered);
+					return true;
+				default:
+					return false;
+			}
+		}
+
+		private bool TryWriteTemporalStereoViewProjectionUniform(
+			Span<byte> data,
+			AutoUniformMember member,
+			in Matrix4x4 left,
+			in Matrix4x4 right)
+		{
+			if (!member.IsArray || member.ArrayLength < 2 || member.ArrayStride == 0)
+				return false;
+
+			AutoUniformMember element = member with
+			{
+				IsArray = false,
+				ArrayLength = 0,
+				ArrayStride = 0,
+			};
+			bool wroteLeft = TryWriteTemporalMatrix(data, element, left);
+			element = element with { Offset = member.Offset + member.ArrayStride };
+			bool wroteRight = TryWriteTemporalMatrix(data, element, right);
+			return wroteLeft && wroteRight;
+		}
+
+		private static bool TryWriteTemporalMatrix(
+			Span<byte> data,
+			AutoUniformMember member,
+			in Matrix4x4 matrix)
+		{
+			if (member.EngineType != EShaderVarType._mat4 || member.Offset + 64u > (uint)data.Length)
+				return false;
+
+			Unsafe.WriteUnaligned(ref data[(int)member.Offset], matrix);
+			return true;
+		}
+
 		private void LogMaterialAutoUniform(
 			AutoUniformMember member,
 			XRMaterial material,
@@ -470,7 +539,9 @@ public unsafe partial class VulkanRenderer
 		private static bool IsMaterialAutoUniform(string name)
 			=> name is "BaseColor" or "Opacity" or "Specular" or "Roughness" or "Metallic" or "Emission" or "AlphaCutoff"
 			or "MatColor" or "LineWidth" or "ArrowHeadLengthPixels" or "ArrowHeadHalfWidthPixels"
-			or "TextAtlasType" or "MsdfDistanceRange" or "MsdfDistanceRangeMiddle" or "MsdfFillBias" or "TextDebugMode" or "TextRenderLayer" or "TextRenderLayer_VTX";
+			or "TextAtlasType" or "MsdfDistanceRange" or "MsdfDistanceRangeMiddle" or "MsdfFillBias" or "TextDebugMode" or "TextRenderLayer" or "TextRenderLayer_VTX"
+			or "ModelMatrix" or "PrevModelMatrix" or "CurrViewProjection" or "PrevViewProjection"
+			or "CurrViewProjectionStereo" or "PrevViewProjectionStereo";
 
 		private bool IsGizmoDiagnosticProgram()
 		{
@@ -504,7 +575,7 @@ public unsafe partial class VulkanRenderer
                 : string.Join("; ", _program.AutoUniformBlocks.Select(pair =>
                 $"{pair.Key}[{string.Join(",", pair.Value.Members.Select(static member => member.Name))}]"));
 
-        private static string FormatMaterialUniformDiagnosticValue(object? value)
+		private static string FormatMaterialUniformDiagnosticValue(object? value)
 			=> value switch
 			{
 				null => "<null>",
@@ -514,10 +585,18 @@ public unsafe partial class VulkanRenderer
 				Vector2 v => $"({v.X:G4},{v.Y:G4})",
 				Vector3 v => $"({v.X:G4},{v.Y:G4},{v.Z:G4})",
 				Vector4 v => $"({v.X:G4},{v.Y:G4},{v.Z:G4},{v.W:G4})",
+				Matrix4x4 m => FormatMatrixDiagnosticValue(in m),
+				Matrix4x4[] matrices => string.Join(",", matrices.Select(static m => FormatMatrixDiagnosticValue(in m))),
 				ColorF3 c => $"({c.R:G4},{c.G:G4},{c.B:G4})",
 				ColorF4 c => $"({c.R:G4},{c.G:G4},{c.B:G4},{c.A:G4})",
 				_ => value.ToString() ?? "<null>",
 			};
+
+		private static string FormatMatrixDiagnosticValue(in Matrix4x4 matrix)
+			=> $"[{matrix.M11:G4},{matrix.M12:G4},{matrix.M13:G4},{matrix.M14:G4};" +
+			   $"{matrix.M21:G4},{matrix.M22:G4},{matrix.M23:G4},{matrix.M24:G4};" +
+			   $"{matrix.M31:G4},{matrix.M32:G4},{matrix.M33:G4},{matrix.M34:G4};" +
+			   $"{matrix.M41:G4},{matrix.M42:G4},{matrix.M43:G4},{matrix.M44:G4}]";
 
 		private bool TryWriteStructUniformValue(Span<byte> data, AutoUniformMember member, string uniformPrefix, uint baseOffset)
 		{
@@ -699,10 +778,6 @@ public unsafe partial class VulkanRenderer
 			XRCamera? camera = draw.Camera;
 			bool stereoPass = draw.IsStereoPass;
 
-			Matrix4x4 prevModelMatrix = draw.PreviousModelMatrix;
-			if (IsApproximatelyIdentity(prevModelMatrix) && !IsApproximatelyIdentity(draw.ModelMatrix))
-				prevModelMatrix = draw.ModelMatrix;
-
 			Matrix4x4 inverseModel = Matrix4x4.Identity;
 			Matrix4x4.Invert(draw.ModelMatrix, out inverseModel);
 
@@ -772,7 +847,7 @@ public unsafe partial class VulkanRenderer
 					type = EShaderVarType._mat4;
 					return true;
 				case nameof(EEngineUniform.PrevModelMatrix):
-					value = prevModelMatrix;
+					value = draw.PreviousModelMatrix;
 					type = EShaderVarType._mat4;
 					return true;
 				case nameof(EEngineUniform.RootInvModelMatrix):
@@ -1268,14 +1343,6 @@ public unsafe partial class VulkanRenderer
 			XRCamera? camera = draw.Camera;
 			bool stereoPass = draw.IsStereoPass;
 
-			// Fallback: if previous model matrix was never captured, assume static
-			// to avoid injecting false motion into the velocity buffer (causes
-			// diagonal blur on objects that are actually still). Use a loose
-			// comparison to tolerate floating-point jitter around identity.
-			Matrix4x4 prevModelMatrix = draw.PreviousModelMatrix;
-			if (IsApproximatelyIdentity(prevModelMatrix) && !IsApproximatelyIdentity(draw.ModelMatrix))
-				prevModelMatrix = draw.ModelMatrix;
-
 			Matrix4x4 inverseModel = Matrix4x4.Identity;
 			Matrix4x4.Invert(draw.ModelMatrix, out inverseModel);
 
@@ -1323,7 +1390,7 @@ public unsafe partial class VulkanRenderer
 				case nameof(EEngineUniform.ModelMatrix):
 					return UploadUniform(buffer, draw.ModelMatrix);
 				case nameof(EEngineUniform.PrevModelMatrix):
-					return UploadUniform(buffer, prevModelMatrix);
+					return UploadUniform(buffer, draw.PreviousModelMatrix);
 				case nameof(EEngineUniform.RootInvModelMatrix):
 					return UploadUniform(buffer, inverseModel);
 				case nameof(EEngineUniform.ViewMatrix):
@@ -1475,21 +1542,6 @@ public unsafe partial class VulkanRenderer
 
 		/// <summary>Converts a Vector3 to Vector4 with W=0 for shader upload.</summary>
 		private static Vector4 ToVector4(in Vector3 v) => new(v, 0f);
-
-		/// <summary>
-		/// Checks whether a matrix is approximately identity (within epsilon).
-		/// Used to detect un-initialized previous-frame model matrices and
-		/// suppress false motion vectors.
-		/// </summary>
-		private static bool IsApproximatelyIdentity(in Matrix4x4 m)
-		{
-			const float eps = 1e-4f;
-			return MathF.Abs(m.M11 - 1f) < eps && MathF.Abs(m.M22 - 1f) < eps && MathF.Abs(m.M33 - 1f) < eps && MathF.Abs(m.M44 - 1f) < eps
-				&& MathF.Abs(m.M12) < eps && MathF.Abs(m.M13) < eps && MathF.Abs(m.M14) < eps
-				&& MathF.Abs(m.M21) < eps && MathF.Abs(m.M23) < eps && MathF.Abs(m.M24) < eps
-				&& MathF.Abs(m.M31) < eps && MathF.Abs(m.M32) < eps && MathF.Abs(m.M34) < eps
-				&& MathF.Abs(m.M41) < eps && MathF.Abs(m.M42) < eps && MathF.Abs(m.M43) < eps;
-		}
 
 		/// <summary>Maps and uploads a single unmanaged value to a host-visible UBO.</summary>
 		private bool UploadUniform<T>(EngineUniformBuffer buffer, in T value) where T : unmanaged

@@ -869,10 +869,7 @@ public unsafe partial class VulkanRenderer
             return;
 
         if (_commandChainCaches is not null)
-        {
-            DestroyCommandChainCaches();
-            MarkOpenXrPrimaryCommandBufferVariantsDirty();
-        }
+            DestroyIndexedCommandChainCaches();
 
         _commandChainCaches = new Dictionary<CommandChainKey, CommandChain>[count];
         for (int i = 0; i < count; i++)
@@ -880,6 +877,9 @@ public unsafe partial class VulkanRenderer
     }
 
     internal void NotifyTextureDescriptorPublished(string reason)
+        => InvalidateCommandChainScheduleForResourceChange(reason);
+
+    private void InvalidateCommandChainScheduleForResourceChange(string reason)
     {
         bool commandChainsAvailable =
             _commandChainCaches is not null ||

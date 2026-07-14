@@ -145,6 +145,9 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     }
 
     private ViewportRenderCommandContainer _commandChain = [];
+    [YamlIgnore]
+    public ulong CommandGeneration { get; private set; }
+
     /// <summary>
     /// Gets the command chain for this pipeline.
     /// The command chain represents the sequence of render commands that will be executed by this pipeline.
@@ -395,6 +398,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     /// </summary>
     protected virtual void OnCommandChainChanged()
     {
+        CommandGeneration++;
         PassMetadata = GeneratePassMetadata();
         RefreshPostProcessSchema();
     }

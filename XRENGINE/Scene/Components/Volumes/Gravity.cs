@@ -1,8 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Numerics;
 using XREngine.Components.Physics;
-using XREngine.Rendering.Physics.Physx;
-using XREngine.Scene.Physics.Jolt;
 
 namespace XREngine.Components.Scene.Volumes
 {
@@ -19,7 +17,7 @@ namespace XREngine.Components.Scene.Volumes
             set => SetField(ref _gravity, value);
         }
 
-        private readonly HashSet<DynamicRigidBodyComponent> _affected = [];
+        private readonly Dictionary<DynamicRigidBodyComponent, bool> _affected = [];
 
         protected override void OnComponentActivated()
         {
@@ -30,6 +28,11 @@ namespace XREngine.Components.Scene.Volumes
         protected override void OnComponentDeactivated()
         {
             UnregisterTick(ETickGroup.PostPhysics, (int)ETickOrder.Scene, ApplyGravityTick);
+            foreach ((DynamicRigidBodyComponent component, bool gravityEnabled) in _affected)
+            {
+                if (component.RigidBody is not null)
+                    component.RigidBody.GravityEnabled = gravityEnabled;
+            }
             _affected.Clear();
             base.OnComponentDeactivated();
         }
@@ -39,29 +42,13 @@ namespace XREngine.Components.Scene.Volumes
             if (_affected.Count == 0)
                 return;
 
-            var scene = WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene;
-            if (scene is null)
-                return;
-
-            // Approximate per-body gravity by applying a velocity delta each fixed step.
-            // - PhysX: we can disable built-in gravity per actor.
-            // - Jolt: no per-body gravity toggle exposed; apply the difference from scene gravity.
             float dt = Engine.FixedDelta;
-            Vector3 dvPhysx = Gravity * dt;
-            Vector3 dvJolt = (Gravity - scene.Gravity) * dt;
+            Vector3 velocityDelta = Gravity * dt;
 
-            foreach (var bodyComponent in _affected)
+            foreach (DynamicRigidBodyComponent bodyComponent in _affected.Keys)
             {
                 var body = bodyComponent.RigidBody;
-                switch (body)
-                {
-                    case PhysxDynamicRigidBody physx:
-                        physx.SetLinearVelocity(physx.LinearVelocity + dvPhysx, wake: true);
-                        break;
-                    case JoltDynamicRigidBody jolt:
-                        jolt.SetLinearVelocity(jolt.LinearVelocity + dvJolt);
-                        break;
-                }
+                body?.SetLinearVelocity(body.LinearVelocity + velocityDelta, wake: true);
             }
         }
 
@@ -69,9 +56,8 @@ namespace XREngine.Components.Scene.Volumes
         {
             if (component is DynamicRigidBodyComponent rb)
             {
-                _affected.Add(rb);
-                if (rb.RigidBody is PhysxActor actor)
-                    actor.GravityEnabled = false;
+                if (rb.RigidBody is { } body && _affected.TryAdd(rb, body.GravityEnabled))
+                    body.GravityEnabled = false;
             }
 
             base.OnEntered(component);
@@ -80,9 +66,8 @@ namespace XREngine.Components.Scene.Volumes
         {
             if (component is DynamicRigidBodyComponent rb)
             {
-                _affected.Remove(rb);
-                if (rb.RigidBody is PhysxActor actor)
-                    actor.GravityEnabled = true;
+                if (_affected.Remove(rb, out bool gravityEnabled) && rb.RigidBody is { } body)
+                    body.GravityEnabled = gravityEnabled;
             }
 
             base.OnLeft(component);

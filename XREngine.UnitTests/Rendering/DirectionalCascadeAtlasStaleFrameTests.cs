@@ -86,6 +86,87 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
     }
 
     [Test]
+    public void DirectionalCascadeSlots_PublishAndCommitWholeGenerationsAtomically()
+    {
+        string directionalSource = ReadRepoFile("XREngine.Runtime.Rendering/Scene/Components/Lights/Types/DirectionalLightComponent.CascadeShadows.cs")
+            .Replace("\r\n", "\n");
+        string lightsSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.Shadows.cs")
+            .Replace("\r\n", "\n");
+        string atlasManager = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasManager.cs")
+            .Replace("\r\n", "\n");
+
+        directionalSource.ShouldContain("DirectionalCascadeAtlasSlot[] PendingAtlasSlots");
+        directionalSource.ShouldContain("CompleteDirectionalAtlasSlotPublish(bool publish)");
+        directionalSource.ShouldContain("state.AtlasSlots = state.PendingAtlasSlots;");
+        directionalSource.ShouldContain("GetAtlasSlotWriteTarget(state)");
+        directionalSource.ShouldContain("CommitRenderedCascadeAtlasSlots(ReadOnlySpan<DirectionalCascadeAtlasRenderCommit> commits)");
+        directionalSource.ShouldContain("state.AtlasRequestContentHashes[index] == sample.ContentHash");
+        directionalSource.ShouldContain("state.PendingAtlasSlots[index] = renderedSlot;");
+
+        string publishDiagnostics = ExtractRegion(
+            lightsSource,
+            "private void PublishShadowAtlasDiagnostics()",
+            "private static void AccumulateShadowAtlasDiagnostic(");
+        publishDiagnostics.ShouldContain("bool publishDirectionalSlots = false;");
+        publishDiagnostics.ShouldContain("finally");
+        publishDiagnostics.ShouldContain("CompleteDirectionalAtlasSlotPublish(publishDirectionalSlots)");
+
+        atlasManager.ShouldContain("EnqueueDirectionalCascadePlanMemberCompletions(plan, entry, light);");
+        atlasManager.ShouldContain("light.CommitRenderedCascadeAtlasSlots(commits[..commitCount]);");
+        atlasManager.IndexOf("light.CommitRenderedCascadeAtlasSlots(commits[..commitCount]);", StringComparison.Ordinal)
+            .ShouldBeLessThan(atlasManager.IndexOf("EnqueueTileCompletion(completion);", atlasManager.IndexOf("private void EnqueueDirectionalCascadePlanMemberCompletions", StringComparison.Ordinal), StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void LegacyDirectionalCascades_RequireRenderedContentAndReadyDescriptors()
+    {
+        string directionalSource = ReadRepoFile("XREngine.Runtime.Rendering/Scene/Components/Lights/Types/DirectionalLightComponent.CascadeShadows.cs")
+            .Replace("\r\n", "\n");
+        string deferredSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_LightCombinePass.cs")
+            .Replace("\r\n", "\n");
+        string forwardSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.ForwardLighting.cs")
+            .Replace("\r\n", "\n");
+        string dirtyReasonSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferDirtyReasons.cs")
+            .Replace("\r\n", "\n");
+        string loweringSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs")
+            .Replace("\r\n", "\n");
+
+        directionalSource.ShouldContain("GetSampleableCascadedShadowReceiverTexture");
+        directionalSource.ShouldContain("state.LegacyRenderedContentRevision != state.ContentRevision");
+        directionalSource.ShouldContain("state.LegacyRenderedCascadeCount < activeCascadeCount");
+        directionalSource.ShouldContain("ReferenceEquals(state.LegacyRenderedReceiverTexture, receiverTexture)");
+        directionalSource.ShouldContain("renderer.IsTextureReadyForShaderSampling(receiverTexture)");
+        directionalSource.ShouldContain("MarkLegacyCascadeRenderComplete(source, cascadeCount);");
+        directionalSource.ShouldContain("EnsureCascadeShadowResources();");
+
+        deferredSource.ShouldContain("GetSampleableCascadedShadowReceiverTexture(activeRenderingCamera)");
+        deferredSource.ShouldContain("IsTextureReadyForShadowSampling(atlasTexture)");
+        deferredSource.ShouldContain("if (!IsTextureReadyForShadowSampling(selectedShadowMap))");
+        forwardSource.ShouldContain("GetSampleableCascadedShadowReceiverTexture(directionalShadowCamera)");
+        forwardSource.ShouldContain("IsTextureReadyForShadowSampling(directionalAtlas)");
+
+        dirtyReasonSource.ShouldContain("InvalidateCommandChainScheduleForResourceChange");
+        loweringSource.ShouldContain("private void InvalidateCommandChainScheduleForResourceChange(string reason)");
+        loweringSource.ShouldContain("Array.Clear(_commandChainScheduleFastSignatures)");
+        loweringSource.ShouldContain("Array.Clear(_commandChainScheduleCache)");
+    }
+
+    [Test]
+    public void DeferredLightCombine_PreservesViewportContextAcrossCommandChainRebuilds()
+    {
+        string source = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_LightCombinePass.cs")
+            .Replace("\r\n", "\n");
+
+        source.ShouldContain("XRViewport? viewport = ActivePipelineInstance.RenderState.WindowViewport\n                ?? ActivePipelineInstance.LastWindowViewport;");
+        source.ShouldContain("if (ActivePipelineInstance.RenderState.Scene is null && world is null)");
+        source.Split(
+            "XRViewport? viewport = ActivePipelineInstance.RenderState.WindowViewport\n                ?? ActivePipelineInstance.LastWindowViewport;",
+            StringSplitOptions.None).Length.ShouldBeGreaterThanOrEqualTo(3);
+        source.ShouldContain("return (ActivePipelineInstance.RenderState.WindowViewport\n                ?? ActivePipelineInstance.LastWindowViewport)?.World?.Lights;");
+        source.ShouldNotContain("var world = ActivePipelineInstance.RenderState.WindowViewport?.World;");
+    }
+
+    [Test]
     public void DirectionalCascadeShaders_ReprojectStaleAtlasSamplesWithRenderedUniforms()
     {
         string forwardShader = ReadRepoFile("Build/CommonAssets/Shaders/Snippets/ForwardLighting.glsl")
@@ -96,7 +177,7 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
             .Replace("\r\n", "\n");
         string lightComponent = ReadRepoFile("XREngine.Runtime.Rendering/Scene/Components/Lights/Types/DirectionalLightComponent.cs")
             .Replace("\r\n", "\n");
-        string pipelineSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs")
+        string pipelineSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs")
             .Replace("\r\n", "\n");
         string forwardGpu = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.ForwardLighting.cs")
             .Replace("\r\n", "\n");

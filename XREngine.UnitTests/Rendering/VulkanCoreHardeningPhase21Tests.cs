@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using NUnit.Framework;
 using Shouldly;
 using XREngine;
+using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine.UnitTests.Rendering;
@@ -22,6 +23,69 @@ public sealed class VulkanCoreHardeningPhase21Tests
             .ShouldBe(VulkanRenderer.BuildFrameOpPlannerStateKey(descriptorOnlyChange));
         VulkanRenderer.BuildFrameOpPlannerStateKey(first)
             .ShouldNotBe(VulkanRenderer.BuildFrameOpPlannerStateKey(allocationChange));
+    }
+
+    [Test]
+    public void PlannerAllocatorKey_SeparatesDistinctResourceRegistryContracts()
+    {
+        RenderResourceRegistry firstRegistry = new();
+        firstRegistry.RegisterFrameBufferDescriptor(new FrameBufferResourceDescriptor(
+            "PipelineOnly",
+            RenderResourceLifetime.Persistent,
+            RenderResourceSizePolicy.Absolute(32u, 32u),
+            []));
+        RenderResourceRegistry secondRegistry = new();
+        secondRegistry.RegisterFrameBufferDescriptor(new FrameBufferResourceDescriptor(
+            "PipelineAndOpenXrOutput",
+            RenderResourceLifetime.Persistent,
+            RenderResourceSizePolicy.Absolute(32u, 32u),
+            []));
+
+        VulkanRenderer.FrameOpContext first = CreateContext(
+            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+            descriptorGeneration: 10) with { ResourceRegistry = firstRegistry };
+        VulkanRenderer.FrameOpContext second = first with { ResourceRegistry = secondRegistry };
+
+        VulkanRenderer.BuildFrameOpPlannerStateKey(first)
+            .ShouldNotBe(VulkanRenderer.BuildFrameOpPlannerStateKey(second));
+    }
+
+    [Test]
+    public void PlannerAllocatorKey_UsesCapturedRegistrySignatureInsteadOfMutableRegistryReference()
+    {
+        RenderResourceRegistry firstRegistry = new();
+        firstRegistry.RegisterFrameBufferDescriptor(new FrameBufferResourceDescriptor(
+            "FirstGeneration",
+            RenderResourceLifetime.Persistent,
+            RenderResourceSizePolicy.Absolute(32u, 32u),
+            []));
+        RenderResourceRegistry secondRegistry = new();
+        secondRegistry.RegisterFrameBufferDescriptor(new FrameBufferResourceDescriptor(
+            "SecondGeneration",
+            RenderResourceLifetime.Persistent,
+            RenderResourceSizePolicy.Absolute(64u, 64u),
+            []));
+
+        VulkanRenderer.FrameOpContext captured = CreateContext(
+            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+            descriptorGeneration: 10) with
+        {
+            ResourceRegistry = firstRegistry,
+            ResourceRegistrySignatureSnapshot = firstRegistry.DescriptorSignature,
+        };
+        VulkanRenderer.FrameOpContext referenceChangedAfterCapture = captured with
+        {
+            ResourceRegistry = secondRegistry,
+        };
+        VulkanRenderer.FrameOpContext recaptured = referenceChangedAfterCapture with
+        {
+            ResourceRegistrySignatureSnapshot = secondRegistry.DescriptorSignature,
+        };
+
+        VulkanRenderer.BuildFrameOpPlannerStateKey(captured)
+            .ShouldBe(VulkanRenderer.BuildFrameOpPlannerStateKey(referenceChangedAfterCapture));
+        VulkanRenderer.BuildFrameOpPlannerStateKey(captured)
+            .ShouldNotBe(VulkanRenderer.BuildFrameOpPlannerStateKey(recaptured));
     }
 
     [Test]

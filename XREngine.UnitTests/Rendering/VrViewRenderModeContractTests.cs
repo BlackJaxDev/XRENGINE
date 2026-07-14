@@ -2,6 +2,8 @@ using NUnit.Framework;
 using Shouldly;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using XREngine.Data.Geometry;
+using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Runtime.Bootstrap;
 
@@ -10,6 +12,85 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class VrViewRenderModeContractTests
 {
+    [Test]
+    public void ViewportRenderArea_SeparatesInternalRenderingFromFullResolutionPresentation()
+    {
+        var internalRegion = new BoundingRectangle(0, 0, 600, 674);
+        var viewportRegion = new BoundingRectangle(8, 12, 896, 1007);
+        var externalRegion = new BoundingRectangle(0, 0, 1024, 1024);
+        var outputRegion = new BoundingRectangle(0, 0, 896, 1007);
+
+        VPRC_PushViewportRenderArea.ResolveRenderArea(
+            useInternalResolution: true,
+            internalRegion,
+            viewportRegion,
+            externalRegion,
+            outputRegion).ShouldBe(internalRegion);
+        VPRC_PushViewportRenderArea.ResolveRenderArea(
+            useInternalResolution: false,
+            internalRegion,
+            viewportRegion,
+            externalRegion,
+            outputRegion).ShouldBe(externalRegion);
+        VPRC_PushViewportRenderArea.ResolveRenderArea(
+            useInternalResolution: false,
+            internalRegion,
+            viewportRegion,
+            externalRegion: null,
+            outputRegion).ShouldBe(outputRegion);
+        VPRC_PushViewportRenderArea.ResolveRenderArea(
+            useInternalResolution: false,
+            internalRegion,
+            viewportRegion,
+            externalRegion: null,
+            outputRegion: null).ShouldBe(viewportRegion);
+    }
+
+    [TestCase(OpenXrStrictSpsFailureStage.Capability)]
+    [TestCase(OpenXrStrictSpsFailureStage.Target)]
+    [TestCase(OpenXrStrictSpsFailureStage.Recording)]
+    [TestCase(OpenXrStrictSpsFailureStage.LifetimeValidation)]
+    [TestCase(OpenXrStrictSpsFailureStage.Submit)]
+    [TestCase(OpenXrStrictSpsFailureStage.Publish)]
+    public void StrictSinglePassStereo_AllFailureStagesAreHandledWithoutProjectionOrFallback(
+        OpenXrStrictSpsFailureStage stage)
+    {
+        OpenXrStrictSpsFailureResolution resolution = OpenXrStrictSpsFailurePolicy.Resolve(stage);
+
+        resolution.Handled.ShouldBeTrue();
+        resolution.ProjectionLayerCount.ShouldBe(0u);
+        resolution.SequentialFallbackRequested.ShouldBeFalse();
+        resolution.SequentialFallbackAttemptDelta.ShouldBe(0L);
+    }
+
+    [TestCase(null, 0L)]
+    [TestCase("invalid", 0L)]
+    [TestCase("-4", 0L)]
+    [TestCase("4", 4L)]
+    [NonParallelizable]
+    public void StrictSinglePassStereo_InjectedFailureDefersUntilSmokeWarmupCompletes(
+        string? configuredWarmupFrames,
+        long expectedWarmupFrames)
+    {
+        string? previous = Environment.GetEnvironmentVariable(
+            XREngineEnvironmentVariables.OpenXrSmokeWarmupFrames);
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                XREngineEnvironmentVariables.OpenXrSmokeWarmupFrames,
+                configuredWarmupFrames);
+
+            OpenXrStrictSpsFailurePolicy.ResolveInjectedFailureWarmupFrameCount()
+                .ShouldBe(expectedWarmupFrames);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                XREngineEnvironmentVariables.OpenXrSmokeWarmupFrames,
+                previous);
+        }
+    }
+
     [TestCase(true, false, false, true)]
     [TestCase(true, false, true, false)]
     [TestCase(true, true, false, false)]
@@ -898,7 +979,9 @@ public sealed class VrViewRenderModeContractTests
         openXrState.ShouldContain("_vulkanStereoDepthArray");
         openXrState.ShouldContain("GetOrCreateOpenXrStereoPipeline");
         xrViewport.ShouldContain("meshRenderCommandsOverride: MeshRenderCommandsOverride");
-        pushViewportRenderArea.ShouldContain("UseInternalResolution || vp.RendersToExternalSwapchainTarget");
+        pushViewportRenderArea.ShouldContain("if (UseInternalResolution)");
+        pushViewportRenderArea.ShouldContain("TryResolveDestinationRenderArea");
+        pushViewportRenderArea.ShouldNotContain("UseInternalResolution || vp.RendersToExternalSwapchainTarget");
         contracts.ShouldContain("EVrViewRenderImplementationPath");
         contracts.ShouldContain("EVrTemporalHistoryPolicy");
         contracts.ShouldContain("EOpenXrEyeResolutionPreset");
@@ -987,8 +1070,6 @@ public sealed class VrViewRenderModeContractTests
     {
         string pipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs");
         string pipeline2 = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs");
-        string pipelineLegacy = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
-
         foreach (string source in new[] { pipeline, pipeline2 })
         {
             source.ShouldContain("ifElse.ConditionEvaluator = ShouldUseViewportTargetCommands;");
@@ -998,7 +1079,6 @@ public sealed class VrViewRenderModeContractTests
             source.ShouldContain("CreateFBOTargetCommands()");
         }
 
-        pipelineLegacy.ShouldContain("ifElse.ConditionEvaluator = ShouldUseViewportTargetCommands;");
         pipeline.ShouldNotContain("&& RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null;");
         pipeline2.ShouldNotContain("&& RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null;");
     }

@@ -141,6 +141,15 @@ public unsafe partial class VulkanRenderer
         Action EmitFrameOps,
         bool RendersExternalSwapchainTarget = true);
 
+    internal static bool IsOpenXrStrictSpsFaultBoundary(
+        EOpenXrStrictSpsFaultInjectionStage requested,
+        EOpenXrStrictSpsFaultInjectionStage boundary)
+        => requested != EOpenXrStrictSpsFaultInjectionStage.None && requested == boundary;
+
+    internal static bool ShouldFreeTemporaryOpenXrCommandBuffer(
+        EVulkanQueueSubmissionDisposition disposition)
+        => disposition != EVulkanQueueSubmissionDisposition.SubmittedIncomplete;
+
     internal readonly record struct OpenXrEyeMirrorPublishRequest(
         XRTexture2D? SourceTexture,
         Image SwapchainImage,
@@ -249,6 +258,12 @@ public unsafe partial class VulkanRenderer
     private static int _threadSynchronousResourceUploadBlockDepth;
     private readonly Dictionary<OpenXrViewResourcePlannerContextKey, ResourcePlannerRuntimeState> _openXrResourcePlannerStates = new();
     private readonly object _openXrResourcePlannerStatesLock = new();
+    [ThreadStatic]
+    private static VulkanRenderer? _threadOpenXrResourcePlannerScopeRenderer;
+    [ThreadStatic]
+    private static OpenXrViewResourcePlannerContextKey _threadOpenXrResourcePlannerScopeKey;
+    [ThreadStatic]
+    private static int _threadOpenXrResourcePlannerScopeDepth;
 
     public override bool IsRenderingExternalSwapchainTarget => IsThreadOpenXrExternalSwapchainTarget;
     internal bool IsPrewarmingOpenXrExternalSwapchainTarget =>
@@ -331,6 +346,31 @@ public unsafe partial class VulkanRenderer
             {
                 for (int i = 0; i < variants.Count; i++)
                     variants[i].Dirty = true;
+            }
+        }
+    }
+
+    private void MarkUnsubmittedOpenXrPrimaryCommandBufferDirty(
+        in OpenXrRecordedEyeCommandBuffer recorded,
+        string reason)
+    {
+        if (!recorded.OwnedByOpenXrPrimaryCache || recorded.CommandBuffer.Handle == 0)
+            return;
+
+        lock (_openXrPrimaryCommandBufferVariantsLock)
+        {
+            foreach (List<CommandBufferCacheVariant> variants in _openXrPrimaryCommandBufferVariants.Values)
+            {
+                for (int i = 0; i < variants.Count; i++)
+                {
+                    CommandBufferCacheVariant variant = variants[i];
+                    if (variant.PrimaryCommandBuffer.Handle != recorded.CommandBuffer.Handle)
+                        continue;
+
+                    variant.Dirty = true;
+                    variant.DirtyReason = reason;
+                    return;
+                }
             }
         }
     }
@@ -1214,6 +1254,14 @@ public unsafe partial class VulkanRenderer
 
                 variant.GpuProfilerActive = gpuPipelineProfilingActive;
                 variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
+
+                if (HasQueryFrameOps(ops) && !PrepareQueryFrameOpsForCommandBufferReuse(ops))
+                {
+                    if (OpenXrVulkanTraceEnabled)
+                        RecordOpenXrPrimaryReuseMiss("openxr-primary-miss:query-pool-prepare");
+                    return false;
+                }
+
                 variant.LastUsedFrameId = VulkanFrameCounter;
                 StoreFrameOpSignatureDebugParts(variant, ops);
                 RestoreRecordedImageLayoutEndState(variant);
@@ -1998,6 +2046,8 @@ public unsafe partial class VulkanRenderer
         bool hasPublish = false;
         bool submitted = false;
         bool commandBuffersCompleted = false;
+        EVulkanQueueSubmissionDisposition submissionDisposition =
+            EVulkanQueueSubmissionDisposition.NotSubmitted;
 
         try
         {
@@ -2031,6 +2081,8 @@ public unsafe partial class VulkanRenderer
                 commandBuffers,
                 3,
                 out commandBuffersCompleted,
+                out submissionDisposition,
+                out _,
                 CreateOpenXrBatchSubmissionDiagnosticContext(
                     "OpenXrEyeMirrorRenderPublishSubmit",
                     "OpenXrEyeMirrorRenderPublish",
@@ -2067,7 +2119,7 @@ public unsafe partial class VulkanRenderer
                 CancelRecordedTextureUploads(_openXrRecordedTextureUploadsForSubmit, "OpenXR eye mirror render+publish batch command buffer submit failed");
 
             if (hasPublish)
-                FreeOpenXrMirrorPublishCommandBuffer(publishCommandBuffer, commandBuffersCompleted);
+                FreeOpenXrMirrorPublishCommandBuffer(publishCommandBuffer, submissionDisposition);
             if (hasSecond)
                 FreeOpenXrRecordedEyeCommandBuffer(secondRecorded);
             if (hasFirst)
@@ -2089,8 +2141,11 @@ public unsafe partial class VulkanRenderer
         Format rightDestinationFormat,
         Extent2D rightDestinationExtent,
         string rightDestinationLabel,
-        bool flipY = false)
+        bool flipY,
+        EOpenXrStrictSpsFaultInjectionStage faultInjectionStage,
+        out EOpenXrStrictSpsFaultInjectionStage injectedFailureStage)
     {
+        injectedFailureStage = EOpenXrStrictSpsFaultInjectionStage.None;
         _openXrRecordedTextureUploadsForSubmit.Clear();
         OpenXrRecordedEyeCommandBuffer recorded = default;
         CommandBuffer publishCommandBuffer = default;
@@ -2098,18 +2153,38 @@ public unsafe partial class VulkanRenderer
         bool hasPublish = false;
         bool submitted = false;
         bool commandBuffersCompleted = false;
+        EVulkanQueueSubmissionDisposition submissionDisposition =
+            EVulkanQueueSubmissionDisposition.NotSubmitted;
 
         try
         {
+            // Keep the same planner context active until the array-layer publish
+            // command has captured its source image. Leaving the mirror-record
+            // scope first can refresh the logical texture wrapper back to its
+            // dedicated fallback image even though the recorded render targeted
+            // the planner-owned physical image.
+            using IDisposable sourcePlannerScope = EnterOpenXrResourcePlannerThreadScope(
+                renderRequest.ResourcePlannerStateIndex,
+                EOpenXrResourcePlannerPurpose.Mirror);
+
             hasRecorded = TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(in renderRequest, out recorded);
             if (!hasRecorded)
                 return false;
+
+            if (IsOpenXrStrictSpsFaultBoundary(
+                    faultInjectionStage,
+                    EOpenXrStrictSpsFaultInjectionStage.Recording))
+            {
+                injectedFailureStage = EOpenXrStrictSpsFaultInjectionStage.Recording;
+                return false;
+            }
 
             if (renderPipelineInstance?.SkippedResizeCatchUpThisFrame == true)
                 return false;
 
             if (!TryPrepareStereoLayerBlit(
                     sourceTexture,
+                    recorded.CommandBuffer,
                     leftDestinationImage,
                     leftDestinationFormat,
                     leftDestinationExtent,
@@ -2136,12 +2211,17 @@ public unsafe partial class VulkanRenderer
                 commandBuffers,
                 2,
                 out commandBuffersCompleted,
+                out submissionDisposition,
+                out injectedFailureStage,
                 CreateOpenXrPublishBatchSubmissionDiagnosticContext(
                     "OpenXrStereoLayerRenderPublishSubmit",
                     "OpenXrStereoLayerRenderPublish",
                     in recorded,
                     leftDestinationExtent,
-                    leftDestinationLabel));
+                    leftDestinationLabel) with
+                {
+                    OpenXrStrictSpsFaultInjectionStage = faultInjectionStage,
+                });
 
             if (submitted)
             {
@@ -2168,11 +2248,20 @@ public unsafe partial class VulkanRenderer
         }
         finally
         {
+            if (!submitted &&
+                submissionDisposition == EVulkanQueueSubmissionDisposition.NotSubmitted &&
+                hasRecorded)
+            {
+                MarkUnsubmittedOpenXrPrimaryCommandBufferDirty(
+                    in recorded,
+                    "OpenXR true stereo render+publish batch was not submitted");
+            }
+
             if (!submitted && !commandBuffersCompleted && !IsDeviceLost)
                 CancelRecordedTextureUploads(_openXrRecordedTextureUploadsForSubmit, "OpenXR true stereo render+publish batch command buffer submit failed");
 
             if (hasPublish)
-                FreeOpenXrMirrorPublishCommandBuffer(publishCommandBuffer, commandBuffersCompleted);
+                FreeOpenXrMirrorPublishCommandBuffer(publishCommandBuffer, submissionDisposition);
             if (hasRecorded)
                 FreeOpenXrRecordedEyeCommandBuffer(recorded);
 
@@ -2457,6 +2546,14 @@ public unsafe partial class VulkanRenderer
 
                 variant.GpuProfilerActive = gpuPipelineProfilingActive;
                 variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
+
+                if (HasQueryFrameOps(ops) && !PrepareQueryFrameOpsForCommandBufferReuse(ops))
+                {
+                    if (OpenXrVulkanTraceEnabled)
+                        RecordOpenXrPrimaryReuseMiss("openxr-mirror-primary-miss:query-pool-prepare");
+                    return false;
+                }
+
                 variant.LastUsedFrameId = VulkanFrameCounter;
                 StoreFrameOpSignatureDebugParts(variant, ops);
                 RestoreRecordedImageLayoutEndState(variant);
@@ -3065,7 +3162,9 @@ public unsafe partial class VulkanRenderer
             if (beginResult != Result.Success)
             {
                 Debug.VulkanWarning($"[OpenXR] Failed to begin eye mirror publish command buffer: {beginResult}");
-                FreeOpenXrMirrorPublishCommandBuffer(commandBuffer, commandBufferCompleted: true);
+                FreeOpenXrMirrorPublishCommandBuffer(
+                    commandBuffer,
+                    EVulkanQueueSubmissionDisposition.Completed);
                 commandBuffer = default;
                 return false;
             }
@@ -3079,7 +3178,9 @@ public unsafe partial class VulkanRenderer
             if (endResult != Result.Success)
             {
                 Debug.VulkanWarning($"[OpenXR] Failed to end eye mirror publish command buffer: {endResult}");
-                FreeOpenXrMirrorPublishCommandBuffer(commandBuffer, commandBufferCompleted: true);
+                FreeOpenXrMirrorPublishCommandBuffer(
+                    commandBuffer,
+                    EVulkanQueueSubmissionDisposition.Completed);
                 commandBuffer = default;
                 return false;
             }
@@ -3090,19 +3191,23 @@ public unsafe partial class VulkanRenderer
         {
             if (begun)
                 RemoveCommandBufferBindState(commandBuffer);
-            FreeOpenXrMirrorPublishCommandBuffer(commandBuffer, commandBufferCompleted: true);
+            FreeOpenXrMirrorPublishCommandBuffer(
+                commandBuffer,
+                EVulkanQueueSubmissionDisposition.Completed);
             commandBuffer = default;
 
             throw;
         }
     }
 
-    private void FreeOpenXrMirrorPublishCommandBuffer(CommandBuffer commandBuffer, bool commandBufferCompleted)
+    private void FreeOpenXrMirrorPublishCommandBuffer(
+        CommandBuffer commandBuffer,
+        EVulkanQueueSubmissionDisposition submissionDisposition)
     {
         if (commandBuffer.Handle == 0)
             return;
 
-        if (!commandBufferCompleted)
+        if (!ShouldFreeTemporaryOpenXrCommandBuffer(submissionDisposition))
         {
             RemoveCommandBufferBindState(commandBuffer);
             return;
@@ -3865,6 +3970,7 @@ public unsafe partial class VulkanRenderer
         {
             if (!TryPrepareStereoLayerBlit(
                     sourceTexture,
+                    default,
                     leftDestinationImage,
                     leftDestinationFormat,
                     leftDestinationExtent,
@@ -3930,7 +4036,9 @@ public unsafe partial class VulkanRenderer
             if (beginResult != Result.Success)
             {
                 Debug.VulkanWarning($"[OpenXR] Failed to begin stereo layer publish command buffer: {beginResult}");
-                FreeOpenXrMirrorPublishCommandBuffer(commandBuffer, commandBufferCompleted: true);
+                FreeOpenXrMirrorPublishCommandBuffer(
+                    commandBuffer,
+                    EVulkanQueueSubmissionDisposition.Completed);
                 commandBuffer = default;
                 return false;
             }
@@ -3943,7 +4051,9 @@ public unsafe partial class VulkanRenderer
             if (endResult != Result.Success)
             {
                 Debug.VulkanWarning($"[OpenXR] Failed to end stereo layer publish command buffer: {endResult}");
-                FreeOpenXrMirrorPublishCommandBuffer(commandBuffer, commandBufferCompleted: true);
+                FreeOpenXrMirrorPublishCommandBuffer(
+                    commandBuffer,
+                    EVulkanQueueSubmissionDisposition.Completed);
                 commandBuffer = default;
                 return false;
             }
@@ -3954,7 +4064,9 @@ public unsafe partial class VulkanRenderer
         {
             if (begun)
                 RemoveCommandBufferBindState(commandBuffer);
-            FreeOpenXrMirrorPublishCommandBuffer(commandBuffer, commandBufferCompleted: true);
+            FreeOpenXrMirrorPublishCommandBuffer(
+                commandBuffer,
+                EVulkanQueueSubmissionDisposition.Completed);
             commandBuffer = default;
             throw;
         }
@@ -3962,6 +4074,7 @@ public unsafe partial class VulkanRenderer
 
     private bool TryPrepareStereoLayerBlit(
         XRTexture2DArray? sourceTexture,
+        CommandBuffer recordedSourceCommandBuffer,
         Image leftDestinationImage,
         Format leftDestinationFormat,
         Extent2D leftDestinationExtent,
@@ -4054,7 +4167,22 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
-            sourceOldLayout = ResolveOpenXrAttachmentLayout(source, sourceLayer);
+            ImageSubresourceRange sourceRange = new()
+            {
+                AspectMask = sourceAspect,
+                BaseMipLevel = 0,
+                LevelCount = 1,
+                BaseArrayLayer = sourceLayer,
+                LayerCount = 1,
+            };
+            sourceOldLayout = recordedSourceCommandBuffer.Handle != 0 &&
+                TryGetRecordedImageLayout(
+                    recordedSourceCommandBuffer,
+                    sourceImage,
+                    sourceRange,
+                    out ImageLayout recordedSourceLayout)
+                    ? recordedSourceLayout
+                    : ResolveOpenXrAttachmentLayout(source, sourceLayer);
             if (sourceOldLayout == ImageLayout.Undefined)
             {
                 Debug.VulkanWarningEvery(
@@ -4803,6 +4931,10 @@ public unsafe partial class VulkanRenderer
         private readonly OpenXrViewResourcePlannerContextKey _contextKey;
         private readonly ThreadResourcePlannerRuntimeStateScope _threadScope;
         private readonly ThreadFrameOpResourcePlannerSwitchingStateScope _frameOpThreadScope;
+        private readonly VulkanRenderer? _previousScopeRenderer;
+        private readonly OpenXrViewResourcePlannerContextKey _previousScopeKey;
+        private readonly int _previousScopeDepth;
+        private readonly bool _ownsThreadScopes;
 
         public OpenXrResourcePlannerThreadScope(
             VulkanRenderer renderer,
@@ -4810,6 +4942,23 @@ public unsafe partial class VulkanRenderer
         {
             _renderer = renderer;
             _contextKey = contextKey;
+            _previousScopeRenderer = _threadOpenXrResourcePlannerScopeRenderer;
+            _previousScopeKey = _threadOpenXrResourcePlannerScopeKey;
+            _previousScopeDepth = _threadOpenXrResourcePlannerScopeDepth;
+            bool reentrant = ReferenceEquals(_previousScopeRenderer, renderer) &&
+                _previousScopeDepth > 0 &&
+                _previousScopeKey.Equals(contextKey);
+            _threadOpenXrResourcePlannerScopeRenderer = renderer;
+            _threadOpenXrResourcePlannerScopeKey = contextKey;
+            _threadOpenXrResourcePlannerScopeDepth = reentrant ? _previousScopeDepth + 1 : 1;
+            _ownsThreadScopes = !reentrant;
+            if (reentrant)
+            {
+                _threadScope = default;
+                _frameOpThreadScope = default;
+                return;
+            }
+
             ResourcePlannerRuntimeState openXrState;
             lock (renderer._openXrResourcePlannerStatesLock)
             {
@@ -4831,6 +4980,12 @@ public unsafe partial class VulkanRenderer
 
         public void Dispose()
         {
+            if (!_ownsThreadScopes)
+            {
+                RestorePreviousScopeIdentity();
+                return;
+            }
+
             ResourcePlannerRuntimeState state = _threadScope.CaptureCurrent(_renderer);
             state.FrameOpResourcePlannerSwitchingState = _frameOpThreadScope.CaptureCurrent(_renderer);
             if (_renderer.IsDeviceOperational)
@@ -4846,6 +5001,14 @@ public unsafe partial class VulkanRenderer
             }
             _frameOpThreadScope.Dispose();
             _threadScope.Dispose();
+            RestorePreviousScopeIdentity();
+        }
+
+        private void RestorePreviousScopeIdentity()
+        {
+            _threadOpenXrResourcePlannerScopeRenderer = _previousScopeRenderer;
+            _threadOpenXrResourcePlannerScopeKey = _previousScopeKey;
+            _threadOpenXrResourcePlannerScopeDepth = _previousScopeDepth;
         }
     }
 
@@ -5927,8 +6090,25 @@ public unsafe partial class VulkanRenderer
         uint commandBufferCount,
         out bool commandBufferCompleted,
         VulkanSubmissionDiagnosticContext diagnosticContext = default)
+        => SubmitAndWaitOpenXrCommandBuffers(
+            commandBuffers,
+            commandBufferCount,
+            out commandBufferCompleted,
+            out _,
+            out _,
+            diagnosticContext);
+
+    private bool SubmitAndWaitOpenXrCommandBuffers(
+        CommandBuffer* commandBuffers,
+        uint commandBufferCount,
+        out bool commandBufferCompleted,
+        out EVulkanQueueSubmissionDisposition submissionDisposition,
+        out EOpenXrStrictSpsFaultInjectionStage injectedFailureStage,
+        VulkanSubmissionDiagnosticContext diagnosticContext = default)
     {
         commandBufferCompleted = false;
+        submissionDisposition = EVulkanQueueSubmissionDisposition.NotSubmitted;
+        injectedFailureStage = EOpenXrStrictSpsFaultInjectionStage.None;
         if (commandBuffers is null || commandBufferCount == 0)
             return false;
 
@@ -5962,7 +6142,18 @@ public unsafe partial class VulkanRenderer
                 {
                     Monitor.Enter(_oneTimeSubmitLock, ref queueLockTaken);
                     LogOpenXrSerializedCriticalSectionWait("QueueSubmit", queueLockWaitStart, Stopwatch.GetTimestamp());
-                    submitResult = SubmitToQueueTracked(graphicsQueue, ref submitInfo, fence, diagnosticContext);
+                    submitResult = SubmitToQueueTrackedWithDisposition(
+                        graphicsQueue,
+                        ref submitInfo,
+                        fence,
+                        diagnosticContext,
+                        out bool queueDispatchAttempted,
+                        out injectedFailureStage);
+                    if (queueDispatchAttempted)
+                    {
+                        submissionDisposition =
+                            EVulkanQueueSubmissionDisposition.SubmittedIncomplete;
+                    }
                 }
                 finally
                 {
@@ -5999,6 +6190,7 @@ public unsafe partial class VulkanRenderer
             }
 
             NotifyVulkanFenceCompleted(fence);
+            submissionDisposition = EVulkanQueueSubmissionDisposition.Completed;
 
             if (OpenXrVulkanTraceEnabled)
             {

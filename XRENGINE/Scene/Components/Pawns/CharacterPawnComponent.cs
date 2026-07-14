@@ -26,7 +26,7 @@ namespace XREngine.Components
     /// <list type="bullet">
     /// <item>Supports keyboard (WASD), mouse, and gamepad input simultaneously</item>
     /// <item>Provides network state capture for multiplayer synchronization</item>
-    /// <item>View rotation is clamped to prevent gimbal lock (±89° pitch, ±180° yaw)</item>
+    /// <item>View rotation is clamped to prevent gimbal lock (Â±89Â° pitch, Â±180Â° yaw)</item>
     /// <item>Input sensitivity can be configured per-device type</item>
     /// </list>
     /// </remarks>
@@ -418,8 +418,13 @@ namespace XREngine.Components
             var cam = GetCamera();
             var tfm = InputOrientationTransform ?? cam?.Transform ?? Transform;
 
-            // Get XZ-plane directions for ground-based movement
-            tfm.GetDirectionsXZ(out Vector3 forward, out Vector3 right);
+            // Project view-relative axes onto the controller's authored movement plane.
+            Vector3 up = Movement.UpDirection;
+            up = up.LengthSquared() > 1e-8f ? Vector3.Normalize(up) : Globals.Up;
+            Vector3 forward = ProjectOntoPlane(tfm.WorldForward, up);
+            Vector3 right = ProjectOntoPlane(tfm.WorldRight, up);
+            forward = forward.LengthSquared() > 1e-8f ? Vector3.Normalize(forward) : Vector3.Zero;
+            right = right.LengthSquared() > 1e-8f ? Vector3.Normalize(right) : Vector3.Zero;
 
             AddMovement(forward, right);
             UpdateViewRotation(cam);
@@ -435,25 +440,26 @@ namespace XREngine.Components
             bool keyboardMovement = _keyboardMovementInput.X != 0.0f || _keyboardMovementInput.Y != 0.0f;
             bool gamepadMovement = _gamepadMovementInput.X != 0.0f || _gamepadMovementInput.Y != 0.0f;
 
-            if (!keyboardMovement && !gamepadMovement)
-                return;
-
-            // Select appropriate delta time based on time dilation setting
-            float dt = MovementAffectedByTimeDilation ? Engine.Delta : Engine.UndilatedDelta;
+            Vector3 movementInput = Vector3.Zero;
 
             if (keyboardMovement)
             {
                 // Combine forward/backward and strafe into world-space direction
                 Vector3 input = forward * _keyboardMovementInput.Y + right * _keyboardMovementInput.X;
-                Movement.AddMovementInput(dt * KeyboardMovementInputMultiplier * input.Normalized());
+                movementInput += KeyboardMovementInputMultiplier * input.Normalized();
             }
 
             if (gamepadMovement)
             {
                 Vector3 input = forward * _gamepadMovementInput.Y + right * _gamepadMovementInput.X;
-                Movement.AddMovementInput(dt * GamePadMovementInputMultiplier * input.Normalized());
+                movementInput += GamePadMovementInputMultiplier * input.Normalized();
             }
+
+            Movement.SetMovementInput(movementInput);
         }
+
+        private static Vector3 ProjectOntoPlane(in Vector3 value, in Vector3 planeNormal)
+            => value - planeNormal * Vector3.Dot(value, planeNormal);
 
         /// <summary>
         /// Applies accumulated view rotation to the target transform, with optional axis locking.
@@ -723,7 +729,7 @@ namespace XREngine.Components
 
         /// <summary>
         /// Clamps pitch rotation to prevent camera flip-over (gimbal lock prevention).
-        /// Limits are ±89 degrees to maintain a small buffer from vertical.
+        /// Limits are Â±89 degrees to maintain a small buffer from vertical.
         /// </summary>
         private void ClampPitch()
         {
@@ -734,7 +740,7 @@ namespace XREngine.Components
         }
 
         /// <summary>
-        /// Wraps yaw rotation to stay within ±180 degrees, preventing value overflow
+        /// Wraps yaw rotation to stay within Â±180 degrees, preventing value overflow
         /// and ensuring consistent interpolation behavior.
         /// </summary>
         private void RemapYaw()
