@@ -3,6 +3,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.Resources;
 using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering;
@@ -46,6 +47,38 @@ public class UserInterfaceRenderPipeline : RenderPipeline
     public const string DepthViewTextureName = "DepthView";
     public const string StencilViewTextureName = "StencilView";
     public const string DepthStencilTextureName = "DepthStencil";
+
+    protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        RenderResourceSizePolicy size = RenderResourceSizePolicy.Internal();
+        const RenderPipelineResourceUsage depthUsage =
+            RenderPipelineResourceUsage.SampledTexture |
+            RenderPipelineResourceUsage.DepthStencilAttachment;
+
+        builder.Texture(DepthStencilTextureName)
+            .Size(size)
+            .Usage(depthUsage)
+            .Format(EPixelInternalFormat.Depth24Stencil8, EPixelFormat.DepthStencil, EPixelType.UnsignedInt248)
+            .SizedFormat(ESizedInternalFormat.Depth24Stencil8)
+            .Factory(CreateDepthStencilTexture)
+            .Add();
+
+        builder.TextureView(DepthViewTextureName, DepthStencilTextureName)
+            .Size(size)
+            .Usage(RenderPipelineResourceUsage.SampledTexture)
+            .SizedFormat(ESizedInternalFormat.Depth24Stencil8)
+            .DepthStencilAspect(EDepthStencilFmt.Depth)
+            .Factory(CreateDepthViewTexture)
+            .Add();
+
+        builder.TextureView(StencilViewTextureName, DepthStencilTextureName)
+            .Size(size)
+            .Usage(RenderPipelineResourceUsage.SampledTexture)
+            .SizedFormat(ESizedInternalFormat.Depth24Stencil8)
+            .DepthStencilAspect(EDepthStencilFmt.Stencil)
+            .Factory(CreateStencilViewTexture)
+            .Add();
+    }
 
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
@@ -92,10 +125,6 @@ public class UserInterfaceRenderPipeline : RenderPipeline
     private ViewportRenderCommandContainer CreateViewportTargetCommands()
     {
         ViewportRenderCommandContainer c = new(this);
-
-        CacheTextures(c);
-
-        //Create FBOs only after all their texture dependencies have been cached.
 
         c.Add<VPRC_SetClears>().Set(null, 1.0f, 0);
         c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.PreRender;
@@ -158,29 +187,4 @@ public class UserInterfaceRenderPipeline : RenderPipeline
             Name = StencilViewTextureName,
         };
 
-    private void CacheTextures(ViewportRenderCommandContainer c)
-    {
-        //Depth + Stencil GBuffer texture
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            DepthStencilTextureName,
-            CreateDepthStencilTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        //Depth view texture
-        //This is a view of the depth/stencil texture that only shows the depth values.
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            DepthViewTextureName,
-            CreateDepthViewTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        //Stencil view texture
-        //This is a view of the depth/stencil texture that only shows the stencil values.
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            StencilViewTextureName,
-            CreateStencilViewTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-    }
 }

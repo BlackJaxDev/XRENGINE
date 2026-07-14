@@ -10,10 +10,13 @@ public sealed partial class RenderPipelineResourceLayoutBuilder
         private readonly List<FrameBufferAttachmentDescriptor> _attachments = [];
         private Func<XRFrameBuffer>? _factory;
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="FrameBufferSpecBuilder"/> class.
+        /// </summary>
+        /// <param name="owner">The resource layout builder that owns this frame buffer specification.</param>
+        /// <param name="name">The name of the frame buffer specification.</param>
         internal FrameBufferSpecBuilder(RenderPipelineResourceLayoutBuilder owner, string name)
-            : base(owner, name)
-        {
-        }
+            : base(owner, name) { }
 
         /// <summary>
         /// Adds a color attachment to the frame buffer resource specification.

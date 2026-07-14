@@ -294,6 +294,13 @@ namespace XREngine
 
         private static bool ShouldTraceFirstChanceException(Exception ex)
         {
+            // HttpListener's Windows teardown deliberately disposes its request-queue
+            // handle and then probes CancelIoEx with that disposed handle. The runtime
+            // catches the resulting exception internally; tracing it as an engine
+            // exception makes every orderly MCP shutdown look like a fault.
+            if (ex is ObjectDisposedException { ObjectName: "System.Net.HttpRequestQueueV2Handle" })
+                return false;
+
             if (ex is InvalidOperationException or ArgumentException)
                 return true;
 

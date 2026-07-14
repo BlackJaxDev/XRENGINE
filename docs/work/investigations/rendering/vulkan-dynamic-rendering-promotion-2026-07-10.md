@@ -193,3 +193,36 @@ Fresh sync-validation runs:
   those runs is accepted. Query reset preparation has been moved to the first query
   boundary after planner/context activation; the next run must prove the VUID is
   gone before the cross-output swapchain barrier is isolated.
+
+Later Phase 5.2.4b probes used the installed `K:\VulkanSDK\1.4.350.0`
+SDK and its Vulkan 1.4.350 Khronos validation layer. They established the
+following additional root causes and fixes:
+
+- A Vulkan multiview occlusion query consumes one consecutive query index per
+  active view. The pool and reset/result ranges now cover two queries for
+  `viewMask=0x3`; both availability values must complete and the result is the
+  conservative OR of both eyes. The modern validation layer then completed the
+  short strict-SPS probes without the former unreset-query VUID.
+- Detached strict-SPS recording now excludes desktop swapchain barriers and
+  blits explicitly. OpenXR external image layout publication consults the live
+  tracked layout for the exact array layer, eliminating the stale
+  `ColorAttachment` versus `ShaderReadOnly` descriptor report.
+- Generic odd-resolution scale planning now uses the same floor convention as
+  texture factories, so the `896x1007` eye family no longer oscillates between
+  incompatible planned and physical extents.
+- CPU-query mesh decisions execute during deferred Vulkan lowering. The command
+  collection therefore restores a missing ambient camera from its owning
+  pipeline, and CpuQueryAsync disables reusable OpenXR primary/secondary command
+  chains so a startup empty visibility set cannot be frozen into later frames.
+- The strict-SPS collection reaches 21-23 opaque Sponza candidates per frame.
+  In the current validation pose all are correctly fail-visible as
+  `NearPlaneUnsafe` because the HMD is inside/intersecting their coarse bounds;
+  the deterministic acceptance scene still needs separate known-visible and
+  known-occluded sentinels outside the near-plane exclusion before nonzero SPS
+  query/cull acceptance can be claimed.
+
+The short `probe-active-ledger-no-preview` cohort retained 10 projection-layer
+frames with zero Vulkan validation errors, zero submission rejection, zero
+retirement, and zero global waits. GPU time was 7.56 ms p50 / 10.42 ms p95.
+It is not acceptance evidence: model uploads were still active, CPU frame p95
+was 124.42 ms, and the required SPS sentinel queries were not submitted.

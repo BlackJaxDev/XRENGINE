@@ -25,6 +25,7 @@ internal sealed class VulkanResourceAllocator
     private readonly Dictionary<VulkanAliasGroupKey, VulkanImageAliasGroup> _aliasGroups = new();
     private readonly Dictionary<VulkanAliasGroupKey, VulkanPhysicalImageGroup> _physicalGroups = new();
     private readonly Dictionary<string, VulkanPhysicalImageGroup> _resourceToPhysicalGroup = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<VulkanPhysicalImageGroup, VulkanImageAllocation[]> _pendingReusedImageMetadata = new();
 
     private readonly Dictionary<string, VulkanBufferAllocation> _logicalBufferAllocations = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<VulkanBufferAliasGroupKey, VulkanBufferAliasGroup> _bufferAliasGroups = new();
@@ -63,6 +64,7 @@ internal sealed class VulkanResourceAllocator
         _aliasGroups.Clear();
         _physicalGroups.Clear();
         _resourceToPhysicalGroup.Clear();
+        _pendingReusedImageMetadata.Clear();
 
         _logicalBufferAllocations.Clear();
         _bufferAliasGroups.Clear();
@@ -193,7 +195,7 @@ internal sealed class VulkanResourceAllocator
             }
 
             VulkanImageAllocation[] logicalResources = pendingGroup.LogicalResources.ToArray();
-            previousGroup.ReplaceLogicalResources(logicalResources);
+            _pendingReusedImageMetadata[previousGroup] = logicalResources;
             _physicalGroups[pair.Key] = previousGroup;
             ReplacePhysicalGroupReferences(pendingGroup, previousGroup);
 
@@ -203,6 +205,14 @@ internal sealed class VulkanResourceAllocator
         }
 
         return reusedCount;
+    }
+
+    public void CommitReusedPhysicalImageMetadata()
+    {
+        foreach ((VulkanPhysicalImageGroup group, VulkanImageAllocation[] logicalResources) in _pendingReusedImageMetadata)
+            group.ReplaceLogicalResources(logicalResources);
+
+        _pendingReusedImageMetadata.Clear();
     }
 
     private void ReplacePhysicalGroupReferences(

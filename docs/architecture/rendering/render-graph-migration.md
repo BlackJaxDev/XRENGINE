@@ -19,7 +19,7 @@ This guide documents how pipeline commands should participate in the render-grap
 
 ## 3. Register logical resources through cache commands
 
-- Use `VPRC_CacheOrCreateTexture` / `VPRC_CacheOrCreateFBO` to publish descriptor metadata.
+- Declare textures and framebuffers through `DescribeResources(...)`; commands consume the committed generation and never publish descriptor metadata.
 - For temporary attachments and buffers, set transient lifetime:
   - `UseLifetime(RenderResourceLifetime.Transient)`.
   - This enables allocator alias grouping for transient-only resources.

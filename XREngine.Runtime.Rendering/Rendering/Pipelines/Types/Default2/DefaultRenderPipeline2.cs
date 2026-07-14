@@ -124,7 +124,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
         set => SetField(ref _globalIlluminationMode, value);
     }
 
-    public bool UsesRestirGI => _globalIlluminationMode == EGlobalIlluminationMode.Restir;
+    public bool UsesRestirGI => _globalIlluminationMode == EGlobalIlluminationMode.PathTracing;
     public bool UsesVoxelConeTracing => _globalIlluminationMode == EGlobalIlluminationMode.VoxelConeTracing;
     public bool UsesLightVolumes => _globalIlluminationMode == EGlobalIlluminationMode.LightVolumes;
     public bool UsesLightProbeGI => _globalIlluminationMode == EGlobalIlluminationMode.LightProbesAndIbl;
@@ -1419,6 +1419,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
     public const string LightCombineFBOName = "LightCombineFBO";
     public const string ForwardPassFBOName = "ForwardPassFBO";
     public const string ForwardPassMsaaFBOName = "ForwardPassMSAAFBO";
+    public const string ForwardPassMsaaColorRenderBufferName = "ForwardPassMSAAColor";
     public const string SceneCopyFBOName = "SceneCopyFBO";
     public const string TransparentSceneCopyFBOName = "TransparentSceneCopyFBO";
     public const string DeferredTransparencyBlurFBOName = "DeferredTransparencyBlurFBO";
@@ -1487,6 +1488,10 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
     public const string DeferredGBufferPreForwardCopyFBOName = "DeferredGBufferPreForwardCopyFBO";
     public const string FxaaOutputTextureName = "FxaaOutputTexture";
     public const string SmaaOutputTextureName = "SmaaOutputTexture";
+    public const string SmaaEdgeTextureName = SmaaFBOName + "_EdgeTexture";
+    public const string SmaaBlendTextureName = SmaaFBOName + "_BlendTexture";
+    public const string SmaaEdgeFBOName = SmaaFBOName + "_EdgeFBO";
+    public const string SmaaBlendFBOName = SmaaFBOName + "_BlendFBO";
     public const string TsrOutputTextureName = "TsrOutputTexture";
     public const string TsrHistoryColorFBOName = "TsrHistoryColorFBO";
     public const string RadianceCascadeCompositeFBOName = "RadianceCascadeCompositeFBO";
@@ -1585,11 +1590,6 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
     private const string AtmosphericScatteringStageKey = "atmosphericScattering";
     private const string VolumetricFogStageKey = "volumetricFog";
     private const string GpuBvhDebugStageKey = "gpuBvhDebug";
-
-    private static readonly string[] AntiAliasingTextureDependencies = RenderPipelineAntiAliasingResources.AntiAliasingTextureDependencies;
-    private static readonly string[] AntiAliasingFrameBufferDependencies = RenderPipelineAntiAliasingResources.AntiAliasingFrameBufferDependencies;
-    private static readonly string[] ResizeRecoveryTextureDependencies = RenderPipelineAntiAliasingResources.ResizeRecoveryTextureDependencies;
-    private static readonly string[] ResizeRecoveryFrameBufferDependencies = RenderPipelineAntiAliasingResources.ResizeRecoveryFrameBufferDependencies;
 
     public DefaultRenderPipeline2() : this(false)
     {
@@ -2747,9 +2747,9 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
             return;
 
         if (_probeIrradianceArray is not null)
-            pipeline.SetTexture(_probeIrradianceArray);
+            pipeline.BindImportedTexture(_probeIrradianceArray);
         if (_probePrefilterArray is not null)
-            pipeline.SetTexture(_probePrefilterArray);
+            pipeline.BindImportedTexture(_probePrefilterArray);
     }
 
     private static void RegisterProbeBuffer(XRDataBuffer? buffer)
@@ -2757,27 +2757,19 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
         if (buffer is null)
             return;
 
-        RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.SetBuffer(buffer);
+        RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.BindImportedBuffer(buffer);
     }
 
     private static bool RemoveProbeBufferResource(string name)
     {
         XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
-        if (pipeline is null || !pipeline.Resources.TryGetBuffer(name, out _))
-            return false;
-
-        pipeline.Resources.RemoveBuffer(name);
-        return true;
+        return pipeline?.UnbindImportedBuffer(name) == true;
     }
 
     private static bool RemoveProbeTextureResource(string name)
     {
         XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
-        if (pipeline is null || !pipeline.Resources.TryGetTexture(name, out _))
-            return false;
-
-        pipeline.Resources.RemoveTexture(name);
-        return true;
+        return pipeline?.UnbindImportedTexture(name) == true;
     }
 
     private static void DestroyProbeBuffer(ref XRDataBuffer? buffer)

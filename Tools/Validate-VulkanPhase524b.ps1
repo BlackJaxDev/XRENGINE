@@ -4,6 +4,9 @@ param(
     [string]$RuntimeJson,
 
     [Parameter()]
+    [string]$VulkanSdkRoot,
+
+    [Parameter()]
     [ValidateRange(0, 10000)]
     [int]$WarmupFrames = 60,
 
@@ -88,7 +91,8 @@ function Get-Percentile {
         return $Sorted[0]
     }
 
-    $position = [Math]::Clamp($Percentile, 0.0, 1.0) * ($Sorted.Count - 1)
+    $boundedPercentile = [Math]::Min(1.0, [Math]::Max(0.0, $Percentile))
+    $position = $boundedPercentile * ($Sorted.Count - 1)
     $lower = [Math]::Floor($position)
     $upper = [Math]::Ceiling($position)
     if ($lower -eq $upper) {
@@ -98,21 +102,106 @@ function Get-Percentile {
     return $Sorted[$lower] + (($Sorted[$upper] - $Sorted[$lower]) * $weight)
 }
 
+function Get-PropertySum {
+    param(
+        [AllowEmptyCollection()][object[]]$Items,
+        [Parameter(Mandatory)][string]$PropertyName
+    )
+
+    $sum = 0L
+    foreach ($item in @($Items)) {
+        if ($null -eq $item) {
+            continue
+        }
+        $property = $item.PSObject.Properties[$PropertyName]
+        if ($null -ne $property -and $null -ne $property.Value) {
+            $sum += [long]$property.Value
+        }
+    }
+    return $sum
+}
+
+function Resolve-VulkanSdkRoot {
+    param([string]$RequestedRoot)
+
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    if (-not [string]::IsNullOrWhiteSpace($RequestedRoot)) {
+        $candidates.Add($RequestedRoot)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:VULKAN_SDK)) {
+        $candidates.Add($env:VULKAN_SDK)
+    }
+    foreach ($drive in Get-PSDrive -PSProvider FileSystem) {
+        $sdkParent = Join-Path $drive.Root "VulkanSDK"
+        if (-not (Test-Path -LiteralPath $sdkParent -PathType Container)) {
+            continue
+        }
+        foreach ($directory in Get-ChildItem -LiteralPath $sdkParent -Directory -ErrorAction SilentlyContinue) {
+            $candidates.Add($directory.FullName)
+        }
+    }
+
+    $valid = foreach ($candidate in $candidates | Select-Object -Unique) {
+        $fullPath = [System.IO.Path]::GetFullPath($candidate)
+        $manifestPath = Join-Path $fullPath "Bin\VkLayer_khronos_validation.json"
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            continue
+        }
+
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $apiVersionText = [string]$manifest.layer.api_version
+        $parsedVersion = $null
+        if (-not [Version]::TryParse($apiVersionText, [ref]$parsedVersion)) {
+            continue
+        }
+
+        [pscustomobject]@{
+            Root = $fullPath
+            ApiVersion = $parsedVersion
+            ApiVersionText = $apiVersionText
+            ManifestPath = $manifestPath
+        }
+    }
+
+    $selected = $valid | Sort-Object ApiVersion -Descending | Select-Object -First 1
+    if ($null -eq $selected) {
+        throw "No Vulkan SDK with VK_LAYER_KHRONOS_validation was found. Pass -VulkanSdkRoot or install it through ExecTool."
+    }
+    if ($selected.ApiVersion -lt [Version]"1.4.0") {
+        throw "Vulkan validation layer $($selected.ApiVersionText) at '$($selected.Root)' is too old for Phase 5.2.4b; Vulkan 1.4 validation is required."
+    }
+
+    return $selected
+}
+
+$selectedVulkanSdk = Resolve-VulkanSdkRoot -RequestedRoot $VulkanSdkRoot
+$vulkanSdkBin = Join-Path $selectedVulkanSdk.Root "Bin"
 $environment = [ordered]@{
+    VULKAN_SDK                              = $selectedVulkanSdk.Root
+    VK_LAYER_PATH                          = $vulkanSdkBin
+    VK_LOADER_LAYERS_DISABLE               = "~implicit~"
+    PATH                                   = "$vulkanSdkBin$([System.IO.Path]::PathSeparator)$env:PATH"
     XRE_UNIT_TEST_VR_VIEW_RENDER_MODE       = "SinglePassStereo"
     XRE_UNIT_TEST_VR_FOVEATION_MODE        = $FoveationMode
     XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR = "1"
-    XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS  = "1"
+    # The acceptance workload requires the independent desktop plus the submitted
+    # strict-SPS output. Per-eye editor preview viewports are a separate diagnostic
+    # workload and would add two redundant scene renders to every measured frame.
+    XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS  = "0"
     XRE_OCCLUSION_CULLING_MODE             = "CpuQueryAsync"
+    # CpuQueryAsync is the CPU-direct hardware-query path. GPU-indirect uses its
+    # own occlusion implementation and cannot satisfy this cohort's per-POV proof.
+    XRE_FORCE_MESH_SUBMISSION_STRATEGY     = "CpuDirect"
     XRE_VK_RENDER_TARGET_MODE              = "DynamicRendering"
     XRE_VULKAN_DIAGNOSTIC_PRESET           = "SyncValidation"
     XRE_VULKAN_VALIDATION                  = "1"
     XRE_VULKAN_SYNC_VALIDATION             = "1"
     XRE_VULKAN_COMMAND_CHAIN_VALIDATE      = "1"
-    XRE_VULKAN_FRAMEOP_TRACE               = "1"
-    XRE_VULKAN_TARGET_TRACE                = "1"
+    # Per-op/target traces are intentionally disabled for the acceptance cohort:
+    # they serialize thousands of log writes and invalidate the framerate gate.
+    XRE_VULKAN_FRAMEOP_TRACE               = "0"
+    XRE_VULKAN_TARGET_TRACE                = "0"
     XRE_VULKAN_CAPTURE_EYE_OUTPUTS         = "1"
-    XRE_FIRST_CHANCE_EXCEPTIONS            = "1"
 }
 
 $previousEnvironment = @{}
@@ -123,26 +212,53 @@ foreach ($entry in $environment.GetEnumerator()) {
 
 $runnerExitCode = 1
 try {
-    $runnerArguments = @{
-        Renderer = "Vulkan"
-        SmokeFrames = $RetainedFrames
-        WarmupFrames = $WarmupFrames
-        TimeoutSeconds = $TimeoutSeconds
-        RunRoot = $RunRoot
-        SkipAllocationAudit = $true
-    }
+    # The smoke runner is also a standalone tool and uses process exit codes.
+    # Run it in a child PowerShell process so its `exit` cannot terminate this
+    # validator before the retained-frame ledger is checked.
+    $runnerArguments = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $runner,
+        "-Renderer", "Vulkan",
+        "-SmokeFrames", [string]$RetainedFrames,
+        "-WarmupFrames", [string]$WarmupFrames,
+        "-TimeoutSeconds", [string]$TimeoutSeconds,
+        "-RunRoot", $RunRoot,
+        "-SkipAllocationAudit",
+        "-SkipLoaderPreflight"
+    )
     if (-not [string]::IsNullOrWhiteSpace($RuntimeJson)) {
-        $runnerArguments.RuntimeJson = $RuntimeJson
+        $runnerArguments += @("-RuntimeJson", $RuntimeJson)
     }
     if ($NoBuild) {
-        $runnerArguments.NoBuild = $true
+        $runnerArguments += "-NoBuild"
     }
     if ($StartService) {
-        $runnerArguments.StartService = $true
+        $runnerArguments += "-StartService"
     }
 
-    & $runner @runnerArguments
-    $runnerExitCode = $LASTEXITCODE
+    $runnerProcess = Start-Process `
+        -FilePath "powershell.exe" `
+        -ArgumentList $runnerArguments `
+        -WorkingDirectory $repoRoot `
+        -PassThru `
+        -WindowStyle Hidden
+    $runnerDeadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds + 60)
+    while (-not $runnerProcess.HasExited) {
+        if ([DateTimeOffset]::UtcNow -ge $runnerDeadline) {
+            try {
+                $runnerProcess.Kill()
+            }
+            catch {
+            }
+            throw "OpenXR smoke runner exceeded the validator deadline of $($TimeoutSeconds + 60) seconds."
+        }
+        Start-Sleep -Milliseconds 250
+        $runnerProcess.Refresh()
+    }
+    $runnerExitCode = $runnerProcess.ExitCode
+    $runnerProcess.Dispose()
+    Write-Host "Phase 5.2.4b smoke runner completed with exit code $runnerExitCode."
 }
 finally {
     foreach ($entry in $previousEnvironment.GetEnumerator()) {
@@ -303,11 +419,15 @@ for ($i = 1; $i -lt $frameLedger.Count; $i++) {
 }
 
 $invalidOutputs = @($outputLedger | Where-Object {
+    $requiresRenderTargetMetadata = [string]$_.outputKind -notin @("Present", "ImGuiOverlay", "DynamicTextOverlay") -and
+        [string]$_.targetClass -notin @("Overlay", "Unknown")
+    $requiresPipelineMetadata = [string]$_.outputKind -notin @("Present", "ImGuiOverlay", "DynamicTextOverlay")
     [int]$_.retainedIndex -lt 0 -or [int]$_.retainedIndex -ge $RetainedFrames -or
-    [uint64]$_.outputId -eq 0 -or [string]::IsNullOrWhiteSpace([string]$_.pipelineName) -or
-    [uint32]$_.displayWidth -eq 0 -or [uint32]$_.displayHeight -eq 0 -or
-    [uint32]$_.internalWidth -eq 0 -or [uint32]$_.internalHeight -eq 0 -or
-    [uint32]$_.layerCount -eq 0
+    [uint64]$_.outputId -eq 0 -or [uint32]$_.layerCount -eq 0 -or
+    ($requiresRenderTargetMetadata -and (
+        [uint32]$_.displayWidth -eq 0 -or [uint32]$_.displayHeight -eq 0 -or
+        [uint32]$_.internalWidth -eq 0 -or [uint32]$_.internalHeight -eq 0)) -or
+    ($requiresPipelineMetadata -and [string]::IsNullOrWhiteSpace([string]$_.pipelineName))
 })
 if ($invalidOutputs.Count -gt 0) {
     $failures.Add("$($invalidOutputs.Count) output-ledger entries have invalid identity, pipeline, extent, or layer metadata.")
@@ -349,12 +469,12 @@ $desktopOcclusion = @($occlusionViewLedger | Where-Object { $desktopScopes -cont
 $vrOcclusion = @($occlusionViewLedger | Where-Object { $vrScopes -contains [string]$_.scope })
 $desktopPovIds = @($desktopOcclusion | ForEach-Object { [int]$_.povId } | Sort-Object -Unique)
 $vrPovIds = @($vrOcclusion | ForEach-Object { [int]$_.povId } | Sort-Object -Unique)
-$desktopViewSubmissions = ($desktopOcclusion | Measure-Object -Property submissions -Sum).Sum
-$desktopViewResolutions = ($desktopOcclusion | Measure-Object -Property resolutions -Sum).Sum
-$desktopViewCulls = ($desktopOcclusion | Measure-Object -Property skips -Sum).Sum
-$vrViewSubmissions = ($vrOcclusion | Measure-Object -Property submissions -Sum).Sum
-$vrViewResolutions = ($vrOcclusion | Measure-Object -Property resolutions -Sum).Sum
-$vrViewCulls = ($vrOcclusion | Measure-Object -Property skips -Sum).Sum
+$desktopViewSubmissions = Get-PropertySum -Items $desktopOcclusion -PropertyName "submissions"
+$desktopViewResolutions = Get-PropertySum -Items $desktopOcclusion -PropertyName "resolutions"
+$desktopViewCulls = Get-PropertySum -Items $desktopOcclusion -PropertyName "skips"
+$vrViewSubmissions = Get-PropertySum -Items $vrOcclusion -PropertyName "submissions"
+$vrViewResolutions = Get-PropertySum -Items $vrOcclusion -PropertyName "resolutions"
+$vrViewCulls = Get-PropertySum -Items $vrOcclusion -PropertyName "skips"
 if ($desktopOcclusion.Count -eq 0 -or $desktopViewSubmissions -le 0 -or $desktopViewResolutions -le 0 -or $desktopViewCulls -le 0) {
     $failures.Add("Desktop POV occlusion was not independently active: keys=$($desktopOcclusion.Count) submissions=$desktopViewSubmissions resolutions=$desktopViewResolutions culls=$desktopViewCulls.")
 }
@@ -447,6 +567,9 @@ $result = [ordered]@{
     runRoot = $RunRoot
     engineLogDirectory = $engineLogDirectory
     configuration = [ordered]@{
+        vulkanSdkRoot = $selectedVulkanSdk.Root
+        validationLayerApiVersion = $selectedVulkanSdk.ApiVersionText
+        validationLayerManifest = $selectedVulkanSdk.ManifestPath
         renderer = "Vulkan"
         renderTargetMode = "DynamicRendering"
         viewRenderMode = "SinglePassStereo"

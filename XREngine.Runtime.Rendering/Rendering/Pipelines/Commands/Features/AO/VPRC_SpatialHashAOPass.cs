@@ -17,12 +17,19 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Builds the spatial hash buffers and dispatches the compute shader for the spatially hashed ray traced AO.
     /// </summary>
     [RenderPipelineScriptCommand]
-    public class VPRC_SpatialHashAOPass : ViewportRenderCommand
+    public class VPRC_SpatialHashAOPass : ViewportRenderCommand, IDeclaredAoResourceProvider
     {
         private static void Log(string message)
             => Debug.Rendering(EOutputVerbosity.Normal, false, "[AO][SpatialHash] {0}", message);
 
-        private const uint HashMapScale = 2u;
+        internal const string HistoryAoTextureAName = "HistoryAoTextureA";
+        internal const string HistoryAoTextureBName = "HistoryAoTextureB";
+        internal const string HistoryDepthTextureAName = "HistoryDepthTextureA";
+        internal const string HistoryDepthTextureBName = "HistoryDepthTextureB";
+        internal const string HashBufferName = "SpatialHashKeys";
+        internal const string HashTimeBufferName = "SpatialHashTime";
+        internal const string SpatialBufferName = "SpatialHashData";
+        internal const uint HashMapScale = 2u;
         private const uint LocalGroupSize = 8u;
         private const string ComputeShaderFile = "AO/SpatialHashAO.comp";
         private const string ComputeShaderFileStereo = "AO/SpatialHashAOStereo.comp";
@@ -32,6 +39,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         public const uint DefaultNoiseHeight = 4u;
         public const float DefaultMinSampleDist = 0.1f;
         public const float DefaultMaxSampleDist = 1.0f;
+
+        internal static uint NextPowerOfTwo(uint value)
+            => XRMath.NextPowerOfTwo(value);
 
         public string IntensityTextureName { get; set; } = "AmbientOcclusionTexture";
         public string GenerationFBOName { get; set; } = "AmbientOcclusionFBO";
@@ -170,78 +180,73 @@ namespace XREngine.Rendering.Pipelines.Commands
             bool hasTemporalData = !Stereo && VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out temporalData);
             int settingsHash = ComputeSettingsHash(runtimeSettings, Stereo);
 
-            bool forceRebuild = state.ResourcesDirty;
+            bool refreshResources = state.ResourcesDirty;
             state.ResourcesDirty = false;
 
             if (state.SettingsHash != settingsHash)
             {
                 state.SettingsHash = settingsHash;
-                forceRebuild = true;
+                ResetHistoryState(state);
             }
 
             if (!Stereo && runtimeSettings.TemporalReuseEnabled && state.HistoryReady && (!hasTemporalData || !temporalData.HistoryReady))
-                forceRebuild = true;
+                ResetHistoryState(state);
 
-            if (!forceRebuild)
-            {
-                bool missingStateTexture = state.AoTexture is null;
-                XRTexture? registeredAoTexture = instance.GetTexture<XRTexture>(IntensityTextureName);
-                bool registryMissingTexture = state.AoTexture is not null && registeredAoTexture is null;
-                bool registryReplacedTexture = state.AoTexture is not null && registeredAoTexture is not null && !ReferenceEquals(state.AoTexture, registeredAoTexture);
-
-                if (missingStateTexture)
-                {
-                    Log("AO texture missing from state; forcing regenerate");
-                    forceRebuild = true;
-                }
-                else if (registryMissingTexture)
-                {
-                    Log("AO texture not registered in pipeline; forcing regenerate");
-                    forceRebuild = true;
-                }
-                else if (registryReplacedTexture)
-                {
-                    Log("AO texture replaced externally; forcing regenerate");
-                    forceRebuild = true;
-                }
-            }
-
-/*
-            Log($"Execute start: forceRebuild={forceRebuild}, last={state.LastWidth}x{state.LastHeight}, current={width}x{height}");
-
-            Debug.RenderingEvery(
-                $"AO.SpatialHash.Execute.{RuntimeHelpers.GetHashCode(instance)}",
-                TimeSpan.FromSeconds(1),
-                "[AO][SpatialHash] Execute forceRebuild={0} size={1}x{2} stereo={3} normal={4} depth={5} output={6}",
-                forceRebuild,
-                width,
-                height,
-                Stereo,
-                normalTex.Name ?? "null",
-                depthViewTex.Name ?? "null",
-                IntensityTextureName);
-*/
-
-            if (!forceRebuild)
-                forceRebuild = !instance.TryGetFBO(GenerationFBOName, out _);
-
-            if (forceRebuild || width != state.LastWidth || height != state.LastHeight)
-            {
-                RegenerateResources(
-                    instance,
-                    state,
-                    normalTex,
-                    depthViewTex,
-                    albedoTex,
-                    rmseTex,
-                        transformIdTex,
-                    depthStencilTex,
-                    width,
-                    height);
-            }
+            if (refreshResources || width != state.LastWidth || height != state.LastHeight || !DeclaredResourcesMatch(instance, state))
+                RefreshDeclaredResources(instance, state, width, height);
 
             EnsureComputeProgram();
             DispatchSpatialHashAO(state, normalTex, depthViewTex, width, height, runtimeSettings, hasTemporalData ? temporalData : default, hasTemporalData);
+        }
+
+        private bool DeclaredResourcesMatch(XRRenderPipelineInstance instance, InstanceState state)
+            => ReferenceEquals(state.AoTexture, instance.GetTexture<XRTexture>(IntensityTextureName))
+            && ReferenceEquals(state.HistoryAoTextureA, instance.GetTexture<XRTexture>(HistoryAoTextureAName))
+            && ReferenceEquals(state.HistoryAoTextureB, instance.GetTexture<XRTexture>(HistoryAoTextureBName))
+            && ReferenceEquals(state.HistoryDepthTextureA, instance.GetTexture<XRTexture>(HistoryDepthTextureAName))
+            && ReferenceEquals(state.HistoryDepthTextureB, instance.GetTexture<XRTexture>(HistoryDepthTextureBName))
+            && ReferenceEquals(state.HashBuffer, instance.GetBuffer(HashBufferName))
+            && ReferenceEquals(state.HashTimeBuffer, instance.GetBuffer(HashTimeBufferName))
+            && ReferenceEquals(state.SpatialBuffer, instance.GetBuffer(SpatialBufferName));
+
+        private void RefreshDeclaredResources(XRRenderPipelineInstance instance, InstanceState state, int width, int height)
+        {
+            state.AoTexture = RequireTexture(instance, IntensityTextureName);
+            state.HistoryAoTextureA = RequireTexture(instance, HistoryAoTextureAName);
+            state.HistoryAoTextureB = RequireTexture(instance, HistoryAoTextureBName);
+            state.HistoryDepthTextureA = RequireTexture(instance, HistoryDepthTextureAName);
+            state.HistoryDepthTextureB = RequireTexture(instance, HistoryDepthTextureBName);
+            state.HashBuffer = RequireBuffer(instance, HashBufferName);
+            state.HashTimeBuffer = RequireBuffer(instance, HashTimeBufferName);
+            state.SpatialBuffer = RequireBuffer(instance, SpatialBufferName);
+            state.HashCapacity = ResolveHashCapacity((uint)width, (uint)height);
+            state.LastWidth = width;
+            state.LastHeight = height;
+            ResetHistoryState(state);
+
+            if (!instance.TryGetFBO(GenerationFBOName, out _) || !instance.TryGetFBO(BlurFBOName, out _))
+                throw new InvalidOperationException("Spatial hash AO requires its declared generation and blur framebuffers.");
+        }
+
+        private static XRTexture RequireTexture(XRRenderPipelineInstance instance, string name)
+            => instance.GetTexture<XRTexture>(name)
+                ?? throw new InvalidOperationException($"Missing declared spatial hash AO texture '{name}'.");
+
+        private static XRDataBuffer RequireBuffer(XRRenderPipelineInstance instance, string name)
+            => instance.GetBuffer(name)
+                ?? throw new InvalidOperationException($"Missing declared spatial hash AO buffer '{name}'.");
+
+        private static void ResetHistoryState(InstanceState state)
+        {
+            state.FrameIndex = 0;
+            state.HistoryReady = false;
+            state.UseHistoryTextureA = true;
+        }
+
+        private static uint ResolveHashCapacity(uint width, uint height)
+        {
+            uint capacity = NextPowerOfTwo(width * height * HashMapScale);
+            return capacity == 0 ? 1024u : capacity;
         }
 
         private static SpatialHashRuntimeSettings ResolveRuntimeSettings(AmbientOcclusionSettings? settings)
@@ -330,90 +335,24 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
         }
 
-        private void RegenerateResources(
-            XRRenderPipelineInstance instance,
-            InstanceState state,
-            XRTexture normalTex,
-            XRTexture depthViewTex,
-            XRTexture albedoTex,
-            XRTexture rmseTex,
-            XRTexture transformIdTex,
-            XRTexture depthStencilTex,
-            int width,
-            int height)
+        public XRTexture? CreateDeclaredTexture(XRRenderPipelineInstance instance, string name)
         {
-            state.LastWidth = width;
-            state.LastHeight = height;
-            state.FrameIndex = 0;
-            state.HistoryReady = false;
-            state.UseHistoryTextureA = true;
+            (uint width, uint height) = ResolveDeclaredDimensions(instance);
 
-            //Log($"Regenerating resources: size={width}x{height}, stereo={Stereo}");
-
-            state.AoTexture?.Destroy();
-            state.AoTexture = CreateAOTexture(width, height);
-            PrimeTextureStorage(state.AoTexture);
-            DestroyHistoryTextures(state);
-            CreateHistoryTextures(state, width, height);
-            instance.SetTexture(state.AoTexture);
-            InvalidateDependentFbos(instance);
-
-            EnsureBuffers(state, (uint)width, (uint)height);
-            CreateFbos(instance, state, albedoTex, normalTex, rmseTex, transformIdTex, depthStencilTex);
-        }
-
-        private XRTexture CreateAOTexture(int width, int height)
-        {
-            if (Stereo)
+            XRTexture? texture = name switch
             {
-                var t = XRTexture2DArray.CreateFrameBufferTexture(
-                    2,
-                    (uint)width,
-                    (uint)height,
-                    EPixelInternalFormat.R16f,
-                    EPixelFormat.Red,
-                    EPixelType.HalfFloat,
-                    EFrameBufferAttachment.ColorAttachment0);
-                t.Resizable = false;
-                t.SizedInternalFormat = ESizedInternalFormat.R16f;
-                t.OVRMultiViewParameters = new(0, 2u);
-                t.Name = IntensityTextureName;
-                t.SamplerName = IntensityTextureName;
-                t.MinFilter = ETexMinFilter.Nearest;
-                t.MagFilter = ETexMagFilter.Nearest;
-                t.UWrap = ETexWrapMode.ClampToEdge;
-                t.VWrap = ETexWrapMode.ClampToEdge;
-                return t;
+                HistoryAoTextureAName or HistoryAoTextureBName => CreateHistoryAoTexture((int)width, (int)height),
+                HistoryDepthTextureAName or HistoryDepthTextureBName => CreateHistoryDepthTexture((int)width, (int)height),
+                _ => null,
+            };
+
+            if (texture is not null)
+            {
+                texture.Name = name;
+                texture.SamplerName = name;
             }
 
-            var tex = XRTexture2D.CreateFrameBufferTexture(
-                (uint)width,
-                (uint)height,
-                EPixelInternalFormat.R16f,
-                EPixelFormat.Red,
-                EPixelType.HalfFloat,
-                EFrameBufferAttachment.ColorAttachment0);
-            tex.Name = IntensityTextureName;
-            tex.SamplerName = IntensityTextureName;
-            tex.MinFilter = ETexMinFilter.Nearest;
-            tex.MagFilter = ETexMagFilter.Nearest;
-            tex.UWrap = ETexWrapMode.ClampToEdge;
-            tex.VWrap = ETexWrapMode.ClampToEdge;
-            tex.RequiresStorageUsage = true;
-            return tex;
-        }
-
-        private void CreateHistoryTextures(InstanceState state, int width, int height)
-        {
-            state.HistoryAoTextureA = CreateHistoryAoTexture(width, height);
-            state.HistoryAoTextureB = CreateHistoryAoTexture(width, height);
-            state.HistoryDepthTextureA = CreateHistoryDepthTexture(width, height);
-            state.HistoryDepthTextureB = CreateHistoryDepthTexture(width, height);
-
-            PrimeTextureStorage(state.HistoryAoTextureA);
-            PrimeTextureStorage(state.HistoryAoTextureB);
-            PrimeTextureStorage(state.HistoryDepthTextureA);
-            PrimeTextureStorage(state.HistoryDepthTextureB);
+            return texture;
         }
 
         private XRTexture CreateHistoryAoTexture(int width, int height)
@@ -488,127 +427,70 @@ namespace XREngine.Rendering.Pipelines.Commands
             return historyTexture;
         }
 
-        private static void DestroyHistoryTextures(InstanceState state)
+        public XRDataBuffer? CreateDeclaredBuffer(XRRenderPipelineInstance instance, string name)
         {
-            state.HistoryAoTextureA?.Destroy();
-            state.HistoryAoTextureA = null;
-            state.HistoryAoTextureB?.Destroy();
-            state.HistoryAoTextureB = null;
-            state.HistoryDepthTextureA?.Destroy();
-            state.HistoryDepthTextureA = null;
-            state.HistoryDepthTextureB?.Destroy();
-            state.HistoryDepthTextureB = null;
+            (uint width, uint height) = ResolveDeclaredDimensions(instance);
+            uint capacity = ResolveHashCapacity(width, height);
+            XRDataBuffer? buffer = name switch
+            {
+                HashBufferName => CreateHashBuffer(name, capacity, 1, 1u),
+                HashTimeBufferName => CreateHashBuffer(name, capacity, 1, 2u),
+                SpatialBufferName => CreateHashBuffer(name, capacity, 2, 3u),
+                _ => null,
+            };
+            buffer?.PushData();
+            return buffer;
         }
 
-        private static void PrimeTextureStorage(XRTexture texture)
+        private static (uint Width, uint Height) ResolveDeclaredDimensions(XRRenderPipelineInstance instance)
         {
-            try
-            {
-                texture.PushData();
-            }
-            catch (Exception ex)
-            {
-                Log($"Failed to initialize AO texture storage: {ex.Message}");
-            }
+            var area = RuntimeEngine.Rendering.State.RenderArea;
+            return (
+                instance.ResourceInternalWidth ?? (uint)Math.Max(area.Width, 1),
+                instance.ResourceInternalHeight ?? (uint)Math.Max(area.Height, 1));
         }
 
-        private void CreateFbos(
-            XRRenderPipelineInstance instance,
-            InstanceState state,
-            XRTexture albedoTex,
-            XRTexture normalTex,
-            XRTexture rmseTex,
-            XRTexture transformIdTex,
-            XRTexture depthStencilTex)
+        private static XRDataBuffer CreateHashBuffer(string name, uint capacity, uint componentCount, uint bindingIndex)
+            => new(name, EBufferTarget.ShaderStorageBuffer, capacity, EComponentType.UInt, componentCount, false, true)
+            {
+                Usage = EBufferUsage.DynamicDraw,
+                BindingIndexOverride = bindingIndex,
+                PadEndingToVec4 = false,
+                DisposeOnPush = false
+            };
+
+        public XRFrameBuffer CreateDeclaredFrameBuffer(XRRenderPipelineInstance instance, string name)
         {
-            if (state.AoTexture is not IFrameBufferAttachement aoAttach)
-                throw new ArgumentException("Ambient occlusion texture must be an IFrameBufferAttachement");
+            if (string.Equals(name, OutputFBOName, StringComparison.Ordinal))
+                return instance.GetFBO<XRFrameBuffer>(OutputFBOName)
+                    ?? throw new InvalidOperationException($"Missing shared output framebuffer '{OutputFBOName}'.");
 
-            if (albedoTex is not IFrameBufferAttachement albedoAttach)
-                throw new ArgumentException("Albedo texture must be an IFrameBufferAttachement");
+            if (string.Equals(name, BlurFBOName, StringComparison.Ordinal))
+            {
+                return new XRFrameBuffer(
+                    (RequireAttachment(instance, IntensityTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1))
+                {
+                    Name = BlurFBOName
+                };
+            }
 
-            if (normalTex is not IFrameBufferAttachement normalAttach)
-                throw new ArgumentException("Normal texture must be an IFrameBufferAttachement");
+            if (!string.Equals(name, GenerationFBOName, StringComparison.Ordinal))
+                throw new InvalidOperationException($"Unsupported spatial hash AO framebuffer '{name}'.");
 
-            if (rmseTex is not IFrameBufferAttachement rmseAttach)
-                throw new ArgumentException("RMSE texture must be an IFrameBufferAttachement");
-
-            if (transformIdTex is not IFrameBufferAttachement transformIdAttach)
-                throw new ArgumentException("TransformId texture must be an IFrameBufferAttachement");
-
-            if (depthStencilTex is not IFrameBufferAttachement depthStencilAttach)
-                throw new ArgumentException("DepthStencil texture must be an IFrameBufferAttachement");
-
-            XRFrameBuffer genFbo = new(
-                (albedoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
-                (normalAttach, EFrameBufferAttachment.ColorAttachment1, 0, -1),
-                (rmseAttach, EFrameBufferAttachment.ColorAttachment2, 0, -1),
-                (transformIdAttach, EFrameBufferAttachment.ColorAttachment3, 0, -1),
-                (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+            return new XRFrameBuffer(
+                (RequireAttachment(instance, AlbedoTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                (RequireAttachment(instance, NormalTextureName), EFrameBufferAttachment.ColorAttachment1, 0, -1),
+                (RequireAttachment(instance, RMSETextureName), EFrameBufferAttachment.ColorAttachment2, 0, -1),
+                (RequireAttachment(instance, TransformIdTextureName), EFrameBufferAttachment.ColorAttachment3, 0, -1),
+                (RequireAttachment(instance, DepthStencilTextureName), EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
             {
                 Name = GenerationFBOName
             };
-
-            XRFrameBuffer blurFbo = new((aoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
-            {
-                Name = BlurFBOName
-            };
-
-            XRFrameBuffer outputFbo = new((aoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
-            {
-                Name = OutputFBOName,
-            };
-
-            instance.SetFBO(genFbo);
-            instance.SetFBO(blurFbo);
-            instance.SetFBO(outputFbo);
-            Log("Registered spatial hash AO FBOs");
         }
 
-        private void EnsureBuffers(InstanceState state, uint width, uint height)
-        {
-            uint pixelCount = width * height;
-            uint desiredCapacity = XRMath.NextPowerOfTwo(pixelCount * HashMapScale);
-            if (desiredCapacity == 0)
-                desiredCapacity = 1024;
-
-            if (state.HashBuffer != null && desiredCapacity == state.HashCapacity)
-                return;
-
-            state.HashCapacity = desiredCapacity;
-
-            state.HashBuffer?.Destroy();
-            state.HashTimeBuffer?.Destroy();
-            state.SpatialBuffer?.Destroy();
-
-            state.HashBuffer = new XRDataBuffer("SpatialHashKeys", EBufferTarget.ShaderStorageBuffer, state.HashCapacity, EComponentType.UInt, 1, false, true)
-            {
-                Usage = EBufferUsage.DynamicDraw,
-                BindingIndexOverride = 1u,
-                PadEndingToVec4 = false,
-                DisposeOnPush = false
-            };
-            state.HashBuffer.PushData();
-
-            state.HashTimeBuffer = new XRDataBuffer("SpatialHashTime", EBufferTarget.ShaderStorageBuffer, state.HashCapacity, EComponentType.UInt, 1, false, true)
-            {
-                Usage = EBufferUsage.DynamicDraw,
-                BindingIndexOverride = 2u,
-                PadEndingToVec4 = false,
-                DisposeOnPush = false
-            };
-            state.HashTimeBuffer.PushData();
-
-            state.SpatialBuffer = new XRDataBuffer("SpatialHashData", EBufferTarget.ShaderStorageBuffer, state.HashCapacity, EComponentType.UInt, 2, false, true)
-            {
-                Usage = EBufferUsage.DynamicDraw,
-                BindingIndexOverride = 3u,
-                PadEndingToVec4 = false,
-                DisposeOnPush = false
-            };
-            state.SpatialBuffer.PushData();
-            Log($"Recreated buffers capacity={state.HashCapacity}");
-        }
+        private static IFrameBufferAttachement RequireAttachment(XRRenderPipelineInstance instance, string textureName)
+            => instance.GetTexture<XRTexture>(textureName) as IFrameBufferAttachement
+                ?? throw new InvalidOperationException($"Declared AO texture '{textureName}' is missing or not framebuffer-attachable.");
 
         private void DispatchSpatialHashAO(
             InstanceState state,
@@ -643,21 +525,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 DispatchMono(state, normalTex, depthViewTex, aoTexture, width, height,
                     runtimeSettings, fovY, camera, temporalData, hasTemporalData);
-            }
-        }
-
-        private void InvalidateDependentFbos(XRRenderPipelineInstance instance)
-        {
-            if (DependentFboNames.Count == 0)
-                return;
-
-            foreach (string name in DependentFboNames)
-            {
-                if (string.IsNullOrWhiteSpace(name))
-                    continue;
-
-                instance.Resources.RemoveFrameBuffer(name);
-                //Log($"Invalidated dependent FBO '{name}'");
             }
         }
 
@@ -773,14 +640,13 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             
             state.ResourcesDirty = true;
-            state.AoTexture?.Destroy();
             state.AoTexture = null;
-            DestroyHistoryTextures(state);
-            state.HashBuffer?.Destroy();
+            state.HistoryAoTextureA = null;
+            state.HistoryAoTextureB = null;
+            state.HistoryDepthTextureA = null;
+            state.HistoryDepthTextureB = null;
             state.HashBuffer = null;
-            state.HashTimeBuffer?.Destroy();
             state.HashTimeBuffer = null;
-            state.SpatialBuffer?.Destroy();
             state.SpatialBuffer = null;
             state.LastWidth = 0;
             state.LastHeight = 0;
@@ -907,9 +773,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             builder.SampleTexture(MakeTextureResource(NormalTextureName));
             builder.SampleTexture(MakeTextureResource(DepthViewTextureName));
             builder.ReadWriteTexture(MakeTextureResource(IntensityTextureName));
-            builder.ReadWriteBuffer("SpatialHashKeys");
-            builder.ReadWriteBuffer("SpatialHashTime");
-            builder.ReadWriteBuffer("SpatialHashData");
+            builder.ReadWriteBuffer(HashBufferName);
+            builder.ReadWriteBuffer(HashTimeBufferName);
+            builder.ReadWriteBuffer(SpatialBufferName);
         }
     }
 }

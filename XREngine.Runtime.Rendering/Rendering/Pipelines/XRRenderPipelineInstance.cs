@@ -126,6 +126,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// force re-allocation of per-command resources such as fullscreen quads.
     /// </summary>
     public int ResourceGeneration { get; private set; }
+    internal IRenderResourceGenerationBackend? ResourceGenerationBackendOverride { get; set; }
 
     // Track the last applied internal resolution scale to avoid resetting the viewport every frame.
     private float? _appliedInternalResolutionScale;
@@ -625,6 +626,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// <returns>True if resource generation is ensured; false otherwise.</returns>
     private bool EnsureResourceGenerationForCurrentFrame(XRViewport? viewport)
     {
+        DrainRetiredGenerations();
+
         if (Pipeline is null || viewport is null)
             return true;
 
@@ -1102,6 +1105,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         uint reservedViewCount = stereo ? 2u : 1u;
         uint reservedEyeIndex = 0u;
+        RenderPipelineExternalTargetKind externalTargetKind = viewport?.RendersToExternalSwapchainTarget == true
+            ? RenderPipelineExternalTargetKind.ExternalSwapchain
+            : RenderState.OutputFBO is not null
+                ? RenderPipelineExternalTargetKind.CallerProvidedFrameBuffer
+                : RenderPipelineExternalTargetKind.Window;
 
         return new ResourceGenerationKey(
             pipeline?.DebugName ?? DebugName,
@@ -1115,7 +1123,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             stereo,
             featureMask,
             reservedViewCount,
-            reservedEyeIndex);
+            reservedEyeIndex,
+            externalTargetKind);
     }
 
     /// <summary>
@@ -1165,10 +1174,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             ClearPendingGenerationDebounce();
 
         if (pending.IsReady)
-        {
-            CommitPendingGeneration(reason);
-            return true;
-        }
+            return CommitPendingGeneration(reason);
 
         if (TryBuildCurrentViewportGenerationKey(out ResourceGenerationKey currentKey) &&
             pending.Key != currentKey)
@@ -1219,8 +1225,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return false;
         }
 
-        CommitPendingGeneration(reason);
-        return true;
+        return CommitPendingGeneration(reason);
     }
 
     /// <summary>
@@ -1331,11 +1336,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// Commits the currently pending resource generation, making it the active generation and retiring any previous active generation. This method checks if the pending generation is ready and valid, and if so, it updates the active generation reference, clears the pending generation, and notifies any listeners of the change in render resources. It also logs detailed information about the committed generation, including its key, resource counts, and build duration.
     /// </summary>
     /// <param name="reason">The reason for committing the pending generation.</param>
-    private void CommitPendingGeneration(string reason)
+    private bool CommitPendingGeneration(string reason)
     {
         RenderResourceGeneration? pending = PendingGeneration;
         if (pending is null || !pending.IsReady)
-            return;
+            return false;
 
         if (TryBuildCurrentViewportGenerationKey(out ResourceGenerationKey currentKey) &&
             pending.Key != currentKey)
@@ -1348,36 +1353,80 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 currentKey,
                 DescribeResourceGenerationKeyDelta(pending.Key, currentKey));
             DiscardPendingGeneration($"StaleCommit:{reason}");
-            return;
+            return false;
         }
 
-        RenderResourceGeneration? old = ActiveGeneration;
-        ActiveGeneration = pending;
-        PendingGeneration = null;
-        ClearPendingGenerationDebounce();
-        ClearFailedGenerationBackoff(ActiveGeneration.Key);
-        ActiveGeneration.MarkActive(reason);
-        ResourceGeneration++;
+        XRViewport? viewport = RenderState.WindowViewport ?? LastWindowViewport;
+        IRenderResourceGenerationBackend? backend = ResourceGenerationBackendOverride ?? AbstractRenderer.Current;
+        IRenderResourceGenerationTransaction? backendTransaction = null;
+        if (backend is not null &&
+            !backend.TryPrepareRenderResourceGeneration(
+                this,
+                pending,
+                viewport,
+                out backendTransaction,
+                out string? backendFailureReason))
+        {
+            string failure = string.IsNullOrWhiteSpace(backendFailureReason)
+                ? "Backend resource generation preparation failed."
+                : backendFailureReason;
+            RegisterPendingGenerationFailure(pending.Key, failure);
+            PendingGeneration = null;
+            ClearPendingGenerationDebounce();
+            pending.MarkFailed(failure);
+            pending.Dispose();
+            return false;
+        }
 
-        if (old is not null)
-            RetireGeneration(old, $"Committed replacement generation: {reason}");
-        else
-            _legacyResources.DestroyAllPhysicalResources();
+        using (backendTransaction)
+        {
+            RenderResourceGeneration? old = ActiveGeneration;
+            ActiveGeneration = pending;
+            PendingGeneration = null;
+            ActiveGeneration.MarkActive(reason);
+            ResourceGeneration++;
 
-        NotifyRenderResourcesChanged();
+            try
+            {
+                backendTransaction?.Commit();
+            }
+            catch (Exception ex)
+            {
+                ResourceGeneration--;
+                ActiveGeneration = old;
+                string failure = $"Backend resource generation commit failed: {ex.Message}";
+                RegisterPendingGenerationFailure(pending.Key, failure);
+                ClearPendingGenerationDebounce();
+                pending.MarkFailed(failure);
+                pending.Dispose();
+                return false;
+            }
 
-        Debug.Rendering(
-            "[RenderResources] Pending generation committed. Pipeline={0} Reason={1} Previous={2} Active={3} Delta={4} Textures={5} FBOs={6} Buffers={7} RenderBuffers={8} BuildMs={9:F2}",
-            ProfilerKey,
-            reason,
-            old?.Key.ToString() ?? "<none>",
-            ActiveGeneration.Key,
-            DescribeResourceGenerationKeyDelta(old?.Key, ActiveGeneration.Key),
-            ActiveGeneration.TextureCount,
-            ActiveGeneration.FrameBufferCount,
-            ActiveGeneration.BufferCount,
-            ActiveGeneration.RenderBufferCount,
-            ActiveGeneration.BuildDuration.TotalMilliseconds);
+            ClearPendingGenerationDebounce();
+            ClearFailedGenerationBackoff(ActiveGeneration.Key);
+
+            if (old is not null)
+                RetireGeneration(old, $"Committed replacement generation: {reason}");
+            else
+                _legacyResources.DestroyAllPhysicalResources();
+
+            NotifyRenderResourcesChanged();
+
+            Debug.Rendering(
+                "[RenderResources] Pending generation committed. Pipeline={0} Reason={1} Previous={2} Active={3} Delta={4} Textures={5} FBOs={6} Buffers={7} RenderBuffers={8} BuildMs={9:F2}",
+                ProfilerKey,
+                reason,
+                old?.Key.ToString() ?? "<none>",
+                ActiveGeneration.Key,
+                DescribeResourceGenerationKeyDelta(old?.Key, ActiveGeneration.Key),
+                ActiveGeneration.TextureCount,
+                ActiveGeneration.FrameBufferCount,
+                ActiveGeneration.BufferCount,
+                ActiveGeneration.RenderBufferCount,
+                ActiveGeneration.BuildDuration.TotalMilliseconds);
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -1412,6 +1461,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     private void RetireGeneration(RenderResourceGeneration generation, string reason)
     {
         generation.MarkRetired(reason);
+        generation.ArmRetirementFence(AbstractRenderer.Current?.InsertGpuFence());
         _retiredGenerations.Enqueue(generation);
         Debug.Rendering(
             "[RenderResources] Generation retired. Pipeline={0} Reason={1} Key={2} Textures={3} FBOs={4} Buffers={5} RenderBuffers={6} RetiredQueue={7}",
@@ -1424,16 +1474,46 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             generation.RenderBufferCount,
             _retiredGenerations.Count);
 
-        while (_retiredGenerations.Count > MaxRetiredResourceGenerations)
+        DrainRetiredGenerations();
+        if (_retiredGenerations.Count > MaxRetiredResourceGenerations)
         {
             WaitForGpuBeforePhysicalResourceDestruction("RetiredRenderResourceGenerationCap");
-            RenderResourceGeneration retired = _retiredGenerations.Dequeue();
+            DrainRetiredGenerations(force: true);
+        }
+    }
+
+    private void DrainRetiredGenerations(bool force = false)
+    {
+        while (_retiredGenerations.Count != 0)
+        {
+            RenderResourceGeneration retired = _retiredGenerations.Peek();
+            EGpuFenceStatus fenceStatus = retired.PollRetirementFence();
+            if (!force && fenceStatus == EGpuFenceStatus.Pending)
+                return;
+
+            if (fenceStatus == EGpuFenceStatus.Failed)
+            {
+                Debug.RenderingWarning(
+                    "[RenderResources] Retired generation fence failed. Pipeline={0} Key={1} Force={2}",
+                    ProfilerKey,
+                    retired.Key,
+                    force);
+                if (!force)
+                    return;
+            }
+
+            _retiredGenerations.Dequeue();
+            retired.Dispose();
             Debug.Rendering(
-                "[RenderResources] Disposing retired generation after queue cap. Pipeline={0} Reason=RetiredRenderResourceGenerationCap Key={1} RemainingQueue={2}",
+                "[RenderResources] Retired generation disposed. Pipeline={0} Key={1} Fence={2} Force={3} RemainingQueue={4}",
                 ProfilerKey,
                 retired.Key,
+                fenceStatus,
+                force,
                 _retiredGenerations.Count);
-            retired.Dispose();
+
+            if (force && _retiredGenerations.Count <= MaxRetiredResourceGenerations)
+                return;
         }
     }
 
@@ -1604,25 +1684,29 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// <param name="reason">The reason for waiting for the GPU.</param>
     private static void WaitForGpuBeforePhysicalResourceDestruction(string reason)
     {
-        if (AbstractRenderer.Current is not VulkanRenderer renderer)
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null)
             return;
 
-        renderer.DeviceWaitIdle();
-        if (renderer.IsDeviceLost)
+        renderer.WaitForGpu();
+        if (renderer is not VulkanRenderer vulkanRenderer)
+            return;
+
+        if (vulkanRenderer.IsDeviceLost)
         {
             Debug.VulkanWarningEvery(
                 $"Vulkan.RenderPipeline.ResourceDestroy.DeviceLost.{reason}",
                 System.TimeSpan.FromSeconds(1),
-                "[Vulkan] Skipping descriptor-reference release after DeviceWaitIdle reported device loss: {0}",
+                "[Vulkan] Skipping descriptor-reference release after GPU wait reported device loss: {0}",
                 reason);
             return;
         }
 
-        renderer.ReleaseDescriptorReferencesForPhysicalResourceDestruction(reason);
+        vulkanRenderer.ReleaseDescriptorReferencesForPhysicalResourceDestruction(reason);
         Debug.VulkanEvery(
             $"Vulkan.RenderPipeline.ResourceDestroy.WaitIdle.{reason}",
             System.TimeSpan.FromSeconds(1),
-            "[Vulkan] DeviceWaitIdle before render-pipeline physical resource destruction: {0}",
+            "[Vulkan] GPU wait before render-pipeline physical resource destruction: {0}",
             reason);
     }
 
@@ -1811,6 +1895,114 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         Resources.BindBuffer(buffer, descriptor);
         if (bindingChanged)
             NotifyRenderResourcesChanged();
+    }
+
+    internal void BindImportedTexture(XRTexture texture)
+    {
+        ArgumentNullException.ThrowIfNull(texture);
+        string name = texture.Name ?? throw new InvalidOperationException("Imported texture name must be set before binding.");
+        RenderResourceRegistry registry = GetImportedResourceRegistry(name, ExternalRenderResourceKind.Texture);
+
+        registry.TryGetTexture(name, out XRTexture? existingTexture);
+        TextureResourceDescriptor descriptor = RenderResourceDescriptorFactory.FromTexture(texture) with
+        {
+            Name = name,
+            Lifetime = RenderResourceLifetime.External,
+        };
+        registry.BindTexture(texture, descriptor, ownsInstance: false);
+        if (!ReferenceEquals(existingTexture, texture))
+            NotifyRenderResourcesChanged();
+    }
+
+    internal void BindImportedBuffer(XRDataBuffer buffer)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+        string name = buffer.AttributeName;
+        if (string.IsNullOrWhiteSpace(name))
+            throw new InvalidOperationException("Imported buffer attribute name must be set before binding.");
+
+        RenderResourceRegistry registry = GetImportedResourceRegistry(name, ExternalRenderResourceKind.Buffer);
+        registry.TryGetBuffer(name, out XRDataBuffer? existingBuffer);
+        BufferResourceDescriptor descriptor = RenderResourceDescriptorFactory.FromBuffer(buffer) with
+        {
+            Name = name,
+            Lifetime = RenderResourceLifetime.External,
+        };
+        registry.BindBuffer(buffer, descriptor, ownsInstance: false);
+        if (!ReferenceEquals(existingBuffer, buffer))
+            NotifyRenderResourcesChanged();
+    }
+
+    internal bool UnbindImportedTexture(string name)
+    {
+        if (!TryGetImportedResourceRegistry(name, ExternalRenderResourceKind.Texture, out RenderResourceRegistry? registry))
+            return false;
+        if (!registry.TryGetTexture(name, out _))
+            return false;
+
+        registry.RemoveTexture(name);
+        NotifyRenderResourcesChanged();
+        return true;
+    }
+
+    internal bool UnbindImportedBuffer(string name)
+    {
+        if (!TryGetImportedResourceRegistry(name, ExternalRenderResourceKind.Buffer, out RenderResourceRegistry? registry))
+            return false;
+        if (!registry.TryGetBuffer(name, out _))
+            return false;
+
+        registry.RemoveBuffer(name);
+        NotifyRenderResourcesChanged();
+        return true;
+    }
+
+    private RenderResourceRegistry GetImportedResourceRegistry(string name, ExternalRenderResourceKind expectedKind)
+    {
+        if (TryGetImportedResourceRegistry(name, expectedKind, out RenderResourceRegistry? registry))
+            return registry;
+
+        RenderResourceGeneration? generation = ActiveGeneration;
+        string actualContract;
+        if (generation is null)
+        {
+            actualContract = "<no active generation>";
+        }
+        else if (!generation.Layout.ResourcesByName.TryGetValue(name, out RenderPipelineResourceSpec? spec))
+        {
+            actualContract = "<undeclared>";
+        }
+        else if (spec is ExternalResourceSpec external)
+        {
+            actualContract = $"ExternalKind={external.ExternalKind},Ownership={external.Ownership},Synchronization={external.Synchronization}";
+        }
+        else
+        {
+            actualContract = $"Kind={spec.Kind},Lifetime={spec.Lifetime}";
+        }
+
+        throw new InvalidOperationException(
+            $"Imported resource mismatch. Pipeline={ProfilerKey} Generation={generation?.Key.ToString() ?? "<none>"} " +
+            $"Resource={name} ExpectedExternalKind={expectedKind} Actual={actualContract}.");
+    }
+
+    private bool TryGetImportedResourceRegistry(
+        string name,
+        ExternalRenderResourceKind expectedKind,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out RenderResourceRegistry? registry)
+    {
+        RenderResourceGeneration? generation = ActiveGeneration;
+        if (generation is not null &&
+            generation.Layout.ResourcesByName.TryGetValue(name, out RenderPipelineResourceSpec? spec) &&
+            spec is ExternalResourceSpec external &&
+            external.ExternalKind == expectedKind)
+        {
+            registry = generation.Registry;
+            return true;
+        }
+
+        registry = null;
+        return false;
     }
 
     /// <summary>

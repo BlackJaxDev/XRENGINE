@@ -1856,4 +1856,38 @@ public partial class DefaultRenderPipeline2
         texture.Name = VolumetricFogHalfHistoryTextureName;
         return texture;
     }
+    private XRTexture CreateSmaaEdgeTexture()
+        => CreateSmaaTexture(SmaaEdgeTextureName, EPixelInternalFormat.Rgba8, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8, ETexMinFilter.Nearest);
+
+    private XRTexture CreateSmaaBlendTexture()
+        => CreateSmaaTexture(SmaaBlendTextureName, EPixelInternalFormat.Rgba8, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8, ETexMinFilter.Nearest);
+
+    private XRTexture CreateSmaaOutputTexture()
+        => CreateSmaaTexture(
+            SmaaOutputTextureName,
+            ResolvePostProcessIntermediateInternalFormat(),
+            ResolvePostProcessIntermediatePixelType(),
+            ResolvePostProcessIntermediateSizedInternalFormat(),
+            ETexMinFilter.Linear);
+
+    private static XRTexture CreateSmaaTexture(
+        string name,
+        EPixelInternalFormat internalFormat,
+        EPixelType pixelType,
+        ESizedInternalFormat sizedFormat,
+        ETexMinFilter minFilter)
+    {
+        var (width, height) = GetDesiredFBOSizeFull();
+        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+            width, height, internalFormat, EPixelFormat.Rgba, pixelType, EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = false;
+        texture.SizedInternalFormat = sizedFormat;
+        texture.MinFilter = minFilter;
+        texture.MagFilter = minFilter == ETexMinFilter.Nearest ? ETexMagFilter.Nearest : ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = name;
+        texture.Name = name;
+        return texture;
+    }
 }

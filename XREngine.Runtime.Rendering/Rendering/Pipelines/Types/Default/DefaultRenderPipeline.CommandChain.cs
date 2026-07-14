@@ -14,6 +14,16 @@ namespace XREngine.Rendering;
 
 public partial class DefaultRenderPipeline
 {
+    // \u2500\u2500 AO provider references \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    // Captured during Configure*Pass calls; used by DeclareAmbientOcclusionFBOs factories.\n    private IDeclaredAoResourceProvider? _disabledAoProvider;\n    private IDeclaredAoResourceProvider? _ssaoAoProvider;\n    private IDeclaredAoResourceProvider? _mvaoAoProvider;\n    private IDeclaredAoResourceProvider? _msvoAoProvider;\n    private IDeclaredAoResourceProvider? _hbaoPlusAoProvider;\n    private IDeclaredAoResourceProvider? _gtaoAoProvider;\n    private IDeclaredAoResourceProvider? _spatialHashAoProvider;
+    private IDeclaredAoResourceProvider? _disabledAoProvider;
+    private IDeclaredAoResourceProvider? _ssaoAoProvider;
+    private IDeclaredAoResourceProvider? _mvaoAoProvider;
+    private IDeclaredAoResourceProvider? _msvoAoProvider;
+    private IDeclaredAoResourceProvider? _hbaoPlusAoProvider;
+    private IDeclaredAoResourceProvider? _gtaoAoProvider;
+    private IDeclaredAoResourceProvider? _spatialHashAoProvider;
+    private VPRC_BloomPass? _bloomProvider;
+
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
         ViewportRenderCommandContainer c = new(this);
@@ -119,7 +129,6 @@ public partial class DefaultRenderPipeline
 
         AppendTemporalBegin(c);
 
-        CacheTextures(c);
         AppendVoxelConeTracingPass(c, enableComputePasses);
 
         c.Add<VPRC_ColorMask>().Set(true, true, true, true);
@@ -161,10 +170,7 @@ public partial class DefaultRenderPipeline
                 AppendVolumetricFog(c);
             }
             c.Add<VPRC_DepthTest>().Enable = false;
-            AppendPostProcessResourceCaching(c);
-            AppendDebugVisualizationCaching(c);
             AppendFullOverdrawCountingPass(c);
-            AppendAntiAliasingResourceCaching(c);
         }
 
         AppendExposureUpdate(c);
@@ -341,16 +347,6 @@ public partial class DefaultRenderPipeline
         prePassChoice.ConditionEvaluator = ShouldRunForwardDepthPrePass;
         {
             var shareChoice = new ViewportRenderCommandContainer(this);
-            shareChoice.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                ForwardDepthPrePassMergeFBOName,
-                CreateForwardDepthPrePassMergeFBO,
-                GetDesiredFBOSizeInternal)
-                .UseLifetime(RenderResourceLifetime.Transient);
-            shareChoice.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                DeferredGBufferPreForwardCopyFBOName,
-                CreateDeferredGBufferPreForwardCopyFBO,
-                GetDesiredFBOSizeInternal)
-                .UseLifetime(RenderResourceLifetime.Transient);
             shareChoice.Add<VPRC_BlitFrameBuffer>().SetOptions(
                 ForwardDepthPrePassMergeFBOName,
                 DeferredGBufferPreForwardCopyFBOName,
@@ -364,11 +360,6 @@ public partial class DefaultRenderPipeline
             shareIfElse.ConditionEvaluator = () => ForwardPrePassSharesGBufferTargets;
             shareIfElse.TrueCommands = CreateForwardPrePassSharedCommands();
             shareIfElse.FalseCommands = CreateForwardPrePassSeparateCommands();
-            shareChoice.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                ForwardContactPrePassCopyFBOName,
-                CreateForwardContactPrePassCopyFBO,
-                GetDesiredFBOSizeForwardDepthNormalPrePass)
-                .UseLifetime(RenderResourceLifetime.Transient);
             shareChoice.Add<VPRC_BlitFrameBuffer>().SetOptions(
                 ForwardDepthPrePassMergeFBOName,
                 ForwardContactPrePassCopyFBOName,
@@ -388,16 +379,6 @@ public partial class DefaultRenderPipeline
         restoreChoice.ConditionEvaluator = ShouldRunForwardDepthPrePass;
         {
             var restoreCommands = new ViewportRenderCommandContainer(this);
-            restoreCommands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                ForwardDepthPrePassMergeFBOName,
-                CreateForwardDepthPrePassMergeFBO,
-                GetDesiredFBOSizeInternal)
-                .UseLifetime(RenderResourceLifetime.Transient);
-            restoreCommands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                DeferredGBufferPreForwardCopyFBOName,
-                CreateDeferredGBufferPreForwardCopyFBO,
-                GetDesiredFBOSizeInternal)
-                .UseLifetime(RenderResourceLifetime.Transient);
             restoreCommands.Add<VPRC_BlitFrameBuffer>().SetOptions(
                 DeferredGBufferPreForwardCopyFBOName,
                 ForwardDepthPrePassMergeFBOName,
@@ -578,30 +559,6 @@ public partial class DefaultRenderPipeline
     private void AppendForwardPass(ViewportRenderCommandContainer c, bool enableComputePasses)
     {
         bool includeMsaaCommandGraph = !UseOpenXrVulkanDesktopStartupSafePath;
-        if (includeMsaaCommandGraph)
-        {
-            AddConditionalFboCache(c, "ForwardPassMsaaFBO", () => RuntimeEnableMsaaTargets,
-                ForwardPassMsaaFBOName,
-                CreateForwardPassMsaaFBO,
-                GetDesiredFBOSizeInternal,
-                NeedsRecreateMsaaFbo);
-            AddConditionalFboCache(c, "MsaaLightCombineFBO", () => RuntimeEnableMsaaDeferred,
-                MsaaLightCombineFBOName,
-                CreateMsaaLightCombineFBO,
-                GetDesiredFBOSizeInternal,
-                NeedsRecreateMsaaLightCombineFbo);
-            AddConditionalFboCache(c, "DepthPreloadFBO", () => RuntimeEnableMsaaTargets && !RuntimeEnableMsaaDeferred,
-                DepthPreloadFBOName,
-                CreateDepthPreloadFBO,
-                GetDesiredFBOSizeInternal);
-        }
-
-        AddConditionalTransientFboCache(c, "TransparencySceneCopyFBO", () => EnableTransparencySceneCopyResources, SceneCopyFBOName, CreateSceneCopyFBO);
-
-        AddConditionalTransientFboCache(c, "RestirCompositeFBO", () => enableComputePasses && UsesRestirGI, RestirCompositeFBOName, CreateRestirCompositeFBO);
-        AddConditionalTransientFboCache(c, "LightVolumeCompositeFBO", () => enableComputePasses && UsesLightVolumes, LightVolumeCompositeFBOName, CreateLightVolumeCompositeFBO);
-        AddConditionalTransientFboCache(c, "RadianceCascadeCompositeFBO", () => enableComputePasses && UsesRadianceCascades, RadianceCascadeCompositeFBOName, CreateRadianceCascadeCompositeFBO);
-        AddConditionalTransientFboCache(c, "SurfelGICompositeFBO", () => enableComputePasses && UsesSurfelGI, SurfelGICompositeFBOName, CreateSurfelGICompositeFBO);
 
         using (c.AddUsing<VPRC_BindFBOByName>(x =>
         {
@@ -719,48 +676,6 @@ public partial class DefaultRenderPipeline
         AppendDiagnosticTextureCapture(c, "06_ForwardPass", HDRSceneTextureName);
     }
 
-    private void AddConditionalFboCache(
-        ViewportRenderCommandContainer c,
-        string label,
-        Func<bool> condition,
-        string name,
-        Func<XRFrameBuffer> factory,
-        Func<(uint x, uint y)>? sizeVerifier,
-        Func<XRFrameBuffer, bool>? needsRecreate = null)
-    {
-        var conditional = c.Add<VPRC_IfElse>();
-        conditional.Label = label;
-        conditional.ConditionEvaluator = condition;
-
-        var commands = new ViewportRenderCommandContainer(this);
-        commands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            name,
-            factory,
-            sizeVerifier,
-            needsRecreate);
-        conditional.TrueCommands = commands;
-    }
-
-    private void AddConditionalTransientFboCache(
-        ViewportRenderCommandContainer c,
-        string label,
-        Func<bool> condition,
-        string name,
-        Func<XRFrameBuffer> factory)
-    {
-        var conditional = c.Add<VPRC_IfElse>();
-        conditional.Label = label;
-        conditional.ConditionEvaluator = condition;
-
-        var commands = new ViewportRenderCommandContainer(this);
-        commands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            name,
-            factory,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
-        conditional.TrueCommands = commands;
-    }
-
     private void AppendTransparencyPasses(ViewportRenderCommandContainer c)
     {
         var transparencyChoice = c.Add<VPRC_IfElse>();
@@ -842,10 +757,12 @@ public partial class DefaultRenderPipeline
         bloomChoice.ConditionEvaluator = ShouldUseBloom;
         {
             var bloomCommands = new ViewportRenderCommandContainer(this);
-            bloomCommands.Add<VPRC_BloomPass>().SetTargetFBONames(
+            VPRC_BloomPass bloomPass = bloomCommands.Add<VPRC_BloomPass>();
+            bloomPass.SetTargetFBONames(
                 ForwardPassFBOName,
                 BloomBlurTextureName,
                 Stereo);
+            _bloomProvider = bloomPass;
             bloomChoice.TrueCommands = bloomCommands;
         }
 
@@ -917,16 +834,6 @@ public partial class DefaultRenderPipeline
         }
     }
 
-    private void AppendPostProcessResourceCaching(ViewportRenderCommandContainer c)
-    {
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            PostProcessFBOName,
-            CreatePostProcessFBO,
-            GetDesiredFBOSizeInternal,
-            NeedsRecreatePostProcessFbo)
-            .UseLifetime(RenderResourceLifetime.Transient);
-    }
-
     private void AppendPostProcessCompositeInputDefaults(ViewportRenderCommandContainer c)
     {
         if (UseOpenXrVulkanDesktopStartupSafePath)
@@ -936,30 +843,6 @@ public partial class DefaultRenderPipeline
         defaults.Label = "PostProcessCompositeInputDefaultsActive";
         defaults.ConditionEvaluator = ShouldUseFullSizePostProcessCompositeInputDefaults;
         var commands = new ViewportRenderCommandContainer(this);
-
-        commands.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            AtmosphereColorTextureName,
-            CreateAtmosphereColorTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        commands.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            VolumetricFogColorTextureName,
-            CreateVolumetricFogColorTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        commands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            AtmosphereUpscaleFBOName,
-            CreateAtmosphereUpscaleFBO,
-            GetDesiredFBOSizeInternal,
-            NeedsRecreateAtmosphereUpscaleFbo);
-
-        commands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            VolumetricFogUpscaleFBOName,
-            CreateVolumetricFogUpscaleFBO,
-            GetDesiredFBOSizeInternal,
-            NeedsRecreateVolumetricFogUpscaleFbo);
 
         commands.Add<VPRC_SetClears>().Set(ColorF4.Transparent, null, null);
         using (commands.AddUsing<VPRC_BindFBOByName>(x =>
@@ -973,67 +856,6 @@ public partial class DefaultRenderPipeline
         }
 
         defaults.TrueCommands = commands;
-    }
-
-    private void AppendDebugVisualizationCaching(ViewportRenderCommandContainer c)
-    {
-        if (UseOpenXrVulkanDesktopStartupSafePath)
-            return;
-
-        if (EnableTransformIdVisualization)
-        {
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                TransformIdDebugQuadFBOName,
-                CreateTransformIdDebugQuadFBO,
-                GetDesiredFBOSizeInternal);
-        }
-
-        if (EnableTransparencyAccumulationVisualization)
-        {
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                TransparentAccumulationDebugFBOName,
-                CreateTransparentAccumulationDebugFBO,
-                GetDesiredFBOSizeInternal);
-        }
-
-        if (EnableTransparencyRevealageVisualization)
-        {
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                TransparentRevealageDebugFBOName,
-                CreateTransparentRevealageDebugFBO,
-                GetDesiredFBOSizeInternal);
-        }
-
-        if (EnableTransparencyOverdrawVisualization)
-        {
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                TransparentOverdrawDebugFBOName,
-                CreateTransparentOverdrawDebugFBO,
-                GetDesiredFBOSizeInternal);
-        }
-
-        if (EnableDepthPeelingLayerVisualization)
-        {
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                DepthPeelingDebugFBOName,
-                CreateDepthPeelingDebugFBO,
-                GetDesiredFBOSizeInternal);
-        }
-
-        var fullOverdrawCache = c.Add<VPRC_IfElse>();
-        fullOverdrawCache.ConditionEvaluator = () => EnableFullOverdrawVisualization;
-        {
-            var cacheCommands = new ViewportRenderCommandContainer(this);
-            cacheCommands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                FullOverdrawCountFBOName,
-                CreateFullOverdrawCountFBO,
-                GetDesiredFBOSizeInternal);
-            cacheCommands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                FullOverdrawDebugFBOName,
-                CreateFullOverdrawDebugFBO,
-                GetDesiredFBOSizeInternal);
-            fullOverdrawCache.TrueCommands = cacheCommands;
-        }
     }
 
     private void AppendFullOverdrawCountingPass(ViewportRenderCommandContainer c)
@@ -1060,16 +882,6 @@ public partial class DefaultRenderPipeline
             countCommands.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
             fullOverdraw.TrueCommands = countCommands;
         }
-    }
-
-    private void AppendAntiAliasingResourceCaching(ViewportRenderCommandContainer c)
-    {
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            FinalPostProcessFBOName,
-            CreateFinalPostProcessFBO,
-            GetDesiredFBOSizeInternal,
-            NeedsRecreateFinalPostProcessFbo)
-            .UseLifetime(RenderResourceLifetime.Transient);
     }
 
     private void AppendFxaaTsrUpscaleChain(ViewportRenderCommandContainer c)
@@ -1203,103 +1015,15 @@ public partial class DefaultRenderPipeline
     {
         var c = new ViewportRenderCommandContainer(this);
 
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            AtmosphereHalfDepthTextureName,
-            CreateAtmosphereHalfDepthTexture,
-            NeedsRecreateTextureHalfInternalSize,
-            ResizeTextureHalfInternalSize);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            AtmosphereHalfDepthQuadFBOName,
-            CreateAtmosphereHalfDepthQuadFBO,
-            GetDesiredFBOSizeHalfInternal,
-            NeedsRecreateAtmosphereHalfDepthQuadFbo)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            AtmosphereHalfDepthFBOName,
-            CreateAtmosphereHalfDepthFBO,
-            GetDesiredFBOSizeHalfInternal,
-            NeedsRecreateAtmosphereHalfDepthFbo);
-
         c.Add<VPRC_RenderQuadToFBO>()
             .SetTargets(AtmosphereHalfDepthQuadFBOName, AtmosphereHalfDepthFBOName, matchDestinationRenderArea: true);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            AtmosphereHalfScatterTextureName,
-            CreateAtmosphereHalfScatterTexture,
-            NeedsRecreateTextureHalfInternalSize,
-            ResizeTextureHalfInternalSize);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            AtmosphereHalfScatterQuadFBOName,
-            CreateAtmosphereHalfScatterQuadFBO,
-            GetDesiredFBOSizeHalfInternal,
-            NeedsRecreateAtmosphereHalfScatterQuadFbo)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            AtmosphereHalfScatterFBOName,
-            CreateAtmosphereHalfScatterFBO,
-            GetDesiredFBOSizeHalfInternal,
-            NeedsRecreateAtmosphereHalfScatterFbo);
 
         c.Add<VPRC_RenderQuadToFBO>()
             .SetTargets(AtmosphereHalfScatterQuadFBOName, AtmosphereHalfScatterFBOName, matchDestinationRenderArea: true);
 
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            AtmosphereHalfTemporalTextureName,
-            CreateAtmosphereHalfTemporalTexture,
-            NeedsRecreateTextureHalfInternalSize,
-            ResizeTextureHalfInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            AtmosphereHalfHistoryTextureName,
-            CreateAtmosphereHalfHistoryTexture,
-            NeedsRecreateTextureHalfInternalSize,
-            ResizeTextureHalfInternalSize);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            AtmosphereReprojectQuadFBOName,
-            CreateAtmosphereReprojectQuadFBO,
-            GetDesiredFBOSizeHalfInternal,
-            NeedsRecreateAtmosphereReprojectQuadFbo)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            AtmosphereReprojectFBOName,
-            CreateAtmosphereReprojectFBO,
-            GetDesiredFBOSizeHalfInternal,
-            NeedsRecreateAtmosphereReprojectFbo);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            AtmosphereHistoryFBOName,
-            CreateAtmosphereHistoryFBO,
-            GetDesiredFBOSizeHalfInternal,
-            NeedsRecreateAtmosphereHistoryFbo);
-
         c.Add<VPRC_AtmosphereHistoryPass>().Phase = VPRC_AtmosphereHistoryPass.EPhase.Begin;
         c.Add<VPRC_RenderQuadToFBO>()
             .SetTargets(AtmosphereReprojectQuadFBOName, AtmosphereReprojectFBOName, matchDestinationRenderArea: true);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            AtmosphereColorTextureName,
-            CreateAtmosphereColorTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            AtmosphereUpscaleQuadFBOName,
-            CreateAtmosphereUpscaleQuadFBO,
-            GetDesiredFBOSizeInternal,
-            NeedsRecreateAtmosphereUpscaleQuadFbo)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            AtmosphereUpscaleFBOName,
-            CreateAtmosphereUpscaleFBO,
-            GetDesiredFBOSizeInternal,
-            NeedsRecreateAtmosphereUpscaleFbo);
 
         c.Add<VPRC_RenderQuadToFBO>()
             .SetTargets(AtmosphereUpscaleQuadFBOName, AtmosphereUpscaleFBOName, matchDestinationRenderArea: true);
@@ -1340,106 +1064,22 @@ public partial class DefaultRenderPipeline
         var c = new ViewportRenderCommandContainer(this);
 
         // Stage 1: half-resolution depth downsample.
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            VolumetricFogHalfDepthTextureName,
-            CreateVolumetricFogHalfDepthTexture,
-            NeedsRecreateTextureHalfInternalSize,
-            ResizeTextureHalfInternalSize);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            VolumetricFogHalfDepthQuadFBOName,
-            CreateVolumetricFogHalfDepthQuadFBO,
-            GetDesiredFBOSizeHalfInternal,
-            NeedsRecreateVolumetricFogHalfDepthQuadFbo)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            VolumetricFogHalfDepthFBOName,
-            CreateVolumetricFogHalfDepthFBO,
-            GetDesiredFBOSizeHalfInternal,
-            NeedsRecreateVolumetricFogHalfDepthFbo);
 
         c.Add<VPRC_RenderQuadToFBO>()
             .SetTargets(VolumetricFogHalfDepthQuadFBOName, VolumetricFogHalfDepthFBOName, matchDestinationRenderArea: true);
 
         // Stage 2: half-resolution scatter raymarch.
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            VolumetricFogHalfScatterTextureName,
-            CreateVolumetricFogHalfScatterTexture,
-            NeedsRecreateTextureHalfInternalSize,
-            ResizeTextureHalfInternalSize);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            VolumetricFogHalfScatterQuadFBOName,
-            CreateVolumetricFogHalfScatterQuadFBO,
-            GetDesiredFBOSizeHalfInternal,
-            NeedsRecreateVolumetricFogHalfScatterQuadFbo)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            VolumetricFogHalfScatterFBOName,
-            CreateVolumetricFogHalfScatterFBO,
-            GetDesiredFBOSizeHalfInternal,
-            NeedsRecreateVolumetricFogHalfScatterFbo);
 
         c.Add<VPRC_RenderQuadToFBO>()
             .SetTargets(VolumetricFogHalfScatterQuadFBOName, VolumetricFogHalfScatterFBOName, matchDestinationRenderArea: true);
 
         // Stage 3: half-resolution temporal reprojection.
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            VolumetricFogHalfTemporalTextureName,
-            CreateVolumetricFogHalfTemporalTexture,
-            NeedsRecreateTextureHalfInternalSize,
-            ResizeTextureHalfInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            VolumetricFogHalfHistoryTextureName,
-            CreateVolumetricFogHalfHistoryTexture,
-            NeedsRecreateTextureHalfInternalSize,
-            ResizeTextureHalfInternalSize);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            VolumetricFogReprojectQuadFBOName,
-            CreateVolumetricFogReprojectQuadFBO,
-            GetDesiredFBOSizeHalfInternal,
-            NeedsRecreateVolumetricFogReprojectQuadFbo)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            VolumetricFogReprojectFBOName,
-            CreateVolumetricFogReprojectFBO,
-            GetDesiredFBOSizeHalfInternal,
-            NeedsRecreateVolumetricFogReprojectFbo);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            VolumetricFogHistoryFBOName,
-            CreateVolumetricFogHistoryFBO,
-            GetDesiredFBOSizeHalfInternal,
-            NeedsRecreateVolumetricFogHistoryFbo);
 
         c.Add<VPRC_VolumetricFogHistoryPass>().Phase = VPRC_VolumetricFogHistoryPass.EPhase.Begin;
         c.Add<VPRC_RenderQuadToFBO>()
             .SetTargets(VolumetricFogReprojectQuadFBOName, VolumetricFogReprojectFBOName, matchDestinationRenderArea: true);
 
         // Stage 4: full-resolution bilateral upscale.
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            VolumetricFogColorTextureName,
-            CreateVolumetricFogColorTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            VolumetricFogUpscaleQuadFBOName,
-            CreateVolumetricFogUpscaleQuadFBO,
-            GetDesiredFBOSizeInternal,
-            NeedsRecreateVolumetricFogUpscaleQuadFbo)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            VolumetricFogUpscaleFBOName,
-            CreateVolumetricFogUpscaleFBO,
-            GetDesiredFBOSizeInternal,
-            NeedsRecreateVolumetricFogUpscaleFbo);
 
         c.Add<VPRC_RenderQuadToFBO>()
             .SetTargets(VolumetricFogUpscaleQuadFBOName, VolumetricFogUpscaleFBOName, matchDestinationRenderArea: true);

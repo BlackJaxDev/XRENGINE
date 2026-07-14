@@ -783,6 +783,12 @@ public unsafe partial class VulkanRenderer
         ImageBlit* regions,
         Filter filter)
     {
+        if (t_excludeDesktopSwapchainBarriers &&
+            (IsDesktopSwapchainImage(source) || IsDesktopSwapchainImage(destination)))
+        {
+            return;
+        }
+
         TrackVulkanCommandBufferResource(commandBuffer, ObjectType.Image, source.Handle, "BlitImage.Source");
         TrackVulkanCommandBufferResource(commandBuffer, ObjectType.Image, destination.Handle, "BlitImage.Destination");
         Api!.CmdBlitImage(
@@ -806,6 +812,12 @@ public unsafe partial class VulkanRenderer
         ref ImageBlit region,
         Filter filter)
     {
+        if (t_excludeDesktopSwapchainBarriers &&
+            (IsDesktopSwapchainImage(source) || IsDesktopSwapchainImage(destination)))
+        {
+            return;
+        }
+
         TrackVulkanCommandBufferResource(commandBuffer, ObjectType.Image, source.Handle, "BlitImage.Source");
         TrackVulkanCommandBufferResource(commandBuffer, ObjectType.Image, destination.Handle, "BlitImage.Destination");
         Api!.CmdBlitImage(

@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using XREngine.Data;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering;
@@ -28,7 +29,25 @@ public partial class DefaultRenderPipeline
         BloomResourcesEnabled = 1UL << 14,
         TemporalResourcesEnabled = 1UL << 15,
         MinimalDirectCapture = 1UL << 16,
+        MsaaTargetsEnabled = 1UL << 17,
+        AtmosphereResourcesEnabled = 1UL << 18,
+        VolumetricFogResourcesEnabled = 1UL << 19,
+        RestirGiResourcesEnabled = 1UL << 20,
+        LightVolumeGiResourcesEnabled = 1UL << 21,
+        RadianceCascadeGiResourcesEnabled = 1UL << 22,
+        SurfelGiResourcesEnabled = 1UL << 23,
+        VoxelConeTracingResourcesEnabled = 1UL << 24,
+        DebugVisualizationResourcesEnabled = 1UL << 25,
+        // AO mode field [bits 26-29]: 0=disabled/safe-path, (int)NormalizedType+1 for active modes.
+        // Changing AO type replaces the generation so mode-specific FBOs are rebuilt.
+        AoModeFieldBit0 = 1UL << 26,
+        AoModeFieldBit1 = 1UL << 27,
+        AoModeFieldBit2 = 1UL << 28,
+        AoModeFieldBit3 = 1UL << 29,
     }
+
+    private const ulong AoModeFieldMask = 0xFUL << 26;
+    private const int AoModeFieldShift = 26;
 
     private const RenderPipelineResourceUsage SampledColorAttachment =
         RenderPipelineResourceUsage.SampledTexture |
@@ -63,9 +82,12 @@ public partial class DefaultRenderPipeline
             return (ulong)DefaultPipelineResourceFeature.MinimalDirectCapture;
 
         bool useOpenXrVulkanSafePath = UseOpenXrVulkanDesktopStartupSafePathForViewport(viewport);
+        bool usesStereoResources = UsesStereoResources(instance, viewport);
 
         if (EnableDeferredMsaa && !useOpenXrVulkanSafePath)
             mask |= DefaultPipelineResourceFeature.DeferredMsaaEnabled;
+        if (!useOpenXrVulkanSafePath && ResolveEffectiveAntiAliasingModeForGeneration(instance, viewport) == EAntiAliasingMode.Msaa)
+            mask |= DefaultPipelineResourceFeature.MsaaTargetsEnabled;
         bool useForwardPrePassResources = ForwardDepthPrePassEnabled && !useOpenXrVulkanSafePath;
         if (useForwardPrePassResources)
             mask |= DefaultPipelineResourceFeature.ForwardDepthPrePassEnabled;
@@ -94,8 +116,31 @@ public partial class DefaultRenderPipeline
             // resources remain available when users flip AO/bloom/temporal
             // settings without rebuilding the command chain.
             mask |= DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled;
+            // Encode effective AO type in bits 26-29 so mode changes rebuild the generation.
+            AmbientOcclusionSettings? aoSettingsForMode = ResolveAmbientOcclusionSettings();
+            if (aoSettingsForMode?.Enabled == true)
+            {
+                int encodedMode = (int)AmbientOcclusionSettings.NormalizeType(aoSettingsForMode.Type) + 1;
+                mask |= (DefaultPipelineResourceFeature)((ulong)encodedMode << AoModeFieldShift);
+            }
             mask |= DefaultPipelineResourceFeature.BloomResourcesEnabled;
             mask |= DefaultPipelineResourceFeature.TemporalResourcesEnabled;
+            if (!usesStereoResources)
+            {
+                mask |= DefaultPipelineResourceFeature.AtmosphereResourcesEnabled;
+                mask |= DefaultPipelineResourceFeature.VolumetricFogResourcesEnabled;
+                mask |= DefaultPipelineResourceFeature.DebugVisualizationResourcesEnabled;
+            }
+
+            mask |= GlobalIlluminationMode switch
+            {
+                EGlobalIlluminationMode.PathTracing => DefaultPipelineResourceFeature.RestirGiResourcesEnabled,
+                EGlobalIlluminationMode.LightVolumes => DefaultPipelineResourceFeature.LightVolumeGiResourcesEnabled,
+                EGlobalIlluminationMode.RadianceCascades => DefaultPipelineResourceFeature.RadianceCascadeGiResourcesEnabled,
+                EGlobalIlluminationMode.SurfelGI => DefaultPipelineResourceFeature.SurfelGiResourcesEnabled,
+                EGlobalIlluminationMode.VoxelConeTracing => DefaultPipelineResourceFeature.VoxelConeTracingResourcesEnabled,
+                _ => DefaultPipelineResourceFeature.None,
+            };
         }
 
         mask |= ForwardDepthNormalPrePassResolution switch
@@ -121,6 +166,7 @@ public partial class DefaultRenderPipeline
             return;
 
         DeclareCoreTextures(builder);
+        DeclareForwardPlusBuffers(builder);
         DeclareAmbientOcclusionResources(builder);
         DeclareTextureViews(builder);
         DeclareMsaaDeferredResources(builder);
@@ -130,6 +176,118 @@ public partial class DefaultRenderPipeline
         DeclareTransparencyResources(builder);
         DeclareTemporalAndEffectResources(builder);
         DeclareAntiAliasingResources(builder);
+        DeclareImportedResources(builder);
+        DeclareRemainingDefaultResources(builder);
+    }
+
+    private static void DeclareForwardPlusBuffers(RenderPipelineResourceLayoutBuilder builder)
+    {
+        const uint tileSize = VPRC_ForwardPlusLightCullingPass.TileSize;
+        uint tileCountX = (Math.Max(builder.Profile.InternalWidth, 1u) + tileSize - 1u) / tileSize;
+        uint tileCountY = (Math.Max(builder.Profile.InternalHeight, 1u) + tileSize - 1u) / tileSize;
+        uint viewCount = Math.Max(builder.Profile.ViewCount, builder.Profile.Stereo ? 2u : 1u);
+        uint tileCount = VPRC_ForwardPlusLightCullingPass.ComputeForwardPlusElementCount(checked((int)tileCountX), checked((int)tileCountY), checked((int)viewCount), 1);
+        uint visibleCount = checked(tileCount * VPRC_ForwardPlusLightCullingPass.MaxLightsPerTile);
+
+        builder.Buffer(VPRC_ForwardPlusLightCullingPass.LocalLightsBufferName)
+            .Size(RenderResourceSizePolicy.Internal())
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.StorageBuffer)
+            .BufferFormat((ulong)VPRC_ForwardPlusLightCullingPass.MaxLocalLights * VPRC_ForwardPlusLightCullingPass.LocalLightStride, EBufferTarget.ShaderStorageBuffer, EBufferUsage.StreamDraw)
+            .Elements(VPRC_ForwardPlusLightCullingPass.LocalLightStride, VPRC_ForwardPlusLightCullingPass.MaxLocalLights)
+            .Factory(VPRC_ForwardPlusLightCullingPass.CreateDeclaredLocalLightsBuffer)
+            .Add();
+        builder.Buffer(VPRC_ForwardPlusLightCullingPass.VisibleIndicesBufferName)
+            .Size(RenderResourceSizePolicy.Internal())
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.StorageBuffer)
+            .BufferFormat((ulong)visibleCount * sizeof(int), EBufferTarget.ShaderStorageBuffer, EBufferUsage.StaticCopy)
+            .Elements(sizeof(int), visibleCount)
+            .Factory(() => VPRC_ForwardPlusLightCullingPass.CreateDeclaredVisibleIndicesBuffer(visibleCount))
+            .Add();
+        builder.Buffer(VPRC_ForwardPlusLightCullingPass.TileLightCountsBufferName)
+            .Size(RenderResourceSizePolicy.Internal())
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.StorageBuffer)
+            .BufferFormat((ulong)tileCount * sizeof(uint), EBufferTarget.ShaderStorageBuffer, EBufferUsage.StaticCopy)
+            .Elements(sizeof(uint), tileCount)
+            .Factory(() => VPRC_ForwardPlusLightCullingPass.CreateDeclaredTileLightCountsBuffer(tileCount))
+            .Add();
+    }
+
+    private static EAntiAliasingMode ResolveEffectiveAntiAliasingModeForGeneration(
+        XRRenderPipelineInstance instance,
+        XRViewport? viewport)
+        => instance.EffectiveAntiAliasingModeThisFrame
+            ?? instance.LastSceneCamera?.AntiAliasingModeOverride
+            ?? instance.LastRenderingCamera?.AntiAliasingModeOverride
+            ?? viewport?.ActiveCamera?.AntiAliasingModeOverride
+            ?? RuntimeRenderingHostServices.Current.DefaultAntiAliasingMode;
+
+    private static void DeclareImportedResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        DeclareProbeImports(builder);
+
+        const string externalOutput = "$ExternalOutput";
+        RenderPipelineExternalTargetKind kind = builder.Profile.ExternalTargetKind;
+        if (kind == RenderPipelineExternalTargetKind.None)
+            return;
+
+        ExternalRenderResourceOwnership ownership = kind switch
+        {
+            RenderPipelineExternalTargetKind.Window => ExternalRenderResourceOwnership.Window,
+            RenderPipelineExternalTargetKind.ExternalSwapchain => ExternalRenderResourceOwnership.XrRuntime,
+            _ => ExternalRenderResourceOwnership.Caller,
+        };
+        ExternalRenderResourceSynchronization synchronization = kind switch
+        {
+            RenderPipelineExternalTargetKind.Window => ExternalRenderResourceSynchronization.FrameBoundary,
+            RenderPipelineExternalTargetKind.ExternalSwapchain => ExternalRenderResourceSynchronization.AcquireRelease,
+            _ => ExternalRenderResourceSynchronization.CallerProvided,
+        };
+
+        builder.External(externalOutput)
+            .Contract(ExternalRenderResourceKind.FrameBuffer, ownership, synchronization)
+            .DebugLabel(kind.ToString())
+            .Add();
+    }
+
+    private static void DeclareProbeImports(RenderPipelineResourceLayoutBuilder builder)
+    {
+        string[] textureNames = [LightProbeIrradianceArrayName, LightProbePrefilterArrayName];
+        foreach (string name in textureNames)
+        {
+            builder.External(name)
+                .Contract(ExternalRenderResourceKind.Texture, ExternalRenderResourceOwnership.Scene, ExternalRenderResourceSynchronization.FrameBoundary)
+                .Add();
+        }
+
+        string[] bufferNames =
+        [
+            LightProbePositionBufferName,
+            LightProbeParamBufferName,
+            LightProbeTetraBufferName,
+            LightProbeGridCellBufferName,
+            LightProbeGridIndexBufferName,
+        ];
+        foreach (string name in bufferNames)
+        {
+            builder.External(name)
+                .Contract(ExternalRenderResourceKind.Buffer, ExternalRenderResourceOwnership.Scene, ExternalRenderResourceSynchronization.FrameBoundary)
+                .Add();
+        }
+    }
+
+    private void DeclareRemainingDefaultResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        DeclareRemainingMsaaResources(builder);
+        DeclareRemainingForwardPrePassResources(builder);
+        DeclarePostProcessExecutionResources(builder);
+        DeclareAtmosphereResources(builder);
+        DeclareVolumetricFogResources(builder);
+        DeclareExactTransparencyResources(builder);
+        DeclareGlobalIlluminationResources(builder);
+        DeclareDebugVisualizationResources(builder);
     }
 
     private void DeclareCoreTextures(RenderPipelineResourceLayoutBuilder builder)
@@ -270,7 +428,271 @@ public partial class DefaultRenderPipeline
             .Optional()
             .When(UsesAmbientOcclusionResources)
             .Add();
+
+        DeclareAmbientOcclusionFBOs(builder);
     }
+
+    // ── AO mode helpers ────────────────────────────────────────────────────────
+
+    private static int DecodeAoModeFromProfile(RenderPipelineResourceProfile profile)
+        => (int)((profile.FeatureMask & AoModeFieldMask) >> AoModeFieldShift);
+
+    private static bool UsesAoMode(RenderPipelineResourceProfile profile, AmbientOcclusionSettings.EType type)
+        => UsesAmbientOcclusionResources(profile)
+        && DecodeAoModeFromProfile(profile) == (int)AmbientOcclusionSettings.NormalizeType(type) + 1;
+
+    private static bool UsesGTAOMode(RenderPipelineResourceProfile profile)
+        => UsesAoMode(profile, AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion);
+
+    private static bool UsesHBAOPlusMode(RenderPipelineResourceProfile profile)
+        => UsesAoMode(profile, AmbientOcclusionSettings.EType.HorizonBasedPlus);
+
+    private static bool UsesSpatialHashAOMode(RenderPipelineResourceProfile profile)
+        => UsesAoMode(profile, AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion);
+
+    /// <summary>Decodes the AO mode from the current resource build context feature mask.</summary>
+    private static int DecodeCurrentAoMode()
+    {
+        if (!TryResolveCurrentResourceFeatureMask(out ulong featureMask))
+            return 0;
+        return (int)((featureMask & AoModeFieldMask) >> AoModeFieldShift);
+    }
+
+    // ── AO FBO layout declarations ─────────────────────────────────────────────
+
+    private void DeclareAmbientOcclusionFBOs(RenderPipelineResourceLayoutBuilder builder)
+    {
+        RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
+        RenderResourceSizePolicy gtaoScratchSize = GtaoScratchSizePolicy(builder.Profile);
+
+        // ── AmbientOcclusionFBO (gen quad FBO) ──
+        // All modes share the same GBuffer attachment structure; only the material and
+        // uniform callbacks differ. The factory selects the correct provider at materialization
+        // time via the generation key's AO mode bits.
+        builder.FrameBuffer(AmbientOcclusionFBOName)
+            .Size(internalSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
+            .DependsOn(DepthViewTextureName)
+            .Color(0, AlbedoOpacityTextureName)
+            .Color(1, NormalTextureName)
+            .Color(2, RMSETextureName)
+            .Color(3, TransformIdTextureName)
+            .DepthStencil(DepthStencilTextureName)
+            .Factory(CreateAmbientOcclusionGenFbo)
+            .When(UsesAmbientOcclusionResources)
+            .Add();
+
+        // ── AmbientOcclusionBlurFBO ── (non-GTAO modes: raw AO or intensity texture)
+        // SSAO / MVAO / MSVO: attachment = AmbientOcclusionRawTexture
+        builder.FrameBuffer(AmbientOcclusionBlurFBOName)
+            .Size(internalSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .DependsOn(DepthViewTextureName, NormalTextureName)
+            .Color(0, AmbientOcclusionRawTextureName)
+            .Factory(CreateAmbientOcclusionBlurFbo)
+            .When(p => UsesAmbientOcclusionResources(p)
+                    && DecodeAoModeFromProfile(p) is 1 or 2 or 4) // SSAO, MVAO, MSVO
+            .Add();
+
+        // Disabled / SpatialHash / VoxelAO: attachment = AmbientOcclusionIntensityTexture
+        builder.FrameBuffer(AmbientOcclusionBlurFBOName)
+            .Size(internalSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .DependsOn(DepthViewTextureName, NormalTextureName)
+            .Color(0, AmbientOcclusionIntensityTextureName)
+            .Factory(CreateAmbientOcclusionBlurFbo)
+            .When(p => UsesAmbientOcclusionResources(p)
+                    && DecodeAoModeFromProfile(p) is 0 or 7 or 9) // disabled, SpatialHash, VoxelAO
+            .Add();
+
+        // HBAO+: attachment = HBAOPlusRawTexture
+        builder.FrameBuffer(AmbientOcclusionBlurFBOName)
+            .Size(internalSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .DependsOn(DepthViewTextureName, NormalTextureName)
+            .Color(0, HBAOPlusRawTextureName)
+            .Factory(CreateAmbientOcclusionBlurFbo)
+            .When(p => UsesAmbientOcclusionResources(p) && DecodeAoModeFromProfile(p) == 6) // HBAOPlus
+            .Add();
+
+        // GTAO: attachment = GTAORawTexture at scratch resolution
+        builder.FrameBuffer(AmbientOcclusionBlurFBOName)
+            .Size(gtaoScratchSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .DependsOn(DepthViewTextureName, NormalTextureName)
+            .Color(0, GTAORawTextureName)
+            .Factory(CreateAmbientOcclusionBlurFbo)
+            .When(p => UsesAmbientOcclusionResources(p) && DecodeAoModeFromProfile(p) == 8) // GTAO
+            .Add();
+
+        // ── GTAOBlurIntermediateFBO ──
+        builder.FrameBuffer(GTAOBlurIntermediateFBOName)
+            .Size(gtaoScratchSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .DependsOn(DepthViewTextureName, NormalTextureName)
+            .Color(0, GTAOBlurIntermediateTextureName)
+            .Factory(CreateGtaoBlurIntermediateFbo)
+            .When(UsesGTAOMode)
+            .Add();
+
+        // ── HBAOPlusBlurIntermediateFBO ──
+        builder.FrameBuffer(HBAOPlusBlurIntermediateFBOName)
+            .Size(internalSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .DependsOn(DepthViewTextureName, NormalTextureName)
+            .Color(0, HBAOPlusBlurIntermediateTextureName)
+            .Factory(CreateHbaoPlusBlurIntermediateFbo)
+            .When(UsesHBAOPlusMode)
+            .Add();
+
+        // ── SpatialHash history textures ──
+        DeclareSpatialHashAOTextures(builder);
+
+        // ── SpatialHash SSBOs ──
+        DeclareSpatialHashAOBuffers(builder);
+    }
+
+    private void DeclareSpatialHashAOTextures(RenderPipelineResourceLayoutBuilder builder)
+    {
+        RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
+        uint layerCount = DeclaredLayerCount(builder);
+        const RenderPipelineResourceUsage historyUsage =
+            RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.StorageImage;
+
+        foreach (string name in new[]
+        {
+            VPRC_SpatialHashAOPass.HistoryAoTextureAName,
+            VPRC_SpatialHashAOPass.HistoryAoTextureBName,
+        })
+        {
+            string captured = name;
+            builder.Texture(captured)
+                .Size(internalSize)
+                .Usage(historyUsage)
+                .Format(EPixelInternalFormat.R16f, EPixelFormat.Red, EPixelType.HalfFloat)
+                .SizedFormat(ESizedInternalFormat.R16f)
+                .Layers(layerCount)
+                .StereoCompatible(builder.Profile.Stereo)
+                .RequiresStorageUsage()
+                .Factory(() => _spatialHashAoProvider!.CreateDeclaredTexture(TryCurrentPipeline!, captured)!)
+                .When(UsesSpatialHashAOMode)
+                .Add();
+        }
+
+        foreach (string name in new[]
+        {
+            VPRC_SpatialHashAOPass.HistoryDepthTextureAName,
+            VPRC_SpatialHashAOPass.HistoryDepthTextureBName,
+        })
+        {
+            string captured = name;
+            builder.Texture(captured)
+                .Size(internalSize)
+                .Usage(historyUsage)
+                .Format(EPixelInternalFormat.R32f, EPixelFormat.Red, EPixelType.Float)
+                .SizedFormat(ESizedInternalFormat.R32f)
+                .Layers(layerCount)
+                .StereoCompatible(builder.Profile.Stereo)
+                .RequiresStorageUsage()
+                .Factory(() => _spatialHashAoProvider!.CreateDeclaredTexture(TryCurrentPipeline!, captured)!)
+                .When(UsesSpatialHashAOMode)
+                .Add();
+        }
+    }
+
+    private void DeclareSpatialHashAOBuffers(RenderPipelineResourceLayoutBuilder builder)
+    {
+        uint pixelCount = Math.Max(builder.Profile.InternalWidth * builder.Profile.InternalHeight, 1u);
+        uint capacity = VPRC_SpatialHashAOPass.NextPowerOfTwo(pixelCount * VPRC_SpatialHashAOPass.HashMapScale);
+        if (capacity == 0) capacity = 1024u;
+
+        builder.Buffer(VPRC_SpatialHashAOPass.HashBufferName)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.StorageBuffer)
+            .BufferFormat((ulong)capacity * sizeof(uint), EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicDraw)
+            .Elements(sizeof(uint), capacity)
+            .Access(EBufferAccessPattern.ReadWrite)
+            .Factory(() => _spatialHashAoProvider!.CreateDeclaredBuffer(TryCurrentPipeline!, VPRC_SpatialHashAOPass.HashBufferName)!)
+            .When(UsesSpatialHashAOMode)
+            .Add();
+
+        builder.Buffer(VPRC_SpatialHashAOPass.HashTimeBufferName)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.StorageBuffer)
+            .BufferFormat((ulong)capacity * sizeof(uint), EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicDraw)
+            .Elements(sizeof(uint), capacity)
+            .Access(EBufferAccessPattern.ReadWrite)
+            .Factory(() => _spatialHashAoProvider!.CreateDeclaredBuffer(TryCurrentPipeline!, VPRC_SpatialHashAOPass.HashTimeBufferName)!)
+            .When(UsesSpatialHashAOMode)
+            .Add();
+
+        builder.Buffer(VPRC_SpatialHashAOPass.SpatialBufferName)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.StorageBuffer)
+            .BufferFormat((ulong)capacity * 2u * sizeof(uint), EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicDraw)
+            .Elements(sizeof(uint) * 2u, capacity)
+            .Access(EBufferAccessPattern.ReadWrite)
+            .Factory(() => _spatialHashAoProvider!.CreateDeclaredBuffer(TryCurrentPipeline!, VPRC_SpatialHashAOPass.SpatialBufferName)!)
+            .When(UsesSpatialHashAOMode)
+            .Add();
+    }
+
+    // ── AO FBO factory methods (select provider via current generation key) ───
+
+    private XRFrameBuffer CreateAmbientOcclusionGenFbo()
+    {
+        var instance = TryCurrentPipeline
+            ?? throw new InvalidOperationException("No active pipeline instance during AO gen FBO materialization.");
+        IDeclaredAoResourceProvider provider = SelectAoProviderForCurrentMode()
+            ?? throw new InvalidOperationException($"No AO provider registered for mode {DecodeCurrentAoMode()}.");
+        return provider.CreateDeclaredFrameBuffer(instance, AmbientOcclusionFBOName);
+    }
+
+    private XRFrameBuffer CreateAmbientOcclusionBlurFbo()
+    {
+        var instance = TryCurrentPipeline
+            ?? throw new InvalidOperationException("No active pipeline instance during AO blur FBO materialization.");
+        IDeclaredAoResourceProvider provider = SelectAoProviderForCurrentMode()
+            ?? throw new InvalidOperationException($"No AO provider registered for mode {DecodeCurrentAoMode()}.");
+        return provider.CreateDeclaredFrameBuffer(instance, AmbientOcclusionBlurFBOName);
+    }
+
+    private XRFrameBuffer CreateGtaoBlurIntermediateFbo()
+    {
+        var instance = TryCurrentPipeline
+            ?? throw new InvalidOperationException("No active pipeline instance during GTAO intermediate FBO materialization.");
+        return (_gtaoAoProvider ?? throw new InvalidOperationException("GTAO provider not registered."))
+            .CreateDeclaredFrameBuffer(instance, GTAOBlurIntermediateFBOName);
+    }
+
+    private XRFrameBuffer CreateHbaoPlusBlurIntermediateFbo()
+    {
+        var instance = TryCurrentPipeline
+            ?? throw new InvalidOperationException("No active pipeline instance during HBAO+ intermediate FBO materialization.");
+        return (_hbaoPlusAoProvider ?? throw new InvalidOperationException("HBAO+ provider not registered."))
+            .CreateDeclaredFrameBuffer(instance, HBAOPlusBlurIntermediateFBOName);
+    }
+
+    private IDeclaredAoResourceProvider? SelectAoProviderForCurrentMode()
+        => GetAoProvider(DecodeCurrentAoMode());
+
+    private IDeclaredAoResourceProvider? GetAoProvider(int modeIndex) => modeIndex switch
+    {
+        1 => _ssaoAoProvider,
+        2 => _mvaoAoProvider,
+        4 => _msvoAoProvider,
+        6 => _hbaoPlusAoProvider,
+        7 => _spatialHashAoProvider,
+        8 => _gtaoAoProvider,
+        _ => _disabledAoProvider,  // disabled (0), VoxelAO (9), or unknown
+    };
 
     private void DeclareTextureViews(RenderPipelineResourceLayoutBuilder builder)
     {
@@ -353,7 +775,7 @@ public partial class DefaultRenderPipeline
             EPixelInternalFormat.Depth24Stencil8, EPixelFormat.DepthStencil, EPixelType.UnsignedInt248, ESizedInternalFormat.Depth24Stencil8,
             CreateForwardPassMsaaDepthStencilTexture)
             .Samples(samples)
-            .When(predicate)
+            .When(UsesMsaaTargets)
             .Add();
 
         builder.TextureView(ForwardPassMsaaDepthViewTextureName, ForwardPassMsaaDepthStencilTextureName)
@@ -363,7 +785,7 @@ public partial class DefaultRenderPipeline
             .DepthStencilAspect(EDepthStencilFmt.Depth)
             .Target(array: false, multisample: true)
             .Factory(CreateForwardPassMsaaDepthViewTexture)
-            .When(predicate)
+            .When(UsesMsaaTargets)
             .Add();
     }
 
@@ -562,15 +984,17 @@ public partial class DefaultRenderPipeline
             CreateBloomBlurFallbackTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
-            .When(UsesOpenXrVulkanPostProcessFallbackResources)
+            .When(UsesBloomFallbackResource)
             .Add();
+
+        DeclareBloomFrameBuffers(builder, internalSize);
 
         Texture(builder, AtmosphereColorTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), RenderPipelineResourceUsage.SampledTexture,
             EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f,
             CreateAtmosphereColorFallbackTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
-            .When(UsesOpenXrVulkanPostProcessFallbackResources)
+            .When(UsesAtmosphereFallbackResource)
             .Add();
 
         Texture(builder, VolumetricFogColorTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), RenderPipelineResourceUsage.SampledTexture,
@@ -578,7 +1002,7 @@ public partial class DefaultRenderPipeline
             CreateVolumetricFogColorFallbackTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
-            .When(UsesOpenXrVulkanPostProcessFallbackResources)
+            .When(UsesVolumetricFogFallbackResource)
             .Add();
 
         builder.FrameBuffer(PostProcessOutputFBOName)
@@ -597,6 +1021,29 @@ public partial class DefaultRenderPipeline
             .Factory(CreateFinalPostProcessOutputFBO)
             .Add();
     }
+
+    private void DeclareBloomFrameBuffers(RenderPipelineResourceLayoutBuilder builder, RenderResourceSizePolicy internalSize)
+    {
+        DeclareBloomFrameBuffer(builder, VPRC_BloomPass.BloomMip0FBOName, internalSize, 0);
+        DeclareBloomFrameBuffer(builder, VPRC_BloomPass.BloomDS1FBOName, internalSize, 1);
+        DeclareBloomFrameBuffer(builder, VPRC_BloomPass.BloomDS2FBOName, internalSize, 2);
+        DeclareBloomFrameBuffer(builder, VPRC_BloomPass.BloomDS3FBOName, internalSize, 3);
+        DeclareBloomFrameBuffer(builder, VPRC_BloomPass.BloomDS4FBOName, internalSize, 4);
+        DeclareBloomFrameBuffer(builder, VPRC_BloomPass.BloomUS3FBOName, internalSize, 3);
+        DeclareBloomFrameBuffer(builder, VPRC_BloomPass.BloomUS2FBOName, internalSize, 2);
+        DeclareBloomFrameBuffer(builder, VPRC_BloomPass.BloomUS1FBOName, internalSize, 1);
+    }
+
+    private void DeclareBloomFrameBuffer(RenderPipelineResourceLayoutBuilder builder, string name, RenderResourceSizePolicy size, int mipLevel)
+        => builder.FrameBuffer(name)
+            .Size(size)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .Color(0, BloomBlurTextureName, mipLevel)
+            .Factory(() => (_bloomProvider ?? throw new InvalidOperationException("Bloom provider not registered."))
+                .CreateDeclaredFrameBuffer(TryCurrentPipeline!, name))
+            .When(UsesBloomResources)
+            .Add();
 
     private void DeclareTransparencyResources(RenderPipelineResourceLayoutBuilder builder)
     {
@@ -908,6 +1355,460 @@ public partial class DefaultRenderPipeline
             .Add();
     }
 
+    private void DeclareRemainingMsaaResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        RenderPipelineResourcePredicate msaa = UsesMsaaTargets;
+        RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
+        uint samples = Math.Max(1u, builder.Profile.MsaaSampleCount);
+
+        builder.RenderBuffer(ForwardPassMsaaColorRenderBufferName)
+            .Size(internalSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .Storage(ERenderBufferStorage.Rgba16f)
+            .Samples(samples)
+            .DefaultAttachment(EFrameBufferAttachment.ColorAttachment0)
+            .Factory(CreateForwardPassMsaaColorRenderBuffer)
+            .When(msaa)
+            .Add();
+
+        builder.FrameBuffer(ForwardPassMsaaFBOName)
+            .Size(internalSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
+            .Color(0, ForwardPassMsaaColorRenderBufferName)
+            .DepthStencil(ForwardPassMsaaDepthStencilTextureName)
+            .Factory(CreateForwardPassMsaaFBO)
+            .When(msaa)
+            .Add();
+
+        builder.QuadMaterial(DepthPreloadFBOName)
+            .Lifetime(RenderResourceLifetime.Transient)
+            .DependsOn(DepthViewTextureName)
+            .Factory(CreateDepthPreloadFBO)
+            .When(UsesForwardOnlyMsaaTargets)
+            .Add();
+
+        builder.QuadMaterial(MsaaLightCombineFBOName)
+            .Lifetime(RenderResourceLifetime.Transient)
+            .DependsOn(
+                MsaaAlbedoOpacityTextureName,
+                MsaaNormalTextureName,
+                MsaaRMSETextureName,
+                AmbientOcclusionIntensityTextureName,
+                MsaaDepthViewTextureName,
+                MsaaLightingTextureName,
+                BRDFTextureName)
+            .Factory(CreateMsaaLightCombineFBO)
+            .When(UsesDeferredMsaa)
+            .Add();
+    }
+
+    private void DeclareRemainingForwardPrePassResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        RenderPipelineResourcePredicate predicate = UsesForwardPrePass;
+        RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
+        RenderResourceSizePolicy prePassSize = ForwardDepthNormalPrePassSizePolicy();
+
+        builder.FrameBuffer(ForwardDepthPrePassFBOName)
+            .Size(prePassSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
+            .Color(0, ForwardPrePassNormalTextureName)
+            .DepthStencil(ForwardPrePassDepthStencilTextureName)
+            .Factory(CreateForwardDepthPrePassFBO)
+            .When(predicate)
+            .Add();
+
+        builder.FrameBuffer(ForwardDepthPrePassMergeFBOName)
+            .Size(internalSize)
+            .Lifetime(RenderResourceLifetime.Transient)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
+            .Color(0, NormalTextureName)
+            .DepthStencil(DepthStencilTextureName)
+            .Factory(CreateForwardDepthPrePassMergeFBO)
+            .When(predicate)
+            .Add();
+
+        builder.FrameBuffer(DeferredGBufferPreForwardCopyFBOName)
+            .Size(internalSize)
+            .Lifetime(RenderResourceLifetime.Transient)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
+            .Color(0, DeferredGBufferPreForwardNormalTextureName)
+            .DepthStencil(DeferredGBufferPreForwardDepthStencilTextureName)
+            .Factory(CreateDeferredGBufferPreForwardCopyFBO)
+            .When(predicate)
+            .Add();
+
+        builder.FrameBuffer(ForwardContactPrePassCopyFBOName)
+            .Size(prePassSize)
+            .Lifetime(RenderResourceLifetime.Transient)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
+            .Color(0, ForwardContactNormalTextureName)
+            .DepthStencil(ForwardContactDepthStencilTextureName)
+            .Factory(CreateForwardContactPrePassCopyFBO)
+            .When(predicate)
+            .Add();
+    }
+
+    private void DeclarePostProcessExecutionResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        builder.QuadMaterial(PostProcessFBOName)
+            .Lifetime(RenderResourceLifetime.Transient)
+            .DependsOn(
+                HDRSceneTextureName,
+                BloomBlurTextureName,
+                DepthViewTextureName,
+                StencilViewTextureName,
+                AutoExposureTextureName,
+                AtmosphereColorTextureName,
+                VolumetricFogColorTextureName)
+            .Factory(CreatePostProcessFBO)
+            .Add();
+
+        builder.QuadMaterial(FinalPostProcessFBOName)
+            .Lifetime(RenderResourceLifetime.Transient)
+            .DependsOn(PostProcessOutputTextureName)
+            .Factory(CreateFinalPostProcessFBO)
+            .Add();
+
+        builder.QuadMaterial(MotionBlurFBOName)
+            .Lifetime(RenderResourceLifetime.Transient)
+            .DependsOn(MotionBlurTextureName, VelocityTextureName, DepthViewTextureName)
+            .Factory(CreateMotionBlurFBO)
+            .When(UsesMotionBlurResources)
+            .Add();
+
+        builder.QuadMaterial(DepthOfFieldFBOName)
+            .Lifetime(RenderResourceLifetime.Transient)
+            .DependsOn(DepthOfFieldTextureName, DepthViewTextureName)
+            .Factory(CreateDepthOfFieldFBO)
+            .When(UsesDepthOfFieldResources)
+            .Add();
+
+        builder.QuadMaterial(SceneCopyFBOName)
+            .Lifetime(RenderResourceLifetime.Transient)
+            .DependsOn(HDRSceneTextureName)
+            .Factory(CreateSceneCopyFBO)
+            .When(UsesTransparencySceneCopyResources)
+            .Add();
+    }
+
+    private void DeclareAtmosphereResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        RenderPipelineResourcePredicate predicate = UsesAtmosphereResources;
+        RenderResourceSizePolicy full = RenderResourceSizePolicy.Internal();
+        RenderResourceSizePolicy half = RenderResourceSizePolicy.Internal(0.5f);
+
+        DeclareColorTexture(builder, AtmosphereColorTextureName, full, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, CreateAtmosphereColorTexture, predicate);
+        DeclareColorTexture(builder, AtmosphereHalfDepthTextureName, half, EPixelInternalFormat.R32f, EPixelFormat.Red, EPixelType.Float, ESizedInternalFormat.R32f, CreateAtmosphereHalfDepthTexture, predicate);
+        DeclareColorTexture(builder, AtmosphereHalfScatterTextureName, half, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, CreateAtmosphereHalfScatterTexture, predicate);
+        DeclareColorTexture(builder, AtmosphereHalfTemporalTextureName, half, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, CreateAtmosphereHalfTemporalTexture, predicate);
+        Texture(builder, AtmosphereHalfHistoryTextureName, half, SampledColorAttachment,
+            EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f,
+            CreateAtmosphereHalfHistoryTexture)
+            .History(RenderResourceHistoryPolicy.SeedFromCurrentFrame)
+            .When(predicate)
+            .Add();
+
+        DeclareEffectQuad(builder, AtmosphereHalfDepthQuadFBOName, CreateAtmosphereHalfDepthQuadFBO, predicate, DepthViewTextureName);
+        DeclareEffectDestination(builder, AtmosphereHalfDepthFBOName, AtmosphereHalfDepthTextureName, half, CreateAtmosphereHalfDepthFBO, predicate);
+        DeclareEffectQuad(builder, AtmosphereHalfScatterQuadFBOName, CreateAtmosphereHalfScatterQuadFBO, predicate, AtmosphereHalfDepthTextureName);
+        DeclareEffectDestination(builder, AtmosphereHalfScatterFBOName, AtmosphereHalfScatterTextureName, half, CreateAtmosphereHalfScatterFBO, predicate);
+        DeclareEffectQuad(builder, AtmosphereReprojectQuadFBOName, CreateAtmosphereReprojectQuadFBO, predicate, AtmosphereHalfScatterTextureName, AtmosphereHalfHistoryTextureName, AtmosphereHalfDepthTextureName);
+        DeclareEffectDestination(builder, AtmosphereReprojectFBOName, AtmosphereHalfTemporalTextureName, half, CreateAtmosphereReprojectFBO, predicate);
+        DeclareEffectDestination(builder, AtmosphereHistoryFBOName, AtmosphereHalfHistoryTextureName, half, CreateAtmosphereHistoryFBO, predicate, RenderResourceLifetime.Persistent);
+        DeclareEffectQuad(builder, AtmosphereUpscaleQuadFBOName, CreateAtmosphereUpscaleQuadFBO, predicate, AtmosphereHalfTemporalTextureName, AtmosphereHalfDepthTextureName, DepthViewTextureName);
+        DeclareEffectDestination(builder, AtmosphereUpscaleFBOName, AtmosphereColorTextureName, full, CreateAtmosphereUpscaleFBO, predicate);
+    }
+
+    private void DeclareVolumetricFogResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        RenderPipelineResourcePredicate predicate = UsesVolumetricFogResources;
+        RenderResourceSizePolicy full = RenderResourceSizePolicy.Internal();
+        RenderResourceSizePolicy half = RenderResourceSizePolicy.Internal(0.5f);
+
+        DeclareColorTexture(builder, VolumetricFogColorTextureName, full, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, CreateVolumetricFogColorTexture, predicate);
+        DeclareColorTexture(builder, VolumetricFogHalfDepthTextureName, half, EPixelInternalFormat.R32f, EPixelFormat.Red, EPixelType.Float, ESizedInternalFormat.R32f, CreateVolumetricFogHalfDepthTexture, predicate);
+        DeclareColorTexture(builder, VolumetricFogHalfScatterTextureName, half, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, CreateVolumetricFogHalfScatterTexture, predicate);
+        DeclareColorTexture(builder, VolumetricFogHalfTemporalTextureName, half, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, CreateVolumetricFogHalfTemporalTexture, predicate);
+        Texture(builder, VolumetricFogHalfHistoryTextureName, half, SampledColorAttachment,
+            EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f,
+            CreateVolumetricFogHalfHistoryTexture)
+            .History(RenderResourceHistoryPolicy.SeedFromCurrentFrame)
+            .When(predicate)
+            .Add();
+
+        DeclareEffectQuad(builder, VolumetricFogHalfDepthQuadFBOName, CreateVolumetricFogHalfDepthQuadFBO, predicate, DepthViewTextureName);
+        DeclareEffectDestination(builder, VolumetricFogHalfDepthFBOName, VolumetricFogHalfDepthTextureName, half, CreateVolumetricFogHalfDepthFBO, predicate);
+        DeclareEffectQuad(builder, VolumetricFogHalfScatterQuadFBOName, CreateVolumetricFogHalfScatterQuadFBO, predicate, VolumetricFogHalfDepthTextureName);
+        DeclareEffectDestination(builder, VolumetricFogHalfScatterFBOName, VolumetricFogHalfScatterTextureName, half, CreateVolumetricFogHalfScatterFBO, predicate);
+        DeclareEffectQuad(builder, VolumetricFogReprojectQuadFBOName, CreateVolumetricFogReprojectQuadFBO, predicate, VolumetricFogHalfScatterTextureName, VolumetricFogHalfHistoryTextureName, VolumetricFogHalfDepthTextureName);
+        DeclareEffectDestination(builder, VolumetricFogReprojectFBOName, VolumetricFogHalfTemporalTextureName, half, CreateVolumetricFogReprojectFBO, predicate);
+        DeclareEffectDestination(builder, VolumetricFogHistoryFBOName, VolumetricFogHalfHistoryTextureName, half, CreateVolumetricFogHistoryFBO, predicate, RenderResourceLifetime.Persistent);
+        DeclareEffectQuad(builder, VolumetricFogUpscaleQuadFBOName, CreateVolumetricFogUpscaleQuadFBO, predicate, VolumetricFogHalfTemporalTextureName, VolumetricFogHalfDepthTextureName, DepthViewTextureName);
+        DeclareEffectDestination(builder, VolumetricFogUpscaleFBOName, VolumetricFogColorTextureName, full, CreateVolumetricFogUpscaleFBO, predicate);
+    }
+
+    private void DeclareExactTransparencyResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        RenderPipelineResourcePredicate predicate = UsesExactTransparencyResources;
+        RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
+        uint nodeCount = ComputePpllNodeCapacity(builder.Profile);
+
+        Texture(builder, PpllHeadPointerTextureName, internalSize, SampledStorageTexture,
+            EPixelInternalFormat.R32ui, EPixelFormat.RedInteger, EPixelType.UnsignedInt, ESizedInternalFormat.R32ui,
+            CreatePpllHeadPointerTexture)
+            .RequiresStorageUsage()
+            .When(predicate)
+            .Add();
+        DeclareColorTexture(builder, PpllFragmentCountTextureName, internalSize, EPixelInternalFormat.R16f, EPixelFormat.Red, EPixelType.HalfFloat, ESizedInternalFormat.R16f, CreatePpllFragmentCountTexture, predicate);
+
+        builder.Buffer(PpllNodeBufferName)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.StorageBuffer)
+            .BufferFormat((ulong)nodeCount * PpllNodeStrideBytes, EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicCopy)
+            .Elements(PpllNodeStrideBytes, nodeCount)
+            .Access(EBufferAccessPattern.ReadWrite)
+            .Factory(CreatePpllNodeBuffer)
+            .When(predicate)
+            .Add();
+        builder.Buffer(PpllCounterBufferName)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.StorageBuffer)
+            .BufferFormat(2u * sizeof(uint), EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicCopy)
+            .Elements(sizeof(uint), 2u)
+            .Access(EBufferAccessPattern.ReadWrite)
+            .Factory(CreatePpllCounterBuffer)
+            .When(predicate)
+            .Add();
+
+        for (int layerIndex = 0; layerIndex < MaxDepthPeelingLayersSupported; layerIndex++)
+        {
+            int capture = layerIndex;
+            string colorName = DepthPeelColorTextureName(capture);
+            string depthName = DepthPeelDepthTextureName(capture);
+            DeclareColorTexture(builder, colorName, internalSize, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, () => CreateDepthPeelColorTexture(capture), predicate);
+            Texture(builder, depthName, internalSize, SampledDepthStencilAttachment,
+                EPixelInternalFormat.DepthComponent32, EPixelFormat.DepthComponent, EPixelType.Float, ESizedInternalFormat.DepthComponent32f,
+                () => CreateDepthPeelDepthTexture(capture))
+                .When(predicate)
+                .Add();
+            builder.FrameBuffer(DepthPeelLayerFboName(capture))
+                .Size(internalSize)
+                .Lifetime(RenderResourceLifetime.Transient)
+                .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
+                .Color(0, colorName)
+                .Depth(depthName)
+                .Factory(() => CreateDepthPeelLayerFBO(capture))
+                .When(predicate)
+                .Add();
+        }
+
+        builder.FrameBuffer(PpllResolveFBOName)
+            .Size(internalSize)
+            .Lifetime(RenderResourceLifetime.Transient)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .DependsOn(TransparentSceneCopyTextureName, PpllHeadPointerTextureName, PpllNodeBufferName, PpllCounterBufferName)
+            .Color(0, HDRSceneTextureName)
+            .Color(1, PpllFragmentCountTextureName)
+            .Factory(CreatePpllResolveFBO)
+            .When(predicate)
+            .Add();
+        builder.FrameBuffer(DepthPeelingResolveFBOName)
+            .Size(internalSize)
+            .Lifetime(RenderResourceLifetime.Transient)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .DependsOn(DepthPeelColorTextureName(0), DepthPeelDepthTextureName(0))
+            .Color(0, HDRSceneTextureName)
+            .Factory(CreateDepthPeelingResolveFBO)
+            .When(predicate)
+            .Add();
+        DeclareEffectQuad(builder, PpllFragmentCountDebugFBOName, CreatePpllFragmentCountDebugFBO, predicate, PpllFragmentCountTextureName);
+        DeclareEffectQuad(builder, DepthPeelingDebugFBOName, CreateDepthPeelingDebugFBO, predicate, DepthPeelColorTextureName(0), DepthPeelDepthTextureName(0));
+    }
+
+    private void DeclareGlobalIlluminationResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
+        uint layers = DeclaredLayerCount(builder);
+
+        DeclareGiTextureAndQuad(builder, RestirGITextureName, RestirCompositeFBOName, CreateRestirGITexture, CreateRestirCompositeFBO, UsesRestirGiResources, layers, internalSize);
+        DeclareRestirReservoirBuffers(builder);
+        DeclareGiTextureAndQuad(builder, LightVolumeGITextureName, LightVolumeCompositeFBOName, CreateLightVolumeGITexture, CreateLightVolumeCompositeFBO, UsesLightVolumeGiResources, layers, internalSize);
+        DeclareGiTextureAndQuad(builder, RadianceCascadeGITextureName, RadianceCascadeCompositeFBOName, CreateRadianceCascadeGITexture, CreateRadianceCascadeCompositeFBO, UsesRadianceCascadeGiResources, layers, internalSize, DepthViewTextureName, NormalTextureName);
+        DeclareRadianceCascadeHistoryTextures(builder, internalSize, layers);
+        DeclareGiTextureAndQuad(builder, SurfelGITextureName, SurfelGICompositeFBOName, CreateSurfelGITexture, CreateSurfelGICompositeFBO, UsesSurfelGiResources, layers, internalSize);
+        DeclareSurfelGiBuffers(builder);
+
+        Texture(builder, VoxelConeTracingVolumeTextureName, RenderResourceSizePolicy.Absolute(128u, 128u),
+            RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.StorageImage,
+            EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8,
+            CreateVoxelConeTracingVolumeTexture)
+            .Mips(new RenderResourceMipPolicy(AutoGenerateMipmaps: true, RequireImmutableStorage: false))
+            .RequiresStorageUsage()
+            .When(UsesVoxelConeTracingResources)
+            .Add();
+    }
+
+    private void DeclareRestirReservoirBuffers(RenderPipelineResourceLayoutBuilder builder)
+    {
+        uint elementCount = checked(Math.Max(1u, builder.Profile.InternalWidth) * Math.Max(1u, builder.Profile.InternalHeight));
+        DeclareRestirReservoirBuffer(builder, VPRC_ReSTIRPass.InitialReservoirBufferName, 3u, elementCount);
+        DeclareRestirReservoirBuffer(builder, VPRC_ReSTIRPass.TemporalReservoirBufferName, 4u, elementCount);
+        DeclareRestirReservoirBuffer(builder, VPRC_ReSTIRPass.SpatialReservoirBufferName, 5u, elementCount);
+    }
+
+    private static void DeclareRestirReservoirBuffer(RenderPipelineResourceLayoutBuilder builder, string name, uint bindingIndex, uint elementCount)
+        => builder.Buffer(name)
+            .Size(RenderResourceSizePolicy.Internal())
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.StorageBuffer)
+            .BufferFormat((ulong)elementCount * VPRC_ReSTIRPass.ReservoirStride, EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicDraw)
+            .Elements(VPRC_ReSTIRPass.ReservoirStride, elementCount)
+            .Factory(() => VPRC_ReSTIRPass.CreateDeclaredReservoirBuffer(name, bindingIndex, elementCount))
+            .When(UsesRestirGiResources)
+            .Add();
+
+    private static void DeclareSurfelGiBuffers(RenderPipelineResourceLayoutBuilder builder)
+    {
+        DeclareSurfelGiBuffer(builder, VPRC_SurfelGIPass.SurfelBufferName, VPRC_SurfelGIPass.SurfelStride, VPRC_SurfelGIPass.MaxSurfelsConst, VPRC_SurfelGIPass.CreateDeclaredSurfelBuffer);
+        DeclareSurfelGiBuffer(builder, VPRC_SurfelGIPass.CounterBufferName, VPRC_SurfelGIPass.ScalarStride, VPRC_SurfelGIPass.CounterCount, VPRC_SurfelGIPass.CreateDeclaredCounterBuffer);
+        DeclareSurfelGiBuffer(builder, VPRC_SurfelGIPass.FreeStackBufferName, VPRC_SurfelGIPass.ScalarStride, VPRC_SurfelGIPass.MaxSurfelsConst, VPRC_SurfelGIPass.CreateDeclaredFreeStackBuffer);
+        DeclareSurfelGiBuffer(builder, VPRC_SurfelGIPass.GridCountsBufferName, VPRC_SurfelGIPass.ScalarStride, VPRC_SurfelGIPass.GridCellCount, VPRC_SurfelGIPass.CreateDeclaredGridCountsBuffer);
+        DeclareSurfelGiBuffer(builder, VPRC_SurfelGIPass.GridIndicesBufferName, VPRC_SurfelGIPass.ScalarStride, VPRC_SurfelGIPass.GridIndexCount, VPRC_SurfelGIPass.CreateDeclaredGridIndicesBuffer);
+    }
+
+    private static void DeclareSurfelGiBuffer(RenderPipelineResourceLayoutBuilder builder, string name, uint stride, uint elementCount, Func<XRDataBuffer> factory)
+        => builder.Buffer(name)
+            .Size(RenderResourceSizePolicy.Internal())
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.StorageBuffer)
+            .BufferFormat((ulong)stride * elementCount, EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicDraw)
+            .Elements(stride, elementCount)
+            .Factory(factory)
+            .When(UsesSurfelGiResources)
+            .Add();
+
+    private void DeclareRadianceCascadeHistoryTextures(RenderPipelineResourceLayoutBuilder builder, RenderResourceSizePolicy size, uint layers)
+    {
+        DeclareRadianceCascadeHistoryTexture(builder, VPRC_RadianceCascadesPass.HistoryTextureAName, size, layers);
+        DeclareRadianceCascadeHistoryTexture(builder, VPRC_RadianceCascadesPass.HistoryTextureBName, size, layers);
+    }
+
+    private void DeclareRadianceCascadeHistoryTexture(RenderPipelineResourceLayoutBuilder builder, string name, RenderResourceSizePolicy size, uint layers)
+        => Texture(builder, name, size, SampledStorageTexture,
+                EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f,
+                () => CreateRadianceCascadeHistoryTexture(name))
+            .Layers(layers)
+            .StereoCompatible(layers > 1u)
+            .RequiresStorageUsage()
+            .History(RenderResourceHistoryPolicy.ClearOnCommit)
+            .When(UsesRadianceCascadeGiResources)
+            .Add();
+
+    private XRTexture CreateRadianceCascadeHistoryTexture(string name)
+    {
+        XRTexture texture = CreateRadianceCascadeGITexture();
+        texture.Name = name;
+        texture.SamplerName = "gHistory";
+        if (texture is XRTexture2D texture2D)
+        {
+            texture2D.MinFilter = ETexMinFilter.Linear;
+            texture2D.MagFilter = ETexMagFilter.Linear;
+        }
+        else if (texture is XRTexture2DArray textureArray)
+        {
+            textureArray.MinFilter = ETexMinFilter.Linear;
+            textureArray.MagFilter = ETexMagFilter.Linear;
+        }
+        return texture;
+    }
+
+    private void DeclareDebugVisualizationResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        RenderPipelineResourcePredicate predicate = UsesDebugVisualizationResources;
+        RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
+
+        DeclareColorTexture(builder, FullOverdrawCountTextureName, internalSize, EPixelInternalFormat.R16f, EPixelFormat.Red, EPixelType.HalfFloat, ESizedInternalFormat.R16f, CreateFullOverdrawCountTexture, predicate);
+        DeclareEffectDestination(builder, FullOverdrawCountFBOName, FullOverdrawCountTextureName, internalSize, CreateFullOverdrawCountFBO, predicate);
+        DeclareEffectQuad(builder, FullOverdrawDebugFBOName, CreateFullOverdrawDebugFBO, predicate, FullOverdrawCountTextureName, PostProcessOutputTextureName);
+        DeclareEffectQuad(builder, TransformIdDebugQuadFBOName, CreateTransformIdDebugQuadFBO, predicate, TransformIdTextureName);
+        DeclareEffectQuad(builder, TransparentAccumulationDebugFBOName, CreateTransparentAccumulationDebugFBO, UsesWeightedBlendedOitResources, TransparentAccumTextureName);
+        DeclareEffectQuad(builder, TransparentRevealageDebugFBOName, CreateTransparentRevealageDebugFBO, UsesWeightedBlendedOitResources, TransparentRevealageTextureName);
+        DeclareEffectQuad(builder, TransparentOverdrawDebugFBOName, CreateTransparentOverdrawDebugFBO, UsesWeightedBlendedOitResources, TransparentRevealageTextureName, TransparentAccumTextureName);
+    }
+
+    private void DeclareColorTexture(
+        RenderPipelineResourceLayoutBuilder builder,
+        string name,
+        RenderResourceSizePolicy size,
+        EPixelInternalFormat internalFormat,
+        EPixelFormat pixelFormat,
+        EPixelType pixelType,
+        ESizedInternalFormat sizedFormat,
+        Func<XRTexture> factory,
+        RenderPipelineResourcePredicate predicate)
+        => Texture(builder, name, size, SampledColorAttachment, internalFormat, pixelFormat, pixelType, sizedFormat, factory)
+            .When(predicate)
+            .Add();
+
+    private static void DeclareEffectDestination(
+        RenderPipelineResourceLayoutBuilder builder,
+        string name,
+        string textureName,
+        RenderResourceSizePolicy size,
+        Func<XRFrameBuffer> factory,
+        RenderPipelineResourcePredicate predicate,
+        RenderResourceLifetime lifetime = RenderResourceLifetime.Transient)
+        => builder.FrameBuffer(name)
+            .Size(size)
+            .Lifetime(lifetime)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .Color(0, textureName)
+            .Factory(factory)
+            .When(predicate)
+            .Add();
+
+    private static void DeclareEffectQuad(
+        RenderPipelineResourceLayoutBuilder builder,
+        string name,
+        Func<XRFrameBuffer> factory,
+        RenderPipelineResourcePredicate predicate,
+        params string[] dependencies)
+        => builder.QuadMaterial(name)
+            .Lifetime(RenderResourceLifetime.Transient)
+            .DependsOn(dependencies)
+            .Factory(factory)
+            .When(predicate)
+            .Add();
+
+    private void DeclareGiTextureAndQuad(
+        RenderPipelineResourceLayoutBuilder builder,
+        string textureName,
+        string quadName,
+        Func<XRTexture> textureFactory,
+        Func<XRFrameBuffer> quadFactory,
+        RenderPipelineResourcePredicate predicate,
+        uint layers,
+        RenderResourceSizePolicy size,
+        params string[] extraDependencies)
+    {
+        Texture(builder, textureName, size, SampledStorageTexture,
+            EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f,
+            textureFactory)
+            .Layers(layers)
+            .StereoCompatible(layers > 1u)
+            .RequiresStorageUsage()
+            .When(predicate)
+            .Add();
+
+        string[] dependencies = new string[extraDependencies.Length + 1];
+        dependencies[0] = textureName;
+        Array.Copy(extraDependencies, 0, dependencies, 1, extraDependencies.Length);
+        DeclareEffectQuad(builder, quadName, quadFactory, predicate, dependencies);
+    }
+
     private XRTexture CreateAmbientOcclusionIntensityTexture()
     {
         if (Stereo)
@@ -1006,8 +1907,8 @@ public partial class DefaultRenderPipeline
     {
         int divisor = GtaoResolutionDivisor(ResolveGtaoResolutionForTextureFactory());
         return (
-            Math.Max(1u, InternalWidth / (uint)divisor),
-            Math.Max(1u, InternalHeight / (uint)divisor));
+            ScaleInternalExtent(InternalWidth, (uint)divisor),
+            ScaleInternalExtent(InternalHeight, (uint)divisor));
     }
 
     private GroundTruthAmbientOcclusionSettings.EResolution ResolveGtaoResolutionForGenerationKey()
@@ -1350,6 +2251,16 @@ public partial class DefaultRenderPipeline
         && profile.AntiAliasingMode == EAntiAliasingMode.Msaa
         && profile.MsaaSampleCount > 1u;
 
+    private static bool UsesMsaaTargets(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.MsaaTargetsEnabled) != 0
+        && !profile.Stereo
+        && !UsesOpenXrVulkanDesktopSafePath(profile)
+        && profile.AntiAliasingMode == EAntiAliasingMode.Msaa
+        && profile.MsaaSampleCount > 1u;
+
+    private bool UsesForwardOnlyMsaaTargets(RenderPipelineResourceProfile profile)
+        => UsesMsaaTargets(profile) && !UsesDeferredMsaa(profile);
+
     private bool UsesForwardPrePass(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.ForwardDepthPrePassEnabled) != 0
         && !UsesOpenXrVulkanDesktopSafePath(profile);
@@ -1377,8 +2288,14 @@ public partial class DefaultRenderPipeline
     private static bool UsesBloomResources(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.BloomResourcesEnabled) != 0;
 
-    private static bool UsesOpenXrVulkanPostProcessFallbackResources(RenderPipelineResourceProfile profile)
-        => UsesOpenXrVulkanDesktopSafePath(profile);
+    private static bool UsesBloomFallbackResource(RenderPipelineResourceProfile profile)
+        => !UsesBloomResources(profile);
+
+    private static bool UsesAtmosphereFallbackResource(RenderPipelineResourceProfile profile)
+        => !UsesAtmosphereResources(profile);
+
+    private static bool UsesVolumetricFogFallbackResource(RenderPipelineResourceProfile profile)
+        => !UsesVolumetricFogResources(profile);
 
     private static bool UsesTemporalResources(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.TemporalResourcesEnabled) != 0;
@@ -1388,6 +2305,30 @@ public partial class DefaultRenderPipeline
 
     private static bool UsesDepthOfFieldResources(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.DepthOfFieldEnabled) != 0;
+
+    private static bool UsesAtmosphereResources(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.AtmosphereResourcesEnabled) != 0;
+
+    private static bool UsesVolumetricFogResources(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.VolumetricFogResourcesEnabled) != 0;
+
+    private static bool UsesRestirGiResources(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.RestirGiResourcesEnabled) != 0;
+
+    private static bool UsesLightVolumeGiResources(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.LightVolumeGiResourcesEnabled) != 0;
+
+    private static bool UsesRadianceCascadeGiResources(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.RadianceCascadeGiResourcesEnabled) != 0;
+
+    private static bool UsesSurfelGiResources(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.SurfelGiResourcesEnabled) != 0;
+
+    private static bool UsesVoxelConeTracingResources(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.VoxelConeTracingResourcesEnabled) != 0;
+
+    private static bool UsesDebugVisualizationResources(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.DebugVisualizationResourcesEnabled) != 0;
 
     private RenderResourceSizePolicy ForwardDepthNormalPrePassSizePolicy()
         => RenderResourceSizePolicy.Internal(ForwardDepthNormalPrePassResolution switch

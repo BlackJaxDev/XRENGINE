@@ -10,7 +10,7 @@ using XREngine.Rendering.Models.Materials;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
-    public class VPRC_AODisabledPass : ViewportRenderCommand
+    public class VPRC_AODisabledPass : ViewportRenderCommand, IDeclaredAoResourceProvider
     {
         private static void LogStub(string key, string message)
             => Debug.RenderingEvery(
@@ -137,10 +137,62 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (!forceRebuild && width == state.LastWidth && height == state.LastHeight)
                 return;
 
-            RegenerateResources(instance, state, albedoTex, normalTex, rmseTex, transformIdTex, depthStencilTex, width, height);
+            RefreshDeclaredResources(instance, state, albedoTex, normalTex, rmseTex, transformIdTex, depthStencilTex, width, height);
         }
 
-        private void RegenerateResources(
+        public XRFrameBuffer CreateDeclaredFrameBuffer(XRRenderPipelineInstance instance, string name)
+        {
+            XRTexture aoTexture = instance.GetTexture<XRTexture>(IntensityTextureName)
+                ?? throw new InvalidOperationException($"Missing declared AO texture '{IntensityTextureName}'.");
+
+            RenderingParameters renderParams = CreateRenderParameters();
+            XRShader shader = XRShader.EngineShader(Path.Combine(SceneShaderPath, DisabledShaderName()), EShaderType.Fragment);
+            XRMaterial material = new(Array.Empty<XRTexture>(), shader) { RenderOptions = renderParams };
+
+            if (string.Equals(name, BlurFBOName, StringComparison.Ordinal))
+            {
+                return new XRQuadFrameBuffer(material, true, (RequireAttachment(aoTexture, IntensityTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1))
+                {
+                    Name = BlurFBOName
+                };
+            }
+
+            if (!string.Equals(name, GenerationFBOName, StringComparison.Ordinal))
+                throw new InvalidOperationException($"Unsupported disabled AO framebuffer '{name}'.");
+
+            return new XRQuadFrameBuffer(material, true,
+                (RequireAttachment(instance, AlbedoTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                (RequireAttachment(instance, NormalTextureName), EFrameBufferAttachment.ColorAttachment1, 0, -1),
+                (RequireAttachment(instance, RMSETextureName), EFrameBufferAttachment.ColorAttachment2, 0, -1),
+                (RequireAttachment(instance, TransformIdTextureName), EFrameBufferAttachment.ColorAttachment3, 0, -1),
+                (RequireAttachment(instance, DepthStencilTextureName), EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+            {
+                Name = GenerationFBOName
+            };
+        }
+
+        private static RenderingParameters CreateRenderParameters()
+            => new()
+            {
+                DepthTest =
+                {
+                    Enabled = ERenderParamUsage.Unchanged,
+                    UpdateDepth = false,
+                    Function = EComparison.Always,
+                }
+            };
+
+        private static IFrameBufferAttachement RequireAttachment(XRRenderPipelineInstance instance, string textureName)
+            => RequireAttachment(
+                instance.GetTexture<XRTexture>(textureName)
+                    ?? throw new InvalidOperationException($"Missing declared AO input '{textureName}'."),
+                textureName);
+
+        private static IFrameBufferAttachement RequireAttachment(XRTexture texture, string textureName)
+            => texture as IFrameBufferAttachement
+                ?? throw new InvalidOperationException($"Declared AO texture '{textureName}' is not framebuffer-attachable.");
+
+        private void RefreshDeclaredResources(
             XRRenderPipelineInstance instance,
             InstanceState state,
             XRTexture albedoTex,
@@ -158,71 +210,16 @@ namespace XREngine.Rendering.Pipelines.Commands
             state.RmseTexture = rmseTex;
             state.TransformIdTexture = transformIdTex;
             state.DepthStencilTexture = depthStencilTex;
-
-            state.AoTexture = ResolveAoTexture(instance, state.AoTexture, width, height);
             state.DepthViewTexture = instance.GetTexture<XRTexture>(DepthViewTextureName);
-            InvalidateDependentFbos(instance);
+            state.AoTexture = instance.GetTexture<XRTexture>(IntensityTextureName)
+                ?? throw new InvalidOperationException($"Missing declared AO texture '{IntensityTextureName}'.");
 
-            RenderingParameters renderParams = new()
-            {
-                DepthTest =
-                {
-                    Enabled = ERenderParamUsage.Unchanged,
-                    UpdateDepth = false,
-                    Function = EComparison.Always,
-                }
-            };
-
-            XRShader disabledShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, DisabledShaderName()), EShaderType.Fragment);
-            XRMaterial genMaterial = new(Array.Empty<XRTexture>(), disabledShader) { RenderOptions = renderParams };
-            XRMaterial blurMaterial = new(Array.Empty<XRTexture>(), disabledShader) { RenderOptions = renderParams };
-
-            if (albedoTex is not IFrameBufferAttachement albedoAttach)
-                throw new ArgumentException("Albedo texture must be an IFrameBufferAttachement");
-
-            if (normalTex is not IFrameBufferAttachement normalAttach)
-                throw new ArgumentException("Normal texture must be an IFrameBufferAttachement");
-
-            if (rmseTex is not IFrameBufferAttachement rmseAttach)
-                throw new ArgumentException("RMSE texture must be an IFrameBufferAttachement");
-
-            if (transformIdTex is not IFrameBufferAttachement transformIdAttach)
-                throw new ArgumentException("TransformId texture must be an IFrameBufferAttachement");
-
-            if (depthStencilTex is not IFrameBufferAttachement depthStencilAttach)
-                throw new ArgumentException("DepthStencil texture must be an IFrameBufferAttachement");
-
-            if (state.AoTexture is not IFrameBufferAttachement aoAttach)
-                throw new ArgumentException("Ambient occlusion texture must be an IFrameBufferAttachement");
-
-            XRQuadFrameBuffer generationFbo = new(genMaterial, true,
-                (albedoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
-                (normalAttach, EFrameBufferAttachment.ColorAttachment1, 0, -1),
-                (rmseAttach, EFrameBufferAttachment.ColorAttachment2, 0, -1),
-                (transformIdAttach, EFrameBufferAttachment.ColorAttachment3, 0, -1),
-                (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
-            {
-                Name = GenerationFBOName
-            };
-
-            XRQuadFrameBuffer blurFbo = new(blurMaterial, true, (aoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
-            {
-                Name = BlurFBOName
-            };
-
-            XRFrameBuffer outputFbo = new((aoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
-            {
-                Name = OutputFBOName
-            };
-
-            instance.SetFBO(generationFbo);
-            instance.SetFBO(blurFbo);
-            instance.SetFBO(outputFbo);
+            if (!instance.TryGetFBO(GenerationFBOName, out _) || !instance.TryGetFBO(BlurFBOName, out _))
+                throw new InvalidOperationException("Disabled AO command requires its declared generation and blur framebuffers.");
         }
 
         private XRTexture ResolveAoTexture(
             XRRenderPipelineInstance instance,
-            XRTexture? previousTexture,
             int width,
             int height)
         {
@@ -233,12 +230,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return registeredTexture;
             }
 
-            if (previousTexture is not null && !ReferenceEquals(previousTexture, registeredTexture))
-                previousTexture.Destroy();
-
-            XRTexture createdTexture = CreateAoTexture(width, height);
-            instance.SetTexture(createdTexture);
-            return createdTexture;
+            throw new InvalidOperationException(
+                $"Declared AO texture '{IntensityTextureName}' is missing or does not match {width}x{height}.");
         }
 
         private static bool TextureMatchesSize(XRTexture texture, int width, int height)
@@ -293,20 +286,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             return aoTexture;
         }
 
-        private void InvalidateDependentFbos(XRRenderPipelineInstance instance)
-        {
-            if (DependentFboNames.Length == 0)
-                return;
-
-            foreach (string name in DependentFboNames)
-            {
-                if (string.IsNullOrWhiteSpace(name))
-                    continue;
-
-                instance.Resources.RemoveFrameBuffer(name);
-            }
-        }
-
         internal override void AllocateContainerResources(XRRenderPipelineInstance instance)
         {
             GetInstanceState(instance).ResourcesDirty = true;
@@ -317,7 +296,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (_instanceStates.TryGetValue(instance, out var state))
             {
                 state.ResourcesDirty = true;
-                state.AoTexture?.Destroy();
                 state.AoTexture = null;
                 state.LastWidth = 0;
                 state.LastHeight = 0;

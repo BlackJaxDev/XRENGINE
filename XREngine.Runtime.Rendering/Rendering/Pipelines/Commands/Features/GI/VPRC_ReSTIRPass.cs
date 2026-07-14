@@ -17,6 +17,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     public class VPRC_ReSTIRPass : ViewportRenderCommand
     {
         private const uint GroupSize = 16u;
+        public const string InitialReservoirBufferName = "RestirInitialReservoir";
+        public const string TemporalReservoirBufferName = "RestirTemporalReservoir";
+        public const string SpatialReservoirBufferName = "RestirSpatialReservoir";
 
         private XRRenderProgram? _initialProgram;
         private XRRenderProgram? _resampleProgram;
@@ -26,11 +29,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRDataBuffer? _temporalReservoir;
         private XRDataBuffer? _spatialReservoir;
 
-        private uint _currentWidth;
-        private uint _currentHeight;
         private uint _frameIndex;
 
-        private readonly uint _reservoirStride = (uint)Marshal.SizeOf<RestirGI.Reservoir>();
+        internal static readonly uint ReservoirStride = (uint)Marshal.SizeOf<RestirGI.Reservoir>();
 
         // Optional NV_ray_tracing path
         // If these are set (non-zero), this pass will attempt to bind and dispatch the RT pipeline via RestirGI.
@@ -78,7 +79,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (!EnsurePrograms())
                 return;
 
-            if (!EnsureResources(width, height))
+            if (!RefreshDeclaredResources())
                 return;
 
             if (ActivePipelineInstance.GetTexture<XRTexture>(DepthTextureName) is not XRTexture2D depthTex ||
@@ -165,31 +166,17 @@ namespace XREngine.Rendering.Pipelines.Commands
             return _initialProgram is not null && _resampleProgram is not null && _finalProgram is not null;
         }
 
-        private bool EnsureResources(uint width, uint height)
+        private bool RefreshDeclaredResources()
         {
-            if (_initialReservoir is not null && width == _currentWidth && height == _currentHeight)
-                return true;
-
-            uint elementCount = width * height;
-            if (elementCount == 0)
-                return false;
-
-            _initialReservoir?.Destroy();
-            _temporalReservoir?.Destroy();
-            _spatialReservoir?.Destroy();
-
-            _initialReservoir = CreateReservoirBuffer("RestirInitialReservoir", 3u, elementCount);
-            _temporalReservoir = CreateReservoirBuffer("RestirTemporalReservoir", 4u, elementCount);
-            _spatialReservoir = CreateReservoirBuffer("RestirSpatialReservoir", 5u, elementCount);
-
-            _currentWidth = width;
-            _currentHeight = height;
-            return true;
+            _initialReservoir = ActivePipelineInstance.GetBuffer(InitialReservoirBufferName);
+            _temporalReservoir = ActivePipelineInstance.GetBuffer(TemporalReservoirBufferName);
+            _spatialReservoir = ActivePipelineInstance.GetBuffer(SpatialReservoirBufferName);
+            return _initialReservoir is not null && _temporalReservoir is not null && _spatialReservoir is not null;
         }
 
-        private XRDataBuffer CreateReservoirBuffer(string name, uint bindingIndex, uint elementCount)
+        internal static XRDataBuffer CreateDeclaredReservoirBuffer(string name, uint bindingIndex, uint elementCount)
         {
-            var buffer = new XRDataBuffer(name, EBufferTarget.ShaderStorageBuffer, elementCount, EComponentType.Struct, _reservoirStride, false, false)
+            var buffer = new XRDataBuffer(name, EBufferTarget.ShaderStorageBuffer, elementCount, EComponentType.Struct, ReservoirStride, false, false)
             {
                 Usage = EBufferUsage.DynamicDraw,
                 BindingIndexOverride = bindingIndex,
@@ -264,9 +251,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             builder.SampleTexture(MakeTextureResource(NormalTextureName));
             builder.ReadWriteTexture(MakeTextureResource(RestirOutputTextureName));
 
-            builder.ReadWriteBuffer("RestirInitialReservoir");
-            builder.ReadWriteBuffer("RestirTemporalReservoir");
-            builder.ReadWriteBuffer("RestirSpatialReservoir");
+            builder.ReadWriteBuffer(InitialReservoirBufferName);
+            builder.ReadWriteBuffer(TemporalReservoirBufferName);
+            builder.ReadWriteBuffer(SpatialReservoirBufferName);
 
             builder.SampleTexture(MakeTextureResource(RestirOutputTextureName));
             builder.UseColorAttachment(MakeFboColorResource(ForwardFBOName));

@@ -413,8 +413,10 @@ public sealed class OpenXrTimingPipelineContractTests
         fogGate.IndexOf("UseOpenXrVulkanDesktopStartupSafePath", StringComparison.Ordinal)
             .ShouldBeLessThan(fogGate.IndexOf("GetActivePostProcessState", StringComparison.Ordinal));
 
-        commandChain.ShouldContain("AtmosphereColorTextureName,\n            CreateAtmosphereColorTexture");
-        commandChain.ShouldContain("VolumetricFogColorTextureName,\n            CreateVolumetricFogColorTexture");
+        resources.ShouldContain("DeclareColorTexture(builder, AtmosphereColorTextureName, full");
+        resources.ShouldContain("CreateAtmosphereColorTexture, predicate");
+        resources.ShouldContain("DeclareColorTexture(builder, VolumetricFogColorTextureName, full");
+        resources.ShouldContain("CreateVolumetricFogColorTexture, predicate");
         resources.ShouldContain("Texture(builder, AtmosphereColorTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), RenderPipelineResourceUsage.SampledTexture");
         resources.ShouldContain("Texture(builder, VolumetricFogColorTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), RenderPipelineResourceUsage.SampledTexture");
         resources.ShouldContain("CreateAtmosphereColorFallbackTexture");
@@ -422,9 +424,21 @@ public sealed class OpenXrTimingPipelineContractTests
     }
 
     [Test]
+    public void DefaultPipelineScaledFactories_MatchPlannerRoundingForOddEyeExtents()
+    {
+        string pipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
+        string resources = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.Resources.cs");
+
+        pipeline.ShouldContain("System.MathF.Round(System.Math.Max(extent, 1u) / (float)System.Math.Max(divisor, 1u))");
+        pipeline.ShouldContain("ScaleInternalExtent(InternalHeight, 2u)");
+        pipeline.ShouldContain("ScaleInternalExtent(InternalHeight, divisor)");
+        resources.ShouldContain("ScaleInternalExtent(InternalHeight, (uint)divisor)");
+    }
+
+    [Test]
     public void VulkanFboLayoutQuery_FallsBackToAttachmentSourceTrackedLayout()
     {
-        string commandRecording = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string commandRecording = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
         string queryCurrentLayouts = SliceMethod(
             commandRecording,
@@ -432,9 +446,8 @@ public sealed class OpenXrTimingPipelineContractTests
             "private bool TryGetExactTrackedFboAttachmentLayout");
 
         queryCurrentLayouts.ShouldContain("TryGetExactTrackedFboAttachmentLayout");
-        queryCurrentLayouts.ShouldContain("ResolveFboAttachmentOldLayout(target, mipLevel, layerIndex, ImageLayout.Undefined)");
-        queryCurrentLayouts.IndexOf("TryGetExactTrackedFboAttachmentLayout", StringComparison.Ordinal)
-            .ShouldBeLessThan(queryCurrentLayouts.IndexOf("ResolveFboAttachmentOldLayout", StringComparison.Ordinal));
+        queryCurrentLayouts.ShouldContain(": ImageLayout.Undefined;");
+        queryCurrentLayouts.ShouldNotContain("ResolveFboAttachmentOldLayout");
 
         string beginRenderingForTarget = SliceMethod(
             commandRecording,
@@ -450,17 +463,18 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void VulkanDynamicRenderingFboTransition_UsesQueriedAttachmentOldLayoutFallback()
     {
-        string commandRecording = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string commandRecording = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
         string transition = SliceMethod(
             commandRecording,
             "private void TransitionFboAttachmentsForDynamicRendering",
             "private static ImageLayout NormalizeFboAttachmentLayout");
 
-        transition.ShouldContain("else if (TryGetTrackedImageLayout(transitionImage, transitionRange, out ImageLayout trackedImageLayout))");
-        transition.ShouldContain("ResolveFboAttachmentOldLayout(target, mipLevel, trackedLayer, requestedOldLayout)");
-        transition.IndexOf("TryGetTrackedImageLayout(transitionImage, transitionRange, out ImageLayout trackedImageLayout)", StringComparison.Ordinal)
-            .ShouldBeLessThan(transition.IndexOf("ResolveFboAttachmentOldLayout(target, mipLevel, trackedLayer, requestedOldLayout)", StringComparison.Ordinal));
+        transition.ShouldContain("TryGetRecordedImageAccessState(");
+        transition.ShouldContain("oldLayout = NormalizeFboAttachmentLayout(signature, recordedState.Layout);");
+        transition.ShouldContain("oldLayout = NormalizeFboAttachmentLayout(signature, requestedOldLayout);");
+        transition.IndexOf("TryGetRecordedImageAccessState(", StringComparison.Ordinal)
+            .ShouldBeLessThan(transition.IndexOf("requestedOldLayout);", StringComparison.Ordinal));
         transition.ShouldNotContain(": beginRendering\n                                ? ImageLayout.Undefined");
     }
 
@@ -574,13 +588,20 @@ public sealed class OpenXrTimingPipelineContractTests
         resourceRetirement.ShouldContain("TryBeginDestroyImageView(r.PrimaryView, \"DrainRetiredImages.PrimaryView\")");
         resourceRetirement.ShouldContain("TryBeginDestroyImageView(v, \"DrainRetiredImages.AttachmentView\")");
         initialization.ShouldContain("ForceFlushAllRetiredResources();\n            DestroyRemainingTrackedImageViews();\n            DestroyRemainingTrackedPipelineLayouts();\n            DestroyRemainingTrackedBufferAllocations();");
-        initialization.ShouldContain("ForceFlushAllRetiredResources();\n            DestroyRemainingTrackedImageViews();\n            DestroyRemainingTrackedPipelineLayouts();\n            DestroySharedGraphicsPipelineLibraries();");
+        int finalFlushIndex = initialization.LastIndexOf("ForceFlushAllRetiredResources();", StringComparison.Ordinal);
+        int finalImageViewsIndex = initialization.LastIndexOf("DestroyRemainingTrackedImageViews();", StringComparison.Ordinal);
+        int finalPipelineLayoutsIndex = initialization.LastIndexOf("DestroyRemainingTrackedPipelineLayouts();", StringComparison.Ordinal);
+        int finalPipelineLibrariesIndex = initialization.LastIndexOf("DestroySharedGraphicsPipelineLibraries();", StringComparison.Ordinal);
+        finalFlushIndex.ShouldBeGreaterThanOrEqualTo(0);
+        finalImageViewsIndex.ShouldBeGreaterThan(finalFlushIndex);
+        finalPipelineLayoutsIndex.ShouldBeGreaterThan(finalImageViewsIndex);
+        finalPipelineLibrariesIndex.ShouldBeGreaterThan(finalPipelineLayoutsIndex);
 
-        openXr.ShouldContain("TrackLiveImageView(imageView, \"OpenXR.SwapchainImageView\");");
-        openXr.ShouldContain("TrackLiveImageView(depthView, \"OpenXR.DepthTarget\");");
-        imageBackedTexture.ShouldContain("Renderer.TrackLiveImageView(created, \"VkImageBackedTexture.View\");");
-        textureView.ShouldContain("Renderer.TrackLiveImageView(_view, \"VkTextureView.View\");");
-        textureView.ShouldContain("Renderer.TrackLiveImageView(_depthOnlyView, \"VkTextureView.DepthOnlyDescriptor\");");
+        openXr.ShouldContain("TrackLiveImageView(imageView, in viewInfo, \"OpenXR.SwapchainImageView\");");
+        openXr.ShouldContain("TrackLiveImageView(depthView, in viewInfo, \"OpenXR.DepthTarget\");");
+        imageBackedTexture.ShouldContain("Renderer.TrackLiveImageView(created, in viewInfo, \"VkImageBackedTexture.View\");");
+        textureView.ShouldContain("Renderer.TryAcquireInternedImageView(in viewInfo, \"VkTextureView.View\", out _view)");
+        textureView.ShouldContain("Renderer.TryAcquireInternedImageView(in depthOnlyViewInfo, \"VkTextureView.DepthOnlyDescriptor\", out _depthOnlyView)");
         textureView.ShouldContain("private readonly object _viewLifetimeLock = new();");
         renderProgram.ShouldContain("Renderer.TrackLivePipelineLayout(_pipelineLayout, \"VkRenderProgram.PipelineLayout\");");
         renderProgram.ShouldContain("Renderer.TryBeginDestroyPipelineLayout(pipelineLayout, owner)");
@@ -588,8 +609,8 @@ public sealed class OpenXrTimingPipelineContractTests
         renderProgramPipeline.ShouldContain("Renderer.TryBeginDestroyPipelineLayout(pipelineLayout, owner)");
         imgui.ShouldContain("TrackLivePipelineLayout(_imguiPipelineLayout, \"ImGui.PipelineLayout\");");
         imgui.ShouldContain("TryBeginDestroyPipelineLayout(pipelineLayout, \"ImGui.DestroyPipelineResources\")");
-        renderBuffer.ShouldContain("Renderer.TrackLiveImageView(_view, \"VkRenderBuffer.View\");");
-        swapchainViews.ShouldContain("TrackLiveImageView(swapChainImageViews[i], \"Swapchain.Color\");");
+        renderBuffer.ShouldContain("Renderer.TrackLiveImageView(_view, in viewInfo, \"VkRenderBuffer.View\");");
+        swapchainViews.ShouldContain("TrackLiveImageView(swapChainImageViews[i], in createInfo, \"Swapchain.Color\");");
 
         string textureViewCreate = SliceMethod(
             textureView,
@@ -612,7 +633,7 @@ public sealed class OpenXrTimingPipelineContractTests
         string meshRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
         string meshUniforms = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
 
-        dirtyReasons.ShouldContain("if (CommandChainsEnabledForCurrentRecording)\n            return;");
+        dirtyReasons.ShouldContain("VulkanPrimaryCommandBufferReuseEnabled || CommandChainsEnabledForCurrentRecording || t_frameOpCapture is not null");
 
         string onRenderRequested = SliceMethod(
             meshRenderer,
@@ -724,8 +745,8 @@ public sealed class OpenXrTimingPipelineContractTests
         meshRenderer.ShouldContain("string.Equals(name, \"SourceTexture0\", StringComparison.Ordinal)");
         meshRenderer.ShouldContain("string.Equals(name, \"SourceTexture1\", StringComparison.Ordinal)");
         meshRenderer.ShouldContain("pipeline.TryGetTexture(name, out XRTexture? texture)");
-        meshRenderer.ShouldContain("HashProgramBindingSnapshot(ref hash, meshDraw.Draw.ProgramBindingSnapshot, meshDraw.Context.PipelineInstance);");
-        meshRenderer.ShouldContain("HashProgramBindingSnapshot(ref hash, compute.Snapshot, compute.Context.PipelineInstance);");
+        meshRenderer.ShouldContain("HashProgramBindingLayoutSnapshot(ref hash, meshDraw.Draw.ProgramBindingSnapshot);");
+        meshRenderer.ShouldContain("HashProgramBindingLayoutSnapshot(ref hash, compute.Snapshot);");
         meshRenderer.ShouldContain("HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline, includeMutableFrameSourceDescriptors)");
         samplerUnitHashing.ShouldContain("samplerNamesByUnit.TryGetValue(pair.Key");
         samplerUnitHashing.ShouldContain("IsMutableFrameSourceSamplerName(samplerName, pipeline)");
@@ -935,6 +956,7 @@ public sealed class OpenXrTimingPipelineContractTests
     public void PoseAndInputPolicies_AreConfigurable()
     {
         string state = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs");
+        string collectVisiblePosePolicy = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.OpenXrCollectVisiblePosePolicy.cs");
         string settings = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs");
         string defaults = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderingHostServiceDefaults.cs");
         string runtimeSettings = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderSettings.cs");
@@ -945,8 +967,8 @@ public sealed class OpenXrTimingPipelineContractTests
         string xrCalls = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.XrCalls.cs");
 
         state.ShouldContain("OpenXrCollectVisiblePosePolicy");
-        state.ShouldContain("RelocatePredicted");
-        state.ShouldContain("PaddedFrustum");
+        collectVisiblePosePolicy.ShouldContain("RelocatePredicted");
+        collectVisiblePosePolicy.ShouldContain("PaddedFrustum");
         state.ShouldContain("OpenXrTrackingLossPolicy");
         state.ShouldContain("OpenXrActionSyncPolicy");
 
@@ -1018,7 +1040,7 @@ public sealed class OpenXrTimingPipelineContractTests
         finder.ShouldNotContain("Set-ItemProperty");
         finder.ShouldNotContain("New-ItemProperty");
 
-        installer.ShouldContain("https://gitlab.freedesktop.org/monado/monado.git");
+        installer.ShouldContain("https://github.com/BlackJaxDev/Monado.git");
         installer.ShouldContain("https://github.com/microsoft/vcpkg.git");
         installer.ShouldContain("XRT_FEATURE_SERVICE=ON");
         installer.ShouldContain("openxr_loader.dll");
@@ -1045,6 +1067,22 @@ public sealed class OpenXrTimingPipelineContractTests
         tasks.ShouldContain("Install-Monado");
         tasks.ShouldContain("Test-OpenXR-Monado-Smoke");
         tasks.ShouldContain("Test-OpenXR-SceneOnlyVR-Smoke");
+    }
+
+    [Test]
+    public void VulkanSdkInstaller_UsesOfficialVersionChecksumAndExecToolEntry()
+    {
+        string installer = ReadWorkspaceFile("Tools/Dependencies/Install-LatestVulkanSdk.ps1");
+        string execTool = ReadWorkspaceFile("ExecTool.bat");
+
+        installer.ShouldContain("https://vulkan.lunarg.com/sdk/latest/windows.json");
+        installer.ShouldContain("https://sdk.lunarg.com/sdk/download/$version/windows/vulkan_sdk.exe");
+        installer.ShouldContain("https://sdk.lunarg.com/sdk/sha/$version/windows/vulkan_sdk.exe.json");
+        installer.ShouldContain("Get-FileHash -LiteralPath $temporaryPath -Algorithm SHA256");
+        installer.ShouldContain("Get-AuthenticodeSignature -LiteralPath $installerPath");
+        installer.ShouldContain("VkLayer_khronos_validation.json");
+        installer.ShouldContain("Start-Process @startParameters");
+        execTool.ShouldContain("Tools\\Dependencies\\Install-LatestVulkanSdk.ps1");
     }
 
     [Test]
@@ -1077,7 +1115,7 @@ public sealed class OpenXrTimingPipelineContractTests
         program.ShouldContain("SmokeFrameCompleted += RecordSmokeFrame");
         program.ShouldContain("VulkanFrameTotalMs");
         program.ShouldContain("OcclusionTelemetry.CpuQuerySubmittedTotal");
-        program.ShouldContain("CopyLastFrameCpuViewSnapshots");
+        program.ShouldContain("CopyLastActiveCpuViewSnapshots");
         program.ShouldContain("OpenXrSmokeOcclusionViewLedgerEntry");
         program.ShouldContain("OpenXrSmokeOutputLedgerEntry[] _outputLedger");
         program.ShouldContain("LeftAcquireDelta = leftAcquireDelta");
@@ -1289,7 +1327,6 @@ public sealed class OpenXrTimingPipelineContractTests
         hostServices.ShouldContain("output.OutputKind == EFrameOutputKind.DesktopScene && output.RenderPhaseSceneRendered");
         hostServices.ShouldContain("if (autoSkipWhenOverBudget && ShouldHoldDesktopOutputForVrPressure(frameId, manifest))");
         hostServices.ShouldNotContain("bool independentDesktopScene =");
-        hostServices.ShouldNotContain("mode == EVrMirrorMode.FullIndependentRender &&");
         hostServices.ShouldNotContain("outputKind == EFrameOutputKind.DesktopScene;\r\n            if (independentDesktopScene)");
         hostServices.ShouldNotContain("if (output.SceneRendered ||");
         frameOutputs.ShouldContain("public bool RenderPhaseSceneRendered");
@@ -1366,9 +1403,9 @@ public sealed class OpenXrTimingPipelineContractTests
         source.ShouldContain($"if (!{addPickupExpression})");
         source.ShouldContain("CreateDesktopCamera(cameraNode, isServer, flyable: true, addListener: false)");
         source.ShouldContain("CreateCamera(rootNode, out var camComp, null, cameraName: CameraVRPickupName)");
-        source.ShouldContain("AddCameraPickupPhysicsBody(cameraNode);");
+        source.ShouldContain("AddCameraPickupPhysicsBody(cameraNode, initialPosition, initialRotation);");
         source.ShouldContain(cameraPreviewRegistration);
-        source.ShouldContain("private static void AddCameraPickupPhysicsBody(SceneNode cameraNode)");
+        source.ShouldContain("private static DynamicRigidBodyComponent AddCameraPickupPhysicsBody(");
 
         string createDesktopCamera = SliceMethod(
             source,
@@ -1820,6 +1857,7 @@ public sealed class OpenXrTimingPipelineContractTests
     public void PacingThread_ModeIsConfigurableAndSurfacesStats()
     {
         string state = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs");
+        string pacingMode = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.OpenXrRenderPacingMode.cs");
         string settings = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs");
         string stats = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.Vr.cs");
         string packet = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");
@@ -1827,11 +1865,11 @@ public sealed class OpenXrTimingPipelineContractTests
         string editorSource = ReadWorkspaceFile("XREngine.Editor/EngineProfilerDataSource.cs");
         string panel = ReadWorkspaceFile("XREngine.Profiler.UI/ProfilerPanelRenderer.cs");
 
-        state.ShouldContain("enum OpenXrRenderPacingMode");
-        state.ShouldContain("InRenderCallback");
-        state.ShouldContain("PostRenderCallback");
-        state.ShouldContain("DedicatedThread");
-        state.ShouldContain("CollectVisibleThread");
+        pacingMode.ShouldContain("enum OpenXrRenderPacingMode");
+        pacingMode.ShouldContain("InRenderCallback");
+        pacingMode.ShouldContain("PostRenderCallback");
+        pacingMode.ShouldContain("DedicatedThread");
+        pacingMode.ShouldContain("CollectVisibleThread");
         state.ShouldContain("OpenXrRenderPacingHandling");
 
         settings.ShouldContain("OpenXrRenderPacingMode");

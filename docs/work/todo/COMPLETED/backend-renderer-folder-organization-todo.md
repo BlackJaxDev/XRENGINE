@@ -544,13 +544,14 @@ Do this after OpenGL move-only validation.
   moved OpenGL program files.
 - [x] Update `docs/developer-guides/rendering/vulkan-upscale-bridge.md` for
   moved upscale bridge files.
-- [x] Update active TODOs that reference backend paths. The referenced
-  frame-loop and resource-lifecycle TODOs were already under `COMPLETED/`, so
-  the active existing rendering TODOs were updated instead:
+- [x] Update active TODOs that reference backend paths. At the time of this
+  completed reorganization, the referenced frame-loop and resource-lifecycle
+  TODOs were under `COMPLETED/`; the resource-lifecycle TODO was later
+  reactivated to finish removal of command-time resource allocation:
   - `docs/work/todo/COMPLETED/vulkan-frame-loop-performance-todo.md`
   - `docs/work/todo/rendering/vulkan-dynamic-rendering-migration-todo.md`
   - `docs/work/todo/rendering/resolved-shader-source-optimization-todo.md`
-  - `docs/work/todo/COMPLETED/render-pipeline-resource-lifecycle-todo.md`
+  - `docs/work/todo/rendering/render-pipeline-resource-lifecycle-todo.md`
   - `docs/work/todo/rendering/render-settings-api-separation-refactor-todo.md`
   - `docs/work/todo/rendering/vulkan-deferred-and-probe-gi-fixes-todo.md`
   - `docs/work/todo/rendering/vulkan-fossilize-integration-todo.md`

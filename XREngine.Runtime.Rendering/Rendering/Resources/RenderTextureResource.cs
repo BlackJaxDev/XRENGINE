@@ -19,6 +19,8 @@ public sealed class RenderTextureResource
     /// </summary>
     public XRTexture? Instance { get; private set; }
 
+    public bool OwnsInstance { get; private set; } = true;
+
     /// <summary>
     /// Creates a texture registry record from its logical descriptor.
     /// </summary>
@@ -34,9 +36,9 @@ public sealed class RenderTextureResource
     /// <summary>
     /// Associates a live texture with this logical resource.
     /// </summary>
-    public void Bind(XRTexture texture)
+    public void Bind(XRTexture texture, bool ownsInstance = true)
     {
-        if (Instance == texture)
+        if (Instance == texture && OwnsInstance == ownsInstance)
             return;
 
         // The registry is an ownership map, not a lifetime boundary. The same logical
@@ -44,6 +46,7 @@ public sealed class RenderTextureResource
         // resources are being enriched; destroying the previous instance here invalidates
         // live descriptors and framebuffer attachments.
         Instance = texture;
+        OwnsInstance = ownsInstance;
     }
 
     /// <summary>
@@ -51,7 +54,9 @@ public sealed class RenderTextureResource
     /// </summary>
     public void DestroyInstance()
     {
-        Instance?.Destroy(true);
+        if (OwnsInstance)
+            Instance?.Destroy(true);
         Instance = null;
+        OwnsInstance = true;
     }
 }

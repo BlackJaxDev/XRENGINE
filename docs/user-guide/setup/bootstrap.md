@@ -81,6 +81,11 @@ The `Deps` installer path also stages public optional downloads such as the
 NVIDIA Streamline SDK runtime files. Those files remain local under
 `ThirdParty/NVIDIA/SDK/win-x64/` and are ignored by Git.
 
+It also checks for the latest LunarG Vulkan SDK. When the current release is
+missing, `Tools/Dependencies/Install-LatestVulkanSdk.ps1` downloads and verifies
+the official installer before opening its interactive setup. Reopen the shell
+after installation so native builds and validation runs see the new SDK.
+
 The Vulkan Memory Allocator header is retrieved by the `Deps` installer path, and the native bridge is built automatically by the runtime rendering project. If you need to run those pieces manually:
 
 ```powershell

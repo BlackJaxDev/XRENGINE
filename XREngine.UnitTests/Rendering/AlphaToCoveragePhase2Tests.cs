@@ -230,7 +230,7 @@ public sealed class AlphaToCoveragePhase2Tests
     [Test]
     public void DeferredGeometry_UsesDedicatedGBufferFbo_InsteadOfAoQuadFbo()
     {
-        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
         pipelineSource.ShouldContain("public const string DeferredGBufferFBOName = \"DeferredGBufferFBO\";");
         pipelineSource.ShouldContain("private bool NeedsRecreateDeferredGBufferFbo(XRFrameBuffer fbo)");
 
@@ -465,8 +465,11 @@ public sealed class AlphaToCoveragePhase2Tests
         string helperSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/RenderPipelineAntiAliasingResources.cs").Replace("\r\n", "\n");
         helperSource.ShouldContain("internal static void InvalidateAntiAliasingResources(XRRenderPipelineInstance instance, string reason = \"AntiAliasingSettingsChanged\")");
         helperSource.ShouldContain("VPRC_TemporalAccumulationPass.ResetHistory(instance);");
-        helperSource.ShouldContain("foreach (string name in AntiAliasingFrameBufferDependencies)");
-        helperSource.ShouldContain("foreach (string name in AntiAliasingTextureDependencies)");
+        helperSource.ShouldContain("VPRC_AtmosphereHistoryPass.ResetHistory(instance);");
+        helperSource.ShouldContain("VPRC_VolumetricFogHistoryPass.ResetHistory(instance);");
+        helperSource.ShouldNotContain("RemoveFrameBufferResource");
+        helperSource.ShouldNotContain("RemoveTextureResource");
+        helperSource.ShouldNotContain("Dependencies =");
 
         string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
         pipelineSource.ShouldContain("RenderPipelineAntiAliasingResources.InvalidateAntiAliasingResources(instance);");
@@ -503,16 +506,17 @@ public sealed class AlphaToCoveragePhase2Tests
     [Test]
     public void V1CommandChain_UsesDedicatedPartial_WithNamedAppendHelpers()
     {
-        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
-        pipelineSource.ShouldContain("GenerateCommandChainLegacy()");
-        pipelineSource.ShouldContain("CreateFBOTargetCommandsLegacy()");
-        pipelineSource.ShouldContain("CreateViewportTargetCommandsLegacy()");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        pipelineSource.ShouldNotContain("GenerateCommandChainLegacy()");
+        pipelineSource.ShouldNotContain("CreateFBOTargetCommandsLegacy()");
+        pipelineSource.ShouldNotContain("CreateViewportTargetCommandsLegacy()");
 
-        string commandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
+        string commandChainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
         commandChainSource.ShouldContain("protected override ViewportRenderCommandContainer GenerateCommandChain()");
         commandChainSource.ShouldContain("private void AppendAmbientOcclusionSwitch(ViewportRenderCommandContainer c, bool enableComputePasses)");
         commandChainSource.ShouldContain("private void AppendLightingPass(ViewportRenderCommandContainer c)");
         commandChainSource.ShouldContain("private void AppendForwardPass(ViewportRenderCommandContainer c, bool enableComputePasses)");
+        commandChainSource.ShouldNotContain("VPRC_" + "CacheOrCreate");
     }
 
 
@@ -820,10 +824,22 @@ public sealed class AlphaToCoveragePhase2Tests
     private static string? TryResolveMigratedRenderingPath(string repoCandidate, string relativePath)
     {
         const string legacyPrefix = "XRENGINE/Rendering/";
-        if (!relativePath.StartsWith(legacyPrefix, StringComparison.Ordinal))
-            return null;
+        string migratedRelativePath = relativePath.StartsWith(legacyPrefix, StringComparison.OrdinalIgnoreCase)
+            ? "XREngine.Runtime.Rendering/Rendering/" + relativePath[legacyPrefix.Length..]
+            : relativePath;
 
-        string migratedRelativePath = "XREngine.Runtime.Rendering/Rendering/" + relativePath[legacyPrefix.Length..];
+        const string typesPrefix = "Pipelines/Types/";
+        int typesIndex = migratedRelativePath.IndexOf(typesPrefix, StringComparison.OrdinalIgnoreCase);
+        if (typesIndex >= 0)
+        {
+            int fileIndex = typesIndex + typesPrefix.Length;
+            string fileName = migratedRelativePath[fileIndex..];
+            if (fileName.StartsWith("DefaultRenderPipeline2", StringComparison.OrdinalIgnoreCase))
+                migratedRelativePath = migratedRelativePath.Insert(fileIndex, "Default2/");
+            else if (fileName.StartsWith("DefaultRenderPipeline", StringComparison.OrdinalIgnoreCase))
+                migratedRelativePath = migratedRelativePath.Insert(fileIndex, "Default/");
+        }
+
         string candidate = Path.Combine(repoCandidate, migratedRelativePath.Replace('/', Path.DirectorySeparatorChar));
         return File.Exists(candidate) ? candidate : null;
     }

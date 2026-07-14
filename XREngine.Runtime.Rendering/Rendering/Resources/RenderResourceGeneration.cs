@@ -11,6 +11,7 @@ public sealed class RenderResourceGeneration(ResourceGenerationKey key, RenderPi
 {
     private readonly List<string> _diagnostics = [];
     private readonly Stopwatch _buildTimer = new();
+    private XRGpuFence? _retirementFence;
 
     /// <summary>
     /// The key identifying the resource generation.
@@ -149,6 +150,15 @@ public sealed class RenderResourceGeneration(ResourceGenerationKey key, RenderPi
         Status = RenderResourceGenerationStatus.Retired;
     }
 
+    internal void ArmRetirementFence(XRGpuFence? fence)
+    {
+        _retirementFence?.Dispose();
+        _retirementFence = fence;
+    }
+
+    internal EGpuFenceStatus PollRetirementFence()
+        => _retirementFence?.Poll() ?? EGpuFenceStatus.Signaled;
+
     /// <summary>
     /// Disposes the resource generation, destroying all physical resources in the registry and transitioning its status to <see cref="RenderResourceGenerationStatus.Disposed"/>.
     /// </summary>
@@ -157,6 +167,8 @@ public sealed class RenderResourceGeneration(ResourceGenerationKey key, RenderPi
         if (Status == RenderResourceGenerationStatus.Disposed)
             return;
 
+        _retirementFence?.Dispose();
+        _retirementFence = null;
         Registry.DestroyAllPhysicalResources();
         Status = RenderResourceGenerationStatus.Disposed;
     }

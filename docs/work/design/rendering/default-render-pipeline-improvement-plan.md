@@ -1,8 +1,31 @@
 # DefaultRenderPipeline Improvement Plan
 
-**Goal:** Maximize readability, minimize out-of-render-pipeline processing, and fully leverage the new VPRC command inventory (including `VPRC_CacheOrCreateBuffer`, `VPRC_CacheOrCreateRenderBuffer`, `VPRC_BindBuffer`, `VPRC_PushShaderGlobals`, and `VPRC_SetVariable`).
+**Goal:** Maximize readability, keep GPU execution explicit, and use immutable
+resource declarations plus focused VPRC execution commands. Resource lifecycle
+commands are no longer part of the supported command inventory.
 
 **Status (2026-05-07):** The parallel `DefaultRenderPipeline2` implementation now satisfies the core migration goals for V2: decomposed command-chain builders, GPU annotations/timers, no V2 `VPRC_Manual` commands, no V2 FBO/material `SettingUniforms +=` subscriptions, no raw V2 `BindTo()` SSBO calls in `DefaultRenderPipeline2*.cs`, PPLL state managed through typed commands and pipeline variables, runtime debug visualization branches, and light-probe shader bindings scoped through the command chain. Some original wording below remains historical and mentions `VPRC_PushShaderGlobals`; V2 uses command-scoped program bindings where the uniform payload still needs live camera/post-process state at draw time.
+
+**Resource architecture update (2026-07-10):** V2 now has a complete
+`DescribeResources(...)` implementation and retains its organized `Append*`
+command chain and profiling scopes. Textures, views, buffers, renderbuffers,
+FBOs, fullscreen helpers, history, and external outputs materialize in pending
+generations. The old cache-or-create command family was deleted. Historical
+examples below that mention it describe superseded migration steps, not current
+authoring guidance.
+
+### Declarative lifecycle design rules
+
+1. V2 command builders may bind, clear, render, dispatch, copy, resolve,
+   synchronize, read back, and present resources only.
+2. Layout-affecting options must enter the immutable resource profile and
+   generation key before `DescribeResources(...)` runs.
+3. Feature-local resources use predicates; mutually exclusive attachment graphs
+   use separate declared FBOs rather than attachment mutation.
+4. Window, caller capture, and XR swapchain targets use explicit imported
+   ownership and synchronization contracts.
+5. V2-specific organization remains independent from V1. Shared declaration
+   helpers may be extracted later, but V2 must not inherit V1's command chain.
 
 ---
 

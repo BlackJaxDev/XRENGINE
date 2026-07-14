@@ -18,6 +18,12 @@ public sealed partial class RenderPipelineResourceLayoutBuilder
         private bool _multisample;
         private Func<XRTexture>? _factory;
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="TextureViewSpecBuilder"/> class.
+        /// </summary>
+        /// <param name="owner">The resource layout builder that owns this texture view specification.</param>
+        /// <param name="name">The name of the texture view specification.</param>
+        /// <param name="sourceTextureName">The name of the source texture for this view.</param>
         internal TextureViewSpecBuilder(RenderPipelineResourceLayoutBuilder owner, string name, string sourceTextureName)
             : base(owner, name)
         {

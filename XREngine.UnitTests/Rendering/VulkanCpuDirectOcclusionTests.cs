@@ -15,7 +15,7 @@ public sealed class VulkanCpuDirectOcclusionTests
         string cpuDirect = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs");
         string gpuOcclusion = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Occlusion.cs");
         string frameOps = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
-        string recorder = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string recorder = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string query = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Queries/VkRenderQuery.cs");
         string renderGraph = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderGraphCompiler.cs");
 
@@ -56,12 +56,14 @@ public sealed class VulkanCpuDirectOcclusionTests
         recorder.ShouldNotContain("(!VulkanPrimaryCommandBufferReuseEnabled || hasQueryFrameOps)");
         recorder.ShouldContain("private static bool HasQueryFrameOps(FrameOp[] ops)");
         recorder.ShouldContain("case QueryOp queryOp:");
-        recorder.ShouldContain("queryOp.Query.BeginQuery(commandBuffer, queryOp.QueryTarget);");
+        recorder.ShouldContain("queryOp.Query.BeginQuery(commandBuffer, queryOp.QueryTarget)");
         recorder.ShouldContain("queryOp.Query.EndQuery(commandBuffer);");
 
-        query.ShouldContain("vkCmdResetQueryPool is queued on the GPU");
+        query.ShouldContain("CmdResetQueryPool(commandBuffer, _queryPool, 0, _activeQueryCount)");
         query.ShouldContain("PrepareForCommandBufferReuse(EQueryTarget target)");
         query.ShouldContain("ResetQueryPoolForCommandBufferReuse");
+        query.ShouldContain("QueryCount = 2");
+        query.ShouldContain("_activeQueryCount = Math.Clamp(queryCount, 1u, 2u)");
         query.ShouldContain("DestroyQueryPool();");
 
         renderGraph.ShouldContain("op is MeshDrawOp or QueryOp or BlitOp");

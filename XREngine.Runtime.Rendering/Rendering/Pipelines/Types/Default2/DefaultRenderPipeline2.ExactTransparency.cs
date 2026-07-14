@@ -62,6 +62,12 @@ public partial class DefaultRenderPipeline2
         return Math.Max(pixelCount * 2u, 1024u);
     }
 
+    private static uint ComputePpllNodeCapacity(RenderPipelineResourceProfile profile)
+    {
+        uint pixelCount = Math.Max(profile.InternalWidth * profile.InternalHeight, 1u);
+        return Math.Max(pixelCount * 2u, 1024u);
+    }
+
     private static int ResolveActiveDepthPeelLayerIndex()
     {
         XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
@@ -70,87 +76,18 @@ public partial class DefaultRenderPipeline2
             : -1;
     }
 
-    private void CacheExactTransparencyTextures(ViewportRenderCommandContainer c)
-    {
-        if (!ExactTransparencyEnabled)
-            return;
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            PpllHeadPointerTextureName,
-            CreatePpllHeadPointerTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            PpllFragmentCountTextureName,
-            CreatePpllFragmentCountTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        for (int layerIndex = 0; layerIndex < MaxDepthPeelingLayersSupported; layerIndex++)
-        {
-            int capture = layerIndex;
-            c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-                DepthPeelColorTextureName(capture),
-                () => CreateDepthPeelColorTexture(capture),
-                NeedsRecreateTextureInternalSize,
-                ResizeTextureInternalSize);
-
-            c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-                DepthPeelDepthTextureName(capture),
-                () => CreateDepthPeelDepthTexture(capture),
-                NeedsRecreateTextureInternalSize,
-                ResizeTextureInternalSize);
-        }
-    }
-
     private void AppendExactTransparencyCommands(ViewportRenderCommandContainer c)
     {
         if (!ExactTransparencyEnabled)
             return;
 
-        c.Add<VPRC_CacheOrCreateBuffer>().SetOptions(
-            PpllNodeBufferName,
-            CreatePpllNodeBuffer,
-            NeedsPpllNodeBufferResize);
 
-        c.Add<VPRC_CacheOrCreateBuffer>().SetOptions(
-            PpllCounterBufferName,
-            CreatePpllCounterBuffer,
-            NeedsPpllCounterBufferResize);
 
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            PpllResolveFBOName,
-            CreatePpllResolveFBO,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
 
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            DepthPeelingResolveFBOName,
-            CreateDepthPeelingResolveFBO,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        AppendConditionalDebugFboCache(
-            c,
-            DebugVizPpllFragmentsVariableName,
-            PpllFragmentCountDebugFBOName,
-            CreatePpllFragmentCountDebugFBO);
-
-        AppendConditionalDebugFboCache(
-            c,
-            DebugVizDepthPeelingLayerVariableName,
-            DepthPeelingDebugFBOName,
-            CreateDepthPeelingDebugFBO);
 
         for (int layerIndex = 0; layerIndex < ActiveDepthPeelLayerCount; layerIndex++)
         {
             int capture = layerIndex;
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                DepthPeelLayerFboName(capture),
-                () => CreateDepthPeelLayerFBO(capture),
-                GetDesiredFBOSizeInternal)
-                .UseLifetime(RenderResourceLifetime.Transient);
         }
 
         c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);

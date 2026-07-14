@@ -91,18 +91,6 @@ namespace XREngine.Rendering.Vulkan
             if (inW == 0 || inH == 0 || outW == 0 || outH == 0)
                 return;
 
-            if (inFBO is not null)
-            {
-                EnsureFrameBufferRegistered(inFBO);
-                EnsureFrameBufferAttachmentsRegistered(inFBO);
-            }
-
-            if (outFBO is not null)
-            {
-                EnsureFrameBufferRegistered(outFBO);
-                EnsureFrameBufferAttachmentsRegistered(outFBO);
-            }
-
             FrameOpContext context = CaptureFrameOpContext();
             int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
             EnqueueFrameOp(new BlitOp(

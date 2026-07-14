@@ -821,9 +821,6 @@ namespace XREngine.Rendering.Vulkan
 
             if (fbo is not null)
             {
-                EnsureFrameBufferRegistered(fbo);
-                EnsureFrameBufferAttachmentsRegistered(fbo);
-
                 if (GetOrCreateAPIRenderObject(fbo, generateNow: true) is VkFrameBuffer vkFrameBuffer)
                     vkFrameBuffer.Generate();
             }
@@ -905,9 +902,6 @@ namespace XREngine.Rendering.Vulkan
 
             if (fbo is not null)
             {
-                EnsureFrameBufferRegistered(fbo);
-                EnsureFrameBufferAttachmentsRegistered(fbo);
-
                 if (GetOrCreateAPIRenderObject(fbo, generateNow: true) is VkFrameBuffer vkFrameBuffer)
                     vkFrameBuffer.Generate();
             }

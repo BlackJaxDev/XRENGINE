@@ -34,21 +34,78 @@ public unsafe partial class VulkanRenderer
         UpdateResourcePlannerFromContext(CaptureFrameOpContext());
     }
 
+    /// <summary>
+    /// Represents the different kinds of frame operation contexts in the Vulkan renderer.
+    /// </summary>
     internal enum EVulkanFrameOpContextKind
     {
+        /// <summary>
+        /// The context kind is unknown.
+        /// </summary>
         Unknown = 0,
+        /// <summary>
+        /// The main viewport context.
+        /// </summary>
         MainViewport = 1,
+        /// <summary>
+        /// The OpenXR eye context.
+        /// </summary>
         OpenXrEye = 2,
+        /// <summary>
+        /// The OpenXR mirror context.
+        /// </summary>
         OpenXrMirror = 3,
+        /// <summary>
+        /// The scene capture context.
+        /// </summary>
         SceneCapture = 4,
+        /// <summary>
+        /// The light probe capture context.
+        /// </summary>
         LightProbeCapture = 5,
+        /// <summary>
+        /// The shadow context.
+        /// </summary>
         Shadow = 6,
+        /// <summary>
+        /// The UI preview context.
+        /// </summary>
         UiPreview = 7,
+        /// <summary>
+        /// The diagnostic capture context.
+        /// </summary>
         DiagnosticCapture = 8,
     }
 
     private long _frameOpContextId;
 
+    /// <summary>
+    /// Represents the context of a frame operation in the Vulkan renderer.
+    /// Contains information about the current frame operation, including pipeline, viewport, and rendering targets.
+    /// </summary>
+    /// <param name="PipelineIdentity">The identity of the rendering pipeline.</param>
+    /// <param name="ViewportIdentity">The identity of the viewport.</param>
+    /// <param name="PipelineInstance">The instance of the rendering pipeline.</param>
+    /// <param name="ResourceRegistry">The resource registry for the current frame operation.</param>
+    /// <param name="PassMetadata">The metadata for the render passes.</param>
+    /// <param name="DisplayWidth">The width of the display.</param>
+    /// <param name="DisplayHeight">The height of the display.</param>
+    /// <param name="InternalWidth">The internal width used for rendering.</param>
+    /// <param name="InternalHeight">The internal height used for rendering.</param>
+    /// <param name="OutputFrameBufferName">The name of the output frame buffer.</param>
+    /// <param name="PreserveSubmissionOrderBlock">Indicates whether to preserve the submission order block.</param>
+    /// <param name="OutputTargetIdentity">The identity of the output target.</param>
+    /// <param name="OutputTargetName">The name of the output target.</param>
+    /// <param name="OutputFrameBufferIdentity">The identity of the output frame buffer.</param>
+    /// <param name="ContextKind">The kind of the frame operation context.</param>
+    /// <param name="ContextId">The unique identifier for the context.</param>
+    /// <param name="RecordingFingerprint">The recording fingerprint for the frame operation.</param>
+    /// <param name="SubmissionQueueFamily">The submission queue family index.</param>
+    /// <param name="StereoEnabled">Indicates whether stereo rendering is enabled.</param>
+    /// <param name="MultiviewEnabled">Indicates whether multiview rendering is enabled.</param>
+    /// <param name="ResourceGeneration">The resource generation number.</param>
+    /// <param name="DescriptorGeneration">The descriptor generation number.</param>
+    /// <param name="OutputFrameBuffer">The output frame buffer.</param>
     internal readonly record struct FrameOpContext(
         int PipelineIdentity,
         int ViewportIdentity,
@@ -71,7 +128,8 @@ public unsafe partial class VulkanRenderer
         bool StereoEnabled = false,
         bool MultiviewEnabled = false,
         ulong ResourceGeneration = 0,
-        ulong DescriptorGeneration = 0)
+        ulong DescriptorGeneration = 0,
+        XRFrameBuffer? OutputFrameBuffer = null)
     {
         public int SchedulingIdentity => OutputTargetIdentity == 0
             ? HashCode.Combine(PipelineIdentity, ViewportIdentity)
@@ -122,7 +180,6 @@ public unsafe partial class VulkanRenderer
         }
 
         XRFrameBuffer? outputFrameBuffer = ResolveFrameOpOutputFrameBuffer(pipeline, viewport);
-        RegisterFrameOpOutputFrameBuffer(outputFrameBuffer, pipeline?.Resources);
         ApplyOutputFrameBufferTargetIdentity(outputFrameBuffer, ref outputTargetIdentity, ref outputTargetName);
 
         FrameOpContext context = new(
@@ -139,7 +196,7 @@ public unsafe partial class VulkanRenderer
             ShouldPreserveSubmissionOrderBlock(),
             outputTargetIdentity,
             outputTargetName);
-        context = ApplyInteractiveResizePlannerFreeze(context);
+        context = ApplyInteractiveResizePlannerFreeze(context) with { OutputFrameBuffer = outputFrameBuffer };
         context = CompleteFrameOpContext(context);
 
         if (pipeline is not null)
@@ -200,10 +257,9 @@ public unsafe partial class VulkanRenderer
     internal FrameOpContext CaptureFrameOpContextOrLastActive()
     {
         FrameOpContext context = CaptureFrameOpContext();
-        if (context.PipelineInstance is not null || context.PassMetadata is { Count: > 0 })
-            return context;
-
-        return ActiveLastActiveFrameOpContext ?? context;
+        return context.PipelineInstance is not null || context.PassMetadata is { Count: > 0 }
+            ? context
+            : ActiveLastActiveFrameOpContext ?? context;
     }
 
     public IDisposable EnterPipelineResourcePlannerReadbackScope(
@@ -225,10 +281,161 @@ public unsafe partial class VulkanRenderer
             return null;
 
         FrameOpContext context = CreateFrameOpContext(pipeline, viewport);
-        if (!FrameOpContextHasPlannerResources(context))
-            return null;
+        return !FrameOpContextHasPlannerResources(context) ? null : new ExternalResourcePlannerReadbackScope(this, context);
+    }
 
-        return new ExternalResourcePlannerReadbackScope(this, context);
+    internal override bool TryPrepareRenderResourceGeneration(
+        XRRenderPipelineInstance pipeline,
+        RenderResourceGeneration generation,
+        XRViewport? viewport,
+        out IRenderResourceGenerationTransaction? transaction,
+        out string? failureReason)
+    {
+        transaction = null;
+        failureReason = null;
+        if (!IsDeviceOperational)
+        {
+            failureReason = "Vulkan device is not operational.";
+            return false;
+        }
+
+        if (generation.Registry.TextureRecords.Count == 0 &&
+            generation.Registry.BufferRecords.Count == 0 &&
+            generation.Registry.FrameBufferRecords.Count == 0)
+        {
+            return true;
+        }
+
+        ResourcePlannerRuntimeState previousState = CaptureResourcePlannerRuntimeState();
+        ResourcePlannerRuntimeState pendingState = ResourcePlannerRuntimeState.CreateEmpty();
+        FrameOpContext context = CreateFrameOpContext(pipeline, viewport) with
+        {
+            ResourceRegistry = generation.Registry,
+            DisplayWidth = generation.Key.DisplayWidth,
+            DisplayHeight = generation.Key.DisplayHeight,
+            InternalWidth = generation.Key.InternalWidth,
+            InternalHeight = generation.Key.InternalHeight,
+            ResourceGeneration = unchecked((ulong)Math.Max(pipeline.ResourceGeneration + 1, 0)),
+            DescriptorGeneration = ResolveFrameOpContextDescriptorGeneration(generation.Registry),
+        };
+        context = RefreshFrameOpContextRecordingFingerprint(context);
+
+        using (ThreadResourcePlannerRuntimeStateScope scope = EnterThreadResourcePlannerRuntimeStateScope(in pendingState))
+        {
+            try
+            {
+                UpdateResourcePlannerFromContext(context);
+                pendingState = scope.CaptureCurrent(this);
+
+                if (!ValidatePreparedResourceAllocator(pendingState.ResourcePlanner, pendingState.ResourceAllocator, out failureReason))
+                {
+                    _ = pendingState.ResourceAllocator.TryRetirePhysicalResources(this, immediate: true);
+                    return false;
+                }
+
+                foreach (RenderFrameBufferResource record in generation.Registry.FrameBufferRecords.Values)
+                {
+                    if (record.Instance is not null && record.HasAttachments)
+                        GetOrCreateAPIRenderObject(record.Instance, generateNow: true);
+                }
+
+                pendingState = scope.CaptureCurrent(this);
+                transaction = new VulkanRenderResourceGenerationTransaction(
+                    this,
+                    previousState,
+                    pendingState,
+                    BuildFrameOpPlannerStateKey(context));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                pendingState = scope.CaptureCurrent(this);
+                if (!pendingState.ResourceAllocator.IsRetired)
+                    _ = pendingState.ResourceAllocator.TryRetirePhysicalResources(this, immediate: true);
+                failureReason = $"Vulkan generation preparation failed: {ex.Message}";
+                return false;
+            }
+        }
+    }
+
+    private static bool ValidatePreparedResourceAllocator(
+        VulkanResourcePlanner planner,
+        VulkanResourceAllocator allocator,
+        out string? failureReason)
+    {
+        foreach (VulkanAllocationRequest request in planner.CurrentPlan.AllTextures())
+        {
+            if (request.Lifetime == RenderResourceLifetime.External)
+                continue;
+
+            if (!allocator.TryGetPhysicalGroupForResource(request.Name, out VulkanPhysicalImageGroup? group) ||
+                group?.IsAllocated != true)
+            {
+                failureReason = $"Vulkan image '{request.Name}' was not allocated for the pending generation.";
+                return false;
+            }
+        }
+
+        foreach (VulkanBufferAllocationRequest request in planner.CurrentPlan.AllBuffers())
+        {
+            if (request.Lifetime == RenderResourceLifetime.External)
+                continue;
+
+            if (!allocator.TryGetPhysicalBufferGroupForResource(request.Name, out VulkanPhysicalBufferGroup? group) ||
+                group?.IsAllocated != true)
+            {
+                failureReason = $"Vulkan buffer '{request.Name}' was not allocated for the pending generation.";
+                return false;
+            }
+        }
+
+        failureReason = null;
+        return true;
+    }
+
+    private sealed class VulkanRenderResourceGenerationTransaction(
+        VulkanRenderer renderer,
+        ResourcePlannerRuntimeState previousState,
+        ResourcePlannerRuntimeState pendingState,
+        FrameOpPlannerStateKey pendingKey) : IRenderResourceGenerationTransaction
+    {
+        private bool _committed;
+
+        public void Commit()
+        {
+            if (_committed)
+                return;
+
+            pendingState.ResourceAllocator.CommitReusedPhysicalImageMetadata();
+            renderer.RestoreResourcePlannerRuntimeState(pendingState);
+            FrameOpResourcePlannerSwitchingState switchingState = renderer.ActiveFrameOpResourcePlannerSwitchingState;
+            switchingState.States[pendingKey] = pendingState;
+            renderer.MarkFrameOpResourcePlannerStateUsed(switchingState, pendingKey);
+            _committed = true;
+
+            try
+            {
+                renderer.PruneFrameOpResourcePlannerStatesToCapacity(switchingState);
+                if (!ReferenceEquals(previousState.ResourceAllocator, pendingState.ResourceAllocator) &&
+                    !IsAllocatorOwnedByFrameOpPlannerState(switchingState, previousState.ResourceAllocator))
+                {
+                    _ = previousState.ResourceAllocator.TryRetirePhysicalResources(renderer);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.VulkanWarning(
+                    "[VulkanResourcePlanner] Generation {0} published, but post-commit retirement failed: {1}",
+                    pendingKey.ResourceGeneration,
+                    ex.Message);
+            }
+        }
+
+        public void Dispose()
+        {
+            if (!_committed && !pendingState.ResourceAllocator.IsRetired)
+                _ = pendingState.ResourceAllocator.TryRetirePhysicalResources(renderer, immediate: true);
+        }
     }
 
     internal IDisposable EnterFrameOpResourcePlannerReadbackScope(in FrameOpContext context)
@@ -278,7 +485,6 @@ public unsafe partial class VulkanRenderer
         }
 
         XRFrameBuffer? outputFrameBuffer = ResolveFrameOpOutputFrameBuffer(pipeline, viewport);
-        RegisterFrameOpOutputFrameBuffer(outputFrameBuffer, pipeline.Resources);
         ApplyOutputFrameBufferTargetIdentity(outputFrameBuffer, ref outputTargetIdentity, ref outputTargetName);
 
         FrameOpContext context = new(
@@ -298,7 +504,7 @@ public unsafe partial class VulkanRenderer
             outputTargetIdentity,
             outputTargetName);
 
-        context = ApplyInteractiveResizePlannerFreeze(context);
+        context = ApplyInteractiveResizePlannerFreeze(context) with { OutputFrameBuffer = outputFrameBuffer };
         return CompleteFrameOpContext(context);
     }
 
@@ -343,9 +549,7 @@ public unsafe partial class VulkanRenderer
             return EVulkanFrameOpContextKind.DiagnosticCapture;
         if (pipelineTypeName.Contains("UserInterface", StringComparison.OrdinalIgnoreCase) ||
             pipelineTypeName.Contains("UiPreview", StringComparison.OrdinalIgnoreCase))
-        {
             return EVulkanFrameOpContextKind.UiPreview;
-        }
 
         return EVulkanFrameOpContextKind.MainViewport;
     }
@@ -409,86 +613,6 @@ public unsafe partial class VulkanRenderer
         }
 
         return pipeline?.RenderState.OutputFBO ?? viewport?.LastRenderedTargetFBO;
-    }
-
-    private void RegisterFrameOpOutputFrameBuffer(XRFrameBuffer? frameBuffer, RenderResourceRegistry? registry)
-    {
-        if (frameBuffer is null || registry is null)
-            return;
-
-        if (IsFrameOpOutputFrameBufferRegistered(frameBuffer, registry))
-            return;
-
-        EnsureFrameBufferRegistered(frameBuffer, registry);
-        EnsureFrameBufferAttachmentsRegistered(frameBuffer, registry);
-    }
-
-    private static bool IsFrameOpOutputFrameBufferRegistered(
-        XRFrameBuffer frameBuffer,
-        RenderResourceRegistry registry)
-    {
-        string? name = frameBuffer.Name;
-        if (string.IsNullOrWhiteSpace(name) ||
-            !registry.FrameBufferRecords.TryGetValue(name, out RenderFrameBufferResource? record) ||
-            !ReferenceEquals(record.Instance, frameBuffer))
-        {
-            return false;
-        }
-
-        FrameBufferResourceDescriptor descriptor = record.Descriptor;
-        uint width = Math.Max(frameBuffer.Width, 1u);
-        uint height = Math.Max(frameBuffer.Height, 1u);
-        if (descriptor.SizePolicy.SizeClass != RenderResourceSizeClass.AbsolutePixels ||
-            descriptor.SizePolicy.Width != width ||
-            descriptor.SizePolicy.Height != height)
-        {
-            return false;
-        }
-
-        var targets = frameBuffer.Targets;
-        if (targets is null)
-            return descriptor.Attachments.Count == 0;
-
-        if (descriptor.Attachments.Count != targets.Length)
-            return false;
-
-        for (int i = 0; i < targets.Length; i++)
-        {
-            var (target, attachment, mipLevel, layerIndex) = targets[i];
-            if (target is not XRTexture texture)
-                return false;
-
-            string? textureName = texture.Name;
-            if (string.IsNullOrWhiteSpace(textureName) ||
-                !registry.TextureRecords.TryGetValue(textureName, out RenderTextureResource? textureRecord) ||
-                !ReferenceEquals(textureRecord.Instance, texture))
-            {
-                return false;
-            }
-
-            FrameBufferAttachmentDescriptor attachmentDescriptor = descriptor.Attachments[i];
-            if (!string.Equals(attachmentDescriptor.ResourceName, textureName, StringComparison.OrdinalIgnoreCase) ||
-                attachmentDescriptor.Attachment != attachment ||
-                attachmentDescriptor.MipLevel != mipLevel ||
-                attachmentDescriptor.LayerIndex != layerIndex)
-            {
-                return false;
-            }
-
-            if (texture is XRTextureViewBase view)
-            {
-                XRTexture viewedTexture = view.GetViewedTexture();
-                string? viewedTextureName = viewedTexture.Name;
-                if (string.IsNullOrWhiteSpace(viewedTextureName) ||
-                    !registry.TextureRecords.TryGetValue(viewedTextureName, out RenderTextureResource? viewedTextureRecord) ||
-                    !ReferenceEquals(viewedTextureRecord.Instance, viewedTexture))
-                {
-                    return false;
-                }
-            }
-        }
-
-        return true;
     }
 
     private static void ApplyOutputFrameBufferTargetIdentity(
@@ -1779,22 +1903,24 @@ public unsafe partial class VulkanRenderer
         RenderResourceRegistry? primaryRegistry = primaryContext.ResourceRegistry;
         FrameOpPlannerStateKey ownerKey = BuildFrameOpPlannerStateKey(primaryContext);
         RenderResourceRegistry[] registries = CollectUniqueFrameOpRegistries(ops);
+        int frameBufferDescriptorSignature = ComputeFrameOpFrameBufferDescriptorSignature(ops);
+        bool hasFrameBufferDescriptors = frameBufferDescriptorSignature != 0;
 
         // Shadow command collections are conditional, but their logical resources are structural
         // for the owning pipeline generation. Once a source registry participates in this owner's
         // plan, retain its descriptors until the compatibility key changes. Owner scoping prevents
         // a desktop shadow/source registry from mutating an eye, mirror, or capture plan.
         FrameOpRegistryCacheSource[] cacheSources = BuildFrameOpRegistryCacheSources(registries);
-        if (TryGetCachedMergedFrameOpRegistry(ownerKey, primaryRegistry, cacheSources, out RenderResourceRegistry? cachedRegistry))
+        if (TryGetCachedMergedFrameOpRegistry(ownerKey, primaryRegistry, cacheSources, frameBufferDescriptorSignature, ops, out RenderResourceRegistry? cachedRegistry))
             return cachedRegistry;
 
-        if (registries.Length == 0)
+        if (registries.Length == 0 && !hasFrameBufferDescriptors)
             return primaryRegistry;
 
-        if (registries.Length == 1)
+        if (registries.Length == 1 && !hasFrameBufferDescriptors)
             return registries[0];
 
-        if (primaryRegistry is not null && RegistriesCoveredByPrimary(registries, primaryRegistry))
+        if (!hasFrameBufferDescriptors && primaryRegistry is not null && RegistriesCoveredByPrimary(registries, primaryRegistry))
             return primaryRegistry;
 
         RenderResourceRegistry merged = new();
@@ -1809,7 +1935,9 @@ public unsafe partial class VulkanRenderer
             AddRegistryDescriptors(merged, registry, overwrite: false);
         }
 
-        RememberMergedFrameOpRegistry(ownerKey, primaryRegistry, cacheSources, merged);
+        AddFrameOpFrameBufferDescriptors(merged, ops);
+
+        RememberMergedFrameOpRegistry(ownerKey, primaryRegistry, cacheSources, frameBufferDescriptorSignature, merged);
         return merged;
     }
 
@@ -1863,6 +1991,8 @@ public unsafe partial class VulkanRenderer
         in FrameOpPlannerStateKey ownerKey,
         RenderResourceRegistry? primaryRegistry,
         FrameOpRegistryCacheSource[] sources,
+        int frameBufferDescriptorSignature,
+        FrameOp[] ops,
         out RenderResourceRegistry? mergedRegistry)
     {
         for (int i = 0; i < _mergedFrameOpRegistryCache.Count; i++)
@@ -1874,7 +2004,8 @@ public unsafe partial class VulkanRenderer
 
             if (primaryRegistry is null)
             {
-                if (!FrameOpRegistryCacheSourcesMatch(entry.Sources, sources))
+                if (!FrameOpRegistryCacheSourcesMatch(entry.Sources, sources) ||
+                    entry.FrameBufferDescriptorSignature != frameBufferDescriptorSignature)
                     continue;
 
                 entry.LastUsedFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
@@ -1882,7 +2013,8 @@ public unsafe partial class VulkanRenderer
                 return true;
             }
 
-            bool rebuild = entry.PrimaryDescriptorSignature != primaryRegistry.DescriptorSignature;
+            bool rebuild = entry.PrimaryDescriptorSignature != primaryRegistry.DescriptorSignature ||
+                entry.FrameBufferDescriptorSignature != frameBufferDescriptorSignature;
             FrameOpRegistryCacheSource[] accumulatedSources = entry.Sources;
             List<FrameOpRegistryCacheSource>? updatedSources = null;
             for (int sourceIndex = 0; sourceIndex < sources.Length; sourceIndex++)
@@ -1920,7 +2052,10 @@ public unsafe partial class VulkanRenderer
                         AddRegistryDescriptors(persistentMerged, source, overwrite: false);
                 }
 
+                    AddFrameOpFrameBufferDescriptors(persistentMerged, ops);
+
                 entry.PrimaryDescriptorSignature = primaryRegistry.DescriptorSignature;
+                    entry.FrameBufferDescriptorSignature = frameBufferDescriptorSignature;
                 entry.MergedRegistry = persistentMerged;
             }
 
@@ -1950,6 +2085,7 @@ public unsafe partial class VulkanRenderer
         in FrameOpPlannerStateKey ownerKey,
         RenderResourceRegistry? primaryRegistry,
         FrameOpRegistryCacheSource[] sources,
+        int frameBufferDescriptorSignature,
         RenderResourceRegistry mergedRegistry)
     {
         ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
@@ -1957,6 +2093,7 @@ public unsafe partial class VulkanRenderer
             ownerKey,
             primaryRegistry,
             sources,
+            frameBufferDescriptorSignature,
             mergedRegistry,
             frameId));
 
@@ -2117,8 +2254,84 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    private static void AddFrameOpFrameBufferDescriptors(RenderResourceRegistry destination, FrameOp[] ops)
+    {
+        HashSet<XRFrameBuffer> visited = new(ReferenceEqualityComparer.Instance);
+        foreach (FrameOp op in ops)
+        {
+            foreach (XRFrameBuffer frameBuffer in EnumerateFrameOpFrameBuffers(op))
+            {
+                if (!visited.Add(frameBuffer) || string.IsNullOrWhiteSpace(frameBuffer.Name))
+                    continue;
+
+                if (frameBuffer.Targets is not null)
+                {
+                    foreach (var (target, attachment, mipLevel, layerIndex) in frameBuffer.Targets)
+                    {
+                        if (target is not XRTexture texture || string.IsNullOrWhiteSpace(texture.Name))
+                            continue;
+
+                        if (!destination.TextureRecords.ContainsKey(texture.Name))
+                        {
+                            TextureResourceDescriptor textureDescriptor = RenderResourceDescriptorFactory.FromTexture(texture, RenderResourceLifetime.External);
+                            destination.RegisterTextureDescriptor(EnrichTextureDescriptorForFrameBufferAttachment(textureDescriptor, texture, attachment, mipLevel, layerIndex));
+                        }
+
+                        if (texture is XRTextureViewBase view)
+                        {
+                            XRTexture viewedTexture = view.GetViewedTexture();
+                            if (!string.IsNullOrWhiteSpace(viewedTexture.Name) &&
+                                !destination.TextureRecords.ContainsKey(viewedTexture.Name))
+                            {
+                                int sourceMipLevel = mipLevel >= 0 ? SaturatingAddToInt32(view.MinLevel, (uint)mipLevel) : mipLevel;
+                                int sourceLayerIndex = layerIndex >= 0 ? SaturatingAddToInt32(view.MinLayer, (uint)layerIndex) : layerIndex;
+                                TextureResourceDescriptor viewedDescriptor = RenderResourceDescriptorFactory.FromTexture(viewedTexture, RenderResourceLifetime.External);
+                                destination.RegisterTextureDescriptor(EnrichTextureDescriptorForFrameBufferAttachment(viewedDescriptor, viewedTexture, attachment, sourceMipLevel, sourceLayerIndex));
+                            }
+                        }
+                    }
+                }
+
+                if (!destination.FrameBufferRecords.ContainsKey(frameBuffer.Name))
+                    destination.RegisterFrameBufferDescriptor(RenderResourceDescriptorFactory.FromFrameBuffer(frameBuffer, RenderResourceLifetime.External));
+            }
+        }
+    }
+
+    private static int ComputeFrameOpFrameBufferDescriptorSignature(FrameOp[] ops)
+    {
+        HashCode hash = new();
+        HashSet<XRFrameBuffer> visited = new(ReferenceEqualityComparer.Instance);
+        int count = 0;
+        foreach (FrameOp op in ops)
+        {
+            foreach (XRFrameBuffer frameBuffer in EnumerateFrameOpFrameBuffers(op))
+            {
+                if (!visited.Add(frameBuffer) || string.IsNullOrWhiteSpace(frameBuffer.Name))
+                    continue;
+
+                FrameBufferResourceDescriptor descriptor = RenderResourceDescriptorFactory.FromFrameBuffer(frameBuffer, RenderResourceLifetime.External);
+                hash.Add(descriptor.Name, StringComparer.OrdinalIgnoreCase);
+                hash.Add(descriptor.SizePolicy);
+                foreach (FrameBufferAttachmentDescriptor attachment in descriptor.Attachments)
+                {
+                    hash.Add(attachment.ResourceName, StringComparer.OrdinalIgnoreCase);
+                    hash.Add(attachment.Attachment);
+                    hash.Add(attachment.MipLevel);
+                    hash.Add(attachment.LayerIndex);
+                }
+                count++;
+            }
+        }
+
+        return count == 0 ? 0 : hash.ToHashCode();
+    }
+
     private static IEnumerable<XRFrameBuffer> EnumerateFrameOpFrameBuffers(FrameOp op)
     {
+        if (op.Context.OutputFrameBuffer is not null)
+            yield return op.Context.OutputFrameBuffer;
+
         if (op.Target is not null)
             yield return op.Target;
 
@@ -2251,7 +2464,10 @@ public unsafe partial class VulkanRenderer
 
         ActiveResourcePlanner = pendingPlanner;
         if (pendingAllocator is not null)
+        {
             ActiveResourceAllocator = pendingAllocator;
+            pendingAllocator.CommitReusedPhysicalImageMetadata();
+        }
 
         CommitPhysicalAllocatorPlan(
             allocationPlan.Changed,
@@ -2572,7 +2788,54 @@ public unsafe partial class VulkanRenderer
 
         VulkanPhysicalImageGroup? retainedAutoExposureGroup = PreserveAutoExposureHistory(oldAllocator);
 
+        EvictFrameOpResourcePlannerStatesReferencingAllocator(oldAllocator);
         _ = oldAllocator.TryRetirePhysicalResources(this, retainedAutoExposureGroup, reusedImageGroups);
+    }
+
+    private void EvictFrameOpResourcePlannerStatesReferencingAllocator(VulkanResourceAllocator allocator)
+    {
+        FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
+        List<FrameOpPlannerStateKey> staleKeys = _frameOpPlannerStateEvictionScratch;
+        staleKeys.Clear();
+        foreach (KeyValuePair<FrameOpPlannerStateKey, ResourcePlannerRuntimeState> pair in switchingState.States)
+        {
+            if (ReferenceEquals(pair.Value.ResourceAllocator, allocator))
+                staleKeys.Add(pair.Key);
+        }
+
+        for (int i = 0; i < staleKeys.Count; i++)
+        {
+            FrameOpPlannerStateKey key = staleKeys[i];
+            switchingState.States.Remove(key);
+            switchingState.LastUsedSerials.Remove(key);
+            switchingState.ActiveKeys.Remove(key);
+            if (switchingState.HasActiveKey && switchingState.ActiveKey.Equals(key))
+            {
+                switchingState.HasActiveKey = false;
+                switchingState.HasActiveContext = false;
+                switchingState.ActiveKey = default;
+            }
+        }
+
+        if (switchingState.HasPreparationState &&
+            ReferenceEquals(switchingState.PreparationState.ResourceAllocator, allocator))
+        {
+            switchingState.PreparationState = default;
+            switchingState.HasPreparationState = false;
+        }
+
+        switchingState.SwitchingActive = switchingState.ActiveKeys.Count > 1;
+        if (staleKeys.Count > 0)
+        {
+            Debug.VulkanEvery(
+                $"Vulkan.ResourcePlanner.RetiredAllocatorCacheEviction.{allocator.OwnershipId}",
+                TimeSpan.FromSeconds(1),
+                "[VulkanResourcePlanner] Evicted {0} cached frame-op planner state(s) before retiring allocator owner {1}.",
+                staleKeys.Count,
+                allocator.OwnershipId);
+        }
+
+        staleKeys.Clear();
     }
 
     private VulkanPhysicalImageGroup? PreserveAutoExposureHistory(VulkanResourceAllocator oldAllocator)

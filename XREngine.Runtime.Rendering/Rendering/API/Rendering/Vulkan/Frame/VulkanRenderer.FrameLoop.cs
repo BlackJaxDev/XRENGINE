@@ -65,9 +65,6 @@ namespace XREngine.Rendering.Vulkan
                     context.PassMetadata);
             }
 
-            EnsureFrameBufferRegistered(frameBuffer, context.ResourceRegistry);
-            EnsureFrameBufferAttachmentsRegistered(frameBuffer, context.ResourceRegistry);
-
             EnqueueFrameOp(new PublishFramebufferForSamplingOp(passIndex, frameBuffer, context));
         }
 

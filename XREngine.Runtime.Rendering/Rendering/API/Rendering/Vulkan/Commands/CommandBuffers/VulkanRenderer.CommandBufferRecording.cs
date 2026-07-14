@@ -2157,8 +2157,11 @@ namespace XREngine.Rendering.Vulkan
             out int recordedSwapchainWriteCount,
             bool transitionSwapchainToPresent = true,
             uint? frameDataImageIndexOverride = null,
-            OpenXrEyeRenderTargetContext? openXrTargetContext = null)
+            OpenXrEyeRenderTargetContext? openXrTargetContext = null,
+            bool excludeDesktopSwapchainBarriers = false)
         {
+            using DesktopSwapchainBarrierExclusionScope desktopSwapchainBarrierExclusion =
+                new(excludeDesktopSwapchainBarriers);
             recordedSwapchainWriteCount = 0;
             int droppedDrawOps = 0;
             int droppedComputeOps = 0;
@@ -2166,7 +2169,14 @@ namespace XREngine.Rendering.Vulkan
             FrameOpFailureSnapshot? firstFailure = null;
             uint frameDataImageIndex = frameDataImageIndexOverride ?? imageIndex;
             int commandBufferImageSlot = unchecked((int)Math.Min(frameDataImageIndex, int.MaxValue));
-            SwapchainRecordingTarget swapchainTarget = ResolveSwapchainRecordingTarget(imageIndex, openXrTargetContext);
+            // The strict-SPS mirror recorder targets an engine-owned layered FBO
+            // and intentionally has no OpenXR image target context. Do not let its
+            // frame-data index alias desktop swapchain image 0. Direct per-eye XR
+            // recording supplies an explicit target context and remains valid.
+            SwapchainRecordingTarget swapchainTarget =
+                IsRenderingExternalSwapchainTarget && openXrTargetContext is null
+                    ? default
+                    : ResolveSwapchainRecordingTarget(imageIndex, openXrTargetContext);
             Extent2D swapchainRecordExtent = swapchainTarget.IsValid ? swapchainTarget.Extent : swapChainExtent;
             bool imageWasEverPresentedAtRecordStart = swapchainTarget.ImageEverPresentedAtRecordStart;
             ImageLayout initialSwapchainColorLayout = swapchainTarget.IsValid
@@ -2285,17 +2295,22 @@ namespace XREngine.Rendering.Vulkan
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.FrameStartBarriers"))
             {
                 CmdBeginLabel(commandBuffer, "SwapchainBarriers");
-                var plannedSwapchainBarriers = BarrierPlanner.GetSwapchainBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
-                var swapchainImageBarriers = BarrierPlanner.GetBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
-                var swapchainBufferBarriers = BarrierPlanner.GetBufferBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
-                EmitPlannedSwapchainBarriers(commandBuffer, plannedSwapchainBarriers);
-                EmitPlannedImageBarriers(commandBuffer, swapchainImageBarriers);
-                EmitPlannedBufferBarriers(commandBuffer, swapchainBufferBarriers);
+                if (swapchainTarget.IsValid)
+                {
+                    var plannedSwapchainBarriers = BarrierPlanner.GetSwapchainBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
+                    var swapchainImageBarriers = BarrierPlanner.GetBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
+                    var swapchainBufferBarriers = BarrierPlanner.GetBufferBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
+                    EmitPlannedSwapchainBarriers(commandBuffer, plannedSwapchainBarriers);
+                    EmitPlannedImageBarriers(commandBuffer, swapchainImageBarriers);
+                    EmitPlannedBufferBarriers(commandBuffer, swapchainBufferBarriers);
+                }
                 CmdEndLabel(commandBuffer);
 
                 // Transition any freshly-allocated physical images from UNDEFINED to
                 // a safe initial layout so that render passes never see UNDEFINED.
-                EmitInitialImageBarriersForUnknownPass(commandBuffer);
+                EmitInitialImageBarriersForUnknownPass(
+                    commandBuffer,
+                    skipDesktopSwapchainImages: excludeDesktopSwapchainBarriers);
             }
 
             int clearCount = 0;
@@ -2636,7 +2651,6 @@ namespace XREngine.Rendering.Vulkan
             bool activeDynamicRendering = false;
             XRFrameBuffer? activeTarget = null;
             VkRenderQuery? activeInlineQuery = null;
-            bool inlineQueriesPreparedAtPassBoundary = false;
             RenderPass activeRenderPass = default;
             Framebuffer activeFramebuffer = default;
             DynamicRenderingFormatSignature activeDynamicRenderingFormats = default;
@@ -5224,7 +5238,9 @@ namespace XREngine.Rendering.Vulkan
 
                 // Ensure first-use physical-group images are transitioned out of UNDEFINED
                 // before any planned pass consumes them.
-                EmitInitialImageBarriersForUnknownPass(commandBuffer);
+                EmitInitialImageBarriersForUnknownPass(
+                    commandBuffer,
+                    skipDesktopSwapchainImages: excludeDesktopSwapchainBarriers);
 
                 // Emit per-pass memory barriers registered during the frame.
                 EMemoryBarrierMask perPassMask = ActiveState.DrainMemoryBarrierForPass(passIndex);
@@ -5322,7 +5338,10 @@ namespace XREngine.Rendering.Vulkan
                 {
                     CmdBeginLabel(commandBuffer, "PassBarriers");
                     EmitPlannedSwapchainBarriers(commandBuffer, swapchainBarriers);
-                    EmitPlannedImageBarriers(commandBuffer, imageBarriers);
+                    EmitPlannedImageBarriers(
+                        commandBuffer,
+                        imageBarriers,
+                        skipDesktopSwapchainImages: excludeDesktopSwapchainBarriers);
                     EmitPlannedBufferBarriers(commandBuffer, bufferBarriers);
                     CmdEndLabel(commandBuffer);
 
@@ -5659,25 +5678,22 @@ namespace XREngine.Rendering.Vulkan
                         break;
 
                     case QueryOp queryOp:
-                        if (!inlineQueriesPreparedAtPassBoundary)
+                        bool firstBeginForQuery = queryOp.Operation == EVulkanQueryFrameOpKind.Begin &&
+                            !recordingScratch.BegunInlineQueries.Contains(queryOp.Query);
+                        if (firstBeginForQuery)
                         {
-                            // Planner/context activation can create or replace backend
-                            // objects. Reset the final query pools at the first query
-                            // boundary, outside dynamic rendering, after all such setup.
+                            // Reset immediately before this query's first begin. Keeping
+                            // the reset at the exact pass boundary prevents a pool shared
+                            // with another output from being made available and consumed
+                            // again between an eager batch reset and vkCmdBeginQuery.
                             EndActiveRenderPass();
-                            recordingScratch.PreparedInlineQueries.Clear();
-                            for (int remainingIndex = opIndex; remainingIndex < ops.Length; remainingIndex++)
+                            uint queryCount = 1u;
+                            if (queryOp.Target is not null &&
+                                GenericToAPI<VkFrameBuffer>(queryOp.Target) is { MultiviewViewMask: not 0u } queryFbo)
                             {
-                                if (ops[remainingIndex] is QueryOp
-                                    {
-                                        Operation: EVulkanQueryFrameOpKind.Begin
-                                    } remainingQuery &&
-                                    recordingScratch.PreparedInlineQueries.Add(remainingQuery.Query))
-                                {
-                                    remainingQuery.Query.PrepareForRecording(commandBuffer, remainingQuery.QueryTarget);
-                                }
+                                queryCount = (uint)System.Numerics.BitOperations.PopCount(queryFbo.MultiviewViewMask);
                             }
-                            inlineQueriesPreparedAtPassBoundary = true;
+                            queryOp.Query.PrepareForRecording(commandBuffer, queryOp.QueryTarget, queryCount);
                         }
 
                         if (!renderPassActive || activeTarget != queryOp.Target)
@@ -6416,11 +6432,6 @@ namespace XREngine.Rendering.Vulkan
         private void RecordPublishFramebufferForSamplingOp(CommandBuffer commandBuffer, PublishFramebufferForSamplingOp op)
         {
             XRFrameBuffer fbo = op.FrameBuffer;
-            RenderResourceRegistry? publishRegistry =
-                op.Context.ResourceRegistry ?? RuntimeEngine.Rendering.State.CurrentResourceRegistry;
-            EnsureFrameBufferRegistered(fbo, publishRegistry);
-            EnsureFrameBufferAttachmentsRegistered(fbo, publishRegistry);
-
             if (GetOrCreateAPIRenderObject(fbo, generateNow: true) is not VkFrameBuffer vkFbo)
                 return;
 
@@ -8058,11 +8069,15 @@ namespace XREngine.Rendering.Vulkan
         /// in-frame avoids out-of-band one-shot submissions while resource-planner states
         /// switch between desktop and OpenXR targets.
         /// </summary>
-        private void EmitInitialImageBarriersForUnknownPass(CommandBuffer commandBuffer)
+        private void EmitInitialImageBarriersForUnknownPass(
+            CommandBuffer commandBuffer,
+            bool skipDesktopSwapchainImages = false)
         {
             foreach (VulkanPhysicalImageGroup group in ResourceAllocator.EnumeratePhysicalGroups())
             {
                 if (!group.IsAllocated || group.Image.Handle == 0)
+                    continue;
+                if (skipDesktopSwapchainImages && IsDesktopSwapchainImage(group.Image))
                     continue;
 
                 bool isDepth = VulkanResourceAllocator.IsDepthStencilFormat(group.Format);
@@ -8230,7 +8245,10 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private void EmitPlannedImageBarriers(CommandBuffer commandBuffer, IReadOnlyList<VulkanBarrierPlanner.PlannedImageBarrier>? plannedBarriers)
+        private void EmitPlannedImageBarriers(
+            CommandBuffer commandBuffer,
+            IReadOnlyList<VulkanBarrierPlanner.PlannedImageBarrier>? plannedBarriers,
+            bool skipDesktopSwapchainImages = false)
         {
             if (plannedBarriers is null || plannedBarriers.Count == 0)
                 return;
@@ -8238,6 +8256,8 @@ namespace XREngine.Rendering.Vulkan
             foreach (var planned in plannedBarriers)
             {
                 planned.Group.EnsureAllocated(this);
+                if (skipDesktopSwapchainImages && IsDesktopSwapchainImage(planned.Group.Image))
+                    continue;
 
                 // The barrier planner pre-computes OldLayout from the logical dependency
                 // graph, but dynamic rendering, blits, and resource-plan replacement can
@@ -8326,6 +8346,18 @@ namespace XREngine.Rendering.Vulkan
                     &barrier);
 
             }
+        }
+
+        private bool IsDesktopSwapchainImage(Image image)
+        {
+            if (image.Handle == 0 || swapChainImages is null)
+                return false;
+
+            for (int i = 0; i < swapChainImages.Length; i++)
+                if (swapChainImages[i].Handle == image.Handle)
+                    return true;
+
+            return false;
         }
 
         private void EmitPlannedBufferBarriers(CommandBuffer commandBuffer, IReadOnlyList<VulkanBarrierPlanner.PlannedBufferBarrier>? plannedBarriers)

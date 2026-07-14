@@ -823,6 +823,13 @@ public unsafe partial class VulkanRenderer
                         ops,
                         frameOpsSignature,
                         plannerRevision);
+                    if (RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuQueryAsync)
+                    {
+                        // Mesh visibility and query probes are selected while frame ops are
+                        // lowered. A reusable secondary chain would freeze the startup
+                        // decision set even when the primary command buffer is re-recorded.
+                        commandChainSchedule = null;
+                    }
                 }
 
                 prepared = new OpenXrPreparedEyeCommandBufferInput(
@@ -1121,6 +1128,18 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
+        // CpuQueryAsync makes visibility decisions while mesh frame operations are
+        // lowered. Reusing a previously recorded primary would freeze that decision
+        // set (and can preserve an empty startup frame after commands are published).
+        // Re-recording keeps the stereo POV query lifecycle current; the normal
+        // reusable-primary path remains available for static/GPU-owned visibility.
+        if (RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuQueryAsync)
+        {
+            if (OpenXrVulkanTraceEnabled)
+                RecordOpenXrPrimaryReuseMiss("openxr-primary-miss:cpu-query-async");
+            return false;
+        }
+
         ulong cacheKey = BuildOpenXrPrimaryCommandBufferCacheKey(commandChainImageIndex, targetContext);
         lock (_openXrPrimaryCommandBufferVariantsLock)
         {
@@ -1190,6 +1209,8 @@ public unsafe partial class VulkanRenderer
                     if (!TryRefreshReusableCommandBufferFrameData(recordImageIndex, ops))
                         return false;
                 }
+                if (HasQueryFrameOps(ops) && !PrepareQueryFrameOpsForCommandBufferReuse(ops))
+                    return false;
 
                 variant.GpuProfilerActive = gpuPipelineProfilingActive;
                 variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
@@ -2431,6 +2452,8 @@ public unsafe partial class VulkanRenderer
                     if (!TryRefreshReusableCommandBufferFrameData(recordImageIndex, ops))
                         return false;
                 }
+                if (HasQueryFrameOps(ops) && !PrepareQueryFrameOpsForCommandBufferReuse(ops))
+                    return false;
 
                 variant.GpuProfilerActive = gpuPipelineProfilingActive;
                 variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
@@ -2574,7 +2597,10 @@ public unsafe partial class VulkanRenderer
                     ops.Length);
             }
 
-            bool swapchainImageEverPresented = IsSwapchainImageEverPresented(OpenXrExternalSwapchainTargetImageIndex);
+            // Strict SPS renders into the engine-owned layered FBO. This command
+            // buffer must not inherit desktop swapchain image 0 ownership or a
+            // present transition merely because it reuses the primary recorder.
+            bool swapchainImageEverPresented = false;
             ImageLayout swapchainLayoutAfterCommandBuffer = RecordCommandBuffer(
                 OpenXrExternalSwapchainTargetImageIndex,
                 variant.PrimaryCommandBuffer,
@@ -2584,8 +2610,9 @@ public unsafe partial class VulkanRenderer
                 commandChainSchedule,
                 preserveSwapchainForOverlay: false,
                 recordedSwapchainWriteCount: out int recordedSwapchainWriteCount,
-                transitionSwapchainToPresent: true,
-                frameDataImageIndexOverride: recordImageIndex);
+                transitionSwapchainToPresent: false,
+                frameDataImageIndexOverride: recordImageIndex,
+                excludeDesktopSwapchainBarriers: true);
 
             bool wasDirty = variant.Dirty;
             variant.Dirty = false;
@@ -3692,11 +3719,11 @@ public unsafe partial class VulkanRenderer
                 Debug.VulkanWarningEvery(
                     $"OpenXR.Vulkan.StereoBlit.SourceLayoutUndefined.{GetHashCode()}.{sourceTexture.GetHashCode()}.{sourceLayer}",
                     TimeSpan.FromSeconds(1),
-                    "[OpenXR] Vulkan stereo blit source layer {0} of '{1}' had undefined tracked layout before publishing to '{2}'; falling back to ColorAttachmentOptimal.",
+                    "[OpenXR] Vulkan stereo blit source layer {0} of '{1}' had undefined tracked layout before publishing to '{2}'; falling back to ShaderReadOnlyOptimal.",
                     sourceLayer,
                     sourceTexture.Name ?? "<unnamed>",
                     destinationLabel);
-                sourceOldLayout = ImageLayout.ColorAttachmentOptimal;
+                sourceOldLayout = ImageLayout.ShaderReadOnlyOptimal;
             }
 
             if (TraceOpenXrStereoBlits)
@@ -4033,11 +4060,11 @@ public unsafe partial class VulkanRenderer
                 Debug.VulkanWarningEvery(
                     $"OpenXR.Vulkan.StereoBlit.SourceLayoutUndefined.{GetHashCode()}.{sourceTexture.GetHashCode()}.{sourceLayer}",
                     TimeSpan.FromSeconds(1),
-                    "[OpenXR] Vulkan stereo blit source layer {0} of '{1}' had undefined tracked layout before publishing to '{2}'; falling back to ColorAttachmentOptimal.",
+                    "[OpenXR] Vulkan stereo blit source layer {0} of '{1}' had undefined tracked layout before publishing to '{2}'; falling back to ShaderReadOnlyOptimal.",
                     sourceLayer,
                     sourceTexture.Name ?? "<unnamed>",
                     destinationLabel);
-                sourceOldLayout = ImageLayout.ColorAttachmentOptimal;
+                sourceOldLayout = ImageLayout.ShaderReadOnlyOptimal;
             }
 
             if (TraceOpenXrStereoBlits)
@@ -4963,10 +4990,25 @@ public unsafe partial class VulkanRenderer
                     Math.Max(destinationTexture.Height, 1u));
     }
 
-    private static ImageLayout ResolveOpenXrAttachmentLayout(
+    private ImageLayout ResolveOpenXrAttachmentLayout(
         IVkImageDescriptorSource source,
         uint layer)
     {
+        ImageSubresourceRange range = new()
+        {
+            AspectMask = NormalizeOpenXrMirrorAspect(source.DescriptorFormat, source.DescriptorAspect),
+            BaseMipLevel = 0,
+            LevelCount = 1,
+            BaseArrayLayer = layer,
+            LayerCount = 1,
+        };
+        if (source.DescriptorImage.Handle != 0 &&
+            TryGetTrackedImageLayout(source.DescriptorImage, range, out ImageLayout liveLayout) &&
+            liveLayout != ImageLayout.Undefined)
+        {
+            return liveLayout;
+        }
+
         ImageLayout layout = ImageLayout.Undefined;
         if (source is IVkFrameBufferAttachmentSource attachmentSource)
             layout = attachmentSource.GetAttachmentTrackedLayout(0, checked((int)layer));

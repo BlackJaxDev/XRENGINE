@@ -127,7 +127,12 @@ public unsafe partial class VulkanRenderer
             }
 
             DisableStreamlineFrameGenerationBeforeSwapchainMutation("swapchain recreation");
-            DeviceWaitIdle();
+            WaitForAllInFlightWork();
+            if (WaitForQueueIdleTracked(presentQueue) != Result.Success)
+            {
+                Debug.VulkanWarning("[Vulkan] Swapchain recreation aborted because the presentation queue did not become idle.");
+                return false;
+            }
             try
             {
                 DestroyAllSwapChainObjects();

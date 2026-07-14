@@ -15,6 +15,8 @@ public sealed class RenderBufferResource
     /// </summary>
     public XRDataBuffer? Instance { get; private set; }
 
+    public bool OwnsInstance { get; private set; } = true;
+
     /// <summary>
     /// Creates a data-buffer registry record from its logical descriptor.
     /// </summary>
@@ -32,12 +34,13 @@ public sealed class RenderBufferResource
     /// <summary>
     /// Associates a live data buffer with this logical resource.
     /// </summary>
-    public void Bind(XRDataBuffer buffer)
+    public void Bind(XRDataBuffer buffer, bool ownsInstance = true)
     {
-        if (Instance == buffer)
+        if (Instance == buffer && OwnsInstance == ownsInstance)
             return;
 
         Instance = buffer;
+        OwnsInstance = ownsInstance;
     }
 
     /// <summary>
@@ -45,7 +48,9 @@ public sealed class RenderBufferResource
     /// </summary>
     public void DestroyInstance()
     {
-        Instance?.Destroy(true);
+        if (OwnsInstance)
+            Instance?.Destroy(true);
         Instance = null;
+        OwnsInstance = true;
     }
 }

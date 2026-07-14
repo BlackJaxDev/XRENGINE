@@ -11,6 +11,7 @@ using XREngine.Data.Vectors;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan;
 using static XREngine.RuntimeEngine.Rendering.State;
 
@@ -114,6 +115,89 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
         InitializeCommandChain();
     }
 
+    protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        RenderResourceSizePolicy size = RenderResourceSizePolicy.Internal();
+        const RenderPipelineResourceUsage colorUsage =
+            RenderPipelineResourceUsage.SampledTexture |
+            RenderPipelineResourceUsage.ColorAttachment;
+
+        builder.Texture(DepthStencilTextureName)
+            .Size(size)
+            .Usage(RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.DepthStencilAttachment)
+            .Format(EPixelInternalFormat.Depth24Stencil8, EPixelFormat.DepthStencil, EPixelType.UnsignedInt248)
+            .SizedFormat(ESizedInternalFormat.Depth24Stencil8)
+            .Factory(CreateDepthStencilTexture)
+            .Add();
+        builder.TextureView(DepthViewTextureName, DepthStencilTextureName)
+            .Size(size)
+            .Usage(RenderPipelineResourceUsage.SampledTexture)
+            .SizedFormat(ESizedInternalFormat.Depth24Stencil8)
+            .DepthStencilAspect(EDepthStencilFmt.Depth)
+            .Factory(CreateDepthViewTexture)
+            .Add();
+        DeclareColorTexture(builder, AlbedoOpacityTextureName, size,
+            EPixelInternalFormat.Srgb8Alpha8, EPixelFormat.Rgba, EPixelType.UnsignedByte,
+            ESizedInternalFormat.Srgb8Alpha8, CreateAlbedoOpacityTexture, colorUsage);
+        DeclareColorTexture(builder, NormalTextureName, size,
+            EPixelInternalFormat.RG16f, EPixelFormat.Rg, EPixelType.HalfFloat,
+            ESizedInternalFormat.Rg16f, CreateNormalTexture, colorUsage);
+        DeclareColorTexture(builder, TransformIdTextureName, size,
+            EPixelInternalFormat.R32ui, EPixelFormat.RedInteger, EPixelType.UnsignedInt,
+            ESizedInternalFormat.R32ui, CreateTransformIdTexture, colorUsage);
+        DeclareColorTexture(builder, HDRSceneTextureName, size,
+            EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat,
+            ESizedInternalFormat.Rgba16f, CreateHDRSceneTexture, colorUsage);
+        DeclareColorTexture(builder, SurfelDebugOutputTextureName, size,
+            EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte,
+            ESizedInternalFormat.Rgba8, CreateSurfelDebugOutputTexture,
+            colorUsage | RenderPipelineResourceUsage.StorageImage);
+
+        builder.FrameBuffer(GBufferFBOName)
+            .Size(size)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
+            .Color(0, AlbedoOpacityTextureName)
+            .Color(1, NormalTextureName)
+            .Color(2, TransformIdTextureName)
+            .DepthStencil(DepthStencilTextureName)
+            .Factory(CreateGBufferFBO)
+            .Add();
+        builder.FrameBuffer(ForwardPassFBOName)
+            .Size(size)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
+            .Color(0, HDRSceneTextureName)
+            .DepthStencil(DepthStencilTextureName)
+            .Factory(CreateForwardPassFBO)
+            .Add();
+        builder.QuadMaterial(TransformIdDebugFBOName)
+            .DependsOn(TransformIdTextureName)
+            .Factory(CreateTransformIdDebugFBO)
+            .Add();
+        builder.QuadMaterial(SurfelDebugFBOName)
+            .DependsOn(SurfelDebugOutputTextureName)
+            .Factory(CreateSurfelDebugOutputFBO)
+            .Add();
+    }
+
+    private static void DeclareColorTexture(
+        RenderPipelineResourceLayoutBuilder builder,
+        string name,
+        RenderResourceSizePolicy size,
+        EPixelInternalFormat internalFormat,
+        EPixelFormat pixelFormat,
+        EPixelType pixelType,
+        ESizedInternalFormat sizedFormat,
+        Func<XRTexture> factory,
+        RenderPipelineResourceUsage usage)
+        => builder.Texture(name)
+            .Size(size)
+            .Usage(usage)
+            .Format(internalFormat, pixelFormat, pixelType)
+            .SizedFormat(sizedFormat)
+            .RequiresStorageUsage((usage & RenderPipelineResourceUsage.StorageImage) != 0)
+            .Factory(factory)
+            .Add();
+
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
         ViewportRenderCommandContainer container = new(this);
@@ -148,20 +232,12 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
         ViewportRenderCommandContainer c = new(this);
         bool enableComputePasses = EnableComputeDependentPasses;
 
-        // Cache textures
-        CacheTextures(c, enableComputePasses);
-
         c.Add<VPRC_SetClears>().Set(ColorF4.Black, 1.0f, 0);
         c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
 
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
         {
             // GBuffer pass for deferred geometry (captures transform IDs, normals, albedo)
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                GBufferFBOName,
-                CreateGBufferFBO,
-                GetDesiredFBOSizeInternal);
-
             using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(GBufferFBOName)))
             {
                 c.Add<VPRC_StencilMask>().Set(~0u);
@@ -173,11 +249,6 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
             }
 
             // Forward pass FBO
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                ForwardPassFBOName,
-                CreateForwardPassFBO,
-                GetDesiredFBOSizeInternal);
-
             using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardPassFBOName, true, true, false, false)))
             {
                 c.Add<VPRC_DepthTest>().Enable = true;
@@ -287,10 +358,6 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
     private ViewportRenderCommandContainer CreateTransformIdVisualizationCommands()
     {
         var c = new ViewportRenderCommandContainer(this);
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            TransformIdDebugFBOName,
-            CreateTransformIdDebugFBO,
-            GetDesiredFBOSizeInternal);
         return c;
     }
 
@@ -341,11 +408,6 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
     private ViewportRenderCommandContainer CreateSurfelDebugOutputCommands()
     {
         var c = new ViewportRenderCommandContainer(this);
-        // Create an FBO that uses the surfel debug output texture
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            SurfelDebugFBOName,
-            CreateSurfelDebugOutputFBO,
-            GetDesiredFBOSizeInternal);
         c.Add<VPRC_RenderQuadToFBO>().SetTargets(SurfelDebugFBOName, null);
         return c;
     }
@@ -353,54 +415,6 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
     #endregion
 
     #region Texture Creation
-
-    private void CacheTextures(ViewportRenderCommandContainer c, bool includeComputeDebugTextures)
-    {
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            DepthStencilTextureName,
-            CreateDepthStencilTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            DepthViewTextureName,
-            CreateDepthViewTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            AlbedoOpacityTextureName,
-            CreateAlbedoOpacityTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            NormalTextureName,
-            CreateNormalTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            TransformIdTextureName,
-            CreateTransformIdTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            HDRSceneTextureName,
-            CreateHDRSceneTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        if (includeComputeDebugTextures)
-        {
-            c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-                SurfelDebugOutputTextureName,
-                CreateSurfelDebugOutputTexture,
-                NeedsRecreateTextureInternalSize,
-                ResizeTextureInternalSize);
-        }
-    }
 
     private XRTexture CreateDepthStencilTexture()
     {
@@ -414,6 +428,7 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
         t.SizedInternalFormat = ESizedInternalFormat.Depth24Stencil8;
         t.MinFilter = ETexMinFilter.Nearest;
         t.MagFilter = ETexMagFilter.Nearest;
+        t.SizedInternalFormat = ESizedInternalFormat.R32ui;
         t.Name = DepthStencilTextureName;
         t.SamplerName = DepthStencilTextureName;
         return t;
@@ -488,6 +503,7 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
             EPixelType.HalfFloat);
         t.MinFilter = ETexMinFilter.Linear;
         t.MagFilter = ETexMagFilter.Linear;
+        t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
         t.Name = HDRSceneTextureName;
         t.SamplerName = HDRSceneTextureName;
         return t;
@@ -502,6 +518,7 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
             EPixelType.UnsignedByte);
         t.MinFilter = ETexMinFilter.Linear;
         t.MagFilter = ETexMagFilter.Linear;
+        t.SizedInternalFormat = ESizedInternalFormat.Rgba8;
         t.Name = SurfelDebugOutputTextureName;
         t.SamplerName = SurfelDebugOutputTextureName;
         return t;

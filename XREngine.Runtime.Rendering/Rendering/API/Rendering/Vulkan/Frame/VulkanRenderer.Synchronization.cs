@@ -12,6 +12,24 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+    [ThreadStatic]
+    private static bool t_excludeDesktopSwapchainBarriers;
+
+    private readonly ref struct DesktopSwapchainBarrierExclusionScope
+    {
+        private readonly bool _previous;
+
+        public DesktopSwapchainBarrierExclusionScope(bool exclude)
+        {
+            _previous = t_excludeDesktopSwapchainBarriers;
+            if (exclude)
+                t_excludeDesktopSwapchainBarriers = true;
+        }
+
+        public void Dispose()
+            => t_excludeDesktopSwapchainBarriers = _previous;
+    }
+
     private const int VulkanQueueOperationHistoryCapacity = 64;
     private EVulkanSynchronizationBackend _activeSynchronizationBackend = EVulkanSynchronizationBackend.Legacy;
     private readonly object _vulkanImageLayoutLock = new();
@@ -589,6 +607,23 @@ public unsafe partial class VulkanRenderer
         ImageMemoryBarrier* imageBarriers,
         [CallerMemberName] string? caller = null)
     {
+        if (t_excludeDesktopSwapchainBarriers && imageBarrierCount > 0)
+        {
+            uint retainedBarrierCount = 0;
+            for (uint readIndex = 0; readIndex < imageBarrierCount; readIndex++)
+            {
+                ImageMemoryBarrier barrier = imageBarriers[readIndex];
+                if (IsDesktopSwapchainImage(barrier.Image))
+                    continue;
+
+                if (retainedBarrierCount != readIndex)
+                    imageBarriers[retainedBarrierCount] = barrier;
+                retainedBarrierCount++;
+            }
+
+            imageBarrierCount = retainedBarrierCount;
+        }
+
         for (int i = 0; i < bufferBarrierCount; i++)
         {
             TrackVulkanCommandBufferResource(

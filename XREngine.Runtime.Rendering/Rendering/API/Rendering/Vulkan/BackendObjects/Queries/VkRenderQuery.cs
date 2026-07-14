@@ -10,6 +10,7 @@ namespace XREngine.Rendering.Vulkan
             private QueryPool _queryPool;
             private QueryType _queryType = QueryType.Occlusion;
             private bool _queryActive;
+            private uint _activeQueryCount = 1;
 
             public override VkObjectType Type => VkObjectType.Query;
             public override bool IsGenerated => IsActive;
@@ -51,9 +52,9 @@ namespace XREngine.Rendering.Vulkan
                 // it invalidates them (InvalidCommandBuffer-VkQueryPool validation errors
                 // followed by an access violation inside vkQueueSubmit2).
                 //
-                // PrepareForRecording emits the reset before any render pass begins.
-                // Keeping reset/begin/end queue ordered also prevents another output's
-                // in-flight query epoch from racing a host-side reset.
+                // PrepareForRecording resets the resolved query before recording begins.
+                // The occlusion coordinator never schedules a new epoch until the prior
+                // result is available, so the host reset is externally synchronized.
                 if (!EnsureQueryPool(queryType))
                     return false;
 
@@ -69,11 +70,12 @@ namespace XREngine.Rendering.Vulkan
             }
 
             /// <summary>
-            /// Records the required query reset before any render scope begins. Keeping
-            /// reset and begin in one queue-ordered command buffer avoids host resets
-            /// racing another output that still has the prior query epoch in flight.
+            /// Resets the query before its next begin is recorded. CpuQueryAsync only
+            /// reaches this point after the prior result has resolved, which makes a
+            /// host reset safe and avoids carrying reset state between independently
+            /// submitted desktop and OpenXR command buffers.
             /// </summary>
-            internal bool PrepareForRecording(CommandBuffer commandBuffer, EQueryTarget target)
+            internal bool PrepareForRecording(CommandBuffer commandBuffer, EQueryTarget target, uint queryCount = 1)
             {
                 if (!TryMapQueryType(target, out QueryType queryType, out bool isOcclusion) || !isOcclusion)
                     return false;
@@ -85,7 +87,20 @@ namespace XREngine.Rendering.Vulkan
                     ObjectType.QueryPool,
                     _queryPool.Handle,
                     "Query.Reset");
-                Api!.CmdResetQueryPool(commandBuffer, _queryPool, 0, 1);
+                _activeQueryCount = Math.Clamp(queryCount, 1u, 2u);
+                if (Renderer.SupportsHostQueryReset)
+                {
+                    Renderer.EnsureVulkanResourceMutationAllowed(
+                        ObjectType.QueryPool,
+                        _queryPool.Handle,
+                        "ResetQueryPoolBeforeRecording");
+                    Api!.ResetQueryPool(Device, _queryPool, 0, _activeQueryCount);
+                }
+                // Keep an execution-ordered reset in the command buffer as well. A
+                // reusable OpenXR primary can be submitted after desktop work that was
+                // recorded after the host reset; the queued reset establishes the query
+                // epoch at the exact execution boundary in both cases.
+                Api!.CmdResetQueryPool(commandBuffer, _queryPool, 0, _activeQueryCount);
                 return true;
             }
 
@@ -125,7 +140,7 @@ namespace XREngine.Rendering.Vulkan
                     ObjectType.QueryPool,
                     _queryPool.Handle,
                     "ResetQueryPoolForCommandBufferReuse");
-                Api!.ResetQueryPool(Device, _queryPool, 0, 1);
+                Api!.ResetQueryPool(Device, _queryPool, 0, _activeQueryCount);
                 return true;
             }
 
@@ -156,21 +171,21 @@ namespace XREngine.Rendering.Vulkan
                 if (wait)
                     flags |= QueryResultFlags.ResultWaitBit;
 
-                ulong value = 0ul;
+                ulong* values = stackalloc ulong[2];
                 Result queryResult = Api!.GetQueryPoolResults(
                     Device,
                     _queryPool,
                     0,
-                    1,
-                    (nuint)sizeof(ulong),
-                    &value,
+                    _activeQueryCount,
+                    (nuint)(sizeof(ulong) * _activeQueryCount),
+                    values,
                     (ulong)sizeof(ulong),
                     flags);
 
                 if (queryResult == Result.Success)
                 {
                     Renderer.NotifyVulkanResourceUseCompleted(ObjectType.QueryPool, _queryPool.Handle);
-                    result = value;
+                    result = values[0] | (_activeQueryCount > 1 ? values[1] : 0UL);
                     return true;
                 }
 
@@ -187,29 +202,26 @@ namespace XREngine.Rendering.Vulkan
                 if (_queryPool.Handle == 0)
                     return false;
 
-                ulong[] data = new ulong[2];
-                fixed (ulong* pData = data)
+                ulong* data = stackalloc ulong[4];
+                Result queryResult = Api!.GetQueryPoolResults(
+                    Device,
+                    _queryPool,
+                    0,
+                    _activeQueryCount,
+                    (nuint)(sizeof(ulong) * 2 * _activeQueryCount),
+                    data,
+                    (ulong)(sizeof(ulong) * 2),
+                    QueryResultFlags.Result64Bit | QueryResultFlags.ResultWithAvailabilityBit);
+
+                if (queryResult == Result.Success || queryResult == Result.NotReady)
                 {
-                    Result queryResult = Api!.GetQueryPoolResults(
-                        Device,
-                        _queryPool,
-                        0,
-                        1,
-                        (nuint)(sizeof(ulong) * 2),
-                        pData,
-                        (ulong)(sizeof(ulong) * 2),
-                        QueryResultFlags.Result64Bit | QueryResultFlags.ResultWithAvailabilityBit);
-
-                    if (queryResult == Result.Success || queryResult == Result.NotReady)
-                    {
-                        available = data[1] != 0;
-                        if (available)
-                            Renderer.NotifyVulkanResourceUseCompleted(ObjectType.QueryPool, _queryPool.Handle);
-                        return true;
-                    }
-
-                    return false;
+                    available = data[1] != 0 && (_activeQueryCount == 1 || data[3] != 0);
+                    if (available)
+                        Renderer.NotifyVulkanResourceUseCompleted(ObjectType.QueryPool, _queryPool.Handle);
+                    return true;
                 }
+
+                return false;
             }
 
             private bool EnsureQueryPool(QueryType queryType)
@@ -223,7 +235,9 @@ namespace XREngine.Rendering.Vulkan
                 {
                     SType = StructureType.QueryPoolCreateInfo,
                     QueryType = queryType,
-                    QueryCount = 1,
+                    // Multiview occlusion queries consume one consecutive query index
+                    // per active view. Reserve both stereo indices even for mono use.
+                    QueryCount = 2,
                     PipelineStatistics = QueryPipelineStatisticFlags.None,
                 };
 

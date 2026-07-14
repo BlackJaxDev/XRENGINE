@@ -191,13 +191,6 @@ void main()
     private XRQuadFrameBuffer? _blendQuad;
     private XRQuadFrameBuffer? _neighborhoodQuad;
     private XRTexture? _resolvedSourceTexture;
-    private uint _cachedWidth;
-    private uint _cachedHeight;
-    private EPixelInternalFormat _cachedOutputInternalFormat;
-    private ESizedInternalFormat _cachedOutputSizedFormat;
-    private EPixelFormat _cachedOutputPixelFormat;
-    private EPixelType _cachedOutputPixelType;
-    private bool _ownsResources;
 
     public string? SourceTextureName { get; set; }
     public string? SourceFBOName { get; set; }
@@ -278,12 +271,6 @@ void main()
         _neighborhoodMaterial?.Destroy();
         _neighborhoodMaterial = null;
 
-        _cachedWidth = 0;
-        _cachedHeight = 0;
-        _cachedOutputInternalFormat = default;
-        _cachedOutputSizedFormat = default;
-        _cachedOutputPixelFormat = default;
-        _cachedOutputPixelType = default;
     }
 
     protected override void Execute()
@@ -297,7 +284,7 @@ void main()
             return;
 
         (uint targetWidth, uint targetHeight) = ResolveTargetSize(instance, sourceTexture);
-        EnsureResources(instance, sourceTexture, targetWidth, targetHeight);
+        BindDeclaredResources(instance, sourceTexture, targetWidth, targetHeight);
         if (_outputFbo is null)
             return;
 
@@ -434,11 +421,11 @@ void main()
         BlendModeAllDrawBuffers = BlendMode.Disabled()
     };
 
-    private void EnsureResources(XRRenderPipelineInstance instance, XRTexture sourceTexture, uint width, uint height)
+    private void BindDeclaredResources(XRRenderPipelineInstance instance, XRTexture sourceTexture, uint width, uint height)
     {
         (EPixelInternalFormat sourceInternalFormat, ESizedInternalFormat sourceSizedFormat, EPixelFormat sourcePixelFormat, EPixelType sourcePixelType) = ResolveSourceFormat(sourceTexture);
 
-        if (TryUseDeclaredResources(
+        if (!TryUseDeclaredResources(
             instance,
             sourceTexture,
             width,
@@ -447,97 +434,11 @@ void main()
             sourceSizedFormat,
             sourcePixelFormat,
             sourcePixelType))
-            return;
-
-        bool resourcesRegistered = instance.Resources.TryGetTexture(ResolvedEdgeTextureName, out XRTexture? registeredEdgeTexture)
-            && ReferenceEquals(registeredEdgeTexture, _edgeTexture)
-            && instance.Resources.TryGetTexture(ResolvedBlendTextureName, out XRTexture? registeredBlendTexture)
-            && ReferenceEquals(registeredBlendTexture, _blendTexture)
-            && instance.Resources.TryGetTexture(OutputTextureName, out XRTexture? registeredOutputTexture)
-            && ReferenceEquals(registeredOutputTexture, _outputTexture)
-            && instance.Resources.TryGetFrameBuffer(ResolvedEdgeFboName, out XRFrameBuffer? registeredEdgeFbo)
-            && ReferenceEquals(registeredEdgeFbo, _edgeFbo)
-            && instance.Resources.TryGetFrameBuffer(ResolvedBlendFboName, out XRFrameBuffer? registeredBlendFbo)
-            && ReferenceEquals(registeredBlendFbo, _blendFbo)
-            && instance.Resources.TryGetFrameBuffer(ResolvedOutputFboName, out XRFrameBuffer? registeredOutputFbo)
-            && ReferenceEquals(registeredOutputFbo, _outputFbo);
-
-        if (_cachedWidth == width &&
-            _cachedHeight == height &&
-            _cachedOutputInternalFormat == sourceInternalFormat &&
-            _cachedOutputSizedFormat == sourceSizedFormat &&
-            _cachedOutputPixelFormat == sourcePixelFormat &&
-            _cachedOutputPixelType == sourcePixelType &&
-            resourcesRegistered &&
-            _edgeTexture is not null &&
-            _blendTexture is not null &&
-            _outputTexture is not null &&
-            _edgeFbo is not null &&
-            _blendFbo is not null &&
-            _outputFbo is not null)
-            return;
-
-        ReleaseRenderTargets(instance);
-
-        _edgeTexture = XRTexture2D.CreateFrameBufferTexture(width, height, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte);
-        _edgeTexture.Name = ResolvedEdgeTextureName;
-        _edgeTexture.SamplerName = ResolvedEdgeTextureName;
-        _edgeTexture.SizedInternalFormat = ESizedInternalFormat.Rgba8;
-        _edgeTexture.Resizable = false;
-        _edgeTexture.MagFilter = ETexMagFilter.Nearest;
-        _edgeTexture.MinFilter = ETexMinFilter.Nearest;
-        _edgeTexture.UWrap = ETexWrapMode.ClampToEdge;
-        _edgeTexture.VWrap = ETexWrapMode.ClampToEdge;
-
-        _blendTexture = XRTexture2D.CreateFrameBufferTexture(width, height, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte);
-        _blendTexture.Name = ResolvedBlendTextureName;
-        _blendTexture.SamplerName = ResolvedBlendTextureName;
-        _blendTexture.SizedInternalFormat = ESizedInternalFormat.Rgba8;
-        _blendTexture.Resizable = false;
-        _blendTexture.MagFilter = ETexMagFilter.Nearest;
-        _blendTexture.MinFilter = ETexMinFilter.Nearest;
-        _blendTexture.UWrap = ETexWrapMode.ClampToEdge;
-        _blendTexture.VWrap = ETexWrapMode.ClampToEdge;
-
-        _outputTexture = XRTexture2D.CreateFrameBufferTexture(width, height, sourceInternalFormat, sourcePixelFormat, sourcePixelType);
-        _outputTexture.Name = OutputTextureName;
-        _outputTexture.SamplerName = OutputTextureName;
-        _outputTexture.SizedInternalFormat = sourceSizedFormat;
-        _outputTexture.Resizable = false;
-        _outputTexture.MagFilter = ETexMagFilter.Linear;
-        _outputTexture.MinFilter = ETexMinFilter.Linear;
-        _outputTexture.UWrap = ETexWrapMode.ClampToEdge;
-        _outputTexture.VWrap = ETexWrapMode.ClampToEdge;
-
-        _edgeFbo = new XRFrameBuffer((_edgeTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
-            Name = ResolvedEdgeFboName
-        };
-        _blendFbo = new XRFrameBuffer((_blendTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1))
-        {
-            Name = ResolvedBlendFboName
-        };
-        _outputFbo = new XRFrameBuffer((_outputTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1))
-        {
-            Name = ResolvedOutputFboName
-        };
-
-        instance.SetTexture(_edgeTexture);
-        instance.SetTexture(_blendTexture);
-        instance.SetTexture(_outputTexture);
-        instance.SetFBO(_edgeFbo);
-        instance.SetFBO(_blendFbo);
-        instance.SetFBO(_outputFbo);
-
-        _ownsResources = true;
-        BindMaterialTextures(sourceTexture);
-
-        _cachedWidth = width;
-        _cachedHeight = height;
-        _cachedOutputInternalFormat = sourceInternalFormat;
-        _cachedOutputSizedFormat = sourceSizedFormat;
-        _cachedOutputPixelFormat = sourcePixelFormat;
-        _cachedOutputPixelType = sourcePixelType;
+            Debug.RenderingWarning(
+                $"SMAA skipped because its declared resource set is missing or incompatible: output='{ResolvedOutputFboName}', size={width}x{height}.");
+            ReleaseRenderTargets(instance);
+        }
     }
 
     private bool TryUseDeclaredResources(
@@ -570,25 +471,13 @@ void main()
             return false;
         }
 
-        if (_ownsResources)
-            ReleaseRenderTargets(instance);
-
         _edgeTexture = declaredEdgeTexture;
         _blendTexture = declaredBlendTexture;
         _outputTexture = declaredOutputTexture;
         _edgeFbo = declaredEdgeFbo;
         _blendFbo = declaredBlendFbo;
         _outputFbo = declaredOutputFbo;
-        _ownsResources = false;
-
         BindMaterialTextures(sourceTexture);
-
-        _cachedWidth = width;
-        _cachedHeight = height;
-        _cachedOutputInternalFormat = sourceInternalFormat;
-        _cachedOutputSizedFormat = sourceSizedFormat;
-        _cachedOutputPixelFormat = sourcePixelFormat;
-        _cachedOutputPixelType = sourcePixelType;
         return true;
     }
 
@@ -652,46 +541,12 @@ void main()
 
     private void ReleaseRenderTargets(XRRenderPipelineInstance instance)
     {
-        if (_ownsResources)
-        {
-            RemoveOwnedFrameBuffer(instance, ResolvedEdgeFboName, _edgeFbo);
-            RemoveOwnedFrameBuffer(instance, ResolvedBlendFboName, _blendFbo);
-            RemoveOwnedFrameBuffer(instance, ResolvedOutputFboName, _outputFbo);
-            RemoveOwnedTexture(instance, ResolvedEdgeTextureName, _edgeTexture);
-            RemoveOwnedTexture(instance, ResolvedBlendTextureName, _blendTexture);
-            RemoveOwnedTexture(instance, OutputTextureName, _outputTexture);
-
-            _edgeFbo?.Destroy();
-            _blendFbo?.Destroy();
-            _outputFbo?.Destroy();
-            _edgeTexture?.Destroy();
-            _blendTexture?.Destroy();
-            _outputTexture?.Destroy();
-        }
-
         _edgeFbo = null;
         _blendFbo = null;
         _outputFbo = null;
         _edgeTexture = null;
         _blendTexture = null;
         _outputTexture = null;
-        _ownsResources = false;
-    }
-
-    private static void RemoveOwnedFrameBuffer(XRRenderPipelineInstance instance, string name, XRFrameBuffer? frameBuffer)
-    {
-        if (frameBuffer is not null &&
-            instance.Resources.TryGetFrameBuffer(name, out XRFrameBuffer? registered) &&
-            ReferenceEquals(registered, frameBuffer))
-            instance.Resources.RemoveFrameBuffer(name);
-    }
-
-    private static void RemoveOwnedTexture(XRRenderPipelineInstance instance, string name, XRTexture? texture)
-    {
-        if (texture is not null &&
-            instance.Resources.TryGetTexture(name, out XRTexture? registered) &&
-            ReferenceEquals(registered, texture))
-            instance.Resources.RemoveTexture(name);
     }
 
     private (uint Width, uint Height) ResolveTargetSize(XRRenderPipelineInstance instance, XRTexture sourceTexture)

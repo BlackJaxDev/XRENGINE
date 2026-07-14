@@ -37,10 +37,11 @@ namespace XREngine.Rendering.Occlusion
             public int RecoveryLatencyFrames;
             public int LastTouchedEpoch;
             public CpuOcclusionViewTelemetrySnapshot LastSnapshot;
+            public CpuOcclusionViewTelemetrySnapshot LastActivitySnapshot;
 
             public void SnapshotAndReset()
             {
-                LastSnapshot = new CpuOcclusionViewTelemetrySnapshot(
+                CpuOcclusionViewTelemetrySnapshot snapshot = new(
                     Key,
                     Interlocked.Exchange(ref CandidateCount, 0),
                     Interlocked.Exchange(ref Submissions, 0),
@@ -51,6 +52,13 @@ namespace XREngine.Rendering.Occlusion
                     Interlocked.Exchange(ref CurrentResultAgeFrames, 0),
                     Interlocked.Exchange(ref MaxResultAgeFrames, 0),
                     Interlocked.Exchange(ref RecoveryLatencyFrames, 0));
+                LastSnapshot = snapshot;
+                if (snapshot.CandidateCount != 0 || snapshot.Submissions != 0 ||
+                    snapshot.Resolutions != 0 || snapshot.Skips != 0 ||
+                    snapshot.BudgetSkipped != 0 || snapshot.ForcedVisible != 0)
+                {
+                    LastActivitySnapshot = snapshot;
+                }
             }
         }
 
@@ -411,6 +419,26 @@ namespace XREngine.Rendering.Occlusion
                     if (copied >= destination.Length)
                         break;
                     destination[copied++] = counters.LastSnapshot;
+                }
+                return copied;
+            }
+        }
+
+        /// <summary>
+        /// Copies the most recent active sample for every keyed POV. This is used
+        /// by asynchronous output ledgers whose capture boundary may follow a
+        /// different render-frame boundary than the queried output.
+        /// </summary>
+        public static int CopyLastActiveCpuViewSnapshots(Span<CpuOcclusionViewTelemetrySnapshot> destination)
+        {
+            lock (CpuViewCountersLock)
+            {
+                int copied = 0;
+                foreach (CpuViewCounters counters in CpuViewCountersByKey.Values)
+                {
+                    if (copied >= destination.Length)
+                        break;
+                    destination[copied++] = counters.LastActivitySnapshot;
                 }
                 return copied;
             }

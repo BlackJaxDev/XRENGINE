@@ -10,7 +10,7 @@ using XREngine.Rendering.Models.Materials;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
-    public class VPRC_MSVO : ViewportRenderCommand
+    public class VPRC_MSVO : ViewportRenderCommand, IDeclaredAoResourceProvider
     {
         private static void Log(string message)
             => Debug.Rendering(EOutputVerbosity.Normal, false, "[AO][MSVO] {0}", message);
@@ -132,7 +132,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 depthViewTex.Name ?? "null",
                 MSVOIntensityTextureName);
 
-            RegenerateFBOs(
+            RefreshDeclaredResources(
                 instance,
                 state,
                 normalTex,
@@ -145,7 +145,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 height);
         }
 
-        private void RegenerateFBOs(
+        private void RefreshDeclaredResources(
             XRRenderPipelineInstance instance,
             InstanceState state,
             XRTexture normalTex,
@@ -160,88 +160,75 @@ namespace XREngine.Rendering.Pipelines.Commands
             state.LastWidth = width;
             state.LastHeight = height;
 
-            state.RawAoTexture = ResolveAoTexture(instance, state.RawAoTexture, width, height, MSVORawTextureName, MSVOIntensityTextureName);
-            state.FinalAoTexture = ResolveAoTexture(instance, state.FinalAoTexture, width, height, MSVOIntensityTextureName, MSVOIntensityTextureName);
-            InvalidateDependentFbos(instance);
+            state.RawAoTexture = ResolveDeclaredAoTexture(instance, width, height, MSVORawTextureName, MSVOIntensityTextureName);
+            state.FinalAoTexture = ResolveDeclaredAoTexture(instance, width, height, MSVOIntensityTextureName, MSVOIntensityTextureName);
 
-            RenderingParameters renderParams = new()
+            if (!instance.TryGetFBO(MSVOFBOName, out _) || !instance.TryGetFBO(MSVOBlurFBOName, out _))
+                throw new InvalidOperationException("MSVO command requires its declared generation and blur framebuffers.");
+        }
+
+        public XRFrameBuffer CreateDeclaredFrameBuffer(XRRenderPipelineInstance instance, string name)
+        {
+            XRTexture rawAoTexture = RequireTexture(instance, MSVORawTextureName);
+            XRTexture finalAoTexture = RequireTexture(instance, MSVOIntensityTextureName);
+
+            if (string.Equals(name, GBufferFBOFBOName, StringComparison.Ordinal))
             {
-                DepthTest =
+                return new XRFrameBuffer((RequireAttachment(finalAoTexture, MSVOIntensityTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1))
                 {
-                    Enabled = ERenderParamUsage.Unchanged,
-                    UpdateDepth = false,
-                    Function = EComparison.Always,
-                }
-            };
+                    Name = GBufferFBOFBOName
+                };
+            }
+
+            RenderingParameters renderParams = CreateRenderParameters();
 
             XRShader msvoGenShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, MSVOGenShaderName()), EShaderType.Fragment);
             XRShader msvoBlurShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, MSVOBlurShaderName()), EShaderType.Fragment);
 
-            XRTexture[] msvoGenTexRefs =
-            [
-                normalTex,
-                depthViewTex,
-            ];
-
-            XRTexture[] msvoBlurTexRefs =
-            [
-                state.RawAoTexture!,
-            ];
-
-            XRMaterial msvoGenMat = new(msvoGenTexRefs, msvoGenShader) { RenderOptions = renderParams };
-            XRMaterial msvoBlurMat = new(msvoBlurTexRefs, msvoBlurShader) { RenderOptions = renderParams };
-
-            if (albedoTex is not IFrameBufferAttachement albedoAttach)
-                throw new ArgumentException("Albedo texture must be an IFrameBufferAttachement");
-
-            if (normalTex is not IFrameBufferAttachement normalAttach)
-                throw new ArgumentException("Normal texture must be an IFrameBufferAttachement");
-
-            if (rmseTex is not IFrameBufferAttachement rmseAttach)
-                throw new ArgumentException("RMSE texture must be an IFrameBufferAttachement");
-
-            if (transformIdTex is not IFrameBufferAttachement transformIdAttach)
-                throw new ArgumentException("TransformId texture must be an IFrameBufferAttachement");
-
-            if (depthStencilTex is not IFrameBufferAttachement depthStencilAttach)
-                throw new ArgumentException("DepthStencil texture must be an IFrameBufferAttachement");
-
-            if (state.RawAoTexture is not IFrameBufferAttachement rawAoAttach)
-                throw new ArgumentException("Raw ambient occlusion texture must be an IFrameBufferAttachement");
-
-            if (state.FinalAoTexture is not IFrameBufferAttachement finalAoAttach)
-                throw new ArgumentException("Final ambient occlusion texture must be an IFrameBufferAttachement");
-
-            XRQuadFrameBuffer msvoGenFBO = new(msvoGenMat, true,
-                (albedoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
-                (normalAttach, EFrameBufferAttachment.ColorAttachment1, 0, -1),
-                (rmseAttach, EFrameBufferAttachment.ColorAttachment2, 0, -1),
-                (transformIdAttach, EFrameBufferAttachment.ColorAttachment3, 0, -1),
-                (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+            if (string.Equals(name, MSVOFBOName, StringComparison.Ordinal))
             {
-                Name = MSVOFBOName
-            };
-            msvoGenFBO.SettingUniforms += MSVOGen_SetUniforms;
+                XRMaterial msvoGenMaterial = new(
+                    [
+                        RequireTexture(instance, NormalTextureName),
+                        RequireTexture(instance, DepthViewTextureName),
+                    ],
+                    msvoGenShader)
+                {
+                    RenderOptions = renderParams
+                };
 
-            XRQuadFrameBuffer msvoBlurFBO = new(msvoBlurMat, true, (rawAoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+                XRQuadFrameBuffer msvoGenFbo = new(msvoGenMaterial, true,
+                    (RequireAttachment(instance, AlbedoTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                    (RequireAttachment(instance, NormalTextureName), EFrameBufferAttachment.ColorAttachment1, 0, -1),
+                    (RequireAttachment(instance, RMSETextureName), EFrameBufferAttachment.ColorAttachment2, 0, -1),
+                    (RequireAttachment(instance, TransformIdTextureName), EFrameBufferAttachment.ColorAttachment3, 0, -1),
+                    (RequireAttachment(instance, DepthStencilTextureName), EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+                {
+                    Name = MSVOFBOName
+                };
+                msvoGenFbo.SettingUniforms += MSVOGen_SetUniforms;
+                return msvoGenFbo;
+            }
+
+            if (string.Equals(name, MSVOBlurFBOName, StringComparison.Ordinal))
             {
-                Name = MSVOBlurFBOName
-            };
-            msvoBlurFBO.SettingUniforms += MSVOBlur_SetUniforms;
+                XRMaterial msvoBlurMaterial = new([rawAoTexture], msvoBlurShader) { RenderOptions = renderParams };
+                XRQuadFrameBuffer msvoBlurFbo = new(
+                    msvoBlurMaterial,
+                    true,
+                    (RequireAttachment(rawAoTexture, MSVORawTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1))
+                {
+                    Name = MSVOBlurFBOName
+                };
+                msvoBlurFbo.SettingUniforms += MSVOBlur_SetUniforms;
+                return msvoBlurFbo;
+            }
 
-            XRFrameBuffer outputFbo = new((finalAoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
-            {
-                Name = GBufferFBOFBOName
-            };
-
-            instance.SetFBO(msvoGenFBO);
-            instance.SetFBO(msvoBlurFBO);
-            instance.SetFBO(outputFbo);
+            throw new InvalidOperationException($"Unsupported MSVO framebuffer '{name}'.");
         }
 
-        private XRTexture ResolveAoTexture(
+        private XRTexture ResolveDeclaredAoTexture(
             XRRenderPipelineInstance instance,
-            XRTexture? previousTexture,
             int width,
             int height,
             string textureName,
@@ -254,13 +241,31 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return registeredTexture;
             }
 
-            if (previousTexture is not null && !ReferenceEquals(previousTexture, registeredTexture))
-                previousTexture.Destroy();
-
-            XRTexture createdTexture = CreateAoTexture(width, height, textureName, samplerName);
-            instance.SetTexture(createdTexture);
-            return createdTexture;
+            throw new InvalidOperationException(
+                $"Declared MSVO texture '{textureName}' is missing or does not match {width}x{height}.");
         }
+
+        private static RenderingParameters CreateRenderParameters()
+            => new()
+            {
+                DepthTest =
+                {
+                    Enabled = ERenderParamUsage.Unchanged,
+                    UpdateDepth = false,
+                    Function = EComparison.Always,
+                }
+            };
+
+        private static XRTexture RequireTexture(XRRenderPipelineInstance instance, string textureName)
+            => instance.GetTexture<XRTexture>(textureName)
+                ?? throw new InvalidOperationException($"Missing declared MSVO texture '{textureName}'.");
+
+        private static IFrameBufferAttachement RequireAttachment(XRRenderPipelineInstance instance, string textureName)
+            => RequireAttachment(RequireTexture(instance, textureName), textureName);
+
+        private static IFrameBufferAttachement RequireAttachment(XRTexture texture, string textureName)
+            => texture as IFrameBufferAttachement
+                ?? throw new InvalidOperationException($"Declared MSVO texture '{textureName}' is not framebuffer-attachable.");
 
         private static bool TextureMatchesSize(XRTexture texture, int width, int height)
         {
@@ -354,20 +359,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
         }
 
-        private void InvalidateDependentFbos(XRRenderPipelineInstance instance)
-        {
-            if (DependentFboNames.Length == 0)
-                return;
-
-            foreach (string name in DependentFboNames)
-            {
-                if (string.IsNullOrWhiteSpace(name))
-                    continue;
-
-                instance.Resources.RemoveFrameBuffer(name);
-            }
-        }
-
         internal override void AllocateContainerResources(XRRenderPipelineInstance instance)
         {
             GetInstanceState(instance).ResourcesDirty = true;
@@ -378,9 +369,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (_instanceStates.TryGetValue(instance, out var state))
             {
                 state.ResourcesDirty = true;
-                state.RawAoTexture?.Destroy();
                 state.RawAoTexture = null;
-                state.FinalAoTexture?.Destroy();
                 state.FinalAoTexture = null;
                 state.LastWidth = 0;
                 state.LastHeight = 0;

@@ -123,8 +123,16 @@ public sealed class RenderPipelineResourceLayout
     public IEnumerable<FrameBufferResourceDescriptor> LowerFrameBufferDescriptors()
     {
         foreach (RenderPipelineResourceSpec spec in OrderedSpecs)
+        {
             if (spec is FrameBufferSpec frameBufferSpec)
                 yield return frameBufferSpec.ToDescriptor();
+            else if (spec is QuadMaterialSpec quadMaterialSpec)
+                yield return new FrameBufferResourceDescriptor(
+                    quadMaterialSpec.Name,
+                    quadMaterialSpec.Lifetime,
+                    RenderResourceSizePolicy.Absolute(0u, 0u),
+                    Array.Empty<FrameBufferAttachmentDescriptor>());
+        }
     }
 
     /// <summary>
@@ -162,6 +170,10 @@ public sealed class RenderPipelineResourceLayout
             BufferSpec leftBuffer when right is BufferSpec rightBuffer => AreBufferSpecsEquivalent(leftBuffer, rightBuffer),
             FrameBufferSpec leftFrameBuffer when right is FrameBufferSpec rightFrameBuffer => AreFrameBufferSpecsEquivalent(leftFrameBuffer, rightFrameBuffer),
             QuadMaterialSpec when right is QuadMaterialSpec => true,
+            ExternalResourceSpec leftExternal when right is ExternalResourceSpec rightExternal =>
+                leftExternal.ExternalKind == rightExternal.ExternalKind &&
+                leftExternal.Ownership == rightExternal.Ownership &&
+                leftExternal.Synchronization == rightExternal.Synchronization,
             _ => left.GetType() == right.GetType(),
         };
     }

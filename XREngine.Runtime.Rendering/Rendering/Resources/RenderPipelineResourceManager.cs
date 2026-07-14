@@ -52,6 +52,7 @@ public sealed class RenderPipelineResourceManager
                 }
 
                 ValidateRequiredResources(generation);
+                ValidateDescriptorLayoutParity(generation);
             }
 
             generation.MarkReady();
@@ -139,7 +140,10 @@ public sealed class RenderPipelineResourceManager
             case FrameBufferSpec frameBufferSpec:
                 MaterializeFrameBuffer(instance, generation, frameBufferSpec);
                 break;
-            case QuadMaterialSpec:
+            case QuadMaterialSpec quadMaterialSpec:
+                MaterializeQuadMaterial(instance, generation, quadMaterialSpec);
+                break;
+            case ExternalResourceSpec:
                 break;
         }
     }
@@ -281,13 +285,36 @@ public sealed class RenderPipelineResourceManager
         frameBuffer.Name = spec.Name;
         ValidateFrameBufferInstance(generation, spec, frameBuffer);
         instance.SetFBO(frameBuffer, descriptor);
-        PreGenerateVulkanFrameBuffer(frameBuffer);
     }
 
-    private static void PreGenerateVulkanFrameBuffer(XRFrameBuffer frameBuffer)
+    private static void MaterializeQuadMaterial(
+        XRRenderPipelineInstance instance,
+        RenderResourceGeneration generation,
+        QuadMaterialSpec spec)
     {
-        if (XREngine.Rendering.AbstractRenderer.Current is VulkanRenderer renderer)
-            renderer.GetOrCreateAPIRenderObject(frameBuffer, generateNow: true);
+        FrameBufferResourceDescriptor descriptor = new(
+            spec.Name,
+            spec.Lifetime,
+            RenderResourceSizePolicy.Absolute(0u, 0u),
+            Array.Empty<FrameBufferAttachmentDescriptor>());
+        generation.Registry.RegisterFrameBufferDescriptor(descriptor);
+
+        if (generation.Registry.TryGetFrameBuffer(spec.Name, out _))
+            return;
+
+        if (spec.Factory is null)
+        {
+            if (spec.Required)
+                throw new InvalidOperationException($"Quad material '{spec.Name}' has no factory.");
+            return;
+        }
+
+        XRFrameBuffer frameBuffer = spec.Factory();
+        if (frameBuffer is not XRQuadFrameBuffer)
+            throw new InvalidOperationException($"Quad material '{spec.Name}' factory must produce an XRQuadFrameBuffer.");
+
+        frameBuffer.Name = spec.Name;
+        instance.SetFBO(frameBuffer, descriptor);
     }
 
     private static void ValidateRequiredResources(RenderResourceGeneration generation)
@@ -307,6 +334,8 @@ public sealed class RenderPipelineResourceManager
                     => generation.Registry.TryGetRenderBuffer(spec.Name, out _),
                 RenderPipelineResourceKind.Buffer
                     => generation.Registry.TryGetBuffer(spec.Name, out _),
+                RenderPipelineResourceKind.QuadMaterial
+                    => generation.Registry.TryGetFrameBuffer(spec.Name, out _),
                 _ => true
             };
 
@@ -319,6 +348,90 @@ public sealed class RenderPipelineResourceManager
             }
         }
     }
+
+    internal static void ValidateDescriptorLayoutParity(RenderResourceGeneration generation)
+    {
+        RenderResourceRegistry registry = generation.Registry;
+        foreach (RenderPipelineResourceSpec spec in generation.Layout.OrderedSpecs)
+        {
+            switch (spec)
+            {
+                case TextureSpec textureSpec:
+                    RequireMatchingDescriptor(
+                        spec,
+                        textureSpec.ToDescriptor(),
+                        registry.TextureRecords.GetValueOrDefault(spec.Name)?.Descriptor);
+                    break;
+                case TextureViewSpec viewSpec:
+                    RequireMatchingDescriptor(
+                        spec,
+                        viewSpec.ToDescriptor(),
+                        registry.TextureRecords.GetValueOrDefault(spec.Name)?.Descriptor);
+                    break;
+                case BufferSpec bufferSpec:
+                    RequireMatchingDescriptor(
+                        spec,
+                        bufferSpec.ToDescriptor(),
+                        registry.BufferRecords.GetValueOrDefault(spec.Name)?.Descriptor);
+                    break;
+                case RenderBufferSpec renderBufferSpec:
+                    RequireMatchingDescriptor(
+                        spec,
+                        renderBufferSpec.ToDescriptor(),
+                        registry.RenderBufferRecords.GetValueOrDefault(spec.Name)?.Descriptor);
+                    break;
+                case FrameBufferSpec frameBufferSpec:
+                {
+                    FrameBufferResourceDescriptor expected = frameBufferSpec.ToDescriptor();
+                    FrameBufferResourceDescriptor? actual = registry.FrameBufferRecords.GetValueOrDefault(spec.Name)?.Descriptor;
+                    if (actual is null ||
+                        expected.Name != actual.Name ||
+                        expected.Lifetime != actual.Lifetime ||
+                        expected.SizePolicy != actual.SizePolicy ||
+                        !expected.Attachments.SequenceEqual(actual.Attachments))
+                    {
+                        ThrowDescriptorLayoutMismatch(spec, expected, actual);
+                    }
+                    break;
+                }
+                case QuadMaterialSpec:
+                {
+                    FrameBufferResourceDescriptor expected = new(
+                        spec.Name,
+                        spec.Lifetime,
+                        RenderResourceSizePolicy.Absolute(0u, 0u),
+                        Array.Empty<FrameBufferAttachmentDescriptor>());
+                    FrameBufferResourceDescriptor? actual = registry.FrameBufferRecords.GetValueOrDefault(spec.Name)?.Descriptor;
+                    if (actual is null ||
+                        expected.Name != actual.Name ||
+                        expected.Lifetime != actual.Lifetime ||
+                        expected.SizePolicy != actual.SizePolicy ||
+                        actual.Attachments.Count != 0)
+                    {
+                        ThrowDescriptorLayoutMismatch(spec, expected, actual);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    private static void RequireMatchingDescriptor<TDescriptor>(
+        RenderPipelineResourceSpec spec,
+        TDescriptor expected,
+        TDescriptor? actual)
+        where TDescriptor : class
+    {
+        if (actual is null || !expected.Equals(actual))
+            ThrowDescriptorLayoutMismatch(spec, expected, actual);
+    }
+
+    private static void ThrowDescriptorLayoutMismatch(
+        RenderPipelineResourceSpec spec,
+        object expected,
+        object? actual)
+        => throw new InvalidOperationException(
+            $"Pending descriptor/layout mismatch for {spec.Kind} '{spec.Name}'. Expected={expected} Actual={actual?.ToString() ?? "<missing>"}.");
 
     private static bool CanCommitWithoutInstance(RenderResourceGeneration generation, RenderPipelineResourceSpec spec)
     {

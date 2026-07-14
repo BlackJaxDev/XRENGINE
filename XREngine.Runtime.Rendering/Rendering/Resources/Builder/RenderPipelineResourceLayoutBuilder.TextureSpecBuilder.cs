@@ -18,10 +18,13 @@ public sealed partial class RenderPipelineResourceLayoutBuilder
         private bool _requiresStorageUsage;
         private Func<XRTexture>? _factory;
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="TextureSpecBuilder"/> class.
+        /// </summary>
+        /// <param name="owner">The resource layout builder that owns this texture specification.</param>
+        /// <param name="name">The name of the texture specification.</param>
         internal TextureSpecBuilder(RenderPipelineResourceLayoutBuilder owner, string name)
-            : base(owner, name)
-        {
-        }
+            : base(owner, name) { }
 
         /// <summary>
         /// Sets the pixel format of the texture resource specification.
