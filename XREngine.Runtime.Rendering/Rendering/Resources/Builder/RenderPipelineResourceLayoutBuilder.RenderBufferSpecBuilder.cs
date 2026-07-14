@@ -12,10 +12,13 @@ public sealed partial class RenderPipelineResourceLayoutBuilder
         private EFrameBufferAttachment? _defaultAttachment;
         private Func<XRRenderBuffer>? _factory;
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="RenderBufferSpecBuilder"/> class.
+        /// </summary>
+        /// <param name="owner">The resource layout builder that owns this render buffer specification.</param>
+        /// <param name="name">The name of the render buffer specification.</param>
         internal RenderBufferSpecBuilder(RenderPipelineResourceLayoutBuilder owner, string name)
-            : base(owner, name)
-        {
-        }
+            : base(owner, name) { }
 
         /// <summary>
         /// Sets the storage format for the render buffer resource specification.

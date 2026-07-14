@@ -9,7 +9,6 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <summary>
     /// Runs a separable bilateral filter over a named input texture with optional depth and normal guidance.
     /// </summary>
-    [RenderPipelineScriptCommand]
     public sealed class VPRC_BilateralFilter : ViewportRenderCommand
     {
         private const string BilateralFilterShaderCode = """

@@ -47,6 +47,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# First-chance tracing is an editor diagnostic. Do not expose it to this
+# PowerShell host while the native OpenXR loader is loaded; pass it explicitly
+# to the editor child process instead.
+$editorFirstChanceExceptions = $env:XRE_FIRST_CHANCE_EXCEPTIONS
+Remove-Item Env:XRE_FIRST_CHANCE_EXCEPTIONS -ErrorAction SilentlyContinue
+
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $openXrToolRoot = Join-Path $repoRoot "Tools\OpenXR"
 $findRuntimeScript = Join-Path $openXrToolRoot "Find-MonadoRuntime.ps1"
@@ -225,40 +231,51 @@ public static class OpenXrLoaderPreflight
         SetDllDirectory(null);
     }
 
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
-    private struct XrApiLayerProperties
-    {
-        public int type;
-        public IntPtr next;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
-        public string layerName;
-        public uint specVersion;
-        public uint layerVersion;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
-        public string description;
-    }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
-    private struct XrExtensionProperties
-    {
-        public int type;
-        public IntPtr next;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
-        public string extensionName;
-        public uint extensionVersion;
-    }
+    // OpenXR property arrays are native in/out buffers. Avoid the CLR array/string
+    // marshaler here: it has corrupted the hosting PowerShell heap with some loader
+    // builds during teardown. The smoke tooling is Windows-x64 only, so use the
+    // ABI-defined offsets and copy the fixed UTF-8 name fields explicitly.
+    private const int XR_PROPERTY_NAME_OFFSET_X64 = 16;
+    private const int XR_API_LAYER_PROPERTIES_SIZE_X64 = 536;
+    private const int XR_EXTENSION_PROPERTIES_SIZE_X64 = 152;
 
     [DllImport("openxr_loader.dll", EntryPoint = "xrEnumerateApiLayerProperties", CallingConvention = CallingConvention.Winapi)]
     private static extern int EnumerateApiLayerPropertiesCount(uint propertyCapacityInput, out uint propertyCountOutput, IntPtr properties);
 
     [DllImport("openxr_loader.dll", EntryPoint = "xrEnumerateApiLayerProperties", CallingConvention = CallingConvention.Winapi)]
-    private static extern int EnumerateApiLayerProperties(uint propertyCapacityInput, out uint propertyCountOutput, [In, Out] XrApiLayerProperties[] properties);
+    private static extern int EnumerateApiLayerProperties(uint propertyCapacityInput, out uint propertyCountOutput, IntPtr properties);
 
     [DllImport("openxr_loader.dll", EntryPoint = "xrEnumerateInstanceExtensionProperties", CallingConvention = CallingConvention.Winapi)]
     private static extern int EnumerateInstanceExtensionPropertiesCount(IntPtr layerName, uint propertyCapacityInput, out uint propertyCountOutput, IntPtr properties);
 
     [DllImport("openxr_loader.dll", EntryPoint = "xrEnumerateInstanceExtensionProperties", CallingConvention = CallingConvention.Winapi)]
-    private static extern int EnumerateInstanceExtensionProperties(IntPtr layerName, uint propertyCapacityInput, out uint propertyCountOutput, [In, Out] XrExtensionProperties[] properties);
+    private static extern int EnumerateInstanceExtensionProperties(IntPtr layerName, uint propertyCapacityInput, out uint propertyCountOutput, IntPtr properties);
+
+    private static IntPtr AllocatePropertyArray(uint count, int elementSize, int structureType)
+    {
+        if (IntPtr.Size != 8)
+            throw new PlatformNotSupportedException("OpenXR smoke loader preflight requires a 64-bit process.");
+
+        IntPtr memory = Marshal.AllocHGlobal(checked((int)count * elementSize));
+        for (int i = 0; i < count; i++)
+        {
+            IntPtr element = IntPtr.Add(memory, checked(i * elementSize));
+            for (int offset = 0; offset < elementSize; offset += sizeof(int))
+                Marshal.WriteInt32(element, offset, 0);
+            Marshal.WriteInt32(element, 0, structureType);
+        }
+        return memory;
+    }
+
+    private static string ReadFixedUtf8(IntPtr element, int offset, int capacity)
+    {
+        byte[] bytes = new byte[capacity];
+        Marshal.Copy(IntPtr.Add(element, offset), bytes, 0, capacity);
+        int length = Array.IndexOf(bytes, (byte)0);
+        if (length < 0)
+            length = capacity;
+        return System.Text.Encoding.UTF8.GetString(bytes, 0, length);
+    }
 
     public static string[] EnumerateApiLayers()
     {
@@ -270,19 +287,26 @@ public static class OpenXrLoaderPreflight
         if (count == 0)
             return Array.Empty<string>();
 
-        var properties = new XrApiLayerProperties[count];
-        for (int i = 0; i < properties.Length; i++)
-            properties[i].type = XR_TYPE_API_LAYER_PROPERTIES;
+        IntPtr properties = AllocatePropertyArray(count, XR_API_LAYER_PROPERTIES_SIZE_X64, XR_TYPE_API_LAYER_PROPERTIES);
+        try
+        {
+            result = EnumerateApiLayerProperties(count, out count, properties);
+            if (result != 0)
+                throw new InvalidOperationException("xrEnumerateApiLayerProperties(list) returned " + result);
 
-        result = EnumerateApiLayerProperties(count, out count, properties);
-        if (result != 0)
-            throw new InvalidOperationException("xrEnumerateApiLayerProperties(list) returned " + result);
-
-        var names = new List<string>();
-        for (int i = 0; i < count; i++)
-            if (!string.IsNullOrWhiteSpace(properties[i].layerName))
-                names.Add(properties[i].layerName);
-        return names.ToArray();
+            var names = new List<string>();
+            for (int i = 0; i < count; i++)
+            {
+                string name = ReadFixedUtf8(IntPtr.Add(properties, i * XR_API_LAYER_PROPERTIES_SIZE_X64), XR_PROPERTY_NAME_OFFSET_X64, 256);
+                if (!string.IsNullOrWhiteSpace(name))
+                    names.Add(name);
+            }
+            return names.ToArray();
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(properties);
+        }
     }
 
     public static string[] EnumerateInstanceExtensions()
@@ -295,19 +319,26 @@ public static class OpenXrLoaderPreflight
         if (count == 0)
             return Array.Empty<string>();
 
-        var properties = new XrExtensionProperties[count];
-        for (int i = 0; i < properties.Length; i++)
-            properties[i].type = XR_TYPE_EXTENSION_PROPERTIES;
+        IntPtr properties = AllocatePropertyArray(count, XR_EXTENSION_PROPERTIES_SIZE_X64, XR_TYPE_EXTENSION_PROPERTIES);
+        try
+        {
+            result = EnumerateInstanceExtensionProperties(IntPtr.Zero, count, out count, properties);
+            if (result != 0)
+                throw new InvalidOperationException("xrEnumerateInstanceExtensionProperties(list) returned " + result);
 
-        result = EnumerateInstanceExtensionProperties(IntPtr.Zero, count, out count, properties);
-        if (result != 0)
-            throw new InvalidOperationException("xrEnumerateInstanceExtensionProperties(list) returned " + result);
-
-        var names = new List<string>();
-        for (int i = 0; i < count; i++)
-            if (!string.IsNullOrWhiteSpace(properties[i].extensionName))
-                names.Add(properties[i].extensionName);
-        return names.ToArray();
+            var names = new List<string>();
+            for (int i = 0; i < count; i++)
+            {
+                string name = ReadFixedUtf8(IntPtr.Add(properties, i * XR_EXTENSION_PROPERTIES_SIZE_X64), XR_PROPERTY_NAME_OFFSET_X64, 128);
+                if (!string.IsNullOrWhiteSpace(name))
+                    names.Add(name);
+            }
+            return names.ToArray();
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(properties);
+        }
     }
 }
 "@
@@ -600,6 +631,9 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($openXrLoaderPath)) {
         $environment["PATH"] = "$(Split-Path -Parent $openXrLoaderPath)$([System.IO.Path]::PathSeparator)$env:PATH"
     }
+    if (-not [string]::IsNullOrWhiteSpace($editorFirstChanceExceptions)) {
+        $environment["XRE_FIRST_CHANCE_EXCEPTIONS"] = $editorFirstChanceExceptions
+    }
 
     $smokeResult = Invoke-EditorSmoke `
         -EditorDll $editorDll `
@@ -630,7 +664,7 @@ try {
             if ($failures.Count -gt 0) {
                 Write-Host ($failures -join "`n")
             }
-            exit $exitCode
+            throw "OpenXR smoke editor process failed with exit code $exitCode."
         }
     }
     elseif ([bool]$smokeResult.TerminatedAfterSummary) {
@@ -642,7 +676,7 @@ try {
             if ($failures.Count -gt 0) {
                 Write-Host ($failures -join "`n")
             }
-            exit 1
+            throw "OpenXR smoke summary failed before the lingering editor process was terminated."
         }
     }
 
@@ -659,7 +693,7 @@ try {
     }
 
     Write-Host "OpenXR Monado smoke passed. RunRoot=$RunRoot Summary=$summaryFullPath"
-    exit 0
+    return
 }
 finally {
     if ($serviceStarted) {

@@ -25,6 +25,12 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         public const int TileSize = 16;
         public const int MaxLightsPerTile = 256;
+        public const uint MaxLocalLights = 4096u;
+        public const uint LocalLightStride = 96u;
+
+        public const string LocalLightsBufferName = "ForwardPlusLocalLights";
+        public const string VisibleIndicesBufferName = "ForwardPlusVisibleIndices";
+        public const string TileLightCountsBufferName = "ForwardPlusTileLightCounts";
 
         // Chosen to avoid conflicts with other SSBO users.
         public const uint LocalLightsBinding = 20;
@@ -109,7 +115,16 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             // Build local light list (point + spot).
             List<ForwardPlusLocalLight> lights = BuildLocalLights(world.Lights);
-            int lightCount = lights.Count;
+            int lightCount = Math.Min(lights.Count, checked((int)MaxLocalLights));
+            if (lights.Count > lightCount)
+            {
+                Debug.RenderingEvery(
+                    "ForwardPlus.LocalLightOverflow",
+                    TimeSpan.FromSeconds(1),
+                    "Forward+ local light count {0} exceeds declared capacity {1}; deterministically truncating the uploaded point/spot list.",
+                    lights.Count,
+                    MaxLocalLights);
+            }
 
             // Compute tile counts from the active render area.
             // (Texture sizes can be backend-specific due to views/arrays.)
@@ -125,10 +140,18 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
                 : null;
 
-            EnsureBuffers(lightCount, tileCountX, tileCountY, stereo ? 2 : 1);
+            int viewCount = stereo ? 2 : 1;
+            if (!RefreshDeclaredBuffers(tileCountX, tileCountY, viewCount))
+            {
+                RuntimeEngine.Rendering.State.ForwardPlusLocalLightCount = 0;
+                RuntimeEngine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
+                RuntimeEngine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
+                RuntimeEngine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
+                return;
+            }
 
             // Upload local lights (CPU->GPU). Visible-indices buffer is written by compute.
-            UploadLocalLights(lights);
+            UploadLocalLights(lights, lightCount);
 
             // Bind SSBOs + uniforms and dispatch.
             var cam = RuntimeEngine.Rendering.State.RenderingCamera;
@@ -251,112 +274,84 @@ namespace XREngine.Rendering.Pipelines.Commands
             return result;
         }
 
-        private void EnsureBuffers(int lightCount, int tileCountX, int tileCountY, int eyeCount)
+        private bool RefreshDeclaredBuffers(int tileCountX, int tileCountY, int viewCount)
         {
-            uint localLightStride = (uint)System.Runtime.InteropServices.Marshal.SizeOf<ForwardPlusLocalLight>();
+            _localLightsBuffer = ActivePipelineInstance.GetBuffer(LocalLightsBufferName);
+            _visibleIndicesBuffer = ActivePipelineInstance.GetBuffer(VisibleIndicesBufferName);
+            _tileLightCountsBuffer = ActivePipelineInstance.GetBuffer(TileLightCountsBufferName);
 
-            uint localLightCount = GrowCapacity((uint)Math.Max(lightCount, 1));
-            if (_localLightsBuffer is null || _localLightsBuffer.ElementCount < localLightCount)
+            uint requiredVisibleCount = ComputeForwardPlusElementCount(tileCountX, tileCountY, viewCount, MaxLightsPerTile);
+            uint requiredTileCount = ComputeForwardPlusElementCount(tileCountX, tileCountY, viewCount, 1);
+            if (_localLightsBuffer is null ||
+                _visibleIndicesBuffer is null ||
+                _tileLightCountsBuffer is null ||
+                _localLightsBuffer.ElementCount < MaxLocalLights ||
+                _visibleIndicesBuffer.ElementCount < requiredVisibleCount ||
+                _tileLightCountsBuffer.ElementCount < requiredTileCount)
             {
-                DestroyBuffer(ref _localLightsBuffer);
-                _localLightsBuffer = new XRDataBuffer(
-                    "ForwardPlusLocalLights",
-                    EBufferTarget.ShaderStorageBuffer,
-                    localLightCount,
-                    EComponentType.Struct,
-                    localLightStride,
-                    normalize: false,
-                    integral: false)
-                {
-                    Usage = EBufferUsage.StreamDraw,
-                    PadEndingToVec4 = true,
-                };
-                _localLightsBuffer.PushData();
+                Debug.RenderingEvery(
+                    "ForwardPlus.DeclaredBufferMismatch",
+                    TimeSpan.FromSeconds(1),
+                    "Forward+ declared buffers are missing or undersized for tiles={0}x{1}, views={2}; culling skipped.",
+                    tileCountX,
+                    tileCountY,
+                    viewCount);
+                return false;
             }
 
-            uint visibleCount = GrowCapacity(ComputeForwardPlusElementCount(tileCountX, tileCountY, eyeCount, MaxLightsPerTile));
-            if (_visibleIndicesBuffer is null || _visibleIndicesBuffer.ElementCount < visibleCount)
-            {
-                DestroyBuffer(ref _visibleIndicesBuffer);
-                _visibleIndicesBuffer = new XRDataBuffer(
-                    "ForwardPlusVisibleIndices",
-                    EBufferTarget.ShaderStorageBuffer,
-                    visibleCount,
-                    EComponentType.Int,
-                    1u,
-                    normalize: false,
-                    integral: true)
-                {
-                    Usage = EBufferUsage.StaticCopy,
-                    PadEndingToVec4 = true,
-                };
-                _visibleIndicesBuffer.PushData();
-            }
-
-            uint tileCount = GrowCapacity(ComputeForwardPlusElementCount(tileCountX, tileCountY, eyeCount, 1));
-            if (_tileLightCountsBuffer is null || _tileLightCountsBuffer.ElementCount < tileCount)
-            {
-                DestroyBuffer(ref _tileLightCountsBuffer);
-                _tileLightCountsBuffer = new XRDataBuffer(
-                    "ForwardPlusTileLightCounts",
-                    EBufferTarget.ShaderStorageBuffer,
-                    tileCount,
-                    EComponentType.UInt,
-                    1u,
-                    normalize: false,
-                    integral: true)
-                {
-                    Usage = EBufferUsage.StaticCopy,
-                    PadEndingToVec4 = true,
-                };
-                _tileLightCountsBuffer.PushData();
-            }
+            return true;
         }
 
-        private static uint ComputeForwardPlusElementCount(int tileCountX, int tileCountY, int eyeCount, int elementsPerTile)
+        public static uint ComputeForwardPlusElementCount(int tileCountX, int tileCountY, int viewCount, int elementsPerTile)
         {
             ulong x = (ulong)Math.Max(tileCountX, 1);
             ulong y = (ulong)Math.Max(tileCountY, 1);
-            ulong eyes = (ulong)Math.Max(eyeCount, 1);
+            ulong views = (ulong)Math.Max(viewCount, 1);
             ulong perTile = (ulong)Math.Max(elementsPerTile, 1);
-            ulong count = x * y * eyes * perTile;
+            ulong count = x * y * views * perTile;
             if (count > uint.MaxValue)
-                throw new InvalidOperationException($"Forward+ buffer capacity exceeds uint range: tiles={tileCountX}x{tileCountY}, eyes={eyeCount}, elementsPerTile={elementsPerTile}.");
+                throw new InvalidOperationException($"Forward+ buffer capacity exceeds uint range: tiles={tileCountX}x{tileCountY}, views={viewCount}, elementsPerTile={elementsPerTile}.");
 
             return Math.Max((uint)count, 1u);
         }
 
-        private static uint GrowCapacity(uint requiredCount)
+        public static XRDataBuffer CreateDeclaredLocalLightsBuffer()
+            => CreateDeclaredBuffer(LocalLightsBufferName, MaxLocalLights, EComponentType.Struct, LocalLightStride, EBufferUsage.StreamDraw, integral: false);
+
+        public static XRDataBuffer CreateDeclaredVisibleIndicesBuffer(uint elementCount)
+            => CreateDeclaredBuffer(VisibleIndicesBufferName, elementCount, EComponentType.Int, 1u, EBufferUsage.StaticCopy, integral: true);
+
+        public static XRDataBuffer CreateDeclaredTileLightCountsBuffer(uint elementCount)
+            => CreateDeclaredBuffer(TileLightCountsBufferName, elementCount, EComponentType.UInt, 1u, EBufferUsage.StaticCopy, integral: true);
+
+        private static XRDataBuffer CreateDeclaredBuffer(string name, uint elementCount, EComponentType componentType, uint componentCount, EBufferUsage usage, bool integral)
         {
-            requiredCount = Math.Max(requiredCount, 1u);
-            return requiredCount >= 0x80000000u
-                ? requiredCount
-                : XRMath.NextPowerOfTwo(requiredCount);
+            var buffer = new XRDataBuffer(name, EBufferTarget.ShaderStorageBuffer, elementCount, componentType, componentCount, normalize: false, integral: integral)
+            {
+                Usage = usage,
+                PadEndingToVec4 = true,
+            };
+            buffer.PushData();
+            return buffer;
         }
 
-        private static void DestroyBuffer(ref XRDataBuffer? buffer)
-        {
-            buffer?.Destroy();
-            buffer = null;
-        }
-
-        private void UploadLocalLights(List<ForwardPlusLocalLight> lights)
+        private void UploadLocalLights(List<ForwardPlusLocalLight> lights, int lightCount)
         {
             if (_localLightsBuffer is null)
                 return;
 
             // Ensure at least one element exists (some drivers dislike zero-sized SSBOs).
-            if (lights.Count == 0)
+            if (lightCount == 0)
             {
                 _localLightsBuffer.Set(0, default(ForwardPlusLocalLight));
                 _localLightsBuffer.PushSubData(0, _localLightsBuffer.ElementSize);
                 return;
             }
 
-            for (uint i = 0; i < (uint)lights.Count; ++i)
+            for (uint i = 0; i < (uint)lightCount; ++i)
                 _localLightsBuffer.Set(i, lights[(int)i]);
 
-            uint uploadBytes = (uint)lights.Count * _localLightsBuffer.ElementSize;
+            uint uploadBytes = (uint)lightCount * _localLightsBuffer.ElementSize;
             _localLightsBuffer.PushSubData(0, uploadBytes);
         }
 
@@ -366,9 +361,9 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_ForwardPlusLightCullingPass), ERenderGraphPassStage.Compute);
             builder.SampleTexture(MakeTextureResource(DepthViewTexture));
-            builder.ReadWriteBuffer("ForwardPlusLocalLights");
-            builder.ReadWriteBuffer("ForwardPlusVisibleIndices");
-            builder.ReadWriteBuffer("ForwardPlusTileLightCounts");
+            builder.ReadWriteBuffer(LocalLightsBufferName);
+            builder.ReadWriteBuffer(VisibleIndicesBufferName);
+            builder.ReadWriteBuffer(TileLightCountsBufferName);
         }
 
         private int ResolvePassIndex(string passName)

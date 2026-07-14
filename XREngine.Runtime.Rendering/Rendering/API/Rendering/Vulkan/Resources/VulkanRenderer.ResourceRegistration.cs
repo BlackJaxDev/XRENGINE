@@ -352,73 +352,6 @@ public unsafe partial class VulkanRenderer
     public bool TryGetPhysicalBuffer(string resourceName, out Buffer buffer, out ulong size)
         => ResourceAllocator.TryGetBuffer(resourceName, out buffer, out size);
 
-    private void EnsureFrameBufferRegistered(XRFrameBuffer frameBuffer)
-    {
-        EnsureFrameBufferRegistered(frameBuffer, RuntimeEngine.Rendering.State.CurrentResourceRegistry);
-    }
-
-    private void EnsureFrameBufferRegistered(XRFrameBuffer frameBuffer, RenderResourceRegistry? registry)
-    {
-        if (registry is null)
-            return;
-
-        string? name = frameBuffer.Name;
-        if (string.IsNullOrWhiteSpace(name))
-            return;
-
-        FrameBufferResourceDescriptor? descriptor = registry.FrameBufferRecords.TryGetValue(name, out RenderFrameBufferResource? record)
-            ? record.Descriptor
-            : null;
-        registry.BindFrameBuffer(frameBuffer, descriptor);
-    }
-
-    private void EnsureFrameBufferAttachmentsRegistered(XRFrameBuffer frameBuffer)
-    {
-        EnsureFrameBufferAttachmentsRegistered(frameBuffer, RuntimeEngine.Rendering.State.CurrentResourceRegistry);
-    }
-
-    private void EnsureFrameBufferAttachmentsRegistered(XRFrameBuffer frameBuffer, RenderResourceRegistry? registry)
-    {
-        if (registry is null)
-            return;
-
-        var targets = frameBuffer.Targets;
-        if (targets is null)
-            return;
-
-        foreach (var (target, attachment, mipLevel, layerIndex) in targets)
-        {
-            if (target is XRTexture texture)
-            {
-                string? textureName = texture.Name;
-                if (!string.IsNullOrWhiteSpace(textureName))
-                {
-                    TextureResourceDescriptor descriptor = registry.TextureRecords.TryGetValue(textureName, out RenderTextureResource? existingRecord)
-                        ? existingRecord.Descriptor
-                        : RenderResourceDescriptorFactory.FromTexture(texture);
-
-                    registry.BindTexture(texture, EnrichTextureDescriptorForFrameBufferAttachment(descriptor, texture, attachment, mipLevel, layerIndex));
-                }
-
-                if (texture is XRTextureViewBase view)
-                {
-                    XRTexture viewedTexture = view.GetViewedTexture();
-                    string? viewedTextureName = viewedTexture.Name;
-                    if (!string.IsNullOrWhiteSpace(viewedTextureName))
-                    {
-                        TextureResourceDescriptor descriptor = registry.TextureRecords.TryGetValue(viewedTextureName, out RenderTextureResource? existingRecord)
-                            ? existingRecord.Descriptor
-                            : RenderResourceDescriptorFactory.FromTexture(viewedTexture);
-
-                        int sourceMipLevel = mipLevel >= 0 ? SaturatingAddToInt32(view.MinLevel, (uint)mipLevel) : mipLevel;
-                        int sourceLayerIndex = layerIndex >= 0 ? SaturatingAddToInt32(view.MinLayer, (uint)layerIndex) : layerIndex;
-                        registry.BindTexture(viewedTexture, EnrichTextureDescriptorForFrameBufferAttachment(descriptor, viewedTexture, attachment, sourceMipLevel, sourceLayerIndex));
-                    }
-                }
-            }
-        }
-    }
-
     private static int SaturatingAddToInt32(uint left, uint right)
     {
         ulong sum = (ulong)left + right;
@@ -460,24 +393,6 @@ public unsafe partial class VulkanRenderer
 
     internal void TrackTextureBinding(XRTexture texture)
     {
-        if (texture is null)
-            return;
-
-        string? name = texture.Name;
-        if (string.IsNullOrWhiteSpace(name))
-            return;
-
-        RenderResourceRegistry? registry = RuntimeEngine.Rendering.State.CurrentResourceRegistry;
-        if (registry is null)
-            return;
-
-        if (!registry.TextureRecords.TryGetValue(name, out RenderTextureResource? record))
-            return;
-
-        if (ReferenceEquals(record.Instance, texture))
-            return;
-
-        registry.BindTexture(texture, record.Descriptor);
     }
 
     internal void TrackBufferBinding(XRDataBuffer buffer)
@@ -493,18 +408,6 @@ public unsafe partial class VulkanRenderer
             return;
 
         _trackedBuffersByName[name] = buffer;
-
-        RenderResourceRegistry? registry = RuntimeEngine.Rendering.State.CurrentResourceRegistry;
-        if (registry is null)
-            return;
-
-        if (!registry.BufferRecords.TryGetValue(name, out RenderBufferResource? record))
-            return;
-
-        if (ReferenceEquals(record.Instance, buffer))
-            return;
-
-        registry.BindBuffer(buffer, record.Descriptor);
     }
 
     internal bool TryResolveTrackedBuffer(string resourceName, out Buffer buffer, out ulong size)

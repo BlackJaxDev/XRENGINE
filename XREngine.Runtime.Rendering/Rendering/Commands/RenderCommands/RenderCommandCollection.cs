@@ -641,6 +641,12 @@ namespace XREngine.Rendering.Commands
             if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
                 return;
 
+            // Deferred Vulkan frame-op callbacks can execute after the ambient pipeline
+            // render-state scope has unwound. The collection owner remains authoritative
+            // for the camera/POV that produced these commands.
+            if (camera is null && _ownerPipeline is XRRenderPipelineInstance ownerPipeline)
+                camera = ownerPipeline.LastSceneCamera ?? ownerPipeline.LastRenderingCamera;
+
             EOcclusionCullingMode occlusionMode = RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode;
             OcclusionViewOwnership occlusionOwnership = _ownerPipeline?.OcclusionViewOwnership
                 ?? default;

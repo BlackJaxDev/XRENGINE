@@ -16,6 +16,12 @@ public sealed class RenderFrameBufferResource
     public XRFrameBuffer? Instance { get; private set; }
 
     /// <summary>
+    /// Whether this record represents a physical render target rather than an
+    /// attachmentless fullscreen-material helper stored in the FBO registry.
+    /// </summary>
+    public bool HasAttachments => Descriptor.Attachments.Count > 0;
+
+    /// <summary>
     /// Creates a framebuffer registry record from its logical descriptor.
     /// </summary>
     internal RenderFrameBufferResource(FrameBufferResourceDescriptor descriptor)

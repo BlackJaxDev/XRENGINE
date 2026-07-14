@@ -69,6 +69,18 @@ namespace XREngine.Rendering.Pipelines.Commands
         public const uint GridDimZConst = 32u;
         public const uint GridMaxPerCellConst = 16u;
 
+        internal const string SurfelBufferName = "SurfelGI_Surfels";
+        internal const string CounterBufferName = "SurfelGI_Counters";
+        internal const string FreeStackBufferName = "SurfelGI_FreeStack";
+        internal const string GridCountsBufferName = "SurfelGI_GridCounts";
+        internal const string GridIndicesBufferName = "SurfelGI_GridIndices";
+
+        internal static readonly uint SurfelStride = (uint)Marshal.SizeOf<SurfelGPU>();
+        internal const uint CounterCount = 4u;
+        internal const uint ScalarStride = sizeof(uint);
+        internal const uint GridCellCount = GridDimXConst * GridDimYConst * GridDimZConst;
+        internal const uint GridIndexCount = GridCellCount * GridMaxPerCellConst;
+
         // Coarse world-space grid centered at the camera.
         public const float GridHalfExtentConst = 50.0f;
         private const uint MaxSurfelAgeFrames = 300u;
@@ -210,10 +222,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            EnsureBuffers();
-            if (_surfelBuffer is null || _counterBuffer is null)
+            if (!RefreshDeclaredBuffers())
             {
-                LogGuardFailure(nameof(Execute), "Required Surfel GI buffers were not created after EnsureBuffers().");
+                LogGuardFailure(nameof(Execute), "Required declared Surfel GI buffers are unavailable in the active pipeline generation.");
                 return;
             }
 
@@ -316,84 +327,60 @@ namespace XREngine.Rendering.Pipelines.Commands
             return _initProgram is not null && _recycleProgram is not null && _resetGridProgram is not null && _buildGridProgram is not null && _spawnProgram is not null && _shadeProgram is not null;
         }
 
-        private void EnsureBuffers()
+        private bool RefreshDeclaredBuffers()
         {
-            if (_surfelBuffer is null)
-            {
-                _surfelBuffer = new XRDataBuffer<SurfelGPU>(
-                    "SurfelGI_Surfels",
-                    EBufferTarget.ShaderStorageBuffer,
-                    MaxSurfels)
-                {
-                    Usage = EBufferUsage.DynamicDraw,
-                    BindingIndexOverride = 0u,
-                    DisposeOnPush = false,
-                    PadEndingToVec4 = false
-                };
-                _surfelBuffer.PushData();
-            }
+            var surfels = ActivePipelineInstance.GetBuffer(SurfelBufferName) as XRDataBuffer<SurfelGPU>;
+            var counters = ActivePipelineInstance.GetBuffer(CounterBufferName) as XRDataBuffer<int>;
+            var freeStack = ActivePipelineInstance.GetBuffer(FreeStackBufferName) as XRDataBuffer<uint>;
+            var gridCounts = ActivePipelineInstance.GetBuffer(GridCountsBufferName) as XRDataBuffer<uint>;
+            var gridIndices = ActivePipelineInstance.GetBuffer(GridIndicesBufferName) as XRDataBuffer<uint>;
 
-            if (_counterBuffer is null)
-            {
-                // 4 ints so it naturally aligns to a vec4 in std430.
-                _counterBuffer = new XRDataBuffer<int>(
-                    "SurfelGI_Counters",
-                    EBufferTarget.ShaderStorageBuffer,
-                    4u)
-                {
-                    Usage = EBufferUsage.DynamicDraw,
-                    BindingIndexOverride = 1u,
-                    DisposeOnPush = false,
-                    PadEndingToVec4 = true
-                };
-                _counterBuffer.PushData();
-            }
+            bool generationChanged =
+                !ReferenceEquals(_surfelBuffer, surfels) ||
+                !ReferenceEquals(_counterBuffer, counters) ||
+                !ReferenceEquals(_freeStackBuffer, freeStack) ||
+                !ReferenceEquals(_gridCountsBuffer, gridCounts) ||
+                !ReferenceEquals(_gridIndicesBuffer, gridIndices);
 
-            if (_freeStackBuffer is null)
-            {
-                _freeStackBuffer = new XRDataBuffer<uint>(
-                    "SurfelGI_FreeStack",
-                    EBufferTarget.ShaderStorageBuffer,
-                    MaxSurfels)
-                {
-                    Usage = EBufferUsage.DynamicDraw,
-                    BindingIndexOverride = 2u,
-                    DisposeOnPush = false,
-                    PadEndingToVec4 = false
-                };
-                _freeStackBuffer.PushData();
-            }
+            _surfelBuffer = surfels;
+            _counterBuffer = counters;
+            _freeStackBuffer = freeStack;
+            _gridCountsBuffer = gridCounts;
+            _gridIndicesBuffer = gridIndices;
 
-            uint cellCount = GridDimX * GridDimY * GridDimZ;
-            if (_gridCountsBuffer is null)
-            {
-                _gridCountsBuffer = new XRDataBuffer<uint>(
-                    "SurfelGI_GridCounts",
-                    EBufferTarget.ShaderStorageBuffer,
-                    cellCount)
-                {
-                    Usage = EBufferUsage.DynamicDraw,
-                    BindingIndexOverride = 3u,
-                    DisposeOnPush = false,
-                    PadEndingToVec4 = false
-                };
-                _gridCountsBuffer.PushData();
-            }
+            if (generationChanged)
+                _initialized = false;
 
-            if (_gridIndicesBuffer is null)
+            return surfels is not null && counters is not null && freeStack is not null && gridCounts is not null && gridIndices is not null;
+        }
+
+        internal static XRDataBuffer CreateDeclaredSurfelBuffer()
+            => CreateDeclaredBuffer<SurfelGPU>(SurfelBufferName, MaxSurfelsConst, 0u, padEndingToVec4: false);
+
+        internal static XRDataBuffer CreateDeclaredCounterBuffer()
+            => CreateDeclaredBuffer<int>(CounterBufferName, CounterCount, 1u, padEndingToVec4: true);
+
+        internal static XRDataBuffer CreateDeclaredFreeStackBuffer()
+            => CreateDeclaredBuffer<uint>(FreeStackBufferName, MaxSurfelsConst, 2u, padEndingToVec4: false);
+
+        internal static XRDataBuffer CreateDeclaredGridCountsBuffer()
+            => CreateDeclaredBuffer<uint>(GridCountsBufferName, GridCellCount, 3u, padEndingToVec4: false);
+
+        internal static XRDataBuffer CreateDeclaredGridIndicesBuffer()
+            => CreateDeclaredBuffer<uint>(GridIndicesBufferName, GridIndexCount, 4u, padEndingToVec4: false);
+
+        private static XRDataBuffer<T> CreateDeclaredBuffer<T>(string name, uint elementCount, uint bindingIndex, bool padEndingToVec4)
+            where T : unmanaged
+        {
+            var buffer = new XRDataBuffer<T>(name, EBufferTarget.ShaderStorageBuffer, elementCount)
             {
-                _gridIndicesBuffer = new XRDataBuffer<uint>(
-                    "SurfelGI_GridIndices",
-                    EBufferTarget.ShaderStorageBuffer,
-                    cellCount * GridMaxPerCell)
-                {
-                    Usage = EBufferUsage.DynamicDraw,
-                    BindingIndexOverride = 4u,
-                    DisposeOnPush = false,
-                    PadEndingToVec4 = false
-                };
-                _gridIndicesBuffer.PushData();
-            }
+                Usage = EBufferUsage.DynamicDraw,
+                BindingIndexOverride = bindingIndex,
+                DisposeOnPush = false,
+                PadEndingToVec4 = padEndingToVec4
+            };
+            buffer.PushData();
+            return buffer;
         }
 
         private void DispatchInit()
@@ -548,62 +535,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             program.Uniform("culledCommandFloats", CulledCommandFloats);
         }
 
-        /// <summary>
-        /// Builds a compact SSBO containing only world matrices (16 floats each)
-        /// copied from GPUScene.TransformBuffer.
-        /// </summary>
-        private void BuildCompactTransformAtlas(GPUScene? gpuScene)
-        {
-            if (gpuScene is null)
-            {
-                _transformAtlasElementCount = 0;
-                return;
-            }
-
-            uint commandCount = gpuScene.TotalCommandCount;
-            if (commandCount == 0)
-            {
-                _transformAtlasElementCount = 0;
-                return;
-            }
-
-            // Ensure atlas buffer exists and is large enough.
-            if (_transformAtlasBuffer is null)
-            {
-                _transformAtlasBuffer = new XRDataBuffer<Matrix4x4>(
-                    "SurfelGI_TransformAtlas",
-                    EBufferTarget.ShaderStorageBuffer,
-                    commandCount)
-                {
-                    Usage = EBufferUsage.DynamicDraw,
-                    BindingIndexOverride = 6u,
-                    DisposeOnPush = false,
-                    Resizable = true
-                };
-            }
-
-            if (_transformAtlasBuffer.ElementCount < commandCount)
-                _transformAtlasBuffer.Resize(commandCount);
-
-            _transformAtlasElementCount = commandCount;
-
-            XRDataBuffer transformBuffer = gpuScene.TransformBuffer;
-            if (!transformBuffer.TryGetAddress(out VoidPtr srcAddr) ||
-                !_transformAtlasBuffer.TryGetAddress(out VoidPtr dstAddr))
-            {
-                _transformAtlasElementCount = 0;
-                return;
-            }
-
-            const uint srcStride = 16u * sizeof(float);
-            const uint dstStride = 16u * sizeof(float);
-
-            for (uint i = 0; i < commandCount; i++)
-                Memory.Move(dstAddr + i * dstStride, srcAddr + i * srcStride, dstStride);
-
-            _transformAtlasBuffer.CommitDirtyBytes(0u, commandCount * dstStride);
-        }
-
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)
         {
             base.DescribeRenderPass(context);
@@ -614,11 +545,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             builder.SampleTexture(MakeTextureResource(AlbedoTextureName));
             builder.SampleTexture(MakeTextureResource(TransformIdTextureName));
 
-            builder.ReadWriteBuffer("SurfelGI_Surfels");
-            builder.ReadWriteBuffer("SurfelGI_Counters");
-            builder.ReadWriteBuffer("SurfelGI_FreeStack");
-            builder.ReadWriteBuffer("SurfelGI_GridCounts");
-            builder.ReadWriteBuffer("SurfelGI_GridIndices");
+            builder.ReadWriteBuffer(SurfelBufferName);
+            builder.ReadWriteBuffer(CounterBufferName);
+            builder.ReadWriteBuffer(FreeStackBufferName);
+            builder.ReadWriteBuffer(GridCountsBufferName);
+            builder.ReadWriteBuffer(GridIndicesBufferName);
 
             builder.ReadWriteTexture(MakeTextureResource(OutputTextureName));
             builder.SampleTexture(MakeTextureResource(OutputTextureName));

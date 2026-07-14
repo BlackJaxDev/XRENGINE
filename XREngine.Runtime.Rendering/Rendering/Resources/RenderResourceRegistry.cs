@@ -172,7 +172,7 @@ public sealed class RenderResourceRegistry
     /// </summary>
     /// <param name="texture">Texture instance whose Name becomes the logical registry key.</param>
     /// <param name="descriptor">Optional descriptor override to register before binding.</param>
-    public void BindTexture(XRTexture texture, TextureResourceDescriptor? descriptor = null)
+    public void BindTexture(XRTexture texture, TextureResourceDescriptor? descriptor = null, bool ownsInstance = true)
     {
         ArgumentNullException.ThrowIfNull(texture);
         string name = texture.Name ?? throw new InvalidOperationException("Texture name must be set before binding to the registry.");
@@ -192,7 +192,7 @@ public sealed class RenderResourceRegistry
             record = RegisterTextureDescriptor(descriptor);
         }
 
-        record.Bind(texture);
+        record.Bind(texture, ownsInstance);
     }
 
     /// <summary>
@@ -225,7 +225,7 @@ public sealed class RenderResourceRegistry
     /// </summary>
     /// <param name="buffer">Buffer instance whose AttributeName becomes the logical registry key.</param>
     /// <param name="descriptor">Optional descriptor override to register before binding.</param>
-    public void BindBuffer(XRDataBuffer buffer, BufferResourceDescriptor? descriptor = null)
+    public void BindBuffer(XRDataBuffer buffer, BufferResourceDescriptor? descriptor = null, bool ownsInstance = true)
     {
         ArgumentNullException.ThrowIfNull(buffer);
 
@@ -247,7 +247,7 @@ public sealed class RenderResourceRegistry
             record = RegisterBufferDescriptor(descriptor);
         }
 
-        record.Bind(buffer);
+        record.Bind(buffer, ownsInstance);
     }
 
     /// <summary>

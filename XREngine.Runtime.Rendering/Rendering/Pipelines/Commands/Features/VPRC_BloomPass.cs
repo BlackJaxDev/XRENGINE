@@ -283,12 +283,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                 : Stereo ? BloomUpsampleStereoFallbackScopeName : BloomUpsampleFallbackScopeName;
         }
 
-        private void RegenerateFBOs(uint width, uint height, XRTexture? sourceTexture)
+        private void RefreshDeclaredResources(uint width, uint height)
         {
             var instance = ActivePipelineInstance;
             if (instance is null)
             {
-                LogGuardFailure(nameof(RegenerateFBOs), "No active pipeline instance; skipping FBO regeneration.");
+                LogGuardFailure(nameof(RefreshDeclaredResources), "No active pipeline instance; skipping resource refresh.");
                 return;
             }
 
@@ -306,98 +306,49 @@ namespace XREngine.Rendering.Pipelines.Commands
             BloomRect3 = ResolveBloomMipRegion(width, height, 3);
             BloomRect4 = ResolveBloomMipRegion(width, height, 4);
 
-            (EPixelInternalFormat internalFormat, ESizedInternalFormat sizedInternalFormat, EPixelFormat pixelFormat, EPixelType pixelType) =
-                ResolveBloomTextureFormat(sourceTexture, instance);
-
-            XRTexture outputTexture = ResolveOrCreateBloomTexture(instance, width, height, _activeBloomMaxMip,
-                internalFormat, sizedInternalFormat, pixelFormat, pixelType);
+            XRTexture outputTexture = instance.GetTexture<XRTexture>(BloomOutputTextureName)
+                ?? throw new InvalidOperationException($"Declared bloom texture '{BloomOutputTextureName}' was not materialized.");
             ValidateBloomTextureContract(outputTexture, width, height, _activeBloomMaxMip);
+        }
 
-            _bloomSourceMipViews.Clear();
-            _bloomSourceViewTexture = outputTexture;
-
+        internal XRFrameBuffer CreateDeclaredFrameBuffer(XRRenderPipelineInstance instance, string name)
+        {
+            XRTexture outputTexture = instance.GetTexture<XRTexture>(BloomOutputTextureName)
+                ?? throw new InvalidOperationException($"Declared bloom texture '{BloomOutputTextureName}' was not materialized.");
             if (outputTexture is not IFrameBufferAttachement outputAttach)
-                throw new InvalidOperationException("Output texture is not an IFrameBufferAttachement.");
+                throw new InvalidOperationException($"Declared bloom texture '{BloomOutputTextureName}' is not framebuffer attachable.");
 
-            string copyShader = Path.Combine(SceneShaderPath, GetCopyShaderName());
-            string downsampleShader = Path.Combine(SceneShaderPath, GetDownsampleShaderName());
-            string upsampleShader = Path.Combine(SceneShaderPath, GetUpsampleShaderName());
-
-            // --- Mip 0 write target (for initial HDR scene copy) ---
-            var mip0 = new XRQuadFrameBuffer(CreateCopyMaterial(copyShader)) { Name = BloomMip0FBOName };
-            mip0.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
-            ValidateBloomWriteFboContract(mip0, outputTexture, 0);
-            mip0.SettingUniforms += BloomCopy_SettingUniforms;
-            instance.SetFBO(mip0);
-
-            // --- Downsample FBOs (target mips 1..N) ---
-            for (int mipLevel = 1; mipLevel <= _activeBloomMaxMip; ++mipLevel)
+            int targetMip;
+            XRMaterial material;
+            DelSetUniforms uniformCallback;
+            if (name == BloomMip0FBOName)
             {
-                var downsampleFbo = new XRQuadFrameBuffer(CreateDownsampleMaterial(outputTexture, mipLevel - 1, downsampleShader)) { Name = GetDownsampleFboName(mipLevel) };
-                downsampleFbo.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, mipLevel, -1));
-                ValidateBloomWriteFboContract(downsampleFbo, outputTexture, mipLevel);
-                downsampleFbo.SettingUniforms += mipLevel == 1
-                    ? DownsampleLevel1_SettingUniforms
-                    : DownsampleLevelN_SettingUniforms;
-                instance.SetFBO(downsampleFbo);
+                targetMip = 0;
+                material = CreateCopyMaterial(Path.Combine(SceneShaderPath, GetCopyShaderName()));
+                uniformCallback = BloomCopy_SettingUniforms;
+            }
+            else if (name is BloomDS1FBOName or BloomDS2FBOName or BloomDS3FBOName or BloomDS4FBOName)
+            {
+                targetMip = name == BloomDS1FBOName ? 1 : name == BloomDS2FBOName ? 2 : name == BloomDS3FBOName ? 3 : 4;
+                material = CreateDownsampleMaterial(outputTexture, targetMip - 1, Path.Combine(SceneShaderPath, GetDownsampleShaderName()));
+                uniformCallback = targetMip == 1 ? DownsampleLevel1_SettingUniforms : DownsampleLevelN_SettingUniforms;
+            }
+            else if (name is BloomUS1FBOName or BloomUS2FBOName or BloomUS3FBOName)
+            {
+                targetMip = name == BloomUS1FBOName ? 1 : name == BloomUS2FBOName ? 2 : 3;
+                material = CreateUpsampleMaterial(outputTexture, targetMip + 1, Path.Combine(SceneShaderPath, GetUpsampleShaderName()));
+                uniformCallback = UpsampleFbo_SettingUniforms;
+            }
+            else
+            {
+                throw new ArgumentOutOfRangeException(nameof(name), name, "Unknown declared bloom framebuffer.");
             }
 
-            // --- Upsample FBOs (target mips N-1..1, blended with downsample content) ---
-            for (int targetMipLevel = _activeBloomMaxMip - 1; targetMipLevel >= 1; --targetMipLevel)
-            {
-                int sourceMipLevel = targetMipLevel + 1;
-                var upsampleFbo = new XRQuadFrameBuffer(CreateUpsampleMaterial(outputTexture, sourceMipLevel, upsampleShader)) { Name = GetUpsampleFboName(targetMipLevel) };
-                upsampleFbo.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, targetMipLevel, -1));
-                ValidateBloomWriteFboContract(upsampleFbo, outputTexture, targetMipLevel);
-                upsampleFbo.SettingUniforms += UpsampleFbo_SettingUniforms;
-                instance.SetFBO(upsampleFbo);
-            }
-        }
-
-        private XRTexture ResolveOrCreateBloomTexture(
-            XRRenderPipelineInstance instance,
-            uint width,
-            uint height,
-            int maxMipLevel,
-            EPixelInternalFormat internalFormat,
-            ESizedInternalFormat sizedInternalFormat,
-            EPixelFormat pixelFormat,
-            EPixelType pixelType)
-        {
-            XRTexture? existing = instance.GetTexture<XRTexture>(BloomOutputTextureName);
-            if (IsBloomTextureCompatible(existing, width, height, maxMipLevel, sizedInternalFormat))
-                return existing!;
-
-            XRTexture outputTexture = CreateBloomTexture(width, height, maxMipLevel,
-                internalFormat, sizedInternalFormat, pixelFormat, pixelType);
-            instance.SetTexture(outputTexture);
-            return outputTexture;
-        }
-
-        private bool IsBloomTextureCompatible(
-            XRTexture? texture,
-            uint width,
-            uint height,
-            int maxMipLevel,
-            ESizedInternalFormat sizedInternalFormat)
-        {
-            if (texture is null)
-                return false;
-
-            if (Stereo)
-                return texture is XRTexture2DArray arrayTexture &&
-                    arrayTexture.Width == width &&
-                    arrayTexture.Height == height &&
-                    arrayTexture.SizedInternalFormat == sizedInternalFormat &&
-                    arrayTexture.LargestMipmapLevel == 0 &&
-                    arrayTexture.SmallestAllowedMipmapLevel >= maxMipLevel;
-
-            return texture is XRTexture2D monoTexture &&
-                monoTexture.Width == width &&
-                monoTexture.Height == height &&
-                monoTexture.SizedInternalFormat == sizedInternalFormat &&
-                monoTexture.LargestMipmapLevel == 0 &&
-                monoTexture.SmallestAllowedMipmapLevel >= maxMipLevel;
+            var frameBuffer = new XRQuadFrameBuffer(material) { Name = name };
+            frameBuffer.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, targetMip, -1));
+            frameBuffer.SettingUniforms += uniformCallback;
+            ValidateBloomWriteFboContract(frameBuffer, outputTexture, targetMip);
+            return frameBuffer;
         }
 
         private XRMaterial CreateDownsampleMaterial(XRTexture outputTexture, int sourceMip, string downsampleShader)
@@ -467,18 +418,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
+            RefreshDeclaredResources(inputFBO.Width, inputFBO.Height);
             var mip0 = instance.GetFBO<XRQuadFrameBuffer>(BloomMip0FBOName);
-            if (mip0 is null ||
-                inputFBO.Width != _lastWidth ||
-                inputFBO.Height != _lastHeight)
+            if (mip0 is null)
             {
-                RegenerateFBOs(inputFBO.Width, inputFBO.Height, inputTexture);
-                mip0 = instance.GetFBO<XRQuadFrameBuffer>(BloomMip0FBOName);
-                if (mip0 is null)
-                {
-                    LogGuardFailure(nameof(Execute), "Bloom FBO chain is incomplete after regeneration; skipping this frame.");
-                    return;
-                }
+                LogGuardFailure(nameof(Execute), "Declared bloom FBO chain is incomplete; skipping this frame.");
+                return;
             }
 
             // Step 1: Copy HDR scene into bloom texture mip 0.
@@ -639,7 +584,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private XRTexture GetOrCreateBloomSourceMipView(XRTexture bloomTexture, int sourceMip)
         {
-            int mip = Math.Clamp(sourceMip, 0, Math.Max(_activeBloomMaxMip, 0));
+            int mip = Math.Clamp(sourceMip, 0, Math.Max(bloomTexture.SmallestMipmapLevel, 0));
             if (!ReferenceEquals(_bloomSourceViewTexture, bloomTexture))
             {
                 _bloomSourceMipViews.Clear();

@@ -1,16 +1,17 @@
 # Render Pipeline Resource Lifecycle
 
 `XRRenderPipeline` now has an API-independent resource declaration path for
-pipeline-owned render targets, views, buffers, and framebuffers. The first
-implementation is wired into `DefaultRenderPipeline`; `DefaultRenderPipeline2`
-keeps its existing cache-command path.
+pipeline-owned render targets, views, buffers, framebuffers, and fullscreen
+material helpers. Both default pipelines and the retained UI, test, and surfel
+debug pipelines are declarative. Cache-or-create command types have been removed.
 
 ## Resource Layout
 
 Pipelines declare resources by overriding `DescribeResources(...)`. The builder
 produces an immutable `RenderPipelineResourceLayout` for a
 `RenderPipelineResourceProfile` containing the effective display size, internal
-size, stereo mode, HDR output mode, AA mode, MSAA sample count, and feature mask.
+size, stereo mode, HDR output mode, AA mode, MSAA sample count, external-target
+kind, and feature mask.
 
 Supported declared resource specs are:
 
@@ -19,9 +20,10 @@ Supported declared resource specs are:
 - `RenderBufferSpec`
 - `BufferSpec`
 - `FrameBufferSpec`
-- `QuadMaterialSpec` placeholder for future material-owned resources
+- `QuadMaterialSpec` for generation-owned, attachmentless fullscreen helpers
+- `ExternalResourceSpec` for imported window, caller, and XR targets
 
-Specs carry size policy, lifetime, usage, format, sample count, layer count,
+Owned specs carry size policy, lifetime, usage, format, sample count, layer count,
 history policy, feature predicate, dependencies, and a factory when the resource
 can be materialized up front. Layout construction validates duplicate names,
 missing dependencies, invalid framebuffer attachments, and unsupported sizes,
@@ -35,7 +37,44 @@ The specs lower into the existing descriptor records used by
 - `RenderBufferResourceDescriptor`
 - `BufferResourceDescriptor`
 
-This keeps OpenGL and Vulkan on the same logical resource contract.
+This keeps OpenGL and Vulkan on the same logical resource contract. External
+specs lower to no owned allocation: they record the expected resource kind,
+owner, and synchronization boundary and are bound by the window, caller, XR
+runtime, or backend.
+
+## Custom Pipeline Authoring
+
+A pipeline that owns GPU resources overrides `DescribeResources(...)`. Command
+builders consume those names only; they never create or repair a missing entry.
+
+```csharp
+protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
+{
+    builder.Texture("Color")
+        .Size(RenderResourceSizePolicy.Internal())
+        .Usage(RenderPipelineResourceUsage.SampledTexture |
+               RenderPipelineResourceUsage.ColorAttachment)
+        .Format(EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat)
+        .SizedFormat(ESizedInternalFormat.Rgba16f)
+        .Factory(CreateColorTexture)
+        .Add();
+
+    builder.FrameBuffer("ColorFBO")
+        .Size(RenderResourceSizePolicy.Internal())
+        .Color(0, "Color")
+        .Factory(CreateColorFbo)
+        .Add();
+}
+```
+
+Layout-affecting settings belong in `BuildResourceFeatureMaskForGenerationKey`
+or another explicit generation-key field. History uses `History(...)` and must
+define its first-frame behavior. Caller/window/XR-owned targets use
+`External(...)` with explicit ownership and synchronization. Resource-free
+pipelines such as `DebugOpaqueRenderPipeline` may render only to the imported
+output target and return an empty layout. `CustomRenderPipeline` command assets
+must likewise reference either declared names supplied by a specialized
+subclass or imported targets; arbitrary command-time allocation is unsupported.
 
 ## Generations
 
@@ -98,7 +137,7 @@ partially committed registry or stale exact-size diagnostics.
 
 ## Default Pipeline Coverage
 
-`DefaultRenderPipeline` declares the stable mono desktop core graph resources:
+`DefaultRenderPipeline` declares its complete profile-selected graph, including:
 
 - depth/stencil textures and depth/stencil views
 - GBuffer textures, transform IDs, and GBuffer FBOs
@@ -111,17 +150,16 @@ partially committed registry or stale exact-size diagnostics.
 - temporal history, velocity, motion blur, depth-of-field, and exposure-history
   resources
 - FXAA and TSR resources behind their AA predicates
+- bloom, SMAA, atmosphere, volumetric-fog, and exact-transparency resources
+- ReSTIR, light-volume, radiance-cascade, surfel, and voxel-cone GI outputs
+- overdraw and other debug visualization resources
+- attachmentless fullscreen materials represented by `QuadMaterialSpec`
 
-Some feature-local resources intentionally remain command-owned for this
-migration step: bloom chains, atmospheric scattering half-resolution chains,
-volumetric fog half-resolution chains, SMAA resources, exact-transparency
-scratch resources, and command-local fullscreen materials.
-
-An ambient-occlusion placeholder texture is declared so core FBOs can be
-materialized before the AO feature path runs. AO feature commands may replace it
-with the mode-specific AO target during execution; the deferred light-combine
-quad FBO therefore remains command-owned for now so the existing compatibility
-path can rebuild it after AO invalidates dependent FBOs.
+Mutually exclusive resources and attachment choices are selected by immutable
+profile predicates. AO-disabled profiles receive the declared fallback texture;
+AO-enabled profiles receive the declared mode-specific target, so light-combine
+attachments never rebuild themselves during command execution. Neither default
+command tree performs resource creation or descriptor publication during execution.
 
 ## Backend Contract
 

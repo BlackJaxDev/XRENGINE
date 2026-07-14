@@ -2,9 +2,8 @@
 
 [<- Rendering Architecture index](../../../architecture/rendering/README.md)
 
-Status: proposed design. This document describes the target v1 design for
-render-pipeline-owned resources and resize-time regeneration. It is intended to
-guide migration from command-list cache commands to explicit resource
+Status: implemented architecture; retained historical analysis below explains
+the migration from command-list cache commands to explicit resource
 specification and generation-based resource swaps.
 
 ## Summary
@@ -51,8 +50,8 @@ The target design is:
 ## Non-Goals
 
 - This is not a full frame-graph rewrite.
-- This round targets `DefaultRenderPipeline` only. `DefaultRenderPipeline2` is
-  explicitly out of scope and is not required to adopt the layout in this work.
+- V1 and V2 retain separate command-chain organization; declaration helpers may
+  be deduplicated without making V2 inherit V1's execution structure.
 - XR/stereo present integration (OpenXR/OpenVR swapchain images, per-eye
   targets) is out of scope and is deferred to a separate follow-up doc. The
   generation key reserves room for a stereo dimension, but this round implements

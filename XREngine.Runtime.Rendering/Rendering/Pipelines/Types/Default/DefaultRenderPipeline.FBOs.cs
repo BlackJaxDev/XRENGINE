@@ -963,12 +963,8 @@ public partial class DefaultRenderPipeline
 
     private XRFrameBuffer CreateForwardPassMsaaFBO()
     {
-        XRRenderBuffer colorBuffer = new(InternalWidth, InternalHeight, GetForwardMsaaColorFormat(), MsaaSampleCount)
-        {
-            FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0,
-            Name = $"{ForwardPassMsaaFBOName}_Color"
-        };
-        colorBuffer.Allocate();
+        XRRenderBuffer colorBuffer = TryCurrentPipeline?.GetRenderBuffer(ForwardPassMsaaColorRenderBufferName)
+            ?? throw new InvalidOperationException($"Missing declared renderbuffer '{ForwardPassMsaaColorRenderBufferName}'.");
 
         IFrameBufferAttachement depthAttach = EnsureTextureAttachment(ForwardPassMsaaDepthStencilTextureName, CreateForwardPassMsaaDepthStencilTexture);
 
@@ -1170,47 +1166,18 @@ public partial class DefaultRenderPipeline
 
     private IFrameBufferAttachement EnsureTextureAttachment(string textureName, Func<XRTexture> factory)
     {
+        _ = factory;
         XRTexture? texture = null;
         bool hasConcreteTexture = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Resources.TryGetTexture(textureName, out texture) == true;
         if (hasConcreteTexture && texture is IFrameBufferAttachement attachment)
             return attachment;
 
-        // These attachment names refer to concrete pipeline resources. After cache
-        // invalidation, the registry can be empty or hold a stale non-attachable
-        // survivor under the same name. Rebuild the concrete texture instead of
-        // trusting variable aliases or dangling view instances.
-        if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline is { } instance)
-        {
-            string reason = hasConcreteTexture && texture is not null
-                ? $"cached concrete texture type '{texture.GetType().Name}' is not FBO-attachable"
-                : "no concrete texture instance is registered";
-            LogAttachmentTextureRebuild(instance, textureName, texture, reason);
-        }
-
-        texture = factory();
-        SetTexture(texture);
-        return texture as IFrameBufferAttachement
-            ?? throw new InvalidOperationException($"Factory for '{textureName}' produced a non-FBO-attachable texture.");
-    }
-
-    private XRTexture EnsurePipelineTexture(string textureName, Func<XRTexture> factory)
-    {
-        XRTexture? texture = null;
-        bool hasConcreteTexture = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Resources.TryGetTexture(textureName, out texture) == true;
-        if (hasConcreteTexture && texture is not null)
-            return texture;
-
-        if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline is { } instance)
-        {
-            string reason = hasConcreteTexture
-                ? "cached concrete texture entry is null"
-                : "no concrete texture instance is registered";
-            LogAttachmentTextureRebuild(instance, textureName, texture, reason);
-        }
-
-        texture = factory();
-        SetTexture(texture);
-        return texture;
+        string actual = hasConcreteTexture && texture is not null
+            ? texture.GetType().Name
+            : "missing";
+        throw new InvalidOperationException(
+            $"Declared framebuffer dependency '{textureName}' is not attachable (actual={actual}). " +
+            "Resource factories must not repair or mutate the active registry.");
     }
 
     private XRFrameBuffer CreateVelocityFBO()
@@ -1383,6 +1350,17 @@ public partial class DefaultRenderPipeline
         // ForwardPassMSAAFBO always resolves into HDRSceneTex, which is fixed at RGBA16F.
         => ERenderBufferStorage.Rgba16f;
 
+    private XRRenderBuffer CreateForwardPassMsaaColorRenderBuffer()
+    {
+        XRRenderBuffer colorBuffer = new(InternalWidth, InternalHeight, GetForwardMsaaColorFormat(), MsaaSampleCount)
+        {
+            FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0,
+            Name = ForwardPassMsaaColorRenderBufferName
+        };
+        colorBuffer.Allocate();
+        return colorBuffer;
+    }
+
     private XRFrameBuffer CreateDepthPreloadFBO()
     {
         XRTexture depthViewTexture = GetTexture<XRTexture>(DepthViewTextureName)!;
@@ -1524,11 +1502,7 @@ public partial class DefaultRenderPipeline
         var lightCombineFBO = new XRQuadFrameBuffer(lightCombineMat, useTriangle: true, deriveRenderTargetsFromMaterial: false) { Name = LightCombineFBOName };
 
         if (diffuseTexture is not IFrameBufferAttachement attach)
-        {
-            diffuseTexture = CreateLightingTexture();
-            SetTexture(diffuseTexture);
-            attach = (IFrameBufferAttachement)diffuseTexture;
-        }
+            throw new InvalidOperationException($"Declared texture '{DiffuseTextureName}' is not FBO-attachable.");
         lightCombineFBO.SetRenderTargets((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
 
         return lightCombineFBO;
@@ -1747,17 +1721,16 @@ public partial class DefaultRenderPipeline
     /// </summary>
     private XRFrameBuffer CreateMsaaLightCombineFBO()
     {
-        _ = EnsurePipelineTexture(MsaaDepthStencilTextureName, CreateMsaaDepthStencilTexture);
-        var msaaLightingTexture = EnsurePipelineTexture(MsaaLightingTextureName, CreateMsaaLightingTexture);
+        var msaaLightingTexture = GetTexture<XRTexture>(MsaaLightingTextureName)!;
 
         XRTexture[] textures = [
-            EnsurePipelineTexture(MsaaAlbedoOpacityTextureName, CreateMsaaAlbedoOpacityTexture),
-            EnsurePipelineTexture(MsaaNormalTextureName, CreateMsaaNormalTexture),
-            EnsurePipelineTexture(MsaaRMSETextureName, CreateMsaaRMSETexture),
-            EnsurePipelineTexture(AmbientOcclusionIntensityTextureName, CreateAmbientOcclusionIntensityTexture),
-            EnsurePipelineTexture(MsaaDepthViewTextureName, CreateMsaaDepthViewTexture),
+            GetTexture<XRTexture>(MsaaAlbedoOpacityTextureName)!,
+            GetTexture<XRTexture>(MsaaNormalTextureName)!,
+            GetTexture<XRTexture>(MsaaRMSETextureName)!,
+            GetTexture<XRTexture>(AmbientOcclusionIntensityTextureName)!,
+            GetTexture<XRTexture>(MsaaDepthViewTextureName)!,
             msaaLightingTexture,
-            EnsurePipelineTexture(BRDFTextureName, CreateBRDFTexture),
+            GetTexture<XRTexture>(BRDFTextureName)!,
         ];
 
         XRShader baseShader = XRShader.EngineShader(

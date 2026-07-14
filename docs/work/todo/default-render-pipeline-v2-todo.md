@@ -1,5 +1,11 @@
 # DefaultRenderPipeline2 — Phased Implementation Todo
 
+> **Resource lifecycle completion (2026-07-10):** V2 is retained as the
+> cleaned-up, better-organized successor pipeline. It now implements the same
+> immutable resource-profile and generation model as V1. Its `Append*` command
+> decomposition and GPU annotations remain V2-owned; only resource allocation
+> moved out of executable commands.
+
 > **Audit note (2026-04-19):** This is now a historical phased plan. The current condensed backlog lives in [default-render-pipeline-follow-up-2026-04-20.md](./default-render-pipeline-follow-up-2026-04-20.md). The corrections below keep this file aligned with the current V1/V2 source layout so it can still be read safely.
 
 > **Audit refresh (2026-05-06):** V1 has continued evolving since this plan was written. Important deltas to keep in mind before continuing any phase below:
@@ -312,6 +318,32 @@ Audit note: V1 now also has `DefaultRenderPipeline.ResourceLogging.cs`. V2 does 
 - [x] **9.10** Document `XRE_USE_PIPELINE_V2` env var in README or relevant docs
 
 ---
+
+## Phase 10 — Declarative GPU Resource Lifecycle
+
+- [x] **10.1** Add `DefaultRenderPipeline2.Resources.cs` with immutable
+  profile-selected texture, view, renderbuffer, buffer, framebuffer,
+  fullscreen-material, history, and external-target declarations.
+- [x] **10.2** Include output size, internal size, HDR, effective AA/MSAA,
+  stereo/view shape, feature mask, capture policy, backend-safe path, and
+  imported target class in the generation key.
+- [x] **10.3** Remove all texture/FBO/buffer/renderbuffer cache authoring from
+  the V2 `Append*` command builders without collapsing their organization or
+  profiling annotations.
+- [x] **10.4** Move V2 PPLL, depth-peeling, atmosphere, fog, bloom, AO,
+  temporal, debug, GI, MSAA, FXAA, SMAA, and TSR resources into declarations.
+- [x] **10.5** Make SMAA consume declared edge, blend, output, and FBO resources
+  and report a missing/incompatible generation instead of allocating in-frame.
+- [x] **10.6** Remove the four cache-or-create command types and serialized
+  fixtures that referenced them.
+- [x] **10.7** Add layout and assembly-level source contracts preventing the
+  removed command family from returning.
+- [ ] **10.8** Deduplicate the V1/V2 declaration catalog behind shared helpers
+  once V2 feature parity is frozen; preserve separate command-chain structure.
+- [ ] **10.9** Replace mutable light-probe registry publication with an explicit
+  scene-resource/import binding generation shared by V1 and V2.
+- [ ] **10.10** Complete V2 OpenGL/Vulkan/VR visual validation across all
+  profile variants before promotion.
 
 ## Swap-In Checklist (post-validation, separate task)
 >

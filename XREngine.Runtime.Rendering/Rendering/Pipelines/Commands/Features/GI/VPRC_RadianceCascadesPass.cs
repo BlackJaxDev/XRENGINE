@@ -23,6 +23,8 @@ namespace XREngine.Rendering.Pipelines.Commands
     public class VPRC_RadianceCascadesPass : ViewportRenderCommand
     {
         private const uint GroupSize = 16u;
+        public const string HistoryTextureAName = "RadianceCascadeHistoryA";
+        public const string HistoryTextureBName = "RadianceCascadeHistoryB";
         private const string MonoShaderPath = "Compute/GI/RadianceCascades/RadianceCascades.comp";
         private const string StereoShaderPath = "Compute/GI/RadianceCascades/RadianceCascadesStereo.comp";
 
@@ -35,8 +37,6 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRTexture2DArray? _historyTextureStereoB;
         private bool _useHistoryA = true;
         private uint _frameIndex;
-        private int _lastHistoryWidth;
-        private int _lastHistoryHeight;
 
         public string DepthTextureName { get; set; } = DefaultRenderPipeline.DepthViewTextureName;
         public string NormalTextureName { get; set; } = DefaultRenderPipeline.NormalTextureName;
@@ -131,7 +131,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                     return;
                 }
 
-                EnsureHistoryTextureStereo(renderWidth, renderHeight);
+                if (!RefreshDeclaredHistoryTextures(stereo: true))
+                    return;
                 DispatchComputeStereo(camera, region, depthArray, normalArray, outputArray, cascades, cascadeComponent, worldToLocal, renderWidth, renderHeight);
             }
             else
@@ -144,7 +145,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                     return;
                 }
 
-                EnsureHistoryTexture(renderWidth, renderHeight);
+                if (!RefreshDeclaredHistoryTextures(stereo: false))
+                    return;
                 DispatchCompute(camera, region, depthTex, normalTex, outputTex, cascades, cascadeComponent, worldToLocal, renderWidth, renderHeight);
             }
 
@@ -153,64 +155,20 @@ namespace XREngine.Rendering.Pipelines.Commands
             _frameIndex++;
         }
 
-        private void EnsureHistoryTexture(int width, int height)
+        private bool RefreshDeclaredHistoryTextures(bool stereo)
         {
-            if (_historyTextureA is not null && _lastHistoryWidth == width && _lastHistoryHeight == height)
-                return;
+            XRTexture? historyA = ActivePipelineInstance.GetTexture<XRTexture>(HistoryTextureAName);
+            XRTexture? historyB = ActivePipelineInstance.GetTexture<XRTexture>(HistoryTextureBName);
+            if (stereo)
+            {
+                _historyTextureStereoA = historyA as XRTexture2DArray;
+                _historyTextureStereoB = historyB as XRTexture2DArray;
+                return _historyTextureStereoA is not null && _historyTextureStereoB is not null;
+            }
 
-            _historyTextureA?.Destroy();
-            _historyTextureB?.Destroy();
-            
-            _historyTextureA = new XRTexture2D((uint)width, (uint)height, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat)
-            {
-                MinFilter = ETexMinFilter.Linear,
-                MagFilter = ETexMagFilter.Linear,
-                UWrap = ETexWrapMode.ClampToEdge,
-                VWrap = ETexWrapMode.ClampToEdge,
-                Name = "RadianceCascadeHistoryA",
-                SamplerName = "gHistory",
-            };
-            _historyTextureB = new XRTexture2D((uint)width, (uint)height, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat)
-            {
-                MinFilter = ETexMinFilter.Linear,
-                MagFilter = ETexMagFilter.Linear,
-                UWrap = ETexWrapMode.ClampToEdge,
-                VWrap = ETexWrapMode.ClampToEdge,
-                Name = "RadianceCascadeHistoryB",
-                SamplerName = "gHistory",
-            };
-            _lastHistoryWidth = width;
-            _lastHistoryHeight = height;
-        }
-
-        private void EnsureHistoryTextureStereo(int width, int height)
-        {
-            if (_historyTextureStereoA is not null && _lastHistoryWidth == width && _lastHistoryHeight == height)
-                return;
-
-            _historyTextureStereoA?.Destroy();
-            _historyTextureStereoB?.Destroy();
-            
-            _historyTextureStereoA = new XRTexture2DArray((uint)width, (uint)height, 2, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat)
-            {
-                MinFilter = ETexMinFilter.Linear,
-                MagFilter = ETexMagFilter.Linear,
-                UWrap = ETexWrapMode.ClampToEdge,
-                VWrap = ETexWrapMode.ClampToEdge,
-                Name = "RadianceCascadeHistoryStereoA",
-                SamplerName = "gHistory",
-            };
-            _historyTextureStereoB = new XRTexture2DArray((uint)width, (uint)height, 2, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat)
-            {
-                MinFilter = ETexMinFilter.Linear,
-                MagFilter = ETexMagFilter.Linear,
-                UWrap = ETexWrapMode.ClampToEdge,
-                VWrap = ETexWrapMode.ClampToEdge,
-                Name = "RadianceCascadeHistoryStereoB",
-                SamplerName = "gHistory",
-            };
-            _lastHistoryWidth = width;
-            _lastHistoryHeight = height;
+            _historyTextureA = historyA as XRTexture2D;
+            _historyTextureB = historyB as XRTexture2D;
+            return _historyTextureA is not null && _historyTextureB is not null;
         }
 
         private XRTexture2D? GetCurrentHistoryTexture() => _useHistoryA ? _historyTextureA : _historyTextureB;
@@ -313,6 +271,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             _computeProgram.Sampler("gDepth", depthTex, 0);
             _computeProgram.Sampler("gNormal", normalTex, 1);
             _computeProgram.BindImageTexture(2u, outputTex, 0, false, 0, XRRenderProgram.EImageAccess.ReadWrite, XRRenderProgram.EImageFormat.RGBA16F);
+            XRTexture2D? currentHistory = GetCurrentHistoryTexture();
+            if (currentHistory is null)
+                return;
+            _computeProgram.BindImageTexture(8u, currentHistory, 0, false, 0, XRRenderProgram.EImageAccess.WriteOnly, XRRenderProgram.EImageFormat.RGBA16F);
 
             // Bind previous frame's history texture for temporal accumulation (ping-pong)
             var historyTex = GetPreviousHistoryTexture();
@@ -362,6 +324,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             _computeProgramStereo.Sampler("gDepth", depthTex, 0);
             _computeProgramStereo.Sampler("gNormal", normalTex, 1);
             _computeProgramStereo.BindImageTexture(2u, outputTex, 0, true, 0, XRRenderProgram.EImageAccess.ReadWrite, XRRenderProgram.EImageFormat.RGBA16F);
+            XRTexture2DArray? currentHistory = GetCurrentHistoryTextureStereo();
+            if (currentHistory is null)
+                return;
+            _computeProgramStereo.BindImageTexture(8u, currentHistory, 0, true, 0, XRRenderProgram.EImageAccess.WriteOnly, XRRenderProgram.EImageFormat.RGBA16F);
 
             // Bind previous frame's history texture for temporal accumulation (ping-pong)
             var historyTexStereo = GetPreviousHistoryTextureStereo();

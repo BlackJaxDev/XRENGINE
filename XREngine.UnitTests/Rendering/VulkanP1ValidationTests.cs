@@ -549,37 +549,49 @@ public sealed class VulkanP1ValidationTests
     }
 
     [Test]
-    public void PublishFramebufferForSampling_RegistersAttachmentsInFrameOpContextRegistry()
+    public void FrameOpFrameBuffers_AreDeclaredInPlannerOverlayWithoutMutatingGenerationRegistry()
     {
         string frameLoopSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs")
             .Replace("\r\n", "\n");
-        string registrationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/VulkanRenderer.ResourceRegistration.cs")
+        string plannerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs")
             .Replace("\r\n", "\n");
-        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs")
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs")
+            .Replace("\r\n", "\n");
+        string blitSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Blit.cs")
+            .Replace("\r\n", "\n");
+        string initializationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs")
+            .Replace("\r\n", "\n");
+        string registrationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/VulkanRenderer.ResourceRegistration.cs")
             .Replace("\r\n", "\n");
 
         string publishMethod = SliceBetween(
             frameLoopSource,
             "public override void PublishFrameBufferAttachmentsForSampling",
             "public override void ColorMask");
-        int contextSelection = publishMethod.IndexOf("if (TryGetLastFrameOpForTarget(frameBuffer", StringComparison.Ordinal);
-        int contextRegistration = publishMethod.IndexOf("EnsureFrameBufferAttachmentsRegistered(frameBuffer, context.ResourceRegistry);", StringComparison.Ordinal);
-        contextSelection.ShouldBeGreaterThanOrEqualTo(0);
-        contextRegistration.ShouldBeGreaterThan(contextSelection);
-        publishMethod.ShouldContain("EnsureFrameBufferRegistered(frameBuffer, context.ResourceRegistry);");
-        publishMethod.ShouldNotContain("EnsureFrameBufferAttachmentsRegistered(frameBuffer);\n\n            FrameOpContext context;");
-
-        registrationSource.ShouldContain("private void EnsureFrameBufferRegistered(XRFrameBuffer frameBuffer, RenderResourceRegistry? registry)");
-        registrationSource.ShouldContain("private void EnsureFrameBufferAttachmentsRegistered(XRFrameBuffer frameBuffer, RenderResourceRegistry? registry)");
+        publishMethod.ShouldContain("EnqueueFrameOp(new PublishFramebufferForSamplingOp(passIndex, frameBuffer, context));");
+        publishMethod.ShouldNotContain("EnsureFrameBufferRegistered");
+        publishMethod.ShouldNotContain("EnsureFrameBufferAttachmentsRegistered");
 
         string recordPublish = SliceBetween(
             commandBufferSource,
             "private void RecordPublishFramebufferForSamplingOp",
             "private static ImageLayout ResolvePublishedSampledLayout");
-        recordPublish.ShouldContain("RenderResourceRegistry? publishRegistry =\n                op.Context.ResourceRegistry ?? RuntimeEngine.Rendering.State.CurrentResourceRegistry;");
-        recordPublish.ShouldContain("EnsureFrameBufferRegistered(fbo, publishRegistry);");
-        recordPublish.ShouldContain("EnsureFrameBufferAttachmentsRegistered(fbo, publishRegistry);");
-        recordPublish.ShouldNotContain("EnsureFrameBufferAttachmentsRegistered(fbo);\n\n            if (GetOrCreateAPIRenderObject");
+        recordPublish.ShouldNotContain("EnsureFrameBufferRegistered");
+        recordPublish.ShouldNotContain("EnsureFrameBufferAttachmentsRegistered");
+
+        plannerSource.ShouldContain("AddFrameOpFrameBufferDescriptors(merged, ops);");
+        plannerSource.ShouldContain("RegisterTextureDescriptor(EnrichTextureDescriptorForFrameBufferAttachment");
+        plannerSource.ShouldContain("RegisterFrameBufferDescriptor(RenderResourceDescriptorFactory.FromFrameBuffer");
+        plannerSource.ShouldContain("RenderResourceLifetime.External");
+        plannerSource.ShouldContain("int frameBufferDescriptorSignature = ComputeFrameOpFrameBufferDescriptorSignature(ops);");
+        plannerSource.ShouldNotContain("RegisterFrameOpOutputFrameBuffer");
+        blitSource.ShouldNotContain("EnsureFrameBufferRegistered");
+        blitSource.ShouldNotContain("EnsureFrameBufferAttachmentsRegistered");
+        initializationSource.ShouldNotContain("EnsureFrameBufferRegistered(fbo);");
+        initializationSource.ShouldNotContain("EnsureFrameBufferAttachmentsRegistered(fbo);");
+        registrationSource.ShouldNotContain("registry.BindFrameBuffer(");
+        registrationSource.ShouldNotContain("registry.BindTexture(");
+        registrationSource.ShouldNotContain("registry.BindBuffer(");
     }
 
     [Test]
@@ -772,10 +784,6 @@ public sealed class VulkanP1ValidationTests
         string win32ResizeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/InteractiveResize/Win32ModalLoopTimerInteractiveResizeStrategy.cs");
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
         string resizeResourceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/RenderPipelineAntiAliasingResources.cs");
-        string resizeRecoveryTextures = SliceBetween(
-            resizeResourceSource,
-            "internal static readonly string[] ResizeRecoveryTextureDependencies",
-            "internal static readonly string[] ResizeRecoveryFrameBufferDependencies");
 
         drawingSource.ShouldContain("AcquireNextImage");
         drawingSource.ShouldContain("Result.ErrorOutOfDateKhr");
@@ -809,7 +817,9 @@ public sealed class VulkanP1ValidationTests
         syncSource.ShouldContain("GetSemaphoreCounterValue");
         win32ResizeSource.ShouldContain("private const int VulkanActiveSizingRenderHz = 60;");
         win32ResizeSource.ShouldNotContain("if (ApplyCoalescedClientPresentationResize(\"win32-timer\"))");
-        resizeRecoveryTextures.ShouldNotContain("AutoExposureTextureName");
+        resizeResourceSource.ShouldContain("InvalidateAntiAliasingResources(instance, \"ViewportResized\")");
+        resizeResourceSource.ShouldNotContain("RemoveTextureResource");
+        resizeResourceSource.ShouldNotContain("RemoveFrameBufferResource");
 
         commandBufferSource.ShouldContain("swapchainPresentTransitions");
         commandBufferSource.ShouldContain("usedSwapchainDynamicRendering");

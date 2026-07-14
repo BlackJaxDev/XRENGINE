@@ -92,6 +92,14 @@ VMA is not retrieved from upstream as a prebuilt DLL. GPUOpen VMA is a header-on
 - Direct build script: `Tools/Build-VulkanMemoryAllocatorBridge.ps1`
 - Requirements: LunarG Vulkan SDK with `VULKAN_SDK` set, plus Visual Studio Build Tools with Desktop development with C++
 
+Install or refresh the Windows SDK through the `Deps` section of `ExecTool`, or run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Dependencies\Install-LatestVulkanSdk.ps1
+```
+
+The script queries LunarG's latest-version API, verifies the downloaded installer against LunarG's published SHA-256 and its Authenticode signature, then launches the interactive installer. If the latest SDK is already present under `<drive>:\VulkanSDK\<version>`, it reports that installation without downloading it again. Open a new shell after installation so `VULKAN_SDK` and `PATH` are refreshed.
+
 For a fresh checkout:
 
 ```powershell

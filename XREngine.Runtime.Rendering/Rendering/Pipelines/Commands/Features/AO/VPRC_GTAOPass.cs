@@ -6,12 +6,11 @@ using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
-    public class VPRC_GTAOPass : ViewportRenderCommand
+    public class VPRC_GTAOPass : ViewportRenderCommand, IDeclaredAoResourceProvider
     {
         private static void Log(string message)
             => Debug.Rendering(EOutputVerbosity.Normal, false, "[AO][GTAO] {0}", message);
@@ -106,15 +105,21 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRTexture? rmseTex = instance.GetTexture<XRTexture>(RMSETextureName);
             XRTexture? transformIdTex = instance.GetTexture<XRTexture>(TransformIdTextureName);
             XRTexture? depthStencilTex = instance.GetTexture<XRTexture>(DepthStencilTextureName);
+            XRTexture? rawAoTex = instance.GetTexture<XRTexture>(RawIntensityTextureName);
+            XRTexture? horizontalBlurTex = instance.GetTexture<XRTexture>(IntermediateIntensityTextureName);
+            XRTexture? finalAoTex = instance.GetTexture<XRTexture>(FinalIntensityTextureName);
 
             if (normalTex is null ||
                 depthViewTex is null ||
                 albedoTex is null ||
                 rmseTex is null ||
                 transformIdTex is null ||
-                depthStencilTex is null)
+                depthStencilTex is null ||
+                rawAoTex is null ||
+                horizontalBlurTex is null ||
+                finalAoTex is null)
             {
-                Log($"Missing required GBuffer textures; skipping GTAO resource refresh. normal={normalTex is not null}, depthView={depthViewTex is not null}, albedo={albedoTex is not null}, rmse={rmseTex is not null}, transformId={transformIdTex is not null}, depthStencil={depthStencilTex is not null}");
+                Log("Missing required declared textures; skipping GTAO resource refresh.");
                 return;
             }
 
@@ -124,12 +129,9 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             if (!forceRebuild)
             {
-                XRTexture? registeredAo = instance.GetTexture<XRTexture>(FinalIntensityTextureName);
-                forceRebuild = state.RawAoTexture is null
-                    || state.HorizontalBlurTexture is null
-                    || state.FinalAoTexture is null
-                    || registeredAo is null
-                    || !ReferenceEquals(state.FinalAoTexture, registeredAo)
+                forceRebuild = !ReferenceEquals(state.RawAoTexture, rawAoTex)
+                    || !ReferenceEquals(state.HorizontalBlurTexture, horizontalBlurTex)
+                    || !ReferenceEquals(state.FinalAoTexture, finalAoTex)
                     || !ReferenceEquals(state.NormalTexture, normalTex)
                     || !ReferenceEquals(state.DepthViewTexture, depthViewTex)
                     || !ReferenceEquals(state.AlbedoTexture, albedoTex)
@@ -139,7 +141,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             if (!forceRebuild)
-                forceRebuild = !instance.TryGetFBO(GenerationFBOName, out _);
+                forceRebuild = !HasDeclaredFrameBuffers(instance);
 
             int resDivisor = (int)(GetCurrentSettings()?.GTAOResolution
                 ?? GroundTruthAmbientOcclusionSettings.EResolution.Half);
@@ -148,22 +150,17 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (!forceRebuild && width == state.LastWidth && height == state.LastHeight && resDivisor == state.LastResolutionDivisor)
                 return;
 
-            RegenerateFBOs(
-                instance,
-                state,
-                normalTex,
-                depthViewTex,
-                albedoTex,
-                rmseTex,
-                transformIdTex,
-                depthStencilTex,
-                width,
-                height,
-                resDivisor);
+            RefreshDeclaredResources(state, normalTex, depthViewTex, albedoTex, rmseTex, transformIdTex,
+                depthStencilTex, rawAoTex, horizontalBlurTex, finalAoTex, width, height, resDivisor);
         }
 
-        private void RegenerateFBOs(
-            XRRenderPipelineInstance instance,
+        private bool HasDeclaredFrameBuffers(XRRenderPipelineInstance instance)
+            => instance.TryGetFBO(GenerationFBOName, out _)
+            && instance.TryGetFBO(BlurFBOName, out _)
+            && instance.TryGetFBO(BlurIntermediateFBOName, out _)
+            && instance.TryGetFBO(OutputFBOName, out _);
+
+        private void RefreshDeclaredResources(
             InstanceState state,
             XRTexture normalTex,
             XRTexture depthViewTex,
@@ -171,6 +168,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRTexture rmseTex,
             XRTexture transformIdTex,
             XRTexture depthStencilTex,
+            XRTexture rawAoTex,
+            XRTexture horizontalBlurTex,
+            XRTexture finalAoTex,
             int width,
             int height,
             int resDivisor)
@@ -179,23 +179,77 @@ namespace XREngine.Rendering.Pipelines.Commands
             state.LastHeight = height;
             state.LastResolutionDivisor = resDivisor;
 
-            // AO gen and blur intermediate textures run at reduced resolution;
-            // the final output stays at full res for the GBuffer composite.
-            int aoWidth = Math.Max(width / resDivisor, 1);
-            int aoHeight = Math.Max(height / resDivisor, 1);
             state.NormalTexture = normalTex;
             state.DepthViewTexture = depthViewTex;
             state.AlbedoTexture = albedoTex;
             state.RmseTexture = rmseTex;
             state.TransformIdTexture = transformIdTex;
             state.DepthStencilTexture = depthStencilTex;
+            state.RawAoTexture = rawAoTex;
+            state.HorizontalBlurTexture = horizontalBlurTex;
+            state.FinalAoTexture = finalAoTex;
+            ConfigureAoSampler(rawAoTex, InputSamplerName, bilinear: false);
+            ConfigureAoSampler(horizontalBlurTex, InputSamplerName, bilinear: resDivisor > 1);
+            ConfigureAoSampler(finalAoTex, FinalIntensityTextureName, bilinear: false);
+        }
 
-            state.RawAoTexture = ResolveAoTexture(instance, state.RawAoTexture, aoWidth, aoHeight, RawIntensityTextureName, InputSamplerName);
-            state.HorizontalBlurTexture = ResolveAoTexture(instance, state.HorizontalBlurTexture, aoWidth, aoHeight, IntermediateIntensityTextureName, InputSamplerName, bilinear: resDivisor > 1);
-            state.FinalAoTexture = ResolveAoTexture(instance, state.FinalAoTexture, width, height, FinalIntensityTextureName, FinalIntensityTextureName);
-            InvalidateDependentFbos(instance);
+        public XRFrameBuffer CreateDeclaredFrameBuffer(XRRenderPipelineInstance instance, string name)
+        {
+            RenderingParameters renderParams = CreateRenderParameters();
+            XRShader blurShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, GTAOBlurShaderName()), EShaderType.Fragment);
 
-            RenderingParameters renderParams = new()
+            if (string.Equals(name, BlurFBOName, StringComparison.Ordinal))
+            {
+                XRMaterial material = new([
+                    RequireTexture(instance, RawIntensityTextureName),
+                    RequireTexture(instance, DepthViewTextureName),
+                    RequireTexture(instance, NormalTextureName)], blurShader) { RenderOptions = renderParams };
+                XRQuadFrameBuffer frameBuffer = new(material, true,
+                    (RequireAttachment(instance, RawIntensityTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1))
+                {
+                    Name = BlurFBOName
+                };
+                frameBuffer.SettingUniforms += GTAOHorizontalBlur_SetUniforms;
+                return frameBuffer;
+            }
+
+            if (string.Equals(name, BlurIntermediateFBOName, StringComparison.Ordinal))
+            {
+                XRMaterial material = new([
+                    RequireTexture(instance, IntermediateIntensityTextureName),
+                    RequireTexture(instance, DepthViewTextureName),
+                    RequireTexture(instance, NormalTextureName)], blurShader) { RenderOptions = renderParams };
+                XRQuadFrameBuffer frameBuffer = new(material, true,
+                    (RequireAttachment(instance, IntermediateIntensityTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1))
+                {
+                    Name = BlurIntermediateFBOName
+                };
+                frameBuffer.SettingUniforms += GTAOVerticalBlur_SetUniforms;
+                return frameBuffer;
+            }
+
+            if (!string.Equals(name, GenerationFBOName, StringComparison.Ordinal))
+                throw new InvalidOperationException($"Unsupported GTAO framebuffer '{name}'.");
+
+            XRShader genShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, GTAOGenShaderName()), EShaderType.Fragment);
+            XRMaterial genMaterial = new([
+                RequireTexture(instance, NormalTextureName),
+                RequireTexture(instance, DepthViewTextureName)], genShader) { RenderOptions = renderParams };
+            XRQuadFrameBuffer genFbo = new(genMaterial, true,
+                (RequireAttachment(instance, AlbedoTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                (RequireAttachment(instance, NormalTextureName), EFrameBufferAttachment.ColorAttachment1, 0, -1),
+                (RequireAttachment(instance, RMSETextureName), EFrameBufferAttachment.ColorAttachment2, 0, -1),
+                (RequireAttachment(instance, TransformIdTextureName), EFrameBufferAttachment.ColorAttachment3, 0, -1),
+                (RequireAttachment(instance, DepthStencilTextureName), EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+            {
+                Name = GenerationFBOName
+            };
+            genFbo.SettingUniforms += GTAOGen_SetUniforms;
+            return genFbo;
+        }
+
+        private static RenderingParameters CreateRenderParameters()
+            => new()
             {
                 RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy,
                 DepthTest =
@@ -206,165 +260,29 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
             };
 
-            XRShader genShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, GTAOGenShaderName()), EShaderType.Fragment);
-            XRShader blurShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, GTAOBlurShaderName()), EShaderType.Fragment);
+        private static XRTexture RequireTexture(XRRenderPipelineInstance instance, string textureName)
+            => instance.GetTexture<XRTexture>(textureName)
+                ?? throw new InvalidOperationException($"Missing declared GTAO texture '{textureName}'.");
 
-            XRMaterial genMaterial = new([normalTex, depthViewTex], genShader) { RenderOptions = renderParams };
-            XRMaterial horizontalBlurMaterial = new([state.RawAoTexture, depthViewTex, normalTex], blurShader) { RenderOptions = renderParams };
-            XRMaterial verticalBlurMaterial = new([state.HorizontalBlurTexture, depthViewTex, normalTex], blurShader) { RenderOptions = renderParams };
-
-            if (albedoTex is not IFrameBufferAttachement albedoAttach)
-                throw new ArgumentException("Albedo texture must be an IFrameBufferAttachement");
-
-            if (normalTex is not IFrameBufferAttachement normalAttach)
-                throw new ArgumentException("Normal texture must be an IFrameBufferAttachement");
-
-            if (rmseTex is not IFrameBufferAttachement rmseAttach)
-                throw new ArgumentException("RMSE texture must be an IFrameBufferAttachement");
-
-            if (transformIdTex is not IFrameBufferAttachement transformIdAttach)
-                throw new ArgumentException("TransformId texture must be an IFrameBufferAttachement");
-
-            if (depthStencilTex is not IFrameBufferAttachement depthStencilAttach)
-                throw new ArgumentException("DepthStencil texture must be an IFrameBufferAttachement");
-
-            if (state.RawAoTexture is not IFrameBufferAttachement rawAoAttach)
-                throw new ArgumentException("Raw GTAO texture must be an IFrameBufferAttachement");
-
-            if (state.HorizontalBlurTexture is not IFrameBufferAttachement horizontalAoAttach)
-                throw new ArgumentException("Horizontal GTAO blur texture must be an IFrameBufferAttachement");
-
-            if (state.FinalAoTexture is not IFrameBufferAttachement finalAoAttach)
-                throw new ArgumentException("Final GTAO texture must be an IFrameBufferAttachement");
-
-            XRQuadFrameBuffer genFbo = new(genMaterial, true,
-                (albedoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
-                (normalAttach, EFrameBufferAttachment.ColorAttachment1, 0, -1),
-                (rmseAttach, EFrameBufferAttachment.ColorAttachment2, 0, -1),
-                (transformIdAttach, EFrameBufferAttachment.ColorAttachment3, 0, -1),
-                (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
-            {
-                Name = GenerationFBOName
-            };
-            genFbo.SettingUniforms += GTAOGen_SetUniforms;
-
-            XRQuadFrameBuffer horizontalBlurFbo = new(horizontalBlurMaterial, true,
-                (rawAoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
-            {
-                Name = BlurFBOName
-            };
-            horizontalBlurFbo.SettingUniforms += GTAOHorizontalBlur_SetUniforms;
-
-            XRQuadFrameBuffer verticalBlurFbo = new(verticalBlurMaterial, true,
-                (horizontalAoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
-            {
-                Name = BlurIntermediateFBOName
-            };
-            verticalBlurFbo.SettingUniforms += GTAOVerticalBlur_SetUniforms;
-
-            XRFrameBuffer outputFbo = new((finalAoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
-            {
-                Name = OutputFBOName
-            };
-
-            SetDynamicFBO(instance, genFbo);
-            SetDynamicFBO(instance, horizontalBlurFbo);
-            SetDynamicFBO(instance, verticalBlurFbo);
-            SetDynamicFBO(instance, outputFbo, RenderResourceSizePolicy.Internal());
-        }
-
-        private XRTexture ResolveAoTexture(
-            XRRenderPipelineInstance instance,
-            XRTexture? previousTexture,
-            int width,
-            int height,
-            string textureName,
-            string samplerName,
-            bool bilinear = false)
-        {
-            XRTexture? registeredTexture = instance.GetTexture<XRTexture>(textureName);
-            if (registeredTexture is not null && TextureMatchesSize(registeredTexture, width, height))
-            {
-                ConfigureAoSampler(registeredTexture, samplerName, bilinear);
-                return registeredTexture;
-            }
-
-            if (previousTexture is not null && !ReferenceEquals(previousTexture, registeredTexture))
-                previousTexture.Destroy();
-
-            XRTexture createdTexture = CreateAoTexture(width, height, textureName, samplerName, bilinear);
-            SetDynamicTexture(instance, createdTexture);
-            return createdTexture;
-        }
-
-        private static void SetDynamicTexture(XRRenderPipelineInstance instance, XRTexture texture)
-            => instance.SetTexture(texture, RenderResourceDescriptorFactory.FromTexture(texture));
-
-        private static void SetDynamicFBO(
-            XRRenderPipelineInstance instance,
-            XRFrameBuffer frameBuffer,
-            RenderResourceSizePolicy? sizePolicy = null)
-        {
-            FrameBufferResourceDescriptor descriptor = RenderResourceDescriptorFactory.FromFrameBuffer(frameBuffer);
-            if (sizePolicy is { } resolvedSizePolicy)
-                descriptor = descriptor with { SizePolicy = resolvedSizePolicy };
-
-            instance.SetFBO(frameBuffer, descriptor);
-        }
-
-        private static bool TextureMatchesSize(XRTexture texture, int width, int height)
-        {
-            Vector3 dims = texture.WidthHeightDepth;
-            return (int)MathF.Round(dims.X) == Math.Max(width, 1) &&
-                   (int)MathF.Round(dims.Y) == Math.Max(height, 1);
-        }
+        private static IFrameBufferAttachement RequireAttachment(XRRenderPipelineInstance instance, string textureName)
+            => RequireTexture(instance, textureName) as IFrameBufferAttachement
+                ?? throw new InvalidOperationException($"Declared GTAO texture '{textureName}' is not framebuffer-attachable.");
 
         private static void ConfigureAoSampler(XRTexture texture, string samplerName, bool bilinear)
         {
             texture.SamplerName = samplerName;
-        }
-
-        private XRTexture CreateAoTexture(int width, int height, string textureName, string samplerName, bool bilinear = false)
-        {
-            var minFilter = bilinear ? ETexMinFilter.Linear : ETexMinFilter.Nearest;
-            var magFilter = bilinear ? ETexMagFilter.Linear : ETexMagFilter.Nearest;
-
-            if (Stereo)
+            ETexMinFilter minFilter = bilinear ? ETexMinFilter.Linear : ETexMinFilter.Nearest;
+            ETexMagFilter magFilter = bilinear ? ETexMagFilter.Linear : ETexMagFilter.Nearest;
+            if (texture is XRTexture2D texture2D)
             {
-                var texture = XRTexture2DArray.CreateFrameBufferTexture(
-                    2,
-                    (uint)width,
-                    (uint)height,
-                    EPixelInternalFormat.R16f,
-                    EPixelFormat.Red,
-                    EPixelType.HalfFloat,
-                    EFrameBufferAttachment.ColorAttachment0);
-                texture.Resizable = false;
-                texture.SizedInternalFormat = ESizedInternalFormat.R16f;
-                texture.OVRMultiViewParameters = new(0, 2u);
-                texture.Name = textureName;
-                texture.SamplerName = samplerName;
-                texture.MinFilter = minFilter;
-                texture.MagFilter = magFilter;
-                texture.UWrap = ETexWrapMode.ClampToEdge;
-                texture.VWrap = ETexWrapMode.ClampToEdge;
-                return texture;
+                texture2D.MinFilter = minFilter;
+                texture2D.MagFilter = magFilter;
             }
-
-            var aoTexture = XRTexture2D.CreateFrameBufferTexture(
-                (uint)width,
-                (uint)height,
-                EPixelInternalFormat.R16f,
-                EPixelFormat.Red,
-                EPixelType.HalfFloat,
-                EFrameBufferAttachment.ColorAttachment0);
-            aoTexture.Name = textureName;
-            aoTexture.SamplerName = samplerName;
-            aoTexture.MinFilter = minFilter;
-            aoTexture.MagFilter = magFilter;
-            aoTexture.UWrap = ETexWrapMode.ClampToEdge;
-            aoTexture.VWrap = ETexWrapMode.ClampToEdge;
-            return aoTexture;
+            else if (texture is XRTexture2DArray textureArray)
+            {
+                textureArray.MinFilter = minFilter;
+                textureArray.MagFilter = magFilter;
+            }
         }
 
         private void GTAOGen_SetUniforms(XRRenderProgram program)
@@ -483,20 +401,6 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ?? instance?.LastRenderingCamera;
         }
 
-        private void InvalidateDependentFbos(XRRenderPipelineInstance instance)
-        {
-            if (DependentFboNames.Length == 0)
-                return;
-
-            foreach (string name in DependentFboNames)
-            {
-                if (string.IsNullOrWhiteSpace(name))
-                    continue;
-
-                instance.Resources.RemoveFrameBuffer(name);
-            }
-        }
-
         internal override void AllocateContainerResources(XRRenderPipelineInstance instance)
         {
             GetInstanceState(instance).ResourcesDirty = true;
@@ -508,11 +412,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             
             state.ResourcesDirty = true;
-            state.RawAoTexture?.Destroy();
             state.RawAoTexture = null;
-            state.HorizontalBlurTexture?.Destroy();
             state.HorizontalBlurTexture = null;
-            state.FinalAoTexture?.Destroy();
             state.FinalAoTexture = null;
             state.LastWidth = 0;
             state.LastHeight = 0;

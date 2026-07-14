@@ -15,9 +15,7 @@ public sealed partial class RenderPipelineResourceLayoutBuilder(RenderPipelineRe
     /// Initializes a new instance of the <see cref="RenderPipelineResourceLayoutBuilder"/> class with an empty resource profile.
     /// </summary>
     public RenderPipelineResourceLayoutBuilder()
-        : this(RenderPipelineResourceProfile.Empty)
-    {
-    }
+        : this(RenderPipelineResourceProfile.Empty) { }
 
     /// <summary>
     /// Gets the resource profile associated with this builder.
@@ -63,6 +61,19 @@ public sealed partial class RenderPipelineResourceLayoutBuilder(RenderPipelineRe
     /// <param name="name">The name of the frame buffer resource.</param>
     /// <returns>A <see cref="FrameBufferSpecBuilder"/> for configuring the frame buffer resource.</returns>
     public FrameBufferSpecBuilder FrameBuffer(string name)
+        => new(this, name);
+
+    /// <summary>
+    /// Declares an externally owned resource that is imported at execution.
+    /// </summary>
+    public ExternalResourceSpecBuilder External(string name)
+        => new(this, name);
+
+    /// <summary>
+    /// Declares a generation-owned fullscreen-quad material/FBO helper that has
+    /// no render-target attachments of its own.
+    /// </summary>
+    public QuadMaterialSpecBuilder QuadMaterial(string name)
         => new(this, name);
 
     /// <summary>
@@ -122,6 +133,12 @@ public sealed partial class RenderPipelineResourceLayoutBuilder(RenderPipelineRe
             new ReadOnlyDictionary<string, RenderPipelineResourceSpec>(byName));
     }
 
+    /// <summary>
+    /// Validates a render pipeline resource specification, adding any diagnostics to the provided list.
+    /// </summary>
+    /// <param name="spec">The render pipeline resource specification to validate.</param>
+    /// <param name="byName">A dictionary of resource specifications keyed by their names.</param>
+    /// <param name="diagnostics">A list to which any validation diagnostics will be added.</param>
     private static void ValidateSpec(
         RenderPipelineResourceSpec spec,
         IReadOnlyDictionary<string, RenderPipelineResourceSpec> byName,
@@ -129,10 +146,10 @@ public sealed partial class RenderPipelineResourceLayoutBuilder(RenderPipelineRe
     {
         if (spec.SizePolicy.SizeClass == RenderResourceSizeClass.AbsolutePixels
             && (spec.SizePolicy.Width == 0 || spec.SizePolicy.Height == 0)
-            && spec.Kind is not RenderPipelineResourceKind.Buffer and not RenderPipelineResourceKind.External)
-        {
+            && spec.Kind is not RenderPipelineResourceKind.Buffer
+                and not RenderPipelineResourceKind.External
+                and not RenderPipelineResourceKind.QuadMaterial)
             diagnostics.Add($"Resource '{spec.Name}' has an absolute size policy with zero width or height.");
-        }
 
         foreach (string dependency in spec.Dependencies)
         {
@@ -159,6 +176,12 @@ public sealed partial class RenderPipelineResourceLayoutBuilder(RenderPipelineRe
         }
     }
 
+    /// <summary>
+    /// Topologically sorts the given list of render pipeline resource specifications based on their dependencies.
+    /// </summary>
+    /// <param name="specs">The list of render pipeline resource specifications to sort.</param>
+    /// <param name="byName">A dictionary of resource specifications keyed by their names.</param>
+    /// <returns>A list of render pipeline resource specifications sorted topologically based on their dependencies.</returns>
     private static List<RenderPipelineResourceSpec> TopologicallySort(
         IReadOnlyList<RenderPipelineResourceSpec> specs,
         IReadOnlyDictionary<string, RenderPipelineResourceSpec> byName)
@@ -172,6 +195,15 @@ public sealed partial class RenderPipelineResourceLayoutBuilder(RenderPipelineRe
         return ordered;
     }
 
+    /// <summary>
+    /// Visits the given render pipeline resource specification and its dependencies in a depth-first manner,
+    /// adding them to the ordered list in topological order. Throws an exception if a dependency cycle is detected.
+    /// </summary>
+    /// <param name="spec">The render pipeline resource specification to visit.</param>
+    /// <param name="byName">A dictionary of resource specifications keyed by their names.</param>
+    /// <param name="visitState">A dictionary tracking the visit state of each resource specification.</param>
+    /// <param name="ordered">The list to which the visited resource specifications will be added in topological order.</param>
+    /// <exception cref="InvalidOperationException">Thrown if a dependency cycle is detected.</exception>
     private static void Visit(
         RenderPipelineResourceSpec spec,
         IReadOnlyDictionary<string, RenderPipelineResourceSpec> byName,
@@ -192,16 +224,12 @@ public sealed partial class RenderPipelineResourceLayoutBuilder(RenderPipelineRe
 
         if (spec is TextureViewSpec viewSpec
             && byName.TryGetValue(viewSpec.SourceTextureName, out RenderPipelineResourceSpec? sourceSpec))
-        {
             Visit(sourceSpec, byName, visitState, ordered);
-        }
 
         if (spec is FrameBufferSpec frameBufferSpec)
-        {
             foreach (FrameBufferAttachmentDescriptor attachment in frameBufferSpec.Attachments)
                 if (byName.TryGetValue(attachment.ResourceName, out RenderPipelineResourceSpec? attachmentSpec))
                     Visit(attachmentSpec, byName, visitState, ordered);
-        }
 
         visitState[spec.Name] = 2;
         ordered.Add(spec);

@@ -3,6 +3,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.Resources;
 using static XREngine.RuntimeEngine.Rendering.State;
 
 namespace XREngine.Rendering;
@@ -17,26 +18,42 @@ public class TestRenderPipeline : RenderPipeline
     protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
         => new() { { (int)EDefaultRenderPass.OpaqueForward, _farToNearSorter }, };
 
+    protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        RenderResourceSizePolicy size = RenderResourceSizePolicy.Internal();
+        bool outputHdr = builder.Profile.OutputHDR;
+
+        builder.Texture(DepthStencilTextureName)
+            .Size(size)
+            .Usage(RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.DepthStencilAttachment)
+            .Format(EPixelInternalFormat.Depth24Stencil8, EPixelFormat.DepthStencil, EPixelType.UnsignedInt248)
+            .SizedFormat(ESizedInternalFormat.Depth24Stencil8)
+            .Factory(CreateDepthStencilTexture)
+            .Add();
+
+        builder.Texture(HDRSceneTextureName)
+            .Size(size)
+            .Usage(RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment)
+            .Format(
+                outputHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8,
+                outputHdr ? EPixelFormat.Rgba : EPixelFormat.Bgra,
+                outputHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte)
+            .SizedFormat(outputHdr ? ESizedInternalFormat.Rgba16f : ESizedInternalFormat.Rgba8)
+            .Factory(() => CreateHDRSceneTexture(outputHdr))
+            .Add();
+
+        builder.FrameBuffer(InternalResFBOName)
+            .Size(size)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
+            .Color(0, HDRSceneTextureName)
+            .DepthStencil(DepthStencilTextureName)
+            .Factory(CreateInternalResFBO)
+            .Add();
+    }
+
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
         ViewportRenderCommandContainer c = new(this);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            DepthStencilTextureName,
-            CreateDepthStencilTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            HDRSceneTextureName,
-            CreateHDRSceneTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            InternalResFBOName,
-            CreateInternalResFBO,
-            GetDesiredFBOSizeInternal);
 
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
         {
@@ -135,9 +152,8 @@ void main()
         return fbo;
     }
 
-    private static XRTexture CreateHDRSceneTexture()
+    private static XRTexture CreateHDRSceneTexture(bool useHdr)
     {
-        bool useHdr = RuntimeEngine.Rendering.Settings.OutputHDR;
         var tex = XRTexture2D.CreateFrameBufferTexture(InternalWidth, InternalHeight,
             useHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8,
             useHdr ? EPixelFormat.Rgba : EPixelFormat.Bgra,

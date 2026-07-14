@@ -450,7 +450,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     /// <summary>
     /// Attempts to retrieve the current render pipeline instance from the runtime rendering host services.
     /// </summary>
-    private static XRRenderPipelineInstance? TryCurrentPipeline
+    protected static XRRenderPipelineInstance? TryCurrentPipeline
         => RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext as XRRenderPipelineInstance
             ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
 

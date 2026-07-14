@@ -12,6 +12,9 @@ namespace XREngine.Rendering.Resources;
 /// <param name="MsaaSampleCount">The number of MSAA samples.</param>
 /// <param name="Stereo">Indicates whether stereo rendering is enabled.</param>
 /// <param name="FeatureMask">The feature mask for the render pipeline.</param>
+/// <param name="ExternalTargetKind">The externally owned output class imported by the pipeline.</param>
+/// <param name="ViewCount">The number of views represented by the profile.</param>
+/// <param name="ViewIndex">The selected view index for per-view profiles.</param>
 public readonly record struct RenderPipelineResourceProfile(
     uint DisplayWidth,
     uint DisplayHeight,
@@ -21,7 +24,10 @@ public readonly record struct RenderPipelineResourceProfile(
     EAntiAliasingMode AntiAliasingMode,
     uint MsaaSampleCount,
     bool Stereo,
-    ulong FeatureMask = 0)
+    ulong FeatureMask = 0,
+    RenderPipelineExternalTargetKind ExternalTargetKind = RenderPipelineExternalTargetKind.None,
+    uint ViewCount = 1,
+    uint ViewIndex = 0)
 {
     /// <summary>
     /// Gets an empty render pipeline resource profile with default values for all properties.
@@ -34,5 +40,8 @@ public readonly record struct RenderPipelineResourceProfile(
         OutputHDR: false,
         EAntiAliasingMode.None,
         1u,
-        Stereo: false);
+        Stereo: false,
+        ExternalTargetKind: RenderPipelineExternalTargetKind.None,
+        ViewCount: 1u,
+        ViewIndex: 0u);
 }

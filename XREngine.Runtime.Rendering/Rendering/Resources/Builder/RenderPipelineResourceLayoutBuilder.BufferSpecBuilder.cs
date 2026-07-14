@@ -15,10 +15,13 @@ public sealed partial class RenderPipelineResourceLayoutBuilder
         private EBufferAccessPattern _accessPattern = EBufferAccessPattern.ReadWrite;
         private Func<XRDataBuffer>? _factory;
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="BufferSpecBuilder"/> class.
+        /// </summary>
+        /// <param name="owner">The resource layout builder that owns this buffer specification.</param>
+        /// <param name="name">The name of the buffer specification.</param>
         internal BufferSpecBuilder(RenderPipelineResourceLayoutBuilder owner, string name)
-            : base(owner, name)
-        {
-        }
+            : base(owner, name) { }
 
         /// <summary>
         /// Sets the buffer format for the buffer resource specification.

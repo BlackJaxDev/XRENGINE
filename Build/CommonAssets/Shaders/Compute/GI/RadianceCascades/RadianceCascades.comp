@@ -6,6 +6,7 @@ layout(binding = 0) uniform sampler2D gDepth;
 layout(binding = 1) uniform sampler2D gNormal;
 layout(binding = 2, rgba16f) uniform image2D gOutput; // read-write for temporal accumulation
 layout(binding = 7) uniform sampler2D gHistory; // previous frame GI for temporal accumulation
+layout(binding = 8, rgba16f) writeonly uniform image2D gCurrentHistory;
 
 layout(binding = 3) uniform sampler3D RadianceCascade0;
 layout(binding = 4) uniform sampler3D RadianceCascade1;
@@ -118,6 +119,7 @@ void main()
     if (depth <= 0.0 || cascadeCount <= 0)
     {
         imageStore(gOutput, pix, vec4(0.0));
+        imageStore(gCurrentHistory, pix, vec4(0.0));
         return;
     }
 
@@ -251,5 +253,7 @@ void main()
         gi = mix(gi, clampedHistory, effectiveBlend);
     }
 
-    imageStore(gOutput, pix, vec4(gi, 1.0));
+    vec4 outputValue = vec4(gi, 1.0);
+    imageStore(gOutput, pix, outputValue);
+    imageStore(gCurrentHistory, pix, outputValue);
 }

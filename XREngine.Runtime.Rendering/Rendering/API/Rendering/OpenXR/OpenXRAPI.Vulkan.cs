@@ -616,7 +616,17 @@ public unsafe partial class OpenXRAPI
             _swapchainImagesVK[i] = (SwapchainImageVulkan2KHR*)Marshal.AllocHGlobal((int)imageCount * sizeof(SwapchainImageVulkan2KHR));
 
             for (uint j = 0; j < imageCount; j++)
-                _swapchainImagesVK[i][j].Type = StructureType.SwapchainImageVulkan2Khr;
+            {
+                // XR_KHR_vulkan_enable2 aliases this structure to the original
+                // KHR Vulkan swapchain-image ABI. Silk exposes a distinct enum
+                // member, but runtimes such as Monado require the aliased KHR
+                // type value. Initialize the whole native entry as well: this
+                // memory is reused by the runtime as an in/out structure array.
+                _swapchainImagesVK[i][j] = new SwapchainImageVulkan2KHR
+                {
+                    Type = StructureType.SwapchainImageVulkanKhr
+                };
+            }
 
             enumerateResult = Api.EnumerateSwapchainImages(_swapchains[i], imageCount, &imageCount, (SwapchainImageBaseHeader*)_swapchainImagesVK[i]);
             if (enumerateResult != Result.Success || imageCount == 0)
@@ -959,11 +969,21 @@ public unsafe partial class OpenXRAPI
         _vulkanStereoHeight = height;
         _vulkanStereoColorFormat = swapchainFormat;
 
-        renderer.GetOrCreateAPIRenderObject(color, generateNow: true);
+        AbstractRenderAPIObject? colorObject = renderer.GetOrCreateAPIRenderObject(color, generateNow: true);
         renderer.GetOrCreateAPIRenderObject(depth, generateNow: true);
         renderer.GetOrCreateAPIRenderObject(leftView, generateNow: true);
         renderer.GetOrCreateAPIRenderObject(rightView, generateNow: true);
         renderer.GetOrCreateAPIRenderObject(fbo, generateNow: true);
+
+        // Sampled render targets are initialized in the descriptor-compatible
+        // layout by the Vulkan allocator. Seed both array layers accordingly so
+        // the first strict-SPS render records the required read->attachment
+        // transition instead of assuming the image is already writable.
+        if (colorObject is VulkanRenderer.IVkFrameBufferAttachmentSource colorAttachmentSource)
+        {
+            colorAttachmentSource.UpdateAttachmentTrackedLayout(Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal, 0, 0);
+            colorAttachmentSource.UpdateAttachmentTrackedLayout(Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal, 0, 1);
+        }
     }
 
     private void DestroyVulkanStereoRenderTarget()
@@ -1589,6 +1609,16 @@ public unsafe partial class OpenXRAPI
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.PublishRight"))
                 PublishVulkanEyeMirror(renderer, target.RightColorView, 1, rightImageIndex, width, height);
 
+            RecordVulkanTrueSinglePassStereoOutput(
+                stereoPipeline.DebugName,
+                stereoViewport.RenderPipelineInstance.ResourceGeneration,
+                width,
+                height,
+                leftImageIndex,
+                target.LeftSwapchainFormat,
+                target.RightSwapchainFormat,
+                stereoRenderingCommands);
+
             MarkVulkanEyeResourceWarmupComplete(0);
             MarkVulkanEyeResourceWarmupComplete(1);
             return true;
@@ -1598,6 +1628,61 @@ public unsafe partial class OpenXRAPI
             AbstractRenderer.Current = previousRenderer;
             renderer.Active = previousRendererActive;
         }
+    }
+
+    private static void RecordVulkanTrueSinglePassStereoOutput(
+        string pipelineName,
+        int resourceGeneration,
+        uint width,
+        uint height,
+        uint externalImageSlot,
+        Silk.NET.Vulkan.Format leftFormat,
+        Silk.NET.Vulkan.Format rightFormat,
+        int commandCount)
+    {
+        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+        RenderOutputRequest request = RenderOutputRequest.CreateDefault(
+            EVrOutputViewKind.LeftEye,
+            EFrameOutputKind.OpenXREyeSubmit,
+            frameId);
+        ulong formatKey = ((ulong)(uint)leftFormat << 32) | (uint)rightFormat;
+        RenderOutputTargetDescriptor target = request.Target with
+        {
+            TargetGeneration = unchecked((ulong)Math.Max(resourceGeneration, 0)),
+            DisplayWidth = width,
+            DisplayHeight = height,
+            InternalWidth = width,
+            InternalHeight = height,
+            FormatCompatibilityKey = formatKey,
+            SampleCount = 1u,
+            ViewMask = 0x3u,
+            ExternalImageSlot = checked((int)externalImageSlot),
+        };
+        request = request.WithTarget(target);
+        FrameOutputPacingDecision pacing = FrameOutputPacingDecision.Due(
+            EVrOutputViewKind.LeftEye,
+            EFrameOutputKind.OpenXREyeSubmit,
+            frameId) with { Request = request };
+        RuntimeRenderingHostServices.Current.RecordRenderFrameOutput(new FrameOutputTelemetry(
+            EFrameOutputKind.OpenXREyeSubmit,
+            EVrOutputViewKind.LeftEye,
+            EFrameOutputPhase.Render,
+            pacing,
+            "OpenXR true single-pass stereo",
+            pipelineName,
+            Active: true,
+            Rendered: true,
+            SceneRendered: true,
+            Mirror: false,
+            SeparateSceneRender: true,
+            SharedVisibility: true,
+            CommandCount: Math.Max(commandCount, 0),
+            DrawCalls: 0,
+            MultiDrawCalls: 0,
+            Triangles: 0,
+            CpuMs: 0.0,
+            GpuMs: 0.0,
+            request));
     }
 
     private bool TryRenderVulkanEyeParallelCommandBufferRecordingToSwapchains(

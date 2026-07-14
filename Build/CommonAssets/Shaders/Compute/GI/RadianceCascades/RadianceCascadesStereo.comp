@@ -6,6 +6,7 @@ layout(binding = 0) uniform sampler2DArray gDepth;
 layout(binding = 1) uniform sampler2DArray gNormal;
 layout(binding = 2, rgba16f) uniform image2DArray gOutput; // read-write for temporal accumulation
 layout(binding = 7) uniform sampler2DArray gHistory; // previous frame GI for temporal accumulation
+layout(binding = 8, rgba16f) writeonly uniform image2DArray gCurrentHistory;
 
 layout(binding = 3) uniform sampler3D RadianceCascade0;
 layout(binding = 4) uniform sampler3D RadianceCascade1;
@@ -106,6 +107,7 @@ void ProcessEye(ivec2 pix, int eye)
     if (depth <= 0.0 || cascadeCount <= 0)
     {
         imageStore(gOutput, ivec3(pix, eye), vec4(0.0));
+        imageStore(gCurrentHistory, ivec3(pix, eye), vec4(0.0));
         return;
     }
 
@@ -224,7 +226,9 @@ void ProcessEye(ivec2 pix, int eye)
         gi = mix(gi, clampedHistory, effectiveBlend);
     }
 
-    imageStore(gOutput, ivec3(pix, eye), vec4(gi, 1.0));
+    vec4 outputValue = vec4(gi, 1.0);
+    imageStore(gOutput, ivec3(pix, eye), outputValue);
+    imageStore(gCurrentHistory, ivec3(pix, eye), outputValue);
 }
 
 void main()

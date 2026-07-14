@@ -60,6 +60,7 @@ call :AddTool "Deps" "Tools\Dependencies\Get-StreamlineSdk.ps1" "Download NVIDIA
 call :AddTool "Deps" "Tools\Dependencies\Get-Phonon.ps1" "Download Steam Audio (Phonon) native library"
 call :AddTool "Deps" "Tools\Dependencies\Get-UltralightResources.ps1" "Download Ultralight runtime resources (icudt67l.dat, cacert.pem)"
 call :AddTool "Deps" "Tools\Dependencies\Get-YtDlp.ps1" "Download yt-dlp for YouTube URL extraction"
+call :AddTool "Deps" "Tools\Dependencies\Install-LatestVulkanSdk.ps1" "Download, verify, and run the latest LunarG Vulkan SDK installer"
 call :AddTool "Deps" "Tools\OpenXR\Install-Monado.ps1 -InstallPrerequisites" "Build and stage Monado from the BlackJaxDev submodule for OpenXR no-HMD testing"
 call :AddRunAll "Deps"
 

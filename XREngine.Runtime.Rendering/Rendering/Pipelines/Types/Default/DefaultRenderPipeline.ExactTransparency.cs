@@ -23,12 +23,10 @@ public partial class DefaultRenderPipeline
     private const int MaxDepthPeelingLayersSupported = 4;
     private const float DepthPeelingEpsilon = 1e-5f;
 
-    private XRDataBuffer? _ppllNodeBuffer;
-    private XRDataBuffer? _ppllCounterBuffer;
     private int _activeDepthPeelLayerIndex = -1;
 
-    internal XRDataBuffer? PpllNodeBuffer => _ppllNodeBuffer;
-    internal XRDataBuffer? PpllCounterBuffer => _ppllCounterBuffer;
+    internal XRDataBuffer? PpllNodeBuffer => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.GetBuffer(PpllNodeBufferName);
+    internal XRDataBuffer? PpllCounterBuffer => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.GetBuffer(PpllCounterBufferName);
     internal XRTexture? PpllHeadPointerTexture => GetTexture<XRTexture>(PpllHeadPointerTextureName);
     internal XRTexture? PreviousDepthPeelDepthTexture => _activeDepthPeelLayerIndex > 0
         ? GetTexture<XRTexture>(DepthPeelDepthTextureName(_activeDepthPeelLayerIndex - 1))
@@ -65,84 +63,16 @@ public partial class DefaultRenderPipeline
         return Math.Max(pixelCount * 2u, 1024u);
     }
 
-    private void CacheExactTransparencyTextures(ViewportRenderCommandContainer c)
+    private static uint ComputePpllNodeCapacity(RenderPipelineResourceProfile profile)
     {
-        if (!ExactTransparencyEnabled)
-            return;
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            PpllHeadPointerTextureName,
-            CreatePpllHeadPointerTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            PpllFragmentCountTextureName,
-            CreatePpllFragmentCountTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        for (int layerIndex = 0; layerIndex < MaxDepthPeelingLayersSupported; layerIndex++)
-        {
-            int capture = layerIndex;
-            c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-                DepthPeelColorTextureName(capture),
-                () => CreateDepthPeelColorTexture(capture),
-                NeedsRecreateTextureInternalSize,
-                ResizeTextureInternalSize);
-
-            c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-                DepthPeelDepthTextureName(capture),
-                () => CreateDepthPeelDepthTexture(capture),
-                NeedsRecreateTextureInternalSize,
-                ResizeTextureInternalSize);
-        }
+        uint pixelCount = Math.Max(profile.InternalWidth * profile.InternalHeight, 1u);
+        return Math.Max(pixelCount * 2u, 1024u);
     }
 
     private void AppendExactTransparencyCommands(ViewportRenderCommandContainer c)
     {
         if (!ExactTransparencyEnabled)
             return;
-
-        EnsureExactTransparencyBuffers();
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            PpllResolveFBOName,
-            CreatePpllResolveFBO,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            DepthPeelingResolveFBOName,
-            CreateDepthPeelingResolveFBO,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        if (EnablePerPixelLinkedListVisualization)
-        {
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                PpllFragmentCountDebugFBOName,
-                CreatePpllFragmentCountDebugFBO,
-                GetDesiredFBOSizeInternal);
-        }
-
-        if (EnableDepthPeelingLayerVisualization)
-        {
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                DepthPeelingDebugFBOName,
-                CreateDepthPeelingDebugFBO,
-                GetDesiredFBOSizeInternal);
-        }
-
-        for (int layerIndex = 0; layerIndex < ActiveDepthPeelLayerCount; layerIndex++)
-        {
-            int capture = layerIndex;
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                DepthPeelLayerFboName(capture),
-                () => CreateDepthPeelLayerFBO(capture),
-                GetDesiredFBOSizeInternal)
-                .UseLifetime(RenderResourceLifetime.Transient);
-        }
 
         c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
         c.Add<VPRC_Manual>().ManualAction = ResetPpllResources;
@@ -172,49 +102,36 @@ public partial class DefaultRenderPipeline
         c.Add<VPRC_Manual>().ManualAction = () => _activeDepthPeelLayerIndex = -1;
     }
 
-    private void EnsureExactTransparencyBuffers()
+    private XRDataBuffer CreatePpllNodeBuffer()
     {
         uint nodeCapacity = ComputePpllNodeCapacity();
-        if (_ppllNodeBuffer is null)
+        return new XRDataBuffer(PpllNodeBufferName, EBufferTarget.ShaderStorageBuffer, nodeCapacity, EComponentType.Struct, PpllNodeStrideBytes, false, false)
         {
-            _ppllNodeBuffer = new XRDataBuffer(PpllNodeBufferName, EBufferTarget.ShaderStorageBuffer, nodeCapacity, EComponentType.Struct, PpllNodeStrideBytes, false, false)
-            {
-                Usage = EBufferUsage.DynamicCopy,
-                BindingIndexOverride = 24u,
-                DisposeOnPush = false,
-                PadEndingToVec4 = true,
-            };
-        }
-        else if (_ppllNodeBuffer.ElementCount < nodeCapacity)
-        {
-            _ppllNodeBuffer.Resize(nodeCapacity, false, true);
-        }
-
-        if (_ppllCounterBuffer is null)
-        {
-            _ppllCounterBuffer = new XRDataBuffer(PpllCounterBufferName, EBufferTarget.ShaderStorageBuffer, 2u, EComponentType.UInt, 1u, false, true)
-            {
-                Usage = EBufferUsage.DynamicCopy,
-                BindingIndexOverride = 25u,
-                DisposeOnPush = false,
-                PadEndingToVec4 = true,
-            };
-        }
-        else if (_ppllCounterBuffer.ElementCount < 2u)
-        {
-            _ppllCounterBuffer.Resize(2u, false, true);
-        }
+            Usage = EBufferUsage.DynamicCopy,
+            BindingIndexOverride = 24u,
+            DisposeOnPush = false,
+            PadEndingToVec4 = true,
+        };
     }
+
+    private static XRDataBuffer CreatePpllCounterBuffer()
+        => new(PpllCounterBufferName, EBufferTarget.ShaderStorageBuffer, 2u, EComponentType.UInt, 1u, false, true)
+        {
+            Usage = EBufferUsage.DynamicCopy,
+            BindingIndexOverride = 25u,
+            DisposeOnPush = false,
+            PadEndingToVec4 = true,
+        };
 
     private void ResetPpllResources()
     {
-        EnsureExactTransparencyBuffers();
-        if (_ppllCounterBuffer is null)
+        XRDataBuffer? counterBuffer = PpllCounterBuffer;
+        if (counterBuffer is null)
             return;
 
-        _ppllCounterBuffer.SetDataRawAtIndex(0, 0u);
-        _ppllCounterBuffer.SetDataRawAtIndex(1, 0u);
-        _ppllCounterBuffer.PushSubData();
+        counterBuffer.SetDataRawAtIndex(0, 0u);
+        counterBuffer.SetDataRawAtIndex(1, 0u);
+        counterBuffer.PushSubData();
 
         XRTexture? headTexture = GetTexture<XRTexture>(PpllHeadPointerTextureName);
         if (headTexture is null)
@@ -417,8 +334,8 @@ public partial class DefaultRenderPipeline
 
     private void PpllResolveMaterial_SettingUniforms(XRMaterialBase _, XRRenderProgram program)
     {
-        _ppllNodeBuffer?.BindTo(program, 24u);
-        _ppllCounterBuffer?.BindTo(program, 25u);
+        PpllNodeBuffer?.BindTo(program, 24u);
+        PpllCounterBuffer?.BindTo(program, 25u);
     }
 
     private void PpllFragmentCountDebugFBO_SettingUniforms(XRRenderProgram program)

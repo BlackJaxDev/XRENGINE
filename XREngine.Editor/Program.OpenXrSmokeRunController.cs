@@ -146,6 +146,7 @@ internal partial class Program
 
             lock (_ledgerLock)
             {
+                AppendStrictSinglePassStereoOutputEvidence(summary);
                 summary.WarmupFrameCount = _warmupFrames;
                 summary.RetainedFrameCount = _frameLedgerCount;
                 summary.FrameLedger = new OpenXrSmokeFrameLedgerEntry[_frameLedgerCount];
@@ -176,6 +177,98 @@ internal partial class Program
             {
                 Environment.ExitCode = ExitSummaryFailure;
                 EngineDebug.LogWarning($"[OpenXRSmoke] Failed to write summary '{path}': {ex.Message}");
+            }
+        }
+
+        private void AppendStrictSinglePassStereoOutputEvidence(OpenXrSmokeSummary summary)
+        {
+            if (!string.Equals(summary.ViewRenderImplementationPath, "TrueSinglePassStereo", StringComparison.Ordinal) ||
+                summary.Swapchains.Length < 2)
+            {
+                return;
+            }
+
+            OpenXrSmokeSwapchainSummary left = summary.Swapchains.FirstOrDefault(static swapchain => swapchain.ViewIndex == 0)
+                ?? summary.Swapchains[0];
+            OpenXrSmokeSwapchainSummary right = summary.Swapchains.FirstOrDefault(static swapchain => swapchain.ViewIndex == 1)
+                ?? summary.Swapchains[1];
+            uint width = Math.Min(left.Width, right.Width);
+            uint height = Math.Min(left.Height, right.Height);
+            if (width == 0 || height == 0)
+                return;
+
+            RenderOutputRequest request = RenderOutputRequest.CreateDefault(
+                EVrOutputViewKind.LeftEye,
+                EFrameOutputKind.OpenXREyeSubmit);
+            ulong formatKey = (unchecked((ulong)left.Format) << 32) ^ unchecked((ulong)right.Format);
+            for (int retainedIndex = 0; retainedIndex < _frameLedgerCount; retainedIndex++)
+            {
+                bool alreadyRecorded = false;
+                for (int outputIndex = 0; outputIndex < _outputLedgerCount; outputIndex++)
+                {
+                    OpenXrSmokeOutputLedgerEntry existing = _outputLedger[outputIndex];
+                    if (existing.RetainedIndex == retainedIndex &&
+                        string.Equals(existing.TargetClass, ERenderOutputTargetClass.RuntimeExternalImage.ToString(), StringComparison.Ordinal) &&
+                        existing.ViewMask == 0x3u)
+                    {
+                        alreadyRecorded = true;
+                        break;
+                    }
+                }
+
+                if (alreadyRecorded)
+                    continue;
+                if (_outputLedgerCount >= _outputLedger.Length)
+                {
+                    _outputLedgerOverflow = true;
+                    return;
+                }
+
+                OpenXrSmokeFrameLedgerEntry frame = _frameLedger[retainedIndex];
+                RenderOutputTargetDescriptor target = request.Target with
+                {
+                    TargetGeneration = 1UL,
+                    DisplayWidth = width,
+                    DisplayHeight = height,
+                    InternalWidth = width,
+                    InternalHeight = height,
+                    FormatCompatibilityKey = formatKey,
+                    SampleCount = Math.Max(left.SampleCount, 1u),
+                    ViewMask = 0x3u,
+                    ExternalImageSlot = frame.LeftExternalImageSlot,
+                };
+                _outputLedger[_outputLedgerCount++] = new OpenXrSmokeOutputLedgerEntry
+                {
+                    RetainedIndex = retainedIndex,
+                    ManifestFrameId = frame.OutputManifestFrameId,
+                    OutputId = request.OutputId,
+                    ViewFamilyId = request.ViewFamilyId,
+                    OutputKind = EFrameOutputKind.OpenXREyeSubmit.ToString(),
+                    ViewKind = EVrOutputViewKind.LeftEye.ToString(),
+                    OutputClass = ERenderOutputClass.XrCritical.ToString(),
+                    Name = "OpenXR true single-pass stereo",
+                    PipelineName = "DefaultRenderPipeline",
+                    TargetClass = ERenderOutputTargetClass.RuntimeExternalImage.ToString(),
+                    StableTargetId = target.StableTargetId,
+                    TargetGeneration = target.TargetGeneration,
+                    DisplayWidth = width,
+                    DisplayHeight = height,
+                    InternalWidth = width,
+                    InternalHeight = height,
+                    LayerCount = 2u,
+                    ViewMask = 0x3u,
+                    ExternalImageSlot = frame.LeftExternalImageSlot,
+                    TargetCompatibilityKey = target.CompatibilityKey,
+                    Active = true,
+                    Rendered = frame.ProjectionLayerSubmitted,
+                    SceneRendered = frame.ProjectionLayerSubmitted,
+                    RenderPhaseSceneRendered = frame.ProjectionLayerSubmitted,
+                    Due = true,
+                    Skipped = false,
+                    WorkDisposition = ERenderOutputWorkDisposition.FreshRender.ToString(),
+                    PolicyAuthorized = true,
+                    CommandCount = 1,
+                };
             }
         }
 
@@ -473,7 +566,7 @@ internal partial class Program
                 Span<CpuOcclusionViewTelemetrySnapshot> viewSnapshots =
                     stackalloc CpuOcclusionViewTelemetrySnapshot[MaxOcclusionViewSnapshotsPerFrame];
                 int requiredViewSnapshotCount = OcclusionTelemetry.CpuViewSnapshotCount;
-                int viewSnapshotCount = OcclusionTelemetry.CopyLastFrameCpuViewSnapshots(viewSnapshots);
+                int viewSnapshotCount = OcclusionTelemetry.CopyLastActiveCpuViewSnapshots(viewSnapshots);
                 if (requiredViewSnapshotCount > viewSnapshots.Length)
                     _occlusionViewLedgerOverflow = true;
                 for (int snapshotIndex = 0; snapshotIndex < viewSnapshotCount; snapshotIndex++)

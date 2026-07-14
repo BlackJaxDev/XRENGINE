@@ -16,14 +16,30 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Resources;
 using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering
 {
+    internal interface IRenderResourceGenerationTransaction : IDisposable
+    {
+        void Commit();
+    }
+
+    internal interface IRenderResourceGenerationBackend
+    {
+        bool TryPrepareRenderResourceGeneration(
+            XRRenderPipelineInstance pipeline,
+            RenderResourceGeneration generation,
+            XRViewport? viewport,
+            out IRenderResourceGenerationTransaction? transaction,
+            out string? failureReason);
+    }
+
     /// <summary>
     /// An abstract window renderer handles rendering to a specific window using a specific graphics API.
     /// </summary>
-    public abstract unsafe class AbstractRenderer : XRBase, IRenderApiWrapperOwner, IRuntimeRendererHost//, IDisposable
+    public abstract unsafe class AbstractRenderer : XRBase, IRenderApiWrapperOwner, IRuntimeRendererHost, IRenderResourceGenerationBackend//, IDisposable
     {
         #region Constants / Statics
         /// <summary>
@@ -159,6 +175,26 @@ namespace XREngine.Rendering
             XRRenderPipelineInstance pipeline,
             XRViewport? viewport)
             => null;
+
+        internal virtual bool TryPrepareRenderResourceGeneration(
+            XRRenderPipelineInstance pipeline,
+            RenderResourceGeneration generation,
+            XRViewport? viewport,
+            out IRenderResourceGenerationTransaction? transaction,
+            out string? failureReason)
+        {
+            transaction = null;
+            failureReason = null;
+            return true;
+        }
+
+        bool IRenderResourceGenerationBackend.TryPrepareRenderResourceGeneration(
+            XRRenderPipelineInstance pipeline,
+            RenderResourceGeneration generation,
+            XRViewport? viewport,
+            out IRenderResourceGenerationTransaction? transaction,
+            out string? failureReason)
+            => TryPrepareRenderResourceGeneration(pipeline, generation, viewport, out transaction, out failureReason);
 
         protected bool _frameBufferInvalidated = false;
         #endregion

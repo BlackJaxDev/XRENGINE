@@ -137,7 +137,7 @@ Aligned constructor defaults. Added `ColorGradingSettingsTests.Defaults_MatchPip
 
 ## 6. FBO Texture-Identity Recreation Predicates
 
-**Rule:** Cached FBOs (`VPRC_CacheOrCreateFBO`) must use a texture-identity recreation predicate, not just size checks. After pipeline invalidation or resize, the FBO may hold stale references to recreated textures.
+**Rule:** Default-pipeline FBO attachments must come from the same declared resource generation. Command execution must never recreate an FBO or swap its texture identities.
 
 ### What went wrong
 
@@ -145,13 +145,13 @@ Standard deferred `LightCombine` quad FBOs used size-only caching. After pipelin
 
 ### Fix
 
-Added `NeedsRecreateLightCombineFbo(...)` predicates that verify FBO color/depth attachment identity matches the current pipeline textures. Applied to both pipelines.
+The retained `DefaultRenderPipeline` now declares light-combine dependencies and validates their generation identity before commit. `DefaultRenderPipeline2` still uses the compatibility predicate pending its removal.
 
 ---
 
 ## 6. Resource Cache: Variable Alias Collisions
 
-**Rule:** `VPRC_CacheOrCreateTexture` / `VPRC_CacheOrCreateFBO` must consult `XRRenderPipelineInstance.Resources` directly, not the broader variable-aware lookup (`TryGetTexture` / `TryGetFBO`).
+**Rule:** `DefaultRenderPipeline` commands may resolve declared resources but may not register or replace them. Legacy cache commands in other pipelines must consult `XRRenderPipelineInstance.Resources` directly until those commands are removed.
 
 ### What went wrong
 
