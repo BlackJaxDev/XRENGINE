@@ -1,11 +1,13 @@
 using System.Drawing.Drawing2D;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using XREngine;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Occlusion;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Commands
@@ -43,6 +45,17 @@ namespace XREngine.Rendering.Commands
 
         private Matrix4x4 _lastSubmittedModelMatrix = Matrix4x4.Identity;
         private bool _lastSubmittedModelMatrixValid;
+        private readonly ConditionalWeakTable<XRViewport, OutputModelHistory> _outputModelHistories = new();
+        private ulong _lastPhase524bVelocityDiagnosticFrame = ulong.MaxValue;
+
+        private sealed class OutputModelHistory
+        {
+            public ulong SequenceId;
+            public Matrix4x4 LastRenderedModelMatrix = Matrix4x4.Identity;
+            public Matrix4x4 PreviousModelMatrixForSequence = Matrix4x4.Identity;
+            public bool HasRenderedModel;
+            public bool HasSequence;
+        }
 
         private uint _renderGpuCommandIndex = uint.MaxValue;
 
@@ -137,9 +150,12 @@ namespace XREngine.Rendering.Commands
 
                 using var _ = RuntimeRenderingHostServices.Current.PushTransformId(_renderGpuCommandIndex == uint.MaxValue ? 0u : _renderGpuCommandIndex);
 
+                Matrix4x4 modelMatrix = GetModelMatrix();
+                Matrix4x4 previousModelMatrix = GetPreviousModelMatrix(modelMatrix);
+                LogPhase524bVelocityMatricesIfNeeded(mesh, modelMatrix, previousModelMatrix);
                 mesh.Render(
-                    GetModelMatrix(),
-                    GetPreviousModelMatrix(),
+                    modelMatrix,
+                    previousModelMatrix,
                     _renderMaterialOverride,
                     _renderInstances,
                     renderOptionsOverride: _renderRenderOptionsOverride);
@@ -203,12 +219,65 @@ namespace XREngine.Rendering.Commands
         private Matrix4x4 GetModelMatrix()
             => _renderWorldMatrixIsModelMatrix ? _renderWorldMatrix : Matrix4x4.Identity;
 
-        private Matrix4x4 GetPreviousModelMatrix()
+        private Matrix4x4 GetPreviousModelMatrix(in Matrix4x4 currentModelMatrix)
         {
             if (!_renderHasPrevWorldMatrix)
-                return _renderWorldMatrix;
+                return currentModelMatrix;
 
-            return _renderPrevWorldMatrix;
+            if (!_renderWorldMatrixIsModelMatrix)
+                return currentModelMatrix;
+
+            XRViewport? viewport = RuntimeEngine.Rendering.State.RenderingViewport;
+            if (viewport is null)
+                return _renderPrevWorldMatrix;
+
+            OutputModelHistory history = _outputModelHistories.GetOrCreateValue(viewport);
+            ulong sequenceId = viewport.SceneRenderSequenceId;
+            if (!history.HasSequence || history.SequenceId != sequenceId)
+            {
+                bool consecutive = history.HasSequence && unchecked(history.SequenceId + 1UL) == sequenceId;
+                history.PreviousModelMatrixForSequence = consecutive && history.HasRenderedModel
+                    ? history.LastRenderedModelMatrix
+                    : currentModelMatrix;
+                history.LastRenderedModelMatrix = currentModelMatrix;
+                history.HasRenderedModel = true;
+                history.SequenceId = sequenceId;
+                history.HasSequence = true;
+            }
+
+            return history.PreviousModelMatrixForSequence;
+        }
+
+        private void LogPhase524bVelocityMatricesIfNeeded(
+            XRMeshRenderer mesh,
+            in Matrix4x4 modelMatrix,
+            in Matrix4x4 previousModelMatrix)
+        {
+            if (!CpuOcclusionValidationEvidence.Enabled ||
+                mesh.Material?.Name != CpuOcclusionValidationEvidence.SpsMovingSentinelMaterialName ||
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.CurrentRenderTargetBinding?.Name != DefaultRenderPipeline.VelocityFBOName)
+            {
+                return;
+            }
+
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            if (_lastPhase524bVelocityDiagnosticFrame == frameId)
+                return;
+
+            _lastPhase524bVelocityDiagnosticFrame = frameId;
+            Debug.Rendering(
+                "[Phase524bVelocity] renderFrame={0} sequenceFrame={1} current=({2:F5},{3:F5},{4:F5}) previous=({5:F5},{6:F5},{7:F5}) delta=({8:F5},{9:F5},{10:F5}).",
+                frameId,
+                Phase524bTemporalScenarioDiagnostics.SequenceFrame,
+                modelMatrix.M41,
+                modelMatrix.M42,
+                modelMatrix.M43,
+                previousModelMatrix.M41,
+                previousModelMatrix.M42,
+                previousModelMatrix.M43,
+                modelMatrix.M41 - previousModelMatrix.M41,
+                modelMatrix.M42 - previousModelMatrix.M42,
+                modelMatrix.M43 - previousModelMatrix.M43);
         }
 
         internal bool TryGetCpuOcclusionSnapshot(

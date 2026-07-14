@@ -91,15 +91,12 @@ public unsafe partial class VulkanRenderer
     }
 
     internal override void NotifyRenderResourcesChanged()
-    {
-        if (!VulkanPrimaryCommandBufferReuseEnabled)
-            MarkCommandBuffersDirty();
-    }
+        => InvalidateCommandChainScheduleForResourceChange(nameof(NotifyRenderResourcesChanged));
 
     internal override void NotifyRenderResourcesChanged(string? reason)
-    {
-        if (!VulkanPrimaryCommandBufferReuseEnabled)
-            MarkCommandBuffersDirty(string.IsNullOrWhiteSpace(reason) ? nameof(NotifyRenderResourcesChanged) : reason);
-    }
+        => InvalidateCommandChainScheduleForResourceChange(
+            string.IsNullOrWhiteSpace(reason)
+                ? nameof(NotifyRenderResourcesChanged)
+                : reason);
 
 }

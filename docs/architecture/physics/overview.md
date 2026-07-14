@@ -18,6 +18,38 @@ Every query variant in `AbstractPhysicsScene` works with engine concepts:
 
 ---
 
+
+## Backend-neutral gameplay API contract
+
+Shared gameplay and XRComponent code should depend on the contracts in `XREngine.Scene` instead of PhysX concrete types:
+
+- rigid bodies: `IAbstractPhysicsActor`, `IAbstractRigidPhysicsActor`, `IAbstractDynamicRigidBody`, and `IAbstractStaticRigidBody`;
+- character controllers: `IAbstractCharacterController`;
+- scene queries: `AbstractPhysicsScene.IAbstractQueryFilter` or the concrete backend-neutral `PhysicsQueryFilter`;
+- joints: `IAbstractJoint` and the typed joint interfaces under `XREngine.Scene.Physics.Joints`.
+
+Backend-specific properties are allowed only as explicit extension surfaces. PhysX extension members must be grouped as `Physics / PhysX Extensions` in component metadata and documented as non-portable. They should not be required by ordinary gameplay systems, Jolt scenes, or shared editor workflows.
+
+`PhysicsQueryFilter` is the portable query representation. PhysX maps it to `PxQueryFlags`/`PxHitFlags`; Jolt maps the same actor-type selection to static/dynamic motion filtering. Use `PhysxScene.PhysxQueryFilter` only when a caller needs native PhysX pre/post query callbacks.
+
+## Jolt parity and unsupported-field policy
+
+The current Jolt rigid-body mapping supports gravity toggles, simulation/debug/sleep flags, damping, max velocity limits, mass and inertia settings, center-of-mass pose storage, kinematic/CCD-style flags, lock axes, and layer/object-filter updates. Fields without a native Jolt equivalent must remain visible in inspectors as unsupported or PhysX-extension fields rather than being silently ignored.
+
+Collision filtering parity is defined around shared `LayerMask` behavior plus `PhysicsQueryFilter.ActorTypes`: static-only, dynamic-only, and all-body queries must include the same categories in PhysX and Jolt. Backend-specific callback semantics remain PhysX extensions until an abstract callback contract is introduced.
+
+
+### P1 controller and collider authoring
+
+`CharacterControllerComponent` is the reusable controller owner for gameplay code that wants controller lifecycle separated from movement behavior. `CharacterMovement3DComponent` can bind to a sibling controller component, or continue to create its legacy private controller when no reusable controller owner is present. Controller lifecycle and contact-state changes are exposed through backend-neutral events.
+
+Collider/material authoring should prefer `PhysicsMaterialDefinition` and `PhysicsColliderShape`. Rigid-body components still accept the legacy single `Geometry`/`Material` fields, but `ColliderShapes` is the first-class compound-authoring surface. PhysX attaches additional enabled collider shapes to one actor; Jolt currently consumes the first enabled shape and keeps the authored list intact so native compound transfer can be added without changing component data. Runtime edits should call `RebuildCollisionShapes()` so ownership, registration, and cached velocities are handled coherently.
+
+
+### P2 production hardening contract
+
+Rigid-body components expose `ReplicationAuthority` and `OwnerClient` metadata so networking code can make explicit ownership decisions for rigid bodies, controllers, and joints. Scene reload, activation-order rebind, controller behavior, and Jolt diagnostics are covered by source-contract tests until full Windows/runtime integration tests can run in the engine validation environment. Jolt exposes `GetDiagnostics()` plus debug-render collection hooks so reload/leak tests can assert actor/controller/joint counts without reaching into backend dictionaries.
+
 ## PhysX Backend
 PhysX 5 is the primary, fully-featured integration. It lives in `XREngine.Rendering.Physics.Physx` and exposes the entire PxScene API surface area the engine relies on.
 
@@ -40,10 +72,11 @@ PhysX 5 is the primary, fully-featured integration. It lives in `XREngine.Render
 - `PhysxMaterial` inherits `AbstractPhysicsMaterial` and exposes PhysX 5 material flags (disable friction, improved patch friction, compliant contact) and combine modes. All materials live in a static registry for pointer resolution.
 
 ### Geometry Interop
-`IPhysicsGeometry` (in `Physx/Geometry/IPhysicsGeometry.cs`) provides value-type shapes that work with every backend:
-- Primitive types (`Sphere`, `Box`, `Capsule`, `Plane`) directly construct `Px*Geometry` structs and also expose `AsJoltShape()` where possible.
-- Mesh types (`ConvexMesh`, `TriangleMesh`, `HeightField`, `TetrahedronMesh`, `ParticleSystem`) wrap PhysX mesh pointers and expose transformation parameters (scale, rotation, flags). Jolt conversion is marked TODO for complex meshes.
-- Helper methods provide mass properties, Poisson sampling, and mesh overlap queries by forwarding to PhysX geometry utilities.
+`IPhysicsGeometry` is a backend-neutral marker contract in `Scene/Physics/IPhysicsGeometry.cs`:
+- Primitive authoring types (`Sphere`, `Box`, `Capsule`, `Plane`) contain only portable values.
+- `PhysicsConvexHullGeometry`, `PhysicsTriangleMeshGeometry`, and `PhysicsHeightFieldGeometry` contain serializable CPU-authored data consumed natively by both backends.
+- Jolt conversion is owned by `JoltShapeFactory`; PhysX conversion, cooking, mass-property helpers, and geometry queries are owned by `PhysxGeometryAdapter`.
+- Already-cooked PhysX pointers use explicitly named `Physx*GeometryExtension` types. They are backend extensions and are not portable collider authoring contracts.
 
 ### Scene Queries & Filtering
 PhysX exposes each query variant (`RaycastAny`, `RaycastMultiple`, `Sweep*`, `Overlap*`) via `PxQueryExt`. XREngine adds a thin layer that converts engine-specific masks and optional `PhysxQueryFilter` structs to the native filter callbacks:

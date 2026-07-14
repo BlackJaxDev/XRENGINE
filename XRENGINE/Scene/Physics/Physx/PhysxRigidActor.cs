@@ -103,14 +103,12 @@ namespace XREngine.Rendering.Physics.Physx
 
         public PhysxShape[] GetShapes()
         {
-            if (Scene is null)
-                return [];
             var shapes = new PxShape*[ShapeCount];
             fixed (PxShape** shapesPtr = shapes)
                 RigidActorPtr->GetShapes(shapesPtr, ShapeCount, 0);
             var shapes2 = new PhysxShape[ShapeCount];
             for (int i = 0; i < ShapeCount; i++)
-                shapes2[i] = Scene.GetShape(shapes[i])!;
+                shapes2[i] = PhysxShape.Get(shapes[i]) ?? Scene?.GetShape(shapes[i]) ?? new PhysxShape(shapes[i]);
             return shapes2;
         }
 
@@ -218,7 +216,20 @@ namespace XREngine.Rendering.Physics.Physx
         }
 
         public override void Release()
-            => base.Release();
+        {
+            if (IsReleased)
+                return;
+
+            ReleaseOwnedShapeReferences();
+            base.Release();
+        }
+
+        internal void ReleaseOwnedShapeReferences()
+        {
+            PhysxShape[] shapes = GetShapes();
+            for (int index = 0; index < shapes.Length; index++)
+                shapes[index].Release();
+        }
 
         public PxQueryFilterCallback* CreateRaycastFilterCallback()
             => RigidActorPtr->CreateRaycastFilterCallback();

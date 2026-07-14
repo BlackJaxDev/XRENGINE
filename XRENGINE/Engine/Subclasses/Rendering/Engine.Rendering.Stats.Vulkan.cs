@@ -137,6 +137,9 @@ namespace XREngine
                     private static int _vulkanLifetimeLiveResourceCount;
                     private static int _vulkanTrackedDescriptorSetCount;
                     private static int _vulkanQueueSubmitCount;
+                    private static int _vulkanPresentAttemptCount;
+                    private static int _vulkanPresentAcceptedCount;
+                    private static int _vulkanLastPresentResult;
                     private static int _lastFrameVulkanDeviceLocalAllocationCount;
                     private static long _lastFrameVulkanDeviceLocalAllocatedBytes;
                     private static int _lastFrameVulkanUploadAllocationCount;
@@ -147,6 +150,9 @@ namespace XREngine
                     private static int _lastFrameVulkanDescriptorPoolDestroyCount;
                     private static int _lastFrameVulkanDescriptorPoolResetCount;
                     private static int _lastFrameVulkanQueueSubmitCount;
+                    private static int _lastFrameVulkanPresentAttemptCount;
+                    private static int _lastFrameVulkanPresentAcceptedCount;
+                    private static int _lastFrameVulkanLastPresentResult;
                     private static int _vulkanOomFallbackCount;
                     private static int _lastFrameVulkanOomFallbackCount;
                     private static int _vulkanDroppedFrameOps;
@@ -418,6 +424,13 @@ namespace XREngine
                     public static int VulkanLifetimeLiveResourceCount => Volatile.Read(ref _vulkanLifetimeLiveResourceCount);
                     public static int VulkanTrackedDescriptorSetCount => Volatile.Read(ref _vulkanTrackedDescriptorSetCount);
                     public static int VulkanQueueSubmitCount => _lastFrameVulkanQueueSubmitCount;
+                    public static int VulkanPresentAttemptCount => _lastFrameVulkanPresentAttemptCount;
+                    public static int VulkanPresentAcceptedCount => _lastFrameVulkanPresentAcceptedCount;
+                    public static int VulkanLastPresentResult => _lastFrameVulkanLastPresentResult;
+                    public static bool VulkanValidationLayersEnabled
+                        => RuntimeEngine.Rendering.State.VulkanValidationLayersEnabled;
+                    public static bool VulkanSynchronizationValidationEnabled
+                        => RuntimeEngine.Rendering.State.VulkanSynchronizationValidationEnabled;
                     public static int VulkanOomFallbackCount => _lastFrameVulkanOomFallbackCount;
                     public static int VulkanDroppedFrameOps => _lastFrameVulkanDroppedFrameOps;
                     public static int VulkanDroppedDrawOps => _lastFrameVulkanDroppedDrawOps;
@@ -606,6 +619,17 @@ namespace XREngine
                             return;
 
                         Interlocked.Add(ref _vulkanQueueSubmitCount, count);
+                    }
+
+                    public static void RecordVulkanPresentResult(int result, bool accepted)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        Interlocked.Increment(ref _vulkanPresentAttemptCount);
+                        if (accepted)
+                            Interlocked.Increment(ref _vulkanPresentAcceptedCount);
+                        Volatile.Write(ref _vulkanLastPresentResult, result);
                     }
 
                     public static void RecordVulkanOomFallback(int count = 1)
@@ -1340,6 +1364,9 @@ namespace XREngine
                         _lastFrameVulkanDescriptorPoolDestroyCount = _vulkanDescriptorPoolDestroyCount;
                         _lastFrameVulkanDescriptorPoolResetCount = _vulkanDescriptorPoolResetCount;
                         _lastFrameVulkanQueueSubmitCount = _vulkanQueueSubmitCount;
+                        _lastFrameVulkanPresentAttemptCount = _vulkanPresentAttemptCount;
+                        _lastFrameVulkanPresentAcceptedCount = _vulkanPresentAcceptedCount;
+                        _lastFrameVulkanLastPresentResult = _vulkanLastPresentResult;
                         _lastFrameVulkanOomFallbackCount = _vulkanOomFallbackCount;
                         _lastFrameVulkanDroppedFrameOps = _vulkanDroppedFrameOps;
                         _lastFrameVulkanDroppedDrawOps = _vulkanDroppedDrawOps;
@@ -1510,6 +1537,9 @@ namespace XREngine
                         _vulkanDescriptorPoolDestroyCount = 0;
                         _vulkanDescriptorPoolResetCount = 0;
                         _vulkanQueueSubmitCount = 0;
+                        _vulkanPresentAttemptCount = 0;
+                        _vulkanPresentAcceptedCount = 0;
+                        _vulkanLastPresentResult = 0;
                         _vulkanOomFallbackCount = 0;
                         _vulkanDroppedFrameOps = 0;
                         _vulkanDroppedDrawOps = 0;

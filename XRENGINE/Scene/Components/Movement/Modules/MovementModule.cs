@@ -2,7 +2,6 @@ using MemoryPack;
 using System.ComponentModel;
 using System.Numerics;
 using XREngine.Core.Files;
-using XREngine.Rendering.Physics.Physx;
 
 namespace XREngine.Components.Movement.Modules
 {
@@ -227,7 +226,11 @@ namespace XREngine.Components.Movement.Modules
         public float SlopeLimitCosine
         {
             get => MathF.Cos(SlopeLimitDegrees * MathF.PI / 180f);
-            set => SlopeLimitDegrees = MathF.Acos(value) * 180f / MathF.PI;
+            set
+            {
+                if (float.IsFinite(value))
+                    SlopeLimitDegrees = MathF.Acos(Math.Clamp(value, -1.0f, 1.0f)) * 180f / MathF.PI;
+            }
         }
 
         /// <summary>
@@ -436,8 +439,35 @@ namespace XREngine.Components.Movement.Modules
         {
             // Default swimming implementation - direct control with drag
             Vector3 targetVelocity = context.InputDirection * context.TargetSpeed * SwimSpeedMultiplier;
-            Vector3 newVelocity = Vector3.Lerp(context.CurrentVelocity, targetVelocity, SwimControl);
+            float blend = TimeScaledBlend(SwimControl, context.DeltaTime);
+            Vector3 newVelocity = Vector3.Lerp(context.CurrentVelocity, targetVelocity, blend);
             return new MovementResult(newVelocity);
+        }
+
+        /// <summary>
+        /// Converts a historically 60 Hz-authored blend factor into an
+        /// elapsed-time-preserving factor for the current producer tick.
+        /// </summary>
+        protected static float TimeScaledBlend(float referenceStepBlend, float deltaTime)
+        {
+            referenceStepBlend = Math.Clamp(referenceStepBlend, 0.0f, 1.0f);
+            if (referenceStepBlend <= 0.0f || deltaTime <= 0.0f)
+                return 0.0f;
+            if (referenceStepBlend >= 1.0f)
+                return 1.0f;
+            return 1.0f - MathF.Pow(1.0f - referenceStepBlend, deltaTime * 60.0f);
+        }
+
+        /// <summary>
+        /// Converts a historically 60 Hz-authored retained fraction into the
+        /// equivalent retained fraction for the current producer tick.
+        /// </summary>
+        protected static float TimeScaledRetention(float referenceStepRetention, float deltaTime)
+        {
+            referenceStepRetention = Math.Clamp(referenceStepRetention, 0.0f, 1.0f);
+            if (deltaTime <= 0.0f)
+                return 1.0f;
+            return MathF.Pow(referenceStepRetention, deltaTime * 60.0f);
         }
 
         /// <summary>

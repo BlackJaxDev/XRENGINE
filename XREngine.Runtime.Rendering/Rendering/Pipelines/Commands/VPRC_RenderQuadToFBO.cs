@@ -54,6 +54,12 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// </summary>
         public bool MatchDestinationRenderArea { get; set; }
         /// <summary>
+        /// Treats this draw as an intentional one-layer mono control rendered while
+        /// the surrounding pipeline is stereo. This is reserved for validation
+        /// oracles that compare a mono shader invocation with the SPS result.
+        /// </summary>
+        public bool IsolatedMonoReference { get; set; }
+        /// <summary>
         /// The variant of the render graph pass to use.
         /// </summary>
         public string? RenderGraphPassVariant { get; set; }
@@ -106,6 +112,12 @@ namespace XREngine.Rendering.Pipelines.Commands
         public VPRC_RenderQuadToFBO SetRenderGraphPassVariant(string? variant)
         {
             RenderGraphPassVariant = variant;
+            return this;
+        }
+
+        public VPRC_RenderQuadToFBO SetIsolatedMonoReference(bool enabled = true)
+        {
+            IsolatedMonoReference = enabled;
             return this;
         }
 

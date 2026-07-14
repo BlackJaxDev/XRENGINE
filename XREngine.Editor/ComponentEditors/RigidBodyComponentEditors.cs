@@ -10,6 +10,7 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Tools;
 using XREngine.Diagnostics;
+using XREngine.Scene.Physics.Jolt;
 
 namespace XREngine.Editor.ComponentEditors;
 
@@ -470,6 +471,16 @@ public sealed class DynamicRigidBodyComponentEditor : IXRComponentEditor
             ImGui.TextUnformatted($"Sleeping: {rigidBody.IsSleeping}");
             ImGui.TextUnformatted($"Linear Velocity: {RigidBodyEditorShared.FormatVector(rigidBody.LinearVelocity)}");
             ImGui.TextUnformatted($"Angular Velocity: {RigidBodyEditorShared.FormatVector(rigidBody.AngularVelocity)}");
+
+            if (rigidBody is JoltDynamicRigidBody)
+            {
+                ImGui.SeparatorText("Jolt feature support");
+                ImGui.TextWrapped("Live: gravity, velocity, transform, damping, mass, axis locks, CCD/motion quality, and collision layers.");
+                ImGui.TextWrapped("Creation/rebuild: maximum velocities and solver-step overrides.");
+                ImGui.TextColored(
+                    new Vector4(1.0f, 0.75f, 0.25f, 1.0f),
+                    "PhysX-only fields are retained as authored data but are not silently emulated: simulation toggle, advanced contact/CCD thresholds, COM/inertia overrides, wake counter, and sleep/stabilization thresholds.");
+            }
         }
 
         ImGui.TextUnformatted($"Auto create: {(component.AutoCreateRigidBody ? "Enabled" : "Disabled")}");
@@ -551,10 +562,10 @@ public sealed class DynamicRigidBodyComponentEditor : IXRComponentEditor
             component.DominanceGroup = (byte)Math.Clamp(dominanceGroup, byte.MinValue, byte.MaxValue);
         ImGuiUndoHelper.TrackDragUndo("Dominance Group", component);
 
-        int ownerClient = component.OwnerClient;
-        if (ImGui.InputInt("Owner Client", ref ownerClient))
-            component.OwnerClient = (byte)Math.Clamp(ownerClient, byte.MinValue, byte.MaxValue);
-        ImGuiUndoHelper.TrackDragUndo("Owner Client", component);
+        int ownerClient = component.PhysxOwnerClient;
+        if (ImGui.InputInt("PhysX Owner Client", ref ownerClient))
+            component.PhysxOwnerClient = (byte)Math.Clamp(ownerClient, byte.MinValue, byte.MaxValue);
+        ImGuiUndoHelper.TrackDragUndo("PhysX Owner Client", component);
 
         string actorName = component.ActorName ?? string.Empty;
         if (ImGui.InputText("Actor Name", ref actorName, 128))
@@ -854,10 +865,10 @@ public sealed class StaticRigidBodyComponentEditor : IXRComponentEditor
             component.DominanceGroup = (byte)Math.Clamp(dominanceGroup, byte.MinValue, byte.MaxValue);
         ImGuiUndoHelper.TrackDragUndo("Dominance Group", component);
 
-        int ownerClient = component.OwnerClient;
-        if (ImGui.InputInt("Owner Client", ref ownerClient))
-            component.OwnerClient = (byte)Math.Clamp(ownerClient, byte.MinValue, byte.MaxValue);
-        ImGuiUndoHelper.TrackDragUndo("Owner Client", component);
+        int ownerClient = component.PhysxOwnerClient;
+        if (ImGui.InputInt("PhysX Owner Client", ref ownerClient))
+            component.PhysxOwnerClient = (byte)Math.Clamp(ownerClient, byte.MinValue, byte.MaxValue);
+        ImGuiUndoHelper.TrackDragUndo("PhysX Owner Client", component);
 
         string actorName = component.ActorName ?? string.Empty;
         if (ImGui.InputText("Actor Name", ref actorName, 128))

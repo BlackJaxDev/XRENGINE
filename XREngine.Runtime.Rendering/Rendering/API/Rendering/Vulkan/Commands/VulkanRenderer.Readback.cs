@@ -1126,6 +1126,31 @@ namespace XREngine.Rendering.Vulkan
             out int width,
             out int height,
             out string failure)
+            => TryReadTextureMipRgbaFloat(
+                texture,
+                mipLevel,
+                layerIndex,
+                ImageLayout.ShaderReadOnlyOptimal,
+                PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
+                AccessFlags.MemoryReadBit,
+                useExpectedLayoutWhenUntracked: false,
+                out rgbaFloats,
+                out width,
+                out height,
+                out failure);
+
+        private bool TryReadTextureMipRgbaFloat(
+            XRTexture texture,
+            int mipLevel,
+            int layerIndex,
+            ImageLayout expectedSourceLayout,
+            PipelineStageFlags expectedSourceStage,
+            AccessFlags expectedSourceAccess,
+            bool useExpectedLayoutWhenUntracked,
+            out float[]? rgbaFloats,
+            out int width,
+            out int height,
+            out string failure)
         {
             rgbaFloats = null;
             width = 0;
@@ -1160,13 +1185,21 @@ namespace XREngine.Rendering.Vulkan
                     Math.Max(0, mipLevel),
                     clampedLayer,
                     ImageAspectFlags.ColorBit,
-                    ImageLayout.ShaderReadOnlyOptimal,
-                    PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
-                    AccessFlags.MemoryReadBit,
+                    expectedSourceLayout,
+                    expectedSourceStage,
+                    expectedSourceAccess,
                     out BlitImageInfo source))
             {
                 failure = "Texture not uploaded";
                 return false;
+            }
+
+            if (useExpectedLayoutWhenUntracked && source.PreferredLayout == ImageLayout.Undefined)
+            {
+                source = source.WithResolvedState(
+                    source.Image,
+                    expectedSourceLayout,
+                    source.Extent);
             }
 
             if (IsDepthOrStencilFormat(source.Format))
@@ -1267,6 +1300,78 @@ namespace XREngine.Rendering.Vulkan
 
             rgba = new Vector4(rgbaFloats[0], rgbaFloats[1], rgbaFloats[2], rgbaFloats[3]);
             return true;
+        }
+
+        internal bool TryCaptureTextureLayerToPng(
+            XRTexture texture,
+            int mipLevel,
+            int layerIndex,
+            ImageLayout expectedSourceLayout,
+            PipelineStageFlags expectedSourceStage,
+            AccessFlags expectedSourceAccess,
+            string outputPath,
+            out int width,
+            out int height,
+            out RenderedOutputCaptureMetrics? metrics,
+            out string failure)
+        {
+            metrics = null;
+            if (!TryReadTextureMipRgbaFloat(
+                    texture,
+                    mipLevel,
+                    layerIndex,
+                    expectedSourceLayout,
+                    expectedSourceStage,
+                    expectedSourceAccess,
+                    useExpectedLayoutWhenUntracked: true,
+                    out float[]? rgbaFloats,
+                    out width,
+                    out height,
+                    out failure) ||
+                rgbaFloats is null)
+            {
+                return false;
+            }
+
+            byte[] rgba8 = new byte[rgbaFloats.Length];
+            for (int i = 0; i < rgbaFloats.Length; i++)
+            {
+                float value = Math.Clamp(rgbaFloats[i], 0.0f, 1.0f);
+                rgba8[i] = (byte)MathF.Round(value * byte.MaxValue);
+            }
+
+            string fullPath = Path.GetFullPath(outputPath);
+            string? directory = Path.GetDirectoryName(fullPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            try
+            {
+                using var image = new MagickImage(rgba8, new MagickReadSettings
+                {
+                    Width = checked((uint)width),
+                    Height = checked((uint)height),
+                    Format = MagickFormat.Rgba,
+                    Depth = 8,
+                });
+                image.Write(fullPath);
+                metrics = StereoRenderedOutputMetrics.MeasureCapture(
+                    rgbaFloats,
+                    width,
+                    height);
+                File.WriteAllText(
+                    fullPath + ".metrics.json",
+                    System.Text.Json.JsonSerializer.Serialize(
+                        metrics,
+                        new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+                failure = string.Empty;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                failure = $"PNG write failed: {ex.Message}";
+                return false;
+            }
         }
     }
 }

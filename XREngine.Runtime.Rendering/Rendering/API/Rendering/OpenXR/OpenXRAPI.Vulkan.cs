@@ -884,7 +884,7 @@ public unsafe partial class OpenXRAPI
             AutomaticallySwapBuffers = false,
             AllowUIRender = false,
             SetRenderPipelineFromCamera = false,
-            AllowAutomaticInternalResolution = false,
+            AllowAutomaticInternalResolution = true,
             RendersToExternalSwapchainTarget = true
         };
 
@@ -893,17 +893,14 @@ public unsafe partial class OpenXRAPI
         // as an external target so resource generation catches up synchronously
         // before the array layers are published to acquired swapchain images.
         _openXrStereoViewport.RendersToExternalSwapchainTarget = true;
-        _openXrStereoViewport.AllowAutomaticInternalResolution = false;
+        _openXrStereoViewport.AllowAutomaticInternalResolution = true;
         _openXrStereoViewport.CullWithFrustum = RuntimeEngine.Rendering.Settings.OpenXrCullWithFrustum;
         _openXrStereoViewport.SetFullScreen();
         if (_openXrStereoViewport.Width != (int)width || _openXrStereoViewport.Height != (int)height)
         {
             _openXrStereoViewport.Resize(width, height, setInternalResolution: false);
-            _openXrStereoViewport.SetInternalResolution((int)width, (int)height, correctAspect: false);
-        }
-        else if (_openXrStereoViewport.InternalWidth != (int)width || _openXrStereoViewport.InternalHeight != (int)height)
-        {
-            _openXrStereoViewport.SetInternalResolution((int)width, (int)height, correctAspect: false);
+            if (_openXrStereoViewport.InternalWidth <= 0 || _openXrStereoViewport.InternalHeight <= 0)
+                _openXrStereoViewport.SetInternalResolution((int)width, (int)height, correctAspect: false);
         }
     }
 
@@ -1100,15 +1097,22 @@ public unsafe partial class OpenXRAPI
 
     private bool TryRenderVulkanEyesBatch(CompositionLayerProjectionView* projectionViews, out bool handled)
     {
-        handled = false;
+        bool strictSinglePassStereoRequested =
+            RuntimeRenderingHostServices.Current.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo;
+        handled = strictSinglePassStereoRequested;
+        if (strictSinglePassStereoRequested &&
+            TryCommitStrictSpsFailure(
+                OpenXrStrictSpsFailureStage.Capability,
+                VulkanRenderer.EVulkanQueueSubmissionDisposition.NotSubmitted.ToString(),
+                out OpenXrStrictSpsFailureResolution capabilityFailure))
+        {
+            handled = capabilityFailure.Handled;
+            return false;
+        }
         if (_gl is not null)
             return false;
         if (Window?.Renderer is not VulkanRenderer renderer)
             return false;
-        bool strictSinglePassStereoRequested =
-            RuntimeRenderingHostServices.Current.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo;
-        if (strictSinglePassStereoRequested)
-            handled = true;
         if (_viewCount != 2)
         {
             if (strictSinglePassStereoRequested)
@@ -1181,6 +1185,16 @@ public unsafe partial class OpenXRAPI
         bool trueSinglePassStereo =
             modeResolution.EffectiveImplementationPath == EVrViewRenderImplementationPath.TrueSinglePassStereo;
 
+        if (strictSinglePassStereoRequested &&
+            TryCommitStrictSpsFailure(
+                OpenXrStrictSpsFailureStage.Target,
+                VulkanRenderer.EVulkanQueueSubmissionDisposition.NotSubmitted.ToString(),
+                out OpenXrStrictSpsFailureResolution targetFailure))
+        {
+            handled = targetFailure.Handled;
+            return false;
+        }
+
         try
         {
             bool collectedTrueSinglePassStereo =
@@ -1232,13 +1246,20 @@ public unsafe partial class OpenXRAPI
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.RenderSwapchains"))
             {
+                VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage requestedFaultInjectionStage =
+                    ResolveVulkanStrictSpsFaultInjectionStage();
+                VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage injectedFailureStage =
+                    VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.None;
+
                 bool rendered = modeResolution.EffectiveMode switch
                 {
                     EVrViewRenderMode.SinglePassStereo => TryRenderVulkanEyeSinglePassStereoToSwapchains(
                         renderer,
                         leftImageIndex,
                         rightImageIndex,
-                        modeResolution),
+                        modeResolution,
+                        requestedFaultInjectionStage,
+                        out injectedFailureStage),
                     EVrViewRenderMode.ParallelCommandBufferRecording => TryRenderVulkanEyeParallelCommandBufferRecordingToSwapchains(
                         renderer,
                         leftImageIndex,
@@ -1252,6 +1273,20 @@ public unsafe partial class OpenXRAPI
 
                 if (!rendered)
                 {
+                    if (injectedFailureStage != VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.None)
+                    {
+                        OpenXrStrictSpsFailureStage apiFailureStage =
+                            ConvertVulkanStrictSpsFaultInjectionStage(injectedFailureStage);
+                        if (TryCommitStrictSpsFailure(
+                                apiFailureStage,
+                                VulkanRenderer.EVulkanQueueSubmissionDisposition.NotSubmitted.ToString(),
+                                out OpenXrStrictSpsFailureResolution rendererFailure))
+                        {
+                            handled = rendererFailure.Handled;
+                        }
+                        return false;
+                    }
+
                     requestSequentialFallback = permitSequentialFallback;
                     if (requestSequentialFallback)
                     {
@@ -1269,15 +1304,28 @@ public unsafe partial class OpenXRAPI
                     }
                     return false;
                 }
+
             }
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.FillProjectionViews"))
             {
+                if (strictSinglePassStereoRequested &&
+                    TryCommitStrictSpsFailure(
+                        OpenXrStrictSpsFailureStage.Publish,
+                        VulkanRenderer.EVulkanQueueSubmissionDisposition.Completed.ToString(),
+                        out OpenXrStrictSpsFailureResolution publishFailure))
+                {
+                    handled = publishFailure.Handled;
+                    return false;
+                }
+
                 RecordSmokeEyePublish(0);
                 RecordSmokeEyePublish(1);
                 FillProjectionView(0, projectionViews);
                 FillProjectionView(1, projectionViews);
             }
+            if (strictSinglePassStereoRequested && trueSinglePassStereo)
+                RecordStrictSpsSuccessfulSubmission();
             return true;
         }
         catch (InvalidOperationException)
@@ -1329,6 +1377,40 @@ public unsafe partial class OpenXRAPI
             }
         }
     }
+
+    private VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage ResolveVulkanStrictSpsFaultInjectionStage()
+    {
+        OpenXrStrictSpsFailureStage configuredStage = _strictSpsInjectedFailureStage;
+        if (!IsStrictSpsFailureInjectionEligible(configuredStage))
+            return VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.None;
+
+        return configuredStage switch
+        {
+            OpenXrStrictSpsFailureStage.Recording =>
+                VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.Recording,
+            OpenXrStrictSpsFailureStage.LifetimeValidation =>
+                VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.LifetimeValidation,
+            OpenXrStrictSpsFailureStage.Submit =>
+                VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.Submit,
+            _ => VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.None,
+        };
+    }
+
+    private static OpenXrStrictSpsFailureStage ConvertVulkanStrictSpsFaultInjectionStage(
+        VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage stage)
+        => stage switch
+        {
+            VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.Recording =>
+                OpenXrStrictSpsFailureStage.Recording,
+            VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.LifetimeValidation =>
+                OpenXrStrictSpsFailureStage.LifetimeValidation,
+            VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.Submit =>
+                OpenXrStrictSpsFailureStage.Submit,
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(stage),
+                stage,
+                "A concrete Vulkan strict-SPS fault-injection stage is required."),
+        };
 
     private bool AcquireAndWaitOpenXrEyeImage(
         uint viewIndex,
@@ -1386,8 +1468,11 @@ public unsafe partial class OpenXRAPI
         VulkanRenderer renderer,
         uint leftImageIndex,
         uint rightImageIndex,
-        VrViewRenderModeResolution modeResolution)
+        VrViewRenderModeResolution modeResolution,
+        VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage faultInjectionStage,
+        out VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage injectedFailureStage)
     {
+        injectedFailureStage = VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.None;
         if (modeResolution.EffectiveImplementationPath != EVrViewRenderImplementationPath.TrueSinglePassStereo)
         {
             Debug.VulkanWarningEvery(
@@ -1400,9 +1485,17 @@ public unsafe partial class OpenXRAPI
 
         using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.RenderAndPublish"))
         {
-            if (TryRenderVulkanTrueSinglePassStereoToSwapchains(renderer, leftImageIndex, rightImageIndex))
+            if (TryRenderVulkanTrueSinglePassStereoToSwapchains(
+                    renderer,
+                    leftImageIndex,
+                    rightImageIndex,
+                    faultInjectionStage,
+                    out injectedFailureStage))
                 return true;
         }
+
+        if (injectedFailureStage != VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.None)
+            return false;
 
         Debug.VulkanWarningEvery(
             $"OpenXR.Vulkan.TrueSinglePassStereo.Skipped.{GetHashCode()}",
@@ -1414,8 +1507,11 @@ public unsafe partial class OpenXRAPI
     private bool TryRenderVulkanTrueSinglePassStereoToSwapchains(
         VulkanRenderer renderer,
         uint leftImageIndex,
-        uint rightImageIndex)
+        uint rightImageIndex,
+        VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage faultInjectionStage,
+        out VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage injectedFailureStage)
     {
+        injectedFailureStage = VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.None;
         if (!CanUseOpenXrTrueSinglePassStereo(out string unavailableReason))
         {
             Debug.VulkanWarningEvery(
@@ -1534,6 +1630,11 @@ public unsafe partial class OpenXRAPI
             renderer.Active = true;
             AbstractRenderer.Current = renderer;
 
+            ulong renderFrameId = RuntimeRenderingHostServices.Current.CurrentRenderFrameId;
+            FrameOutputPacingDecision stereoPacing = CreateOpenXrStereoFrameOutputPacing(
+                renderFrameId,
+                checked((int)leftImageIndex));
+
             var renderRequest = new VulkanRenderer.OpenXrEyeMirrorRenderRequest(
                 target.FrameBuffer,
                 target.Extent,
@@ -1542,7 +1643,12 @@ public unsafe partial class OpenXRAPI
                 OpenXrImageIndex: leftImageIndex,
                 EmitFrameOps: () =>
                 {
-                    stereoViewport.RenderStereo(target.FrameBuffer, leftCamera, rightCamera, _openXrFrameWorld);
+                    stereoViewport.RenderStereo(
+                        target.FrameBuffer,
+                        leftCamera,
+                        rightCamera,
+                        _openXrFrameWorld,
+                        stereoPacing);
                 },
                 RendersExternalSwapchainTarget: false);
 
@@ -1558,10 +1664,15 @@ public unsafe partial class OpenXRAPI
                 target.RightSwapchainFormat,
                 target.Extent,
                 $"true stereo right eye swapchain image {rightImageIndex}",
-                flipY: false);
+                flipY: false,
+                faultInjectionStage,
+                out injectedFailureStage);
 
             if (!stereoRenderedAndPublished)
             {
+                if (injectedFailureStage != VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.None)
+                    return false;
+
                 if (!stereoViewport.RenderPipelineInstance.SkippedResizeCatchUpThisFrame)
                 {
                     Debug.VulkanWarningEvery(
@@ -1587,6 +1698,10 @@ public unsafe partial class OpenXRAPI
                 return false;
             }
 
+            Volatile.Write(ref _openXrLastRenderedFrameId, renderFrameId);
+            RecordSmokeEffectiveTsrRenderScale(
+                stereoViewport.RenderPipelineInstance.EffectiveTsrRenderScaleThisFrame);
+
             if (VulkanCaptureEyeOutputs || OpenXrDebugLifecycle || XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw)
             {
                 Debug.VulkanEvery(
@@ -1603,6 +1718,17 @@ public unsafe partial class OpenXRAPI
                     stereoPipeline.DebugName,
                     stereoRenderingCommands);
             }
+
+            TryCaptureStrictSpsBoundarySequence(
+                renderer,
+                target,
+                leftImage,
+                rightImage,
+                leftFormat,
+                rightFormat,
+                extent,
+                leftImageIndex,
+                rightImageIndex);
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.PublishLeft"))
                 PublishVulkanEyeMirror(renderer, target.LeftColorView, 0, leftImageIndex, width, height);
@@ -1683,6 +1809,25 @@ public unsafe partial class OpenXRAPI
             CpuMs: 0.0,
             GpuMs: 0.0,
             request));
+    }
+
+    internal static FrameOutputPacingDecision CreateOpenXrStereoFrameOutputPacing(
+        ulong renderFrameId,
+        int externalImageSlot)
+    {
+        FrameOutputPacingDecision pacing = FrameOutputPacingDecision.Due(
+            EVrOutputViewKind.LeftEye,
+            EFrameOutputKind.OpenXREyeSubmit,
+            renderFrameId);
+        RenderOutputTargetDescriptor target = pacing.Request.Target with
+        {
+            ViewMask = 0x3u,
+            ExternalImageSlot = externalImageSlot,
+        };
+        return pacing with
+        {
+            Request = pacing.Request.WithTarget(target),
+        };
     }
 
     private bool TryRenderVulkanEyeParallelCommandBufferRecordingToSwapchains(

@@ -6,6 +6,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using XREngine.Networking;
 using XREngine.Scene;
 using XREngine.Scene.Physics.Joints;
 using XREngine.Scene.Transforms;
@@ -18,9 +19,10 @@ namespace XREngine.Components.Physics
     /// and rebinding when connected bodies change.
     /// </summary>
     [Category("Physics")]
-    public abstract class PhysicsJointComponent : XRComponent, IRenderable
+    public abstract class PhysicsJointComponent : XRComponent, IRenderable, IPhysicsReplicationTarget
     {
         private PhysicsActorComponent? _connectedBody;
+        private PhysicsActorComponent? _localBody;
         private Vector3 _anchorPosition = Vector3.Zero;
         private Quaternion _anchorRotation = Quaternion.Identity;
         private Vector3 _connectedAnchorPosition = Vector3.Zero;
@@ -32,6 +34,10 @@ namespace XREngine.Components.Physics
         private bool _enablePreprocessing = true;
         private IAbstractJoint? _nativeJoint;
         private bool _drawGizmos = true;
+        private PhysicsReplicationAuthority _replicationAuthority = PhysicsReplicationAuthority.LocalSimulation;
+        private NetworkEntityId _networkEntityId;
+        private string? _ownerClientId;
+        private int _ownerServerPlayerIndex = -1;
 
         private readonly RenderInfo3D _gizmoRenderInfo;
 
@@ -74,8 +80,17 @@ namespace XREngine.Components.Physics
             get => _connectedBody;
             set
             {
-                if (SetField(ref _connectedBody, value))
+                PhysicsActorComponent? previousBody = _connectedBody;
+                if (!SetField(ref _connectedBody, value))
+                    return;
+
+                if (IsActiveInHierarchy)
+                {
+                    if (previousBody is not null)
+                        previousBody.PhysicsActorChanged -= Actor_PhysicsActorChanged;
+                    UpdateActorSubscriptions();
                     RebindJoint();
+                }
             }
         }
 
@@ -227,24 +242,54 @@ namespace XREngine.Components.Physics
         [RuntimeOnly]
         public IAbstractJoint? NativeJoint => _nativeJoint;
 
+        [Category("Networking")]
+        public PhysicsReplicationAuthority ReplicationAuthority
+        {
+            get => _replicationAuthority;
+            set => SetField(ref _replicationAuthority, value);
+        }
+
+        [Category("Networking")]
+        public NetworkEntityId NetworkEntityId
+        {
+            get => _networkEntityId;
+            set => SetField(ref _networkEntityId, value);
+        }
+
+        [Category("Networking")]
+        public string? OwnerClientId
+        {
+            get => _ownerClientId;
+            set => SetField(ref _ownerClientId, value);
+        }
+
+        [Category("Networking")]
+        public int OwnerServerPlayerIndex
+        {
+            get => _ownerServerPlayerIndex;
+            set => SetField(ref _ownerServerPlayerIndex, value);
+        }
+
         #region Lifecycle
 
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            UpdateActorSubscriptions();
             CreateNativeJoint();
         }
 
         protected override void OnComponentDeactivated()
         {
-            base.OnComponentDeactivated();
             DestroyNativeJoint();
+            ClearActorSubscriptions();
+            base.OnComponentDeactivated();
         }
 
         /// <summary>
         /// Destroys and recreates the native joint. Called when connected body references change.
         /// </summary>
-        protected void RebindJoint()
+        protected virtual void RebindJoint()
         {
             if (!IsActiveInHierarchy)
                 return;
@@ -261,6 +306,12 @@ namespace XREngine.Components.Physics
 
             var actorA = ResolveLocalActor();
             var actorB = ResolveConnectedActor();
+            if ((_localBody is not null && actorA is null)
+                || (_connectedBody is not null && actorB is null)
+                || (_localBody is null && _connectedBody is null))
+            {
+                return;
+            }
 
             var localFrameA = new JointAnchor(AnchorPosition, AnchorRotation);
             JointAnchor localFrameB;
@@ -306,33 +357,61 @@ namespace XREngine.Components.Physics
 
         #region Helpers
 
+        private void UpdateActorSubscriptions()
+        {
+            PhysicsActorComponent? localBody = ResolveLocalBodyComponent();
+            if (!ReferenceEquals(_localBody, localBody))
+            {
+                if (_localBody is not null)
+                    _localBody.PhysicsActorChanged -= Actor_PhysicsActorChanged;
+                _localBody = localBody;
+                if (_localBody is not null)
+                    _localBody.PhysicsActorChanged += Actor_PhysicsActorChanged;
+            }
+
+            if (_connectedBody is not null)
+            {
+                _connectedBody.PhysicsActorChanged -= Actor_PhysicsActorChanged;
+                _connectedBody.PhysicsActorChanged += Actor_PhysicsActorChanged;
+            }
+        }
+
+        private void ClearActorSubscriptions()
+        {
+            if (_localBody is not null)
+                _localBody.PhysicsActorChanged -= Actor_PhysicsActorChanged;
+            if (_connectedBody is not null)
+                _connectedBody.PhysicsActorChanged -= Actor_PhysicsActorChanged;
+            _localBody = null;
+        }
+
+        private void Actor_PhysicsActorChanged(
+            PhysicsActorComponent component,
+            IAbstractPhysicsActor? previousActor,
+            IAbstractPhysicsActor? currentActor)
+            => RebindJoint();
+
+        private PhysicsActorComponent? ResolveLocalBodyComponent()
+        {
+            if (TryGetSiblingComponent<DynamicRigidBodyComponent>(out var dynamicBody))
+                return dynamicBody;
+            if (TryGetSiblingComponent<StaticRigidBodyComponent>(out var staticBody))
+                return staticBody;
+            return null;
+        }
+
         /// <summary>
         /// Resolves the physics actor on the same scene node (actor A / "this body").
         /// </summary>
         private IAbstractPhysicsActor? ResolveLocalActor()
-        {
-            if (TryGetSiblingComponent<DynamicRigidBodyComponent>(out var dyn) && dyn?.RigidBody is not null)
-                return dyn.RigidBody;
-            if (TryGetSiblingComponent<StaticRigidBodyComponent>(out var stat) && stat?.RigidBody is not null)
-                return stat.RigidBody;
-            return null;
-        }
+            => _localBody?.PhysicsActor ?? ResolveLocalBodyComponent()?.PhysicsActor;
 
         /// <summary>
         /// Resolves the physics actor for the connected body (actor B).
         /// Returns null when anchored to the world.
         /// </summary>
         private IAbstractPhysicsActor? ResolveConnectedActor()
-        {
-            if (_connectedBody is null)
-                return null;
-
-            if (_connectedBody is DynamicRigidBodyComponent dyn)
-                return dyn.RigidBody;
-            if (_connectedBody is StaticRigidBodyComponent stat)
-                return stat.RigidBody;
-            return null;
-        }
+            => _connectedBody?.PhysicsActor;
 
         /// <summary>
         /// Computes an auto-configured connected anchor by converting the local anchor

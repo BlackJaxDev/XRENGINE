@@ -1106,6 +1106,9 @@ public unsafe partial class OpenXRAPI
         out Matrix4x4 localPose,
         out (float Left, float Right, float Up, float Down) fov)
     {
+        if (TryGetPhase524bFrozenViewPoseAndFov(viewIndex, out localPose, out fov))
+            return true;
+
         bool allowPredictedFallback = timing == OpenXrPoseTiming.Late;
         if (TryGetCachedOpenXrViewForTiming(viewIndex, timing, allowPredictedFallback, out View view))
             return CreateOpenXrViewPoseAndFov(view, out localPose, out fov);
@@ -1128,6 +1131,38 @@ public unsafe partial class OpenXRAPI
         }
 
         return true;
+    }
+
+    private bool TryGetPhase524bFrozenViewPoseAndFov(
+        uint viewIndex,
+        out Matrix4x4 localPose,
+        out (float Left, float Right, float Up, float Down) fov)
+    {
+        if (!Phase524bTemporalStateDiagnostics.Enabled)
+        {
+            localPose = default;
+            fov = default;
+            return false;
+        }
+
+        bool leftEye = IsLeftEyeLikeOpenXrView(viewIndex);
+        lock (_openXrPoseLock)
+        {
+            if (!_phase524bFrozenRuntimePoseInitialized)
+            {
+                localPose = default;
+                fov = default;
+                return false;
+            }
+
+            localPose = leftEye
+                ? _phase524bFrozenLeftEyeLocalPose
+                : _phase524bFrozenRightEyeLocalPose;
+            fov = leftEye
+                ? _phase524bFrozenLeftEyeFov
+                : _phase524bFrozenRightEyeFov;
+            return true;
+        }
     }
 
     private bool TryGetOpenXrProjectionLayerView(uint viewIndex, out View view)

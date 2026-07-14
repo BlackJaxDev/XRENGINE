@@ -687,49 +687,64 @@ namespace XREngine.Rendering.Vulkan
             }
 
             CancelCommandChainRecordingWorkers();
+            DestroySwapchainCommandBuffers(cancelCommandChainWorkers: false);
             DestroyComputeTransientResources();
             DestroyDeferredSecondaryCommandBuffers();
-            DestroyCommandChainCaches();
+            DestroyExternalCommandChainCaches();
             DestroyTrackedCommandChainSecondaryPools();
+            DestroyComputeDescriptorCaches();
+            _externalCommandChainCaches = null;
+            ClearTrackedCommandChainSecondaryPools();
+        }
+
+        private void DestroySwapchainCommandBuffers()
+            => DestroySwapchainCommandBuffers(cancelCommandChainWorkers: true);
+
+        private void DestroySwapchainCommandBuffers(bool cancelCommandChainWorkers)
+        {
+            if (_commandBuffers is null &&
+                _commandBufferVariants is null &&
+                _dynamicUiBatchTextSecondaryCommandBuffers is null &&
+                _dynamicUiBatchTextOverlayCommandBuffers is null &&
+                _imguiOverlayCommandBuffers is null &&
+                _commandChainCaches is null)
+            {
+                return;
+            }
+
+            if (cancelCommandChainWorkers)
+                CancelCommandChainRecordingWorkers();
+
+            int indexedFrameSlotCount = _commandBuffers?.Length ?? 0;
+            DestroyIndexedCommandChainCaches();
+            for (int i = 0; i < indexedFrameSlotCount; i++)
+                ReleaseDeferredSecondaryCommandBuffers(unchecked((uint)i));
+
             DestroyCommandBufferVariants();
             DestroyDynamicUiBatchTextSecondaryCommandBuffers();
             DestroyDynamicUiBatchTextOverlayCommandBuffers();
-            DestroyComputeDescriptorCaches();
             DestroyImGuiOverlayCommandBuffers();
 
-            if (_deviceLost)
+            if (_commandBuffers is not null)
             {
-                if (_commandBuffers is not null)
+                if (_deviceLost)
                 {
                     foreach (CommandBuffer commandBuffer in _commandBuffers)
                         RemoveCommandBufferBindState(commandBuffer);
                 }
-
-                _commandBuffers = null;
-                _activeCommandBuffers = null;
-                _dynamicUiBatchTextSecondaryCommandBuffers = null;
-                _dynamicUiBatchTextOverlayCommandBuffers = null;
-                _imguiOverlayCommandBuffers = null;
-                _dynamicUiBatchTextSecondaryOpCounts = null;
-                _dynamicUiBatchTextSecondarySignatures = null;
-                _commandBufferDirtyFlags = null;
-                _commandBufferFrameOpSignatures = null;
-                _commandBufferFrameOpSignatureDebugParts = null;
-                _commandBufferPlannerRevisions = null;
-                _commandChainCaches = null;
-                _externalCommandChainCaches = null;
-                _commandChainScheduleCache = null;
-                _commandChainScheduleFastSignatures = null;
-                ClearTrackedCommandChainSecondaryPools();
-                return;
-            }
-
-            if (_commandBuffers is not null)
-            {
-                fixed (CommandBuffer* commandBuffersPtr = _commandBuffers)
+                else
                 {
-                    if (_commandBuffers.Length > 0)
-                        FreeVulkanCommandBuffersTracked(commandPool, (uint)_commandBuffers.Length, commandBuffersPtr, "CommandBuffers.DestroyPrimary");
+                    fixed (CommandBuffer* commandBuffersPtr = _commandBuffers)
+                    {
+                        if (_commandBuffers.Length > 0)
+                        {
+                            FreeVulkanCommandBuffersTracked(
+                                commandPool,
+                                (uint)_commandBuffers.Length,
+                                commandBuffersPtr,
+                                "CommandBuffers.DestroySwapchainPrimary");
+                        }
+                    }
                 }
             }
 
@@ -744,11 +759,8 @@ namespace XREngine.Rendering.Vulkan
             _commandBufferFrameOpSignatures = null;
             _commandBufferFrameOpSignatureDebugParts = null;
             _commandBufferPlannerRevisions = null;
-            _commandChainCaches = null;
-            _externalCommandChainCaches = null;
             _commandChainScheduleCache = null;
             _commandChainScheduleFastSignatures = null;
-            ClearTrackedCommandChainSecondaryPools();
         }
 
         private void DestroyCommandBufferVariants()
@@ -800,9 +812,12 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyCommandChainCaches()
         {
-            if (_commandChainCaches is null && _externalCommandChainCaches is null)
-                return;
+            DestroyIndexedCommandChainCaches();
+            DestroyExternalCommandChainCaches();
+        }
 
+        private void DestroyIndexedCommandChainCaches()
+        {
             if (_commandChainCaches is not null)
             {
                 foreach (Dictionary<CommandChainKey, CommandChain>? cache in _commandChainCaches)
@@ -817,6 +832,13 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
+            _commandChainCaches = null;
+            _commandChainScheduleCache = null;
+            _commandChainScheduleFastSignatures = null;
+        }
+
+        private void DestroyExternalCommandChainCaches()
+        {
             if (_externalCommandChainCaches is not null)
             {
                 foreach (Dictionary<CommandChainKey, CommandChain> cache in _externalCommandChainCaches.Values)
@@ -830,10 +852,7 @@ namespace XREngine.Rendering.Vulkan
                 _externalCommandChainCaches.Clear();
             }
 
-            _commandChainCaches = null;
             _externalCommandChainCaches = null;
-            _commandChainScheduleCache = null;
-            _commandChainScheduleFastSignatures = null;
         }
 
         private bool HasTrackedCommandChainSecondaryPools()
@@ -1094,14 +1113,20 @@ namespace XREngine.Rendering.Vulkan
             if (frameDataSlotCount <= 0)
                 return;
 
-            if (_computeTransientResources is not null &&
-                _computeTransientResources.Length < frameDataSlotCount)
+            if (_computeTransientResources is null)
+            {
+                _computeTransientResources = new ComputeTransientResources[frameDataSlotCount];
+            }
+            else if (_computeTransientResources.Length < frameDataSlotCount)
             {
                 Array.Resize(ref _computeTransientResources, frameDataSlotCount);
             }
 
-            if (_deferredSecondaryCommandBuffers is not null &&
-                _deferredSecondaryCommandBuffers.Length < frameDataSlotCount)
+            if (_deferredSecondaryCommandBuffers is null)
+            {
+                _deferredSecondaryCommandBuffers = new List<DeferredSecondaryCommandBuffer>[frameDataSlotCount];
+            }
+            else if (_deferredSecondaryCommandBuffers.Length < frameDataSlotCount)
             {
                 Array.Resize(ref _deferredSecondaryCommandBuffers, frameDataSlotCount);
             }

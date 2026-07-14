@@ -106,6 +106,17 @@ public unsafe partial class OpenXRAPI
     private (float Left, float Right, float Up, float Down) _openXrLateLeftEyeFov;
     private (float Left, float Right, float Up, float Down) _openXrLateRightEyeFov;
 
+    // The Phase 5.2.4b acceptance scene supplies its own deterministic
+    // locomotion-root motion. Freeze the first valid runtime eye basis so a
+    // simulated-runtime wobble cannot contaminate static/motion-vector oracles.
+    // This state is never consulted outside the dedicated validation mode.
+    private bool _phase524bFrozenRuntimePoseInitialized;
+    private Matrix4x4 _phase524bFrozenLeftEyeLocalPose = Matrix4x4.Identity;
+    private Matrix4x4 _phase524bFrozenRightEyeLocalPose = Matrix4x4.Identity;
+    private Matrix4x4 _phase524bFrozenHeadLocalPose = Matrix4x4.Identity;
+    private (float Left, float Right, float Up, float Down) _phase524bFrozenLeftEyeFov;
+    private (float Left, float Right, float Up, float Down) _phase524bFrozenRightEyeFov;
+
     // Controller poses (local in app space).
     private Matrix4x4 _openXrPredLeftControllerLocalPose = Matrix4x4.Identity;
     private Matrix4x4 _openXrPredRightControllerLocalPose = Matrix4x4.Identity;
@@ -270,6 +281,9 @@ public unsafe partial class OpenXRAPI
     private int _openXrLifecycleFrameIndex;
     private int _openXrRenderThreadId;
     private int _openXrActionsSyncedFrameNumber;
+    private ulong _openXrLastRenderedFrameId;
+    private readonly float? _phase524bTsrRenderScaleOverride =
+        ResolvePhase524bTsrRenderScaleOverride();
 
     // Dedicated OpenXR pacing thread (only used when OpenXrRenderPacingHandling == DedicatedThread).
     private Thread? _openXrPacingThread;

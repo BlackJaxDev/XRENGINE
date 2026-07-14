@@ -52,6 +52,44 @@ public sealed class RenderFrameTimingContractTests
         swapCpuTree.ShouldBeGreaterThan(refreshSkinnedBounds);
     }
 
+    [Test]
+    public void RuntimeWorld_GlobalPreCollectVisible_PublishesPendingMeshMatrices()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/XRWorldInstance.Runtime.cs").Replace("\r\n", "\n");
+
+        int preCollectStart = source.IndexOf("public void GlobalPreCollectVisible()", StringComparison.Ordinal);
+        preCollectStart.ShouldBeGreaterThanOrEqualTo(0);
+
+        int preCollectEnd = source.IndexOf("public void GlobalPreRender()", preCollectStart, StringComparison.Ordinal);
+        preCollectEnd.ShouldBeGreaterThan(preCollectStart);
+
+        string preCollectBody = source.Substring(preCollectStart, preCollectEnd - preCollectStart);
+        int publishMatrices = preCollectBody.IndexOf("RenderableMesh.ProcessPendingRenderMatrixUpdates();", StringComparison.Ordinal);
+        int publishScene = preCollectBody.IndexOf("VisualScene.GlobalCollectVisible();", StringComparison.Ordinal);
+
+        publishMatrices.ShouldBeGreaterThanOrEqualTo(0);
+        publishScene.ShouldBeGreaterThan(publishMatrices);
+    }
+
+    [Test]
+    public void OpenXrCollectVisible_PublishesWorldTransformsBeforeSpsCollection()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs").Replace("\r\n", "\n");
+
+        int collectStart = source.IndexOf("private void OpenXrCollectVisible()", StringComparison.Ordinal);
+        collectStart.ShouldBeGreaterThanOrEqualTo(0);
+
+        int collectEnd = source.IndexOf("private void CollectOpenXrEyeVisible", collectStart, StringComparison.Ordinal);
+        collectEnd.ShouldBeGreaterThan(collectStart);
+
+        string collectBody = source.Substring(collectStart, collectEnd - collectStart);
+        int publishMatrices = collectBody.IndexOf("resolvedWorld.GlobalPreCollectVisible();", StringComparison.Ordinal);
+        int collectSps = collectBody.IndexOf("CollectOpenXrTrueSinglePassStereoVisible(", StringComparison.Ordinal);
+
+        publishMatrices.ShouldBeGreaterThanOrEqualTo(0);
+        collectSps.ShouldBeGreaterThan(publishMatrices);
+    }
+
     private static string ReadWorkspaceFile(string relativePath)
     {
         string repoRoot = ResolveRepoRoot();

@@ -2,17 +2,28 @@ using XREngine.Extensions;
 using JoltPhysicsSharp;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Components.Physics;
 using XREngine.Data.Geometry;
 using XREngine.Scene;
 using XREngine.Scene.Physics.Joints;
-using XREngine.Rendering.Physics.Physx;
+using XREngine.Data.Colors;
 using Ray = JoltPhysicsSharp.Ray;
 
 namespace XREngine.Scene.Physics.Jolt
 {
     public class JoltScene : AbstractPhysicsScene
     {
+        private IPhysicsBackendService? _backendService;
+
+        public override IPhysicsBackendService BackendService
+            => _backendService ??= new JoltBackendService(this);
+
         private readonly HashSet<IJoltCharacterController> _characterControllers = new();
+        private readonly object _debugContactsLock = new();
+        private readonly JoltDebugContact[] _debugContacts = new JoltDebugContact[256];
+        private int _debugContactCount;
+        private bool _captureDebugContacts;
+        private JoltEngineDebugRenderer? _debugRenderer;
 
         internal void RegisterCharacterController(IJoltCharacterController controller)
         {
@@ -47,7 +58,7 @@ namespace XREngine.Scene.Physics.Jolt
         private Dictionary<BodyID, JoltStaticRigidBody> _staticBodies = new();
         private Dictionary<BodyID, JoltDynamicRigidBody> _dynamicBodies = new();
         private readonly HashSet<IAbstractJoint> _joints = [];
-        private BodyID _worldAnchorBodyID;
+        private BodyID _worldAnchorBodyID = BodyID.Invalid;
 
         public PhysicsSystem? PhysicsSystem => _physicsSystem;
         public JobSystem? JobSystem => _jobSystem;
@@ -62,46 +73,33 @@ namespace XREngine.Scene.Physics.Jolt
             if (_physicsSystem is null)
                 return null;
 
-            Shape? shape;
+            JoltShapeMetadata metadata;
             try
             {
-                shape = geometry.AsJoltShape();
+                metadata = JoltShapeFactory.Create(geometry, shapeOffsetTranslation, shapeOffsetRotation);
             }
             catch (NotImplementedException)
             {
                 System.Diagnostics.Debug.WriteLine($"[JoltScene] CreateStaticRigidBody failed - geometry type {geometry.GetType().Name} not implemented for Jolt");
                 return null;
             }
-            
-            if (shape is null)
-            {
-                System.Diagnostics.Debug.WriteLine("[JoltScene] CreateStaticRigidBody failed - shape is null");
+
+            return CreateStaticRigidBody(metadata, pose, layerMask, default);
+        }
+
+        public JoltStaticRigidBody? CreateStaticRigidBody(in PhysicsRigidBodyCreateInfo createInfo)
+        {
+            if (_physicsSystem is null)
                 return null;
-            }
 
-            pose = ApplyShapeOffsetToPose(pose, shapeOffsetTranslation, shapeOffsetRotation);
-
-            BodyCreationSettings bodySettings = new(
-                shape,
-                pose.position,
-                pose.rotation,
-                MotionType.Static,
-                layerMask.AsJoltObjectLayer());
-
-            Body body = _physicsSystem.BodyInterface.CreateBody(bodySettings);
-            BodyID bodyId = body.ID;
-            
-            // Check if body creation succeeded
-            if (bodyId.IsInvalid)
-            {
-                System.Diagnostics.Debug.WriteLine("[JoltScene] CreateStaticRigidBody failed - body ID is invalid (max bodies reached?)");
-                return null;
-            }
-            
-            var joltBody = new JoltStaticRigidBody(bodyId);
-
-            AddActor(joltBody);
-            return joltBody;
+            JoltShapeMetadata? metadata = JoltShapeFactory.Create(
+                createInfo.ColliderShapes,
+                createInfo.FallbackGeometry,
+                createInfo.FallbackShapeOffsetTranslation,
+                createInfo.FallbackShapeOffsetRotation);
+            return metadata is null
+                ? null
+                : CreateStaticRigidBody(metadata, createInfo.Pose, createInfo.LayerMask, createInfo);
         }
 
         public JoltDynamicRigidBody? CreateDynamicRigidBody(
@@ -114,46 +112,277 @@ namespace XREngine.Scene.Physics.Jolt
             if (_physicsSystem is null)
                 return null;
 
-            Shape? shape;
+            JoltShapeMetadata metadata;
             try
             {
-                shape = geometry.AsJoltShape();
+                metadata = JoltShapeFactory.Create(geometry, shapeOffsetTranslation, shapeOffsetRotation);
             }
             catch (NotImplementedException)
             {
                 System.Diagnostics.Debug.WriteLine($"[JoltScene] CreateDynamicRigidBody failed - geometry type {geometry.GetType().Name} not implemented for Jolt");
                 return null;
             }
-            
-            if (shape is null)
-            {
-                System.Diagnostics.Debug.WriteLine("[JoltScene] CreateDynamicRigidBody failed - shape is null");
+
+            return CreateDynamicRigidBody(metadata, pose, layerMask, default);
+        }
+
+        public JoltDynamicRigidBody? CreateDynamicRigidBody(in PhysicsRigidBodyCreateInfo createInfo)
+        {
+            if (_physicsSystem is null)
                 return null;
+
+            JoltShapeMetadata? metadata = JoltShapeFactory.Create(
+                createInfo.ColliderShapes,
+                createInfo.FallbackGeometry,
+                createInfo.FallbackShapeOffsetTranslation,
+                createInfo.FallbackShapeOffsetRotation);
+            return metadata is null
+                ? null
+                : CreateDynamicRigidBody(metadata, createInfo.Pose, createInfo.LayerMask, createInfo);
+        }
+
+        private JoltStaticRigidBody? CreateStaticRigidBody(
+            JoltShapeMetadata metadata,
+            (Vector3 position, Quaternion rotation) pose,
+            LayerMask layerMask,
+            PhysicsRigidBodyCreateInfo? createInfo)
+        {
+            try
+            {
+                using BodyCreationSettings bodySettings = new(
+                    metadata.Shape,
+                    pose.position,
+                    JoltShapeFactory.NormalizeRotation(pose.rotation, nameof(pose)),
+                    MotionType.Static,
+                    layerMask.AsJoltObjectLayer());
+                if (createInfo is PhysicsRigidBodyCreateInfo authored)
+                    ApplyCreationSettings(bodySettings, metadata.Shape, authored, dynamic: false);
+
+                Body body = _physicsSystem!.BodyInterface.CreateBody(bodySettings);
+                BodyID bodyID = body.ID;
+                if (bodyID.IsInvalid)
+                {
+                    System.Diagnostics.Debug.WriteLine("[JoltScene] CreateStaticRigidBody failed - body ID is invalid (max bodies reached?)");
+                    metadata.Dispose();
+                    return null;
+                }
+
+                JoltStaticRigidBody joltBody = new(bodyID);
+                joltBody.AttachShapeMetadata(metadata);
+                AddActor(joltBody);
+                return joltBody;
+            }
+            catch
+            {
+                metadata.Dispose();
+                throw;
+            }
+        }
+
+        private JoltDynamicRigidBody? CreateDynamicRigidBody(
+            JoltShapeMetadata metadata,
+            (Vector3 position, Quaternion rotation) pose,
+            LayerMask layerMask,
+            PhysicsRigidBodyCreateInfo? createInfo)
+        {
+            try
+            {
+                MotionType motionType = createInfo is PhysicsRigidBodyCreateInfo authored
+                    && authored.BodyFlags.HasFlag(PhysicsRigidBodyFlags.Kinematic)
+                        ? MotionType.Kinematic
+                        : MotionType.Dynamic;
+                using BodyCreationSettings bodySettings = new(
+                    metadata.Shape,
+                    pose.position,
+                    JoltShapeFactory.NormalizeRotation(pose.rotation, nameof(pose)),
+                    motionType,
+                    layerMask.AsJoltObjectLayer());
+                if (createInfo is PhysicsRigidBodyCreateInfo settings)
+                    ApplyCreationSettings(bodySettings, metadata.Shape, settings, dynamic: true);
+
+                Body body = _physicsSystem!.BodyInterface.CreateBody(bodySettings);
+                BodyID bodyID = body.ID;
+                if (bodyID.IsInvalid)
+                {
+                    System.Diagnostics.Debug.WriteLine("[JoltScene] CreateDynamicRigidBody failed - body ID is invalid (max bodies reached?)");
+                    metadata.Dispose();
+                    return null;
+                }
+
+                JoltDynamicRigidBody joltBody = new(bodyID, createInfo?.GravityEnabled ?? true);
+                joltBody.AttachShapeMetadata(metadata);
+                AddActor(joltBody);
+                return joltBody;
+            }
+            catch
+            {
+                metadata.Dispose();
+                throw;
+            }
+        }
+
+        private static void ApplyCreationSettings(
+            BodyCreationSettings bodySettings,
+            Shape shape,
+            in PhysicsRigidBodyCreateInfo createInfo,
+            bool dynamic)
+        {
+            (float friction, float restitution, float damping) = ResolveMaterial(createInfo);
+            bodySettings.Friction = friction;
+            bodySettings.Restitution = restitution;
+            bodySettings.LinearDamping = damping;
+            bodySettings.AngularDamping = damping;
+
+            if (!dynamic)
+                return;
+
+            ValidateDynamicSettings(createInfo);
+            bodySettings.GravityFactor = createInfo.GravityEnabled ? 1.0f : 0.0f;
+            bodySettings.MaxLinearVelocity = createInfo.MaxLinearVelocity;
+            bodySettings.MaxAngularVelocity = createInfo.MaxAngularVelocity;
+            bodySettings.NumPositionStepsOverride = createInfo.SolverIterations.MinPositionIterations;
+            bodySettings.NumVelocityStepsOverride = createInfo.SolverIterations.MinVelocityIterations;
+            bodySettings.AllowedDOFs = ResolveAllowedDegreesOfFreedom(createInfo.LockFlags);
+            bodySettings.MotionQuality = createInfo.BodyFlags.HasFlag(PhysicsRigidBodyFlags.EnableCcd)
+                ? MotionQuality.LinearCast
+                : MotionQuality.Discrete;
+
+            float volume = shape.Volume;
+            if (float.IsFinite(volume) && volume > 0.0f)
+            {
+                MassProperties massProperties = shape.MassProperties;
+                massProperties.ScaleToMass(createInfo.Density * volume);
+                bodySettings.OverrideMassProperties = OverrideMassProperties.MassAndInertiaProvided;
+                bodySettings.MassPropertiesOverride = massProperties;
+            }
+        }
+
+        private static (float friction, float restitution, float damping) ResolveMaterial(
+            in PhysicsRigidBodyCreateInfo createInfo)
+        {
+            PhysicsMaterialDefinition? definition = createInfo.MaterialDefinition;
+            if (definition is null)
+            {
+                for (int index = 0; index < createInfo.ColliderShapes.Count; index++)
+                {
+                    PhysicsColliderShape shape = createInfo.ColliderShapes[index];
+                    if (shape.Enabled && shape.Material is not null)
+                    {
+                        definition = shape.Material;
+                        break;
+                    }
+                }
             }
 
-            pose = ApplyShapeOffsetToPose(pose, shapeOffsetTranslation, shapeOffsetRotation);
+            float friction = definition?.DynamicFriction
+                ?? createInfo.RuntimeMaterial?.DynamicFriction
+                ?? 0.2f;
+            float restitution = definition?.Restitution
+                ?? createInfo.RuntimeMaterial?.Restitution
+                ?? 0.0f;
+            float damping = definition?.Damping
+                ?? createInfo.RuntimeMaterial?.Damping
+                ?? 0.05f;
+            if (!float.IsFinite(friction) || friction < 0.0f)
+                throw new ArgumentOutOfRangeException(nameof(createInfo), "Physics friction must be finite and non-negative.");
+            if (!float.IsFinite(restitution) || restitution < 0.0f || restitution > 1.0f)
+                throw new ArgumentOutOfRangeException(nameof(createInfo), "Physics restitution must be in [0, 1].");
+            if (!float.IsFinite(damping) || damping < 0.0f || damping > 1.0f)
+                throw new ArgumentOutOfRangeException(nameof(createInfo), "Physics damping must be in [0, 1].");
 
-            BodyCreationSettings bodySettings = new(
-                shape,
-                pose.position,
-                pose.rotation,
-                MotionType.Dynamic,
-                layerMask.AsJoltObjectLayer());
+            return (friction, restitution, damping);
+        }
 
-            Body body = _physicsSystem.BodyInterface.CreateBody(bodySettings);
-            BodyID bodyId = body.ID;
-            
-            // Check if body creation succeeded
-            if (bodyId.IsInvalid)
+        private static void ValidateDynamicSettings(in PhysicsRigidBodyCreateInfo createInfo)
+        {
+            if (!float.IsFinite(createInfo.Density) || createInfo.Density <= 0.0f)
+                throw new ArgumentOutOfRangeException(nameof(createInfo), "Rigid-body density must be finite and positive.");
+            if (!float.IsFinite(createInfo.MaxLinearVelocity) || createInfo.MaxLinearVelocity < 0.0f)
+                throw new ArgumentOutOfRangeException(nameof(createInfo), "Maximum linear velocity must be finite and non-negative.");
+            if (!float.IsFinite(createInfo.MaxAngularVelocity) || createInfo.MaxAngularVelocity < 0.0f)
+                throw new ArgumentOutOfRangeException(nameof(createInfo), "Maximum angular velocity must be finite and non-negative.");
+        }
+
+        private static AllowedDOFs ResolveAllowedDegreesOfFreedom(PhysicsLockFlags lockFlags)
+        {
+            AllowedDOFs allowed = AllowedDOFs.All;
+            if (lockFlags.HasFlag(PhysicsLockFlags.LinearX)) allowed &= ~AllowedDOFs.TranslationX;
+            if (lockFlags.HasFlag(PhysicsLockFlags.LinearY)) allowed &= ~AllowedDOFs.TranslationY;
+            if (lockFlags.HasFlag(PhysicsLockFlags.LinearZ)) allowed &= ~AllowedDOFs.TranslationZ;
+            if (lockFlags.HasFlag(PhysicsLockFlags.AngularX)) allowed &= ~AllowedDOFs.RotationX;
+            if (lockFlags.HasFlag(PhysicsLockFlags.AngularY)) allowed &= ~AllowedDOFs.RotationY;
+            if (lockFlags.HasFlag(PhysicsLockFlags.AngularZ)) allowed &= ~AllowedDOFs.RotationZ;
+            return allowed;
+        }
+
+        internal bool TryReplaceCollisionShapes(
+            JoltRigidActor actor,
+            in PhysicsRigidBodyCreateInfo createInfo)
+        {
+            ArgumentNullException.ThrowIfNull(actor);
+            if (_physicsSystem is null || actor.Scene != this || actor.BodyID.IsInvalid)
+                return false;
+
+            JoltShapeMetadata? metadata = JoltShapeFactory.Create(
+                createInfo.ColliderShapes,
+                createInfo.FallbackGeometry,
+                createInfo.FallbackShapeOffsetTranslation,
+                createInfo.FallbackShapeOffsetRotation);
+            if (metadata is null)
+                return false;
+
+            try
             {
-                System.Diagnostics.Debug.WriteLine("[JoltScene] CreateDynamicRigidBody failed - body ID is invalid (max bodies reached?)");
-                return null;
+                Activation activation = _physicsSystem.BodyInterface.IsActive(actor.BodyID)
+                    ? Activation.Activate
+                    : Activation.DontActivate;
+                _physicsSystem.BodyInterface.SetShape(
+                    actor.BodyID,
+                    metadata.Shape,
+                    updateMassProperties: true,
+                    activation);
+                actor.ReplaceShapeMetadata(metadata);
+                ApplyRuntimeBodySettings(actor, createInfo, activation);
+                return true;
             }
-            
-            var joltBody = new JoltDynamicRigidBody(bodyId);
+            catch
+            {
+                metadata.Dispose();
+                throw;
+            }
+        }
 
-            AddActor(joltBody);
-            return joltBody;
+        private void ApplyRuntimeBodySettings(
+            JoltRigidActor actor,
+            in PhysicsRigidBodyCreateInfo createInfo,
+            Activation activation)
+        {
+            PhysicsSystem physicsSystem = _physicsSystem
+                ?? throw new InvalidOperationException("Cannot update a rigid body without an active Jolt physics system.");
+            (float friction, float restitution, float damping) = ResolveMaterial(createInfo);
+            physicsSystem.BodyInterface.SetFriction(actor.BodyID, friction);
+            physicsSystem.BodyInterface.SetRestitution(actor.BodyID, restitution);
+            physicsSystem.BodyInterface.SetObjectLayer(actor.BodyID, createInfo.LayerMask.AsJoltObjectLayer());
+
+            if (actor is not JoltDynamicRigidBody dynamicBody)
+                return;
+
+            ValidateDynamicSettings(createInfo);
+            physicsSystem.BodyInterface.SetMotionType(
+                actor.BodyID,
+                createInfo.BodyFlags.HasFlag(PhysicsRigidBodyFlags.Kinematic)
+                    ? MotionType.Kinematic
+                    : MotionType.Dynamic,
+                activation);
+            dynamicBody.SetGravityEnabled(createInfo.GravityEnabled);
+            dynamicBody.SetMotionQualityFromFlags(createInfo.BodyFlags);
+            dynamicBody.SetLinearAndAngularDamping(damping, damping);
+            dynamicBody.SetLockFlags(createInfo.LockFlags);
+
+            Shape? replacementShape = physicsSystem.BodyInterface.GetShape(actor.BodyID);
+            float volume = replacementShape?.Volume ?? 0.0f;
+            if (float.IsFinite(volume) && volume > 0.0f)
+                dynamicBody.SetMass(createInfo.Density * volume);
         }
 
         public override void AddActor(IAbstractPhysicsActor actor)
@@ -163,6 +392,18 @@ namespace XREngine.Scene.Physics.Jolt
             
             if (_physicsSystem is null)
                 return;
+
+            if (_actors.TryGetValue(joltActor.BodyID, out JoltActor? existing))
+            {
+                if (ReferenceEquals(existing, joltActor))
+                    return;
+
+                throw new InvalidOperationException(
+                    $"Jolt body ID {joltActor.BodyID} is already owned by another actor wrapper.");
+            }
+
+            if (joltActor.Scene is not null && joltActor.Scene != this)
+                throw new InvalidOperationException("Cannot add a Jolt actor that belongs to another scene.");
 
             // Validate body ID before adding
             if (joltActor.BodyID.IsInvalid)
@@ -192,16 +433,33 @@ namespace XREngine.Scene.Physics.Jolt
             if (_physicsSystem is null)
                 return;
 
+            _physicsSystem.OnContactAdded -= OnContactAdded;
+            _physicsSystem.OnContactPersisted -= OnContactPersisted;
+
+            foreach (IAbstractJoint joint in _joints.ToArray())
+                joint.Release();
+
+            foreach (IJoltCharacterController controller in _characterControllers.ToArray())
+                controller.RequestRelease();
+
             // Remove all actors
             foreach (var actor in _actors.Values.ToArray())
-                RemoveActor(actor);
+                actor.Destroy();
             
             _actors.Clear();
             _rigidActors.Clear();
             _staticBodies.Clear();
             _dynamicBodies.Clear();
             _joints.Clear();
-            _worldAnchorBodyID = new BodyID(0);
+            _characterControllers.Clear();
+            lock (_debugContactsLock)
+                _debugContactCount = 0;
+            if (!_worldAnchorBodyID.IsInvalid && _physicsSystem.BodyInterface.IsAdded(_worldAnchorBodyID))
+                _physicsSystem.BodyInterface.RemoveAndDestroyBody(_worldAnchorBodyID);
+            _worldAnchorBodyID = BodyID.Invalid;
+
+            _debugRenderer?.Dispose();
+            _debugRenderer = null;
 
             (_physicsSystem as IDisposable)?.Dispose();
             _physicsSystem = null;
@@ -293,7 +551,8 @@ namespace XREngine.Scene.Physics.Jolt
                     UseManifoldReduction = true,
                 };
                 _physicsSystem = system;
-                EnsureWorldAnchorBody();
+                system.OnContactAdded += OnContactAdded;
+                system.OnContactPersisted += OnContactPersisted;
                 System.Diagnostics.Debug.WriteLine("[JoltScene] Initialize() completed successfully.");
             }
             catch (Exception ex)
@@ -306,13 +565,171 @@ namespace XREngine.Scene.Physics.Jolt
 
         public override void NotifyShapeChanged(IAbstractPhysicsActor actor)
         {
-            if (actor is not JoltActor joltActor)
+            if (actor is not JoltActor joltActor || _physicsSystem is null || joltActor.BodyID.IsInvalid)
                 return;
 
-            // For Jolt, we need to recreate the body when the shape changes
-            // This is a simplified approach - in a full implementation, you might want to optimize this
-            RemoveActor(actor);
-            AddActor(actor);
+            Vector3 previousCenterOfMass = _physicsSystem.BodyInterface.GetCenterOfMassPosition(joltActor.BodyID);
+            _physicsSystem.BodyInterface.NotifyShapeChanged(
+                joltActor.BodyID,
+                previousCenterOfMass,
+                updateMassProperties: true,
+                Activation.Activate);
+        }
+
+        internal bool TrySetShapeInPlace(
+            JoltActor actor,
+            Shape shape,
+            bool updateMassProperties = true,
+            bool activate = true)
+        {
+            ArgumentNullException.ThrowIfNull(actor);
+            ArgumentNullException.ThrowIfNull(shape);
+
+            if (_physicsSystem is null || actor.BodyID.IsInvalid || actor.Scene != this)
+                return false;
+
+            _physicsSystem.BodyInterface.SetShape(
+                actor.BodyID,
+                shape,
+                updateMassProperties,
+                activate ? Activation.Activate : Activation.DontActivate);
+            return true;
+        }
+
+        private const uint InvalidFaceIndex = uint.MaxValue;
+
+        private static bool ShouldPopulateHitDetail(IAbstractQueryFilter? filter, PhysicsQueryHitDetail detail)
+        {
+            PhysicsQueryHitDetail requested = filter?.HitDetail ?? PhysicsQueryHitDetail.Default;
+            return requested == PhysicsQueryHitDetail.Default || requested.HasFlag(detail);
+        }
+
+        private bool TryGetIncludedQueryActor(
+            BodyID bodyID,
+            LayerMask layerMask,
+            bool includeStatic,
+            bool includeDynamic,
+            out JoltActor? actor)
+        {
+            actor = null;
+            if (_physicsSystem is null || !_actors.TryGetValue(bodyID, out JoltActor? candidate))
+                return false;
+
+            if (!IsBodyLayerIncluded(bodyID, layerMask))
+                return false;
+
+            MotionType motionType = _physicsSystem.BodyInterface.GetMotionType(bodyID);
+            if (motionType == MotionType.Static ? !includeStatic : !includeDynamic)
+                return false;
+
+            actor = candidate;
+            return true;
+        }
+
+        private uint ResolveFaceIndex(BodyID bodyID, SubShapeID subShapeID)
+            => _rigidActors.TryGetValue(bodyID, out JoltRigidActor? actor)
+                ? actor.ResolveFaceIndex(subShapeID)
+                : InvalidFaceIndex;
+
+        private Vector2 ResolveBarycentricUV(
+            BodyID bodyID,
+            SubShapeID subShapeID,
+            Vector3 worldPosition,
+            IAbstractQueryFilter? filter)
+        {
+            if (filter?.HitDetail.HasFlag(PhysicsQueryHitDetail.UV) != true)
+                return Vector2.Zero;
+
+            return _rigidActors.TryGetValue(bodyID, out JoltRigidActor? actor)
+                && actor.TryResolveBarycentricUV(subShapeID, worldPosition, out Vector2 uv)
+                    ? uv
+                    : Vector2.Zero;
+        }
+
+        private bool TryGetWorldSpaceSurfaceNormal(
+            BodyID bodyID,
+            SubShapeID subShapeID,
+            Vector3 worldPosition,
+            out Vector3 normal)
+        {
+            normal = Vector3.Zero;
+            if (_physicsSystem is null)
+                return false;
+
+            BodyLockRead bodyLock = default;
+            BodyLockInterface lockInterface = _physicsSystem.BodyLockInterface;
+            lockInterface.LockRead(bodyID, out bodyLock);
+            try
+            {
+                if (!bodyLock.Succeeded || bodyLock.Body is not Body body)
+                    return false;
+
+                normal = NormalizeOrZero(body.GetWorldSpaceSurfaceNormal(subShapeID, worldPosition));
+                return normal != Vector3.Zero;
+            }
+            finally
+            {
+                lockInterface.UnlockRead(bodyLock);
+            }
+        }
+
+        private static Vector3 NormalizeOrZero(Vector3 value)
+        {
+            float lengthSquared = value.LengthSquared();
+            if (!float.IsFinite(lengthSquared) || lengthSquared <= 1.0e-12f)
+                return Vector3.Zero;
+
+            return value / MathF.Sqrt(lengthSquared);
+        }
+
+        private static Matrix4x4 CreateQueryCenterOfMassTransform(
+            Shape shape,
+            (Vector3 position, Quaternion rotation) pose)
+        {
+            Quaternion rotation = JoltShapeFactory.NormalizeRotation(pose.rotation, nameof(pose));
+            Vector3 centerOfMassPosition = pose.position + Vector3.Transform(shape.CenterOfMass, rotation);
+            Matrix4x4 systemNumericsTransform =
+                Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(centerOfMassPosition);
+
+            // Jolt consumes column-vector transforms while System.Numerics composes row-vector transforms.
+            return Matrix4x4.Transpose(systemNumericsTransform);
+        }
+
+        private static int CompareRayHits(RayCastResult left, RayCastResult right)
+        {
+            int comparison = left.Fraction.CompareTo(right.Fraction);
+            if (comparison != 0)
+                return comparison;
+
+            comparison = left.BodyID.ID.CompareTo(right.BodyID.ID);
+            return comparison != 0 ? comparison : left.subShapeID2.CompareTo(right.subShapeID2);
+        }
+
+        private static int CompareShapeCastHits(ShapeCastResult left, ShapeCastResult right)
+        {
+            int comparison = left.Fraction.CompareTo(right.Fraction);
+            if (comparison != 0)
+                return comparison;
+
+            if (left.Fraction <= 0.0f)
+            {
+                comparison = right.PenetrationDepth.CompareTo(left.PenetrationDepth);
+                if (comparison != 0)
+                    return comparison;
+            }
+
+            comparison = left.BodyID2.ID.CompareTo(right.BodyID2.ID);
+            return comparison != 0 ? comparison : left.SubShapeID2.Value.CompareTo(right.SubShapeID2.Value);
+        }
+
+        private static int CompareOverlapHits(CollideShapeResult left, CollideShapeResult right)
+        {
+            int comparison = left.BodyID2.ID.CompareTo(right.BodyID2.ID);
+            if (comparison != 0)
+                return comparison;
+
+            comparison = left.SubShapeID2.Value.CompareTo(right.SubShapeID2.Value);
+            return comparison != 0 ? comparison : right.PenetrationDepth.CompareTo(left.PenetrationDepth);
         }
 
         public override bool OverlapAny(
@@ -325,40 +742,44 @@ namespace XREngine.Scene.Physics.Jolt
             if (_physicsSystem is null)
                 return false;
 
-            // Convert geometry to Jolt shape
-            var shape = geometry.AsJoltShape();
+            using Shape shape = JoltShapeFactory.CreateShape(geometry);
             if (shape is null)
                 return false;
 
-            // Create world transform matrix from pose
-            var worldTransform = Matrix4x4.CreateFromQuaternion(pose.rotation) * Matrix4x4.CreateTranslation(pose.position);
+            GetQueryActorTypeInclusion(filter, out bool includeStatic, out bool includeDynamic);
+            Matrix4x4 worldTransform = CreateQueryCenterOfMassTransform(shape, pose);
 
-            // Perform overlap query using CollideShape with zero-length cast
-            var collideResults = new List<CollideShapeResult>();
-            _physicsSystem.NarrowPhaseQuery.CollideShape(shape, Vector3.One, worldTransform, pose.position, CollisionCollectorType.AnyHit, collideResults);
+            List<CollideShapeResult> collideResults = [];
+            _physicsSystem.NarrowPhaseQuery.CollideShape(
+                shape,
+                Vector3.One,
+                worldTransform,
+                Vector3.Zero,
+                CollisionCollectorType.AllHit,
+                collideResults);
+            collideResults.Sort(CompareOverlapHits);
 
-            bool hasHit = false;
             foreach (CollideShapeResult result in collideResults)
             {
-                var hitBodyID = result.BodyID2;
-                if (!_actors.TryGetValue(hitBodyID, out var hitActor))
-                    continue;
-
-                if (!IsBodyLayerIncluded(hitBodyID, layerMask))
-                    continue;
-
-                var component = hitActor.GetOwningComponent();
-                if (component is null)
+                if (!TryGetIncludedQueryActor(
+                    result.BodyID2,
+                    layerMask,
+                    includeStatic,
+                    includeDynamic,
+                    out JoltActor? hitActor))
                     continue;
 
                 if (!results.TryGetValue(0.0f, out var list))
                     results.Add(0.0f, list = []);
 
-                list.Add((component, new OverlapHit { FaceIndex = 0 }));
-                hasHit = true;
+                uint faceIndex = ShouldPopulateHitDetail(filter, PhysicsQueryHitDetail.FaceIndex)
+                    ? ResolveFaceIndex(result.BodyID2, result.SubShapeID2)
+                    : InvalidFaceIndex;
+                list.Add((hitActor!.GetOwningComponent(), new OverlapHit { FaceIndex = faceIndex }));
+                return true;
             }
 
-            return hasHit;
+            return false;
         }
 
         public override bool OverlapMultiple(
@@ -371,36 +792,41 @@ namespace XREngine.Scene.Physics.Jolt
             if (_physicsSystem is null)
                 return false;
 
-            // Convert geometry to Jolt shape
-            var shape = geometry.AsJoltShape();
+            using Shape shape = JoltShapeFactory.CreateShape(geometry);
             if (shape is null)
                 return false;
 
-            // Create world transform matrix from pose
-            var worldTransform = Matrix4x4.CreateFromQuaternion(pose.rotation) * Matrix4x4.CreateTranslation(pose.position);
+            GetQueryActorTypeInclusion(filter, out bool includeStatic, out bool includeDynamic);
+            Matrix4x4 worldTransform = CreateQueryCenterOfMassTransform(shape, pose);
 
-            // Perform overlap query using CollideShape
-            var collideResults = new List<CollideShapeResult>();
-            _physicsSystem.NarrowPhaseQuery.CollideShape(shape, Vector3.One, worldTransform, pose.position, CollisionCollectorType.AllHit, collideResults);
+            List<CollideShapeResult> collideResults = [];
+            _physicsSystem.NarrowPhaseQuery.CollideShape(
+                shape,
+                Vector3.One,
+                worldTransform,
+                Vector3.Zero,
+                CollisionCollectorType.AllHit,
+                collideResults);
+            collideResults.Sort(CompareOverlapHits);
 
             bool hasHit = false;
             foreach (CollideShapeResult result in collideResults)
             {
-                var hitBodyID = result.BodyID2;
-                if (!_actors.TryGetValue(hitBodyID, out var hitActor))
-                    continue;
-
-                if (!IsBodyLayerIncluded(hitBodyID, layerMask))
-                    continue;
-
-                var component = hitActor.GetOwningComponent();
-                if (component is null)
+                if (!TryGetIncludedQueryActor(
+                    result.BodyID2,
+                    layerMask,
+                    includeStatic,
+                    includeDynamic,
+                    out JoltActor? hitActor))
                     continue;
 
                 if (!results.TryGetValue(0.0f, out var list))
                     results.Add(0.0f, list = []);
 
-                list.Add((component, new OverlapHit { FaceIndex = 0 }));
+                uint faceIndex = ShouldPopulateHitDetail(filter, PhysicsQueryHitDetail.FaceIndex)
+                    ? ResolveFaceIndex(result.BodyID2, result.SubShapeID2)
+                    : InvalidFaceIndex;
+                list.Add((hitActor!.GetOwningComponent(), new OverlapHit { FaceIndex = faceIndex }));
                 hasHit = true;
             }
 
@@ -413,33 +839,43 @@ namespace XREngine.Scene.Physics.Jolt
             IAbstractQueryFilter? filter,
             out uint hitFaceIndex)
         {
-            hitFaceIndex = 0;
+            hitFaceIndex = InvalidFaceIndex;
             
             if (_physicsSystem is null)
                 return false;
 
-            var start = worldSegment.Start;
-            var end = worldSegment.End;
-            var direction = (end - start).Normalized();
+            Vector3 start = worldSegment.Start;
+            Vector3 direction = worldSegment.End - start;
+            float distance = direction.Length();
+            if (!float.IsFinite(distance) || distance <= float.Epsilon)
+                return false;
 
-            var hits = new List<RayCastResult>();
-            if (_physicsSystem.NarrowPhaseQuery.CastRay(new Ray(start, direction), new RayCastSettings(), CollisionCollectorType.AnyHit, hits))
+            GetQueryActorTypeInclusion(filter, out bool includeStatic, out bool includeDynamic);
+
+            List<RayCastResult> hits = [];
+            _physicsSystem.NarrowPhaseQuery.CastRay(
+                new Ray(start, direction),
+                new RayCastSettings(),
+                CollisionCollectorType.AllHit,
+                hits);
+            hits.Sort(CompareRayHits);
+
+            foreach (RayCastResult hit in hits)
             {
-                if (hits.Count == 0)
-                {
-                    hitFaceIndex = 0;
-                    return false;
-                }
-                var hit = hits[0];
-                if (!IsBodyLayerIncluded(hit.BodyID, layerMask))
-                {
-                    hitFaceIndex = 0;
-                    return false;
-                }
-                hitFaceIndex = hit.subShapeID2;
+                if (!TryGetIncludedQueryActor(
+                    hit.BodyID,
+                    layerMask,
+                    includeStatic,
+                    includeDynamic,
+                    out _))
+                    continue;
+
+                hitFaceIndex = ShouldPopulateHitDetail(filter, PhysicsQueryHitDetail.FaceIndex)
+                    ? ResolveFaceIndex(hit.BodyID, new SubShapeID(hit.subShapeID2))
+                    : InvalidFaceIndex;
                 return true;
             }
-            
+
             return false;
         }
 
@@ -452,43 +888,54 @@ namespace XREngine.Scene.Physics.Jolt
             if (_physicsSystem is null)
                 return false;
 
-            var start = worldSegment.Start;
-            var end = worldSegment.End;
-            var direction = (end - start).Normalized();
-            var distance = worldSegment.Length;
+            Vector3 start = worldSegment.Start;
+            Vector3 rayVector = worldSegment.End - start;
+            float distance = rayVector.Length();
+            if (!float.IsFinite(distance) || distance <= float.Epsilon)
+                return false;
 
-            var rayCast = new Ray(start, direction);
-            var rayCastSettings = new RayCastSettings();
-            
+            GetQueryActorTypeInclusion(filter, out bool includeStatic, out bool includeDynamic);
+
             List<RayCastResult> hits = [];
-            _physicsSystem.NarrowPhaseQuery.CastRay(rayCast, rayCastSettings, CollisionCollectorType.AllHit, hits);
+            _physicsSystem.NarrowPhaseQuery.CastRay(
+                new Ray(start, rayVector),
+                new RayCastSettings(),
+                CollisionCollectorType.AllHit,
+                hits);
+            hits.Sort(CompareRayHits);
             
             bool hasHit = false;
-            foreach (var hit in hits)
+            foreach (RayCastResult hit in hits)
             {
-                if (!IsBodyLayerIncluded(hit.BodyID, layerMask))
+                if (!TryGetIncludedQueryActor(
+                    hit.BodyID,
+                    layerMask,
+                    includeStatic,
+                    includeDynamic,
+                    out JoltActor? hitActor))
                     continue;
 
-                if (_actors.TryGetValue(hit.BodyID, out var hitActor))
+                float hitDistance = hit.Fraction * distance;
+                Vector3 hitPosition = start + hit.Fraction * rayVector;
+                SubShapeID subShapeID = new(hit.subShapeID2);
+                Vector3 normal = Vector3.Zero;
+                if (ShouldPopulateHitDetail(filter, PhysicsQueryHitDetail.Normal))
+                    TryGetWorldSpaceSurfaceNormal(hit.BodyID, subShapeID, hitPosition, out normal);
+
+                if (!results.TryGetValue(hitDistance, out var list))
+                    results.Add(hitDistance, list = []);
+
+                list.Add((hitActor!.GetOwningComponent(), new RaycastHit
                 {
-                    var component = hitActor.GetOwningComponent();
-                    if (component is not null)
-                    {
-                        float dist = hit.Fraction * distance;
-                        if (!results.TryGetValue(dist, out var list))
-                            results.Add(dist, list = []);
-                        
-                        list.Add((component, new RaycastHit 
-                        { 
-                            Position = dist * direction + start,
-                            //Normal = hit.Normal,
-                            Distance = dist,
-                            FaceIndex = hit.subShapeID2,
-                            UV = Vector2.Zero
-                        }));
-                        hasHit = true;
-                    }
-                }
+                    Position = ShouldPopulateHitDetail(filter, PhysicsQueryHitDetail.Position) ? hitPosition : Vector3.Zero,
+                    Normal = normal,
+                    Distance = hitDistance,
+                    FaceIndex = ShouldPopulateHitDetail(filter, PhysicsQueryHitDetail.FaceIndex)
+                        ? ResolveFaceIndex(hit.BodyID, subShapeID)
+                        : InvalidFaceIndex,
+                    UV = ResolveBarycentricUV(hit.BodyID, subShapeID, hitPosition, filter),
+                }));
+                hasHit = true;
             }
             
             return hasHit;
@@ -502,53 +949,63 @@ namespace XREngine.Scene.Physics.Jolt
             Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>> finishedCallback)
         {
             if (_physicsSystem is null)
-                return false;
-
-            var start = worldSegment.Start;
-            var end = worldSegment.End;
-            var direction = (end - start).Normalized();
-            var maxDist = worldSegment.Length;
-
-            var rayCast = new JoltPhysicsSharp.Ray(start, direction);
-            var rayCastSettings = new RayCastSettings();
-            
-            List<RayCastResult> hits = [];
-            if (_physicsSystem.NarrowPhaseQuery.CastRay(rayCast, rayCastSettings, CollisionCollectorType.ClosestHit, hits))
             {
-                if (hits.Count == 0)
-                {
-                    finishedCallback?.Invoke(items);
-                    return false;
-                }
-                var hit = hits[0];
-                if (!IsBodyLayerIncluded(hit.BodyID, layerMask))
-                {
-                    finishedCallback?.Invoke(items);
-                    return false;
-                }
+                finishedCallback?.Invoke(items);
+                return false;
+            }
 
-                if (_actors.TryGetValue(hit.BodyID, out var hitActor))
+            Vector3 start = worldSegment.Start;
+            Vector3 rayVector = worldSegment.End - start;
+            float distance = rayVector.Length();
+            if (!float.IsFinite(distance) || distance <= float.Epsilon)
+            {
+                finishedCallback?.Invoke(items);
+                return false;
+            }
+
+            GetQueryActorTypeInclusion(filter, out bool includeStatic, out bool includeDynamic);
+
+            List<RayCastResult> hits = [];
+            _physicsSystem.NarrowPhaseQuery.CastRay(
+                new Ray(start, rayVector),
+                new RayCastSettings(),
+                CollisionCollectorType.AllHit,
+                hits);
+            hits.Sort(CompareRayHits);
+
+            foreach (RayCastResult hit in hits)
+            {
+                if (!TryGetIncludedQueryActor(
+                    hit.BodyID,
+                    layerMask,
+                    includeStatic,
+                    includeDynamic,
+                    out JoltActor? hitActor))
+                    continue;
+
+                float hitDistance = hit.Fraction * distance;
+                Vector3 hitPosition = start + hit.Fraction * rayVector;
+                SubShapeID subShapeID = new(hit.subShapeID2);
+                Vector3 normal = Vector3.Zero;
+                if (ShouldPopulateHitDetail(filter, PhysicsQueryHitDetail.Normal))
+                    TryGetWorldSpaceSurfaceNormal(hit.BodyID, subShapeID, hitPosition, out normal);
+
+                if (!items.TryGetValue(hitDistance, out var list))
+                    items.Add(hitDistance, list = []);
+
+                list.Add((hitActor!.GetOwningComponent(), new RaycastHit
                 {
-                    var component = hitActor.GetOwningComponent();
-                    if (component is not null)
-                    {
-                        var dist = hit.Fraction * maxDist;
-                        if (!items.TryGetValue(dist, out var list))
-                            items.Add(dist, list = []);
-                        
-                        list.Add((component, new RaycastHit 
-                        { 
-                            Position = dist * direction + start,
-                            //Normal = hit.Normal,
-                            Distance = dist,
-                            FaceIndex = hit.subShapeID2,
-                            UV = Vector2.Zero
-                        }));
-                        
-                        finishedCallback?.Invoke(items);
-                        return true;
-                    }
-                }
+                    Position = ShouldPopulateHitDetail(filter, PhysicsQueryHitDetail.Position) ? hitPosition : Vector3.Zero,
+                    Normal = normal,
+                    Distance = hitDistance,
+                    FaceIndex = ShouldPopulateHitDetail(filter, PhysicsQueryHitDetail.FaceIndex)
+                        ? ResolveFaceIndex(hit.BodyID, subShapeID)
+                        : InvalidFaceIndex,
+                    UV = ResolveBarycentricUV(hit.BodyID, subShapeID, hitPosition, filter),
+                }));
+
+                finishedCallback?.Invoke(items);
+                return true;
             }
             
             finishedCallback?.Invoke(items);
@@ -570,6 +1027,28 @@ namespace XREngine.Scene.Physics.Jolt
             _dynamicBodies.Remove(joltActor.BodyID);
             
             joltActor.OnRemovedFromScene(this);
+        }
+
+        internal void DestroyActor(JoltActor actor)
+        {
+            ArgumentNullException.ThrowIfNull(actor);
+
+            if (_physicsSystem is null || actor.Scene != this || actor.BodyID.IsInvalid)
+                return;
+
+            BodyID bodyID = actor.BodyID;
+            if (_physicsSystem.BodyInterface.IsAdded(bodyID))
+                _physicsSystem.BodyInterface.RemoveAndDestroyBody(bodyID);
+            else
+                _physicsSystem.BodyInterface.DestroyBody(bodyID);
+
+            _actors.Remove(bodyID);
+            _rigidActors.Remove(bodyID);
+            _staticBodies.Remove(bodyID);
+            _dynamicBodies.Remove(bodyID);
+            if (actor is JoltRigidActor rigidActor)
+                rigidActor.ReleaseShapeMetadata();
+            actor.OnRemovedFromScene(this);
         }
 
         public static ObjectLayer GetObjectLayer(uint group, uint mask)
@@ -595,23 +1074,24 @@ namespace XREngine.Scene.Physics.Jolt
 
             ObjectLayer objectLayer = _physicsSystem.BodyInterface.GetObjectLayer(bodyID);
             uint bodyGroup = ObjectLayerPairFilterMask.GetGroup(objectLayer);
-            return (queryMask & (1u << (int)bodyGroup)) != 0;
+            return (queryMask & bodyGroup) != 0;
         }
 
         internal BodyID EnsureWorldAnchorBody()
         {
             if (_physicsSystem is null)
-                return new BodyID(0);
+                return BodyID.Invalid;
 
             if (!_worldAnchorBodyID.IsInvalid)
                 return _worldAnchorBodyID;
 
-            BodyCreationSettings settings = new(
-                new BoxShape(new Vector3(0.05f), 0.0f),
+            using BoxShape shape = new(new Vector3(0.05f), 0.0f);
+            using BodyCreationSettings settings = new(
+                shape,
                 Vector3.Zero,
                 Quaternion.Identity,
                 MotionType.Static,
-                new LayerMask(1).AsJoltObjectLayer());
+                ObjectLayerPairFilterMask.GetObjectLayer(0u, 0u));
 
             _worldAnchorBodyID = _physicsSystem.BodyInterface.CreateAndAddBody(settings, Activation.DontActivate);
             return _worldAnchorBodyID;
@@ -703,18 +1183,86 @@ namespace XREngine.Scene.Physics.Jolt
                     controller.ConsumeInputBuffer(dt);
             }
 
-            _physicsSystem.Update(Engine.FixedDelta, 3, _jobSystem);
-            
-            //// Update transforms for all active bodies
-            //var activeBodies = new List<BodyID>();
-            //_physicsSystem.BodyInterface.GetActiveBodies(activeBodies);
+            _captureDebugContacts = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeEnabled
+                || Engine.EditorPreferences.Diagnostics.General.JoltDebugRenderDiagnostics;
+            if (_captureDebugContacts)
+            {
+                lock (_debugContactsLock)
+                    _debugContactCount = 0;
+            }
 
-            //foreach (var bodyID in activeBodies)
-            //    if (_dynamicBodies.TryGetValue(bodyID, out var body))
-            //        body.OwningComponent?.RigidBodyTransform.OnPhysicsStepped();
+            _physicsSystem.Update(Engine.FixedDelta, 3, _jobSystem);
+
+            foreach (JoltDynamicRigidBody body in _dynamicBodies.Values)
+                body.OwningComponent?.RigidBodyTransform.OnPhysicsStepped();
 
             NotifySimulationStepped();
         }
+
+
+        private static void GetQueryActorTypeInclusion(
+            IAbstractQueryFilter? filter,
+            out bool includeStatic,
+            out bool includeDynamic)
+        {
+            PhysicsQueryActorTypes actorTypes = filter?.ActorTypes ?? PhysicsQueryActorTypes.All;
+            includeStatic = actorTypes.HasFlag(PhysicsQueryActorTypes.Static);
+            includeDynamic = actorTypes.HasFlag(PhysicsQueryActorTypes.Dynamic);
+
+            if (!includeStatic && !includeDynamic)
+            {
+                includeStatic = true;
+                includeDynamic = true;
+            }
+        }
+
+        private static Shape CreateSweepQueryShape(IPhysicsGeometry geometry, IAbstractQueryFilter? filter)
+        {
+            float inflation = filter?.SweepInflation ?? 0.0f;
+            if (!float.IsFinite(inflation) || inflation < 0.0f)
+                throw new ArgumentOutOfRangeException(nameof(filter), inflation, "Sweep inflation must be finite and non-negative.");
+
+            if (inflation == 0.0f)
+                return JoltShapeFactory.CreateShape(geometry);
+
+            return geometry switch
+            {
+                IPhysicsGeometry.Sphere sphere => new SphereShape(sphere.Radius + inflation),
+                IPhysicsGeometry.Box box => new BoxShape(box.HalfExtents + new Vector3(inflation)),
+                IPhysicsGeometry.Capsule capsule => new CapsuleShape(capsule.HalfHeight, capsule.Radius + inflation),
+                _ => throw new NotSupportedException(
+                    $"Jolt sweep inflation is exact only for sphere, box, and capsule query geometry; {geometry.GetType().Name} cannot be inflated without changing its authored shape."),
+            };
+        }
+
+        private static bool TryCreateSweepDisplacement(Vector3 direction, float distance, out Vector3 displacement)
+        {
+            displacement = Vector3.Zero;
+            if (!float.IsFinite(distance) || distance <= 0.0f)
+                return false;
+
+            Vector3 normalizedDirection = NormalizeOrZero(direction);
+            if (normalizedDirection == Vector3.Zero)
+                return false;
+
+            displacement = normalizedDirection * distance;
+            return true;
+        }
+
+        private SweepHit CreateSweepHit(ShapeCastResult result, float distance, IAbstractQueryFilter? filter)
+            => new()
+            {
+                Position = ShouldPopulateHitDetail(filter, PhysicsQueryHitDetail.Position)
+                    ? result.ContactPointOn2
+                    : Vector3.Zero,
+                Normal = ShouldPopulateHitDetail(filter, PhysicsQueryHitDetail.Normal)
+                    ? NormalizeOrZero(-result.PenetrationAxis)
+                    : Vector3.Zero,
+                Distance = result.Fraction * distance,
+                FaceIndex = ShouldPopulateHitDetail(filter, PhysicsQueryHitDetail.FaceIndex)
+                    ? ResolveFaceIndex(result.BodyID2, result.SubShapeID2)
+                    : InvalidFaceIndex,
+            };
 
         public override bool SweepAny(
             IPhysicsGeometry geometry,
@@ -725,50 +1273,44 @@ namespace XREngine.Scene.Physics.Jolt
             IAbstractQueryFilter? filter,
             out uint hitFaceIndex)
         {
-            hitFaceIndex = 0;
+            hitFaceIndex = InvalidFaceIndex;
             
             if (_physicsSystem is null)
                 return false;
 
-            // Convert geometry to Jolt shape
-            var shape = geometry.AsJoltShape();
+            if (!TryCreateSweepDisplacement(unitDir, distance, out Vector3 displacement))
+                return false;
+
+            using Shape shape = CreateSweepQueryShape(geometry, filter);
             if (shape is null)
                 return false;
 
-            // Parse query flags from PhysX filter for compatibility
-            bool includeStatic = true;
-            bool includeDynamic = true;
-            if (filter is PhysxScene.PhysxQueryFilter physxFilter)
-            {
-                includeStatic = (physxFilter.Flags & MagicPhysX.PxQueryFlags.Static) != 0;
-                includeDynamic = (physxFilter.Flags & MagicPhysX.PxQueryFlags.Dynamic) != 0;
-            }
+            GetQueryActorTypeInclusion(filter, out bool includeStatic, out bool includeDynamic);
+            Matrix4x4 worldTransform = CreateQueryCenterOfMassTransform(shape, pose);
 
-            // Create world transform matrix from pose (positions shape at starting location)
-            var worldTransform = Matrix4x4.CreateFromQuaternion(pose.rotation) * Matrix4x4.CreateTranslation(pose.position);
+            List<ShapeCastResult> sweepResults = [];
+            _physicsSystem.NarrowPhaseQuery.CastShape(
+                shape,
+                worldTransform,
+                displacement,
+                Vector3.Zero,
+                CollisionCollectorType.AllHit,
+                sweepResults);
+            sweepResults.Sort(CompareShapeCastHits);
 
-            // Perform sweep query - direction is normalized, multiply by distance to get full sweep length
-            var sweepResults = new List<ShapeCastResult>();
-            _physicsSystem.NarrowPhaseQuery.CastShape(shape, worldTransform, unitDir * distance, pose.position, CollisionCollectorType.AnyHit, sweepResults);
-
-            // Check if any bodies are in the sweep path
             foreach (ShapeCastResult result in sweepResults)
             {
-                var hitBodyID = result.BodyID2;
-                if (!_actors.TryGetValue(hitBodyID, out var hitActor))
+                if (!TryGetIncludedQueryActor(
+                    result.BodyID2,
+                    layerMask,
+                    includeStatic,
+                    includeDynamic,
+                    out _))
                     continue;
 
-                if (!IsBodyLayerIncluded(hitBodyID, layerMask))
-                    continue;
-
-                // Filter by motion type to match PhysX query flags behavior
-                var motionType = _physicsSystem.BodyInterface.GetMotionType(hitBodyID);
-                if (motionType == MotionType.Static && !includeStatic)
-                    continue;
-                if (motionType != MotionType.Static && !includeDynamic)
-                    continue;
-
-                hitFaceIndex = (uint)result.SubShapeID2;
+                hitFaceIndex = ShouldPopulateHitDetail(filter, PhysicsQueryHitDetail.FaceIndex)
+                    ? ResolveFaceIndex(result.BodyID2, result.SubShapeID2)
+                    : InvalidFaceIndex;
                 return true;
             }
             
@@ -787,61 +1329,42 @@ namespace XREngine.Scene.Physics.Jolt
             if (_physicsSystem is null)
                 return false;
 
-            // Convert geometry to Jolt shape
-            var shape = geometry.AsJoltShape();
+            if (!TryCreateSweepDisplacement(unitDir, distance, out Vector3 displacement))
+                return false;
+
+            using Shape shape = CreateSweepQueryShape(geometry, filter);
             if (shape is null)
                 return false;
 
-            // Parse query flags from PhysX filter for compatibility
-            bool includeStatic = true;
-            bool includeDynamic = true;
-            if (filter is PhysxScene.PhysxQueryFilter physxFilter)
-            {
-                includeStatic = (physxFilter.Flags & MagicPhysX.PxQueryFlags.Static) != 0;
-                includeDynamic = (physxFilter.Flags & MagicPhysX.PxQueryFlags.Dynamic) != 0;
-            }
+            GetQueryActorTypeInclusion(filter, out bool includeStatic, out bool includeDynamic);
+            Matrix4x4 worldTransform = CreateQueryCenterOfMassTransform(shape, pose);
 
-            // Create world transform matrix from pose (positions shape at starting location)
-            var worldTransform = Matrix4x4.CreateFromQuaternion(pose.rotation) * Matrix4x4.CreateTranslation(pose.position);
-
-            // Perform sweep query - direction is normalized, multiply by distance to get full sweep length
-            var sweepResults = new List<ShapeCastResult>();
-            _physicsSystem.NarrowPhaseQuery.CastShape(shape, worldTransform, unitDir * distance, pose.position, CollisionCollectorType.AllHit, sweepResults);
+            List<ShapeCastResult> sweepResults = [];
+            _physicsSystem.NarrowPhaseQuery.CastShape(
+                shape,
+                worldTransform,
+                displacement,
+                Vector3.Zero,
+                CollisionCollectorType.AllHit,
+                sweepResults);
+            sweepResults.Sort(CompareShapeCastHits);
 
             bool hasHit = false;
             foreach (ShapeCastResult result in sweepResults)
             {
-                var hitBodyID = result.BodyID2;
-                if (!_actors.TryGetValue(hitBodyID, out var hitActor))
+                if (!TryGetIncludedQueryActor(
+                    result.BodyID2,
+                    layerMask,
+                    includeStatic,
+                    includeDynamic,
+                    out JoltActor? hitActor))
                     continue;
 
-                if (!IsBodyLayerIncluded(hitBodyID, layerMask))
-                    continue;
-
-                // Filter by motion type to match PhysX query flags behavior
-                var motionType = _physicsSystem.BodyInterface.GetMotionType(hitBodyID);
-                if (motionType == MotionType.Static && !includeStatic)
-                    continue;
-                if (motionType != MotionType.Static && !includeDynamic)
-                    continue;
-
-                var component = hitActor.GetOwningComponent();
-                if (component is null)
-                    continue;
-
-                // Calculate actual hit distance using fraction
                 float hitDistance = result.Fraction * distance;
-                
                 if (!results.TryGetValue(hitDistance, out var list))
                     results.Add(hitDistance, list = []);
 
-                list.Add((component, new SweepHit
-                {
-                    Position = result.ContactPointOn2,
-                    Normal = Vector3.Normalize(result.PenetrationAxis),
-                    Distance = hitDistance,
-                    FaceIndex = (uint)result.SubShapeID2
-                }));
+                list.Add((hitActor!.GetOwningComponent(), CreateSweepHit(result, distance, filter)));
 
                 hasHit = true;
             }
@@ -861,61 +1384,41 @@ namespace XREngine.Scene.Physics.Jolt
             if (_physicsSystem is null)
                 return false;
 
-            // Convert geometry to Jolt shape
-            var shape = geometry.AsJoltShape();
+            if (!TryCreateSweepDisplacement(unitDir, distance, out Vector3 displacement))
+                return false;
+
+            using Shape shape = CreateSweepQueryShape(geometry, filter);
             if (shape is null)
                 return false;
 
-            // Parse query flags from PhysX filter for compatibility
-            bool includeStatic = true;
-            bool includeDynamic = true;
-            if (filter is PhysxScene.PhysxQueryFilter physxFilter)
-            {
-                includeStatic = (physxFilter.Flags & MagicPhysX.PxQueryFlags.Static) != 0;
-                includeDynamic = (physxFilter.Flags & MagicPhysX.PxQueryFlags.Dynamic) != 0;
-            }
+            GetQueryActorTypeInclusion(filter, out bool includeStatic, out bool includeDynamic);
+            Matrix4x4 worldTransform = CreateQueryCenterOfMassTransform(shape, pose);
 
-            // Create world transform matrix from pose (positions shape at starting location)
-            var worldTransform = Matrix4x4.CreateFromQuaternion(pose.rotation) * Matrix4x4.CreateTranslation(pose.position);
-
-            // Perform sweep query - direction is normalized, multiply by distance to get full sweep length
-            // Use AllHit to get multiple results so we can filter by motion type
-            var sweepResults = new List<ShapeCastResult>();
-            _physicsSystem.NarrowPhaseQuery.CastShape(shape, worldTransform, unitDir * distance, pose.position, CollisionCollectorType.AllHitSorted, sweepResults);
+            List<ShapeCastResult> sweepResults = [];
+            _physicsSystem.NarrowPhaseQuery.CastShape(
+                shape,
+                worldTransform,
+                displacement,
+                Vector3.Zero,
+                CollisionCollectorType.AllHit,
+                sweepResults);
+            sweepResults.Sort(CompareShapeCastHits);
 
             foreach (ShapeCastResult result in sweepResults)
             {
-                var hitBodyID = result.BodyID2;
-                if (!_actors.TryGetValue(hitBodyID, out var hitActor))
+                if (!TryGetIncludedQueryActor(
+                    result.BodyID2,
+                    layerMask,
+                    includeStatic,
+                    includeDynamic,
+                    out JoltActor? hitActor))
                     continue;
 
-                if (!IsBodyLayerIncluded(hitBodyID, layerMask))
-                    continue;
-
-                // Filter by motion type to match PhysX query flags behavior
-                var motionType = _physicsSystem.BodyInterface.GetMotionType(hitBodyID);
-                if (motionType == MotionType.Static && !includeStatic)
-                    continue;
-                if (motionType != MotionType.Static && !includeDynamic)
-                    continue;
-
-                var component = hitActor.GetOwningComponent();
-                if (component is null)
-                    continue;
-
-                // Calculate actual hit distance using fraction
                 float hitDistance = result.Fraction * distance;
-                
                 if (!items.TryGetValue(hitDistance, out var list))
                     items.Add(hitDistance, list = []);
 
-                list.Add((component, new SweepHit
-                {
-                    Position = result.ContactPointOn2,
-                    Normal = Vector3.Normalize(result.PenetrationAxis),
-                    Distance = hitDistance,
-                    FaceIndex = (uint)result.SubShapeID2
-                }));
+                list.Add((hitActor!.GetOwningComponent(), CreateSweepHit(result, distance, filter)));
 
                 return true;
             }
@@ -1143,16 +1646,170 @@ namespace XREngine.Scene.Physics.Jolt
         {
             if (joint is not JoltJointBase jolt)
                 return;
+            if (!_joints.Remove(joint))
+                return;
 
             if (_physicsSystem is not null)
             {
                 _physicsSystem.RemoveConstraint(jolt.NativeConstraint);
                 (jolt.NativeConstraint as IDisposable)?.Dispose();
             }
+        }
 
-            _joints.Remove(joint);
+
+        public JoltPhysicsDiagnostics GetDiagnostics()
+            => new(
+                _actors.Count,
+                _rigidActors.Count,
+                _staticBodies.Count,
+                _dynamicBodies.Count,
+                _characterControllers.Count,
+                _joints.Count);
+
+        public JoltDebugRenderSnapshot GetDebugRenderSnapshot()
+        {
+            lock (_debugContactsLock)
+            {
+                return new JoltDebugRenderSnapshot(
+                    _actors.Count,
+                    _characterControllers.Count,
+                    _joints.Count,
+                    _debugContactCount);
+            }
+        }
+
+        public override void DebugRenderCollect()
+        {
+            PhysicsVisualizeSettings settings = Engine.Rendering.Settings.PhysicsVisualizeSettings;
+            bool diagnosticsEnabled = Engine.EditorPreferences.Diagnostics.General.JoltDebugRenderDiagnostics;
+            if (!settings.VisualizeEnabled && !diagnosticsEnabled)
+                return;
+
+            JoltPhysicsDiagnostics diagnostics = GetDiagnostics();
+            if (diagnosticsEnabled)
+            {
+                JoltDebugRenderSnapshot snapshot = GetDebugRenderSnapshot();
+                System.Diagnostics.Debug.WriteLine(
+                    $"[JoltScene] DebugRenderCollect actors={diagnostics.ActorCount} rigid={diagnostics.RigidActorCount} static={diagnostics.StaticBodyCount} dynamic={diagnostics.DynamicBodyCount} controllers={diagnostics.CharacterControllerCount} joints={diagnostics.JointCount} contacts={snapshot.ContactCount}");
+            }
+
+            if (!settings.VisualizeEnabled || _physicsSystem is null)
+                return;
+
+            _debugRenderer ??= new JoltEngineDebugRenderer();
+            _debugRenderer.NextFrame();
+
+            DrawSettings drawSettings = new()
+            {
+                DrawShape = settings.VisualizeCollisionShapes || settings.VisualizeSimulationMesh,
+                DrawShapeWireframe = true,
+                DrawBoundingBox = settings.VisualizeCollisionAabbs,
+                DrawCenterOfMassTransform = settings.VisualizeBodyMassAxes,
+                DrawWorldTransform = settings.VisualizeBodyAxes || settings.VisualizeActorAxes,
+                DrawVelocity = settings.VisualizeBodyLinearVelocity || settings.VisualizeBodyAngularVelocity,
+            };
+            _physicsSystem.DrawBodies(drawSettings, _debugRenderer);
+
+            if (settings.VisualizeJointLocalFrames || settings.VisualizeJointLimits)
+            {
+                _physicsSystem.DrawConstraints(_debugRenderer);
+                if (settings.VisualizeJointLocalFrames)
+                    _physicsSystem.DrawConstraintReferenceFrame(_debugRenderer);
+                if (settings.VisualizeJointLimits)
+                    _physicsSystem.DrawConstraintLimits(_debugRenderer);
+            }
+
+            foreach (IJoltCharacterController controller in _characterControllers)
+            {
+                Vector3 up = controller.UpDirection;
+                float halfCylinderHeight = MathF.Max(
+                    0.0f,
+                    controller.TotalHeight - 2.0f * controller.Radius) * 0.5f;
+                Vector3 start = controller.Position - up * halfCylinderHeight;
+                Vector3 end = controller.Position + up * halfCylinderHeight;
+                Engine.Rendering.Debug.RenderCapsule(start, end, controller.Radius, false, ColorF4.Cyan);
+            }
+
+            if (settings.VisualizeContactPoint || settings.VisualizeContactNormal || settings.VisualizeContactError)
+            {
+                lock (_debugContactsLock)
+                {
+                    for (int index = 0; index < _debugContactCount; index++)
+                    {
+                        JoltDebugContact contact = _debugContacts[index];
+                        if (settings.VisualizeContactPoint)
+                            Engine.Rendering.Debug.RenderSphere(contact.Position, 0.015f, false, ColorF4.Yellow);
+                        if (settings.VisualizeContactNormal)
+                            Engine.Rendering.Debug.RenderLine(contact.Position, contact.Position + contact.Normal * 0.2f, ColorF4.Green);
+                        if (settings.VisualizeContactError && contact.PenetrationDepth > 0.0f)
+                            Engine.Rendering.Debug.RenderLine(contact.Position, contact.Position - contact.Normal * contact.PenetrationDepth, ColorF4.Red);
+                    }
+                }
+            }
+        }
+
+        public override void DebugRender()
+            => DebugRenderCollect();
+
+        private void OnContactAdded(
+            PhysicsSystem system,
+            in Body body1,
+            in Body body2,
+            in ContactManifold manifold,
+            ref ContactSettings settings)
+            => CaptureDebugContacts(in manifold);
+
+        private void OnContactPersisted(
+            PhysicsSystem system,
+            in Body body1,
+            in Body body2,
+            in ContactManifold manifold,
+            ref ContactSettings settings)
+            => CaptureDebugContacts(in manifold);
+
+        private void CaptureDebugContacts(in ContactManifold manifold)
+        {
+            if (!_captureDebugContacts)
+                return;
+
+            Vector3 normal = manifold.WorldSpaceNormal;
+            float penetrationDepth = manifold.PenetrationDepth;
+            lock (_debugContactsLock)
+            {
+                for (uint index = 0; index < manifold.PointCount; index++)
+                {
+                    if (_debugContactCount >= _debugContacts.Length)
+                        break;
+
+                    Vector3 onBody1 = manifold.GetWorldSpaceContactPointOn1(index);
+                    Vector3 onBody2 = manifold.GetWorldSpaceContactPointOn2(index);
+                    _debugContacts[_debugContactCount++] = new JoltDebugContact(
+                        (onBody1 + onBody2) * 0.5f,
+                        normal,
+                        penetrationDepth);
+                }
+            }
         }
 
         #endregion
     }
+
+    public readonly record struct JoltPhysicsDiagnostics(
+        int ActorCount,
+        int RigidActorCount,
+        int StaticBodyCount,
+        int DynamicBodyCount,
+        int CharacterControllerCount,
+        int JointCount);
+
+    public readonly record struct JoltDebugRenderSnapshot(
+        int BodyCount,
+        int CharacterControllerCount,
+        int JointCount,
+        int ContactCount);
+
+    internal readonly record struct JoltDebugContact(
+        Vector3 Position,
+        Vector3 Normal,
+        float PenetrationDepth);
 }

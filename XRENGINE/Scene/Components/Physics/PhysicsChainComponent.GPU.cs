@@ -207,6 +207,13 @@ public partial class PhysicsChainComponent
     private void ReconfigureGpuExecutionMode()
     {
         DeactivateGpuExecutionMode();
+
+        if (DefaultTransform is null)
+        {
+            MarkGpuBuffersDirty();
+            return;
+        }
+
         if (IsActive)
             ActivateGpuExecutionMode();
 

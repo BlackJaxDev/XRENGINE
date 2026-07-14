@@ -15,6 +15,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
+using XREngine.Scene.Physics;
 using XREngine.Scene.Transforms;
 using static XREngine.Scene.Transforms.RigidBodyTransform;
 
@@ -278,20 +279,20 @@ public static partial class EditorUnitTests
             vrInput.RightHandTransform = rightTfm;
         }
 
-        private static void VrInput_HandGrabbed(VRPlayerInputSet sender, PhysxDynamicRigidBody item, bool left)
+        private static void VrInput_HandGrabbed(VRPlayerInputSet sender, IAbstractDynamicRigidBody item, bool left)
         {
 
         }
 
-        private static void ChangeHighlight(PhysxDynamicRigidBody? prev, PhysxDynamicRigidBody? current)
+        private static void ChangeHighlight(IAbstractDynamicRigidBody? prev, IAbstractDynamicRigidBody? current)
         {
             DefaultRenderPipeline.SetHighlighted(prev, false);
             DefaultRenderPipeline.SetHighlighted(current, true);
         }
 
-        private static void OnLeftHandOverlapChanged(VRPlayerInputSet set, PhysxDynamicRigidBody? prev, PhysxDynamicRigidBody? current)
+        private static void OnLeftHandOverlapChanged(VRPlayerInputSet set, IAbstractDynamicRigidBody? prev, IAbstractDynamicRigidBody? current)
             => ChangeHighlight(prev, current);
-        private static void OnRightHandOverlapChanged(VRPlayerInputSet set, PhysxDynamicRigidBody? prev, PhysxDynamicRigidBody? current)
+        private static void OnRightHandOverlapChanged(VRPlayerInputSet set, IAbstractDynamicRigidBody? prev, IAbstractDynamicRigidBody? current)
             => ChangeHighlight(prev, current);
 
         private static void InitMovement(CharacterMovement3DComponent movementComp)

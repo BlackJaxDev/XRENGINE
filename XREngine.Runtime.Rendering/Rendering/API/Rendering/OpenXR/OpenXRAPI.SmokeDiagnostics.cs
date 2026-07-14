@@ -23,6 +23,7 @@ public unsafe partial class OpenXRAPI
     private readonly int[] _smokePerEyeLastImageSlots = new int[RenderFrameViewSet.MaxViewCount];
     private string[] _smokeEnabledExtensions = [];
     private VrViewRenderModeResolution _smokeViewRenderModeResolution;
+    private int _smokeViewRenderModeResolutionObserved;
     private VrFoveationResolution _smokeFoveationResolution;
     private string[] _smokeFoveationBackendCapabilities = [];
     private string _smokeRendererBackend = string.Empty;
@@ -44,9 +45,22 @@ public unsafe partial class OpenXRAPI
     private long _smokeEndFrameFailureCount;
     private long _smokeMissedDeadlineCount;
     private long _strictSinglePassStereoSequentialFallbackAttemptCount;
+    private readonly OpenXrStrictSpsFailureStage _strictSpsInjectedFailureStage =
+        OpenXrStrictSpsFailurePolicy.ResolveInjectedStage();
+    private readonly long _strictSpsInjectedFailureWarmupFrameCount =
+        OpenXrStrictSpsFailurePolicy.ResolveInjectedFailureWarmupFrameCount();
+    private long _strictSpsInjectedFailureCount;
+    private long _strictSpsInjectedFallbackBaseline;
+    private int _strictSpsInjectedFailureHandled;
+    private uint _strictSpsInjectedProjectionLayerCount;
+    private int _strictSpsInjectedSequentialFallbackRequested;
+    private long _strictSpsInjectedCompletedFrameCount;
+    private string _strictSpsInjectedQueueDisposition = string.Empty;
+    private long _strictSpsSuccessfulSubmissionCount;
     private uint _smokeLocatedViewCount;
     private int _smokeLastEndFrameResult;
     private uint _smokeLastEndFrameLayerCount;
+    private int _smokeEffectiveTsrRenderScaleBits = BitConverter.SingleToInt32Bits(float.NaN);
 
     public long SmokeSubmittedFrameCount => Volatile.Read(ref _smokeSubmittedFrameCount);
     public long SmokeNoLayerFrameCount => Volatile.Read(ref _smokeNoLayerFrameCount);
@@ -76,6 +90,16 @@ public unsafe partial class OpenXRAPI
 
     public int SmokeLastEndFrameResult => Volatile.Read(ref _smokeLastEndFrameResult);
     public uint SmokeLastEndFrameLayerCount => Volatile.Read(ref _smokeLastEndFrameLayerCount);
+    public ulong SmokeLastRenderedFrameId => Volatile.Read(ref _openXrLastRenderedFrameId);
+    public float? SmokeEffectiveTsrRenderScale
+    {
+        get
+        {
+            float value = BitConverter.Int32BitsToSingle(
+                Volatile.Read(ref _smokeEffectiveTsrRenderScaleBits));
+            return float.IsFinite(value) ? value : null;
+        }
+    }
 
     public OpenXrSmokeSummary CreateSmokeSummary(string? logDirectory = null)
     {
@@ -102,6 +126,7 @@ public unsafe partial class OpenXRAPI
                 ViewRenderModeRequested = _smokeViewRenderModeResolution.RequestedMode.ToString(),
                 ViewRenderModeEffective = _smokeViewRenderModeResolution.EffectiveMode.ToString(),
                 ViewRenderImplementationPath = _smokeViewRenderModeResolution.EffectiveImplementationPath.ToString(),
+                ViewRenderModeResolutionObserved = Volatile.Read(ref _smokeViewRenderModeResolutionObserved) != 0,
                 ViewRenderTemporalHistoryPolicy = _smokeViewRenderModeResolution.TemporalHistoryPolicy.ToString(),
                 ViewRenderModeSupported = _smokeViewRenderModeResolution.IsSupported,
                 ViewRenderModeDiagnostic = _smokeViewRenderModeResolution.Diagnostic,
@@ -124,6 +149,18 @@ public unsafe partial class OpenXRAPI
                 NoLayerFrameCount = Volatile.Read(ref _smokeNoLayerFrameCount),
                 EndFrameFailureCount = Volatile.Read(ref _smokeEndFrameFailureCount),
                 StrictSinglePassStereoSequentialFallbackAttemptCount = Volatile.Read(ref _strictSinglePassStereoSequentialFallbackAttemptCount),
+                StrictSpsInjectedFailureStage = _strictSpsInjectedFailureStage.ToString(),
+                StrictSpsInjectedFailureCount = Volatile.Read(ref _strictSpsInjectedFailureCount),
+                StrictSpsInjectedFailureHandled = Volatile.Read(ref _strictSpsInjectedFailureHandled) != 0,
+                StrictSpsInjectedProjectionLayerCount = Volatile.Read(ref _strictSpsInjectedProjectionLayerCount),
+                StrictSpsInjectedSequentialFallbackRequested = Volatile.Read(ref _strictSpsInjectedSequentialFallbackRequested) != 0,
+                StrictSpsInjectedSequentialFallbackAttemptDelta = Math.Max(
+                    0L,
+                    Volatile.Read(ref _strictSinglePassStereoSequentialFallbackAttemptCount) -
+                    Volatile.Read(ref _strictSpsInjectedFallbackBaseline)),
+                StrictSpsInjectedCompletedFrameCount = Volatile.Read(ref _strictSpsInjectedCompletedFrameCount),
+                StrictSpsInjectedQueueDisposition = _strictSpsInjectedQueueDisposition,
+                StrictSpsSuccessfulSubmissionCount = Volatile.Read(ref _strictSpsSuccessfulSubmissionCount),
                 LocatedViewCount = Volatile.Read(ref _smokeLocatedViewCount),
                 PredictedViewPoseCached = Volatile.Read(ref _smokePredictedViewPoseCached) != 0,
                 LateViewPoseCached = Volatile.Read(ref _smokeLateViewPoseCached) != 0,
@@ -214,6 +251,7 @@ public unsafe partial class OpenXRAPI
 
     private void ResetSmokeDiagnostics()
     {
+        ResetStrictSpsBoundaryCaptureDiagnostics();
         lock (_smokeDiagnosticsLock)
         {
             _smokeRuntimeStateTransitions.Clear();
@@ -223,6 +261,7 @@ public unsafe partial class OpenXRAPI
             _smokeSwapchains.Clear();
             _smokeEnabledExtensions = [];
             _smokeViewRenderModeResolution = default;
+            Volatile.Write(ref _smokeViewRenderModeResolutionObserved, 0);
             _smokeFoveationResolution = default;
             _smokeFoveationBackendCapabilities = [];
             _smokeRendererBackend = string.Empty;
@@ -251,9 +290,21 @@ public unsafe partial class OpenXRAPI
         Volatile.Write(ref _smokeEndFrameFailureCount, 0);
         Volatile.Write(ref _smokeMissedDeadlineCount, 0);
         Volatile.Write(ref _strictSinglePassStereoSequentialFallbackAttemptCount, 0);
+        Volatile.Write(ref _strictSpsInjectedFailureCount, 0);
+        Volatile.Write(ref _strictSpsInjectedFallbackBaseline, 0);
+        Volatile.Write(ref _strictSpsInjectedFailureHandled, 0);
+        Volatile.Write(ref _strictSpsInjectedProjectionLayerCount, 0u);
+        Volatile.Write(ref _strictSpsInjectedSequentialFallbackRequested, 0);
+        Volatile.Write(ref _strictSpsInjectedCompletedFrameCount, 0L);
+        _strictSpsInjectedQueueDisposition = string.Empty;
+        Volatile.Write(ref _strictSpsSuccessfulSubmissionCount, 0L);
         Volatile.Write(ref _smokeLocatedViewCount, 0);
         Volatile.Write(ref _smokeLastEndFrameResult, (int)Result.Success);
         Volatile.Write(ref _smokeLastEndFrameLayerCount, 0u);
+        Volatile.Write(ref _openXrLastRenderedFrameId, 0UL);
+        Volatile.Write(
+            ref _smokeEffectiveTsrRenderScaleBits,
+            BitConverter.SingleToInt32Bits(float.NaN));
     }
 
     private void RecordSmokeInstanceCreated(string rendererBackend, string[] enabledExtensions)
@@ -271,6 +322,7 @@ public unsafe partial class OpenXRAPI
     {
         lock (_smokeDiagnosticsLock)
             _smokeViewRenderModeResolution = resolution;
+        Volatile.Write(ref _smokeViewRenderModeResolutionObserved, 1);
     }
 
     private void RecordSmokeFoveationResolution(
@@ -425,8 +477,62 @@ public unsafe partial class OpenXRAPI
             message);
     }
 
+    private bool IsStrictSpsFailureInjectionEligible(OpenXrStrictSpsFailureStage stage)
+        => _strictSpsInjectedFailureStage == stage &&
+           Volatile.Read(ref _strictSpsInjectedFailureCount) == 0L &&
+           SmokeCompletedFrameCount >= _strictSpsInjectedFailureWarmupFrameCount &&
+           Volatile.Read(ref _strictSpsSuccessfulSubmissionCount) >= _strictSpsInjectedFailureWarmupFrameCount;
+
+    private bool TryCommitStrictSpsFailure(
+        OpenXrStrictSpsFailureStage stage,
+        string queueDisposition,
+        out OpenXrStrictSpsFailureResolution resolution)
+    {
+        resolution = default;
+        if (!IsStrictSpsFailureInjectionEligible(stage) ||
+            Interlocked.CompareExchange(ref _strictSpsInjectedFailureCount, 1L, 0L) != 0L)
+        {
+            return false;
+        }
+
+        resolution = OpenXrStrictSpsFailurePolicy.Resolve(stage);
+        Volatile.Write(
+            ref _strictSpsInjectedFallbackBaseline,
+            Volatile.Read(ref _strictSinglePassStereoSequentialFallbackAttemptCount));
+        Volatile.Write(ref _strictSpsInjectedFailureHandled, resolution.Handled ? 1 : 0);
+        Volatile.Write(ref _strictSpsInjectedProjectionLayerCount, resolution.ProjectionLayerCount);
+        Volatile.Write(
+            ref _strictSpsInjectedSequentialFallbackRequested,
+            resolution.SequentialFallbackRequested ? 1 : 0);
+        Volatile.Write(
+            ref _strictSpsInjectedCompletedFrameCount,
+            checked(SmokeCompletedFrameCount + 1L));
+        _strictSpsInjectedQueueDisposition = queueDisposition;
+        Debug.RenderingWarning(
+            "[OpenXR] Injected strict SinglePassStereo failure at stage={0}; handled={1} layers={2} sequentialFallbackRequested={3} fallbackDelta={4}.",
+            stage,
+            resolution.Handled,
+            resolution.ProjectionLayerCount,
+            resolution.SequentialFallbackRequested,
+            resolution.SequentialFallbackAttemptDelta);
+        return true;
+    }
+
+    private void RecordStrictSpsSuccessfulSubmission()
+        => Interlocked.Increment(ref _strictSpsSuccessfulSubmissionCount);
+
     private void RecordSmokeTeardownCompleted()
         => Volatile.Write(ref _smokeTeardownCompleted, 1);
+
+    private void RecordSmokeEffectiveTsrRenderScale(float? scale)
+    {
+        float value = scale.HasValue && float.IsFinite(scale.Value)
+            ? Math.Clamp(scale.Value, 0.5f, 1.0f)
+            : float.NaN;
+        Volatile.Write(
+            ref _smokeEffectiveTsrRenderScaleBits,
+            BitConverter.SingleToInt32Bits(value));
+    }
 
     private void RecordSmokeWarning(string warning)
     {

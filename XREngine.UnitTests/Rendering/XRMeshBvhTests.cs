@@ -87,6 +87,8 @@ public class XRMeshBvhTests
             new Vector3(0f, 1f, 0f)
         };
 
-        return XRMesh.CreateTriangles(positions);
+        XRMesh mesh = XRMesh.CreateTriangles(positions);
+        mesh.AllowBVHGeneration = true;
+        return mesh;
     }
 }

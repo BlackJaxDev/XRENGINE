@@ -161,7 +161,7 @@ public unsafe partial class VulkanRenderer
     {
         DestroySwapchainImGuiResources();
         DestroyDepth();
-        DestroyCommandBuffers();
+        DestroySwapchainCommandBuffers();
         DestroyFrameBuffers();
         // FBO render passes are independent of the swapchain (they describe FBO
         // attachment formats, not swapchain images) and must NOT be destroyed

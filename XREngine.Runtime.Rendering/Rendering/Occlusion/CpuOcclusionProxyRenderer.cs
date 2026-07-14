@@ -1,4 +1,3 @@
-using System.Drawing;
 using System.Numerics;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -42,8 +41,13 @@ namespace XREngine.Rendering.Occlusion
                 // Unit cube in local space [0,0,0]..[1,1,1] — the AABB→model mapping is a
                 // simple scale-by-size + translate-by-min, no centering correction needed.
                 XRMesh cube = XRMesh.Shapes.SolidBox(Vector3.Zero, Vector3.One);
+                cube.Name = "CpuOcclusionProxy.UnitCube";
 
-                XRMaterial probeMat = XRMaterial.CreateUnlitColorMaterialForward(Color.Transparent);
+                // The color attachment is masked off below, so an opaque shader value
+                // cannot affect the image. Keeping alpha nonzero also prevents future
+                // alpha-discard variants from turning a valid query into an empty one.
+                XRMaterial probeMat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.White);
+                probeMat.Name = "CpuOcclusionProxy.Material";
 
                 var rp = new RenderingParameters
                 {
@@ -61,8 +65,30 @@ namespace XREngine.Rendering.Occlusion
 
                 s_probeMaterial = probeMat;
                 s_probeRenderParams = rp;
-                s_unitCubeRenderer = new XRMeshRenderer(cube, probeMat);
+                s_unitCubeRenderer = new XRMeshRenderer(cube, probeMat)
+                {
+                    Name = "CpuOcclusionProxy.Renderer",
+                };
             }
+        }
+
+        /// <summary>
+        /// Ensures the proxy's program, buffers, and descriptors are ready before a
+        /// query begin is emitted. Query brackets must never be recorded around a
+        /// draw that is still waiting on asynchronous resource generation.
+        /// </summary>
+        public static bool TryPrepare(out string reason)
+        {
+            EnsureInitialized();
+
+            XRMeshRenderer? renderer = s_unitCubeRenderer;
+            if (renderer is null)
+            {
+                reason = "RendererMissing";
+                return false;
+            }
+
+            return renderer.TryPrepareForRendering(out reason);
         }
 
         /// <summary>

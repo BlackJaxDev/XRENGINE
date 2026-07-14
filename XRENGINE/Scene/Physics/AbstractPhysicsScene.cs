@@ -6,6 +6,7 @@ using XREngine.Data.Geometry;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Components.Animation;
 using XREngine.Components.Physics;
+using XREngine.Scene.Physics;
 using XREngine.Scene.Physics.Joints;
 
 namespace XREngine.Scene
@@ -30,13 +31,20 @@ namespace XREngine.Scene
         public uint FaceIndex;
     }
 
+
     public abstract class AbstractPhysicsScene : XRBase
     {
-        public interface IAbstractQueryFilter
+        public interface IAbstractQueryFilter : IPhysicsQueryFilter
         {
-
         }
         public event Action? OnSimulationStep;
+
+        /// <summary>
+        /// Backend construction service used by gameplay-facing physics components.
+        /// </summary>
+        public virtual IPhysicsBackendService BackendService
+            => throw new NotSupportedException(
+                $"Physics scene '{GetType().FullName}' does not provide an {nameof(IPhysicsBackendService)}.");
 
         protected virtual void NotifySimulationStepped()
             => OnSimulationStep?.Invoke();
@@ -227,28 +235,5 @@ namespace XREngine.Scene
         }
 
         #endregion
-    }
-    public interface IAbstractPhysicsActor
-    {
-        void Destroy(bool wakeOnLostTouch = false);
-    }
-    public interface IAbstractStaticRigidBody : IAbstractRigidPhysicsActor
-    {
-        StaticRigidBodyComponent? OwningComponent { get; set; }
-    }
-    public interface IAbstractDynamicRigidBody : IAbstractRigidBody
-    {
-        DynamicRigidBodyComponent? OwningComponent { get; set; }
-    }
-    public interface IAbstractRigidPhysicsActor : IAbstractPhysicsActor
-    {
-        (Vector3 position, Quaternion rotation) Transform { get; }
-        Vector3 LinearVelocity { get; }
-        Vector3 AngularVelocity { get; }
-        bool IsSleeping { get; }
-    }
-    public interface IAbstractRigidBody : IAbstractRigidPhysicsActor
-    {
-
     }
 }

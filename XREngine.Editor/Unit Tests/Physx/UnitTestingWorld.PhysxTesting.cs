@@ -9,6 +9,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
+using XREngine.Scene.Physics;
 using XREngine.Scene.Transforms;
 using Quaternion = System.Numerics.Quaternion;
 

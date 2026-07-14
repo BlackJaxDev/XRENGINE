@@ -860,10 +860,14 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RecordRenderVrXrWaitFrameBlockTime(TimeSpan waitTime)
         => Engine.Rendering.Stats.Vr.RecordVrXrWaitFrameBlockTime(waitTime);
 
-    public void RecordRenderVrXrEndFrameSubmitTime(TimeSpan submitTime)
+    public void RecordRenderVrXrEndFrameSubmitTime(TimeSpan submitTime, ulong renderFrameId = 0UL)
     {
         Engine.Rendering.Stats.Vr.RecordVrXrEndFrameSubmitTime(submitTime);
-        RecordVrSubmitFrameOutput(EFrameOutputKind.OpenXREyeSubmit, submitTime, "OpenXR xrEndFrame submit");
+        RecordVrSubmitFrameOutput(
+            EFrameOutputKind.OpenXREyeSubmit,
+            submitTime,
+            "OpenXR xrEndFrame submit",
+            renderFrameId);
     }
 
     public void RecordRenderVrXrPredictedToLatePoseDelta(double millimeters, double degrees)
@@ -890,13 +894,19 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RecordRenderVrXrPacingHandoffStall()
         => Engine.Rendering.Stats.Vr.RecordVrXrPacingHandoffStall();
 
-    private static void RecordVrSubmitFrameOutput(EFrameOutputKind outputKind, TimeSpan submitTime, string name)
+    private static void RecordVrSubmitFrameOutput(
+        EFrameOutputKind outputKind,
+        TimeSpan submitTime,
+        string name,
+        ulong renderFrameId = 0UL)
     {
         if (!Engine.VRState.IsInVR)
             return;
 
         double cpuMs = Math.Max(0.0, submitTime.TotalMilliseconds * 0.5);
-        ulong frameId = Engine.Rendering.State.RenderFrameId;
+        ulong frameId = renderFrameId != 0UL
+            ? renderFrameId
+            : Engine.Rendering.State.RenderFrameId;
         RecordVrSubmitFrameOutputForEye(outputKind, EVrOutputViewKind.LeftEye, frameId, cpuMs, name + " left");
         RecordVrSubmitFrameOutputForEye(outputKind, EVrOutputViewKind.RightEye, frameId, cpuMs, name + " right");
     }
@@ -1236,6 +1246,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public void RecordRenderVulkanQueueSubmit()
         => Engine.Rendering.Stats.Vulkan.RecordVulkanQueueSubmit();
+
+    public void RecordRenderVulkanPresentResult(int result, bool accepted)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanPresentResult(result, accepted);
 
     public void RecordRenderVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount)
         => Engine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourcePlanReplacement(imageCount, bufferCount);

@@ -1427,120 +1427,37 @@ public partial class DefaultRenderPipeline2
     private XRTexture CreateFxaaOutputTexture()
     {
         var (width, height) = GetDesiredFBOSizeFull();
-        EPixelInternalFormat internalFormat = ResolvePostProcessIntermediateInternalFormat();
-        EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
-        ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();
-
-        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+        return CreatePostProcessIntermediateTexture(
+            FxaaOutputTextureName,
             width,
             height,
-            internalFormat,
-            EPixelFormat.Rgba,
-            pixelType,
-            EFrameBufferAttachment.ColorAttachment0);
-        texture.Resizable = true;
-        texture.SizedInternalFormat = sized;
-        texture.MinFilter = ETexMinFilter.Linear;
-        texture.MagFilter = ETexMagFilter.Linear;
-        texture.UWrap = ETexWrapMode.ClampToEdge;
-        texture.VWrap = ETexWrapMode.ClampToEdge;
-        texture.SamplerName = FxaaOutputTextureName;
-        texture.Name = FxaaOutputTextureName;
-        return texture;
+            ResolvePostProcessIntermediateInternalFormat(),
+            ResolvePostProcessIntermediatePixelType(),
+            ResolvePostProcessIntermediateSizedInternalFormat());
     }
 
     private XRTexture CreateTsrOutputTexture()
     {
         var (width, height) = GetDesiredFBOSizeFull();
-        EPixelInternalFormat internalFormat = ResolvePostProcessIntermediateInternalFormat();
-        EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
-        ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();
-
-        if (Stereo)
-        {
-            XRTexture2DArray stereoTexture = XRTexture2DArray.CreateFrameBufferTexture(
-                2,
-                width,
-                height,
-                internalFormat,
-                EPixelFormat.Rgba,
-                pixelType,
-                EFrameBufferAttachment.ColorAttachment0);
-            stereoTexture.Resizable = true;
-            stereoTexture.SizedInternalFormat = sized;
-            stereoTexture.OVRMultiViewParameters = new(0, 2u);
-            stereoTexture.MinFilter = ETexMinFilter.Linear;
-            stereoTexture.MagFilter = ETexMagFilter.Linear;
-            stereoTexture.UWrap = ETexWrapMode.ClampToEdge;
-            stereoTexture.VWrap = ETexWrapMode.ClampToEdge;
-            stereoTexture.SamplerName = TsrOutputTextureName;
-            stereoTexture.Name = TsrOutputTextureName;
-            return stereoTexture;
-        }
-
-        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+        return CreatePostProcessIntermediateTexture(
+            TsrOutputTextureName,
             width,
             height,
-            internalFormat,
-            EPixelFormat.Rgba,
-            pixelType,
-            EFrameBufferAttachment.ColorAttachment0);
-        texture.Resizable = true;
-        texture.SizedInternalFormat = sized;
-        texture.MinFilter = ETexMinFilter.Linear;
-        texture.MagFilter = ETexMagFilter.Linear;
-        texture.UWrap = ETexWrapMode.ClampToEdge;
-        texture.VWrap = ETexWrapMode.ClampToEdge;
-        texture.SamplerName = TsrOutputTextureName;
-        texture.Name = TsrOutputTextureName;
-        return texture;
+            ResolvePostProcessIntermediateInternalFormat(),
+            ResolvePostProcessIntermediatePixelType(),
+            ResolvePostProcessIntermediateSizedInternalFormat());
     }
 
     private XRTexture CreateTsrHistoryColorTexture()
     {
         var (width, height) = GetDesiredFBOSizeFull();
-        EPixelInternalFormat internalFormat = ResolvePostProcessIntermediateInternalFormat();
-        EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
-        ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();
-
-        if (Stereo)
-        {
-            XRTexture2DArray stereoTexture = XRTexture2DArray.CreateFrameBufferTexture(
-                2,
-                width,
-                height,
-                internalFormat,
-                EPixelFormat.Rgba,
-                pixelType,
-                EFrameBufferAttachment.ColorAttachment0);
-            stereoTexture.Resizable = true;
-            stereoTexture.SizedInternalFormat = sized;
-            stereoTexture.OVRMultiViewParameters = new(0, 2u);
-            stereoTexture.MinFilter = ETexMinFilter.Linear;
-            stereoTexture.MagFilter = ETexMagFilter.Linear;
-            stereoTexture.UWrap = ETexWrapMode.ClampToEdge;
-            stereoTexture.VWrap = ETexWrapMode.ClampToEdge;
-            stereoTexture.SamplerName = TsrHistoryColorTextureName;
-            stereoTexture.Name = TsrHistoryColorTextureName;
-            return stereoTexture;
-        }
-
-        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+        return CreatePostProcessIntermediateTexture(
+            TsrHistoryColorTextureName,
             width,
             height,
-            internalFormat,
-            EPixelFormat.Rgba,
-            pixelType,
-            EFrameBufferAttachment.ColorAttachment0);
-        texture.Resizable = true;
-        texture.SizedInternalFormat = sized;
-        texture.MinFilter = ETexMinFilter.Linear;
-        texture.MagFilter = ETexMagFilter.Linear;
-        texture.UWrap = ETexWrapMode.ClampToEdge;
-        texture.VWrap = ETexWrapMode.ClampToEdge;
-        texture.SamplerName = TsrHistoryColorTextureName;
-        texture.Name = TsrHistoryColorTextureName;
-        return texture;
+            ResolvePostProcessIntermediateInternalFormat(),
+            ResolvePostProcessIntermediatePixelType(),
+            ResolvePostProcessIntermediateSizedInternalFormat());
     }
 
     private XRTexture CreateRadianceCascadeGITexture()

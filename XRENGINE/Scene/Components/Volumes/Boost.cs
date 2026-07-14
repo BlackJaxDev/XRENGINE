@@ -1,8 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Numerics;
 using XREngine.Components.Physics;
-using XREngine.Rendering.Physics.Physx;
-using XREngine.Scene.Physics.Jolt;
 
 namespace XREngine.Components.Scene.Volumes
 {
@@ -23,15 +21,8 @@ namespace XREngine.Components.Scene.Volumes
         {
             if (component is DynamicRigidBodyComponent rb)
             {
-                switch (rb.RigidBody)
-                {
-                    case PhysxDynamicRigidBody physx:
-                        physx.SetLinearVelocity(physx.LinearVelocity + Force, wake: true);
-                        break;
-                    case JoltDynamicRigidBody jolt:
-                        jolt.SetLinearVelocity(jolt.LinearVelocity + Force);
-                        break;
-                }
+                IAbstractDynamicRigidBody? body = rb.RigidBody;
+                body?.SetLinearVelocity(body.LinearVelocity + Force, wake: true);
             }
 
             base.OnEntered(component);

@@ -62,6 +62,8 @@ public static class BootstrapWorldFactory
 
         SceneNode? characterPawnModelParentNode = BootstrapPawnFactory.CreatePlayerPawn(setUI, isServer, rootNode);
 
+        BootstrapPhase524bValidationBuilder.AddValidationWorkload(rootNode);
+
         DirectionalLightComponent? sunDirectionalLight = null;
         DirectionalLightComponent? moonDirectionalLight = null;
 

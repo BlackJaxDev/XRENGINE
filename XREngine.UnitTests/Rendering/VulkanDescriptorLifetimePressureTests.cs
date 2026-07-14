@@ -109,6 +109,48 @@ public sealed class VulkanDescriptorLifetimePressureTests
         harness.ShouldContain("[ValidateSet('Configured', 'Desktop', 'Emulated', 'MonadoOpenXR', 'OpenVR', 'OpenXR')]");
     }
 
+    [Test]
+    public void ForcedIdleRetirementDestroysPinnedSamplersAndTracksThemUntilDestruction()
+    {
+        string lifetime = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+        string retirement = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+        string samplerLifetime = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Samplers/VulkanRenderer.SamplerLifetime.cs");
+
+        string beginDestroy = SliceMethod(
+            lifetime,
+            "private bool TryBeginDestroyVulkanResourceGeneration(",
+            "private bool HasUndestroyedVulkanBufferViewReference(");
+        beginDestroy.ShouldContain("bool forced = _vulkanForcedRetirementDrainDepth > 0;");
+        beginDestroy.ShouldContain("(!forced &&");
+
+        string enqueue = SliceMethod(
+            retirement,
+            "internal void RetireImageResources(in RetiredImageResources resources)",
+            "private ImageView[] FilterRetiredAttachmentViews(");
+        enqueue.ShouldNotContain("UnregisterLiveSampler");
+
+        string drain = SliceMethod(
+            retirement,
+            "private void DrainRetiredImages(int frameSlot, int maxItems)",
+            "private void CompleteRetiredImageDeduplication(");
+        int destroyIndex = drain.IndexOf("Api!.DestroySampler(device, r.Sampler, null);", StringComparison.Ordinal);
+        int unregisterIndex = drain.IndexOf("UnregisterLiveSampler(r.Sampler);", StringComparison.Ordinal);
+        destroyIndex.ShouldBeGreaterThanOrEqualTo(0);
+        unregisterIndex.ShouldBeGreaterThan(destroyIndex);
+
+        samplerLifetime.ShouldContain("private void DestroyRemainingTrackedSamplers()");
+
+        string initialization = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
+        string cleanupPrefix = initialization[
+            initialization.IndexOf("public override void CleanUp()", StringComparison.Ordinal)..
+            initialization.IndexOf("// Drain all deferred-deletion queues now that the GPU is idle.", StringComparison.Ordinal)];
+        cleanupPrefix.ShouldContain("DestroyComputeTransientResources();\n            DestroyComputeDescriptorCaches();");
+    }
+
     private static string SliceMethod(string source, string startMarker, string endMarker)
     {
         int start = source.IndexOf(startMarker, StringComparison.Ordinal);

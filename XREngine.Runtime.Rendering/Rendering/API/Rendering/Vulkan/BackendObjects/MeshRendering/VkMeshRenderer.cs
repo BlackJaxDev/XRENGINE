@@ -1320,6 +1320,7 @@ public unsafe partial class VulkanRenderer
         Matrix4x4 ProjectionMatrix,
         Matrix4x4 InverseProjectionMatrix,
         Matrix4x4 ViewProjectionMatrix,
+        Matrix4x4 ViewProjectionMatrixUnjittered,
         Matrix4x4 PreviousViewMatrix,
         Matrix4x4 PreviousProjectionMatrix,
         Matrix4x4 PreviousViewProjectionMatrix,
@@ -1329,6 +1330,7 @@ public unsafe partial class VulkanRenderer
         Matrix4x4 RightEyeProjectionMatrix,
         Matrix4x4 RightEyeInverseProjectionMatrix,
         Matrix4x4 RightEyeViewProjectionMatrix,
+        Matrix4x4 RightEyeViewProjectionMatrixUnjittered,
         Matrix4x4 PreviousRightEyeViewMatrix,
         Matrix4x4 PreviousRightEyeProjectionMatrix,
         Matrix4x4 PreviousRightEyeViewProjectionMatrix,
@@ -1835,6 +1837,8 @@ public unsafe partial class VulkanRenderer
             Matrix4x4 viewProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotCamera is not null
                 ? snapshotCamera.ViewProjectionMatrixUnjittered
                 : snapshotCamera?.ViewProjectionMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 viewProjectionMatrixUnjitteredSnapshot =
+                snapshotCamera?.ViewProjectionMatrixUnjittered ?? viewProjectionMatrixSnapshot;
             Matrix4x4 rightEyeViewMatrixSnapshot = snapshotRightEyeCamera?.Transform.InverseRenderMatrix ?? viewMatrixSnapshot;
             Matrix4x4 rightEyeInverseViewMatrixSnapshot = snapshotRightEyeCamera?.Transform.RenderMatrix ?? inverseViewMatrixSnapshot;
             Matrix4x4 rightEyeProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotRightEyeCamera is not null
@@ -1846,6 +1850,8 @@ public unsafe partial class VulkanRenderer
             Matrix4x4 rightEyeViewProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotRightEyeCamera is not null
                 ? snapshotRightEyeCamera.ViewProjectionMatrixUnjittered
                 : snapshotRightEyeCamera?.ViewProjectionMatrix ?? viewProjectionMatrixSnapshot;
+            Matrix4x4 rightEyeViewProjectionMatrixUnjitteredSnapshot =
+                snapshotRightEyeCamera?.ViewProjectionMatrixUnjittered ?? viewProjectionMatrixUnjitteredSnapshot;
             Matrix4x4 previousViewMatrixSnapshot = viewMatrixSnapshot;
             Matrix4x4 previousProjectionMatrixSnapshot = projectionMatrixSnapshot;
             Matrix4x4 previousViewProjectionMatrixSnapshot = viewProjectionMatrixSnapshot;
@@ -1855,16 +1861,21 @@ public unsafe partial class VulkanRenderer
             Matrix4x4 previousRightEyeViewProjectionMatrixSnapshot = rightEyeViewProjectionMatrixSnapshot;
             Matrix4x4 previousRightEyeViewProjectionMatrixUnjitteredSnapshot =
                 snapshotRightEyeCamera?.ViewProjectionMatrixUnjittered ?? rightEyeViewProjectionMatrixSnapshot;
-            if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData) && temporalData.HistoryReady)
+            if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
             {
-                previousViewMatrixSnapshot = temporalData.PrevViewMatrix;
-                previousProjectionMatrixSnapshot = temporalData.PrevProjection;
-                previousViewProjectionMatrixSnapshot = temporalData.PrevViewProjection;
-                previousViewProjectionMatrixUnjitteredSnapshot = temporalData.PrevViewProjectionUnjittered;
-                previousRightEyeViewMatrixSnapshot = temporalData.RightEyePrevViewMatrix;
-                previousRightEyeProjectionMatrixSnapshot = temporalData.RightEyePrevProjection;
-                previousRightEyeViewProjectionMatrixSnapshot = temporalData.RightEyePrevViewProjection;
-                previousRightEyeViewProjectionMatrixUnjitteredSnapshot = temporalData.RightEyePrevViewProjectionUnjittered;
+                viewProjectionMatrixUnjitteredSnapshot = temporalData.CurrViewProjectionUnjittered;
+                rightEyeViewProjectionMatrixUnjitteredSnapshot = temporalData.RightEyeCurrViewProjectionUnjittered;
+                if (temporalData.HistoryReady)
+                {
+                    previousViewMatrixSnapshot = temporalData.PrevViewMatrix;
+                    previousProjectionMatrixSnapshot = temporalData.PrevProjection;
+                    previousViewProjectionMatrixSnapshot = temporalData.PrevViewProjection;
+                    previousViewProjectionMatrixUnjitteredSnapshot = temporalData.PrevViewProjectionUnjittered;
+                    previousRightEyeViewMatrixSnapshot = temporalData.RightEyePrevViewMatrix;
+                    previousRightEyeProjectionMatrixSnapshot = temporalData.RightEyePrevProjection;
+                    previousRightEyeViewProjectionMatrixSnapshot = temporalData.RightEyePrevViewProjection;
+                    previousRightEyeViewProjectionMatrixUnjitteredSnapshot = temporalData.RightEyePrevViewProjectionUnjittered;
+                }
             }
             Vector3 cameraPositionSnapshot = snapshotCamera?.Transform.RenderTranslation ?? Vector3.Zero;
             Vector3 cameraForwardSnapshot = snapshotCamera?.Transform.RenderForward ?? Vector3.UnitZ;
@@ -1941,6 +1952,7 @@ public unsafe partial class VulkanRenderer
                 projectionMatrixSnapshot,
                 inverseProjectionMatrixSnapshot,
                 viewProjectionMatrixSnapshot,
+                viewProjectionMatrixUnjitteredSnapshot,
                 previousViewMatrixSnapshot,
                 previousProjectionMatrixSnapshot,
                 previousViewProjectionMatrixSnapshot,
@@ -1950,6 +1962,7 @@ public unsafe partial class VulkanRenderer
                 rightEyeProjectionMatrixSnapshot,
                 rightEyeInverseProjectionMatrixSnapshot,
                 rightEyeViewProjectionMatrixSnapshot,
+                rightEyeViewProjectionMatrixUnjitteredSnapshot,
                 previousRightEyeViewMatrixSnapshot,
                 previousRightEyeProjectionMatrixSnapshot,
                 previousRightEyeViewProjectionMatrixSnapshot,
@@ -2105,6 +2118,8 @@ public unsafe partial class VulkanRenderer
             Matrix4x4 viewProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotCamera is not null
                 ? snapshotCamera.ViewProjectionMatrixUnjittered
                 : snapshotCamera?.ViewProjectionMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 viewProjectionMatrixUnjitteredSnapshot =
+                snapshotCamera?.ViewProjectionMatrixUnjittered ?? viewProjectionMatrixSnapshot;
             Matrix4x4 rightEyeViewMatrixSnapshot = snapshotRightEyeCamera?.Transform.InverseRenderMatrix ?? viewMatrixSnapshot;
             Matrix4x4 rightEyeInverseViewMatrixSnapshot = snapshotRightEyeCamera?.Transform.RenderMatrix ?? inverseViewMatrixSnapshot;
             Matrix4x4 rightEyeProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotRightEyeCamera is not null
@@ -2116,6 +2131,8 @@ public unsafe partial class VulkanRenderer
             Matrix4x4 rightEyeViewProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotRightEyeCamera is not null
                 ? snapshotRightEyeCamera.ViewProjectionMatrixUnjittered
                 : snapshotRightEyeCamera?.ViewProjectionMatrix ?? viewProjectionMatrixSnapshot;
+            Matrix4x4 rightEyeViewProjectionMatrixUnjitteredSnapshot =
+                snapshotRightEyeCamera?.ViewProjectionMatrixUnjittered ?? viewProjectionMatrixUnjitteredSnapshot;
             Matrix4x4 previousViewMatrixSnapshot = viewMatrixSnapshot;
             Matrix4x4 previousProjectionMatrixSnapshot = projectionMatrixSnapshot;
             Matrix4x4 previousViewProjectionMatrixSnapshot = viewProjectionMatrixSnapshot;
@@ -2125,16 +2142,21 @@ public unsafe partial class VulkanRenderer
             Matrix4x4 previousRightEyeViewProjectionMatrixSnapshot = rightEyeViewProjectionMatrixSnapshot;
             Matrix4x4 previousRightEyeViewProjectionMatrixUnjitteredSnapshot =
                 snapshotRightEyeCamera?.ViewProjectionMatrixUnjittered ?? rightEyeViewProjectionMatrixSnapshot;
-            if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData) && temporalData.HistoryReady)
+            if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
             {
-                previousViewMatrixSnapshot = temporalData.PrevViewMatrix;
-                previousProjectionMatrixSnapshot = temporalData.PrevProjection;
-                previousViewProjectionMatrixSnapshot = temporalData.PrevViewProjection;
-                previousViewProjectionMatrixUnjitteredSnapshot = temporalData.PrevViewProjectionUnjittered;
-                previousRightEyeViewMatrixSnapshot = temporalData.RightEyePrevViewMatrix;
-                previousRightEyeProjectionMatrixSnapshot = temporalData.RightEyePrevProjection;
-                previousRightEyeViewProjectionMatrixSnapshot = temporalData.RightEyePrevViewProjection;
-                previousRightEyeViewProjectionMatrixUnjitteredSnapshot = temporalData.RightEyePrevViewProjectionUnjittered;
+                viewProjectionMatrixUnjitteredSnapshot = temporalData.CurrViewProjectionUnjittered;
+                rightEyeViewProjectionMatrixUnjitteredSnapshot = temporalData.RightEyeCurrViewProjectionUnjittered;
+                if (temporalData.HistoryReady)
+                {
+                    previousViewMatrixSnapshot = temporalData.PrevViewMatrix;
+                    previousProjectionMatrixSnapshot = temporalData.PrevProjection;
+                    previousViewProjectionMatrixSnapshot = temporalData.PrevViewProjection;
+                    previousViewProjectionMatrixUnjitteredSnapshot = temporalData.PrevViewProjectionUnjittered;
+                    previousRightEyeViewMatrixSnapshot = temporalData.RightEyePrevViewMatrix;
+                    previousRightEyeProjectionMatrixSnapshot = temporalData.RightEyePrevProjection;
+                    previousRightEyeViewProjectionMatrixSnapshot = temporalData.RightEyePrevViewProjection;
+                    previousRightEyeViewProjectionMatrixUnjitteredSnapshot = temporalData.RightEyePrevViewProjectionUnjittered;
+                }
             }
             Vector3 cameraPositionSnapshot = snapshotCamera?.Transform.RenderTranslation ?? Vector3.Zero;
             Vector3 cameraForwardSnapshot = snapshotCamera?.Transform.RenderForward ?? Vector3.UnitZ;
@@ -2208,6 +2230,7 @@ public unsafe partial class VulkanRenderer
                 projectionMatrixSnapshot,
                 inverseProjectionMatrixSnapshot,
                 viewProjectionMatrixSnapshot,
+                viewProjectionMatrixUnjitteredSnapshot,
                 previousViewMatrixSnapshot,
                 previousProjectionMatrixSnapshot,
                 previousViewProjectionMatrixSnapshot,
@@ -2217,6 +2240,7 @@ public unsafe partial class VulkanRenderer
                 rightEyeProjectionMatrixSnapshot,
                 rightEyeInverseProjectionMatrixSnapshot,
                 rightEyeViewProjectionMatrixSnapshot,
+                rightEyeViewProjectionMatrixUnjitteredSnapshot,
                 previousRightEyeViewMatrixSnapshot,
                 previousRightEyeProjectionMatrixSnapshot,
                 previousRightEyeViewProjectionMatrixSnapshot,

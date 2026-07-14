@@ -39,7 +39,14 @@ public class PhysicsChainColliderBase : XRComponent
 
     protected bool TryResolveEffectiveTransform(TransformBase? overrideTransform, out TransformBase effectiveTransform)
     {
-        effectiveTransform = overrideTransform ?? Transform!;
-        return effectiveTransform is not null;
+        TransformBase? resolvedTransform = overrideTransform ?? DefaultTransform;
+        if (resolvedTransform is null)
+        {
+            effectiveTransform = null!;
+            return false;
+        }
+
+        effectiveTransform = resolvedTransform;
+        return true;
     }
 }

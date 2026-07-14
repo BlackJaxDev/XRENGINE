@@ -29,9 +29,8 @@ namespace XREngine.Scene.Physics.Jolt
                 if (Scene?.PhysicsSystem is null)
                     return (Vector3.Zero, Quaternion.Identity);
 
-                Matrix4x4 transform = Scene.PhysicsSystem.BodyInterface.GetWorldTransform(BodyID);
-                Matrix4x4.Decompose(transform, out _, out Quaternion rotation, out Vector3 position);
-                return (position, rotation);
+                BodyInterface bodies = Scene.PhysicsSystem.BodyInterface;
+                return (bodies.GetPosition(BodyID), bodies.GetRotation(BodyID));
             }
         }
 
@@ -44,8 +43,7 @@ namespace XREngine.Scene.Physics.Jolt
             if (Scene?.PhysicsSystem is null)
                 return;
 
-            uint mask = groupsMaskWord0 == 0 ? uint.MaxValue : groupsMaskWord0;
-            ObjectLayer layer = ObjectLayerPairFilterMask.GetObjectLayer(collisionGroup, mask);
+            ObjectLayer layer = LayerMaskJoltExtensions.CreateObjectLayer(collisionGroup, groupsMaskWord0);
             Scene.PhysicsSystem.BodyInterface.SetObjectLayer(BodyID, layer);
         }
     }

@@ -17,6 +17,7 @@ public sealed class VulkanCpuDirectOcclusionTests
         string frameOps = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
         string recorder = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string query = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Queries/VkRenderQuery.cs");
+        string resourceLifetime = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
         string renderGraph = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderGraphCompiler.cs");
 
         coordinator.ShouldContain("using XREngine.Rendering.Vulkan;");
@@ -56,15 +57,22 @@ public sealed class VulkanCpuDirectOcclusionTests
         recorder.ShouldNotContain("(!VulkanPrimaryCommandBufferReuseEnabled || hasQueryFrameOps)");
         recorder.ShouldContain("private static bool HasQueryFrameOps(FrameOp[] ops)");
         recorder.ShouldContain("case QueryOp queryOp:");
-        recorder.ShouldContain("queryOp.Query.BeginQuery(commandBuffer, queryOp.QueryTarget)");
+        recorder.ShouldContain("activeInlineQuery = queryOp.Query.BeginQuery(");
+        recorder.ShouldContain("queryOp.QueryTarget,");
         recorder.ShouldContain("queryOp.Query.EndQuery(commandBuffer);");
 
-        query.ShouldContain("CmdResetQueryPool(commandBuffer, _queryPool, 0, _activeQueryCount)");
+        query.ShouldContain("Api!.CmdResetQueryPool(commandBuffer, _queryPool, 0, _queryPoolCapacity);");
         query.ShouldContain("PrepareForCommandBufferReuse(EQueryTarget target)");
         query.ShouldContain("ResetQueryPoolForCommandBufferReuse");
-        query.ShouldContain("QueryCount = 2");
-        query.ShouldContain("_activeQueryCount = Math.Clamp(queryCount, 1u, 2u)");
+        query.ShouldContain("QueryCount = queryPoolCapacity");
+        query.ShouldContain("_activeQueryCount = Math.Clamp(queryCount, 1u, _queryPoolCapacity)");
+        query.ShouldContain("ResolveOcclusionQueryViewSlotCount(viewMask)");
         query.ShouldContain("DestroyQueryPool();");
+        query.ShouldContain("_hasSubmittedResultEpoch");
+        query.ShouldContain("Volatile.Read(ref _hasSubmittedResultEpoch) == 0");
+        query.ShouldContain("Renderer.RegisterVulkanRenderQuery(_queryPool, this);");
+        resourceLifetime.ShouldContain("key.Type == ObjectType.QueryPool");
+        resourceLifetime.ShouldContain("query.MarkResultEpochSubmitted();");
 
         renderGraph.ShouldContain("op is MeshDrawOp or QueryOp or BlitOp");
         renderGraph.ShouldContain("QueryOp q => q.Target is null");

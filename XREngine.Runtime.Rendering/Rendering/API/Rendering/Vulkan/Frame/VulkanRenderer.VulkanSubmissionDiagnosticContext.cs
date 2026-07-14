@@ -2,6 +2,21 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+    internal enum EOpenXrStrictSpsFaultInjectionStage : byte
+    {
+        None = 0,
+        Recording,
+        LifetimeValidation,
+        Submit,
+    }
+
+    internal enum EVulkanQueueSubmissionDisposition : byte
+    {
+        NotSubmitted = 0,
+        SubmittedIncomplete,
+        Completed,
+    }
+
     private readonly record struct VulkanSubmissionDiagnosticContext
     {
         public ulong SubmissionSerial { get; init; }
@@ -38,6 +53,7 @@ public unsafe partial class VulkanRenderer
         public ulong ImageLayoutTransitionSerial { get; init; }
         public ulong DescriptorTableGeneration { get; init; }
         public string? FirstFailingApi { get; init; }
+        public EOpenXrStrictSpsFaultInjectionStage OpenXrStrictSpsFaultInjectionStage { get; init; }
 
         public bool IsEmpty =>
             SubmissionKind is null &&

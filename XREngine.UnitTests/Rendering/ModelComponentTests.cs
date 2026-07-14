@@ -149,10 +149,13 @@ public sealed class ModelComponentTests
     }
 
     [Test]
+    [NonParallelizable]
     public void RenderableMeshes_RegisterWhenWorldArrivesAfterActivation()
     {
         IRuntimeWorldObjectServices? previousServices = RuntimeWorldObjectServices.Current;
+        IRuntimeShaderServices? previousShaderServices = RuntimeShaderServices.Current;
         RuntimeWorldObjectServices.Current = null;
+        RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
 
         try
         {
@@ -176,6 +179,7 @@ public sealed class ModelComponentTests
         finally
         {
             RuntimeWorldObjectServices.Current = previousServices;
+            RuntimeShaderServices.Current = previousShaderServices;
         }
     }
 }

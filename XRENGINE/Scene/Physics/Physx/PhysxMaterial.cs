@@ -1,6 +1,7 @@
 ﻿using Assimp;
 using MagicPhysX;
 using System.Collections.Concurrent;
+using XREngine.Scene.Physics;
 using static MagicPhysX.NativeMethods;
 
 namespace XREngine.Rendering.Physics.Physx
@@ -42,8 +43,8 @@ namespace XREngine.Rendering.Physics.Physx
             float dynamicFriction,
             float restitution,
             float damping,
-            ECombineMode frictionCombineMode,
-            ECombineMode restitutionCombineMode,
+            PhysicsMaterialCombineMode frictionCombineMode,
+            PhysicsMaterialCombineMode restitutionCombineMode,
             bool disableFriction,
             bool disableStrongFriction,
             bool improvedPatchFriction,
@@ -117,7 +118,7 @@ namespace XREngine.Rendering.Physics.Physx
                 PhysxObjectLog.Modified(this, (nint)MaterialPtr, nameof(Damping), $"{prev} -> {value}");
             }
         }
-        public override ECombineMode FrictionCombineMode
+        public override PhysicsMaterialCombineMode FrictionCombineMode
         {
             get => Conv(_materialPtr->GetFrictionCombineMode());
             set
@@ -127,7 +128,7 @@ namespace XREngine.Rendering.Physics.Physx
                 PhysxObjectLog.Modified(this, (nint)MaterialPtr, nameof(FrictionCombineMode), $"{prev} -> {value}");
             }
         }
-        public override ECombineMode RestitutionCombineMode
+        public override PhysicsMaterialCombineMode RestitutionCombineMode
         {
             get => Conv(_materialPtr->GetRestitutionCombineMode());
             set
@@ -187,23 +188,23 @@ namespace XREngine.Rendering.Physics.Physx
             }
         }
 
-        private static PxCombineMode Conv(ECombineMode mode)
+        private static PxCombineMode Conv(PhysicsMaterialCombineMode mode)
             => mode switch
             {
-                ECombineMode.Average => PxCombineMode.Average,
-                ECombineMode.Min => PxCombineMode.Min,
-                ECombineMode.Multiply => PxCombineMode.Multiply,
-                ECombineMode.Max => PxCombineMode.Max,
+                PhysicsMaterialCombineMode.Average => PxCombineMode.Average,
+                PhysicsMaterialCombineMode.Min => PxCombineMode.Min,
+                PhysicsMaterialCombineMode.Multiply => PxCombineMode.Multiply,
+                PhysicsMaterialCombineMode.Max => PxCombineMode.Max,
                 _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, null),
             };
 
-        private static ECombineMode Conv(PxCombineMode mode)
+        private static PhysicsMaterialCombineMode Conv(PxCombineMode mode)
             => mode switch
             {
-                PxCombineMode.Average => ECombineMode.Average,
-                PxCombineMode.Min => ECombineMode.Min,
-                PxCombineMode.Multiply => ECombineMode.Multiply,
-                PxCombineMode.Max => ECombineMode.Max,
+                PxCombineMode.Average => PhysicsMaterialCombineMode.Average,
+                PxCombineMode.Min => PhysicsMaterialCombineMode.Min,
+                PxCombineMode.Multiply => PhysicsMaterialCombineMode.Multiply,
+                PxCombineMode.Max => PhysicsMaterialCombineMode.Max,
                 _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, null),
             };
     }

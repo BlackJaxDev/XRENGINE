@@ -195,7 +195,7 @@ public sealed class DirectionalShadowAtlasFallbackTests
     public void VulkanDynamicFramebufferTransitions_UseOrderedAttachmentTargets()
     {
         string framebufferSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
-        string commandBufferSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string commandBufferSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
         framebufferSource.ShouldContain("private AttachmentTargetInfo[]? _attachmentTargets;");
         framebufferSource.ShouldContain("internal bool TryGetAttachmentTarget(");
@@ -209,7 +209,7 @@ public sealed class DirectionalShadowAtlasFallbackTests
     public void VulkanLayeredFramebuffer_UsesAttachmentLayerCountForTextureArrays()
     {
         string framebufferSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
-        string commandBufferSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string commandBufferSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
         framebufferSource.ShouldContain("public uint FramebufferLayers { get; private set; } = 1u;");
         framebufferSource.ShouldContain("uint framebufferLayers = ResolveFramebufferLayers(attachments);");

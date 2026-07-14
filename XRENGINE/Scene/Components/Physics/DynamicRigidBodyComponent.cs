@@ -8,6 +8,7 @@ using XREngine.Scene;
 using XREngine.Scene.Physics.Jolt;
 using XREngine.Scene.Transforms;
 using XREngine;
+using XREngine.Networking;
 
 namespace XREngine.Components.Physics
 {
@@ -16,7 +17,7 @@ namespace XREngine.Components.Physics
     [DisplayName("Dynamic Rigid Body")]
     [Description("Simulated rigid body that responds to forces, collisions, and networking state.")]
     [XRComponentEditor("XREngine.Editor.ComponentEditors.DynamicRigidBodyComponentEditor")]
-    public class DynamicRigidBodyComponent : PhysicsActorComponent
+    public class DynamicRigidBodyComponent : PhysicsActorComponent, IPhysicsReplicationTarget
     {
         private const float DefaultDensity = 1.0f;
         private const float DefaultLinearDamping = 0.05f;
@@ -35,10 +36,16 @@ namespace XREngine.Components.Physics
         private ushort _collisionGroup;
         private PhysicsGroupsMask _groupsMask = PhysicsGroupsMask.Empty;
         private byte _dominanceGroup;
-        private byte _ownerClient;
+        private byte _physxOwnerClient;
+        private PhysicsReplicationAuthority _replicationAuthority = PhysicsReplicationAuthority.LocalSimulation;
+        private NetworkEntityId _networkEntityId;
+        private string? _ownerClientId;
+        private int _ownerServerPlayerIndex = -1;
         private string? _actorName;
         private AbstractPhysicsMaterial? _material;
+        private PhysicsMaterialDefinition? _materialDefinition;
         private IPhysicsGeometry? _geometry;
+        private List<PhysicsColliderShape> _colliderShapes = [];
         private Vector3 _shapeOffsetTranslation = Vector3.Zero;
         private Quaternion _shapeOffsetRotation = Quaternion.Identity;
         private float _density = DefaultDensity;
@@ -109,8 +116,26 @@ namespace XREngine.Components.Physics
         }
 
         [Category("Shape")]
+        [DisplayName("Material Definition")]
+        [Description("Backend-neutral authored material settings. Native backend materials are generated from this definition when needed.")]
+        public PhysicsMaterialDefinition? MaterialDefinition
+        {
+            get => _materialDefinition;
+            set => SetField(ref _materialDefinition, value);
+        }
+
+        [Category("Shape")]
+        [DisplayName("Compound Colliders")]
+        [Description("Backend-neutral collider shape list. The first enabled shape is the primary shape; PhysX attaches additional enabled shapes as a compound actor.")]
+        public List<PhysicsColliderShape> ColliderShapes
+        {
+            get => _colliderShapes;
+            set => SetField(ref _colliderShapes, value ?? []);
+        }
+
+        [Category("Shape")]
         [DisplayName("Geometry")]
-        [Description("The collision geometry shape.")]
+        [Description("The legacy single collision geometry shape. Used when Compound Colliders is empty.")]
         public IPhysicsGeometry? Geometry
         {
             get => _geometry;
@@ -171,13 +196,13 @@ namespace XREngine.Components.Physics
         [Description("Whether gravity affects this body.")]
         public bool GravityEnabled
         {
-            get => RigidBody is PhysxActor actor ? actor.GravityEnabled : _gravityEnabled;
+            get => RigidBody?.GravityEnabled ?? _gravityEnabled;
             set
             {
                 if (!SetField(ref _gravityEnabled, value))
                     return;
-                if (RigidBody is PhysxActor physx)
-                    physx.GravityEnabled = value;
+                if (RigidBody is not null)
+                    RigidBody.GravityEnabled = value;
             }
         }
 
@@ -271,15 +296,15 @@ namespace XREngine.Components.Physics
             }
         }
 
-        [Category("Networking")]
-        [DisplayName("Owner Client")]
-        [Description("Client ID that owns this body.")]
-        public byte OwnerClient
+        [Category("Physics / PhysX Extensions")]
+        [DisplayName("PhysX Owner Client")]
+        [Description("Legacy PhysX owner-client byte. Network authority uses OwnerClientId and OwnerServerPlayerIndex.")]
+        public byte PhysxOwnerClient
         {
-            get => RigidBody is PhysxActor actor ? actor.OwnerClient : _ownerClient;
+            get => RigidBody is PhysxActor actor ? actor.OwnerClient : _physxOwnerClient;
             set
             {
-                if (!SetField(ref _ownerClient, value))
+                if (!SetField(ref _physxOwnerClient, value))
                     return;
                 if (RigidBody is PhysxActor physx)
                 {
@@ -288,6 +313,16 @@ namespace XREngine.Components.Physics
                         physx.OwnerClient = value;
                 }
             }
+        }
+
+
+        [Category("Networking")]
+        [DisplayName("Replication Authority")]
+        [Description("Defines which peer is authoritative for replicated physics state. This is metadata for networking handoff and does not change local simulation by itself.")]
+        public PhysicsReplicationAuthority ReplicationAuthority
+        {
+            get => _replicationAuthority;
+            set => SetField(ref _replicationAuthority, value);
         }
 
         [Category("Debug")]
@@ -570,7 +605,7 @@ namespace XREngine.Components.Physics
 
         [Category("Solver")]
         [DisplayName("Solver Iterations")]
-        [Description("Position and velocity solver iteration counts.")]
+        [Description("Position and velocity solver iteration counts. PhysX updates live; Jolt applies these overrides when the body is created or rebuilt.")]
         public PhysicsSolverIterations SolverIterations
         {
             get => RigidBody is PhysxDynamicRigidBody physx ? new PhysicsSolverIterations(physx.SolverIterationCounts.minPositionIters, physx.SolverIterationCounts.minVelocityIters) : _solverIterations;
@@ -725,69 +760,84 @@ namespace XREngine.Components.Physics
 
         private void EnsureRigidBodyConstructed()
         {
-            if (!AutoCreateRigidBody || RigidBody is not null || WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is null)
+            AbstractPhysicsScene? physicsScene = WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene;
+            if (!AutoCreateRigidBody || RigidBody is not null || physicsScene is null)
                 return;
 
-            RigidBody = WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene switch
-            {
-                PhysxScene => CreatePhysxDynamicRigidBody(),
-                JoltScene joltScene => CreateJoltDynamicRigidBody(joltScene),
-                _ => null
-            };
+            RigidBody = physicsScene.BackendService.CreateDynamicRigidBody(BuildRigidBodyCreateInfo());
         }
 
-        private PhysxDynamicRigidBody? CreatePhysxDynamicRigidBody()
+        private PhysicsRigidBodyCreateInfo BuildRigidBodyCreateInfo()
         {
-            var (position, rotation) = GetSpawnPose();
-            var geometry = Geometry;
-            if (geometry is not null)
-            {
-                var mat = ResolvePhysxMaterial();
-                if (mat is null)
-                    return null;
-                var created = new PhysxDynamicRigidBody(
-                    mat,
-                    geometry,
-                    Density,
-                    position,
-                    rotation,
-                    ShapeOffsetTranslation,
-                    ShapeOffsetRotation);
-                return created;
-            }
-
-            return new PhysxDynamicRigidBody(position, rotation);
-        }
-
-        private JoltDynamicRigidBody? CreateJoltDynamicRigidBody(JoltScene scene)
-        {
-            var geometry = Geometry;
-            if (geometry is null)
-                return null;
-
-            var pose = GetSpawnPose();
             LayerMask layerMask = CollisionGroup == 0
                 ? new LayerMask(1)
                 : new LayerMask(1 << CollisionGroup);
 
-            var body = scene.CreateDynamicRigidBody(
-                geometry,
-                pose,
-                ShapeOffsetTranslation,
-                ShapeOffsetRotation,
-                layerMask);
-
-            return body;
+            return new PhysicsRigidBodyCreateInfo(
+                    ColliderShapes,
+                    Geometry,
+                    Material,
+                    MaterialDefinition,
+                    GetSpawnPose(),
+                    ShapeOffsetTranslation,
+                    ShapeOffsetRotation,
+                    Density,
+                    layerMask)
+                {
+                    GravityEnabled = GravityEnabled,
+                    MaxLinearVelocity = MaxLinearVelocity,
+                    MaxAngularVelocity = MaxAngularVelocity,
+                    SolverIterations = SolverIterations,
+                    BodyFlags = BodyFlags,
+                    LockFlags = LockFlags,
+                };
         }
 
-        protected PhysxMaterial? ResolvePhysxMaterial()
-        {
-            if (Material is PhysxMaterial physxMaterial)
-                return physxMaterial;
+        [Browsable(false)]
+        public override IAbstractPhysicsActor? PhysicsActor => RigidBody;
 
-            var created = new PhysxMaterial(0.5f, 0.5f, 0.1f);
-            Material = created;
-            return created;
+        [Category("Networking")]
+        public NetworkEntityId NetworkEntityId
+        {
+            get => _networkEntityId;
+            set => SetField(ref _networkEntityId, value);
+        }
+
+        [Category("Networking")]
+        public string? OwnerClientId
+        {
+            get => _ownerClientId;
+            set => SetField(ref _ownerClientId, value);
+        }
+
+        [Category("Networking")]
+        public int OwnerServerPlayerIndex
+        {
+            get => _ownerServerPlayerIndex;
+            set => SetField(ref _ownerServerPlayerIndex, value);
+        }
+
+
+        public void RebuildCollisionShapes(bool wakeOnLostTouch = true)
+        {
+            IAbstractDynamicRigidBody? oldBody = RigidBody;
+            Vector3 linearVelocity = oldBody?.LinearVelocity ?? _cachedLinearVelocity;
+            Vector3 angularVelocity = oldBody?.AngularVelocity ?? _cachedAngularVelocity;
+            AbstractPhysicsScene? physicsScene = WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene;
+            if (oldBody is not null
+                && physicsScene is not null
+                && physicsScene.BackendService.TryReplaceCollisionShapes(oldBody, BuildRigidBodyCreateInfo()))
+            {
+                oldBody.SetLinearVelocity(linearVelocity);
+                oldBody.SetAngularVelocity(angularVelocity);
+                return;
+            }
+
+            RigidBody = null;
+            oldBody?.Destroy(wakeOnLostTouch);
+            EnsureRigidBodyConstructed();
+            RigidBody?.SetLinearVelocity(linearVelocity);
+            RigidBody?.SetAngularVelocity(angularVelocity);
         }
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
@@ -812,13 +862,29 @@ namespace XREngine.Components.Physics
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
-            if (propName == nameof(RigidBody) && RigidBody is not null)
+            if (propName == nameof(RigidBody))
             {
+                NotifyPhysicsActorChanged(
+                    prev is IAbstractPhysicsActor previousActor ? previousActor : null,
+                    RigidBody);
+                if (RigidBody is null)
+                    return;
+
                 if (_rigidBodyOwnershipSyncDepth == 0)
                     RigidBody.OwningComponent = this;
                 RigidBodyTransform.RigidBody = RigidBody;
                 ApplyAllCachedProperties();
                 TryRegisterRigidBodyWithScene();
+                return;
+            }
+
+            if (RigidBody is not null
+                && (propName == nameof(Geometry)
+                    || propName == nameof(Material)
+                    || propName == nameof(MaterialDefinition)
+                    || propName == nameof(ColliderShapes)))
+            {
+                RebuildCollisionShapes();
                 return;
             }
 
@@ -870,9 +936,9 @@ namespace XREngine.Components.Physics
 
         private void ApplyActorProperties(IAbstractDynamicRigidBody body)
         {
+            body.GravityEnabled = _gravityEnabled;
             if (body is PhysxActor actor)
             {
-                actor.GravityEnabled = _gravityEnabled;
                 actor.SimulationEnabled = _simulationEnabled;
                 actor.DebugVisualize = _debugVisualization;
                 actor.SendSleepNotifies = _sendSleepNotifies;
@@ -881,13 +947,12 @@ namespace XREngine.Components.Physics
                 actor.DominanceGroup = _dominanceGroup;
                 // PhysX disallows setting ownerClient once the actor is inserted into a scene.
                 if (actor.Scene is null)
-                    actor.OwnerClient = _ownerClient;
+                    actor.OwnerClient = _physxOwnerClient;
                 if (_actorName is not null)
                     actor.Name = _actorName;
             }
             else if (body is JoltDynamicRigidBody jolt)
             {
-                jolt.SetGravityEnabled(_gravityEnabled);
                 jolt.SetObjectLayer(_collisionGroup, _groupsMask.Word0);
 
                 if (!_simulationEnabled)
@@ -932,7 +997,7 @@ namespace XREngine.Components.Physics
                 if (_kinematicTarget.HasValue)
                     jolt.SetTransform(_kinematicTarget.Value.position, _kinematicTarget.Value.rotation, Activation.Activate);
 
-                Debug.Physics("[DynamicRigidBodyComponent] Jolt unsupported dynamic parity fields remain cached only: MaxLinearVelocity/MaxAngularVelocity/SolverIterations/Contact thresholds/CCD advanced tuning.");
+                Debug.Physics("[DynamicRigidBodyComponent] Jolt applies max velocities and solver-step overrides at body creation; unsupported PhysX-only contact, sleep, COM/inertia, and advanced CCD fields remain authored data only.");
             }
         }
 

@@ -1081,7 +1081,6 @@ namespace XREngine.Rendering.Vulkan
                     else
                     {
                         _retiredSamplerHandles[frameSlot].Add(sampler.Handle);
-                        UnregisterLiveSampler(sampler);
                     }
                 }
 
@@ -1214,6 +1213,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     Api!.DestroySampler(device, r.Sampler, null);
                     CompleteVulkanResourceDestruction(ObjectType.Sampler, r.Sampler.Handle);
+                    UnregisterLiveSampler(r.Sampler);
                     destroyedSamplers++;
                 }
                 if (r.PrimaryView.Handle != 0)
@@ -1355,9 +1355,13 @@ namespace XREngine.Rendering.Vulkan
             {
                 Debug.VulkanWarning(
                     "[Vulkan.ResourceLifetime] Force-destroying retired resources after device loss without waiting for timelines or fences.");
-                BeginForcedVulkanRetirementDrain();
             }
 
+            // Every caller has either waited for the device to become idle or has
+            // explicitly waited for all in-flight frame work. Retirement pins are
+            // frame-safety guards, so retaining them past that boundary leaks the
+            // descriptor pools (and their sets) into vkDestroyDevice.
+            BeginForcedVulkanRetirementDrain();
             try
             {
                 for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
@@ -1382,8 +1386,7 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                if (forcedAfterDeviceLoss)
-                    EndForcedVulkanRetirementDrain();
+                EndForcedVulkanRetirementDrain();
             }
 
             LogVulkanResourceLifetimeDiagnostics(

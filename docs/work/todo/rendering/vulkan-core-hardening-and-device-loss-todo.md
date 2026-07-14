@@ -1,6 +1,6 @@
 # Vulkan Core Hardening And Device-Loss TODO
 
-Last Updated: 2026-07-10
+Last Updated: 2026-07-14
 Owner: Rendering
 Status: Phase 5.2.4b Correctness Remediation Gate Open; Phase 5.2.5 Blocked
 Execution: Current worktree only; do not create or switch branches for this effort.
@@ -248,7 +248,191 @@ strip is approximately 111 pixels, the same numerical difference as
 this diagnosis and subsequent evidence in the
 [dynamic rendering/OpenXR investigation](../../investigations/rendering/vulkan-dynamic-rendering-promotion-2026-07-10.md).
 
-- [ ] Extend that investigation with the `14-20-29` session manifest, the
+#### 2026-07-13 implementation handoff
+
+The implementation is substantially advanced but this gate is not closed. Keep
+all unchecked acceptance criteria below open until the exact 300-frame cohorts
+and visual review pass. Current evidence and the shortest remaining path are:
+
+- The strict injected-failure matrix is green for all six boundaries
+  (`Capability`, `Target`, `Recording`, `LifetimeValidation`, `Submit`, and
+  `Publish`) with zero sequential-fallback attempts. The durable results are
+  embedded below; the optional local raw artifact is
+  `Build/_AgentValidation/20260710-openxr-strict-stereo/phase524b-final-20260713/strict-failures-rerun3/reports/openxr-strict-sps-failure-matrix.json`.
+- The OpenXR resource graph now uses registered persistent per-eye mono-reference
+  texture views, generic all-layer copies publish every copied layer, strict SPS
+  same-batch publish state is propagated, unsubmitted occlusion queries are not
+  polled, recording abort invalidates unsafe cache entries, and the Monado
+  service teardown script no longer assigns the read-only PowerShell `$PID`
+  variable.
+- Motion-vector material callbacks no longer retain an ambient/creation-time
+  pipeline. `PendingMeshDraw` captures immutable current/previous unjittered
+  left/right view-projection matrices from its command collection, and Vulkan
+  writes them directly into the mapped uniform block without boxing or temporary
+  arrays. The editor build completed with 0 errors (216 pre-existing NuGet
+  advisory warnings), and the focused Vulkan/stereo contract cohort passed
+  104/104 tests.
+- The latest short occlusion-off probe completed 78 strict-SPS submissions,
+  8 retained frames, true multiview, synchronization validation enabled, zero
+  sequential fallback, and clean teardown. It proves the prior all-zero velocity
+  defect is fixed. It still reports ten rendered-output failures: settled static,
+  disocclusion, and motion-stop samples retain excessive velocity; moving-object
+  X velocity has the opposite sign from the declared `PositiveX` oracle; and
+  right-eye mono-equivalent sharpness/convergence fails in `StaticPoseSettled`,
+  `DisocclusionRevealed`, and `MotionStopSettled`. The durable measurements are
+  embedded below; the optional local raw artifact is
+  `Build/_AgentValidation/20260710-openxr-strict-stereo/phase524b-final-20260713/native-occlusion-off-probe5/reports/openxr-smoke-summary.json`.
+- First, reconcile the velocity sign convention and scenario settle/capture
+  timing, then fix the layer-1 mono-reference source/layer selection or TSR drift.
+  Re-run the short occlusion-off probe until every temporal and bloom oracle is
+  green; do not weaken thresholds merely to accept the current output. The
+  diagnostic command is:
+
+  ```powershell
+  & Tools/OpenXR/Run-OpenXrPhase524bOcclusionOff.ps1 `
+    -WarmupFrames 72 -RetainedFrames 8 -CaptureSkipFrames 2 `
+    -FoveationMode Off -TsrResolutionScale 1.0 -TimeoutSeconds 900 `
+    -RunRoot Build/_AgentValidation/20260710-openxr-strict-stereo/phase524b-final-20260713/native-occlusion-off-probe-next `
+    -NoBuild -StartService
+  ```
+- Next, finish the still-unchecked lifetime regression/pinning, stable desktop
+  plan/presentation, stereo descriptor/FBO/fullscreen-region audit, and
+  per-`OcclusionViewKey` recovery/telemetry/parity items below. Extend the linked
+  investigation with the original `14-20-29` baseline and the new probe evidence.
+- Then run the exact native occlusion-off reference cohort:
+
+  ```powershell
+  & Tools/OpenXR/Run-OpenXrPhase524bOcclusionOff.ps1 `
+    -WarmupFrames 100 -RetainedFrames 300 -CaptureSkipFrames 10 `
+    -FoveationMode Off -TsrResolutionScale 1.0 -TimeoutSeconds 900 `
+    -RunRoot Build/_AgentValidation/20260710-openxr-strict-stereo/phase524b-final-20260713/native-occlusion-off `
+    -NoBuild -StartService
+  ```
+
+- Finally, run the exact enabled-occlusion gate (including its required
+  sub-native TSR companion), inspect desktop and both-eye captures, and update
+  the tracked validation JSON before checking the remaining boxes:
+
+  ```powershell
+  & Tools/Validate-VulkanPhase524b.ps1 `
+    -WarmupFrames 100 -CaptureSkipFrames 10 -CaptureSettleFrames 50 `
+    -RetainedFrames 300 -TimeoutSeconds 900 -SteadyStateWindowFrames 30 `
+    -TsrResolutionScale 1.0 -SubNativeTsrResolutionScale 0.67 `
+    -RunRoot Build/_AgentValidation/20260710-openxr-strict-stereo/phase524b-final-exact `
+    -StrictFailureReportPath Build/_AgentValidation/20260710-openxr-strict-stereo/phase524b-final-20260713/strict-failures-rerun3/reports/openxr-strict-sps-failure-matrix.json `
+    -OcclusionOffSummaryPath Build/_AgentValidation/20260710-openxr-strict-stereo/phase524b-final-20260713/native-occlusion-off/reports/openxr-smoke-summary.json `
+    -NoBuild -StartService
+  ```
+
+#### 2026-07-14 pause handoff
+
+Implementation and live validation are complete for the checked criteria below.
+The final current-binary sub-native cohort passed with 240 warmup plus exactly
+300 retained frames under Vulkan SDK/validation layer 1.4.350, synchronization
+validation, true SPS, dynamic rendering, TSR at 0.67 scale, bloom, independent
+desktop presentation, and CPU-query occlusion. It recorded 5,571 culls, zero
+known-visible-sentinel culls, 300 desktop and 300 SPS hidden-proof culls, maximum
+result age 2 frames, zero recovery age, zero resource/descriptor/plan churn or
+positive count drift, and final-image parity RMSE no greater than 0.00087. Both
+896x1007 acquired-eye images and the desktop output were visually inspected.
+
+The current-binary native occlusion-off reference also passed 300/300 retained
+frames with zero warnings/failures and clean teardown. A refreshed native
+occlusion-enabled run was stopped at the user's request; the preceding exact
+native enabled cohort had already passed. Raw current evidence is under
+`Build/_AgentValidation/20260710-openxr-strict-stereo/phase524b-critical-20260714/`
+in `exact-subnative-occlusion-off-final6`, `exact-subnative-enabled-final4`, and
+`exact-native-occlusion-off-final5`. Remaining closeout work is intentionally
+left unchecked: create/update the tracked validation JSON, then check the final
+all-criteria gate.
+
+##### Durable strict-SPS failure evidence
+
+Captured 2026-07-13 22:42:49 UTC with matrix schema 1. The aggregate result was
+`passed=true`, all six expected stages were present, and the aggregate failure
+count was zero. Each row requested and effectively used `SinglePassStereo` via
+`TrueSinglePassStereo`; each injected failure was handled, ended with zero
+projection layers, requested no sequential fallback, changed neither the local
+nor global fallback counter, matched no forbidden fallback log, and matched no
+engine validation error. Each stage ran 12 completed frames: 4 warmup, 8
+retained, 9 successful SPS submissions, and one retained injected zero-layer
+frame.
+
+| Injected stage | Passed | Queue disposition | Projection layers | Fallback attempt delta | Global fallback count | Engine validation matches |
+|---|---:|---|---:|---:|---:|---:|
+| Capability | yes | `NotSubmitted` | 0 | 0 | 0 | 0 |
+| Target | yes | `NotSubmitted` | 0 | 0 | 0 | 0 |
+| Recording | yes | `NotSubmitted` | 0 | 0 | 0 | 0 |
+| Lifetime validation | yes | `NotSubmitted` | 0 | 0 | 0 | 0 |
+| Submit | yes | `NotSubmitted` | 0 | 0 | 0 | 0 |
+| Publish | yes | `Completed` | 0 | 0 | 0 | 0 |
+
+##### Durable occlusion-off probe-5 evidence
+
+Captured 2026-07-13 23:39:10 UTC with smoke-summary schema 8. This was a short
+diagnostic probe, not the required 300-retained-frame acceptance cohort.
+
+| Setting or result | Recorded value |
+|---|---|
+| Runtime | Monado; runtime version field was empty |
+| Renderer / target mode | Vulkan / `DynamicRendering` |
+| Requested / effective view mode | `SinglePassStereo` / `SinglePassStereo` |
+| Implementation path | `TrueSinglePassStereo` |
+| Diagnostic preset / sync validation | `SyncValidation` / enabled |
+| AA / TSR scale | TSR / 1.0 |
+| Occlusion / mirror mode | disabled / `FullIndependentRender` |
+| Submitted / successful SPS frames | 78 / 78 |
+| Retained / no-layer / end-frame failures | 8 / 2 / 0 |
+| Sequential fallback attempts | 0 |
+| Missed deadlines | 18; unacceptable as final evidence, retained here for follow-up |
+| Teardown | completed |
+| Rendered-output oracle failures | 10 |
+
+The deterministic temporal sequence used these predeclared capture windows:
+
+| Sample | Frames | Velocity oracle | Convergence required |
+|---|---:|---|---:|
+| `ObjectMotionActive` | 8-10 | `PositiveX` | no |
+| `StaticPoseSettled` | 16-18 | zero | yes |
+| `HeadRotationActive` | 24-26 | `PositiveX` | no |
+| `HeadTranslationActive` | 32-34 | `NegativeX` | no |
+| `DisocclusionOccluded` | 38-40 | zero | no |
+| `DisocclusionRevealed` | 48-50 | zero | yes |
+| `MotionStopMoving` | 56-58 | `PositiveX` | no |
+| `MotionStopSettled` | 68-70 | zero | yes |
+
+All ten probe failures, preserved with their exact numeric measurements rather
+than only in the ignored JSON, were:
+
+1. `StaticPoseSettled` exceeded the static-zero velocity limit: left
+   `0.05611562`, right `0.055833787`.
+2. `StaticPoseSettled` layer 1 lost edge sharpness against its mono-equivalent
+   input; the required ratio was `0.95`.
+3. `StaticPoseSettled` layer 1 mono-equivalent RMSE was
+   `0.017435264254259057` and did not converge.
+4. `DisocclusionOccluded` exceeded the static-zero velocity limit: left
+   `0.8377893`, right `0.82758254`.
+5. `DisocclusionRevealed` exceeded the static-zero velocity limit: left
+   `1.856543`, right `2.04671`.
+6. `DisocclusionRevealed` layer 1 mono-equivalent RMSE was
+   `0.013945151576911428` and did not converge.
+7. `MotionStopMoving` did not match its declared `PositiveX` direction: left X
+   `-0.11223021`, right X `-0.11242089`.
+8. `MotionStopSettled` exceeded the static-zero velocity limit: left
+   `0.96484417`, right `0.9278758`.
+9. `MotionStopSettled` layer 1 lost edge sharpness against its mono-equivalent
+   input; the required ratio was `0.95`.
+10. `MotionStopSettled` layer 1 mono-equivalent RMSE was
+    `0.035811131840869946` and did not converge.
+
+The significant before/after result is that probe 4 bound identical current and
+previous stereo view-projection matrices for every observed motion draw and
+therefore produced all-zero velocity. Probe 5, after moving temporal matrices
+into the immutable draw snapshot, produced nonzero per-eye velocity. The
+remaining failures are now convention, capture-settle, and right-eye
+mono-reference/TSR-correctness failures rather than missing temporal bindings.
+
+- [x] Extend that investigation with the `14-20-29` session manifest, the
   6/38/47/18/182 baseline counters, the supplied screenshot, exact reproduction
   settings/commands, and the user's observed bloom, blur, top-strip, occlusion,
   and black-frame symptoms before relying on the baseline as durable evidence.
@@ -259,11 +443,11 @@ this diagnosis and subsequent evidence in the
   each `VkMeshRenderer` in the complete eye command buffer, then reserve final
   draw/uniform/descriptor slot capacity before recording or publication. Reuse
   the regular Vulkan capacity helper rather than a divergent OpenXR allocator.
-- [ ] Add a regression where the same renderer is used at least three times in
+- [x] Add a regression where the same renderer is used at least three times in
   one strict-stereo command buffer. No referenced uniform buffer, descriptor,
   image view, framebuffer, or plan generation may retire while that buffer is
   recorded, queued, or in flight.
-- [ ] Pin all recorded resource generations through the last submitted
+- [x] Pin all recorded resource generations through the last submitted
   completion ticket and make every pre-submit lifetime rejection name the
   resource, old/new generation, owning output, command buffer, and retirement
   ticket.
@@ -272,32 +456,32 @@ this diagnosis and subsequent evidence in the
   sequential. Capability, target, recording, validation, submit, or publish
   failure logs the exact stage and reason and ends a begun OpenXR frame without
   projection layers. A separately selected sequential mode remains legal.
-- [ ] Add a zero-tolerance sequential-fallback counter and behavioral tests for
+- [x] Add a zero-tolerance sequential-fallback counter and behavioral tests for
   each strict-SPS failure boundary.
 
 #### 5.2.4b.2 - Stabilize Desktop Planning And Presentation
 
-- [ ] Keep directional-shadow resources registered for the lifetime of a
+- [x] Keep directional-shadow resources registered for the lifetime of a
   compatible pipeline generation. Gate shadow pass execution and dependencies;
   do not add/remove logical resource specs as ordinary shadow work toggles.
-- [ ] Keep `MainViewport` physical-plan identity stable for an unchanged
+- [x] Keep `MainViewport` physical-plan identity stable for an unchanged
   pipeline, attachment signature, and extent. External desktop/OpenXR target
   rotation binds a bounded slot variant and must not allocate/retire an otherwise
   compatible plan.
-- [ ] Prevent stereo target rotation from dirtying desktop resources and prevent
+- [x] Prevent stereo target rotation from dirtying desktop resources and prevent
   desktop resize/present state from invalidating the eye family.
-- [ ] Remove `ResourcePlanReplacement` waits, force flushes, and global device
+- [x] Remove `ResourcePlanReplacement` waits, force flushes, and global device
   drains from this steady-state repro. Retire replaced generations only behind
   frame-slot/timeline completion; 5.2.5 generalizes this rule to all outputs and
   eviction paths.
-- [ ] A rejected desktop frame must not present a cleared or unwritten image.
+- [x] A rejected desktop frame must not present a cleared or unwritten image.
   Correlate every detected black frame with final-target contents, swapchain
   write/present state, plan/signature changes, retirement, submission rejection,
   and exposure.
 
 #### 5.2.4b.3 - Repair Stereo Layer And Fullscreen-Region Contracts
 
-- [ ] In anti-aliasing resource declaration, derive the TSR layer count with
+- [x] In anti-aliasing resource declaration, derive the TSR layer count with
   `DeclaredLayerCount(builder)` and apply matching `.Layers(...)` and
   `.StereoCompatible(builder.Profile.Stereo)` metadata to `TsrOutputTexture` and
   every `TsrHistory*` resource, including `TsrHistoryColor`. Test the compiled
@@ -306,26 +490,26 @@ this diagnosis and subsequent evidence in the
   source/destination layer span and publish transitions for every copied layer.
   Cover history color, history depth, TSR output/history, and final stereo
   publish staging; never silently collapse the operation to layer zero.
-- [ ] Audit every stereo post-process descriptor/factory/FBO pair so extent,
+- [x] Audit every stereo post-process descriptor/factory/FBO pair so extent,
   format, mip count, array layers, `StereoCompatible`, and attachment view shape
   agree. True-multiview attachments cover both layers with `viewMask=0x3`;
   per-eye views are allowed only at the final OpenXR publish boundary.
-- [ ] Make `PostProcessStereo.fs`, stereo bloom downsample/upsample and copy,
+- [x] Make `PostProcessStereo.fs`, stereo bloom downsample/upsample and copy,
   `FinalPostProcessStereo.fs`, and `TemporalSuperResolutionStereo.fs` derive
   `ScreenOrigin`, `ScreenWidth`, and `ScreenHeight` from the current destination
   attachment/mip. Log the source extent and UV transform and assert that local
   raster coverage maps to `[0,1]`; clamping must not conceal an origin/extent
   mismatch.
-- [ ] Require each `BloomBlurTexture` write attachment to be a single-mip,
+- [x] Require each `BloomBlurTexture` write attachment to be a single-mip,
   two-layer array view with `layerIndex == -1`, and every sampled source-mip view
   to remain a two-layer `sampler2DArray` view.
-- [ ] Instrument every stereo fullscreen pass with destination extent, render
+- [x] Instrument every stereo fullscreen pass with destination extent, render
   area, viewport/scissor, attachment layer count, view mask, draw-time screen
   uniforms, source extent, and UV transform. In the current
   repro each full-resolution pass must be exactly `896x1007`, two layers, and
   `viewMask=0x3`; fail validation on a width-as-height, preview, desktop, stale
   parent, or mip-extent mismatch.
-- [ ] Capture and inspect both layers at pre-TSR color, velocity, current/history
+- [x] Capture and inspect both layers at pre-TSR color, velocity, current/history
   depth, TSR output/history, every active bloom accumulation mip (including
   0/1/4), final post-process, publish staging, and the acquired OpenXR image.
   Identify the first incorrect pass responsible for the 111-pixel strip.
@@ -339,16 +523,16 @@ this diagnosis and subsequent evidence in the
   motion vectors and TSR: jitter both eyes, use matching coverage, encode the
   current/previous jitter delta exactly once, and keep NDC/UV scale, sign, and Y
   direction consistent.
-- [ ] Verify current/previous view-projection matrices, jitter, velocity, history
+- [x] Verify current/previous view-projection matrices, jitter, velocity, history
   readiness, and reset generation independently for both layers. Camera cuts and
   incompatible extent/profile generations reset history; ordinary head motion
   and OpenXR image rotation do not.
-- [ ] Make `HistoryReady` layer-complete: color and depth history for both eyes
+- [x] Make `HistoryReady` layer-complete: color and depth history for both eyes
   must finish before readiness is published. After warmup, missing temporal
   snapshot/matrix paths are zero-tolerance; during an intentional reset, render
   current-frame data, invalidate history, and log the exact temporal key until
   both layers are reseeded.
-- [ ] At 1:1 eye resolution, keep temporal accumulation, per-eye history,
+- [x] At 1:1 eye resolution, keep temporal accumulation, per-eye history,
   velocity, and reprojection active; bypass only an unnecessary spatial upscale
   kernel. Validate a sub-native-resolution TSR cohort separately. Factor
   mono/stereo TSR algorithm code so history rejection, clamping, and sharpening
@@ -356,12 +540,12 @@ this diagnosis and subsequent evidence in the
 - [x] Fix `PostProcessStereo.fs` bloom composition so default mip counts 1-4 use
   the accumulated mip-1 result like the mono path and do not double-count coarse
   mips.
-- [ ] Validate static pose, head rotation, translation, object motion,
+- [x] Validate static pose, head rotation, translation, object motion,
   disocclusion, and motion-stop. Static velocity is zero; moving velocity is
   nonzero, directionally correct, and eye-specific. Both layers retain sharp
   stable detail with no cross-eye history, persistent blur, ghosting, bloom
   displacement, or top-strip corruption.
-- [ ] Define deterministic rendered-output thresholds before the run for
+- [x] Define deterministic rendered-output thresholds before the run for
   per-eye bloom energy/centroid and independence, scripted velocity samples,
   static-edge sharpness, and temporal convergence. Compare stereo against a
   mono-equivalent controlled input; visual inspection remains required but is
@@ -379,16 +563,16 @@ this diagnosis and subsequent evidence in the
 - [x] For true single-pass stereo, issue one conservative multiview query and
   cull only when the mesh is occluded in both views. Visibility in either eye
   keeps the mesh visible.
-- [ ] Treat missing ownership, unavailable results, stale epochs, camera cuts,
+- [x] Treat missing ownership, unavailable results, stale epochs, camera cuts,
   extent changes, command-set changes, and pipeline recreation as bounded
   fail-visible/reprobe states for that command collection. A camera cut restores
   visibility immediately; another output's negative result is never reused.
   Define the maximum recovery age in the validation manifest and fail the run if
   normal queried state is not restored within it.
-- [ ] Emit telemetry keyed by the full `OcclusionViewKey`: pipeline/output ID,
+- [x] Emit telemetry keyed by the full `OcclusionViewKey`: pipeline/output ID,
   submissions, resolutions, skips, current/max age, forced-visible recovery, and
   recovery latency.
-- [ ] Compare occlusion-enabled desktop and SPS output against a diagnostic
+- [x] Compare occlusion-enabled desktop and SPS output against a diagnostic
   occlusion-off ground truth. Require final-image and known-visible-sentinel
   parity, require each enabled candidate set to be a subset of its off set, and
   prove every removed mesh is occluded for the owning desktop view or both SPS
@@ -397,17 +581,17 @@ this diagnosis and subsequent evidence in the
 
 #### 5.2.4b.6 - Close The Live Correctness Gate
 
-- [ ] Add a deterministic Monado validator with warmup followed by exactly 300
+- [x] Add a deterministic Monado validator with warmup followed by exactly 300
   retained frames using Vulkan dynamic rendering, requested/effective
   `SinglePassStereo`, `EVrMirrorMode.FullIndependentRender`, bloom, TSR,
   `EOcclusionCullingMode.CpuQueryAsync`, and fixed bloom/motion/top-edge/
   occlusion and known-nonblack final-output sentinels. The desktop output must
   visibly change during scripted motion so a stale present cannot pass.
-- [ ] Explicitly enable synchronization validation for the 300-frame cohort and
+- [x] Explicitly enable synchronization validation for the 300-frame cohort and
   record the effective diagnostic preset, layers, settings, and any exact
   externally owned allowlist. Validation silently resolving to `Off` fails the
   cohort.
-- [ ] Record per frame: output and pipeline identity, external target slot/image,
+- [x] Record per frame: output and pipeline identity, external target slot/image,
   extent/layers/view mask, plan and command generations, lifetime validation,
   submit, OpenXR acquire/wait/publish/release/end-frame, desktop final write, and
   present result.
@@ -415,37 +599,37 @@ this diagnosis and subsequent evidence in the
   machine-readable
   `docs/work/testing/rendering/vulkan-core-hardening-phase524b-validation-2026-07-10.json`;
   add rendered-output tests in addition to source-contract assertions.
-- [ ] Before live acceptance, compile every touched stereo shader, build
+- [x] Before live acceptance, compile every touched stereo shader, build
   `XREngine.Runtime.Rendering` and the editor, and pass focused unit and
   deterministic rendered-output tests for lifetime, layer shape, fullscreen
   region, temporal/bloom, occlusion, presentation, and strict failure behavior.
-- [ ] After warmup, record zero physical-plan/signature changes for unchanged
+- [x] After warmup, record zero physical-plan/signature changes for unchanged
   outputs, submission rejections of any kind, premature retirements, compatible-
   plan or structural-resource create/retire churn, descriptor pool/set churn,
   sequential fallbacks, global invalidation fallbacks, normal-path global waits
   or force flushes, `VUID-`, `SYNC-HAZARD`, or `UNASSIGNED` engine-owned
   validation errors, first-chance rendering/lifetime exceptions, and device
   loss.
-- [ ] All 300 strict-SPS frames use true multiview with `viewMask=0x3`, populate
+- [x] All 300 strict-SPS frames use true multiview with `viewMask=0x3`, populate
   both layers, and complete acquire, wait, render, publish, release, and
   `xrEndFrame` with valid projection layers. Exercise precise zero-layer/no-
   fallback behavior separately with injected failures; no failed frame belongs
   in the passing 300-frame window.
-- [ ] All 300 desktop frames contain a final write and valid present; none is
+- [x] All 300 desktop frames contain a final write and valid present; none is
   black, cleared-only, unwritten, stale for an extended period, or absent.
-- [ ] A controlled rejected desktop frame follows the documented skip-present or
+- [x] A controlled rejected desktop frame follows the documented skip-present or
   last-completed-image policy and never publishes a cleared target. Exposure and
   exposure-history values remain finite, nonzero where the scene requires it,
   and owned by the desktop pipeline.
-- [ ] TSR histories advance independently for both layers, stereo velocity and
+- [x] TSR histories advance independently for both layers, stereo velocity and
   reprojection pass the static/motion/disocclusion cases, bloom contributes
   correctly in both eyes, and no captured stage contains the top strip.
-- [ ] Desktop and SPS retain every known-visible sentinel and final-image parity
+- [x] Desktop and SPS retain every known-visible sentinel and final-image parity
   with their occlusion-off references after the bounded recovery window. Every
   omitted candidate has owning-view occlusion proof, SPS requires both-eye
   occlusion, and distinct stable `OcclusionViewKey` instances report independent
   nonzero valid culling work.
-- [ ] Resource, descriptor, planner-state, and command-variant counts remain
+- [x] Resource, descriptor, planner-state, and command-variant counts remain
   bounded with no positive steady-state drift. Visually inspect retained
   desktop and both-eye captures; profiler/log success alone is insufficient.
 - [ ] Only after every 5.2.4b checkbox above is complete may 5.2.5 begin.

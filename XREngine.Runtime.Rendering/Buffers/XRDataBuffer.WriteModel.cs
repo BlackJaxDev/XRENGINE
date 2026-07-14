@@ -1,4 +1,5 @@
 using MemoryPack;
+using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using XREngine.Data;
@@ -537,7 +538,9 @@ public partial class XRDataBuffer
         if (!hasDirtyBytes)
             return;
 
-        XRBufferDirtyRange[] rangesToUpload;
+        XRBufferDirtyRange[]? rentedRanges = null;
+        Span<XRBufferDirtyRange> uploadStorage = stackalloc XRBufferDirtyRange[DefaultDirtyRangeCollapseThreshold];
+        int uploadRangeCount;
         lock (_writeModelSync)
         {
             _revision++;
@@ -550,19 +553,36 @@ public partial class XRDataBuffer
             _dirtyRanges.Clear();
             for (int i = 0; i < dirtyRanges.Length; i++)
                 AddDirtyRangeLocked(dirtyRanges[i], capacity);
-            rangesToUpload = [.. _dirtyRanges];
+
+            uploadRangeCount = _dirtyRanges.Count;
+            if (uploadRangeCount > uploadStorage.Length)
+            {
+                rentedRanges = ArrayPool<XRBufferDirtyRange>.Shared.Rent(uploadRangeCount);
+                uploadStorage = rentedRanges;
+            }
+
+            CollectionsMarshal.AsSpan(_dirtyRanges).CopyTo(uploadStorage);
         }
 
-        TraceWriterUploadCommit(options, rangesToUpload);
-        ClearGpuCompressedPayload();
-        for (int i = 0; i < rangesToUpload.Length; i++)
+        ReadOnlySpan<XRBufferDirtyRange> rangesToUpload = uploadStorage[..uploadRangeCount];
+        try
         {
-            XRBufferDirtyRange range = rangesToUpload[i];
-            XRBufferWriteTelemetry.RecordUpload(_lastResolvedRoute, range.LengthBytes);
-            if (range.OffsetBytes == 0u && range.LengthBytes >= Length)
-                PushData();
-            else
-                PushSubData(checked((int)range.OffsetBytes), range.LengthBytes);
+            TraceWriterUploadCommit(options, rangesToUpload);
+            ClearGpuCompressedPayload();
+            for (int i = 0; i < rangesToUpload.Length; i++)
+            {
+                XRBufferDirtyRange range = rangesToUpload[i];
+                XRBufferWriteTelemetry.RecordUpload(_lastResolvedRoute, range.LengthBytes);
+                if (range.OffsetBytes == 0u && range.LengthBytes >= Length)
+                    PushData();
+                else
+                    PushSubData(checked((int)range.OffsetBytes), range.LengthBytes);
+            }
+        }
+        finally
+        {
+            if (rentedRanges is not null)
+                ArrayPool<XRBufferDirtyRange>.Shared.Return(rentedRanges);
         }
     }
 
@@ -630,7 +650,7 @@ public partial class XRDataBuffer
             $"[XRDataBuffer] Dirty ranges collapsed for '{AttributeName}': byCount={byCount} byCoverage={byCoverage} dirtyBytes={dirtyBytes} capacity={capacity} revision={Revision}.");
     }
 
-    private void TraceWriterUploadCommit(XRBufferWriteOptions options, XRBufferDirtyRange[] rangesToUpload)
+    private void TraceWriterUploadCommit(XRBufferWriteOptions options, ReadOnlySpan<XRBufferDirtyRange> rangesToUpload)
     {
         if (!RenderDiagnosticsFlags.PushSubDataTrace)
             return;

@@ -13,6 +13,10 @@ public unsafe partial class VulkanRenderer
     private bool _useDynamicRenderingRenderTargets;
 
     internal bool UseDynamicRenderingRenderTargets => _useDynamicRenderingRenderTargets;
+    public EVulkanRenderTargetMode RequestedRenderTargetMode => _requestedRenderTargetMode;
+    public EVulkanRenderTargetMode EffectiveRenderTargetMode => _useDynamicRenderingRenderTargets
+        ? EVulkanRenderTargetMode.DynamicRendering
+        : EVulkanRenderTargetMode.LegacyRenderPass;
 
     private void ResolveRenderTargetMode()
     {

@@ -95,7 +95,7 @@ The cache is a runtime/import acceleration artifact, not a replacement for user-
 **Goal:** make model cache identity and rejection explainable before payload hydration begins.
 
 - [ ] Add `schemaVersion`, `payloadVersion`, and per-chunk version constants with documented bump rules.
-- [ ] Keep model cache path resolution on the existing cooked `.asset` cache convention.
+- [x] Keep model cache path resolution on the existing cooked `.asset` cache convention.
 - [ ] Add a model cache variant key such as `Models/v<schemaVersion>/importer_<backend-key>/opts_<8hex>/...`.
 - [ ] Keep settings detail in the header; do not encode individual settings directly into path segments.
 - [ ] Implement long-path handling and hashed fallback for cache paths that would exceed Windows path limits.
@@ -131,9 +131,9 @@ The cache is a runtime/import acceleration artifact, not a replacement for user-
 
 **Goal:** make warm cache reads reconstruct model geometry and LOD chains without opening source files.
 
-- [ ] Serialize engine-native mesh payload identity and metadata.
-- [ ] Serialize vertex streams for positions, normals, tangents, UVs, colors, bone influences, and any engine-required attributes.
-- [ ] Serialize index streams, primitive topology, bounds, and source diagnostic identity.
+- [x] Serialize engine-native mesh payload identity and metadata.
+- [x] Serialize vertex streams for positions, normals, tangents, UVs, colors, bone influences, and any engine-required attributes.
+- [x] Serialize index streams, primitive topology, bounds, and source diagnostic identity.
 - [ ] Serialize morph target deltas in a dedicated `MorphTargets` chunk.
 - [ ] Serialize skeleton bind pose, joint hierarchy, and inverse bind matrices in a dedicated `Skeletons` chunk.
 - [ ] Serialize `SubMeshLOD` chains with LOD 0 referencing the source mesh payload and LOD 1+ using distinct mesh payloads.
@@ -152,18 +152,18 @@ The cache is a runtime/import acceleration artifact, not a replacement for user-
 
 2026-05-19 dependency note: the meshlet production tracker now provides an `XRMesh`-level `MeshletPayload` contract with CPU descriptors, cone data, freshness hashes, disabled-generation manifests, and runtime cooked-binary round trip. This phase still owns the disposable model-cache chunk/container integration, GPUScene registration handoff, GPU `Meshlet` layout/shader coordination, and model-cache counter coverage.
 
-- [ ] Add a serialized CPU meshlet descriptor distinct from the GPU `Meshlet` struct.
+- [x] Add a serialized CPU meshlet descriptor distinct from the GPU `Meshlet` struct.
 - [ ] Extend the GPU `Meshlet` layout with cone axis, cutoff, and apex or a documented compressed equivalent.
-- [ ] Coordinate the GPU buffer layout change with shaders, indirect-buffer writers, pools, allocators, and payload versioning.
-- [ ] Serialize meshlet descriptors, vertex-reference indices, triangle-local indices, bounds, cones, settings, and meshoptimizer stats.
+- [x] Coordinate the GPU buffer layout change with shaders, indirect-buffer writers, pools, allocators, and payload versioning.
+- [x] Serialize meshlet descriptors, vertex-reference indices, triangle-local indices, bounds, cones, settings, and meshoptimizer stats.
 - [ ] Represent `MeshletGenerationSettings.Enabled == false` as empty chunks plus an explicit manifest flag.
-- [ ] Load meshlet payloads into GPUScene registration data without calling `MeshletGenerator.Build` during warm-cache startup.
+- [x] Load meshlet payloads into GPUScene registration data without calling `MeshletGenerator.Build` during warm-cache startup.
 - [ ] Add counter-based tests proving warm-cache render startup does not rebuild meshlets.
 
 ### Exit Criteria
 
 - [ ] Warm-cache render startup consumes cached meshlets.
-- [ ] GPUScene has meshlet cone data available for task-shader cone culling.
+- [x] GPUScene has meshlet cone data available for task-shader cone culling.
 
 ## Phase 6: Prefab, Material, Texture Reference, And Sub-Asset Reconstruction
 

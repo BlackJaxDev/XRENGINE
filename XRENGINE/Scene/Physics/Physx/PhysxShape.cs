@@ -9,19 +9,22 @@ namespace XREngine.Rendering.Physics.Physx
     public unsafe class PhysxShape : PhysxRefCounted, IAbstractPhysicsShape
     {
         private readonly unsafe PxShape* _shapePtr;
+        private readonly bool _ownsReference;
 
         public PhysxShape(PxShape* shape)
         {
             _shapePtr = shape;
+            _ownsReference = false;
             PhysxObjectLog.AddOrUpdate(All, nameof(All), (nint)shape, this);
             PhysxObjectLog.Created(this, (nint)shape, "from-existing");
         }
         public PhysxShape(IPhysicsGeometry geometry, PhysxMaterial material, PxShapeFlags flags, bool isExclusive = false)
         {
-            using var geomStruct = geometry.GetPhysxStruct();
+            using var geomStruct = geometry.CreatePhysxGeometryData();
             PxShape* shape = PhysxScene.PhysicsPtr->CreateShapeMut(geomStruct.ToStructPtr<PxGeometry>(), material.MaterialPtr, isExclusive, flags);
 
             _shapePtr = shape;
+            _ownsReference = true;
             PhysxObjectLog.AddOrUpdate(All, nameof(All), (nint)shape, this);
             PhysxObjectLog.Created(this, (nint)shape, $"flags={flags} exclusive={isExclusive}");
         }
@@ -123,8 +126,15 @@ namespace XREngine.Rendering.Physics.Physx
             foreach (var scene in PhysxScene.Scenes.Values)
                 scene.Shapes.TryRemove((nint)_shapePtr, out _);
 
-            PhysxObjectLog.Released(this, (nint)_shapePtr, $"refCount={ReferenceCount}");
-            ShapePtr->ReleaseMut();
+            if (_ownsReference)
+            {
+                PhysxObjectLog.Released(this, (nint)_shapePtr, $"refCount={ReferenceCount}");
+                ShapePtr->ReleaseMut();
+            }
+            else
+            {
+                PhysxObjectLog.Modified(this, (nint)_shapePtr, nameof(Release), "wrapper invalidated (non-owning)");
+            }
         }
 
         public PxGeometry* Geometry
@@ -281,7 +291,7 @@ namespace XREngine.Rendering.Physics.Physx
         public unsafe bool Overlap(PhysxRigidActor actor, IPhysicsGeometry otherGeom, (Vector3 position, Quaternion rotation) otherGeomPose)
         {
             var tfm = PhysxScene.MakeTransform(otherGeomPose.position, otherGeomPose.rotation);
-            var structObj = otherGeom.GetPhysxStruct();
+            using var structObj = otherGeom.CreatePhysxGeometryData();
             return ShapePtr->ExtOverlap(actor.RigidActorPtr, structObj.Address.As<PxGeometry>(), &tfm);
         }
 
@@ -290,7 +300,7 @@ namespace XREngine.Rendering.Physics.Physx
             var tfm = PhysxScene.MakeTransform(otherGeomPose.position, otherGeomPose.rotation);
             PxSweepHit h;
             PxVec3 ud = unitDir;
-            var structObj = otherGeom.GetPhysxStruct();
+            using var structObj = otherGeom.CreatePhysxGeometryData();
             bool result = ShapePtr->ExtSweep(actor.RigidActorPtr, &ud, distance, structObj.Address.As<PxGeometry>(), &tfm, &h, hitFlags);
             sweepHit = h;
             return result;

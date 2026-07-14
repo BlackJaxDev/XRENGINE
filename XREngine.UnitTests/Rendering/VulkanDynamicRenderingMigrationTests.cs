@@ -15,6 +15,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
         string modeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanRenderTargetMode.cs");
         string environmentSource = ReadWorkspaceFile("XREngine.Data/Environment/XREngineEnvironmentVariables.cs");
         string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
+        string smokeControllerSource = ReadWorkspaceFile("XREngine.Editor/Program.OpenXrSmokeRunController.cs");
 
         modeSource.ShouldContain("XREngineEnvironmentVariables.VkRenderTargetMode");
         environmentSource.ShouldContain(XREngineEnvironmentVariables.VkRenderTargetMode);
@@ -22,6 +23,10 @@ public sealed class VulkanDynamicRenderingMigrationTests
         modeSource.ShouldContain("VulkanRenderTargetMode.DynamicRendering");
         modeSource.ShouldContain("VulkanRenderTargetMode.LegacyRenderPass");
         modeSource.ShouldContain("dynamic rendering was explicitly requested");
+        modeSource.ShouldContain("public EVulkanRenderTargetMode EffectiveRenderTargetMode");
+        modeSource.ShouldContain("? EVulkanRenderTargetMode.DynamicRendering");
+        smokeControllerSource.ShouldContain("AbstractRenderer.Current is VulkanRenderer vulkanRenderer");
+        smokeControllerSource.ShouldContain("vulkanRenderer.EffectiveRenderTargetMode.ToString()");
         logicalDeviceSource.ShouldContain("ResolveRenderTargetMode();");
         logicalDeviceSource.ShouldContain("[Vulkan] Render target mode:");
     }
@@ -105,7 +110,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
         frameBuffer.ShouldContain("RuntimeEngine.Rendering.State.IsStereoPass");
         frameBuffer.ShouldContain("IsTextureArrayAttachment(texture)");
         frameBuffer.ShouldContain("TryGetTextureArrayMultiviewParameters(texture");
-        frameBuffer.ShouldContain("XRTexture2DArrayView textureArrayView => textureArrayView.ViewedTexture.OVRMultiViewParameters");
+        frameBuffer.ShouldContain("XRTexture2DArrayView { NumLayers: > 1u } textureArrayView => textureArrayView.ViewedTexture.OVRMultiViewParameters");
         frameBuffer.ShouldContain("IsStereoCompatibleTextureArrayAttachment(texture, layerCount)");
         frameBuffer.ShouldContain("descriptor.StereoCompatible && descriptorLayers >= 2u");
         frameBuffer.ShouldContain("BuildMultiviewViewMask(0, 2u, layerCount)");

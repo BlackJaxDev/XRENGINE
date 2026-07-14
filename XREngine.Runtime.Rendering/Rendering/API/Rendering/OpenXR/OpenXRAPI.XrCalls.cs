@@ -10,6 +10,8 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 
 public unsafe partial class OpenXRAPI
 {
+    internal const float Phase524bValidationIpdMeters = 0.063f;
+
     private KhrWin32ConvertPerformanceCounterTime? _win32PerformanceCounterTimeExtension;
     private int _win32PerformanceCounterTimeExtensionChecked;
     private int _win32PerformanceCounterTimeExtensionUnavailableLogged;
@@ -292,7 +294,9 @@ public unsafe partial class OpenXRAPI
         }
         long end = Stopwatch.GetTimestamp();
         long ticks = end - start;
-        RuntimeEngine.Rendering.Stats.Vr.RecordVrXrEndFrameSubmitTime(TimeSpan.FromSeconds(ticks / (double)Stopwatch.Frequency));
+        RuntimeEngine.Rendering.Stats.Vr.RecordVrXrEndFrameSubmitTime(
+            TimeSpan.FromSeconds(ticks / (double)Stopwatch.Frequency),
+            Volatile.Read(ref _openXrLastRenderedFrameId));
         RecordDeadlineStatus(frameEndInfo.DisplayTime, end, frameEndInfo.LayerCount);
         RecordSmokeEndFrame(result, frameEndInfo.LayerCount);
         return result;
@@ -458,25 +462,64 @@ public unsafe partial class OpenXRAPI
         {
             var lf = _views[0].Fov;
             var rf = _views[1].Fov;
+            var leftFov = (lf.AngleLeft, lf.AngleRight, lf.AngleUp, lf.AngleDown);
+            var rightFov = (rf.AngleLeft, rf.AngleRight, rf.AngleUp, rf.AngleDown);
+
+            if (Phase524bTemporalStateDiagnostics.Enabled && !_phase524bFrozenRuntimePoseInitialized)
+            {
+                CreatePhase524bDeterministicRuntimePoseBasis(
+                    out lRotM,
+                    out rRotM,
+                    out headLocal);
+                _phase524bFrozenRuntimePoseInitialized = true;
+                _phase524bFrozenLeftEyeLocalPose = lRotM;
+                _phase524bFrozenRightEyeLocalPose = rRotM;
+                _phase524bFrozenHeadLocalPose = headLocal;
+                _phase524bFrozenLeftEyeFov = leftFov;
+                _phase524bFrozenRightEyeFov = rightFov;
+                Debug.Rendering(
+                    "[Phase524bValidation] Frozen the first valid OpenXR runtime FOV basis with a deterministic centered {0:F1} mm eye-pose basis; scripted locomotion-root motion remains active.",
+                    Phase524bValidationIpdMeters * 1000.0f);
+            }
+
+            if (Phase524bTemporalStateDiagnostics.Enabled && _phase524bFrozenRuntimePoseInitialized)
+            {
+                lRotM = _phase524bFrozenLeftEyeLocalPose;
+                rRotM = _phase524bFrozenRightEyeLocalPose;
+                headLocal = _phase524bFrozenHeadLocalPose;
+                leftFov = _phase524bFrozenLeftEyeFov;
+                rightFov = _phase524bFrozenRightEyeFov;
+            }
 
             if (timing == OpenXrPoseTiming.Late)
             {
                 _openXrLateLeftEyeLocalPose = lRotM;
                 _openXrLateRightEyeLocalPose = rRotM;
                 _openXrLateHeadLocalPose = headLocal;
-                _openXrLateLeftEyeFov = (lf.AngleLeft, lf.AngleRight, lf.AngleUp, lf.AngleDown);
-                _openXrLateRightEyeFov = (rf.AngleLeft, rf.AngleRight, rf.AngleUp, rf.AngleDown);
+                _openXrLateLeftEyeFov = leftFov;
+                _openXrLateRightEyeFov = rightFov;
             }
             else
             {
                 _openXrPredLeftEyeLocalPose = lRotM;
                 _openXrPredRightEyeLocalPose = rRotM;
                 _openXrPredHeadLocalPose = headLocal;
-                _openXrPredLeftEyeFov = (lf.AngleLeft, lf.AngleRight, lf.AngleUp, lf.AngleDown);
-                _openXrPredRightEyeFov = (rf.AngleLeft, rf.AngleRight, rf.AngleUp, rf.AngleDown);
+                _openXrPredLeftEyeFov = leftFov;
+                _openXrPredRightEyeFov = rightFov;
             }
         }
         RecordSmokeViewPoseCache(timing);
+    }
+
+    internal static void CreatePhase524bDeterministicRuntimePoseBasis(
+        out System.Numerics.Matrix4x4 leftEyeLocalPose,
+        out System.Numerics.Matrix4x4 rightEyeLocalPose,
+        out System.Numerics.Matrix4x4 headLocalPose)
+    {
+        float halfIpd = Phase524bValidationIpdMeters * 0.5f;
+        leftEyeLocalPose = System.Numerics.Matrix4x4.CreateTranslation(-halfIpd, 0.0f, 0.0f);
+        rightEyeLocalPose = System.Numerics.Matrix4x4.CreateTranslation(halfIpd, 0.0f, 0.0f);
+        headLocalPose = System.Numerics.Matrix4x4.Identity;
     }
 
     private void StoreLocatedViewsToTimingCache(OpenXrPoseTiming timing)

@@ -205,6 +205,20 @@ public readonly record struct ShadowAtlasAllocation(
     ShadowFallbackMode ActiveFallback,
     SkipReason SkipReason);
 
+/// <summary>
+/// One completed directional cascade tile ready to be published with the other
+/// members of its rendered cascade generation.
+/// </summary>
+public readonly record struct DirectionalCascadeAtlasRenderCommit(
+    ShadowRequestSource Source,
+    int CascadeIndex,
+    ShadowAtlasAllocation Allocation,
+    int RecordIndex,
+    float NearPlane,
+    float FarPlane,
+    uint DesiredResolution,
+    DirectionalCascadeSampleState RenderedSample);
+
 public readonly record struct ShadowAtlasGroupedAllocationMember(
     int CascadeIndex,
     int RecordIndex,

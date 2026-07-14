@@ -1209,22 +1209,33 @@ namespace XREngine.Scene
                 DynamicDirectionalLights[i].SetShadowAtlasDiagnostic(default);
             }
 
-            for (int i = 0; i < DynamicSpotLights.Count; i++)
-                DynamicSpotLights[i].SetShadowAtlasDiagnostic(default);
-
-            for (int i = 0; i < DynamicPointLights.Count; i++)
+            bool publishDirectionalSlots = false;
+            try
             {
-                DynamicPointLights[i].ClearShadowAtlasFaceSlots();
-                DynamicPointLights[i].SetShadowAtlasDiagnostic(default);
+                for (int i = 0; i < DynamicSpotLights.Count; i++)
+                    DynamicSpotLights[i].SetShadowAtlasDiagnostic(default);
+
+                for (int i = 0; i < DynamicPointLights.Count; i++)
+                {
+                    DynamicPointLights[i].ClearShadowAtlasFaceSlots();
+                    DynamicPointLights[i].SetShadowAtlasDiagnostic(default);
+                }
+
+                for (int i = 0; i < ShadowAtlas.Requests.Count; i++)
+                {
+                    ShadowMapRequest request = ShadowAtlas.Requests[i];
+                    if (!ShadowAtlas.TryGetDiagnosticAllocationIndex(request, out int recordIndex, out ShadowAtlasAllocation allocation))
+                        continue;
+
+                    AccumulateShadowAtlasDiagnostic(request.Light, request, allocation, recordIndex, frameId);
+                }
+
+                publishDirectionalSlots = true;
             }
-
-            for (int i = 0; i < ShadowAtlas.Requests.Count; i++)
+            finally
             {
-                ShadowMapRequest request = ShadowAtlas.Requests[i];
-                if (!ShadowAtlas.TryGetDiagnosticAllocationIndex(request, out int recordIndex, out ShadowAtlasAllocation allocation))
-                    continue;
-
-                AccumulateShadowAtlasDiagnostic(request.Light, request, allocation, recordIndex, frameId);
+                for (int i = 0; i < DynamicDirectionalLights.Count; i++)
+                    DynamicDirectionalLights[i].CompleteDirectionalAtlasSlotPublish(publishDirectionalSlots);
             }
         }
 

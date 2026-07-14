@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
@@ -11,9 +10,6 @@ namespace XREngine.Rendering;
 
 public partial class DefaultRenderPipeline
 {
-    private readonly Matrix4x4[] _motionVectorCurrViewProjectionStereo = new Matrix4x4[2];
-    private readonly Matrix4x4[] _motionVectorPrevViewProjectionStereo = new Matrix4x4[2];
-
     //private XRFrameBuffer CreateUserInterfaceFBO()
     //{
     //    var hudTexture = GetTexture<XRTexture>(UserInterfaceTextureName)!;
@@ -616,7 +612,8 @@ public partial class DefaultRenderPipeline
                     Enabled = ERenderParamUsage.Disabled,
                 },
                 BlendModeAllDrawBuffers = BlendMode.Disabled(),
-                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
+                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy
+                    | EUniformRequirements.ViewportDimensions,
             }
         };
         upscaleMaterial.SettingUniforms += (_, program) => TsrUpscaleFBO_SettingUniforms(program);
@@ -628,6 +625,118 @@ public partial class DefaultRenderPipeline
         fbo.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
         fbo.SettingUniforms += TsrUpscaleFBO_SettingUniforms;
         return fbo;
+    }
+
+    /// <summary>
+    /// Runs the mono TSR entry point against one isolated array layer. The two
+    /// reference draws share the production inputs/history but cannot sample the
+    /// other eye, providing a rendered mono-equivalent oracle for the SPS pass.
+    /// </summary>
+    private XRFrameBuffer CreateTsrMonoReferenceFBO(int eyeIndex)
+    {
+        uint layer = (uint)Math.Clamp(eyeIndex, 0, 1);
+        XRTexture sourceTexture = CreateTsrMonoLayerView(FinalPostProcessOutputTextureName, layer);
+        XRTexture velocityTexture = CreateTsrMonoLayerView(VelocityTextureName, layer);
+        XRTexture depthTexture = CreateTsrMonoLayerView(DepthViewTextureName, layer);
+        XRTexture historyDepthTexture = CreateTsrMonoLayerView(HistoryDepthViewTextureName, layer);
+        XRTexture historyColorTexture = CreateTsrMonoLayerView(TsrHistoryColorTextureName, layer);
+        XRTexture stencilTexture = CreateTsrMonoLayerView(StencilViewTextureName, layer);
+        XRTexture2DArrayView outputAttach = GetTexture<XRTexture2DArrayView>(
+            eyeIndex == 0
+                ? TsrMonoReferenceLeftTextureViewName
+                : TsrMonoReferenceRightTextureViewName)!;
+        XRShader upscaleShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "TemporalSuperResolution.fs"),
+            EShaderType.Fragment);
+        XRMaterial upscaleMaterial = new(
+            [sourceTexture, velocityTexture, depthTexture, historyDepthTexture, historyColorTexture, stencilTexture],
+            upscaleShader)
+        {
+            Name = eyeIndex == 0 ? "TsrMonoReferenceLeftMaterial" : "TsrMonoReferenceRightMaterial",
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                StencilTest = new StencilTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                },
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
+                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy
+                    | EUniformRequirements.ViewportDimensions,
+            }
+        };
+        upscaleMaterial.SettingUniforms += (_, program) => TsrMonoReferenceFBO_SettingUniforms(program);
+        var fbo = new XRQuadFrameBuffer(upscaleMaterial, deriveRenderTargetsFromMaterial: false)
+        {
+            Name = eyeIndex == 0 ? TsrMonoReferenceLeftFBOName : TsrMonoReferenceRightFBOName,
+        };
+        fbo.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+        fbo.SettingUniforms += TsrMonoReferenceFBO_SettingUniforms;
+        return fbo;
+    }
+
+    private XRTexture2DArrayView CreateTsrMonoLayerView(string textureName, uint layer)
+    {
+        XRTexture texture = GetTexture<XRTexture>(textureName)!;
+        XRTexture2DArray array;
+        uint minLevel;
+        uint numLevels;
+        uint minLayer;
+        ESizedInternalFormat format;
+        EDepthStencilFmt depthStencilFormat = EDepthStencilFmt.None;
+        ETexMinFilter minFilter;
+        ETexMagFilter magFilter;
+        ETexWrapMode uWrap;
+        ETexWrapMode vWrap;
+        if (texture is XRTexture2DArrayView existingView)
+        {
+            array = existingView.ViewedTexture;
+            minLevel = existingView.MinLevel;
+            numLevels = existingView.NumLevels;
+            minLayer = existingView.MinLayer + layer;
+            format = existingView.InternalFormat;
+            depthStencilFormat = existingView.DepthStencilViewFormat;
+            minFilter = existingView.MinFilter;
+            magFilter = existingView.MagFilter;
+            uWrap = existingView.UWrap;
+            vWrap = existingView.VWrap;
+        }
+        else
+        {
+            array = (XRTexture2DArray)texture;
+            minLevel = 0u;
+            numLevels = 1u;
+            minLayer = layer;
+            format = array.SizedInternalFormat;
+            minFilter = array.MinFilter;
+            magFilter = array.MagFilter;
+            uWrap = array.UWrap;
+            vWrap = array.VWrap;
+        }
+
+        return new XRTexture2DArrayView(
+            array,
+            minLevel,
+            numLevels,
+            minLayer,
+            1u,
+            format,
+            array: false,
+            multisample: false)
+        {
+            Name = $"{textureName}.MonoEye{layer}",
+            SamplerName = textureName,
+            MinFilter = minFilter,
+            MagFilter = magFilter,
+            UWrap = uWrap,
+            VWrap = vWrap,
+            DepthStencilViewFormat = depthStencilFormat,
+        };
     }
 
     private XRFrameBuffer CreateTsrHistoryColorFBO()
@@ -1010,8 +1119,6 @@ public partial class DefaultRenderPipeline
 
     private XRMaterial CreateMotionVectorsMaterial()
     {
-        XRRenderPipelineInstance ownerPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline
-            ?? throw new InvalidOperationException("Motion-vector material creation requires an owning pipeline instance.");
         XRShader shader = XRShader.EngineShader(
             Path.Combine(SceneShaderPath, Stereo ? "MotionVectorsStereo.fs" : "MotionVectors.fs"),
             EShaderType.Fragment);
@@ -1034,8 +1141,6 @@ public partial class DefaultRenderPipeline
             }
         };
 
-        material.SettingUniforms += (material, program) =>
-            MotionVectorsMaterial_SettingUniforms(ownerPipeline, material, program);
         return material;
     }
 
@@ -1084,84 +1189,6 @@ public partial class DefaultRenderPipeline
                 RequiredEngineUniforms = EUniformRequirements.None
             }
         };
-    }
-
-    private void MotionVectorsMaterial_SettingUniforms(
-        XRRenderPipelineInstance ownerPipeline,
-        XRMaterialBase material,
-        XRRenderProgram program)
-    {
-        if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(ownerPipeline, out var temporal))
-        {
-            //Debug.Out($"[Velocity] Using temporal uniforms. HistoryReady={temporal.HistoryReady}, ExposureReady={temporal.HistoryExposureReady}, Size={temporal.Width}x{temporal.Height}");
-            if (Stereo)
-            {
-                _motionVectorCurrViewProjectionStereo[0] = temporal.CurrViewProjectionUnjittered;
-                _motionVectorCurrViewProjectionStereo[1] = temporal.RightEyeCurrViewProjectionUnjittered;
-                _motionVectorPrevViewProjectionStereo[0] = temporal.HistoryReady
-                    ? temporal.PrevViewProjectionUnjittered
-                    : temporal.CurrViewProjectionUnjittered;
-                _motionVectorPrevViewProjectionStereo[1] = temporal.HistoryReady
-                    ? temporal.RightEyePrevViewProjectionUnjittered
-                    : temporal.RightEyeCurrViewProjectionUnjittered;
-                program.Uniform("CurrViewProjectionStereo", _motionVectorCurrViewProjectionStereo);
-                program.Uniform("PrevViewProjectionStereo", _motionVectorPrevViewProjectionStereo);
-                return;
-            }
-
-            program.Uniform("CurrViewProjection", temporal.CurrViewProjectionUnjittered);
-            program.Uniform(
-                "PrevViewProjection",
-                temporal.HistoryReady
-                    ? temporal.PrevViewProjectionUnjittered
-                    : temporal.CurrViewProjectionUnjittered);
-            return;
-        }
-
-        var camera = RuntimeEngine.Rendering.State.RenderingCamera;
-        if (camera is not null)
-        {
-            Matrix4x4 viewMatrix = camera.Transform.InverseRenderMatrix;
-            Matrix4x4 projMatrix = camera.ProjectionMatrix;
-            Matrix4x4 viewProj = viewMatrix * projMatrix;
-            Debug.RenderingEvery(
-                "Velocity.V1.NoTemporalData",
-                TimeSpan.FromSeconds(2),
-                "[Velocity] Temporal data unavailable; using current camera matrices for motion vectors.");
-            if (Stereo)
-            {
-                _motionVectorCurrViewProjectionStereo[0] = viewProj;
-                _motionVectorCurrViewProjectionStereo[1] = viewProj;
-                _motionVectorPrevViewProjectionStereo[0] = viewProj;
-                _motionVectorPrevViewProjectionStereo[1] = viewProj;
-                program.Uniform("CurrViewProjectionStereo", _motionVectorCurrViewProjectionStereo);
-                program.Uniform("PrevViewProjectionStereo", _motionVectorPrevViewProjectionStereo);
-                return;
-            }
-
-            program.Uniform("CurrViewProjection", viewProj);
-            program.Uniform("PrevViewProjection", viewProj);
-        }
-        else
-        {
-            Debug.RenderingEvery(
-                "Velocity.V1.NoCamera",
-                TimeSpan.FromSeconds(2),
-                "[Velocity] No camera available; motion vectors will be zeroed.");
-            if (Stereo)
-            {
-                _motionVectorCurrViewProjectionStereo[0] = Matrix4x4.Identity;
-                _motionVectorCurrViewProjectionStereo[1] = Matrix4x4.Identity;
-                _motionVectorPrevViewProjectionStereo[0] = Matrix4x4.Identity;
-                _motionVectorPrevViewProjectionStereo[1] = Matrix4x4.Identity;
-                program.Uniform("CurrViewProjectionStereo", _motionVectorCurrViewProjectionStereo);
-                program.Uniform("PrevViewProjectionStereo", _motionVectorPrevViewProjectionStereo);
-                return;
-            }
-
-            program.Uniform("CurrViewProjection", Matrix4x4.Identity);
-            program.Uniform("PrevViewProjection", Matrix4x4.Identity);
-        }
     }
 
     private IFrameBufferAttachement EnsureTextureAttachment(string textureName, Func<XRTexture> factory)

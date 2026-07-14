@@ -439,6 +439,13 @@ namespace XREngine.Rendering.Pipelines.Commands
                 using (instance.RenderState.PushRenderArea(copyRegion))
                 using (mip0.BindForWritingState())
                 {
+                    VPRCFullscreenPassContract.ValidateAndLog(
+                        instance,
+                        BloomCopyPassName,
+                        mip0,
+                        inputTexture,
+                        Stereo,
+                        copyRegion);
                     bool rendered = mip0.Render();
                     LogBloomRenderResult("CopyMip0", mip0, copyRegion, copyPassIndex, 0, rendered);
                 }
@@ -487,7 +494,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             int targetMip = sourceMip + 1;
             ValidateBloomRenderRegion(fbo, rect, targetMip);
-            int passIndex = ResolvePassIndex(GetDownsamplePassName(targetMip));
+            string passName = GetDownsamplePassName(targetMip);
+            int passIndex = ResolvePassIndex(passName);
             using var passScope = passIndex != int.MinValue
                 ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
                 : default;
@@ -495,6 +503,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             using (instance.RenderState.PushRenderArea(rect))
             using (fbo.BindForWritingState())
             {
+                VPRCFullscreenPassContract.ValidateAndLog(
+                    instance,
+                    passName,
+                    fbo,
+                    ResolveBloomPassSource(fbo, passName),
+                    Stereo,
+                    rect);
                 bool rendered = fbo.Render();
                 LogBloomRenderResult("Downsample", fbo, rect, passIndex, sourceMip, rendered);
             }
@@ -515,7 +530,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             int targetMip = sourceMip - 1;
             ValidateBloomRenderRegion(fbo, rect, targetMip);
-            int passIndex = ResolvePassIndex(GetUpsamplePassName(sourceMip));
+            string passName = GetUpsamplePassName(sourceMip);
+            int passIndex = ResolvePassIndex(passName);
             using var passScope = passIndex != int.MinValue
                 ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
                 : default;
@@ -523,9 +539,26 @@ namespace XREngine.Rendering.Pipelines.Commands
             using (instance.RenderState.PushRenderArea(rect))
             using (fbo.BindForWritingState())
             {
+                VPRCFullscreenPassContract.ValidateAndLog(
+                    instance,
+                    passName,
+                    fbo,
+                    ResolveBloomPassSource(fbo, passName),
+                    Stereo,
+                    rect);
                 bool rendered = fbo.Render();
                 LogBloomRenderResult("Upsample", fbo, rect, passIndex, sourceMip, rendered);
             }
+        }
+
+        private static XRTexture ResolveBloomPassSource(XRQuadFrameBuffer fbo, string passName)
+        {
+            XRMaterial? material = fbo.Material;
+            if (material is not null && material.Textures.Count > 0 && material.Textures[0] is XRTexture source)
+                return source;
+
+            throw new InvalidOperationException(
+                $"Bloom fullscreen pass '{passName}' has no source texture on framebuffer '{fbo.Name}'.");
         }
 
         private static void LogBloomRenderResult(

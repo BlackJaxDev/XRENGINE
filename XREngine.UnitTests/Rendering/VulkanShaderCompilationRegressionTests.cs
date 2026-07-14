@@ -42,6 +42,8 @@ public sealed class VulkanShaderCompilationRegressionTests
         "Scene3D/PostProcessStereo.fs",
         "Scene3D/FinalPostProcess.fs",
         "Scene3D/FinalPostProcessStereo.fs",
+        "Scene3D/FXAA.fs",
+        "Scene3D/FXAAStereo.fs",
         "Scene3D/PrefilterCubemapOcta.fs",
         "Scene3D/PrefilterEquirect.fs",
         "Scene3D/PrefilterEquirectOcta.fs",
