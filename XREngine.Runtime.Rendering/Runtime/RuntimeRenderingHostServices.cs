@@ -866,6 +866,10 @@ public static class RuntimeRenderingHostServices
         {
         }
 
+        public void RecordRenderVulkanFrameWideMeshFrameDataManifestGauges(ulong generation, long publicationCount, long lateRegistrationCount, int rendererCount, int familyCount, bool isSealed)
+        {
+        }
+
         public void AdjustRenderVulkanMeshDescriptorOwnership(int allocationVariants, int pools, int allocatedSets, int reservedSets)
         {
         }

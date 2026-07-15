@@ -63,19 +63,6 @@ public unsafe partial class VulkanRenderer
             texture is not null;
     }
 
-    internal sealed record ComputeDispatchOp(
-        int PassIndex,
-        VkRenderProgram Program,
-        uint GroupsX,
-        uint GroupsY,
-        uint GroupsZ,
-        ComputeDispatchSnapshot Snapshot,
-        FrameOpContext Context) : FrameOp(PassIndex, null, Context);
-
-    internal sealed record TextureUploadFrameOp(
-        VulkanImportedTexturePendingUpload Upload,
-        FrameOpContext Context) : FrameOp(int.MinValue, null, Context);
-
     internal void EnqueueFrameOp(FrameOp op)
     {
         FrameOp validatedOp = EnsureValidFrameOpPassIndex(op);
@@ -259,39 +246,6 @@ public unsafe partial class VulkanRenderer
         return buffer;
     }
 
-    private sealed class FrameOpCapture
-    {
-        public FrameOpCapture? Previous { get; private set; }
-        public bool ExcludeTextureUploads { get; private set; }
-        public FrameOp[] Buffer { get; private set; } = new FrameOp[256];
-        public int Count { get; private set; }
-
-        public void Begin(FrameOpCapture? previous, bool excludeTextureUploads)
-        {
-            Previous = previous;
-            ExcludeTextureUploads = excludeTextureUploads;
-            Count = 0;
-        }
-
-        public void Add(FrameOp op)
-        {
-            int count = Count;
-            if ((uint)count >= (uint)Buffer.Length)
-                Grow();
-
-            Buffer[count] = op;
-            Count = count + 1;
-        }
-
-        private void Grow()
-        {
-            int newLength = Buffer.Length == 0 ? 256 : Buffer.Length * 2;
-            FrameOp[] grown = new FrameOp[newLength];
-            Array.Copy(Buffer, grown, Count);
-            Buffer = grown;
-        }
-    }
-
     private static void PublishFrameOpDrawStats(FrameOp op)
     {
         if (op.PassIndex == int.MinValue)
@@ -360,7 +314,8 @@ public unsafe partial class VulkanRenderer
         };
     }
 
-    internal FrameOp[] DrainFrameOps() => DrainFrameOps(out _);
+    internal FrameOp[] DrainFrameOps() 
+        => DrainFrameOps(out _);
 
     internal FrameOp[] DrainFrameOps(out ulong signature)
         => DrainFrameOps(out signature, computeSignature: true);
@@ -799,50 +754,6 @@ public unsafe partial class VulkanRenderer
         return hash.ToHash();
     }
 
-    private struct FrameOpSignatureHasher
-    {
-        private const ulong OffsetBasis = 14695981039346656037UL;
-        private const ulong Prime = 1099511628211UL;
-        private ulong _value;
-
-        public FrameOpSignatureHasher()
-        {
-            _value = OffsetBasis;
-        }
-
-        public void Add(bool value) => Add(value ? 1 : 0);
-        public void Add(int value) => Mix(unchecked((uint)value));
-        public void Add(uint value) => Mix(value);
-        public void Add(ulong value) => Mix(value);
-        public void Add(float value) => Add(BitConverter.SingleToUInt32Bits(value));
-
-        public void Add(string? value)
-        {
-            if (value is null)
-            {
-                Add(-1);
-                return;
-            }
-
-            Add(value.Length);
-            for (int i = 0; i < value.Length; i++)
-                Add(value[i]);
-        }
-
-        public ulong ToHash() => _value;
-
-        private void Mix(ulong value)
-        {
-            unchecked
-            {
-                _value ^= value;
-                _value *= Prime;
-                _value ^= value >> 32;
-                _value *= Prime;
-            }
-        }
-    }
-
     private static void HashProgramBindingSnapshot(
         ref FrameOpSignatureHasher hash,
         ComputeDispatchSnapshot? snapshot,
@@ -1116,92 +1027,12 @@ public unsafe partial class VulkanRenderer
     }
 
     #endregion
-
-    #region Draw State Snapshot
-
-    internal readonly record struct PendingMeshDraw(
-        VkMeshRenderer Renderer,
-        Viewport Viewport,
-        Rect2D Scissor,
-        Viewport[]? IndexedViewports,
-        Rect2D[]? IndexedScissors,
-        uint ViewportScissorCount,
-        SampleCountFlags RasterizationSamples,
-        bool DepthTestEnabled,
-        bool DepthWriteEnabled,
-        CompareOp DepthCompareOp,
-        bool StencilTestEnabled,
-        StencilOpState FrontStencilState,
-        StencilOpState BackStencilState,
-        uint StencilWriteMask,
-        ColorComponentFlags ColorWriteMask,
-        CullModeFlags CullMode,
-        FrontFace FrontFace,
-        bool BlendEnabled,
-        bool AlphaToCoverageEnabled,
-        BlendOp ColorBlendOp,
-        BlendOp AlphaBlendOp,
-        BlendFactor SrcColorBlendFactor,
-        BlendFactor DstColorBlendFactor,
-        BlendFactor SrcAlphaBlendFactor,
-        BlendFactor DstAlphaBlendFactor,
-        Matrix4x4 ModelMatrix,
-        Matrix4x4 PreviousModelMatrix,
-        XRMaterial? MaterialOverride,
-        uint Instances,
-        EMeshBillboardMode BillboardMode,
-        XRCamera? Camera,
-        XRCamera? StereoRightEyeCamera,
-        bool IsStereoPass,
-        bool UseUnjitteredProjection,
-        uint TransformId,
-        // Camera matrices/vectors are snapshotted at enqueue time
-        // while the camera is still the active rendering camera. The command buffer is
-        // recorded later, after the pipeline camera stack has been popped, so reading
-        // Camera.* at record time can yield stale values.
-        Matrix4x4 ViewMatrix,
-        Matrix4x4 InverseViewMatrix,
-        Matrix4x4 ProjectionMatrix,
-        Matrix4x4 InverseProjectionMatrix,
-        Matrix4x4 ViewProjectionMatrix,
-        Matrix4x4 ViewProjectionMatrixUnjittered,
-        Matrix4x4 PreviousViewMatrix,
-        Matrix4x4 PreviousProjectionMatrix,
-        Matrix4x4 PreviousViewProjectionMatrix,
-        Matrix4x4 PreviousViewProjectionMatrixUnjittered,
-        Matrix4x4 RightEyeViewMatrix,
-        Matrix4x4 RightEyeInverseViewMatrix,
-        Matrix4x4 RightEyeProjectionMatrix,
-        Matrix4x4 RightEyeInverseProjectionMatrix,
-        Matrix4x4 RightEyeViewProjectionMatrix,
-        Matrix4x4 RightEyeViewProjectionMatrixUnjittered,
-        Matrix4x4 PreviousRightEyeViewMatrix,
-        Matrix4x4 PreviousRightEyeProjectionMatrix,
-        Matrix4x4 PreviousRightEyeViewProjectionMatrix,
-        Matrix4x4 PreviousRightEyeViewProjectionMatrixUnjittered,
-        Vector3 CameraPosition,
-        Vector3 CameraForward,
-        Vector3 CameraUp,
-        Vector3 CameraRight,
-        // Render-area dimensions snapshotted at enqueue time. The live
-        // RuntimeEngine.Rendering.State.RenderArea is derived from the pipeline's
-        // CurrentRenderRegion, which is reset to Empty by the time the command buffer
-        // is recorded, so ScreenWidth/ScreenHeight engine uniforms (used by the debug
-        // line/point geometry shaders) must read these snapshots instead.
-        int RenderAreaWidth,
-        int RenderAreaHeight,
-        LayeredShadowUniformState ShadowUniformState,
-        VkRenderProgram? PreparedProgram,
-        string? PreparedProgramIdentity,
-        ComputeDispatchSnapshot? ProgramBindingSnapshot);
-
+    
     private static bool ViewportEquals(in Viewport a, in Viewport b)
         => a.X == b.X && a.Y == b.Y && a.Width == b.Width && a.Height == b.Height && a.MinDepth == b.MinDepth && a.MaxDepth == b.MaxDepth;
 
     private static bool RectEquals(in Rect2D a, in Rect2D b)
         => a.Offset.X == b.Offset.X && a.Offset.Y == b.Offset.Y && a.Extent.Width == b.Extent.Width && a.Extent.Height == b.Extent.Height;
-
-    #endregion
 
     public partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.BaseVersion data) : VkObject<XRMeshRenderer.BaseVersion>(api, data), IRenderPreparationState
     {
@@ -1376,8 +1207,7 @@ public unsafe partial class VulkanRenderer
             MeshRenderer.PropertyChanging += OnMeshRendererPropertyChanging;
             SubscribeRendererBuffers(MeshRenderer.Buffers);
 
-            if (Mesh is not null)
-                Mesh.DataChanged += OnMeshChanged;
+            Mesh?.DataChanged += OnMeshChanged;
             SubscribeMeshBufferCollection(Mesh?.Buffers);
 
             CollectBuffers();
@@ -1390,8 +1220,7 @@ public unsafe partial class VulkanRenderer
             MeshRenderer.PropertyChanging -= OnMeshRendererPropertyChanging;
             SubscribeRendererBuffers(null);
 
-            if (Mesh is not null)
-                Mesh.DataChanged -= OnMeshChanged;
+            Mesh?.DataChanged -= OnMeshChanged;
             SubscribeMeshBufferCollection(null);
 
             Renderer.DrainVulkanPipelineCompileJobsForOwner(this);
@@ -1417,9 +1246,7 @@ public unsafe partial class VulkanRenderer
             switch (e.PropertyName)
             {
                 case nameof(XRMeshRenderer.Mesh):
-                    if (MeshRenderer.Mesh is not null)
-                        MeshRenderer.Mesh.DataChanged += OnMeshChanged;
-
+                    MeshRenderer.Mesh?.DataChanged += OnMeshChanged;
                     SubscribeMeshBufferCollection(MeshRenderer.Mesh?.Buffers);
                     InvalidateGeometryLayout("MeshChanged", collectBuffers: true);
                     break;
@@ -1449,13 +1276,9 @@ public unsafe partial class VulkanRenderer
             if (ReferenceEquals(_subscribedRendererBuffers, buffers))
                 return;
 
-            if (_subscribedRendererBuffers is not null)
-                _subscribedRendererBuffers.Changed -= OnBuffersChanged;
-
+            _subscribedRendererBuffers?.Changed -= OnBuffersChanged;
             _subscribedRendererBuffers = buffers;
-
-            if (_subscribedRendererBuffers is not null)
-                _subscribedRendererBuffers.Changed += OnBuffersChanged;
+            _subscribedRendererBuffers?.Changed += OnBuffersChanged;
         }
 
         private void SubscribeMeshBufferCollection(XRMesh.BufferCollection? buffers)
@@ -1463,13 +1286,9 @@ public unsafe partial class VulkanRenderer
             if (ReferenceEquals(_subscribedMeshBuffers, buffers))
                 return;
 
-            if (_subscribedMeshBuffers is not null)
-                _subscribedMeshBuffers.Changed -= OnMeshBuffersChanged;
-
+            _subscribedMeshBuffers?.Changed -= OnMeshBuffersChanged;
             _subscribedMeshBuffers = buffers;
-
-            if (_subscribedMeshBuffers is not null)
-                _subscribedMeshBuffers.Changed += OnMeshBuffersChanged;
+            _subscribedMeshBuffers?.Changed += OnMeshBuffersChanged;
         }
 
         private void InvalidateGeometryLayout(string reason, bool collectBuffers)

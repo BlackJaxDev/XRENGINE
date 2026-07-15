@@ -951,32 +951,50 @@ namespace XREngine.Rendering.Commands
                             }
                             if (ShouldLogSponzaCpuDiag(cmd))
                                 LogSponzaCpuDiag("skip-cpu-query-probe", renderPass, cmd, camera, $"queryKey={queryKey}, cpuSocCull={cpuSocCull}");
-                            probeCandidates.Add(CreateCpuOcclusionProbeCandidate(queryKey, probeBounds.Value, probeRequest, camera!));
+                            probeCandidates.Add(CreateCpuOcclusionProbeCandidate(
+                                queryKey,
+                                probeBounds.Value,
+                                probeRequest,
+                                camera!));
                             cpuCmdIndex++;
                             continue;
                         }
-                        s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey, ECpuOcclusionForceVisibleReason.NoBounds, occlusionOwnership);
-                        // No bounds available — fall through to full-mesh requery so the
-                        // query can still refresh (correctness fallback; will flicker).
+                        // No bounds available — fall through to the fail-visible mesh path.
                     }
 
-                    // Visible draw path. We deliberately do NOT bracket the mesh's own
-                    // Render() call with the occlusion query: AnySamplesPassedConservative
-                    // around a self-draw reports "did this draw contribute samples", which
-                    // is a self-visibility test rather than an occlusion test. The mesh's
-                    // first-drawn-before-occluder case (common across material buckets)
-                    // would then permanently latch LastAnySamplesPassed=true and the mesh
-                    // would never demote to Skip. Instead, always route the hardware query
-                    // through the deferred-probe queue so it tests a proxy AABB against
-                    // the pass's complete depth — matching the GPU-dispatch occlusion path.
+                    // A visible-demotion query must bracket the exact contributing draw
+                    // at its original position. Deferring the draw perturbs equal-depth
+                    // ordering, while an AABB proxy is not valid visibility proof for a
+                    // non-convex mesh. The coordinator keeps this inline path bounded.
                     if (needsHardwareQuery &&
                         probeCandidates is not null &&
                         cmd.CullingVolume is AABB visibleProbeBounds)
                     {
                         if (CpuQueryProxyIsNearPlaneUnsafe(camera!, visibleProbeBounds))
+                        {
                             s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey, ECpuOcclusionForceVisibleReason.NearPlaneUnsafe, occlusionOwnership);
+                            RenderWithGpuScope(cmd, renderPass);
+                        }
                         else
-                            probeCandidates.Add(CreateCpuOcclusionProbeCandidate(queryKey, visibleProbeBounds, probeRequest, camera!));
+                        {
+                            bool queryScheduled = s_cpuOcclusionCoordinator.TryScheduleVisibleDrawProbe(
+                                renderPass,
+                                camera,
+                                queryKey,
+                                probeRequest,
+                                occlusionOwnership);
+                            if (queryScheduled)
+                                s_cpuOcclusionCoordinator.BeginQuery(renderPass, camera, queryKey, occlusionOwnership);
+                            try
+                            {
+                                RenderWithGpuScope(cmd, renderPass);
+                            }
+                            finally
+                            {
+                                if (queryScheduled)
+                                    s_cpuOcclusionCoordinator.EndQuery(renderPass, camera, queryKey, occlusionOwnership);
+                            }
+                        }
 
                         if (ShouldLogSponzaCpuDiag(cmd))
                             LogSponzaCpuDiag("draw-cpu-query-visible", renderPass, cmd, camera, $"queryKey={queryKey}, needsHardwareQuery=True");
@@ -989,11 +1007,9 @@ namespace XREngine.Rendering.Commands
                                 appliedOcclusionMode,
                                 decision);
                         }
-                        RenderWithGpuScope(cmd, renderPass);
                     }
                     else
                     {
-                        // Fallback: command has no AABB, so we can't issue a proxy probe.
                         if (needsHardwareQuery)
                         {
                             s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey, ECpuOcclusionForceVisibleReason.NoBounds, occlusionOwnership);
@@ -1055,9 +1071,9 @@ namespace XREngine.Rendering.Commands
                 RenderWithGpuScope(cmd, renderPass);
             }
 
-            // Phase 3: deferred probe-only AABB draws. Now the depth buffer reflects all
-            // visible meshes from this pass, so the conservative samples-passed query
-            // result is a faithful "is this mesh's AABB exposed to the camera?" answer.
+            // Phase 3: deferred probe-only AABB draws for meshes that were not rendered.
+            // The depth buffer now reflects all visible meshes from this pass, so the
+            // conservative samples-passed result can safely drive recovery from Skip.
             if (probeCandidates is { Count: > 0 } && deferredProbes is not null)
                 s_cpuOcclusionCoordinator.SelectProbeCandidates(
                     renderPass,
@@ -1131,7 +1147,12 @@ namespace XREngine.Rendering.Commands
             }
 
             priority += request.PriorityBias;
-            return new CpuOcclusionProbeCandidate(queryKey, bounds, request, priority, distance);
+            return new CpuOcclusionProbeCandidate(
+                queryKey,
+                bounds,
+                request,
+                priority,
+                distance);
         }
 
         private static float EstimateCpuOcclusionProbePriority(in AABB bounds, XRCamera camera, out float distance)

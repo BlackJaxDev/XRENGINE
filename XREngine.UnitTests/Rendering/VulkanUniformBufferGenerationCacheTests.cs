@@ -152,11 +152,16 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         drawing.ShouldContain("TryRefreshFrameSourceDescriptorSetsForDraw(");
         string openXr = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
-        openXr.ShouldContain("PrewarmOpenXrFrameOpResources(FrameOp[] ops, uint frameDataImageIndex)");
+        openXr.ShouldContain("private bool PrewarmOpenXrFrameOpResources(");
+        openXr.ShouldContain("sealFrameManifest = false");
         openXr.ShouldContain("EnterFrameOpResourcePlannerReadbackScope(context)");
         openXr.ShouldContain("descriptorFrameIndex,\n                    out string reason");
         arena.ShouldContain("late or unsealed frame-data request");
         arena.ShouldContain("manifest.ContainsSealedDraw");
+        primary.ShouldContain("TryRegisterFrameWideMeshFrameDataRequirements(");
+        primary.ShouldContain("sealAfterRegister: true");
+        secondary.ShouldContain(
+            "TryRegisterFrameWideMeshFrameDataRequirements(\n                    Array.Empty<FrameOp>(),\n                    dynamicUiBatchTextOps,");
     }
 
     [Test]
@@ -240,6 +245,231 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         manifest.TrySeal(generation: 2, reservedBytes: 8192).ShouldBeTrue();
         manifest.Generation.ShouldBe(2UL);
         manifest.End();
+    }
+
+    [Test]
+    public void FrameWideManifest_DefersLateFamiliesAndPublishesThemAtTheNextFrameBoundary()
+    {
+        var renderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+            typeof(VulkanRenderer.VkMeshRenderer));
+        var requirements = new Dictionary<VulkanRenderer.VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
+        var eyeFamily = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(
+            3,
+            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
+            VulkanRenderer.EVulkanFrameOpContextKind.OpenXrEye,
+            10,
+            20,
+            30,
+            OutputTargetIdentity: 40,
+            CameraIdentity: 50,
+            StereoRightEyeCameraIdentity: 51,
+            StereoEnabled: true,
+            MultiviewEnabled: true);
+        var desktopFamily = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(
+            0,
+            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
+            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+            11,
+            21,
+            31,
+            OutputTargetIdentity: 41,
+            CameraIdentity: 52,
+            StereoRightEyeCameraIdentity: 0,
+            StereoEnabled: false,
+            MultiviewEnabled: false);
+        var rendererFamilies = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance)
+        {
+            [new(renderer, eyeFamily)] = 3,
+        };
+        var familyStrides = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>
+        {
+            [eyeFamily] = 3,
+        };
+        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>();
+        VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
+
+        manifest.TryRegister(
+                100,
+                requirements,
+                rendererFamilies,
+                familyStrides,
+                familyBases,
+                sealAfterRegister: true,
+                out ulong firstGeneration,
+                out _)
+            .ShouldBeTrue();
+        manifest.IsSealed.ShouldBeTrue();
+        int eyeBase = familyBases[eyeFamily];
+
+        rendererFamilies.Clear();
+        rendererFamilies[new(renderer, desktopFamily)] = 3;
+        familyStrides.Clear();
+        familyStrides[desktopFamily] = 3;
+        manifest.TryRegister(
+                100,
+                requirements,
+                rendererFamilies,
+                familyStrides,
+                familyBases,
+                sealAfterRegister: true,
+                out _,
+                out string lateReason)
+            .ShouldBeFalse();
+        lateReason.ShouldContain("after frame-wide manifest generation");
+
+        manifest.TryRegister(
+                101,
+                requirements,
+                rendererFamilies,
+                familyStrides,
+                familyBases,
+                sealAfterRegister: true,
+                out ulong secondGeneration,
+                out _)
+            .ShouldBeTrue();
+        secondGeneration.ShouldBeGreaterThan(firstGeneration);
+        int desktopBase = familyBases[desktopFamily];
+        eyeBase.ShouldBe(0);
+        desktopBase.ShouldBe(0);
+        manifest.PublishedRendererCount.ShouldBe(1);
+        manifest.PublishedFamilyCount.ShouldBe(2);
+    }
+
+    [Test]
+    public void FrameWideManifest_AllocatesDisjointFamilyRangesWithinOneFrameDataSlot()
+    {
+        var renderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+            typeof(VulkanRenderer.VkMeshRenderer));
+        var primaryFamily = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(
+            2,
+            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
+            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+            10,
+            20,
+            30,
+            40,
+            50,
+            0,
+            false,
+            false);
+        var dynamicUiFamily = primaryFamily with
+        {
+            StreamKind = VulkanRenderer.EVulkanMeshFrameDataStreamKind.DynamicUi,
+        };
+        var requirements = new Dictionary<VulkanRenderer.VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
+        var rendererFamilies = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance)
+        {
+            [new(renderer, primaryFamily)] = 3,
+            [new(renderer, dynamicUiFamily)] = 5,
+        };
+        var familyStrides = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>
+        {
+            [primaryFamily] = 3,
+            [dynamicUiFamily] = 5,
+        };
+        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>();
+        VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
+
+        manifest.TryRegister(
+                100,
+                requirements,
+                rendererFamilies,
+                familyStrides,
+                familyBases,
+                sealAfterRegister: true,
+                out _,
+                out _)
+            .ShouldBeTrue();
+
+        int primaryBase = familyBases[primaryFamily];
+        int dynamicUiBase = familyBases[dynamicUiFamily];
+        dynamicUiBase.ShouldBeGreaterThanOrEqualTo(primaryBase + 3);
+        requirements[renderer].ShouldBeGreaterThanOrEqualTo(dynamicUiBase + 5);
+    }
+
+    [Test]
+    public void FrameWideManifest_KeepsPublishedFamilyBaseStableAcrossBoundedDrawCountVariation()
+    {
+        var renderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+            typeof(VulkanRenderer.VkMeshRenderer));
+        var family = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(
+            2,
+            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
+            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+            10,
+            20,
+            30,
+            40,
+            50,
+            0,
+            false,
+            false);
+        var requirements = new Dictionary<VulkanRenderer.VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
+        var rendererFamilies = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance)
+        {
+            [new(renderer, family)] = 3,
+        };
+        var familyStrides = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>
+        {
+            [family] = 3,
+        };
+        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>();
+        VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
+
+        manifest.TryRegister(
+                100,
+                requirements,
+                rendererFamilies,
+                familyStrides,
+                familyBases,
+                sealAfterRegister: true,
+                out ulong firstGeneration,
+                out _)
+            .ShouldBeTrue();
+        int firstBase = familyBases[family];
+        requirements[renderer].ShouldBeGreaterThanOrEqualTo(firstBase + 32);
+
+        rendererFamilies[new(renderer, family)] = 20;
+        familyStrides[family] = 20;
+        manifest.TryRegister(
+                100,
+                requirements,
+                rendererFamilies,
+                familyStrides,
+                familyBases,
+                sealAfterRegister: true,
+                out ulong secondGeneration,
+                out _)
+            .ShouldBeTrue();
+
+        familyBases[family].ShouldBe(firstBase);
+        secondGeneration.ShouldBe(firstGeneration);
+        manifest.LateRegistrationCount.ShouldBe(0);
+    }
+
+    [Test]
+    public void FrameWideFamilyIdentity_IsStableAcrossExternalTargetRotationButSeparatesFrameSlots()
+    {
+        var leftSlot = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(
+            3,
+            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
+            VulkanRenderer.EVulkanFrameOpContextKind.OpenXrEye,
+            10,
+            20,
+            30,
+            OutputTargetIdentity: 40,
+            CameraIdentity: 50,
+            StereoRightEyeCameraIdentity: 51,
+            StereoEnabled: true,
+            MultiviewEnabled: true);
+        var rotatedExternalImage = leftSlot;
+        var rightSlot = leftSlot with { FrameDataSlot = 4 };
+
+        rotatedExternalImage.ShouldBe(leftSlot);
+        rightSlot.ShouldNotBe(leftSlot);
     }
 
     private static void AssertOrdered(string source, params string[] markers)

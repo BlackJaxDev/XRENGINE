@@ -152,6 +152,22 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
+            CommandBufferRecordingScratch frameDataScratch = _commandBufferRecordingScratch.Value!;
+            if (!TryRegisterFrameWideMeshFrameDataRequirements(
+                    ops,
+                    dynamicUiBatchTextOps,
+                    commandBufferImageSlot,
+                    sealAfterRegister: true,
+                    frameDataScratch.MeshDrawSlotsByRenderer,
+                    frameDataScratch,
+                    frameDataScratch.ReusableMeshFrameDataFamilyBases,
+                    out _,
+                    out string frameDataManifestReason))
+            {
+                recordingDeferredReason = frameDataManifestReason;
+                return default;
+            }
+
             FrameOp[] plannerPreparationOps = ops.Length > 0 ? ops : dynamicUiBatchTextOps;
             using FrameOpResourcePlannerPreparationScope frameOpResourcePlannerPreparationScope =
                 new(this, plannerPreparationOps);
@@ -539,9 +555,9 @@ namespace XREngine.Rendering.Vulkan
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RefreshFrameData"))
                 {
                     refreshedReusableFrameData = !hasStaticFrameOps ||
-                        TryRefreshReusableCommandBufferFrameData(imageIndex, ops);
+                        TryRefreshReusableCommandBufferFrameData(imageIndex, ops, EVulkanMeshFrameDataStreamKind.Primary);
                     if (refreshedReusableFrameData && dynamicUiBatchTextOps.Length > 0)
-                        refreshedReusableFrameData = TryRefreshReusableCommandBufferFrameData(imageIndex, dynamicUiBatchTextOps);
+                        refreshedReusableFrameData = TryRefreshReusableCommandBufferFrameData(imageIndex, dynamicUiBatchTextOps, EVulkanMeshFrameDataStreamKind.DynamicUi);
                 }
 
                 if (!refreshedReusableFrameData)
@@ -1350,9 +1366,9 @@ namespace XREngine.Rendering.Vulkan
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.FastReuse.RefreshFrameData"))
                 {
                     refreshedReusableFrameData = ops.Length == 0 ||
-                        TryRefreshReusableCommandBufferFrameData(imageIndex, ops);
+                        TryRefreshReusableCommandBufferFrameData(imageIndex, ops, EVulkanMeshFrameDataStreamKind.Primary);
                     if (refreshedReusableFrameData && dynamicUiBatchTextOps.Length > 0)
-                        refreshedReusableFrameData = TryRefreshReusableCommandBufferFrameData(imageIndex, dynamicUiBatchTextOps);
+                        refreshedReusableFrameData = TryRefreshReusableCommandBufferFrameData(imageIndex, dynamicUiBatchTextOps, EVulkanMeshFrameDataStreamKind.DynamicUi);
                 }
                 if (!refreshedReusableFrameData)
                     return false;
@@ -1438,21 +1454,22 @@ namespace XREngine.Rendering.Vulkan
             return false;
         }
 
-        private bool TryRefreshReusableCommandBufferFrameData(uint imageIndex, FrameOp[] ops, bool refreshMaterialUniforms = true)
+        private bool TryRefreshReusableCommandBufferFrameData(
+            uint imageIndex,
+            FrameOp[] ops,
+            EVulkanMeshFrameDataStreamKind streamKind = EVulkanMeshFrameDataStreamKind.Primary,
+            bool refreshMaterialUniforms = true)
         {
             if (ops.Length == 0)
                 return true;
 
-            Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = _refreshMeshDrawSlotsByRendererScratch;
-            meshDrawSlotsByRenderer.Clear();
-            meshDrawSlotsByRenderer.EnsureCapacity(_refreshMeshDrawSlotCapacityHint);
-            int GetMeshDrawUniformSlot(VkMeshRenderer renderer)
-            {
-                ref int slotRef = ref CollectionsMarshal.GetValueRefOrAddDefault(meshDrawSlotsByRenderer, renderer, out _);
-                int slot = slotRef;
-                slotRef = slot + 1;
-                return slot;
-            }
+            Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshDrawSlotsByRendererFamily =
+                _refreshMeshDrawSlotsByRendererFamilyScratch;
+            meshDrawSlotsByRendererFamily.Clear();
+            meshDrawSlotsByRendererFamily.EnsureCapacity(_refreshMeshDrawSlotCapacityHint);
+            Dictionary<VulkanMeshFrameDataFamilyKey, int> familyBases =
+                _commandBufferRecordingScratch.Value!.ReusableMeshFrameDataFamilyBases;
+            int frameDataSlot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
 
             for (int i = 0; i < ops.Length; i++)
             {
@@ -1462,7 +1479,14 @@ namespace XREngine.Rendering.Vulkan
                 {
                     case MeshDrawOp drawOp:
                     {
-                        int drawUniformSlot = GetMeshDrawUniformSlot(drawOp.Draw.Renderer);
+                        int drawUniformSlot = GetFrameWideMeshDrawUniformSlot(
+                            meshDrawSlotsByRendererFamily,
+                            familyBases,
+                            drawOp.Draw.Renderer,
+                            frameDataSlot,
+                            streamKind,
+                            drawOp.Context,
+                            drawOp.Draw);
                         if (!drawOp.Draw.Renderer.TryRefreshReusableCommandBufferFrameData(imageIndex, drawOp.Draw, drawUniformSlot, out string reason, refreshMaterialUniforms))
                         {
                             _lastReusableFrameDataRefreshFailureReason =
@@ -1487,7 +1511,14 @@ namespace XREngine.Rendering.Vulkan
                     }
                     case IndirectDrawOp indirectDrawOp:
                     {
-                        int drawUniformSlot = GetMeshDrawUniformSlot(indirectDrawOp.MeshRenderer);
+                        int drawUniformSlot = GetFrameWideMeshDrawUniformSlot(
+                            meshDrawSlotsByRendererFamily,
+                            familyBases,
+                            indirectDrawOp.MeshRenderer,
+                            frameDataSlot,
+                            streamKind,
+                            indirectDrawOp.Context,
+                            indirectDrawOp.Draw);
                         if (!indirectDrawOp.MeshRenderer.TryRefreshReusableCommandBufferFrameData(
                                 imageIndex,
                                 indirectDrawOp.Draw,
@@ -1529,7 +1560,7 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            _refreshMeshDrawSlotCapacityHint = Math.Max(1, meshDrawSlotsByRenderer.Count);
+            _refreshMeshDrawSlotCapacityHint = Math.Max(1, meshDrawSlotsByRendererFamily.Count);
             return true;
         }
 
@@ -1582,30 +1613,126 @@ namespace XREngine.Rendering.Vulkan
                 _ => "Vulkan.RecordPrimary.Op.Unknown"
             };
 
-        internal static void EnsureMeshDrawUniformSlotCapacityForRecording(
+        internal static void CollectMeshFrameDataRequirementsForRecording(
             FrameOp[] ops,
-            Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer)
+            int frameDataSlot,
+            EVulkanMeshFrameDataStreamKind streamKind,
+            Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> rendererFamilyDrawSlots,
+            Dictionary<VulkanMeshFrameDataFamilyKey, int> familyStrides,
+            bool append = false)
         {
-            meshDrawSlotsByRenderer.Clear();
+            if (!append)
+            {
+                rendererFamilyDrawSlots.Clear();
+                familyStrides.Clear();
+            }
 
             for (int i = 0; i < ops.Length; i++)
             {
-                VkMeshRenderer? renderer = ops[i] switch
+                FrameOp op = ops[i];
+                VkMeshRenderer? renderer;
+                PendingMeshDraw draw;
+                switch (op)
                 {
-                    MeshDrawOp drawOp => drawOp.Draw.Renderer,
-                    IndirectDrawOp indirectDrawOp => indirectDrawOp.MeshRenderer,
-                    _ => null
-                };
-                if (renderer is null)
-                    continue;
+                    case MeshDrawOp drawOp:
+                        renderer = drawOp.Draw.Renderer;
+                        draw = drawOp.Draw;
+                        break;
+                    case IndirectDrawOp indirectDrawOp:
+                        renderer = indirectDrawOp.MeshRenderer;
+                        draw = indirectDrawOp.Draw;
+                        break;
+                    default:
+                        continue;
+                }
 
-                meshDrawSlotsByRenderer.TryGetValue(renderer, out int count);
-                meshDrawSlotsByRenderer[renderer] = count + 1;
+                VulkanMeshFrameDataFamilyKey family =
+                    VulkanMeshFrameDataFamilyKey.From(frameDataSlot, streamKind, op.Context, draw);
+                VulkanMeshFrameDataRendererFamilyKey rendererFamily = new(renderer, family);
+                rendererFamilyDrawSlots.TryGetValue(rendererFamily, out int count);
+                int requiredDrawSlots = count + 1;
+                rendererFamilyDrawSlots[rendererFamily] = requiredDrawSlots;
+                if (!familyStrides.TryGetValue(family, out int stride) || stride < requiredDrawSlots)
+                    familyStrides[family] = requiredDrawSlots;
+            }
+        }
+
+        private static int GetFrameWideMeshDrawUniformSlot(
+            Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> slotsByRendererFamily,
+            Dictionary<VulkanMeshFrameDataFamilyKey, int> familyBases,
+            VkMeshRenderer renderer,
+            int frameDataSlot,
+            EVulkanMeshFrameDataStreamKind streamKind,
+            in FrameOpContext context,
+            in PendingMeshDraw draw)
+        {
+            VulkanMeshFrameDataFamilyKey family =
+                VulkanMeshFrameDataFamilyKey.From(frameDataSlot, streamKind, context, draw);
+            if (!familyBases.TryGetValue(family, out int baseSlot))
+            {
+                throw new InvalidOperationException(
+                    $"Mesh frame-data output family {family} was not published before draw-slot resolution.");
             }
 
-            foreach (KeyValuePair<VkMeshRenderer, int> pair in meshDrawSlotsByRenderer)
-                pair.Key.EnsureUniformDrawSlotCapacity(pair.Value);
+            VulkanMeshFrameDataRendererFamilyKey rendererFamily = new(renderer, family);
+            ref int ordinalRef = ref CollectionsMarshal.GetValueRefOrAddDefault(
+                slotsByRendererFamily,
+                rendererFamily,
+                out _);
+            int slot = checked(baseSlot + ordinalRef);
+            ordinalRef++;
+            return slot;
         }
+
+        private bool TryRegisterFrameWideMeshFrameDataRequirements(
+            FrameOp[] primaryOps,
+            FrameOp[] secondaryOps,
+            int frameDataSlot,
+            bool sealAfterRegister,
+            Dictionary<VkMeshRenderer, int> requirements,
+            CommandBufferRecordingScratch scratch,
+            Dictionary<VulkanMeshFrameDataFamilyKey, int> resolvedFamilyBases,
+            out ulong manifestGeneration,
+            out string reason)
+        {
+            CollectMeshFrameDataRequirementsForRecording(
+                primaryOps,
+                frameDataSlot,
+                EVulkanMeshFrameDataStreamKind.Primary,
+                scratch.MeshDrawSlotsByRendererFamily,
+                scratch.MeshFrameDataFamilyStrides);
+            if (secondaryOps.Length > 0)
+            {
+                CollectMeshFrameDataRequirementsForRecording(
+                    secondaryOps,
+                    frameDataSlot,
+                    EVulkanMeshFrameDataStreamKind.DynamicUi,
+                    scratch.MeshDrawSlotsByRendererFamily,
+                    scratch.MeshFrameDataFamilyStrides,
+                    append: true);
+            }
+
+            bool registered = _frameWideMeshFrameDataManifest.TryRegister(
+                RuntimeEngine.Rendering.State.RenderFrameId,
+                requirements,
+                scratch.MeshDrawSlotsByRendererFamily,
+                scratch.MeshFrameDataFamilyStrides,
+                resolvedFamilyBases,
+                sealAfterRegister,
+                out manifestGeneration,
+                out reason);
+            PublishFrameWideMeshFrameDataManifestGauges();
+            return registered;
+        }
+
+        private void PublishFrameWideMeshFrameDataManifestGauges()
+            => RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameWideMeshFrameDataManifestGauges(
+                MeshFrameDataManifestGeneration,
+                MeshFrameDataManifestPublicationCount,
+                MeshFrameDataManifestLateRegistrationCount,
+                MeshFrameDataManifestRendererCount,
+                MeshFrameDataManifestFamilyCount,
+                MeshFrameDataManifestIsSealed);
 
         private bool HasLastWindowPresentSourceForSwapchainRefresh()
         {
@@ -2227,7 +2354,21 @@ namespace XREngine.Rendering.Vulkan
             VulkanMeshFrameDataReservationManifest frameDataManifest = recordingScratch.MeshFrameDataManifest;
             ulong frameDataGeneration = MeshFrameDataReservationGeneration;
             frameDataManifest.Begin(frameDataGeneration, recordingScratch.RecordMeshDrawSlotCapacityHint);
-            EnsureMeshDrawUniformSlotCapacityForRecording(ops, meshDrawSlotsByRenderer);
+            if (!TryRegisterFrameWideMeshFrameDataRequirements(
+                    ops,
+                    Array.Empty<FrameOp>(),
+                    commandBufferImageSlot,
+                    sealAfterRegister: true,
+                    meshDrawSlotsByRenderer,
+                    recordingScratch,
+                    recordingScratch.PrimaryMeshFrameDataFamilyBases,
+                    out _,
+                    out string frameWideReason))
+            {
+                frameDataManifest.End();
+                throw new InvalidOperationException(
+                    $"Frame-wide mesh frame-data manifest rejected command recording: {frameWideReason}");
+            }
             foreach (KeyValuePair<VkMeshRenderer, int> reservation in meshDrawSlotsByRenderer)
             {
                 if (frameDataManifest.TryReserve(reservation.Key, reservation.Value))
@@ -2236,7 +2377,11 @@ namespace XREngine.Rendering.Vulkan
                 throw new InvalidOperationException(
                     $"Unable to reserve {reservation.Value} mesh frame-data slots before command recording.");
             }
-            meshDrawSlotsByRenderer.Clear();
+            Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshDrawSlotsByRendererFamily =
+                recordingScratch.PrimaryMeshDrawSlotsByRendererFamily;
+            Dictionary<VulkanMeshFrameDataFamilyKey, int> meshFrameDataFamilyBases =
+                recordingScratch.PrimaryMeshFrameDataFamilyBases;
+            meshDrawSlotsByRendererFamily.Clear();
             for (int opIndex = 0; opIndex < ops.Length; opIndex++)
             {
                 VkMeshRenderer? meshRenderer;
@@ -2255,8 +2400,14 @@ namespace XREngine.Rendering.Vulkan
                         continue;
                 }
 
-                meshDrawSlotsByRenderer.TryGetValue(meshRenderer, out int drawSlot);
-                meshDrawSlotsByRenderer[meshRenderer] = drawSlot + 1;
+                int drawSlot = GetFrameWideMeshDrawUniformSlot(
+                    meshDrawSlotsByRendererFamily,
+                    meshFrameDataFamilyBases,
+                    meshRenderer,
+                    commandBufferImageSlot,
+                    EVulkanMeshFrameDataStreamKind.Primary,
+                    ops[opIndex].Context,
+                    pendingDraw);
                 using IDisposable plannerScope =
                     EnterFrameOpResourcePlannerReadbackScope(ops[opIndex].Context);
                 if (!meshRenderer.TryPrewarmFrameDataForRecording(
@@ -2280,8 +2431,8 @@ namespace XREngine.Rendering.Vulkan
             }
             recordingScratch.RecordMeshDrawSlotCapacityHint = Math.Max(
                 recordingScratch.RecordMeshDrawSlotCapacityHint,
-                meshDrawSlotsByRenderer.Count);
-            meshDrawSlotsByRenderer.Clear();
+                meshDrawSlotsByRendererFamily.Count);
+            meshDrawSlotsByRendererFamily.Clear();
 
             if (!frameDataManifest.TrySeal(
                     MeshFrameDataReservationGeneration,
@@ -2459,7 +2610,7 @@ namespace XREngine.Rendering.Vulkan
                 swapchainWriterPassByPipeline.Clear();
                 swapchainWriterOpIndexByPipeline.Clear();
                 pipelineNameByIdentity.Clear();
-                meshDrawSlotsByRenderer.Clear();
+                meshDrawSlotsByRendererFamily.Clear();
                 int writerCapacityHint = Math.Max(1, recordingScratch.RecordSwapchainWriterCapacityHint);
                 swapchainWritesByPipeline.EnsureCapacity(writerCapacityHint);
                 swapchainWriterLabelByPipeline.EnsureCapacity(writerCapacityHint);
@@ -2469,8 +2620,8 @@ namespace XREngine.Rendering.Vulkan
                 swapchainWriterPassByPipeline.EnsureCapacity(writerCapacityHint);
                 swapchainWriterOpIndexByPipeline.EnsureCapacity(writerCapacityHint);
                 pipelineNameByIdentity.EnsureCapacity(Math.Max(1, recordingScratch.RecordPipelineNameCapacityHint));
-                meshDrawSlotsByRenderer.EnsureCapacity(Math.Max(1, recordingScratch.RecordMeshDrawSlotCapacityHint));
-				meshDrawSlotsByRenderer.Clear();
+                meshDrawSlotsByRendererFamily.EnsureCapacity(Math.Max(1, recordingScratch.RecordMeshDrawSlotCapacityHint));
+				meshDrawSlotsByRendererFamily.Clear();
             }
 
             void RememberPipelineName(in FrameOpContext context)
@@ -2498,12 +2649,19 @@ namespace XREngine.Rendering.Vulkan
                     _ => string.Empty
                 };
 
-            int GetMeshDrawUniformSlot(VkMeshRenderer renderer)
+            int GetMeshDrawUniformSlot(
+                VkMeshRenderer renderer,
+                in FrameOpContext context,
+                in PendingMeshDraw draw)
             {
-                ref int slotRef = ref CollectionsMarshal.GetValueRefOrAddDefault(meshDrawSlotsByRenderer, renderer, out _);
-                int slot = slotRef;
-                slotRef = slot + 1;
-                return slot;
+                return GetFrameWideMeshDrawUniformSlot(
+                    meshDrawSlotsByRendererFamily,
+                    meshFrameDataFamilyBases,
+                    renderer,
+                    commandBufferImageSlot,
+                    EVulkanMeshFrameDataStreamKind.Primary,
+                    context,
+                    draw);
             }
 
             void MarkSwapchainWriterCore(string writerLabel, int passIndex, int opIndex, int pipelineIdentity)
@@ -4030,7 +4188,8 @@ namespace XREngine.Rendering.Vulkan
                         draw.ViewProjectionMatrix.M44);
                 }
 
-                int drawUniformSlot = drawUniformSlotOverride ?? GetMeshDrawUniformSlot(drawOp.Draw.Renderer);
+                int drawUniformSlot = drawUniformSlotOverride ??
+                    GetMeshDrawUniformSlot(drawOp.Draw.Renderer, drawOp.Context, drawOp.Draw);
                 bool recordedDraw = drawOp.Draw.Renderer.RecordDraw(
                     targetCommandBuffer,
                     drawOp.Draw,
@@ -4093,7 +4252,7 @@ namespace XREngine.Rendering.Vulkan
                         activeDepthStencilReadOnly,
                         indirectOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
                         indirectOp.Target?.Name ?? "<swapchain>",
-                        GetMeshDrawUniformSlot(indirectOp.MeshRenderer),
+                        GetMeshDrawUniformSlot(indirectOp.MeshRenderer, indirectOp.Context, indirectOp.Draw),
                         out _))
                 {
                     return;
@@ -4432,7 +4591,10 @@ namespace XREngine.Rendering.Vulkan
                         recordingStates[i] = default;
                         recordingStatePrepared[i] = false;
                         IndirectDrawOp indirectOp = (IndirectDrawOp)ops[startIndex + i];
-                        uniformSlots[i] = GetMeshDrawUniformSlot(indirectOp.MeshRenderer);
+                        uniformSlots[i] = GetMeshDrawUniformSlot(
+                            indirectOp.MeshRenderer,
+                            indirectOp.Context,
+                            indirectOp.Draw);
                     }
 
                     for (int i = 0; i < runCount; i++)
@@ -4812,7 +4974,10 @@ namespace XREngine.Rendering.Vulkan
                         secondaryChains[i] = chain;
                         secondaryBuffers[i] = secondary;
 
-                        int drawUniformSlot = GetMeshDrawUniformSlot(drawOp.Draw.Renderer);
+                        int drawUniformSlot = GetMeshDrawUniformSlot(
+                            drawOp.Draw.Renderer,
+                            drawOp.Context,
+                            drawOp.Draw);
 
                         if (!ScheduledCommandChainSecondaryNeedsRecording(chain) &&
                             drawOp.Draw.Renderer.TryRefreshReusableCommandBufferFrameData(
@@ -4998,7 +5163,10 @@ namespace XREngine.Rendering.Vulkan
                     for (int i = 0; i < runCount; i++)
                     {
                         MeshDrawOp drawOp = (MeshDrawOp)ops[startIndex + i];
-                        int drawUniformSlot = GetMeshDrawUniformSlot(drawOp.Draw.Renderer);
+                        int drawUniformSlot = GetMeshDrawUniformSlot(
+                            drawOp.Draw.Renderer,
+                            drawOp.Context,
+                            drawOp.Draw);
                         drawUniformSlots[i] = drawUniformSlot;
                         drawOp.Draw.Renderer.EnsureUniformDrawSlotCapacity(drawUniformSlot + 1);
                     }
@@ -5477,6 +5645,39 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
+            // Reset every inline query pool before the first render operation. Query-pool
+            // resets are illegal inside rendering, and deferring them until QueryOp would
+            // force the forward pass through a store/reload cycle for proxy queries.
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.PrepareInlineQueries"))
+            {
+                for (int prepareIndex = 0; prepareIndex < ops.Length; prepareIndex++)
+                {
+                    if (ops[prepareIndex] is not QueryOp
+                        {
+                            Operation: EVulkanQueryFrameOpKind.Begin,
+                        } pendingQuery ||
+                        !recordingScratch.PreparedInlineQueries.Add(pendingQuery.Query))
+                    {
+                        continue;
+                    }
+
+                    uint queryCount = 1u;
+                    if (pendingQuery.Target is not null &&
+                        GenericToAPI<VkFrameBuffer>(pendingQuery.Target) is { MultiviewViewMask: not 0u } queryFbo)
+                    {
+                        queryCount = (uint)System.Numerics.BitOperations.PopCount(queryFbo.MultiviewViewMask);
+                    }
+
+                    if (!pendingQuery.Query.PrepareForRecording(
+                            commandBuffer,
+                            pendingQuery.QueryTarget,
+                            queryCount))
+                    {
+                        recordingScratch.PreparedInlineQueries.Remove(pendingQuery.Query);
+                    }
+                }
+            }
+
             try
             {
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.MainOpLoop"))
@@ -5791,20 +5992,16 @@ namespace XREngine.Rendering.Vulkan
                     case QueryOp queryOp:
                         bool firstBeginForQuery = queryOp.Operation == EVulkanQueryFrameOpKind.Begin &&
                             !recordingScratch.BegunInlineQueries.Contains(queryOp.Query);
-                        if (firstBeginForQuery)
+                        if (firstBeginForQuery &&
+                            !recordingScratch.PreparedInlineQueries.Contains(queryOp.Query))
                         {
-                            // Reset immediately before this query's first begin. Keeping
-                            // the reset at the exact pass boundary prevents a pool shared
-                            // with another output from being made available and consumed
-                            // again between an eager batch reset and vkCmdBeginQuery.
-                            EndActiveRenderPass();
-                            uint queryCount = 1u;
-                            if (queryOp.Target is not null &&
-                                GenericToAPI<VkFrameBuffer>(queryOp.Target) is { MultiviewViewMask: not 0u } queryFbo)
-                            {
-                                queryCount = (uint)System.Numerics.BitOperations.PopCount(queryFbo.MultiviewViewMask);
-                            }
-                            queryOp.Query.PrepareForRecording(commandBuffer, queryOp.QueryTarget, queryCount);
+                            Debug.VulkanWarningEvery(
+                                $"Vulkan.UnpreparedInlineOcclusionQuery.{queryOp.Query.GetHashCode()}",
+                                TimeSpan.FromSeconds(1),
+                                "[Vulkan] Inline occlusion query begin suppressed because its pool was not prepared. Query='{0}' pass={1} op={2}.",
+                                queryOp.Query.Data.Name ?? "<unnamed>",
+                                opPassIndex,
+                                opIndex);
                         }
 
                         if (!renderPassActive || activeTarget != queryOp.Target)
@@ -5819,8 +6016,12 @@ namespace XREngine.Rendering.Vulkan
                         if (queryOp.Operation == EVulkanQueryFrameOpKind.Begin)
                         {
                             if (activeInlineQuery is not null)
+                            {
                                 activeInlineQuery.EndQuery(commandBuffer);
-                            if (recordingScratch.BegunInlineQueries.Add(queryOp.Query))
+                                activeInlineQuery = null;
+                            }
+                            if (recordingScratch.PreparedInlineQueries.Contains(queryOp.Query) &&
+                                recordingScratch.BegunInlineQueries.Add(queryOp.Query))
                             {
                                 uint queryViewMask = activeDynamicRendering
                                     ? activeDynamicRenderingFormats.ViewMask
@@ -5832,7 +6033,7 @@ namespace XREngine.Rendering.Vulkan
                                     ? queryOp.Query
                                     : null;
                             }
-                            else
+                            else if (recordingScratch.PreparedInlineQueries.Contains(queryOp.Query))
                             {
                                 activeInlineQuery = null;
                                 Debug.VulkanWarningEvery(
@@ -6223,7 +6424,7 @@ namespace XREngine.Rendering.Vulkan
 
                 recordingScratch.RecordSwapchainWriterCapacityHint = Math.Max(1, swapchainWritesByPipeline.Count);
                 recordingScratch.RecordPipelineNameCapacityHint = Math.Max(1, pipelineNameByIdentity.Count);
-                recordingScratch.RecordMeshDrawSlotCapacityHint = Math.Max(1, meshDrawSlotsByRenderer.Count);
+                recordingScratch.RecordMeshDrawSlotCapacityHint = Math.Max(1, meshDrawSlotsByRendererFamily.Count);
                 recordingScratch.RecordFboLayoutCapacityHint = Math.Max(1, fboLayoutTracking.Count);
 
                 EndActiveRenderPass(finalClose: true);

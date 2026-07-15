@@ -118,6 +118,42 @@ internal sealed class VulkanStrictSpsFailureBoundaryTests
         release.ShouldBeGreaterThan(invalidateChains);
     }
 
+    [Test]
+    public void StrictSpsTransferPublish_RegistersRuntimeOwnedSwapchainImages()
+    {
+        string openXr = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+
+        int prepare = openXr.IndexOf("private bool TryPrepareStereoLayerBlit(", StringComparison.Ordinal);
+        int leftRegistration = openXr.IndexOf(
+            "leftDestinationImage.Handle",
+            prepare,
+            StringComparison.Ordinal);
+        int leftExternalOwnership = openXr.IndexOf(
+            "externallyOwned: true",
+            leftRegistration,
+            StringComparison.Ordinal);
+        int rightRegistration = openXr.IndexOf(
+            "rightDestinationImage.Handle",
+            leftExternalOwnership,
+            StringComparison.Ordinal);
+        int rightExternalOwnership = openXr.IndexOf(
+            "externallyOwned: true",
+            rightRegistration,
+            StringComparison.Ordinal);
+        int sourceLookup = openXr.IndexOf(
+            "GetOrCreateAPIRenderObject(sourceTexture, generateNow: true)",
+            rightExternalOwnership,
+            StringComparison.Ordinal);
+
+        prepare.ShouldBeGreaterThanOrEqualTo(0);
+        leftRegistration.ShouldBeGreaterThan(prepare);
+        leftExternalOwnership.ShouldBeGreaterThan(leftRegistration);
+        rightRegistration.ShouldBeGreaterThan(leftExternalOwnership);
+        rightExternalOwnership.ShouldBeGreaterThan(rightRegistration);
+        sourceLookup.ShouldBeGreaterThan(rightExternalOwnership);
+    }
+
     private static string ReadWorkspaceFile(string relativePath)
     {
         DirectoryInfo? directory = new(AppContext.BaseDirectory);

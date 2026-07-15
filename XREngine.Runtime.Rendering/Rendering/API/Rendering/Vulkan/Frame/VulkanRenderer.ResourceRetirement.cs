@@ -81,16 +81,6 @@ namespace XREngine.Rendering.Vulkan
 
         private readonly HashSet<ulong> _retiredFramebufferHandlesAll = new();
 
-        // =========== Descriptor Pool Retirement ===========
-
-        /// <summary>
-        /// Per-frame-slot retirement queue for descriptor pools whose descriptor
-        /// sets may still be referenced by previously recorded command buffers.
-        /// </summary>
-        private readonly record struct RetiredDescriptorPool(
-            DescriptorPool DescriptorPool,
-            VulkanRetirementTicket Ticket);
-
         private readonly List<RetiredDescriptorPool>[] _retiredDescriptorPools =
             [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
 
@@ -98,11 +88,6 @@ namespace XREngine.Rendering.Vulkan
             [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
 
         private readonly HashSet<ulong> _retiredDescriptorPoolHandlesAll = new();
-
-        private readonly record struct RetiredDescriptorSet(
-            DescriptorPool DescriptorPool,
-            DescriptorSet DescriptorSet,
-            VulkanRetirementTicket Ticket);
 
         private readonly List<RetiredDescriptorSet>[] _retiredDescriptorSets =
             [new(), new()];
@@ -112,17 +97,6 @@ namespace XREngine.Rendering.Vulkan
 
         private readonly HashSet<ulong> _retiredDescriptorSetHandlesAll = new();
 
-        // =========== Pipeline Retirement ===========
-
-        /// <summary>
-        /// Per-frame-slot retirement queue for pipelines whose handles may still
-        /// be referenced by command buffers recorded earlier in the same frame or
-        /// by previously submitted frame slots.
-        /// </summary>
-        private readonly record struct RetiredPipeline(
-            Pipeline Pipeline,
-            VulkanRetirementTicket Ticket);
-
         private readonly List<RetiredPipeline>[] _retiredPipelines =
             [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
 
@@ -130,10 +104,6 @@ namespace XREngine.Rendering.Vulkan
             [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
 
         private readonly HashSet<ulong> _retiredPipelineHandlesAll = new();
-
-        private readonly record struct RetiredQueryPool(
-            QueryPool QueryPool,
-            VulkanRetirementTicket Ticket);
 
         private readonly List<RetiredQueryPool>[] _retiredQueryPools =
             [new(), new()];
@@ -143,11 +113,6 @@ namespace XREngine.Rendering.Vulkan
 
         private readonly HashSet<ulong> _retiredQueryPoolHandlesAll = new();
 
-        private readonly record struct RetiredCommandBuffer(
-            CommandPool CommandPool,
-            CommandBuffer CommandBuffer,
-            VulkanRetirementTicket Ticket);
-
         private readonly List<RetiredCommandBuffer>[] _retiredCommandBuffers =
             [new(), new()];
 
@@ -155,10 +120,6 @@ namespace XREngine.Rendering.Vulkan
             [new(), new()];
 
         private readonly HashSet<ulong> _retiredCommandBufferHandlesAll = new();
-
-        private readonly record struct RetiredBufferView(
-            BufferView BufferView,
-            VulkanRetirementTicket Ticket);
 
         private readonly List<RetiredBufferView>[] _retiredBufferViews =
             [new(), new()];
@@ -952,26 +913,6 @@ namespace XREngine.Rendering.Vulkan
                     pooledBuffers);
             }
         }
-
-        /// <summary>
-        /// Holds a complete set of Vulkan handles that were owned by a
-        /// <see cref="VkImageBackedTexture{T}"/> or <see cref="VulkanPhysicalImageGroup"/>
-        /// and need deferred destruction.  Kept alive until the frame slot's
-        /// timeline fence signals that no in-flight command buffer references them.
-        /// </summary>
-        internal readonly record struct RetiredImageResources(
-            Image Image,
-            DeviceMemory Memory,
-            ImageView PrimaryView,
-            ImageView[] AttachmentViews,
-            Sampler Sampler,
-            long AllocatedVRAMBytes);
-
-        private readonly record struct RetiredImageResourceEntry(
-            RetiredImageResources Resources,
-            VulkanRetirementTicket Ticket,
-            ulong ImageGeneration,
-            ulong SamplerGeneration);
 
         /// <summary>
         /// Per-frame-slot retirement queue for image resources that cannot be

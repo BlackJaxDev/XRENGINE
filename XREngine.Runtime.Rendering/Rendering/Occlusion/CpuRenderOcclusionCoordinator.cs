@@ -604,6 +604,57 @@ namespace XREngine.Rendering.Occlusion
             }
         }
 
+        /// <summary>
+        /// Reserves one bounded visible-demotion query at the mesh's original draw
+        /// position. Visible queries must bracket the exact contributing geometry;
+        /// deferring that draw would perturb equal-depth ordering, while replacing it
+        /// with an AABB would not prove that the visible mesh itself passed depth.
+        /// </summary>
+        public bool TryScheduleVisibleDrawProbe(
+            int renderPass,
+            XRCamera? camera,
+            uint sourceCommandIndex,
+            CpuOcclusionProbeRequest request,
+            OcclusionViewOwnership ownership)
+        {
+            if (!request.Requested || request.RecoveryProbe)
+                return false;
+
+            lock (_lock)
+            {
+                PassState state = GetPassStateForOwnership(renderPass, camera, ownership);
+                RefreshBudgets(state);
+
+                int maxQueries = RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMaxQueriesPerFrame;
+                if (state.ForceVisibleThisFrame || maxQueries <= 0)
+                {
+                    OcclusionTelemetry.RecordCpuBudgetSkipped(request.Reason);
+                    state.Telemetry.RecordBudgetSkipped(1);
+                    return false;
+                }
+
+                ComputeBudgets(state.MotionTier, maxQueries, out int visibleBudget, out _);
+                if (state.VisibleBudgetUsed >= visibleBudget)
+                {
+                    OcclusionTelemetry.RecordCpuBudgetSkipped(request.Reason);
+                    state.Telemetry.RecordBudgetSkipped(1);
+                    return false;
+                }
+
+                QueryState queryState = GetOrCreateQueryState(state, sourceCommandIndex);
+                ulong frameId = state.FrameEpoch;
+                if (queryState.QueryPending || queryState.QueryIssuedFrameId == frameId)
+                {
+                    OcclusionTelemetry.RecordCpuBudgetSkipped(request.Reason);
+                    state.Telemetry.RecordBudgetSkipped(1);
+                    return false;
+                }
+
+                state.VisibleBudgetUsed++;
+                return true;
+            }
+        }
+
         public void BeginQuery(int renderPass, uint sourceCommandIndex)
             => BeginQuery(renderPass, null, sourceCommandIndex);
 

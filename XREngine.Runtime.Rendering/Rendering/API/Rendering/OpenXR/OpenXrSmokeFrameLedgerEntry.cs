@@ -70,6 +70,12 @@ public struct OpenXrSmokeFrameLedgerEntry
     public int MeshFrameDataSubmittedLeases { get; set; }
     public int MeshFrameDataActiveGenerationCount { get; set; }
     public int MeshFrameDataLeaseRetainedGenerationCount { get; set; }
+    public ulong MeshFrameDataManifestGeneration { get; set; }
+    public long MeshFrameDataManifestPublicationCount { get; set; }
+    public long MeshFrameDataManifestLateRegistrationCount { get; set; }
+    public int MeshFrameDataManifestRendererCount { get; set; }
+    public int MeshFrameDataManifestFamilyCount { get; set; }
+    public bool MeshFrameDataManifestIsSealed { get; set; }
     public int MeshDescriptorAllocationVariants { get; set; }
     public int MeshDescriptorPools { get; set; }
     public int MeshDescriptorAllocatedSets { get; set; }

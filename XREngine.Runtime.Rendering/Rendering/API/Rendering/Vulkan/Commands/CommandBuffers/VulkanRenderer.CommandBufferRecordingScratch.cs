@@ -20,6 +20,17 @@ namespace XREngine.Rendering.Vulkan
             public Dictionary<int, int> SwapchainWriterOpIndexByPipeline { get; } = new();
             public Dictionary<int, string> PipelineNameByIdentity { get; } = new();
             public Dictionary<VkMeshRenderer, int> MeshDrawSlotsByRenderer { get; } = new(ReferenceEqualityComparer.Instance);
+            public Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> MeshDrawSlotsByRendererFamily { get; } =
+                new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+            public Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> PrimaryMeshDrawSlotsByRendererFamily { get; } =
+                new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+            public Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> OpenXrMeshDrawSlotsByRendererFamily { get; } =
+                new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+            public Dictionary<VulkanMeshFrameDataFamilyKey, int> MeshFrameDataFamilyStrides { get; } = [];
+            public Dictionary<VulkanMeshFrameDataFamilyKey, int> ReusableMeshFrameDataFamilyBases { get; } = [];
+            public Dictionary<VulkanMeshFrameDataFamilyKey, int> PrimaryMeshFrameDataFamilyBases { get; } = [];
+            public Dictionary<VulkanMeshFrameDataFamilyKey, int> DynamicUiMeshFrameDataFamilyBases { get; } = [];
+            public Dictionary<VulkanMeshFrameDataFamilyKey, int> OpenXrMeshFrameDataFamilyBases { get; } = [];
             public VulkanMeshFrameDataReservationManifest MeshFrameDataManifest { get; } = new();
             public Dictionary<XRFrameBuffer, ImageLayout[]> FboLayoutTracking { get; } = new(ReferenceEqualityComparer.Instance);
             public List<KeyValuePair<int, int>> SwapchainWriterCountSort { get; } = new();

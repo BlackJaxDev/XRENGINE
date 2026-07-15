@@ -148,6 +148,12 @@ namespace XREngine
                     private static int _vulkanMeshFrameDataSubmittedLeases;
                     private static int _vulkanMeshFrameDataActiveGenerationCount;
                     private static int _vulkanMeshFrameDataLeaseRetainedGenerationCount;
+                    private static long _vulkanMeshFrameDataManifestGeneration;
+                    private static long _vulkanMeshFrameDataManifestPublicationCount;
+                    private static long _vulkanMeshFrameDataManifestLateRegistrationCount;
+                    private static int _vulkanMeshFrameDataManifestRendererCount;
+                    private static int _vulkanMeshFrameDataManifestFamilyCount;
+                    private static int _vulkanMeshFrameDataManifestIsSealed;
                     private static int _vulkanMeshDescriptorAllocationVariants;
                     private static int _vulkanMeshDescriptorPools;
                     private static int _vulkanMeshDescriptorAllocatedSets;
@@ -459,6 +465,12 @@ namespace XREngine
                     public static int VulkanMeshFrameDataSubmittedLeases => Volatile.Read(ref _vulkanMeshFrameDataSubmittedLeases);
                     public static int VulkanMeshFrameDataActiveGenerationCount => Volatile.Read(ref _vulkanMeshFrameDataActiveGenerationCount);
                     public static int VulkanMeshFrameDataLeaseRetainedGenerationCount => Volatile.Read(ref _vulkanMeshFrameDataLeaseRetainedGenerationCount);
+                    public static ulong VulkanMeshFrameDataManifestGeneration => unchecked((ulong)Math.Max(Volatile.Read(ref _vulkanMeshFrameDataManifestGeneration), 0L));
+                    public static long VulkanMeshFrameDataManifestPublicationCount => Volatile.Read(ref _vulkanMeshFrameDataManifestPublicationCount);
+                    public static long VulkanMeshFrameDataManifestLateRegistrationCount => Volatile.Read(ref _vulkanMeshFrameDataManifestLateRegistrationCount);
+                    public static int VulkanMeshFrameDataManifestRendererCount => Volatile.Read(ref _vulkanMeshFrameDataManifestRendererCount);
+                    public static int VulkanMeshFrameDataManifestFamilyCount => Volatile.Read(ref _vulkanMeshFrameDataManifestFamilyCount);
+                    public static bool VulkanMeshFrameDataManifestIsSealed => Volatile.Read(ref _vulkanMeshFrameDataManifestIsSealed) != 0;
                     public static int VulkanMeshDescriptorAllocationVariants => Volatile.Read(ref _vulkanMeshDescriptorAllocationVariants);
                     public static int VulkanMeshDescriptorPools => Volatile.Read(ref _vulkanMeshDescriptorPools);
                     public static int VulkanMeshDescriptorAllocatedSets => Volatile.Read(ref _vulkanMeshDescriptorAllocatedSets);
@@ -699,6 +711,25 @@ namespace XREngine
                         UpdateHighWater(
                             ref _vulkanMeshFrameDataLeaseHighWater,
                             Math.Max(recordingLeases, 0) + Math.Max(cachedLeases, 0) + Math.Max(submittedLeases, 0));
+                    }
+
+                    public static void RecordVulkanFrameWideMeshFrameDataManifestGauges(
+                        ulong generation,
+                        long publicationCount,
+                        long lateRegistrationCount,
+                        int rendererCount,
+                        int familyCount,
+                        bool isSealed)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        Volatile.Write(ref _vulkanMeshFrameDataManifestGeneration, unchecked((long)Math.Min(generation, (ulong)long.MaxValue)));
+                        Volatile.Write(ref _vulkanMeshFrameDataManifestPublicationCount, Math.Max(publicationCount, 0L));
+                        Volatile.Write(ref _vulkanMeshFrameDataManifestLateRegistrationCount, Math.Max(lateRegistrationCount, 0L));
+                        Volatile.Write(ref _vulkanMeshFrameDataManifestRendererCount, Math.Max(rendererCount, 0));
+                        Volatile.Write(ref _vulkanMeshFrameDataManifestFamilyCount, Math.Max(familyCount, 0));
+                        Volatile.Write(ref _vulkanMeshFrameDataManifestIsSealed, isSealed ? 1 : 0);
                     }
 
                     public static void AdjustVulkanMeshDescriptorOwnership(

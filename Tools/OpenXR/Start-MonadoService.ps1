@@ -72,17 +72,46 @@ function Stop-OwnedService {
     }
 
     $processId = [int]$markerData.pid
-    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
-    if ($null -ne $process -and (Test-SameProcessStart -Process $process -StartedAtUtc ([string]$markerData.startedAtUtc))) {
-        Stop-Process -Id $processId -Force
-        $process.WaitForExit(5000)
-        Remove-Item -LiteralPath $Marker -Force -ErrorAction SilentlyContinue
-        [pscustomobject]@{ Stopped = $true; Pid = $processId; MarkerPath = $Marker }
-        return
+    $ownedStart = [DateTimeOffset]::Parse([string]$markerData.startedAtUtc).UtcDateTime
+    $ownedExecutable = [System.IO.Path]::GetFullPath([string]$markerData.serviceExe)
+    $stoppedProcessIds = [System.Collections.Generic.List[int]]::new()
+
+    # Some Monado Windows builds bootstrap the long-lived service in a second
+    # monado-service process and let the Start-Process child exit. The marker is
+    # still authoritative because startup first proved that no service existed.
+    # Stop every same-executable process created during that owned interval so a
+    # chained validation cohort cannot mistake the bootstrap child for an
+    # unrelated, unowned service.
+    foreach ($process in @(Get-Process -Name "monado-service" -ErrorAction SilentlyContinue)) {
+        $matchesMarkerProcess = $process.Id -eq $processId -and
+            (Test-SameProcessStart -Process $process -StartedAtUtc ([string]$markerData.startedAtUtc))
+        $matchesOwnedBootstrap = $false
+        try {
+            $processExecutable = [System.IO.Path]::GetFullPath([string]$process.Path)
+            $matchesOwnedBootstrap =
+                $process.StartTime.ToUniversalTime() -ge $ownedStart.AddSeconds(-5) -and
+                [string]::Equals($processExecutable, $ownedExecutable, [StringComparison]::OrdinalIgnoreCase)
+        }
+        catch {
+            $matchesOwnedBootstrap = $false
+        }
+
+        if (-not $matchesMarkerProcess -and -not $matchesOwnedBootstrap) {
+            continue
+        }
+
+        Stop-Process -Id $process.Id -Force
+        $null = $process.WaitForExit(5000)
+        $stoppedProcessIds.Add($process.Id)
     }
 
     Remove-Item -LiteralPath $Marker -Force -ErrorAction SilentlyContinue
-    [pscustomobject]@{ Stopped = $false; Reason = "Owned process was already gone or no longer matched the marker."; Pid = $processId; MarkerPath = $Marker }
+    if ($stoppedProcessIds.Count -gt 0) {
+        [pscustomobject]@{ Stopped = $true; Pids = @($stoppedProcessIds); MarkerPath = $Marker }
+        return
+    }
+
+    [pscustomobject]@{ Stopped = $false; Reason = "Owned service processes were already gone or no longer matched the marker."; Pid = $processId; MarkerPath = $Marker }
 }
 
 function Find-ServiceExe {

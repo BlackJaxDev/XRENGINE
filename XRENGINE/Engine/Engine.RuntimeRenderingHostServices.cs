@@ -1020,6 +1020,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RecordRenderVulkanMeshFrameDataGauges(int arenaChunkCount, long mappedBytes, long reservedBytes, int reservationCount, ulong generation, int recordingLeases, int cachedLeases, int submittedLeases, int activeGenerationCount, int leaseRetainedGenerationCount)
         => Engine.Rendering.Stats.Vulkan.RecordVulkanMeshFrameDataGauges(arenaChunkCount, mappedBytes, reservedBytes, reservationCount, generation, recordingLeases, cachedLeases, submittedLeases, activeGenerationCount, leaseRetainedGenerationCount);
 
+    public void RecordRenderVulkanFrameWideMeshFrameDataManifestGauges(ulong generation, long publicationCount, long lateRegistrationCount, int rendererCount, int familyCount, bool isSealed)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanFrameWideMeshFrameDataManifestGauges(generation, publicationCount, lateRegistrationCount, rendererCount, familyCount, isSealed);
+
     public void AdjustRenderVulkanMeshDescriptorOwnership(int allocationVariants, int pools, int allocatedSets, int reservedSets)
         => Engine.Rendering.Stats.Vulkan.AdjustVulkanMeshDescriptorOwnership(allocationVariants, pools, allocatedSets, reservedSets);
 
