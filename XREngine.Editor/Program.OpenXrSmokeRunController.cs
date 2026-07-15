@@ -405,8 +405,7 @@ internal partial class Program
                 if (!_sessionExitRequested)
                 {
                     _preTeardownSmokeSummary ??= api.CreateSmokeSummary(TryGetLogDirectory());
-                    if (_strictSpsBoundaryCaptureLedger.Length == 0)
-                        _strictSpsBoundaryCaptureLedger = api.GetStrictSpsBoundaryCaptureLedger();
+                    _strictSpsBoundaryCaptureLedger = api.GetStrictSpsBoundaryCaptureLedger();
                     _sessionExitRequested = true;
                     _sessionExitDeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(5);
                     api.RequestSmokeSessionExit();
@@ -551,6 +550,17 @@ internal partial class Program
                     _currentOutputScratch,
                     currentOutputCount,
                     renderFrameId);
+                CountCurrentOpenXrOutputEvents(
+                    _currentOutputScratch,
+                    currentOutputCount,
+                    renderFrameId,
+                    out int currentOutputEvents,
+                    out int currentCollectEvents,
+                    out int currentSwapEvents,
+                    out int currentRenderEvents,
+                    out int currentSubmitEvents,
+                    out int currentOverlayEvents,
+                    out int currentPresentEvents);
                 bool validationLayersEnabled = Engine.Rendering.Stats.Vulkan.VulkanValidationLayersEnabled;
                 bool synchronizationValidationEnabled = Engine.Rendering.Stats.Vulkan.VulkanSynchronizationValidationEnabled;
                 int validationErrorCount = Engine.Rendering.Stats.Vulkan.VulkanValidationErrorCount;
@@ -656,6 +666,30 @@ internal partial class Program
                     RetiredResourceCount = retiredResourceCount,
                     LifetimeLiveResourceCount = Engine.Rendering.Stats.Vulkan.VulkanLifetimeLiveResourceCount,
                     TrackedDescriptorSetCount = Engine.Rendering.Stats.Vulkan.VulkanTrackedDescriptorSetCount,
+                    LifetimePendingRetirementCount = Engine.Rendering.Stats.Vulkan.VulkanLifetimePendingRetirementCount,
+                    LifetimeOldestPendingRetirementAgeMilliseconds = Engine.Rendering.Stats.Vulkan.VulkanLifetimeOldestPendingRetirementAgeMilliseconds,
+                    MeshFrameDataArenaChunkCount = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataArenaChunkCount,
+                    MeshFrameDataMappedBytes = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataMappedBytes,
+                    MeshFrameDataReservedBytes = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataReservedBytes,
+                    MeshFrameDataReservationCount = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataReservationCount,
+                    MeshFrameDataGeneration = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataGeneration,
+                    MeshFrameDataRecordingLeases = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataRecordingLeases,
+                    MeshFrameDataCachedLeases = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataCachedLeases,
+                    MeshFrameDataSubmittedLeases = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataSubmittedLeases,
+                    MeshFrameDataActiveGenerationCount = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataActiveGenerationCount,
+                    MeshFrameDataLeaseRetainedGenerationCount = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataLeaseRetainedGenerationCount,
+                    MeshDescriptorAllocationVariants = Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorAllocationVariants,
+                    MeshDescriptorPools = Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorPools,
+                    MeshDescriptorAllocatedSets = Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorAllocatedSets,
+                    MeshDescriptorReservedSets = Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorReservedSets,
+                    MeshFrameDataArenaChunkHighWater = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataArenaChunkHighWater,
+                    MeshFrameDataMappedBytesHighWater = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataMappedBytesHighWater,
+                    MeshFrameDataReservedBytesHighWater = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataReservedBytesHighWater,
+                    MeshFrameDataReservationHighWater = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataReservationHighWater,
+                    MeshFrameDataLeaseHighWater = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataLeaseHighWater,
+                    MeshDescriptorAllocationVariantHighWater = Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorAllocationVariantHighWater,
+                    MeshDescriptorPoolHighWater = Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorPoolHighWater,
+                    MeshDescriptorSetHighWater = Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorSetHighWater,
                     QueueSubmitCount = queueSubmitCount,
                     SubmitCompleted = projectionLayerSubmitted &&
                         queueSubmitCount > 0 &&
@@ -667,7 +701,18 @@ internal partial class Program
                     PlannerPruneCount = outputWork.PlannerPruneCount,
                     OutputManifestFrameId = outputManifest.FrameId,
                     OutputWorkloadIdentityHash = outputManifest.WorkloadIdentityHash,
-                    OutputRequestCount = outputWork.OutputRequestCount + currentOpenXrOutputCount,
+                    OutputRequestCount = outputWork.OutputRequestCount + CountNewCurrentOpenXrViewFamilies(
+                        outputs,
+                        _currentOutputScratch,
+                        currentOutputCount,
+                        renderFrameId),
+                    OutputEventCount = outputWork.OutputEventCount + currentOutputEvents,
+                    CollectEventCount = outputWork.CollectEventCount + currentCollectEvents,
+                    SwapEventCount = outputWork.SwapEventCount + currentSwapEvents,
+                    RenderEventCount = outputWork.RenderEventCount + currentRenderEvents,
+                    SubmitEventCount = outputWork.SubmitEventCount + currentSubmitEvents,
+                    OverlayEventCount = outputWork.OverlayEventCount + currentOverlayEvents,
+                    PresentEventCount = outputWork.PresentEventCount + currentPresentEvents,
                     PlannerStateCount = plannerStateCount,
                     CommandVariantCount = commandVariantCount,
                     ResourcePlanGeneration = resourcePlanGeneration,
@@ -774,44 +819,73 @@ internal partial class Program
                 }
 
                 Span<CpuOcclusionValidationEvidenceSnapshot> evidenceSnapshots = _occlusionEvidenceScratch;
-                int evidenceSnapshotCount = CpuOcclusionValidationEvidence.CopyFrame(
-                    renderFrameId,
-                    evidenceSnapshots);
-                for (int evidenceIndex = 0; evidenceIndex < evidenceSnapshotCount; evidenceIndex++)
-                {
-                    if (_occlusionEvidenceLedgerCount >= _occlusionEvidenceLedger.Length)
-                        break;
+                Span<ulong> evidenceFrameIds = stackalloc ulong[MaxOutputSnapshotsPerFrame + 2];
+                int evidenceFrameIdCount = 0;
 
-                    CpuOcclusionValidationEvidenceSnapshot evidence = evidenceSnapshots[evidenceIndex];
-                    OcclusionViewKey key = evidence.ViewKey;
-                    _occlusionEvidenceLedger[_occlusionEvidenceLedgerCount++] =
-                        new OpenXrSmokeOcclusionEvidenceLedgerEntry
-                        {
-                            RetainedIndex = _frameLedgerCount,
-                            RenderFrameId = evidence.FrameId,
-                            RenderPass = key.RenderPass,
-                            Scope = key.Scope.ToString(),
-                            ViewId = key.ViewId,
-                            PipelineInstanceId = key.PipelineInstanceId,
-                            OutputId = key.OutputId,
-                            PovId = key.PovId,
-                            CoverageMask = key.CoverageMask,
-                            RequiredCoverageMask = key.RequiredCoverageMask,
-                            DeclaredViewCount = key.DeclaredViewCount,
-                            ResourceGeneration = key.ResourceGeneration,
-                            StableQueryKey = evidence.StableQueryKey,
-                            Role = evidence.Role.ToString(),
-                            Mode = evidence.Mode.ToString(),
-                            CandidateObserved = evidence.CandidateObserved,
-                            Rendered = evidence.Rendered,
-                            Culled = evidence.Culled,
-                            OcclusionProofCoverageMask = evidence.OcclusionProofCoverageMask,
-                            HasDecision = evidence.HasDecision,
-                            Decision = evidence.Decision.ToString(),
-                        };
+                AddUniqueEvidenceFrameId(evidenceFrameIds, ref evidenceFrameIdCount, outputManifest.FrameId);
+                AddUniqueEvidenceFrameId(evidenceFrameIds, ref evidenceFrameIdCount, renderFrameId);
+                for (int outputIndex = 0; outputIndex < outputs.Length; outputIndex++)
+                    AddUniqueEvidenceFrameId(evidenceFrameIds, ref evidenceFrameIdCount, outputs[outputIndex].FrameId);
+                for (int outputIndex = 0; outputIndex < currentOutputCount; outputIndex++)
+                    AddUniqueEvidenceFrameId(evidenceFrameIds, ref evidenceFrameIdCount, _currentOutputScratch[outputIndex].FrameId);
+
+                for (int frameIndex = 0; frameIndex < evidenceFrameIdCount; frameIndex++)
+                {
+                    int evidenceSnapshotCount = CpuOcclusionValidationEvidence.CopyFrame(
+                        evidenceFrameIds[frameIndex],
+                        evidenceSnapshots);
+                    for (int evidenceIndex = 0; evidenceIndex < evidenceSnapshotCount; evidenceIndex++)
+                    {
+                        if (_occlusionEvidenceLedgerCount >= _occlusionEvidenceLedger.Length)
+                            break;
+
+                        CpuOcclusionValidationEvidenceSnapshot evidence = evidenceSnapshots[evidenceIndex];
+                        OcclusionViewKey key = evidence.ViewKey;
+                        _occlusionEvidenceLedger[_occlusionEvidenceLedgerCount++] =
+                            new OpenXrSmokeOcclusionEvidenceLedgerEntry
+                            {
+                                RetainedIndex = _frameLedgerCount,
+                                RenderFrameId = evidence.FrameId,
+                                RenderPass = key.RenderPass,
+                                Scope = key.Scope.ToString(),
+                                ViewId = key.ViewId,
+                                PipelineInstanceId = key.PipelineInstanceId,
+                                OutputId = key.OutputId,
+                                PovId = key.PovId,
+                                CoverageMask = key.CoverageMask,
+                                RequiredCoverageMask = key.RequiredCoverageMask,
+                                DeclaredViewCount = key.DeclaredViewCount,
+                                ResourceGeneration = key.ResourceGeneration,
+                                StableQueryKey = evidence.StableQueryKey,
+                                Role = evidence.Role.ToString(),
+                                Mode = evidence.Mode.ToString(),
+                                CandidateObserved = evidence.CandidateObserved,
+                                Rendered = evidence.Rendered,
+                                Culled = evidence.Culled,
+                                OcclusionProofCoverageMask = evidence.OcclusionProofCoverageMask,
+                                HasDecision = evidence.HasDecision,
+                                Decision = evidence.Decision.ToString(),
+                            };
+                    }
                 }
                 _frameLedgerCount++;
             }
+        }
+
+        private static void AddUniqueEvidenceFrameId(
+            Span<ulong> frameIds,
+            ref int frameIdCount,
+            ulong frameId)
+        {
+            if (frameId == 0UL)
+                return;
+            for (int i = 0; i < frameIdCount; i++)
+            {
+                if (frameIds[i] == frameId)
+                    return;
+            }
+            if (frameIdCount < frameIds.Length)
+                frameIds[frameIdCount++] = frameId;
         }
 
         private void AppendOutputLedgerEntry(
@@ -917,6 +991,88 @@ internal partial class Program
                     count++;
             }
             return count;
+        }
+
+        private static int CountNewCurrentOpenXrViewFamilies(
+            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] snapshottedOutputs,
+            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] currentOutputs,
+            int currentOutputCount,
+            ulong renderFrameId)
+        {
+            int count = 0;
+            for (int i = 0; i < currentOutputCount; i++)
+            {
+                ref readonly Engine.Rendering.Stats.FrameOutputEntrySnapshot candidate = ref currentOutputs[i];
+                if (!IsCurrentOpenXrOutput(in candidate, renderFrameId))
+                    continue;
+
+                ulong familyId = candidate.Request.ViewFamilyId != 0
+                    ? candidate.Request.ViewFamilyId
+                    : candidate.Request.OutputId;
+                bool alreadyCounted = false;
+                for (int previous = 0; previous < i; previous++)
+                {
+                    if (IsCurrentOpenXrOutput(in currentOutputs[previous], renderFrameId) &&
+                        (currentOutputs[previous].Request.ViewFamilyId != 0
+                            ? currentOutputs[previous].Request.ViewFamilyId
+                            : currentOutputs[previous].Request.OutputId) == familyId)
+                    {
+                        alreadyCounted = true;
+                        break;
+                    }
+                }
+                if (alreadyCounted)
+                    continue;
+
+                for (int previous = 0; previous < snapshottedOutputs.Length; previous++)
+                {
+                    if (snapshottedOutputs[previous].FrameId == renderFrameId &&
+                        (snapshottedOutputs[previous].Request.ViewFamilyId != 0
+                            ? snapshottedOutputs[previous].Request.ViewFamilyId
+                            : snapshottedOutputs[previous].Request.OutputId) == familyId)
+                    {
+                        alreadyCounted = true;
+                        break;
+                    }
+                }
+                if (!alreadyCounted)
+                    count++;
+            }
+            return count;
+        }
+
+        private static void CountCurrentOpenXrOutputEvents(
+            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs,
+            int outputCount,
+            ulong renderFrameId,
+            out int outputEvents,
+            out int collectEvents,
+            out int swapEvents,
+            out int renderEvents,
+            out int submitEvents,
+            out int overlayEvents,
+            out int presentEvents)
+        {
+            outputEvents = 0;
+            collectEvents = 0;
+            swapEvents = 0;
+            renderEvents = 0;
+            submitEvents = 0;
+            overlayEvents = 0;
+            presentEvents = 0;
+            for (int i = 0; i < outputCount; i++)
+            {
+                ref readonly Engine.Rendering.Stats.FrameOutputEntrySnapshot output = ref outputs[i];
+                if (!IsCurrentOpenXrOutput(in output, renderFrameId))
+                    continue;
+                outputEvents += output.OutputEventCount;
+                collectEvents += output.CollectEventCount;
+                swapEvents += output.SwapEventCount;
+                renderEvents += output.RenderEventCount;
+                submitEvents += output.SubmitEventCount;
+                overlayEvents += output.OverlayEventCount;
+                presentEvents += output.PresentEventCount;
+            }
         }
 
         private static bool HasSubmittedVrEyes(

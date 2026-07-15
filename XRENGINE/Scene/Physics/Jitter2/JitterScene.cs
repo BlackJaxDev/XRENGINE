@@ -8,7 +8,7 @@ using XREngine.Scene.Physics.Joints;
 using static Jitter2.Collision.DynamicTree;
 using Quaternion = System.Numerics.Quaternion;
 
-namespace XREngine.Rendering.Physics.Physx
+namespace XREngine.Rendering.Physics.Jitter
 {
     public class JitterScene : AbstractPhysicsScene
     {

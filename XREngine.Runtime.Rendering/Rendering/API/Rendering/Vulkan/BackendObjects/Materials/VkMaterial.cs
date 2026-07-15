@@ -136,35 +136,12 @@ namespace XREngine.Rendering.Vulkan
             /// </returns>
             public bool TryBindDescriptorSets(CommandBuffer commandBuffer, VkRenderProgram program, int frameIndex, uint firstSet = 0)
             {
-                if (program is null || !program.Link() || Renderer.DescriptorFrameSlotFrameCount <= 0)
-                    return false;
-
-                if (!TryEnsureState(program, out ProgramDescriptorState? state) || state is null)
-                    return false;
-
-                int resolvedFrame = Math.Clamp(frameIndex, 0, state.FrameCount - 1);
-
-                if (!UpdateUniformBuffers(state, resolvedFrame))
-                    return false;
-
-                ulong resourceFingerprint = ComputeResourceFingerprint(program);
-                if (state.ResourceFingerprint != resourceFingerprint)
-                    state.Dirty = true;
-
-                if ((state.Dirty || _materialDirty) && !UpdateDescriptorSets(state))
-                    return false;
-
-                state.ResourceFingerprint = resourceFingerprint;
-                state.Dirty = false;
-                _materialDirty = false;
-
-                DescriptorSet[] sets = state.DescriptorSets[resolvedFrame];
-                if (sets.Length == 0)
-                    return true;
+				if (!TryGetMaterialDescriptorSet(program, frameIndex, out DescriptorSet materialSet, out DescriptorHeapPushDataPayload? heapPayload))
+					return false;
 
                 if (Renderer.IsDescriptorHeapDrawBindingActive)
                 {
-                    if (!Renderer.TryPushDescriptorHeapProgramData(commandBuffer, program, state.DescriptorHeapPushData[resolvedFrame], out string heapReason))
+                    if (!Renderer.TryPushDescriptorHeapProgramData(commandBuffer, program, heapPayload, out string heapReason))
                     {
                         RecordDescriptorFailure(default, $"descriptor heap material push failed: {heapReason}");
                         return false;
@@ -173,15 +150,47 @@ namespace XREngine.Rendering.Vulkan
                     return true;
                 }
 
-                Renderer.BindDescriptorSetsTracked(
-                    commandBuffer,
-                    PipelineBindPoint.Graphics,
-                    program.PipelineLayout,
-                    firstSet,
-                    sets);
+				Renderer.BindDescriptorSetTracked(
+					commandBuffer,
+					PipelineBindPoint.Graphics,
+					program.PipelineLayout,
+					DescriptorSetMaterial,
+					materialSet);
 
                 return true;
             }
+
+			internal bool TryGetMaterialDescriptorSet(
+				VkRenderProgram program,
+				int frameIndex,
+				out DescriptorSet descriptorSet,
+				out DescriptorHeapPushDataPayload? heapPayload)
+			{
+				descriptorSet = default;
+				heapPayload = null;
+				if (program is null || !program.Link() || Renderer.DescriptorFrameSlotFrameCount <= 0 ||
+					!TryEnsureState(program, out ProgramDescriptorState? state) || state is null)
+				{
+					return false;
+				}
+
+				int resolvedFrame = Math.Clamp(frameIndex, 0, state.FrameCount - 1);
+				if (!UpdateUniformBuffers(state, resolvedFrame))
+					return false;
+
+				ulong resourceFingerprint = ComputeResourceFingerprint(program);
+				if (state.ResourceFingerprint != resourceFingerprint)
+					state.Dirty = true;
+				if ((state.Dirty || _materialDirty) && !UpdateDescriptorSets(state))
+					return false;
+
+				state.ResourceFingerprint = resourceFingerprint;
+				state.Dirty = false;
+				_materialDirty = false;
+				descriptorSet = state.DescriptorSets[resolvedFrame][DescriptorSetMaterial];
+				heapPayload = state.DescriptorHeapPushData[resolvedFrame];
+				return descriptorSet.Handle != 0 || Renderer.IsDescriptorHeapDrawBindingActive;
+			}
 
             #endregion
 
@@ -309,7 +318,7 @@ namespace XREngine.Rendering.Vulkan
 
                     int frameCount = Renderer.DescriptorFrameSlotFrameCount;
                     int setCount = program.DescriptorSetLayouts.Count;
-                    ulong fingerprint = ComputeSchemaFingerprint(program.DescriptorBindings, frameCount, setCount);
+                    ulong fingerprint = ComputeMaterialSchemaFingerprint(program.DescriptorBindings, frameCount, setCount);
                     uint key = program.BindingId;
 
                     if (_programStates.TryGetValue(key, out ProgramDescriptorState? existing) &&
@@ -356,7 +365,9 @@ namespace XREngine.Rendering.Vulkan
                     return false;
 
                 int setCount = program.DescriptorSetLayouts.Count;
-                IReadOnlyList<DescriptorBindingInfo> bindings = program.DescriptorBindings;
+				DescriptorBindingInfo[] bindings = program.DescriptorBindings
+					.Where(static binding => binding.Set == DescriptorSetMaterial)
+					.ToArray();
 
                 if (!CanHandleProgramBindings(program, bindings))
                     return false;
@@ -373,17 +384,18 @@ namespace XREngine.Rendering.Vulkan
                     return false;
 
                 DescriptorPool descriptorPool;
+                bool materialSetUsesUpdateAfterBind = program.DescriptorSetUsesUpdateAfterBind(DescriptorSetMaterial);
                 fixed (DescriptorPoolSize* poolSizesPtr = poolSizes)
                 {
                     DescriptorPoolCreateInfo poolInfo = new()
                     {
                         SType = StructureType.DescriptorPoolCreateInfo,
-                        Flags = program.DescriptorSetsRequireUpdateAfterBind
+                        Flags = materialSetUsesUpdateAfterBind
                             ? DescriptorPoolCreateFlags.UpdateAfterBindBit
                             : 0,
                         PoolSizeCount = (uint)poolSizes.Length,
                         PPoolSizes = poolSizesPtr,
-                        MaxSets = (uint)(setCount * frameCount),
+						MaxSets = (uint)frameCount,
                     };
 
                     if (Api!.CreateDescriptorPool(Device, ref poolInfo, null, out descriptorPool) != Result.Success)
@@ -395,25 +407,26 @@ namespace XREngine.Rendering.Vulkan
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolCreate();
                 }
 
-                DescriptorSetLayout[] layoutArray = [.. program.DescriptorSetLayouts];
-                uint[] variableDescriptorCounts = program.DescriptorSetsRequireVariableDescriptorCount
-                    ? VulkanBindlessMaterialDescriptors.BuildVariableDescriptorCounts(bindings, layoutArray.Length)
-                    : [];
+				DescriptorSetLayout materialLayout = program.DescriptorSetLayouts[(int)DescriptorSetMaterial];
+				uint[] variableDescriptorCounts = program.DescriptorSetsRequireVariableDescriptorCount
+					? VulkanBindlessMaterialDescriptors.BuildVariableDescriptorCounts(bindings, setCount)
+					: [];
                 DescriptorSet[][] descriptorSets = new DescriptorSet[frameCount][];
                 DescriptorHeapPushDataPayload[] descriptorHeapPushData = new DescriptorHeapPushDataPayload[frameCount];
                 for (int frame = 0; frame < frameCount; frame++)
                 {
                     DescriptorSet[] frameSets = new DescriptorSet[setCount];
 
-                    fixed (DescriptorSetLayout* layoutPtr = layoutArray)
-                    fixed (DescriptorSet* setPtr = frameSets)
-                    fixed (uint* variableDescriptorCountPtr = variableDescriptorCounts)
+					DescriptorSet materialSet = default;
+					uint variableDescriptorCount = variableDescriptorCounts.Length > DescriptorSetMaterial
+						? variableDescriptorCounts[DescriptorSetMaterial]
+						: 0u;
                     {
                         DescriptorSetVariableDescriptorCountAllocateInfo variableDescriptorCountInfo = new()
                         {
                             SType = StructureType.DescriptorSetVariableDescriptorCountAllocateInfo,
-                            DescriptorSetCount = (uint)layoutArray.Length,
-                            PDescriptorCounts = variableDescriptorCountPtr,
+							DescriptorSetCount = 1,
+							PDescriptorCounts = &variableDescriptorCount,
                         };
 
                         DescriptorSetAllocateInfo allocInfo = new()
@@ -421,24 +434,26 @@ namespace XREngine.Rendering.Vulkan
                             SType = StructureType.DescriptorSetAllocateInfo,
                             PNext = program.DescriptorSetsRequireVariableDescriptorCount ? &variableDescriptorCountInfo : null,
                             DescriptorPool = descriptorPool,
-                            DescriptorSetCount = (uint)setCount,
-                            PSetLayouts = layoutPtr,
-                        };
+							DescriptorSetCount = 1,
+							PSetLayouts = &materialLayout,
+						};
 
-                        if (Api!.AllocateDescriptorSets(Device, ref allocInfo, setPtr) != Result.Success)
+						if (Api!.AllocateDescriptorSets(Device, ref allocInfo, &materialSet) != Result.Success)
                         {
                             Renderer.RetireDescriptorPool(descriptorPool);
                             WarnOnce("Failed to allocate Vulkan descriptor sets for material.");
                             return false;
-                        }
+						}
                     }
+					frameSets[DescriptorSetMaterial] = materialSet;
 
-                    Renderer.SetDebugDescriptorSetNames(frameSets, $"Material.DescriptorSet.Frame{frame}");
-                    Renderer.RegisterVulkanDescriptorSets(
+                    Renderer.SetDebugDescriptorSetName(materialSet, $"Material.DescriptorSet.Frame{frame}.Set{DescriptorSetMaterial}");
+                    Renderer.RegisterVulkanDescriptorSet(
                         descriptorPool,
-                        frameSets,
-                        program.DescriptorSetsRequireUpdateAfterBind,
+						materialSet,
+                        materialSetUsesUpdateAfterBind,
                         $"Material.DescriptorSet.Frame{frame}",
+						DescriptorSetMaterial,
                         bindings);
                     Renderer.RecordVulkanDescriptorTableGeneration("MaterialDescriptorSets.Allocated");
                     descriptorSets[frame] = frameSets;
@@ -461,7 +476,7 @@ namespace XREngine.Rendering.Vulkan
                     HasMaterialParameterOrSamplerBindings = hasMaterialBindings,
                     FrameCount = frameCount,
                     SetCount = setCount,
-                    SchemaFingerprint = ComputeSchemaFingerprint(bindings, frameCount, setCount),
+					SchemaFingerprint = ComputeMaterialSchemaFingerprint(bindings, frameCount, setCount),
                     DescriptorPool = descriptorPool,
                     Dirty = true,
                 };
@@ -637,6 +652,26 @@ namespace XREngine.Rendering.Vulkan
 
                 return unchecked((ulong)hash.ToHashCode());
             }
+
+			private static ulong ComputeMaterialSchemaFingerprint(IReadOnlyList<DescriptorBindingInfo> bindings, int frameCount, int setCount)
+			{
+				HashCode hash = new();
+				hash.Add(frameCount);
+				hash.Add(setCount);
+				for (int i = 0; i < bindings.Count; i++)
+				{
+					DescriptorBindingInfo binding = bindings[i];
+					if (binding.Set != DescriptorSetMaterial)
+						continue;
+					hash.Add(binding.Set);
+					hash.Add(binding.Binding);
+					hash.Add((int)binding.DescriptorType);
+					hash.Add(binding.Count);
+					hash.Add((int)binding.StageFlags);
+					hash.Add(binding.Name);
+				}
+				return unchecked((ulong)hash.ToHashCode());
+			}
 
             private ulong ComputeResourceFingerprint(VkRenderProgram program)
             {

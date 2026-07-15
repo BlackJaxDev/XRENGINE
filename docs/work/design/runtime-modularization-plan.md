@@ -14,9 +14,10 @@ This is a design document for the refactor, not an implementation record.
 Implementation companions:
 
 - Phase 2 is complete and its implementation record has been retired from `docs/work`.
-- [Runtime Modularization Phase 3 TODO](../todo/runtime-modularization-phase3-todo.md) (physical code moves & XRENGINE deletion)
+- [Runtime Modularization Phase 3 TODO](../todo/runtime-modularization-phase3-todo.md) (remaining Runtime.Core carve-out and non-rendering prerequisites)
+- [Runtime Modularization Phase 4 TODO](../todo/runtime-modularization-phase4-todo.md) (remaining rendering move and rendering-boundary cleanup)
 
-> Status note (2026-04-20): Phases 0 through 2 of this refactor are already complete. This document now serves as the target-architecture and migration-rationale reference. Some "current state" sections below intentionally describe the pre-Phase-1 baseline and no longer match the repository. Use [Runtime Modularization Phase 3 TODO](../todo/runtime-modularization-phase3-todo.md) as the execution-status and next-slice source of truth.
+> Status note (2026-07-14): Phases 0 through 2 are complete. Much of the rendering and subsystem-adapter work originally assigned to later design phases landed early while dependencies were lowered. This document remains the target-architecture and migration-rationale reference; use the Phase 3 and Phase 4 todo documents above for current execution status. Some historical baseline sections below intentionally no longer match the repository.
 
 ## Why This Refactor Exists
 

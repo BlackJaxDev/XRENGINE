@@ -5,6 +5,8 @@
 // provides Vulkan format / index-type conversion utilities.
 // ──────────────────────────────────────────────────────────────────────────────
 
+using System.Collections.Generic;
+
 using Silk.NET.Vulkan;
 
 using XREngine;
@@ -31,8 +33,6 @@ public unsafe partial class VulkanRenderer
 					DestroyEngineUniformBufferArray(toDestroy);
 
 				_engineUniformBuffers.Remove(singleName);
-				while (_retainedEngineUniformBufferGenerations.TryTakeAny(singleName, out EngineUniformBuffer[] retained))
-					DestroyEngineUniformBufferArray(retained);
 				return;
 			}
 
@@ -40,8 +40,6 @@ public unsafe partial class VulkanRenderer
 				DestroyEngineUniformBufferArray(buffers);
 
 			_engineUniformBuffers.Clear();
-			while (_retainedEngineUniformBufferGenerations.TryTakeAny(out EngineUniformBuffer[] retained))
-				DestroyEngineUniformBufferArray(retained);
 		}
 
 		/// <summary>
@@ -56,8 +54,6 @@ public unsafe partial class VulkanRenderer
 					DestroyAutoUniformBufferArray(toDestroy);
 
 				_autoUniformBuffers.Remove(singleName);
-				while (_retainedAutoUniformBufferGenerations.TryTakeAny(singleName, out AutoUniformBuffer[] retained))
-					DestroyAutoUniformBufferArray(retained);
 				return;
 			}
 
@@ -65,30 +61,6 @@ public unsafe partial class VulkanRenderer
 				DestroyAutoUniformBufferArray(buffers);
 
 			_autoUniformBuffers.Clear();
-			while (_retainedAutoUniformBufferGenerations.TryTakeAny(out AutoUniformBuffer[] retained))
-				DestroyAutoUniformBufferArray(retained);
-		}
-
-		private void RetainEngineUniformBufferGeneration(string name, EngineUniformBuffer[] buffers)
-		{
-			if (buffers.Length == 0 || buffers[0].Buffer.Handle == 0 || buffers[0].MappedPtr == null)
-			{
-				DestroyEngineUniformBufferArray(buffers);
-				return;
-			}
-
-			_retainedEngineUniformBufferGenerations.Retain(name, buffers.Length, buffers[0].Size, buffers);
-		}
-
-		private void RetainAutoUniformBufferGeneration(string name, AutoUniformBuffer[] buffers)
-		{
-			if (buffers.Length == 0 || buffers[0].Buffer.Handle == 0 || buffers[0].MappedPtr == null)
-			{
-				DestroyAutoUniformBufferArray(buffers);
-				return;
-			}
-
-			_retainedAutoUniformBufferGenerations.Retain(name, buffers.Length, buffers[0].Size, buffers);
 		}
 
 		private void DestroyEngineUniformBufferArray(EngineUniformBuffer[] buffers)
@@ -139,12 +111,13 @@ public unsafe partial class VulkanRenderer
 			ulong activePoolHandle = _descriptorPool.Handle;
 			bool activePoolReleased = activePoolHandle == 0;
 
-			foreach (DescriptorAllocation allocation in _descriptorAllocations.Values)
+			foreach (KeyValuePair<DescriptorAllocationKey, DescriptorAllocation> pair in _descriptorAllocations)
 			{
+				DescriptorAllocation allocation = pair.Value;
 				if (allocation.Pool.Handle == activePoolHandle)
 					activePoolReleased = true;
 
-				ReleaseDescriptorPool(allocation.Pool, destroyPoolImmediately);
+				ReleaseDescriptorAllocationReference(pair.Key, allocation, destroyPoolImmediately);
 			}
 
 			_descriptorAllocations.Clear();
@@ -161,6 +134,18 @@ public unsafe partial class VulkanRenderer
 			_descriptorPool = default;
 		}
 
+		private void ReleaseDescriptorAllocationReference(
+			in DescriptorAllocationKey key,
+			DescriptorAllocation allocation,
+			bool destroyPoolImmediately = false)
+		{
+			if (!Renderer.ReleaseSharedMeshDescriptorAllocation(key, allocation))
+				return;
+
+			ReleaseDescriptorOwnershipTelemetry(allocation);
+			ReleaseDescriptorAllocationResources(allocation, destroyPoolImmediately);
+		}
+
 		private void ReleaseDescriptorPool(DescriptorPool descriptorPool, bool destroyImmediately = false)
 		{
 			if (descriptorPool.Handle == 0)
@@ -173,6 +158,23 @@ public unsafe partial class VulkanRenderer
 			}
 
 			Renderer.RetireDescriptorPool(descriptorPool);
+		}
+
+		private void ReleaseDescriptorAllocationResources(
+			DescriptorAllocation allocation,
+			bool destroyPoolImmediately = false)
+		{
+			if (allocation.PoolSlabLease is not null)
+			{
+				Renderer.ReleaseMeshDescriptorPoolSlab(
+					allocation.PoolSlabLease,
+					allocation.Sets,
+					allocation.ActiveSetMask);
+				allocation.PoolSlabLease = null;
+				return;
+			}
+
+			ReleaseDescriptorPool(allocation.Pool, destroyPoolImmediately);
 		}
 
 		/// <summary>Emits a Vulkan warning message only on the first occurrence of a given message.</summary>

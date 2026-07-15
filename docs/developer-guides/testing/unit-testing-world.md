@@ -72,7 +72,8 @@ You do not need to understand every property up front. These are the ones that u
 - `EditorType`: chooses the editor UI path used inside the test world
 - `Rendering.RenderBackend`: selects OpenGL or Vulkan for unit-test startup
 - `VR.Mode`: selects desktop, scene-only VR, Monado-backed OpenXR, OpenVR, or OpenXR startup
-- `AddPhysics`, `PhysicsBallCount`, `PhysicsChain`: enable physics-focused scenarios
+- `PhysicsBallCount`: controls the restitution-sphere count in `PhysicsTesting` and the lightweight ball count used by `AddPhysics` in the default world
+- `AddPhysics`, `PhysicsChain`: enable the lightweight default-world rigid-body fixture and character jiggle chain
 - `ModelsToImport`: imports test assets into the world at startup
 - `DynamicPointLightCount`, `DynamicSpotLightCount`, `DynamicLightSeed`: add repeatable animated local-light stress rigs
 - `ProceduralSky`, `ProceduralSkyAutoCycle`, `ProceduralSkyTimeOfDay`: enable the dynamic sky and optionally lock it to a deterministic sun position
@@ -97,8 +98,33 @@ Examples visible in the generated file include:
 - `MathIntersections`
 - `MeshEditing`
 - `UberShader`
-- `PhysxTesting`
+- `PhysicsTesting`
 - `NetworkingPose`
+
+`PhysxTesting` remains accepted as a legacy alias for `PhysicsTesting` so existing local settings continue to launch the same world.
+
+### Test rigid bodies, joints, and character controllers
+
+Set the dedicated world and choose the backend to exercise:
+
+```jsonc
+{
+  "WorldKind": "PhysicsTesting",
+  "PhysicsAPI": "Jolt",
+  "PhysicsBallCount": 10,
+  "Locomotion": true,
+  "RenderPhysicsDebug": true
+}
+```
+
+`PhysicsTesting` builds deterministic, named fixture zones for:
+
+- static floors, walls, walkable and steep ramps, steps, and a crouch-height tunnel
+- dynamic box stacks, restitution-varied spheres, a capsule, a compound collider, a heavy body, and a fast CCD projectile
+- fixed, distance, hinge, prismatic, spherical, and D6 joints, including limits and drives where supported
+- character-controller step offset, slope rejection, side collision, crouching clearance, and moving-ground behavior
+
+The desktop character pawn is the interactive controller fixture when `Locomotion` is enabled. Fixture and zone names are stable so MCP scripts and automated tests can locate them. Use `PhysicsAPI` to run the same authored scene with `PhysX` or `Jolt`; unsupported backend capabilities should remain visible in diagnostics rather than silently changing the scene.
 
 ### Test model import
 

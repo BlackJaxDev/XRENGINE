@@ -2,7 +2,7 @@
 
 Last Updated: 2026-07-14
 Owner: Rendering
-Status: Phase 5.2.4b Correctness Remediation Gate Open; Phase 5.2.5 Blocked
+Status: Phase 5.2.4b Live Closeout And Phase 5.2.4c Settled-Workload Proof Open; Phase 5.2.5 Blocked
 Execution: Current worktree only; do not create or switch branches for this effort.
 
 ## Goal
@@ -346,6 +346,35 @@ in `exact-subnative-occlusion-off-final6`, `exact-subnative-enabled-final4`, and
 left unchecked: create/update the tracked validation JSON, then check the final
 all-criteria gate.
 
+#### 2026-07-14 current-worktree regression hold
+
+Do not promote the earlier 300-frame cohort over the current binary without a
+new validation pass. A post-closeout investigation found and fixed two active
+correctness regressions: clean primary reuse did not advance CPU-query frame
+operations, and OpenXR frame operations could retain generated shadow,
+post-process descriptor, and framebuffer resources from a previous output's
+physical plan. The latter caused rejected eye submissions and the observed
+black/rendered Monado flicker.
+
+The final short current-binary smoke recorded zero submission rejections, eight
+successful strict-SPS submissions, no sequential fallback, and projection
+layers in every retained frame. A desktop-only run proved useful current-view
+CPU-query culling (32-52 of 46-76 tested meshes culled, versus all 393 rendered
+with culling disabled). Preserve the cause, fixes, performance measurements,
+and rejected per-draw command-chain experiment in the
+[CPU-query/Monado regression investigation](../../investigations/rendering/vulkan-cpu-query-monado-regressions-2026-07-14.md).
+
+Throughput is not closed. `FullIndependentRender` produced up to 17 output
+ledger entries per retained frame while rendering desktop preview, main desktop,
+and true-SPS eyes. The worst retained samples reached 26,664 tracked descriptor
+sets and 42,868 live resource records even though measured GPU work remained
+roughly 1.8-22.8 ms. This is CPU/output-plan duplication and allocation pressure,
+not a reason to disable `CpuQueryAsync` or silently fall back from SPS. Phase
+5.2.4c owns the immediate mesh frame-data and descriptor-ownership remediation;
+5.2.5-5.2.7 own the general render-plan/transient arena,
+shared-snapshot/view-family, and deadline-scheduler solution after the current
+correctness regression hold passes.
+
 ##### Durable strict-SPS failure evidence
 
 Captured 2026-07-13 22:42:49 UTC with matrix schema 1. The aggregate result was
@@ -581,6 +610,19 @@ mono-reference/TSR-correctness failures rather than missing temporal bindings.
 
 #### 5.2.4b.6 - Close The Live Correctness Gate
 
+- [ ] Re-run the current binary after the 2026-07-14 query-refresh and active-
+  plan rebasing fixes. Require zero retired-resource/validation submission
+  rejections, visually continuous desktop and both-eye output, and valid strict-
+  SPS projection layers throughout the retained window.
+- [ ] Prove sustained nonzero query submission, resolution, and valid culling
+  independently for the main desktop and true-SPS `OcclusionViewKey` instances
+  under `FullIndependentRender`; the desktop-only diagnostic is necessary but
+  is not sufficient for this combined-output gate.
+- [ ] Make output telemetry distinguish logical render requests from manifest,
+  command-buffer, publish, overlay, and present events; remove duplicate request
+  accounting and require bounded output, descriptor, resource, and command-
+  buffer high-water marks during the current-binary smoke.
+
 - [x] Add a deterministic Monado validator with warmup followed by exactly 300
   retained frames using Vulkan dynamic rendering, requested/effective
   `SinglePassStereo`, `EVrMirrorMode.FullIndependentRender`, bloom, TSR,
@@ -632,7 +674,238 @@ mono-reference/TSR-correctness failures rather than missing temporal bindings.
 - [x] Resource, descriptor, planner-state, and command-variant counts remain
   bounded with no positive steady-state drift. Visually inspect retained
   desktop and both-eye captures; profiler/log success alone is insufficient.
-- [ ] Only after every 5.2.4b checkbox above is complete may 5.2.5 begin.
+- [ ] Only after every 5.2.4b checkbox above is complete may 5.2.4c begin.
+
+### 5.2.4c - Bound Mesh Frame-Data And Descriptor Ownership
+
+This is a blocking throughput and lifetime-ownership gate before the general
+plan-and-arena work in 5.2.5. The indexed command-buffer image-access state
+removed the reverse historical scan that made debugger pauses repeatedly land
+in image-range matching, but it did not close the larger allocation problem.
+The current `VkMeshRenderer` path still sizes descriptor slots as descriptor
+frame slots multiplied by the largest draw-slot count seen by that renderer,
+retains superseded uniform-buffer generations until renderer destruction, and
+may keep up to 32 descriptor-allocation variants per renderer. Under the F5
+`FullIndependentRender` workload, the post-fix session still grew to 24,680
+tracked descriptor sets and 35,730 live tracked resources while later
+render-thread waits reached seconds.
+
+Do not close this gate by lowering the descriptor-variant cap alone, disabling
+`CpuQueryAsync`, disabling independent desktop rendering, falling back from
+strict SPS, or adding normal-path device-idle waits/force flushes. The required
+fix makes recording ownership explicit and makes steady-state storage scale
+with active frame/output families and unique material/pass bindings rather than
+the historical number of draws and capacity shapes.
+
+Implementation wrap-up (2026-07-14):
+
+- Replaced the per-renderer historical uniform-generation cache with five
+  renderer-owned, persistently mapped 32 MiB frame-slot arenas. Engine and auto
+  uniforms reserve stable aligned ranges and bind through dynamic offsets;
+  descriptor-set storage is no longer multiplied by the renderer's historical
+  draw-slot capacity.
+- Added pre-record reservation manifests for primary, dynamic-UI secondary,
+  command-chain secondary, indirect-secondary, and OpenXR paths. Capacity is
+  counted and prewarmed before `vkBeginCommandBuffer`; a late/unsealed request
+  is rejected instead of clamped or grown during recording.
+- Added exact command-buffer frame-data leases and wired recording, cached,
+  submission-timeline, invalidation, reset, and destruction ownership. A live
+  follow-up found that secondaries never cross the direct-submit gateway and
+  therefore retained recording leases. `EndCommandBufferTracked` now closes a
+  successful secondary recording into cached ownership and abandons a failed
+  recording. The immediate 8-frame proof reported zero recording leases on
+  every retained frame and reduced submit time from 29-57 ms to 0.6-0.8 ms.
+- Replaced renderer-local one-pool-per-variant ownership with exact shared
+  descriptor allocations and generation-owned 64-allocation pool slabs.
+  Descriptor keys are structural plus exact resource contents and view family;
+  compatible material descriptors are shared while output/pass resources stay
+  isolated. The startup probe reported 50 allocation variants, four pools, and
+  250 allocated sets before additional Sponza programs arrived; it did not run
+  long enough to establish a settled plateau.
+- Added bounded current/high-water telemetry for arena chunks/bytes,
+  reservations, lease states, descriptor variants/pools/sets, live lifetime
+  resources, and pending retirement. Output telemetry now separates two logical
+  requests from manifest/render/submit/overlay/present events (11 events in the
+  stable short samples) instead of counting every event as another render.
+- Replaced the command-local image-range history scan with an indexed
+  subresource state table, completed backing-image retirement for interned and
+  non-interned views, published local command dependencies before retirement,
+  and reset completed invalidated recordings before retirement drains. These
+  changes remove the debugger hot loop and the stale-view lifetime race.
+- Restored per-`FrameOpContext` resource-planner scope to reusable mesh and
+  indirect refresh/recording paths. A live six-frame probe recorded 162 CPU
+  query submissions, 151 resolutions, and 947 valid culls with zero validation
+  errors or submission rejections, but it did not yet prove independent
+  sustained desktop and SPS view-key work.
+- Focused Vulkan lifetime/command-chain tests passed 86/86 before the final
+  secondary-lease test additions; the editor then built with zero errors. The
+  final additions and the last logging change below still need a fresh build and
+  test run.
+- The first post-lease-fix live run completed 8/8 retained frames with zero
+  validation errors, zero submission rejection, true SPS submission, zero
+  pending retirement for seven samples, 27-45 ms total frames, and 1.3-2.1 ms
+  command recording. It was a startup probe, not the required settled 300-frame
+  acceptance cohort.
+- The subsequent 120-warmup/30-retained attempt timed out after 480 seconds at
+  95 completed frames, before the retained window. Its 79.8 MiB Vulkan log
+  contained 335,498 `VkBufferUploadQueue` lines because the Diagnostics GPU
+  profile implicitly enabled per-subrange upload logging. The final source edit
+  now requires explicit upload-stage or push-subdata tracing for those lines;
+  this edit is intentionally recorded as **not yet rebuilt or live-validated**.
+
+Remaining closeout work:
+
+- Build and rerun the focused tests after the final logging/lease changes.
+- Consolidate the command-stream-scoped pre-record manifests into the required
+  single frame-wide manifest before any output command buffer begins recording.
+  The current implementation seals each known recording path independently, so
+  5.2.4c.2's first checkbox remains open.
+- Run a settled current-binary F5 baseline and the exact occlusion-off plus
+  enabled 200-warmup/300-retained cohorts. The enabled cohort must prove
+  independent nonzero desktop and true-SPS query submission, resolution, and
+  culling, not only aggregate work.
+- Confirm cached command-buffer leases and lifetime/resource counts plateau
+  after Sponza import. The short run's recording leases were fixed, but cached
+  leases rose from 104 to 129 while command buffers were still warming and the
+  timed-out run never reached its retained window.
+- Preserve and visually inspect desktop and both-eye captures, publish the
+  tracked Phase 5.2.4b validation JSON, and confirm no black/stale frame,
+  descriptor/resource drift, multi-second stall, or shutdown-only noise is
+  being admitted into the live acceptance window.
+
+#### 5.2.4c.1 - Measure The Ownership Multipliers
+
+- [x] Add allocation-free counters, high-water marks, and bounded diagnostics
+  for active and lease-retained mesh uniform generations, mapped buffer count
+  and bytes, uniform arena chunks and used bytes, draw-slot reservations,
+  descriptor allocation variants, descriptor pools, allocated versus reserved
+  descriptor sets, and pending retirement. Attribute every value to program/
+  layout, material where applicable, output/view family, frame-data slot, and
+  plan generation without logging once per draw.
+- [x] Distinguish logical output requests from plan, command-buffer, publish,
+  overlay, and present events so duplicated ledger accounting cannot masquerade
+  as additional rendering work. Correlate actual draw counts with descriptor
+  and uniform growth for `MainViewport`, UI preview, shadows, scene captures,
+  and true SPS.
+- [ ] Capture a current-binary F5 baseline using the checked-in Unit Testing
+  World settings and preserve the time series from startup through settled
+  desktop/SPS rendering. Record draw-slot high-water changes, generation
+  publication/retirement, pool create/destroy/reset, descriptor-set count,
+  uniform-buffer count/bytes, lifetime live resources, retirement backlog,
+  command-record time, render-thread waits, query work, and output continuity.
+
+#### 5.2.4c.2 - Seal Frame-Data Capacity Before Recording
+
+- [ ] Build one frame-wide mesh frame-data reservation manifest before any
+  desktop, preview, capture, shadow, or OpenXR command buffer starts recording.
+  Assign stable frame-data slots by compatible output/view family and bounded
+  external-target variant, then count every use of each `VkMeshRenderer` in the
+  complete command streams.
+- [x] Publish and seal the required draw slots, aligned uniform bytes, and
+  descriptor capacity as one immutable generation. `EnsureUniformDrawSlotCapacity`
+  and equivalent helpers must not mutate capacity, dirty unrelated command
+  buffers, allocate Vulkan objects, or replace generations after the seal.
+- [x] Treat a late capacity miss as an explicit bounded replan/re-record result
+  before submission. Never resize shared mesh state midway through recording,
+  silently clamp to the last slot, or continue with a partially prepared
+  descriptor/uniform generation.
+- [x] Make OpenXR prewarm consume the same complete reservation manifest as
+  normal recording. It may populate the sealed generation, but it must not grow
+  renderer-global capacity or invalidate desktop/preview command buffers.
+
+#### 5.2.4c.3 - Replace Indefinite Retention With Generation Leases
+
+- [x] Add an explicit frame-data generation lease acquired before a command
+  buffer captures uniform buffers or descriptor sets. On successful submit,
+  transfer the recording lease to the exact queue timeline/completion ticket;
+  on recording failure, rejection, cache eviction, or abandoned output, release
+  it without waiting for global device idle.
+- [x] Keep a superseded generation alive only while a recording lease, cached
+  command variant, external ownership obligation, or submitted timeline ticket
+  references it. Retire the complete descriptor-pool/uniform generation after
+  the last reference and completion point; do not retain it merely because the
+  same capacity shape might be requested again.
+- [x] Remove or redesign the unbounded `VulkanUniformBufferGenerationCache` and
+  per-renderer 32-variant descriptor cache so their bounds derive from active
+  families, cached command variants, and frames in flight. An arbitrary smaller
+  LRU cap is not sufficient ownership proof.
+- [x] When replacing a generation, use exact reverse dependencies to invalidate
+  only command variants that captured it. Preserve unrelated desktop, eye,
+  preview, capture, and shadow variants and emit the owning output, command
+  buffer, generation, lease state, and retirement ticket for any rejection.
+- [x] Retire ready generations and their descriptor pools as units with bounded
+  per-frame work and backlog-aware draining. Capacity pressure may defer new
+  optional work, but it must not call `WaitForAllInFlightWork`, force-flush, or
+  create a multi-second retirement backlog.
+
+#### 5.2.4c.4 - Move Per-Draw Data Into Bounded Arenas
+
+- [x] Replace per-mesh/per-uniform-block Vulkan buffer generations with a small
+  number of persistently mapped, alignment-aware frame-data arena chunks owned
+  by the renderer frame slot and output/view-family generation. Draw preparation
+  writes into reserved ranges and publishes immutable offsets; it performs no
+  heap or Vulkan allocation after the manifest is sealed.
+- [x] Bind per-draw engine and auto-uniform data through Vulkan dynamic uniform
+  offsets or an indexed draw-data buffer. Arena overflow publishes a larger
+  generation at a legal pre-record boundary or defers the output; it never
+  reallocates an arena referenced by recorded or in-flight work.
+- [x] Separate descriptor lifetime tiers: frame/global bindings, output/pass
+  bindings for changing render targets and post-process inputs, stable material
+  bindings, and per-draw arena offsets/indices. A rotating desktop/OpenXR target
+  or mutable frame-source image must not clone otherwise compatible material
+  descriptor sets.
+- [x] Share compatible material descriptors across desktop and SPS families
+  while keeping view-dependent output/pass resources isolated. Encode and test
+  the exact compatibility proof; do not infer sharing from coincidentally equal
+  handles or frame indices.
+- [x] Allocate descriptor sets from generation-owned pool slabs and reset or
+  recycle a slab only after its last recording lease and timeline ticket are
+  complete. Remove the steady-state one-pool-per-mesh-allocation shape.
+
+#### 5.2.4c.5 - Prove Boundedness And Preserve Correctness
+
+- [x] Add deterministic tests for desktop/SPS alternation, at least three uses
+  of one renderer in a command stream, capacity growth between frames, a late
+  post-seal capacity request, recorded-but-not-submitted ownership, successful
+  lease transfer, aborted recording, cached-command eviction, and timeline-safe
+  arena/pool reuse.
+- [x] Replace the existing zero-steady-state-retirement cache expectation with
+  tests proving that obsolete generations retire after their exact owners
+  complete. Run at least 10,000 alternating capacity/output iterations and
+  require generation, buffer, pool, descriptor-set, and retirement-queue counts
+  to return to declared bounds without a global wait.
+- [x] Add structural tests proving descriptor-set count scales with unique
+  material/layout plus active output/pass variants and frame generations, not
+  draw submissions multiplied by outputs and frame/draw slots. Prove uniform
+  Vulkan buffer count scales with active arena chunks, not mesh renderers
+  multiplied by uniform blocks and retained capacities.
+- [ ] Re-run the current F5 Unit Testing World workload with Vulkan, Monado,
+  true SPS, `FullIndependentRender`, TSR/bloom, Sponza, UI preview, and
+  `CpuQueryAsync`. Preserve desktop and both-eye captures plus profiler/log
+  evidence from startup through a settled retained window.
+
+Acceptance criteria:
+
+- [ ] After warmup, per-frame mesh uniform Vulkan allocations, descriptor pool/
+  set allocations, generation replacements, and positive live-resource drift
+  are zero for an unchanged workload. Counts plateau at a declared bound derived
+  from active families, frames in flight, material/pass bindings, and at most
+  one published replacement generation per family.
+- [ ] No mesh descriptor/uniform preparation path performs work proportional to
+  historical accesses, retained generations, all renderer instances, or all
+  tracked descriptor sets. Command-record p95 remains stable as the retained
+  window grows, and F5 has no multi-second editor/render-thread stall.
+- [ ] No capacity growth or shared renderer mutation occurs after recording is
+  sealed. Every recorded-but-not-submitted, submitted, rejected, aborted, and
+  cached command buffer holds and releases the exact generation lease without a
+  premature retirement or indefinite retention.
+- [ ] Main desktop and true-SPS `OcclusionViewKey` instances independently
+  report sustained nonzero CPU-query submission, resolution, and valid culling.
+  Desktop and both-eye output remain visually continuous and nonblack.
+- [ ] The live gate has zero submission rejection, sequential fallback, global
+  invalidation fallback, normal-path device-idle wait/force flush, engine-owned
+  validation error, first-chance lifetime exception, or device loss.
+- [ ] Only after every 5.2.4c checkbox above is complete may 5.2.5 begin.
 
 ### 5.2.5 - Make Render Plans And Resource Arenas Versioned And Nonblocking
 

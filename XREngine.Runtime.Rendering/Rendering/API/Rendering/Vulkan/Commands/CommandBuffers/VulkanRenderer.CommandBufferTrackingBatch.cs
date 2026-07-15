@@ -10,12 +10,126 @@ public unsafe partial class VulkanRenderer
         ImageSubresourceRange Range,
         VulkanImageAccessState State);
 
+    internal sealed class VulkanCommandBufferImageAccessIndex(int initialCapacity = 32)
+    {
+        private readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> _states = new Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState>(initialCapacity);
+
+        public int Count => _states.Count;
+
+        public void Record(
+            ulong imageHandle,
+            in ImageSubresourceRange range,
+            in VulkanImageAccessState state)
+        {
+            uint levelCount = Math.Max(range.LevelCount, 1u);
+            uint layerCount = Math.Max(range.LayerCount, 1u);
+            for (uint mipOffset = 0; mipOffset < levelCount; mipOffset++)
+            {
+                uint mip = range.BaseMipLevel + mipOffset;
+                for (uint layerOffset = 0; layerOffset < layerCount; layerOffset++)
+                {
+                    uint layer = range.BaseArrayLayer + layerOffset;
+                    RecordAspect(imageHandle, mip, layer, range.AspectMask, ImageAspectFlags.ColorBit, state);
+                    RecordAspect(imageHandle, mip, layer, range.AspectMask, ImageAspectFlags.DepthBit, state);
+                    RecordAspect(imageHandle, mip, layer, range.AspectMask, ImageAspectFlags.StencilBit, state);
+                }
+            }
+        }
+
+        public bool TryGet(
+            ulong imageHandle,
+            in ImageSubresourceRange range,
+            out VulkanImageAccessState state)
+        {
+            VulkanImageAccessState? combined = null;
+            uint levelCount = Math.Max(range.LevelCount, 1u);
+            uint layerCount = Math.Max(range.LayerCount, 1u);
+            for (uint mipOffset = 0; mipOffset < levelCount; mipOffset++)
+            {
+                uint mip = range.BaseMipLevel + mipOffset;
+                for (uint layerOffset = 0; layerOffset < layerCount; layerOffset++)
+                {
+                    uint layer = range.BaseArrayLayer + layerOffset;
+                    if (!TryMergeAspect(imageHandle, mip, layer, range.AspectMask, ImageAspectFlags.ColorBit, ref combined) ||
+                        !TryMergeAspect(imageHandle, mip, layer, range.AspectMask, ImageAspectFlags.DepthBit, ref combined) ||
+                        !TryMergeAspect(imageHandle, mip, layer, range.AspectMask, ImageAspectFlags.StencilBit, ref combined))
+                    {
+                        state = VulkanImageAccessState.Undefined;
+                        return false;
+                    }
+                }
+            }
+
+            state = combined ?? VulkanImageAccessState.Undefined;
+            return combined.HasValue;
+        }
+
+        private void RecordAspect(
+            ulong imageHandle,
+            uint mip,
+            uint layer,
+            ImageAspectFlags rangeAspect,
+            ImageAspectFlags trackedAspect,
+            in VulkanImageAccessState state)
+        {
+            if ((rangeAspect & trackedAspect) == 0)
+                return;
+
+            _states[new VulkanTrackedImageSubresource(imageHandle, mip, layer, trackedAspect)] = state;
+        }
+
+        private bool TryMergeAspect(
+            ulong imageHandle,
+            uint mip,
+            uint layer,
+            ImageAspectFlags rangeAspect,
+            ImageAspectFlags trackedAspect,
+            ref VulkanImageAccessState? combined)
+        {
+            if ((rangeAspect & trackedAspect) == 0)
+                return true;
+
+            VulkanTrackedImageSubresource key = new(imageHandle, mip, layer, trackedAspect);
+            if (!_states.TryGetValue(key, out VulkanImageAccessState current) ||
+                current.Layout == ImageLayout.Undefined)
+                return false;
+
+            if (!combined.HasValue)
+            {
+                combined = current;
+                return true;
+            }
+
+            VulkanImageAccessState prior = combined.Value;
+            if (prior.Layout != current.Layout ||
+                (prior.QueueFamilyIndex != Vk.QueueFamilyIgnored &&
+                 current.QueueFamilyIndex != Vk.QueueFamilyIgnored &&
+                 prior.QueueFamilyIndex != current.QueueFamilyIndex))
+                return false;
+
+            combined = prior with
+            {
+                StageMask = prior.StageMask | current.StageMask,
+                AccessMask = prior.AccessMask | current.AccessMask,
+                QueueFamilyIndex = prior.QueueFamilyIndex != Vk.QueueFamilyIgnored
+                    ? prior.QueueFamilyIndex
+                    : current.QueueFamilyIndex,
+                ExpectedDescriptorLayout = prior.ExpectedDescriptorLayout == current.ExpectedDescriptorLayout
+                    ? prior.ExpectedDescriptorLayout
+                    : ImageLayout.Undefined,
+                Serial = Math.Max(prior.Serial, current.Serial),
+            };
+            return true;
+        }
+    }
+
     private sealed class VulkanCommandBufferTrackingBatch
     {
         public readonly HashSet<VulkanResourceLifetimeKey> Dependencies = new(64);
         public readonly Dictionary<ulong, ulong> ExpandedDescriptorGenerations = new(8);
         public readonly Dictionary<ulong, (ulong DescriptorGeneration, ulong LayoutVersion)> ValidatedDescriptorGenerations = new(8);
         public readonly List<VulkanImageAccessRangeDelta> ImageAccessDeltas = new(32);
+        public readonly VulkanCommandBufferImageAccessIndex LatestImageAccessStates = new(32);
         public ulong RecordingGeneration;
         public ulong LayoutVersion;
         public int DependencyBindCount;
@@ -25,6 +139,7 @@ public unsafe partial class VulkanRenderer
         public int ReportedDependencyBindCount;
         public int ReportedImageAccessWriteCount;
         public int QueuedSubmissionCount;
+        public bool IsRecording;
 
         public void RecordDependency(VulkanResourceLifetimeKey key)
         {
@@ -58,6 +173,7 @@ public unsafe partial class VulkanRenderer
         {
             ImageAccessWriteCount++;
             LayoutVersion++;
+            LatestImageAccessStates.Record(delta.ImageHandle, delta.Range, delta.State);
             if (ImageAccessDeltas.Count > PublishedImageDeltaCount)
             {
                 VulkanImageAccessRangeDelta previous = ImageAccessDeltas[^1];
@@ -153,6 +269,7 @@ public unsafe partial class VulkanRenderer
             _commandBufferTrackingBatches[handle] = new VulkanCommandBufferTrackingBatch
             {
                 RecordingGeneration = recordingGeneration,
+                IsRecording = true,
             };
         }
     }
@@ -296,37 +413,54 @@ public unsafe partial class VulkanRenderer
             {
                 return false;
             }
-            for (int i = batch.ImageAccessDeltas.Count - 1; i >= 0; i--)
-            {
-                VulkanImageAccessRangeDelta delta = batch.ImageAccessDeltas[i];
-                if (delta.ImageHandle != image.Handle || !Contains(delta.Range, range))
-                    continue;
-
-                state = delta.State;
-                return state.Layout != ImageLayout.Undefined;
-            }
-
-            return false;
+            return batch.LatestImageAccessStates.TryGet(image.Handle, range, out state);
         }
-    }
-
-    private static bool Contains(in ImageSubresourceRange outer, in ImageSubresourceRange inner)
-    {
-        uint outerLevels = Math.Max(outer.LevelCount, 1u);
-        uint outerLayers = Math.Max(outer.LayerCount, 1u);
-        uint innerLevels = Math.Max(inner.LevelCount, 1u);
-        uint innerLayers = Math.Max(inner.LayerCount, 1u);
-        return (outer.AspectMask & inner.AspectMask) == inner.AspectMask &&
-            inner.BaseMipLevel >= outer.BaseMipLevel &&
-            inner.BaseMipLevel + innerLevels <= outer.BaseMipLevel + outerLevels &&
-            inner.BaseArrayLayer >= outer.BaseArrayLayer &&
-            inner.BaseArrayLayer + innerLayers <= outer.BaseArrayLayer + outerLayers;
     }
 
     private void FlushCommandBufferTrackingBatch(CommandBuffer commandBuffer)
     {
         if (!TryFlushCommandBufferTrackingBatch(commandBuffer, out string failureReason))
             throw new InvalidOperationException(failureReason);
+    }
+
+    /// <summary>
+    /// Ends a recording and transfers any frame-data recording lease to the cached
+    /// command-buffer variant. Secondary command buffers are not submitted directly,
+    /// so waiting for the submission gateway to close their recording ownership would
+    /// retain one lease for every recorded secondary indefinitely.
+    /// </summary>
+    private Result EndCommandBufferTracked(CommandBuffer commandBuffer, bool cacheVariant = true)
+    {
+        Result result = Api!.EndCommandBuffer(commandBuffer);
+        string trackingFailure = string.Empty;
+        bool trackingPublished = result != Result.Success ||
+            TryFlushCommandBufferTrackingBatch(commandBuffer, out trackingFailure);
+
+        ulong handle = unchecked((ulong)commandBuffer.Handle);
+        if (handle == 0)
+            return result;
+
+        lock (_vulkanResourceLifetimeLock)
+        {
+            if (_commandBufferTrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
+            {
+                lock (batch)
+                    batch.IsRecording = false;
+            }
+
+            if (_vulkanCommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? lifetime))
+            {
+                if (result == Result.Success && trackingPublished)
+                    lifetime.FrameDataLease.CompleteRecording(cacheVariant);
+                else
+                    lifetime.FrameDataLease.AbandonRecording();
+            }
+        }
+
+        if (!trackingPublished)
+            throw new InvalidOperationException(trackingFailure);
+
+        return result;
     }
 
     private bool TryFlushCommandBufferTrackingBatch(CommandBuffer commandBuffer, out string failureReason)
@@ -389,5 +523,49 @@ public unsafe partial class VulkanRenderer
         batch.ReportedDependencyBindCount = batch.DependencyBindCount;
         batch.ReportedImageAccessWriteCount = batch.ImageAccessWriteCount;
         return true;
+    }
+
+    /// <summary>
+    /// Publishes any still-local command-buffer dependencies on a resource before that
+    /// resource crosses the retirement boundary. Recording batches deliberately defer
+    /// lifetime-index updates to avoid taking the global lifetime lock for every Vulkan
+    /// command. Destruction is the inverse, rare path and must close that publication
+    /// window before it captures retirement pins; otherwise a resource used earlier in
+    /// the command buffer can be destroyed while that command buffer is still recording.
+    /// </summary>
+    private void PublishCommandBufferTrackingDependenciesBeforeResourceRetirement(
+        VulkanResourceLifetimeKey resourceKey)
+    {
+        List<ulong>? pendingCommandBuffers = null;
+        foreach (KeyValuePair<ulong, VulkanCommandBufferTrackingBatch> pair in _commandBufferTrackingBatches)
+        {
+            VulkanCommandBufferTrackingBatch batch = pair.Value;
+            lock (batch)
+            {
+                if (batch.PublishedDependencyCount == batch.Dependencies.Count ||
+                    !batch.Dependencies.Contains(resourceKey))
+                {
+                    continue;
+                }
+
+                (pendingCommandBuffers ??= []).Add(pair.Key);
+            }
+        }
+
+        if (pendingCommandBuffers is null)
+            return;
+
+        for (int i = 0; i < pendingCommandBuffers.Count; i++)
+        {
+            CommandBuffer commandBuffer = new()
+            {
+                Handle = unchecked((nint)pendingCommandBuffers[i]),
+            };
+            if (!TryFlushCommandBufferTrackingBatch(commandBuffer, out string failureReason))
+            {
+                throw new InvalidOperationException(
+                    $"Cannot retire Vulkan resource {resourceKey} while command-buffer dependency publication failed: {failureReason}");
+            }
+        }
     }
 }

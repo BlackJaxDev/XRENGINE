@@ -109,6 +109,24 @@ public sealed class Phase524bCaptureReadinessTests
         deterministicMotionStart.ShouldBeGreaterThan(readinessGate);
         cadenceAdvance.ShouldBeGreaterThan(readinessGate);
         cadenceAdvance.ShouldBeGreaterThan(deterministicMotionStart);
+        source.ShouldContain("StrictSpsBoundaryMotionCaptureIntervalFrames = 3");
+
+        string commandSource = File.ReadAllText(Path.Combine(
+            FindWorkspaceRoot(),
+            "XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_CaptureFrame.cs"));
+        commandSource.ShouldContain("RequiredPhase524bBoundaryMotionIndex");
+        commandSource.ShouldContain("TryGetBoundaryCaptureMotionTick(out uint motionTick)");
+
+        string pipelineSource = File.ReadAllText(Path.Combine(
+            FindWorkspaceRoot(),
+            "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs"));
+        pipelineSource.ShouldContain("capture.RequiredPhase524bBoundaryMotionIndex = IsPhase524bValidationEnabled() ? 0 : -1;");
+        pipelineSource.ShouldContain("const int motionCaptureIntervalFrames = 3;");
+
+        string validatorSource = File.ReadAllText(Path.Combine(
+            FindWorkspaceRoot(),
+            "Tools/Validate-VulkanPhase524b.ps1"));
+        validatorSource.ShouldContain("$captureMotionIntervalFrames = 3");
     }
 
     private static string FindWorkspaceRoot()

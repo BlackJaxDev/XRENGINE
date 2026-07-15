@@ -184,11 +184,12 @@ public unsafe partial class VulkanRenderer
 
 			if (!CanReuseRecordedDescriptorSets(material, drawUniformSlot, programBindingSnapshot is not null, out string descriptorReason))
 			{
-				return SetPrepareResult(
-					false,
-					"DescriptorsPending",
-					$"Descriptor sets are not prewarmed for the captured indirect draw layout: {descriptorReason}",
-					out reason);
+				// This method is an allocation-free probe used immediately before the
+				// legal prewarm fallback. A cache miss is not a failed draw and must not
+				// publish a renderer-not-ready result (or its rate-limited stack trace).
+				// The fallback owns the authoritative preparation result.
+				reason = $"Descriptor sets are not prewarmed for the captured indirect draw layout: {descriptorReason}";
+				return false;
 			}
 
 			return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("Reused"), out reason);
@@ -225,16 +226,12 @@ public unsafe partial class VulkanRenderer
 				_buffersDirty ||
 				_descriptorDirty ||
 				!string.Equals(_lastPrepareResult, "Ready", StringComparison.Ordinal))
-			{
 				return false;
-			}
 
 			if (_pipelineShaderConfigVersion != RuntimeEngine.Rendering.Settings.ShaderConfigVersion ||
 				_pipelineUsesShaderClipDepthRemap != RuntimeEngine.Rendering.ShouldUseVulkanShaderClipDepthRemap ||
 				_pipelineUsesNativeDepthClipControl != RuntimeEngine.Rendering.ShouldUseNativeVulkanDepthClipControl)
-			{
 				return false;
-			}
 
 			return AreCachedBuffersReadyForRendering(out _, ProgramUsesShaderGeneratedVertices());
 		}

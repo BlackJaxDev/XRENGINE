@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
@@ -14,6 +15,8 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
+        private readonly ConcurrentDictionary<ulong, byte> _invalidatedCommandBuffersPendingReset = new();
+
         private void CreateCommandBuffers()
         {
             if (swapChainFramebuffers is null || swapChainFramebuffers.Length == 0)
@@ -373,7 +376,10 @@ namespace XREngine.Rendering.Vulkan
             for (int i = 0; i < dependentCommandBuffers.Length; i++)
             {
                 if (dependentCommandBuffers[i] != 0)
+                {
                     dependentHandles.Add(dependentCommandBuffers[i]);
+                    _invalidatedCommandBuffersPendingReset.TryAdd(dependentCommandBuffers[i], 0);
+                }
             }
 
             int exactVariantsDirtied = 0;
@@ -447,6 +453,78 @@ namespace XREngine.Rendering.Vulkan
                 exactChainsDirtied,
                 unrelatedVariantsPreserved,
                 GlobalFallbackInvalidations: 0);
+        }
+
+        private void DrainInvalidatedCommandBufferRecordings(int maxItems = 64)
+        {
+            if (maxItems <= 0 || _invalidatedCommandBuffersPendingReset.IsEmpty || Api is null)
+                return;
+
+            int resetCount = 0;
+            foreach (KeyValuePair<ulong, byte> pair in _invalidatedCommandBuffersPendingReset)
+            {
+                if (resetCount >= maxItems)
+                    break;
+
+                ulong handle = pair.Key;
+                CommandBuffer commandBuffer = new() { Handle = unchecked((nint)handle) };
+                bool reset = false;
+                lock (_vulkanResourceLifetimeLock)
+                {
+                    if (_commandBufferTrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
+                    {
+                        lock (batch)
+                        {
+                            if (batch.IsRecording || batch.QueuedSubmissionCount != 0)
+                                continue;
+                        }
+                    }
+
+                    if (_vulkanCommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? lifetime) &&
+                        lifetime.QueuedSubmissionCount != 0)
+                    {
+                        continue;
+                    }
+
+                    if (_vulkanResourceLifetimes.TryGetValue(
+                            ResourceKey(ObjectType.CommandBuffer, handle),
+                            out VulkanResourceLifetimeRecord? commandResource) &&
+                        !UpdateVulkanResourceCompletionState_NoLock(commandResource))
+                    {
+                        continue;
+                    }
+
+                    Result result = Api.ResetCommandBuffer(commandBuffer, 0);
+                    if (result != Result.Success)
+                    {
+                        Debug.VulkanWarningEvery(
+                            $"Vulkan.CommandBuffer.InvalidatedReset.{handle}",
+                            TimeSpan.FromSeconds(1),
+                            "[Vulkan] Failed to reset invalidated command buffer 0x{0:X}: {1}",
+                            handle,
+                            result);
+                        continue;
+                    }
+
+                    if (lifetime is not null)
+                    {
+                        ReleaseVulkanCommandBufferDependencies_NoLock(handle, lifetime);
+                        lifetime.FrameDataLease.EvictCachedVariant();
+                        lifetime.FrameDataLease.Reset();
+                        lifetime.RecordingGeneration++;
+                    }
+
+                    _commandBufferTrackingBatches.TryRemove(handle, out _);
+                    reset = true;
+                }
+
+                if (!reset)
+                    continue;
+
+                ResetRecordedImageLayoutState(commandBuffer);
+                _invalidatedCommandBuffersPendingReset.TryRemove(handle, out _);
+                resetCount++;
+            }
         }
 
         private void AllocateCommandBufferDirtyFlags()

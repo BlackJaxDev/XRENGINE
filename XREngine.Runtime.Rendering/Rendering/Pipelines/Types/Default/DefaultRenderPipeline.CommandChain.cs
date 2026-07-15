@@ -1300,6 +1300,7 @@ public partial class DefaultRenderPipeline
             capture.OutputFilePath = DefaultPipelineDiagnosticCapture.ResolveOutputPath("DefaultPipelineSps", label, layerIndex);
             capture.FlipVertically = false;
             capture.RequireStableImportedTextureStreaming = IsPhase524bValidationEnabled();
+            capture.RequiredPhase524bBoundaryMotionIndex = IsPhase524bValidationEnabled() ? 0 : -1;
             ConfigurePhase524bTemporalScenarioCapture(capture, label, layerIndex, layerCount);
         }
     }
@@ -1323,6 +1324,7 @@ public partial class DefaultRenderPipeline
             capture.OutputFilePath = DefaultPipelineDiagnosticCapture.ResolveOutputPath("DefaultPipelineSps", label, layerIndex);
             capture.FlipVertically = false;
             capture.RequireStableImportedTextureStreaming = IsPhase524bValidationEnabled();
+            capture.RequiredPhase524bBoundaryMotionIndex = IsPhase524bValidationEnabled() ? 0 : -1;
         }
     }
 
@@ -1345,9 +1347,10 @@ public partial class DefaultRenderPipeline
             layerIndex: 0);
         capture.FlipVertically = false;
         capture.RequireStableImportedTextureStreaming = IsPhase524bValidationEnabled();
+        capture.RequiredPhase524bBoundaryMotionIndex = IsPhase524bValidationEnabled() ? 0 : -1;
 
         const int motionCaptureCount = 3;
-        const int motionCaptureIntervalFrames = 15;
+        const int motionCaptureIntervalFrames = 3;
         for (int motionIndex = 1; motionIndex < motionCaptureCount; motionIndex++)
         {
             var motionCapture = c.Add<VPRC_CaptureFrame>();
@@ -1362,6 +1365,9 @@ public partial class DefaultRenderPipeline
                 layerIndex: 0);
             motionCapture.FlipVertically = false;
             motionCapture.RequireStableImportedTextureStreaming = IsPhase524bValidationEnabled();
+            motionCapture.RequiredPhase524bBoundaryMotionIndex = IsPhase524bValidationEnabled()
+                ? motionIndex
+                : -1;
         }
     }
 

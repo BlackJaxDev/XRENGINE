@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.DLSS;
+using XREngine.Rendering.Physics.Jitter;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Vulkan;

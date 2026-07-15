@@ -82,6 +82,8 @@ public sealed partial class RenderStatsPacket
     public int VulkanDescriptorPoolResetCount { get; set; }
     public int VulkanLifetimeLiveResourceCount { get; set; }
     public int VulkanTrackedDescriptorSetCount { get; set; }
+    public int VulkanLifetimePendingRetirementCount { get; set; }
+    public long VulkanLifetimeOldestPendingRetirementAgeMilliseconds { get; set; }
     public int VulkanQueueSubmitCount { get; set; }
     public int VulkanDroppedFrameOps { get; set; }
     public int VulkanDroppedDrawOps { get; set; }
@@ -117,6 +119,28 @@ public sealed partial class RenderStatsPacket
     public int VulkanDynamicUniformAllocations { get; set; }
     public long VulkanDynamicUniformAllocatedBytes { get; set; }
     public int VulkanDynamicUniformExhaustions { get; set; }
+    public int VulkanMeshFrameDataArenaChunkCount { get; set; }
+    public long VulkanMeshFrameDataMappedBytes { get; set; }
+    public long VulkanMeshFrameDataReservedBytes { get; set; }
+    public int VulkanMeshFrameDataReservationCount { get; set; }
+    public ulong VulkanMeshFrameDataGeneration { get; set; }
+    public int VulkanMeshFrameDataRecordingLeases { get; set; }
+    public int VulkanMeshFrameDataCachedLeases { get; set; }
+    public int VulkanMeshFrameDataSubmittedLeases { get; set; }
+    public int VulkanMeshFrameDataActiveGenerationCount { get; set; }
+    public int VulkanMeshFrameDataLeaseRetainedGenerationCount { get; set; }
+    public int VulkanMeshDescriptorAllocationVariants { get; set; }
+    public int VulkanMeshDescriptorPools { get; set; }
+    public int VulkanMeshDescriptorAllocatedSets { get; set; }
+    public int VulkanMeshDescriptorReservedSets { get; set; }
+    public int VulkanMeshFrameDataArenaChunkHighWater { get; set; }
+    public long VulkanMeshFrameDataMappedBytesHighWater { get; set; }
+    public long VulkanMeshFrameDataReservedBytesHighWater { get; set; }
+    public int VulkanMeshFrameDataReservationHighWater { get; set; }
+    public int VulkanMeshFrameDataLeaseHighWater { get; set; }
+    public int VulkanMeshDescriptorAllocationVariantHighWater { get; set; }
+    public int VulkanMeshDescriptorPoolHighWater { get; set; }
+    public int VulkanMeshDescriptorSetHighWater { get; set; }
     public int VulkanRetiredResourcePlanReplacements { get; set; }
     public int VulkanRetiredResourcePlanImages { get; set; }
     public int VulkanRetiredResourcePlanBuffers { get; set; }
@@ -345,6 +369,13 @@ public sealed partial class FrameOutputManifestData
     public double WholeFrameWorstMs { get; set; }
     public ulong WorkloadIdentityHash { get; set; }
     public int OutputRequestCount { get; set; }
+    public int OutputEventCount { get; set; }
+    public int CollectEventCount { get; set; }
+    public int SwapEventCount { get; set; }
+    public int RenderEventCount { get; set; }
+    public int SubmitEventCount { get; set; }
+    public int OverlayEventCount { get; set; }
+    public int PresentEventCount { get; set; }
     public int UniqueViewFamilyCount { get; set; }
     public int TargetVariantCount { get; set; }
     public int SceneSnapshotCount { get; set; }

@@ -1135,7 +1135,15 @@ public sealed class RuntimeRenderingHostServicesTests
         {
         }
 
-        public void RecordRenderVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount)
+        public void RecordRenderVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount, int pendingRetirementCount, long oldestPendingRetirementAgeMilliseconds)
+        {
+        }
+
+        public void RecordRenderVulkanMeshFrameDataGauges(int arenaChunkCount, long mappedBytes, long reservedBytes, int reservationCount, ulong generation, int recordingLeases, int cachedLeases, int submittedLeases, int activeGenerationCount, int leaseRetainedGenerationCount)
+        {
+        }
+
+        public void AdjustRenderVulkanMeshDescriptorOwnership(int allocationVariants, int pools, int allocatedSets, int reservedSets)
         {
         }
 

@@ -357,6 +357,7 @@ namespace XREngine.Rendering.Vulkan
                     frameOpsSignature,
                     scheduledDynamicUiBatchTextSignature,
                     plannerRevision,
+                    allowExternalSwapchainTarget: false,
                     out commandChainStats);
             }
 
@@ -1356,6 +1357,12 @@ namespace XREngine.Rendering.Vulkan
                 if (!refreshedReusableFrameData)
                     return false;
 
+                if ((HasQueryFrameOps(ops) && !PrepareQueryFrameOpsForCommandBufferReuse(ops)) ||
+                    (HasQueryFrameOps(dynamicUiBatchTextOps) && !PrepareQueryFrameOpsForCommandBufferReuse(dynamicUiBatchTextOps)))
+                {
+                    return false;
+                }
+
                 bool dynamicUiSecondaryReady = true;
                 if (!delayDynamicUiSecondaryRecording)
                 {
@@ -1450,6 +1457,7 @@ namespace XREngine.Rendering.Vulkan
             for (int i = 0; i < ops.Length; i++)
             {
                 FrameOp op = ops[i];
+                using IDisposable plannerScope = EnterFrameOpResourcePlannerReadbackScope(op.Context);
                 switch (op)
                 {
                     case MeshDrawOp drawOp:
@@ -1473,6 +1481,22 @@ namespace XREngine.Rendering.Vulkan
                                     drawUniformSlot,
                                     reason);
                             }
+                            return false;
+                        }
+                        break;
+                    }
+                    case IndirectDrawOp indirectDrawOp:
+                    {
+                        int drawUniformSlot = GetMeshDrawUniformSlot(indirectDrawOp.MeshRenderer);
+                        if (!indirectDrawOp.MeshRenderer.TryRefreshReusableCommandBufferFrameData(
+                                imageIndex,
+                                indirectDrawOp.Draw,
+                                drawUniformSlot,
+                                out string reason,
+                                refreshMaterialUniforms))
+                        {
+                            _lastReusableFrameDataRefreshFailureReason =
+                                $"indirect op={i}/{ops.Length} mesh='{indirectDrawOp.MeshRenderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' material='{(indirectDrawOp.Draw.MaterialOverride ?? indirectDrawOp.MeshRenderer.MeshRenderer.Material)?.Name ?? "<unnamed material>"}' slot={drawUniformSlot}: {reason}";
                             return false;
                         }
                         break;
@@ -1656,7 +1680,7 @@ namespace XREngine.Rendering.Vulkan
                         CmdEndLabel(commandBuffer);
                 }
 
-                if (Api.EndCommandBuffer(commandBuffer) != Result.Success)
+                if (EndCommandBufferTracked(commandBuffer) != Result.Success)
                     throw new Exception("Failed to end texture upload command buffer.");
 
                 if (_recordedTextureUploadsForSubmit.Count == queuedBefore)
@@ -2193,6 +2217,82 @@ namespace XREngine.Rendering.Vulkan
             HashSet<nint> executedCommandChainSecondaryHandles = recordingScratch.ExecutedCommandChainSecondaryHandles;
             executedCommandChainSecondaryHandles.Clear();
 
+            // Publish the complete command-stream reservation before vkBeginCommandBuffer.
+            // Arena offsets are stable, but descriptor slabs and CPU view tables must also be
+            // materialized at this legal boundary so a draw cannot grow shared state midway
+            // through recording.
+            Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = recordingScratch.MeshDrawSlotsByRenderer;
+            meshDrawSlotsByRenderer.Clear();
+            meshDrawSlotsByRenderer.EnsureCapacity(Math.Max(1, recordingScratch.RecordMeshDrawSlotCapacityHint));
+            VulkanMeshFrameDataReservationManifest frameDataManifest = recordingScratch.MeshFrameDataManifest;
+            ulong frameDataGeneration = MeshFrameDataReservationGeneration;
+            frameDataManifest.Begin(frameDataGeneration, recordingScratch.RecordMeshDrawSlotCapacityHint);
+            EnsureMeshDrawUniformSlotCapacityForRecording(ops, meshDrawSlotsByRenderer);
+            foreach (KeyValuePair<VkMeshRenderer, int> reservation in meshDrawSlotsByRenderer)
+            {
+                if (frameDataManifest.TryReserve(reservation.Key, reservation.Value))
+                    continue;
+                frameDataManifest.End();
+                throw new InvalidOperationException(
+                    $"Unable to reserve {reservation.Value} mesh frame-data slots before command recording.");
+            }
+            meshDrawSlotsByRenderer.Clear();
+            for (int opIndex = 0; opIndex < ops.Length; opIndex++)
+            {
+                VkMeshRenderer? meshRenderer;
+                PendingMeshDraw pendingDraw;
+                switch (ops[opIndex])
+                {
+                    case MeshDrawOp drawOp:
+                        meshRenderer = drawOp.Draw.Renderer;
+                        pendingDraw = drawOp.Draw;
+                        break;
+                    case IndirectDrawOp indirectDrawOp:
+                        meshRenderer = indirectDrawOp.MeshRenderer;
+                        pendingDraw = indirectDrawOp.Draw;
+                        break;
+                    default:
+                        continue;
+                }
+
+                meshDrawSlotsByRenderer.TryGetValue(meshRenderer, out int drawSlot);
+                meshDrawSlotsByRenderer[meshRenderer] = drawSlot + 1;
+                using IDisposable plannerScope =
+                    EnterFrameOpResourcePlannerReadbackScope(ops[opIndex].Context);
+                if (!meshRenderer.TryPrewarmFrameDataForRecording(
+                        pendingDraw,
+                        drawSlot,
+                        commandBufferImageSlot,
+                        out string prewarmReason))
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.MeshFrameData.PreRecordReservationFailed.{meshRenderer.GetHashCode()}.{drawSlot}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Mesh frame-data reservation failed before command recording for mesh='{0}' slot={1}: {2}",
+                        meshRenderer.Mesh?.Name ?? "<unnamed mesh>",
+                        drawSlot,
+                        prewarmReason);
+                    frameDataManifest.End();
+                    throw new InvalidOperationException(
+                        $"Mesh frame-data reservation failed before command recording for " +
+                        $"mesh '{meshRenderer.Mesh?.Name ?? "<unnamed mesh>"}', slot {drawSlot}: {prewarmReason}");
+                }
+            }
+            recordingScratch.RecordMeshDrawSlotCapacityHint = Math.Max(
+                recordingScratch.RecordMeshDrawSlotCapacityHint,
+                meshDrawSlotsByRenderer.Count);
+            meshDrawSlotsByRenderer.Clear();
+
+            if (!frameDataManifest.TrySeal(
+                    MeshFrameDataReservationGeneration,
+                    MeshFrameDataReservedBytes))
+            {
+                frameDataManifest.End();
+                throw new InvalidOperationException(
+                    "Mesh frame-data generation changed while the command-stream reservation manifest was being materialized.");
+            }
+            using VulkanMeshFrameDataManifestRecordingScope frameDataManifestScope = new(frameDataManifest);
+
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.ResetAndBegin"))
             {
                 ReleaseDeferredSecondaryCommandBuffers(frameDataImageIndex);
@@ -2349,7 +2449,6 @@ namespace XREngine.Rendering.Vulkan
             Dictionary<int, int> swapchainWriterPassByPipeline = recordingScratch.SwapchainWriterPassByPipeline;
             Dictionary<int, int> swapchainWriterOpIndexByPipeline = recordingScratch.SwapchainWriterOpIndexByPipeline;
             Dictionary<int, string> pipelineNameByIdentity = recordingScratch.PipelineNameByIdentity;
-            Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = recordingScratch.MeshDrawSlotsByRenderer;
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.ScratchAndUniformSlots"))
             {
                 swapchainWritesByPipeline.Clear();
@@ -2371,8 +2470,7 @@ namespace XREngine.Rendering.Vulkan
                 swapchainWriterOpIndexByPipeline.EnsureCapacity(writerCapacityHint);
                 pipelineNameByIdentity.EnsureCapacity(Math.Max(1, recordingScratch.RecordPipelineNameCapacityHint));
                 meshDrawSlotsByRenderer.EnsureCapacity(Math.Max(1, recordingScratch.RecordMeshDrawSlotCapacityHint));
-                EnsureMeshDrawUniformSlotCapacityForRecording(ops, meshDrawSlotsByRenderer);
-                meshDrawSlotsByRenderer.Clear();
+				meshDrawSlotsByRenderer.Clear();
             }
 
             void RememberPipelineName(in FrameOpContext context)
@@ -3849,6 +3947,7 @@ namespace XREngine.Rendering.Vulkan
                 int passIndex,
                 int? drawUniformSlotOverride = null)
             {
+                using IDisposable plannerScope = EnterFrameOpResourcePlannerReadbackScope(drawOp.Context);
                 Viewport viewport = drawOp.Draw.Viewport;
                 Rect2D scissor = drawOp.Draw.Scissor;
                 uint viewportScissorCount = drawOp.Draw.ViewportScissorCount;
@@ -3966,6 +4065,7 @@ namespace XREngine.Rendering.Vulkan
 
             void RecordIndirectDrawIntoCommandBuffer(CommandBuffer targetCommandBuffer, IndirectDrawOp indirectOp, int passIndex)
             {
+                using IDisposable plannerScope = EnterFrameOpResourcePlannerReadbackScope(indirectOp.Context);
                 Viewport viewport = indirectOp.Draw.Viewport;
                 Rect2D scissor = indirectOp.Draw.Scissor;
                 uint viewportScissorCount = indirectOp.Draw.ViewportScissorCount;
@@ -4345,6 +4445,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         IndirectDrawOp indirectOp = (IndirectDrawOp)ops[startIndex + i];
                         using IDisposable? pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(indirectOp.Context.PipelineInstance);
+                        using IDisposable plannerScope = EnterFrameOpResourcePlannerReadbackScope(indirectOp.Context);
                         if (!indirectOp.MeshRenderer.TryPrepareIndirectDrawRecordingState(
                                 frameDataImageIndex,
                                 indirectOp.Draw,
@@ -4485,7 +4586,7 @@ namespace XREngine.Rendering.Vulkan
                                     uniformSlots[relativeIndex]);
                             }
 
-                            if (Api!.EndCommandBuffer(secondary) != Result.Success)
+                            if (EndCommandBufferTracked(secondary) != Result.Success)
                                 throw new Exception("Failed to end Vulkan indirect secondary command buffer.");
 
                             MarkCommandChainSecondaryCommandBufferRecorded(chain);
@@ -4580,7 +4681,7 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 key = scheduledCommandChainKeysByOpIndex[opIndex];
-                if (key.ChainOrdinal < 0)
+                if (key.ChainOrdinal == -1)
                     return false;
 
                 if (!scheduledCommandChainCache.TryGetValue(key, out CommandChain? scheduledChain))
@@ -4612,8 +4713,11 @@ namespace XREngine.Rendering.Vulkan
 
             bool TryExecuteScheduledMeshCommandChainSecondaryRun(int startIndex, int runCount, int passIndex, MeshDrawOp firstDraw)
             {
-                if (!CommandChainsEnabledForCurrentRecording ||
-                    !_enableSecondaryCommandBuffers ||
+                // An explicit schedule may be supplied for an external OpenXR
+                // target even though the ordinary desktop eligibility gate is
+                // false inside that render scope. The builder has already
+                // applied the appropriate policy for this recording.
+                if (!_enableSecondaryCommandBuffers ||
                     scheduledCommandChainKeysByOpIndex is null ||
                     scheduledCommandChainCache is null ||
                     runCount <= 0 ||
@@ -4789,7 +4893,7 @@ namespace XREngine.Rendering.Vulkan
                             activeTarget = savedActiveTarget;
                         }
 
-                        if (Api!.EndCommandBuffer(secondary) != Result.Success)
+                        if (EndCommandBufferTracked(secondary) != Result.Success)
                             throw new Exception("Failed to end Vulkan scheduled mesh command-chain secondary command buffer.");
 
                         chain.State = CommandChainState.Recorded;
@@ -5005,7 +5109,7 @@ namespace XREngine.Rendering.Vulkan
                         activeTarget = savedActiveTarget;
                     }
 
-                    if (Api!.EndCommandBuffer(secondary) != Result.Success)
+                    if (EndCommandBufferTracked(secondary) != Result.Success)
                         throw new Exception("Failed to end Vulkan mesh command-chain secondary command buffer.");
 
                     MarkCommandChainSecondaryCommandBufferRecorded(chain);
@@ -6142,7 +6246,7 @@ namespace XREngine.Rendering.Vulkan
 
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.EndCommandBuffer"))
                 {
-                    if (Api!.EndCommandBuffer(commandBuffer) != Result.Success)
+                    if (EndCommandBufferTracked(commandBuffer) != Result.Success)
                         throw new Exception("Failed to record command buffer.");
                 }
             }

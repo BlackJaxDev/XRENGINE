@@ -6,7 +6,11 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 public unsafe partial class OpenXRAPI
 {
     private const int StrictSpsBoundaryMotionCaptureCount = 3;
-    private const int StrictSpsBoundaryMotionCaptureIntervalFrames = 15;
+    // The temporal oracle consumes the first 72 strict-SPS frames. Three
+    // post-sequence motion states must still settle and complete inside the
+    // validator's 100-frame warmup, so each state receives three successful
+    // frames rather than the old fifteen-frame cadence.
+    private const int StrictSpsBoundaryMotionCaptureIntervalFrames = 3;
     private readonly List<OpenXrSmokeCaptureLedgerEntry> _strictSpsBoundaryCaptureLedger = [];
     private int _strictSpsBoundarySuccessfulFrameCount;
     private int _strictSpsBoundaryCaptureCount;

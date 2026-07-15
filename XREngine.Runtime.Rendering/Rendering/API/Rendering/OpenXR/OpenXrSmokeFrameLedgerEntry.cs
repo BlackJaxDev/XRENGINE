@@ -58,6 +58,30 @@ public struct OpenXrSmokeFrameLedgerEntry
     public int RetiredResourceCount { get; set; }
     public int LifetimeLiveResourceCount { get; set; }
     public int TrackedDescriptorSetCount { get; set; }
+    public int LifetimePendingRetirementCount { get; set; }
+    public long LifetimeOldestPendingRetirementAgeMilliseconds { get; set; }
+    public int MeshFrameDataArenaChunkCount { get; set; }
+    public long MeshFrameDataMappedBytes { get; set; }
+    public long MeshFrameDataReservedBytes { get; set; }
+    public int MeshFrameDataReservationCount { get; set; }
+    public ulong MeshFrameDataGeneration { get; set; }
+    public int MeshFrameDataRecordingLeases { get; set; }
+    public int MeshFrameDataCachedLeases { get; set; }
+    public int MeshFrameDataSubmittedLeases { get; set; }
+    public int MeshFrameDataActiveGenerationCount { get; set; }
+    public int MeshFrameDataLeaseRetainedGenerationCount { get; set; }
+    public int MeshDescriptorAllocationVariants { get; set; }
+    public int MeshDescriptorPools { get; set; }
+    public int MeshDescriptorAllocatedSets { get; set; }
+    public int MeshDescriptorReservedSets { get; set; }
+    public int MeshFrameDataArenaChunkHighWater { get; set; }
+    public long MeshFrameDataMappedBytesHighWater { get; set; }
+    public long MeshFrameDataReservedBytesHighWater { get; set; }
+    public int MeshFrameDataReservationHighWater { get; set; }
+    public int MeshFrameDataLeaseHighWater { get; set; }
+    public int MeshDescriptorAllocationVariantHighWater { get; set; }
+    public int MeshDescriptorPoolHighWater { get; set; }
+    public int MeshDescriptorSetHighWater { get; set; }
     public int QueueSubmitCount { get; set; }
     public bool SubmitCompleted { get; set; }
     public int SubmissionRejectionCount { get; set; }
@@ -68,6 +92,13 @@ public struct OpenXrSmokeFrameLedgerEntry
     public ulong OutputManifestFrameId { get; set; }
     public ulong OutputWorkloadIdentityHash { get; set; }
     public int OutputRequestCount { get; set; }
+    public int OutputEventCount { get; set; }
+    public int CollectEventCount { get; set; }
+    public int SwapEventCount { get; set; }
+    public int RenderEventCount { get; set; }
+    public int SubmitEventCount { get; set; }
+    public int OverlayEventCount { get; set; }
+    public int PresentEventCount { get; set; }
     public int PlannerStateCount { get; set; }
     public int CommandVariantCount { get; set; }
     public ulong ResourcePlanGeneration { get; set; }

@@ -33,12 +33,13 @@ public unsafe partial class VulkanRenderer
     private readonly List<RenderPacket> _commandChainPacketScratch = [];
     private readonly List<RenderPassChainGroup> _commandChainGroupScratch = [];
     private readonly List<CommandChainKey> _commandChainGroupKeyScratch = [];
+    private readonly Dictionary<ulong, int> _commandChainStructuralOccurrenceScratch = [];
     private readonly Dictionary<uint, CommandChainStabilityGuardState> _commandChainStabilityGuardStates = [];
-    private CommandChainStabilityGuardState _commandChainGlobalStabilityGuardState;
     private int _commandChainTraceDumped;
     private long _commandChainTraceLastDumpTimestamp;
     private const int CommandChainZeroReuseBackoffThreshold = 1;
     private const int CommandChainZeroReuseProbeInterval = 120;
+    private const int MaxCommandChainsPerSchedule = 64;
 
     private static bool CommandChainsEnabled => IsCommandChainFlagEnabled(CommandChainsEnvVar);
     private static bool CommandChainsSingleThread => IsCommandChainFlagEnabled(CommandChainsSingleThreadEnvVar);
@@ -103,7 +104,6 @@ public unsafe partial class VulkanRenderer
         None,
         ResourcePlanRevisionChanged,
         RecentZeroReuse,
-        GlobalRecentZeroReuse,
     }
 
     private struct CommandChainStabilityGuardState
@@ -153,25 +153,45 @@ public unsafe partial class VulkanRenderer
         ulong frameOpsSignature,
         ulong volatileSignature,
         ulong resourcePlanRevision,
+        bool allowExternalSwapchainTarget,
         out CommandChainLoweringStats stats)
     {
         stats = default;
-        if (!CommandChainsEnabledForCurrentRecording)
+        // Generic external targets do not have the cache/lifetime contract required
+        // by command chains. OpenXR supplies its own external-image cache key and
+        // frame-data slots, so its explicit call site is allowed through this gate.
+        // Without this exception the OpenXR helper can never build the schedule it
+        // was designed to consume and CpuQueryAsync must re-record the complete eye
+        // command buffer every frame.
+        bool commandChainsEnabledForTarget = allowExternalSwapchainTarget
+            ? CommandChainsEnabled
+            : CommandChainsEnabledForCurrentRecording;
+        if (!commandChainsEnabledForTarget)
             return null;
 
-        // Occlusion query brackets (QueryOp Begin/End around a proxy draw) must record
-        // inline into the primary command buffer: chain secondaries would need
-        // inheritedQueries-aware inheritance info, and splitting a bracket across
-        // secondaries ends a command buffer with an in-progress query
-        // (VUID-vkEndCommandBuffer-commandBuffer-00061). Fall back to inline recording
-        // for frames that contain query ops.
-        if (ContainsQueryFrameOp(staticOps) || ContainsQueryFrameOp(volatileOps))
+        // Dynamic overlays are not expected to contain query brackets. Keep the
+        // conservative all-inline fallback if one appears there because overlay
+        // source indices occupy a separate namespace from the static frame ops.
+        if (ContainsQueryFrameOp(volatileOps))
         {
             Debug.VulkanEvery(
                 $"Vulkan.CommandChains.QueryOpsInlineFallback.{GetHashCode()}",
                 TimeSpan.FromSeconds(5),
-                "[Vulkan.CommandChains] Frame contains occlusion QueryOps; recording inline instead of command chains.");
+                "[Vulkan.CommandChains] Dynamic overlay contains occlusion QueryOps; recording the frame inline.");
             return null;
+        }
+
+        bool excludeStaticQueryBrackets = ContainsQueryFrameOp(staticOps);
+        if (excludeStaticQueryBrackets)
+        {
+            // Query begin/proxy/end spans remain in the primary. Other frame ops can
+            // still use secondary command chains; executing a secondary inside the
+            // query would require inheritedQueries-aware inheritance and ending a
+            // secondary with a live query is invalid.
+            Debug.VulkanEvery(
+                $"Vulkan.CommandChains.QueryBracketsInline.{GetHashCode()}",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan.CommandChains] Keeping occlusion query brackets inline while scheduling the remaining frame ops as command chains.");
         }
 
         bool traceCommandChains = CommandChainTraceEnabled;
@@ -214,10 +234,33 @@ public unsafe partial class VulkanRenderer
         List<RenderPacket> packets = _commandChainPacketScratch;
         packets.Clear();
         packets.EnsureCapacity(Math.Max(staticOps.Length + volatileOps.Length, 1));
-        BuildCommandChainRenderPackets(staticOps, volatileOps, resourcePlanRevision, packets);
+        BuildCommandChainRenderPackets(
+            staticOps,
+            volatileOps,
+            resourcePlanRevision,
+            excludeStaticQueryBrackets,
+            packets);
+
+        if (packets.Count > MaxCommandChainsPerSchedule)
+        {
+            // The current cache owns one command pool and secondary command buffer
+            // per chain. Large per-draw schedules therefore multiply resource and
+            // retirement pressure across outputs and swapchain images. Keep those
+            // frames inline until command chains are grouped into bounded arenas.
+            Debug.VulkanEvery(
+                $"Vulkan.CommandChains.ScheduleBudget.{GetHashCode()}",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan.CommandChains] Recording {0} frame ops inline because the per-schedule command-chain budget is {1}.",
+                packets.Count,
+                MaxCommandChainsPerSchedule);
+            return null;
+        }
 
         if (packets.Count == 0)
         {
+            if (staticOps.Length != 0 || volatileOps.Length != 0)
+                return null;
+
             stats = new CommandChainLoweringStats(0, 0, 0, 0, 0, 0, 0, 0, Stopwatch.GetElapsedTime(start), TimeSpan.Zero, null, null, null);
             CommandChainSchedule emptySchedule = new(0, resourcePlanRevision, ReadOnlyMemory<RenderPassChainGroup>.Empty);
             CacheCommandChainSchedule(imageIndex, fastScheduleSignature, emptySchedule);
@@ -233,6 +276,8 @@ public unsafe partial class VulkanRenderer
         List<CommandChainKey> currentGroupKeys = _commandChainGroupKeyScratch;
         currentGroupKeys.Clear();
         currentGroupKeys.EnsureCapacity(8);
+        Dictionary<ulong, int> structuralOccurrences = _commandChainStructuralOccurrenceScratch;
+        structuralOccurrences.Clear();
         int currentPass = packets[0].PassIndex;
         int currentTarget = packets[0].TargetIdentity;
         string currentTargetName = packets[0].TargetName;
@@ -256,6 +301,7 @@ public unsafe partial class VulkanRenderer
             {
                 AddCurrentGroup();
                 currentGroupKeys.Clear();
+                structuralOccurrences.Clear();
                 currentPass = packet.PassIndex;
                 currentTarget = packet.TargetIdentity;
                 currentTargetName = packet.TargetName;
@@ -263,7 +309,7 @@ public unsafe partial class VulkanRenderer
                 currentGroupSignature = 0;
             }
 
-            int chainOrdinal = BuildCommandChainOrdinal(packet, currentGroupKeys.Count);
+            int chainOrdinal = BuildCommandChainOrdinal(packet, structuralOccurrences);
 
             CommandChainKey key = new(
                 unchecked((int)Math.Min(imageIndex, int.MaxValue)),
@@ -418,23 +464,6 @@ public unsafe partial class VulkanRenderer
         if (!CommandChainStabilityGuardEnabled)
             return false;
 
-        CommandChainStabilityGuardState globalState = _commandChainGlobalStabilityGuardState;
-        if (globalState.ConsecutiveRecordedWithoutReuse >= CommandChainZeroReuseBackoffThreshold)
-        {
-            globalState.ResourcePlanRevision = resourcePlanRevision;
-            globalState.StableObservations++;
-            globalState.ConsecutiveBypasses++;
-            if (globalState.ConsecutiveBypasses < CommandChainZeroReuseProbeInterval)
-            {
-                _commandChainGlobalStabilityGuardState = globalState;
-                reason = CommandChainStabilityBypassReason.GlobalRecentZeroReuse;
-                return true;
-            }
-
-            globalState.ConsecutiveBypasses = 0;
-            _commandChainGlobalStabilityGuardState = globalState;
-        }
-
         if (!_commandChainStabilityGuardStates.TryGetValue(imageIndex, out CommandChainStabilityGuardState state))
         {
             _commandChainStabilityGuardStates[imageIndex] = new CommandChainStabilityGuardState
@@ -489,8 +518,6 @@ public unsafe partial class VulkanRenderer
         if (!CommandChainStabilityGuardEnabled || stats.ChainsScheduled == 0)
             return;
 
-        ObserveGlobalCommandChainScheduleForStabilityGuard(resourcePlanRevision, in stats);
-
         if (!_commandChainStabilityGuardStates.TryGetValue(imageIndex, out CommandChainStabilityGuardState state) ||
             state.ResourcePlanRevision != resourcePlanRevision)
         {
@@ -502,9 +529,7 @@ public unsafe partial class VulkanRenderer
         }
 
         state.ScheduledAttemptsForRevision++;
-        if (stats.ChainsRecorded > 0 &&
-            stats.ChainsReused == 0 &&
-            stats.ChainsFrameDataRefreshed == 0 &&
+        if (stats.ChainsRecorded > stats.ChainsReused + stats.ChainsFrameDataRefreshed &&
             state.ScheduledAttemptsForRevision > 1)
         {
             state.ConsecutiveRecordedWithoutReuse++;
@@ -518,43 +543,13 @@ public unsafe partial class VulkanRenderer
         _commandChainStabilityGuardStates[imageIndex] = state;
     }
 
-    private void ObserveGlobalCommandChainScheduleForStabilityGuard(
-        ulong resourcePlanRevision,
-        in CommandChainLoweringStats stats)
-    {
-        CommandChainStabilityGuardState state = _commandChainGlobalStabilityGuardState;
-        state.ResourcePlanRevision = resourcePlanRevision;
-        state.StableObservations++;
-        state.ScheduledAttemptsForRevision++;
-
-        if (stats.ChainsRecorded > 0 &&
-            stats.ChainsReused == 0 &&
-            stats.ChainsFrameDataRefreshed == 0 &&
-            state.ScheduledAttemptsForRevision > 1)
-        {
-            state.ConsecutiveRecordedWithoutReuse++;
-        }
-        else if (stats.ChainsReused != 0 || stats.ChainsFrameDataRefreshed != 0)
-        {
-            state.ConsecutiveRecordedWithoutReuse = 0;
-        }
-
-        state.ConsecutiveBypasses = 0;
-        _commandChainGlobalStabilityGuardState = state;
-    }
-
     private void LogCommandChainStabilityGuardBypass(
         uint imageIndex,
         ulong resourcePlanRevision,
         int opCount,
         CommandChainStabilityBypassReason reason)
     {
-        CommandChainStabilityGuardState state;
-        if (reason == CommandChainStabilityBypassReason.GlobalRecentZeroReuse)
-        {
-            state = _commandChainGlobalStabilityGuardState;
-        }
-        else if (!_commandChainStabilityGuardStates.TryGetValue(imageIndex, out state))
+        if (!_commandChainStabilityGuardStates.TryGetValue(imageIndex, out CommandChainStabilityGuardState state))
         {
             state = default;
         }
@@ -700,15 +695,20 @@ public unsafe partial class VulkanRenderer
         FrameOp[] staticOps,
         FrameOp[] volatileOps,
         ulong resourcePlanRevision,
+        bool excludeStaticQueryBrackets,
         List<RenderPacket> packets)
     {
         bool useParallelBuild =
             ParallelPacketBuildEnabled &&
             !CommandChainsSingleThread &&
+            !excludeStaticQueryBrackets &&
             staticOps.Length + volatileOps.Length > 1;
         if (!useParallelBuild)
         {
-            LowerFrameOpsToRenderPackets(staticOps, dynamicOverlay: false, resourcePlanRevision, packets);
+            if (excludeStaticQueryBrackets)
+                LowerFrameOpsToRenderPacketsExcludingQueryBrackets(staticOps, resourcePlanRevision, packets);
+            else
+                LowerFrameOpsToRenderPackets(staticOps, dynamicOverlay: false, resourcePlanRevision, packets);
             LowerFrameOpsToRenderPackets(volatileOps, dynamicOverlay: true, resourcePlanRevision, packets);
             return;
         }
@@ -729,6 +729,37 @@ public unsafe partial class VulkanRenderer
 
         if (CommandChainValidationEnabled)
             ValidateParallelRenderPacketBuild(staticOps, volatileOps, resourcePlanRevision, packets);
+    }
+
+    private void LowerFrameOpsToRenderPacketsExcludingQueryBrackets(
+        FrameOp[] ops,
+        ulong resourcePlanRevision,
+        List<RenderPacket> packets)
+    {
+        int queryBracketDepth = 0;
+        for (int i = 0; i < ops.Length; i++)
+        {
+            if (ops[i] is QueryOp queryOp)
+            {
+                if (queryOp.Operation == EVulkanQueryFrameOpKind.Begin)
+                    queryBracketDepth++;
+                else if (queryBracketDepth > 0)
+                    queryBracketDepth--;
+                continue;
+            }
+
+            if (queryBracketDepth == 0)
+                packets.Add(CreateRenderPacket(ops[i], i, dynamicOverlay: false, resourcePlanRevision));
+        }
+
+        if (queryBracketDepth != 0)
+        {
+            Debug.VulkanWarningEvery(
+                $"Vulkan.CommandChains.UnbalancedQueryBracket.{GetHashCode()}",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan.CommandChains] Found {0} unterminated occlusion query bracket(s); all operations after the unmatched begin remain inline.",
+                queryBracketDepth);
+        }
     }
 
     private void LowerFrameOpsToRenderPackets(
@@ -788,17 +819,24 @@ public unsafe partial class VulkanRenderer
             dynamicOverlay);
     }
 
-    private static int BuildCommandChainOrdinal(RenderPacket packet, int fallbackOrdinal)
+    private static int BuildCommandChainOrdinal(
+        RenderPacket packet,
+        Dictionary<ulong, int> structuralOccurrences)
     {
-        int sourceOrdinal = packet.SourceStartIndex >= 0
-            ? packet.SourceStartIndex
-            : fallbackOrdinal;
+        ulong structuralSignature = packet.StructuralSignature;
+        structuralOccurrences.TryGetValue(structuralSignature, out int occurrence);
+        structuralOccurrences[structuralSignature] = occurrence + 1;
 
         unchecked
         {
-            ulong structuralSignature = packet.StructuralSignature;
             int foldedStructuralSignature = (int)structuralSignature ^ (int)(structuralSignature >> 32);
-            return HashCode.Combine(sourceOrdinal, foldedStructuralSignature);
+            // Source indices shift whenever CpuQueryAsync changes the visible mesh
+            // subset, which previously changed every key and defeated secondary
+            // reuse. Structural identity plus only the duplicate occurrence remains
+            // stable across those visibility changes; mutable draw data is refreshed
+            // by the existing FrameDataOnly reuse path.
+            int ordinal = HashCode.Combine(foldedStructuralSignature, occurrence);
+            return ordinal == -1 ? int.MaxValue : ordinal;
         }
     }
 
@@ -1397,52 +1435,61 @@ public unsafe partial class VulkanRenderer
         int dynamicOverlayOpCount)
     {
         ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
-        if (groups.Length == 0)
-        {
-            if (staticOps.Length != 0 || dynamicOverlayOpCount != 0)
-                throw new InvalidOperationException("Command-chain primary schedule has no groups for non-empty frame ops.");
-            return;
-        }
-
         int groupIndex = 0;
-        int opIndex = 0;
-        while (opIndex < staticOps.Length)
+        int queryBracketDepth = 0;
+        int currentPassIndex = 0;
+        int currentTargetIdentity = 0;
+        int currentGroupOpCount = 0;
+        for (int opIndex = 0; opIndex < staticOps.Length; opIndex++)
         {
             FrameOp op = staticOps[opIndex];
+            if (op is QueryOp queryOp)
+            {
+                if (queryOp.Operation == EVulkanQueryFrameOpKind.Begin)
+                    queryBracketDepth++;
+                else if (queryBracketDepth > 0)
+                    queryBracketDepth--;
+                continue;
+            }
+
+            if (queryBracketDepth != 0)
+                continue;
+
             int passIndex = op.PassIndex;
             int targetIdentity = ResolveCommandChainTargetIdentity(op);
-            int groupOpCount = 1;
-            for (int i = opIndex + 1; i < staticOps.Length; i++)
+            if (currentGroupOpCount == 0)
             {
-                FrameOp candidate = staticOps[i];
-                if (candidate.PassIndex != passIndex ||
-                    ResolveCommandChainTargetIdentity(candidate) != targetIdentity)
-                {
-                    break;
-                }
-
-                groupOpCount++;
+                currentPassIndex = passIndex;
+                currentTargetIdentity = targetIdentity;
+                currentGroupOpCount = 1;
+                continue;
             }
 
-            if (groupIndex >= groups.Length)
-                throw new InvalidOperationException("Command-chain primary schedule ended before all static frame-op groups were represented.");
-
-            RenderPassChainGroup group = groups[groupIndex];
-            if (group.DynamicOverlay)
-                throw new InvalidOperationException("Command-chain primary schedule placed a dynamic overlay group before all static groups.");
-            if (group.PassIndex != passIndex || group.TargetIdentity != targetIdentity)
+            if (passIndex != currentPassIndex || targetIdentity != currentTargetIdentity)
             {
-                throw new InvalidOperationException(
-                    $"Command-chain primary schedule group {groupIndex} does not match static frame-op group: expected pass={passIndex} target={targetIdentity}, current pass={group.PassIndex} target={group.TargetIdentity}.");
-            }
-            if (group.ChainKeys.Length != groupOpCount)
-            {
-                throw new InvalidOperationException(
-                    $"Command-chain primary schedule group {groupIndex} has {group.ChainKeys.Length} chains for {groupOpCount} static frame ops.");
+                ValidatePrimaryCommandChainStaticGroup(
+                    groups,
+                    ref groupIndex,
+                    currentPassIndex,
+                    currentTargetIdentity,
+                    currentGroupOpCount);
+                currentPassIndex = passIndex;
+                currentTargetIdentity = targetIdentity;
+                currentGroupOpCount = 1;
+                continue;
             }
 
-            groupIndex++;
-            opIndex += groupOpCount;
+            currentGroupOpCount++;
+        }
+
+        if (currentGroupOpCount != 0)
+        {
+            ValidatePrimaryCommandChainStaticGroup(
+                groups,
+                ref groupIndex,
+                currentPassIndex,
+                currentTargetIdentity,
+                currentGroupOpCount);
         }
 
         int dynamicChainCount = 0;
@@ -1460,6 +1507,33 @@ public unsafe partial class VulkanRenderer
             throw new InvalidOperationException(
                 $"Command-chain primary schedule has {dynamicChainCount} dynamic overlay chains for {dynamicOverlayOpCount} dynamic overlay frame ops.");
         }
+    }
+
+    private static void ValidatePrimaryCommandChainStaticGroup(
+        ReadOnlySpan<RenderPassChainGroup> groups,
+        ref int groupIndex,
+        int passIndex,
+        int targetIdentity,
+        int groupOpCount)
+    {
+        if (groupIndex >= groups.Length)
+            throw new InvalidOperationException("Command-chain primary schedule ended before all static frame-op groups were represented.");
+
+        RenderPassChainGroup group = groups[groupIndex];
+        if (group.DynamicOverlay)
+            throw new InvalidOperationException("Command-chain primary schedule placed a dynamic overlay group before all static groups.");
+        if (group.PassIndex != passIndex || group.TargetIdentity != targetIdentity)
+        {
+            throw new InvalidOperationException(
+                $"Command-chain primary schedule group {groupIndex} does not match static frame-op group: expected pass={passIndex} target={targetIdentity}, current pass={group.PassIndex} target={group.TargetIdentity}.");
+        }
+        if (group.ChainKeys.Length != groupOpCount)
+        {
+            throw new InvalidOperationException(
+                $"Command-chain primary schedule group {groupIndex} has {group.ChainKeys.Length} chains for {groupOpCount} static frame ops.");
+        }
+
+        groupIndex++;
     }
 
     internal static ulong ComputePacketInstanceCountSignature(RenderPacket packet)

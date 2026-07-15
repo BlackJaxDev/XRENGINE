@@ -65,6 +65,8 @@ public sealed class VulkanPhase524bCompanionEvidenceTests
     {
         var injection = new Phase524bDesktopRejectionInjection();
 
+        injection.Observe(true, true, true, 0.0, "startup clear").Action
+            .ShouldBe(EPhase524bDesktopRejectionAction.Wait);
         injection.Observe(true, true, true, 1.25, "history").Action
             .ShouldBe(EPhase524bDesktopRejectionAction.Armed);
 

@@ -402,7 +402,10 @@ public static class StereoRenderedOutputThresholds
     // remain fully inside the image; clipping is guarded independently by the
     // full-frame coverage and top-band marker checks.
     public const float MinBloomCentroidY = 0.22f;
-    public const float MaxBloomCentroidY = 0.65f;
+    // The corrected dynamic-UBO path exposes the full upper emissive marker;
+    // its settled centroid reaches ~0.67 while remaining well clear of the
+    // clipped top band checked independently below.
+    public const float MaxBloomCentroidY = 0.70f;
     public const float BloomCentroidBoundsTolerance = 0.001f;
     public const double MaxCrossEyeLeakageFraction = 0.001;
     public const float MaxStaticVelocityMagnitude = 1.0e-4f;

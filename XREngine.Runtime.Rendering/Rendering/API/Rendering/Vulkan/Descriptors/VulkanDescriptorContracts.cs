@@ -16,6 +16,7 @@ internal static class VulkanDescriptorContracts
     private static readonly HashSet<DescriptorType> GlobalsAllowedTypes =
     [
         DescriptorType.UniformBuffer,
+        DescriptorType.UniformBufferDynamic,
         DescriptorType.StorageBuffer,
         DescriptorType.CombinedImageSampler,
         DescriptorType.SampledImage,

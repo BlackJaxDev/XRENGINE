@@ -274,7 +274,8 @@ namespace XREngine
                             return;
 
                         RenderOutputRequest request = ResolveRequest(telemetry);
-                        OutputKey key = new(request.OutputId, telemetry.OutputKind, telemetry.ViewKind, telemetry.Name ?? string.Empty);
+                        string identityName = request.OutputId == 0UL ? telemetry.Name ?? string.Empty : string.Empty;
+                        OutputKey key = new(request.OutputId, telemetry.OutputKind, telemetry.ViewKind, identityName);
                         lock (Sync)
                         {
                             if (!CurrentOutputs.TryGetValue(key, out OutputAccumulator? output))
@@ -453,8 +454,16 @@ namespace XREngine
 
                     private static FrameOutputWorkSnapshot CaptureWorkSnapshot(FrameOutputEntrySnapshot[] outputs)
                     {
+                        int logicalOutputRequests = 0;
                         int uniqueViewFamilies = 0;
                         int targetVariants = 0;
+                        int outputEvents = 0;
+                        int collectEvents = 0;
+                        int swapEvents = 0;
+                        int renderEvents = 0;
+                        int submitEvents = 0;
+                        int overlayEvents = 0;
+                        int presentEvents = 0;
                         int cpuBudgetDeferrals = Interlocked.Exchange(ref _cpuBudgetDeferrals, 0);
                         int gpuBudgetDeferrals = Interlocked.Exchange(ref _gpuBudgetDeferrals, 0);
                         int staleResultReuses = Interlocked.Exchange(ref _staleResultReuses, 0);
@@ -463,6 +472,8 @@ namespace XREngine
                         for (int i = 0; i < outputs.Length; i++)
                         {
                             FrameOutputEntrySnapshot output = outputs[i];
+                            if (IsLogicalRenderRequest(outputs, i))
+                                logicalOutputRequests++;
                             if (output.Request.ViewFamilyId != 0UL && IsFirstViewFamily(outputs, i))
                                 uniqueViewFamilies++;
                             if (output.Request.Target.IsSpecified && IsFirstTargetVariant(outputs, i))
@@ -480,10 +491,24 @@ namespace XREngine
                                 missedDeadlines++;
                             if (!output.PolicyAuthorized)
                                 unapprovedPolicyEvents++;
+                            outputEvents += output.OutputEventCount;
+                            collectEvents += output.CollectEventCount;
+                            swapEvents += output.SwapEventCount;
+                            renderEvents += output.RenderEventCount;
+                            submitEvents += output.SubmitEventCount;
+                            overlayEvents += output.OverlayEventCount;
+                            presentEvents += output.PresentEventCount;
                         }
 
                         return new(
-                            OutputRequestCount: outputs.Length,
+                            OutputRequestCount: logicalOutputRequests,
+                            OutputEventCount: outputEvents,
+                            CollectEventCount: collectEvents,
+                            SwapEventCount: swapEvents,
+                            RenderEventCount: renderEvents,
+                            SubmitEventCount: submitEvents,
+                            OverlayEventCount: overlayEvents,
+                            PresentEventCount: presentEvents,
                             UniqueViewFamilyCount: uniqueViewFamilies,
                             TargetVariantCount: targetVariants,
                             SceneSnapshotCount: Interlocked.Exchange(ref _sceneSnapshots, 0),
@@ -503,6 +528,29 @@ namespace XREngine
                             PlannerPruneCount: Interlocked.Exchange(ref _plannerPrunes, 0),
                             GlobalInFlightWaitCount: Interlocked.Exchange(ref _globalInFlightWaits, 0),
                             ForceFlushCount: Interlocked.Exchange(ref _forceFlushes, 0));
+                    }
+
+                    private static bool IsLogicalRenderRequest(FrameOutputEntrySnapshot[] outputs, int index)
+                    {
+                        FrameOutputEntrySnapshot candidate = outputs[index];
+                        if (!candidate.RenderPhaseSceneRendered && !candidate.SceneRendered && !candidate.Skipped)
+                            return false;
+
+                        ulong familyId = candidate.Request.ViewFamilyId;
+                        ulong outputId = candidate.Request.OutputId;
+                        for (int i = 0; i < index; i++)
+                        {
+                            FrameOutputEntrySnapshot previous = outputs[i];
+                            if (!previous.RenderPhaseSceneRendered && !previous.SceneRendered && !previous.Skipped)
+                                continue;
+                            if (familyId != 0UL
+                                ? previous.Request.ViewFamilyId == familyId
+                                : previous.Request.OutputId == outputId)
+                            {
+                                return false;
+                            }
+                        }
+                        return true;
                     }
 
                     private static bool IsFirstViewFamily(FrameOutputEntrySnapshot[] outputs, int index)
@@ -623,6 +671,13 @@ namespace XREngine
                         public ERenderOutputPolicyReason PolicyReason;
                         public bool SubmitObserved;
                         public bool PresentObserved;
+                        public int OutputEventCount;
+                        public int CollectEventCount;
+                        public int SwapEventCount;
+                        public int RenderEventCount;
+                        public int SubmitEventCount;
+                        public int OverlayEventCount;
+                        public int PresentEventCount;
 
                         public void Apply(in FrameOutputTelemetry telemetry, in RenderOutputRequest request)
                         {
@@ -680,26 +735,33 @@ namespace XREngine
                             MultiDrawCalls += Math.Max(0, telemetry.MultiDrawCalls);
                             Triangles += Math.Max(0, telemetry.Triangles);
                             GpuMs += Math.Max(0.0, telemetry.GpuMs);
+                            OutputEventCount++;
 
                             double cpuMs = Math.Max(0.0, telemetry.CpuMs);
                             switch (telemetry.Phase)
                             {
                                 case EFrameOutputPhase.Collect:
+                                    CollectEventCount++;
                                     CollectCpuMs += cpuMs;
                                     break;
                                 case EFrameOutputPhase.Swap:
+                                    SwapEventCount++;
                                     SwapCpuMs += cpuMs;
                                     break;
                                 case EFrameOutputPhase.Render:
+                                    RenderEventCount++;
                                     RenderCpuMs += cpuMs;
                                     break;
                                 case EFrameOutputPhase.Submit:
+                                    SubmitEventCount++;
                                     SubmitCpuMs += cpuMs;
                                     break;
                                 case EFrameOutputPhase.Overlay:
+                                    OverlayEventCount++;
                                     OverlayCpuMs += cpuMs;
                                     break;
                                 case EFrameOutputPhase.Present:
+                                    PresentEventCount++;
                                     PresentCpuMs += cpuMs;
                                     break;
                             }
@@ -741,6 +803,13 @@ namespace XREngine
                                 PolicyReason,
                                 SubmitObserved,
                                 PresentObserved,
+                                OutputEventCount,
+                                CollectEventCount,
+                                SwapEventCount,
+                                RenderEventCount,
+                                SubmitEventCount,
+                                OverlayEventCount,
+                                PresentEventCount,
                                 CommandCount,
                                 DrawCalls,
                                 MultiDrawCalls,
@@ -826,6 +895,13 @@ namespace XREngine
 
                 public readonly record struct FrameOutputWorkSnapshot(
                     int OutputRequestCount,
+                    int OutputEventCount,
+                    int CollectEventCount,
+                    int SwapEventCount,
+                    int RenderEventCount,
+                    int SubmitEventCount,
+                    int OverlayEventCount,
+                    int PresentEventCount,
                     int UniqueViewFamilyCount,
                     int TargetVariantCount,
                     int SceneSnapshotCount,
@@ -881,6 +957,13 @@ namespace XREngine
                     ERenderOutputPolicyReason PolicyReason,
                     bool SubmitObserved,
                     bool PresentObserved,
+                    int OutputEventCount,
+                    int CollectEventCount,
+                    int SwapEventCount,
+                    int RenderEventCount,
+                    int SubmitEventCount,
+                    int OverlayEventCount,
+                    int PresentEventCount,
                     int CommandCount,
                     int DrawCalls,
                     int MultiDrawCalls,

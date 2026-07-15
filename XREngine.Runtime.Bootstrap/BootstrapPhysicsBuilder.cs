@@ -1,4 +1,3 @@
-using MagicPhysX;
 using System.Numerics;
 using XREngine.Components.Physics;
 using XREngine.Components.Scene.Mesh;
@@ -8,7 +7,6 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
 using XREngine.Scene.Transforms;
@@ -33,11 +31,15 @@ public static class BootstrapPhysicsBuilder
         if (count <= 0)
             return;
 
-        Random random = new();
-        PhysxMaterial physMat = new(0.2f, 0.2f, 1.0f);
-        physMat.RestitutionCombineMode = PhysicsMaterialCombineMode.Max;
+        Random random = new(1337);
+        PhysicsMaterialDefinition material = new()
+        {
+            StaticFriction = 0.2f,
+            DynamicFriction = 0.2f,
+            Restitution = 1.0f,
+        };
         for (int i = 0; i < count; i++)
-            AddBall(rootNode, physMat, radius, random);
+            AddBall(rootNode, material, radius, random, i);
     }
 
     public static void AddPhysicsFloor(SceneNode rootNode)
@@ -46,9 +48,13 @@ public static class BootstrapPhysicsBuilder
         var floorTfm = floor.SetTransform<RigidBodyTransform>();
         var floorComp = floor.AddComponent<StaticRigidBodyComponent>()!;
 
-        PhysxMaterial floorPhysMat = new(0.5f, 0.5f, 0.7f);
         Vector3 floorHalfExtents = new(5000.0f, 0.5f, 5000.0f);
-        floorComp.Material = floorPhysMat;
+        floorComp.MaterialDefinition = new PhysicsMaterialDefinition
+        {
+            StaticFriction = 0.5f,
+            DynamicFriction = 0.5f,
+            Restitution = 0.7f,
+        };
         floorComp.Geometry = new IPhysicsGeometry.Box(floorHalfExtents);
         floorTfm.SetPositionAndRotation(new Vector3(0.0f, -floorHalfExtents.Y, 0.0f), Quaternion.Identity);
         floorComp.CollisionGroup = CollisionGroup;
@@ -62,7 +68,12 @@ public static class BootstrapPhysicsBuilder
         floorModel.Model = new Model([new SubMesh(XRMesh.Create(VertexQuad.PosY(10000.0f)), floorMat)]);
     }
 
-    public static void AddBall(SceneNode rootNode, PhysxMaterial ballPhysMat, float ballRadius, Random random)
+    public static void AddBall(
+        SceneNode rootNode,
+        PhysicsMaterialDefinition material,
+        float ballRadius,
+        Random random,
+        int index = 0)
     {
         const float spawnRange = 40.0f;
         float minSpawnHeight = MathF.Max(ballRadius * 2.0f, 5.0f);
@@ -81,11 +92,11 @@ public static class BootstrapPhysicsBuilder
             random.NextSingle() * 10.0f,
             random.NextSingle() * 10.0f);
 
-        var ball = new SceneNode(rootNode) { Name = "Ball" };
+        var ball = new SceneNode(rootNode) { Name = $"Ball_{index:D3}" };
         var ballTfm = ball.SetTransform<RigidBodyTransform>();
         ballTfm.InterpolationMode = EInterpolationMode.Interpolate;
         var ballComp = ball.AddComponent<DynamicRigidBodyComponent>()!;
-        ballComp.Material = ballPhysMat;
+        ballComp.MaterialDefinition = material;
         ballComp.Geometry = new IPhysicsGeometry.Sphere(ballRadius);
         ballTfm.SetPositionAndRotation(spawnPosition, Quaternion.Identity);
         ballComp.Density = 1.0f;

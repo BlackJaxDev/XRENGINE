@@ -151,15 +151,58 @@ namespace XREngine.Rendering.Vulkan
                 PInheritanceInfo = &inheritanceInfo,
             };
 
+            Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = _dynamicUiMeshDrawSlotsByRendererScratch;
+            meshDrawSlotsByRenderer.Clear();
+            meshDrawSlotsByRenderer.EnsureCapacity(_dynamicUiMeshDrawSlotCapacityHint);
+            EnsureMeshDrawUniformSlotCapacityForRecording(dynamicUiBatchTextOps, meshDrawSlotsByRenderer);
+
+            VulkanMeshFrameDataReservationManifest frameDataManifest =
+                _commandBufferRecordingScratch.Value!.MeshFrameDataManifest;
+            frameDataManifest.Begin(MeshFrameDataReservationGeneration, _dynamicUiMeshDrawSlotCapacityHint);
+            foreach (KeyValuePair<VkMeshRenderer, int> reservation in meshDrawSlotsByRenderer)
+            {
+                if (frameDataManifest.TryReserve(reservation.Key, reservation.Value))
+                    continue;
+                frameDataManifest.End();
+                throw new InvalidOperationException(
+                    $"Unable to reserve {reservation.Value} dynamic-UI mesh frame-data slots before secondary recording.");
+            }
+
+            meshDrawSlotsByRenderer.Clear();
+            for (int i = 0; i < dynamicUiBatchTextOps.Length; i++)
+            {
+                if (dynamicUiBatchTextOps[i] is not MeshDrawOp drawOp)
+                    continue;
+                meshDrawSlotsByRenderer.TryGetValue(drawOp.Draw.Renderer, out int drawSlot);
+                meshDrawSlotsByRenderer[drawOp.Draw.Renderer] = drawSlot + 1;
+                using IDisposable plannerScope =
+                    EnterFrameOpResourcePlannerReadbackScope(drawOp.Context);
+                int descriptorFrameIndex = imageIndex > int.MaxValue ? int.MaxValue : (int)imageIndex;
+                if (drawOp.Draw.Renderer.TryPrewarmFrameDataForRecording(
+                        drawOp.Draw,
+                        drawSlot,
+                        descriptorFrameIndex,
+                        out string reason))
+                    continue;
+                frameDataManifest.End();
+                throw new InvalidOperationException(
+                    $"Dynamic-UI frame-data reservation failed before secondary recording at slot {drawSlot}: {reason}");
+            }
+            meshDrawSlotsByRenderer.Clear();
+
+            if (!frameDataManifest.TrySeal(MeshFrameDataReservationGeneration, MeshFrameDataReservedBytes))
+            {
+                frameDataManifest.End();
+                throw new InvalidOperationException(
+                    "Mesh frame-data generation changed while the dynamic-UI reservation manifest was being materialized.");
+            }
+            using VulkanMeshFrameDataManifestRecordingScope frameDataManifestScope = new(frameDataManifest);
+
             if (Api!.BeginCommandBuffer(secondaryCommandBuffer, ref beginInfo) != Result.Success)
                 throw new Exception("Failed to begin dynamic UI text secondary command buffer.");
 
             ResetCommandBufferBindState(secondaryCommandBuffer);
 
-            Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = _dynamicUiMeshDrawSlotsByRendererScratch;
-            meshDrawSlotsByRenderer.Clear();
-            meshDrawSlotsByRenderer.EnsureCapacity(_dynamicUiMeshDrawSlotCapacityHint);
-            EnsureMeshDrawUniformSlotCapacityForRecording(dynamicUiBatchTextOps, meshDrawSlotsByRenderer);
             meshDrawSlotsByRenderer.Clear();
             int GetMeshDrawUniformSlot(VkMeshRenderer renderer)
             {
@@ -253,7 +296,7 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            if (Api!.EndCommandBuffer(secondaryCommandBuffer) != Result.Success)
+            if (EndCommandBufferTracked(secondaryCommandBuffer) != Result.Success)
                 throw new Exception("Failed to end dynamic UI text secondary command buffer.");
 
             if (recordedDrawCount == 0)
@@ -388,7 +431,7 @@ namespace XREngine.Rendering.Vulkan
 
             CmdEndLabel(commandBuffer);
 
-            if (Api.EndCommandBuffer(commandBuffer) != Result.Success)
+            if (EndCommandBufferTracked(commandBuffer) != Result.Success)
                 throw new InvalidOperationException("Failed to end dynamic UI text overlay command buffer.");
 
             overlayCommandBuffer = commandBuffer;
@@ -549,7 +592,7 @@ namespace XREngine.Rendering.Vulkan
                         ResetCommandBufferBindState(secondary);
                         recorder(relativeIndex, secondary);
 
-                        if (Api!.EndCommandBuffer(secondary) != Result.Success)
+                        if (EndCommandBufferTracked(secondary) != Result.Success)
                             throw new Exception("Failed to end Vulkan primary-owned secondary command buffer.");
 
                         MarkCommandChainSecondaryCommandBufferRecorded(chain);
@@ -635,6 +678,7 @@ namespace XREngine.Rendering.Vulkan
         private void RecordFrameOpInSecondary(CommandBuffer secondaryCommandBuffer, uint imageIndex, FrameOp runOp, int opIndex)
         {
             using IDisposable? _ = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(runOp.Context.PipelineInstance);
+            using IDisposable plannerScope = EnterFrameOpResourcePlannerReadbackScope(runOp.Context);
             switch (runOp)
             {
                 case BlitOp blitOp:
@@ -727,7 +771,7 @@ namespace XREngine.Rendering.Vulkan
 
                 recorder(secondary);
 
-                if (Api!.EndCommandBuffer(secondary) != Result.Success)
+                if (EndCommandBufferTracked(secondary) != Result.Success)
                     throw new Exception("Failed to end Vulkan secondary command buffer.");
 
                 CmdExecuteCommandsTracked(primaryCommandBuffer, 1, &secondary);
@@ -841,7 +885,7 @@ namespace XREngine.Rendering.Vulkan
 
                             recorder(index, secondary);
 
-                            if (Api!.EndCommandBuffer(secondary) != Result.Success)
+                            if (EndCommandBufferTracked(secondary) != Result.Success)
                                 throw new Exception("Failed to end Vulkan secondary command buffer.");
 
                             secondaryBuffers[index] = secondary;

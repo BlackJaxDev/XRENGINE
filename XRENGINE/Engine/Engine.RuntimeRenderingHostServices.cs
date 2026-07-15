@@ -1014,8 +1014,14 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RecordRenderVulkanDescriptorPoolReset()
         => Engine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolReset();
 
-    public void RecordRenderVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount)
-        => Engine.Rendering.Stats.Vulkan.RecordVulkanResourceLifetimeGauges(liveResourceCount, trackedDescriptorSetCount);
+    public void RecordRenderVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount, int pendingRetirementCount, long oldestPendingRetirementAgeMilliseconds)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanResourceLifetimeGauges(liveResourceCount, trackedDescriptorSetCount, pendingRetirementCount, oldestPendingRetirementAgeMilliseconds);
+
+    public void RecordRenderVulkanMeshFrameDataGauges(int arenaChunkCount, long mappedBytes, long reservedBytes, int reservationCount, ulong generation, int recordingLeases, int cachedLeases, int submittedLeases, int activeGenerationCount, int leaseRetainedGenerationCount)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanMeshFrameDataGauges(arenaChunkCount, mappedBytes, reservedBytes, reservationCount, generation, recordingLeases, cachedLeases, submittedLeases, activeGenerationCount, leaseRetainedGenerationCount);
+
+    public void AdjustRenderVulkanMeshDescriptorOwnership(int allocationVariants, int pools, int allocatedSets, int reservedSets)
+        => Engine.Rendering.Stats.Vulkan.AdjustVulkanMeshDescriptorOwnership(allocationVariants, pools, allocatedSets, reservedSets);
 
     public void RecordRenderVulkanDynamicUniformAllocation(long bytes)
         => Engine.Rendering.Stats.Vulkan.RecordVulkanDynamicUniformAllocation(bytes);

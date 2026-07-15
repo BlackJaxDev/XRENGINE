@@ -17,7 +17,7 @@
     },
     "WorldKind": {
       "$ref": "#/definitions/UnitTestWorldKind",
-      "markdownDescription": "Supported values: `Default`, `AudioTesting`, `MathIntersections`, `MeshEditing`, `UberShader`, `PhysxTesting`, `NetworkingPose`.",
+      "markdownDescription": "Supported values: `Default`, `AudioTesting`, `MathIntersections`, `MeshEditing`, `UberShader`, `PhysicsTesting`, `PhysxTesting`, `NetworkingPose`.",
       "description": "Selects the WorldKind enum value."
     },
     "VisualizeOctree": {
@@ -598,10 +598,11 @@
         "MathIntersections",
         "MeshEditing",
         "UberShader",
+        "PhysicsTesting",
         "PhysxTesting",
         "NetworkingPose"
       ],
-      "markdownDescription": "Supported values: `Default`, `AudioTesting`, `MathIntersections`, `MeshEditing`, `UberShader`, `PhysxTesting`, `NetworkingPose`."
+      "markdownDescription": "Supported values: `Default`, `AudioTesting`, `MathIntersections`, `MeshEditing`, `UberShader`, `PhysicsTesting`, `PhysxTesting`, `NetworkingPose`."
     },
     "UnitTestEditorType": {
       "type": "string",
