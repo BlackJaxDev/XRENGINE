@@ -684,7 +684,7 @@ public sealed class CpuRenderOcclusionCoordinatorTests
     }
 
     [Test]
-    public void TryScheduleVisibleDrawProbe_RespectsVisibleBudget()
+    public void SelectProbeCandidates_RespectsVisibleBudget()
     {
         _host.CpuQueryOcclusionMaxQueriesPerFrame = 4;
         _host.CpuQueryOcclusionVisibleDemotionBudgetFraction = 0.25f;
@@ -698,10 +698,19 @@ public sealed class CpuRenderOcclusionCoordinatorTests
             ECpuOcclusionQueryReason.StaleStateRefresh,
             recoveryProbe: false);
 
-        coordinator.TryScheduleVisibleDrawProbe(RenderPass, camera, 64u, request, ownership)
-            .ShouldBeTrue();
-        coordinator.TryScheduleVisibleDrawProbe(RenderPass, camera, 65u, request, ownership)
-            .ShouldBeFalse();
+        coordinator.ShouldRender(RenderPass, camera, 64u, out _, ownership);
+        coordinator.ShouldRender(RenderPass, camera, 65u, out _, ownership);
+        List<CpuOcclusionProbeCandidate> candidates =
+        [
+            new(64u, UnitBounds(), request, screenPriority: 2.0f, distanceMeters: 1.0f),
+            new(65u, UnitBounds(), request, screenPriority: 1.0f, distanceMeters: 2.0f),
+        ];
+        List<CpuOcclusionScheduledProbe> scheduled = [];
+
+        coordinator.SelectProbeCandidates(RenderPass, camera, candidates, scheduled, ownership);
+
+        scheduled.Count.ShouldBe(1);
+        scheduled[0].QueryKey.ShouldBe(64u);
     }
 
     [Test]

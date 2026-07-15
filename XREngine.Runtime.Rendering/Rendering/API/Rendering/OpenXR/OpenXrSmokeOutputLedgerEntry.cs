@@ -40,7 +40,9 @@ public struct OpenXrSmokeOutputLedgerEntry
     public bool Due { get; set; }
     public bool Skipped { get; set; }
     public string? WorkDisposition { get; set; }
+    public double AchievedRateHz { get; set; }
     public uint ContentAgeFrames { get; set; }
+    public bool DeadlineMissed { get; set; }
     public bool PolicyAuthorized { get; set; }
     public int CommandCount { get; set; }
     public int DrawCalls { get; set; }

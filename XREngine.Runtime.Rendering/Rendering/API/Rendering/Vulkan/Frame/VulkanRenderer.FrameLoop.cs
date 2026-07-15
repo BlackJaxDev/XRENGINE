@@ -340,6 +340,7 @@ namespace XREngine.Rendering.Vulkan
             DrainInvalidatedCommandBufferRecordings();
             DrainRetiredDescriptorPools();
             DrainRetiredPipelines();
+            DrainRetiredPipelineLayouts();
             DrainRetiredBuffers();
             DrainRetiredFramebuffers();
             DrainRetiredImages();
@@ -824,6 +825,7 @@ namespace XREngine.Rendering.Vulkan
                         DrainRetiredDescriptorSets(currentFrame);
                         DrainRetiredDescriptorPools();
                         DrainRetiredPipelines();
+                        DrainRetiredPipelineLayouts();
                         DrainRetiredQueryPools(currentFrame);
                         DrainRetiredBufferViews(currentFrame);
                         DrainRetiredBuffers();
@@ -1050,6 +1052,20 @@ namespace XREngine.Rendering.Vulkan
                             _deviceLost,
                             imageWasEverPresented,
                             imageHasValidPresentedContent);
+                        if (!policy.ShouldPresent &&
+                            acquireAvailable &&
+                            !_deviceLost &&
+                            string.Equals(rejectionStage, "RecordDeferred", StringComparison.Ordinal))
+                        {
+                            // Descriptor/program readiness is checked only after the desktop image
+                            // has been acquired. When no prior completed contents exist yet, publish
+                            // one explicit initialization clear so ownership returns to the
+                            // presentation engine without rebuilding the swapchain. The scene output
+                            // remains deferred and is rebuilt on the next frame.
+                            policy = new RejectedDesktopFramePolicyDecision(
+                                ERejectedDesktopFrameDisposition.PresentInitializationClear,
+                                ERejectedDesktopFramePolicyReason.DeferredInitializationClear);
+                        }
                         bool isPhase524bInjectedRejection = string.Equals(
                             rejectionStage,
                             Phase524bInjectedDesktopRejectionStage,
@@ -1149,6 +1165,77 @@ namespace XREngine.Rendering.Vulkan
                                 throw new Exception("Failed to begin swapchain abort-present transition command buffer.");
 
                             ResetCommandBufferBindState(abortCommandBuffer);
+
+                            if (policy.ShouldClearBeforePresent)
+                            {
+                                Image swapchainImage = swapChainImages![imageIndex];
+                                ImageSubresourceRange clearRange = new()
+                                {
+                                    AspectMask = ImageAspectFlags.ColorBit,
+                                    BaseMipLevel = 0,
+                                    LevelCount = 1,
+                                    BaseArrayLayer = 0,
+                                    LayerCount = 1,
+                                };
+                                ImageMemoryBarrier toTransfer = new()
+                                {
+                                    SType = StructureType.ImageMemoryBarrier,
+                                    SrcAccessMask = 0,
+                                    DstAccessMask = AccessFlags.TransferWriteBit,
+                                    OldLayout = imageWasEverPresented
+                                        ? ImageLayout.PresentSrcKhr
+                                        : ImageLayout.Undefined,
+                                    NewLayout = ImageLayout.TransferDstOptimal,
+                                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                                    Image = swapchainImage,
+                                    SubresourceRange = clearRange,
+                                };
+                                CmdPipelineBarrierTracked(
+                                    abortCommandBuffer,
+                                    PipelineStageFlags.AllCommandsBit,
+                                    PipelineStageFlags.TransferBit,
+                                    0,
+                                    0,
+                                    null,
+                                    0,
+                                    null,
+                                    1,
+                                    &toTransfer);
+
+                                ClearColorValue clearColor = new(0.0f, 0.0f, 0.0f, 1.0f);
+                                CmdClearColorImageTracked(
+                                    abortCommandBuffer,
+                                    swapchainImage,
+                                    ImageLayout.TransferDstOptimal,
+                                    ref clearColor,
+                                    1,
+                                    ref clearRange);
+
+                                ImageMemoryBarrier toPresent = new()
+                                {
+                                    SType = StructureType.ImageMemoryBarrier,
+                                    SrcAccessMask = AccessFlags.TransferWriteBit,
+                                    DstAccessMask = 0,
+                                    OldLayout = ImageLayout.TransferDstOptimal,
+                                    NewLayout = ImageLayout.PresentSrcKhr,
+                                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                                    Image = swapchainImage,
+                                    SubresourceRange = clearRange,
+                                };
+                                CmdPipelineBarrierTracked(
+                                    abortCommandBuffer,
+                                    PipelineStageFlags.TransferBit,
+                                    PipelineStageFlags.BottomOfPipeBit,
+                                    0,
+                                    0,
+                                    null,
+                                    0,
+                                    null,
+                                    1,
+                                    &toPresent);
+                            }
 
                             if (EndCommandBufferTracked(abortCommandBuffer, cacheVariant: false) != Result.Success)
                                 throw new Exception("Failed to end swapchain abort-present transition command buffer.");
@@ -1409,10 +1496,11 @@ namespace XREngine.Rendering.Vulkan
                                 Debug.VulkanWarningEvery(
                                     $"Vulkan.Frame.{GetHashCode()}.RecordDeferred",
                                     TimeSpan.FromSeconds(1),
-                                    "[Vulkan] Command buffer recording deferred under resource pressure; skipped draw submit. {0}",
+                                    "[Vulkan] Command buffer recording deferred before vkBeginCommandBuffer; retrying the output on its next frame. {0}",
                                     recordingDeferredReason);
 
-                                RecreateSwapchainImmediately("Command buffer recording deferred under resource pressure - recovering timeline/present state");
+                                ScheduleSwapchainRecreate(
+                                    "Deferred-recording fallback could not return acquired image ownership");
                                 return;
                             }
                         }

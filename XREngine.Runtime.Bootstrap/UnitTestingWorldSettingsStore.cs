@@ -3,6 +3,7 @@ using Newtonsoft.Json.Linq;
 using System.Globalization;
 using XREngine.Audio;
 using XREngine.Rendering;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Runtime.Bootstrap;
 
@@ -162,10 +163,15 @@ public static class UnitTestingWorldSettingsStore
         }
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.GPURenderDispatch)))
+        {
             startupSettings.GPURenderDispatch = settings.GPURenderDispatch;
-
-        if (RequiresGpuRenderDispatchForOpenXrVulkan(settings))
-            startupSettings.GPURenderDispatch = true;
+            if (!settings.GPURenderDispatch && ResolveRenderBackend(settings) == ERenderLibrary.Vulkan)
+            {
+                startupSettings.VulkanGpuDrivenProfileOverride = new(
+                    EVulkanGpuDrivenProfile.DevParity,
+                    true);
+            }
+        }
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.UpdateFPS)))
             startupSettings.TargetUpdatesPerSecond = settings.UpdateFPS;
@@ -199,10 +205,6 @@ public static class UnitTestingWorldSettingsStore
         => settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering))
             ? settings.Rendering.BackendFallbackPolicy
             : RenderBackendFallbackPolicy.RequireRequested;
-
-    private static bool RequiresGpuRenderDispatchForOpenXrVulkan(UnitTestingWorldSettings settings)
-        => settings.VR.Mode is UnitTestingVrLaunchMode.MonadoOpenXR or UnitTestingVrLaunchMode.OpenXR
-        && ResolveRenderBackend(settings) == ERenderLibrary.Vulkan;
 
     private static UnitTestingOpenGLShaderLinkingSettings ResolveOpenGLShaderLinkingSettings(UnitTestingWorldSettings settings)
         => settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering))

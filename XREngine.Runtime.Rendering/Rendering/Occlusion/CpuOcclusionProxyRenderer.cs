@@ -7,10 +7,11 @@ namespace XREngine.Rendering.Occlusion
 {
     /// <summary>
     /// Draws a tiny depth-only AABB proxy used by <see cref="CpuRenderOcclusionCoordinator"/>
-    /// to refresh an occluded mesh's hardware occlusion-query result *without* contributing
-    /// to the visible image. This is the requery path for periodically-retested occluded
-    /// meshes — instead of redrawing the full mesh (which causes visible flicker), we draw
-    /// a cheap solid bounding box with:
+    /// to test a mesh's hardware occlusion-query result *without* contributing to the visible
+    /// image. Both visible demotion and occluded recovery run after the visible pass has built
+    /// complete depth. A zero-sample bounds result proves the mesh is occluded; a false-positive
+    /// result merely preserves an extra visible draw. Instead of redrawing the full mesh
+    /// (which can flicker), each query draws a cheap solid bounding box with:
     ///
     ///   - Color writes disabled (WriteRed/Green/Blue/Alpha = false)
     ///   - Depth writes disabled (DepthTest.UpdateDepth = false)
@@ -96,7 +97,7 @@ namespace XREngine.Rendering.Occlusion
         /// Must be called between <c>CpuRenderOcclusionCoordinator.BeginQuery</c> and
         /// <c>EndQuery</c> so the conservative samples-passed query straddles the draw.
         /// </summary>
-        public static void Draw(in AABB worldBounds)
+        public static void Draw(in AABB worldBounds, XRCamera camera)
         {
             EnsureInitialized();
 
@@ -110,7 +111,20 @@ namespace XREngine.Rendering.Occlusion
                 return;
 
             Matrix4x4 model = Matrix4x4.CreateScale(size) * Matrix4x4.CreateTranslation(worldBounds.Min);
-            renderer.Render(model, model, s_probeMaterial, instances: 1u, renderOptionsOverride: s_probeRenderParams);
+            // RenderCPU's camera argument is the ownership key used for the query state.
+            // Independent desktop, preview, and OpenXR outputs can be enqueued in one
+            // engine frame, so ambient pipeline state may already point at a sibling
+            // output when this deferred proxy is emitted. Snapshot the same camera that
+            // made the visibility decision into the proxy draw.
+            RuntimeEngine.Rendering.State.RenderingCameraOverride = camera;
+            try
+            {
+                renderer.Render(model, model, s_probeMaterial, instances: 1u, renderOptionsOverride: s_probeRenderParams);
+            }
+            finally
+            {
+                RuntimeEngine.Rendering.State.RenderingCameraOverride = null;
+            }
         }
     }
 }

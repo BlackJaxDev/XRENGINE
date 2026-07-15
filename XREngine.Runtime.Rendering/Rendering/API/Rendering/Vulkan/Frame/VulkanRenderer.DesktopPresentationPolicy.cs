@@ -68,6 +68,7 @@ public unsafe partial class VulkanRenderer
     {
         SkipPresent = 0,
         PresentLastCompletedContent = 1,
+        PresentInitializationClear = 2,
     }
 
     internal enum ERejectedDesktopFramePolicyReason
@@ -77,6 +78,7 @@ public unsafe partial class VulkanRenderer
         ImageNeverPresented = 2,
         NoCompletedFinalWrite = 3,
         ReuseCompletedContent = 4,
+        DeferredInitializationClear = 5,
     }
 
     internal readonly record struct RejectedDesktopFramePolicyDecision(
@@ -84,7 +86,10 @@ public unsafe partial class VulkanRenderer
         ERejectedDesktopFramePolicyReason Reason)
     {
         public bool ShouldPresent
-            => Disposition == ERejectedDesktopFrameDisposition.PresentLastCompletedContent;
+            => Disposition != ERejectedDesktopFrameDisposition.SkipPresent;
+
+        public bool ShouldClearBeforePresent
+            => Disposition == ERejectedDesktopFrameDisposition.PresentInitializationClear;
     }
 
     /// <summary>

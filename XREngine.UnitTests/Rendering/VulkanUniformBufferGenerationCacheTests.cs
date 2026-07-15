@@ -141,7 +141,10 @@ public sealed class VulkanUniformBufferGenerationCacheTests
             "TryPrewarmFrameDataForRecording",
             "frameDataManifest.TrySeal(",
             "Api!.BeginCommandBuffer(secondaryCommandBuffer");
-        primary.ShouldContain("throw new InvalidOperationException(\n                        $\"Mesh frame-data reservation failed");
+        primary.ShouldContain("private bool TryRecordCommandBuffer(");
+        primary.ShouldContain("out string recordingDeferredReason");
+        primary.ShouldContain("Mesh frame-data reservation deferred before command recording");
+        primary.ShouldNotContain("$\"Mesh frame-data reservation failed before command recording for \" +");
         primary.ShouldContain("EnterFrameOpResourcePlannerReadbackScope(ops[opIndex].Context)");
         secondary.ShouldContain("EnterFrameOpResourcePlannerReadbackScope(drawOp.Context)");
         primary.ShouldContain("commandBufferImageSlot,\n                        out string prewarmReason");
@@ -286,7 +289,8 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         {
             [eyeFamily] = 3,
         };
-        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>();
+        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
         VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
 
         manifest.TryRegister(
@@ -300,7 +304,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
                 out _)
             .ShouldBeTrue();
         manifest.IsSealed.ShouldBeTrue();
-        int eyeBase = familyBases[eyeFamily];
+        int eyeBase = familyBases[new(renderer, eyeFamily)];
 
         rendererFamilies.Clear();
         rendererFamilies[new(renderer, desktopFamily)] = 3;
@@ -329,7 +333,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
                 out _)
             .ShouldBeTrue();
         secondGeneration.ShouldBeGreaterThan(firstGeneration);
-        int desktopBase = familyBases[desktopFamily];
+        int desktopBase = familyBases[new(renderer, desktopFamily)];
         eyeBase.ShouldBe(0);
         desktopBase.ShouldBe(0);
         manifest.PublishedRendererCount.ShouldBe(1);
@@ -369,7 +373,8 @@ public sealed class VulkanUniformBufferGenerationCacheTests
             [primaryFamily] = 3,
             [dynamicUiFamily] = 5,
         };
-        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>();
+        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
         VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
 
         manifest.TryRegister(
@@ -383,10 +388,67 @@ public sealed class VulkanUniformBufferGenerationCacheTests
                 out _)
             .ShouldBeTrue();
 
-        int primaryBase = familyBases[primaryFamily];
-        int dynamicUiBase = familyBases[dynamicUiFamily];
+        int primaryBase = familyBases[new(renderer, primaryFamily)];
+        int dynamicUiBase = familyBases[new(renderer, dynamicUiFamily)];
         dynamicUiBase.ShouldBeGreaterThanOrEqualTo(primaryBase + 3);
         requirements[renderer].ShouldBeGreaterThanOrEqualTo(dynamicUiBase + 5);
+    }
+
+    [Test]
+    public void FrameWideManifest_DoesNotChargeOneRendererForUnrelatedRendererFamilies()
+    {
+        var firstRenderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+            typeof(VulkanRenderer.VkMeshRenderer));
+        var secondRenderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+            typeof(VulkanRenderer.VkMeshRenderer));
+        var firstFamily = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(
+            2,
+            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
+            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+            10,
+            20,
+            30,
+            40,
+            50,
+            0,
+            false,
+            false);
+        var secondFamily = firstFamily with
+        {
+            PipelineIdentity = 11,
+            OutputTargetIdentity = 41,
+        };
+        var requirements = new Dictionary<VulkanRenderer.VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
+        var rendererFamilies = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance)
+        {
+            [new(firstRenderer, firstFamily)] = 3,
+            [new(secondRenderer, secondFamily)] = 5,
+        };
+        var familyStrides = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>
+        {
+            [firstFamily] = 3,
+            [secondFamily] = 5,
+        };
+        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+        VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
+
+        manifest.TryRegister(
+                100,
+                requirements,
+                rendererFamilies,
+                familyStrides,
+                familyBases,
+                sealAfterRegister: true,
+                out _,
+                out _)
+            .ShouldBeTrue();
+
+        familyBases[new(firstRenderer, firstFamily)].ShouldBe(0);
+        familyBases[new(secondRenderer, secondFamily)].ShouldBe(0);
+        requirements[firstRenderer].ShouldBe(32);
+        requirements[secondRenderer].ShouldBe(32);
     }
 
     [Test]
@@ -416,7 +478,8 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         {
             [family] = 3,
         };
-        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>();
+        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
         VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
 
         manifest.TryRegister(
@@ -429,7 +492,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
                 out ulong firstGeneration,
                 out _)
             .ShouldBeTrue();
-        int firstBase = familyBases[family];
+        int firstBase = familyBases[new(renderer, family)];
         requirements[renderer].ShouldBeGreaterThanOrEqualTo(firstBase + 32);
 
         rendererFamilies[new(renderer, family)] = 20;
@@ -445,7 +508,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
                 out _)
             .ShouldBeTrue();
 
-        familyBases[family].ShouldBe(firstBase);
+        familyBases[new(renderer, family)].ShouldBe(firstBase);
         secondGeneration.ShouldBe(firstGeneration);
         manifest.LateRegistrationCount.ShouldBe(0);
     }

@@ -45,6 +45,26 @@ public sealed class VulkanCoreHardeningPhase4Tests
     }
 
     [Test]
+    public void PipelineLayoutsUseExactTicketDeferredRetirementInsteadOfShutdownRetention()
+    {
+        string layouts = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Pipelines/VulkanRenderer.PipelineLayoutLifetime.cs");
+        string frameLoop = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
+        string openXr = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+
+        layouts.ShouldContain("RetiredPipelineLayout(");
+        layouts.ShouldContain("CaptureVulkanRetirementTicket(");
+        layouts.ShouldContain("IsVulkanRetirementReady(candidate.Ticket)");
+        layouts.ShouldContain("DrainRetiredPipelineLayouts(int frameSlot, int maxItems)");
+        layouts.ShouldContain("CompleteVulkanResourceDestruction(\n                ObjectType.PipelineLayout");
+        layouts.ShouldNotContain("Pipeline-layout destruction deferred until shutdown");
+        frameLoop.ShouldContain("DrainRetiredPipelineLayouts();");
+        openXr.ShouldContain("DrainRetiredPipelineLayouts(i, int.MaxValue)");
+    }
+
+    [Test]
     public void LifetimeState_SeparatesCpuRecordedSubmittedExternalAndRetirementOwnership()
     {
         VulkanRenderer.EVulkanResourceLifetimeState values =

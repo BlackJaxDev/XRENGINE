@@ -606,11 +606,10 @@ namespace XREngine.Rendering.Occlusion
 
         /// <summary>
         /// Reserves one bounded visible-demotion query at the mesh's original draw
-        /// position. Visible queries must bracket the exact contributing geometry;
-        /// deferring that draw would perturb equal-depth ordering, while replacing it
-        /// with an AABB would not prove that the visible mesh itself passed depth.
+        /// position. The caller emits the conservative proxy before the real mesh so
+        /// the mesh cannot occlude its own bounds and manufacture a zero-sample result.
         /// </summary>
-        public bool TryScheduleVisibleDrawProbe(
+        public bool TryScheduleVisibleProxyProbe(
             int renderPass,
             XRCamera? camera,
             uint sourceCommandIndex,
@@ -1160,6 +1159,11 @@ namespace XREngine.Rendering.Occlusion
                 ResolveQueryState(queryState, frameId, out bool resolved, out bool anySamplesPassed);
                 if (resolved && !discardResult)
                 {
+                    anySamplesPassed = NormalizeBackendQueryResult(
+                        state,
+                        queryState,
+                        frameId,
+                        anySamplesPassed);
                     ApplyResolvedCommandResult(state, key, queryState, frameId, anySamplesPassed);
                     ApplyResolvedPovResult(state, key, frameId, anySamplesPassed);
                     state.Telemetry.RecordResolution(queryState.PendingSinceFrame, frameId);
@@ -1189,6 +1193,11 @@ namespace XREngine.Rendering.Occlusion
                 if (!resolved)
                     continue;
 
+                anySamplesPassed = NormalizeBackendQueryResult(
+                    state,
+                    group.Query,
+                    frameId,
+                    anySamplesPassed);
                 state.Telemetry.RecordResolution(group.Query.PendingSinceFrame, frameId);
 
                 group.LastAnySamplesPassed = anySamplesPassed;
@@ -1200,6 +1209,30 @@ namespace XREngine.Rendering.Occlusion
 
                 _ = groupKey;
             }
+        }
+
+        private static bool NormalizeBackendQueryResult(
+            PassState state,
+            QueryState queryState,
+            ulong frameId,
+            bool anySamplesPassed)
+        {
+            if (anySamplesPassed || AbstractRenderer.Current is not VulkanRenderer)
+                return anySamplesPassed;
+
+            // Current Vulkan A/B captures prove that zero-sample results can remove
+            // known-visible foreground geometry. Keep query issue/resolve telemetry
+            // active for diagnosis, but do not let an unvalidated negative result
+            // affect visibility. Positive results remain inherently fail-visible.
+            ForceQueryStateVisible(queryState, frameId);
+            OcclusionTelemetry.RecordCpuForcedVisible(
+                ECpuOcclusionForceVisibleReason.UntrustedBackendNegativeResult);
+            state.Telemetry.RecordForcedVisible();
+            Debug.RenderingWarningEvery(
+                "CpuOcclusion.VulkanNegativeResultQuarantined",
+                TimeSpan.FromSeconds(5),
+                "Vulkan CPU-query occlusion returned zero samples; the result is observation-only until on/off image parity validates backend negative results.");
+            return true;
         }
 
         private void ResolveQueryState(QueryState queryState, ulong frameId, out bool resolved, out bool anySamplesPassed)

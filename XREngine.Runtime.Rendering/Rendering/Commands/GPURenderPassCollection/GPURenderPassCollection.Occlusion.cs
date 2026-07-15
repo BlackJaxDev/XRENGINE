@@ -1320,7 +1320,7 @@ namespace XREngine.Rendering.Commands
                 }
 
                 glQuery.BeginQuery(EQueryTarget.AnySamplesPassedConservative);
-                CpuOcclusionProxyRenderer.Draw(bounds);
+                CpuOcclusionProxyRenderer.Draw(bounds, camera);
                 glQuery.EndQuery();
 
                 _cpuOcclusionPending.Add((sourceIndex, query));
@@ -1330,7 +1330,6 @@ namespace XREngine.Rendering.Commands
             if (submitted > 0)
                 OcclusionTelemetry.RecordCpuQueryAsyncSubmitted(submitted);
 
-            _ = camera; // Camera state is observed via the caller's HasSignificantCameraChange bookkeeping.
         }
 
         private uint ApplyTemporalCpuOcclusionFilter(uint candidates, ECpuOcclusionMotionTier motionTier, ref uint temporalOverrides, ref uint falsePositiveRecoveries)

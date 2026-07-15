@@ -509,16 +509,6 @@ namespace XREngine.Rendering.Commands
                 }
                 int afterCount = set.Count;
                 ++_numCommandsRecentlyAddedToUpdate;
-                if (ShouldLogSponzaCpuDiag(item))
-                {
-                    LogSponzaCpuDiag(
-                        afterCount == beforeCount ? "collect-duplicate" : "collect-add",
-                        pass,
-                        item,
-                        camera: null,
-                        $"updatingPassCount={afterCount}, dirty={item._dirty}, queuedInCollection={_updatingSwapQueueMembership.Contains(item)}");
-                }
-
                 // Dirty-delta enqueue: only swap commands whose state has actually changed since
                 // the last publish. Queue membership is local to this collection so another
                 // viewport cannot starve this collection before either one reaches SwapBuffers().
@@ -962,12 +952,12 @@ namespace XREngine.Rendering.Commands
                         // No bounds available — fall through to the fail-visible mesh path.
                     }
 
-                    // A visible-demotion query must bracket the exact contributing draw
-                    // at its original position. Deferring the draw perturbs equal-depth
-                    // ordering, while an AABB proxy is not valid visibility proof for a
-                    // non-convex mesh. The coordinator keeps this inline path bounded.
+                    // Query the conservative AABB immediately before the contributing draw.
+                    // Deferring a visible-demotion proxy until after the draw lets the mesh
+                    // occlude its own bounds and manufacture a zero-sample result. Running
+                    // the bounds query first is fail-visible with respect to later occluders:
+                    // it may preserve extra work, but it cannot hide visible geometry.
                     if (needsHardwareQuery &&
-                        probeCandidates is not null &&
                         cmd.CullingVolume is AABB visibleProbeBounds)
                     {
                         if (CpuQueryProxyIsNearPlaneUnsafe(camera!, visibleProbeBounds))
@@ -977,23 +967,25 @@ namespace XREngine.Rendering.Commands
                         }
                         else
                         {
-                            bool queryScheduled = s_cpuOcclusionCoordinator.TryScheduleVisibleDrawProbe(
+                            bool queryScheduled = s_cpuOcclusionCoordinator.TryScheduleVisibleProxyProbe(
                                 renderPass,
                                 camera,
                                 queryKey,
                                 probeRequest,
                                 occlusionOwnership);
                             if (queryScheduled)
+                            {
                                 s_cpuOcclusionCoordinator.BeginQuery(renderPass, camera, queryKey, occlusionOwnership);
-                            try
-                            {
-                                RenderWithGpuScope(cmd, renderPass);
-                            }
-                            finally
-                            {
-                                if (queryScheduled)
+                                try
+                                {
+                                    XREngine.Rendering.Occlusion.CpuOcclusionProxyRenderer.Draw(visibleProbeBounds, camera!);
+                                }
+                                finally
+                                {
                                     s_cpuOcclusionCoordinator.EndQuery(renderPass, camera, queryKey, occlusionOwnership);
+                                }
                             }
+                            RenderWithGpuScope(cmd, renderPass);
                         }
 
                         if (ShouldLogSponzaCpuDiag(cmd))
@@ -1071,9 +1063,10 @@ namespace XREngine.Rendering.Commands
                 RenderWithGpuScope(cmd, renderPass);
             }
 
-            // Phase 3: deferred probe-only AABB draws for meshes that were not rendered.
-            // The depth buffer now reflects all visible meshes from this pass, so the
-            // conservative samples-passed result can safely drive recovery from Skip.
+            // Phase 3: deferred AABB probes for occluded recovery. These meshes did not
+            // contribute depth, so testing after the visible pass cannot self-occlude.
+            // A false positive only preserves an extra draw, while a zero result safely
+            // proves the bounded mesh remains fully occluded.
             if (probeCandidates is { Count: > 0 } && deferredProbes is not null)
                 s_cpuOcclusionCoordinator.SelectProbeCandidates(
                     renderPass,
@@ -1112,7 +1105,7 @@ namespace XREngine.Rendering.Commands
                         s_cpuOcclusionCoordinator.BeginQuery(renderPass, camera, probe.QueryKey, occlusionOwnership);
                     try
                     {
-                        XREngine.Rendering.Occlusion.CpuOcclusionProxyRenderer.Draw(probe.WorldBounds);
+                        XREngine.Rendering.Occlusion.CpuOcclusionProxyRenderer.Draw(probe.WorldBounds, camera!);
                     }
                     finally
                     {
@@ -1967,6 +1960,12 @@ namespace XREngine.Rendering.Commands
 
         private static void LogSponzaCpuDiag(string phase, int renderPass, RenderCommand cmd, XRCamera? camera, string detail)
         {
+            // Collection churn and steady-state direct draws can consume the entire bounded
+            // diagnostic budget before an asynchronous query has time to resolve. Keep this
+            // trace focused on state transitions that explain visible occlusion changes.
+            if (phase is "collect-add" or "collect-duplicate" or "draw-cpu" or "draw-cpu-query-direct")
+                return;
+
             if (!ShouldLogSponzaCpuDiag(cmd) || cmd is not RenderCommandMesh3D meshCommand)
                 return;
 
@@ -1977,8 +1976,23 @@ namespace XREngine.Rendering.Commands
             XRMeshRenderer? renderer = meshCommand.Mesh;
             var material = meshCommand.MaterialOverride ?? renderer?.Material;
             XRMesh? mesh = renderer?.Mesh;
+            string spatialDetail;
+            if (meshCommand.CullingVolume is AABB worldBounds)
+            {
+                Vector3 cameraPosition = camera?.Transform.RenderMatrix.Translation ?? new Vector3(float.NaN);
+                Vector3 modelTranslation = meshCommand.WorldMatrix.Translation;
+                spatialDetail =
+                    $"boundsMin=({worldBounds.Min.X:F3},{worldBounds.Min.Y:F3},{worldBounds.Min.Z:F3})," +
+                    $"boundsMax=({worldBounds.Max.X:F3},{worldBounds.Max.Y:F3},{worldBounds.Max.Z:F3})," +
+                    $"modelT=({modelTranslation.X:F3},{modelTranslation.Y:F3},{modelTranslation.Z:F3})," +
+                    $"cameraT=({cameraPosition.X:F3},{cameraPosition.Y:F3},{cameraPosition.Z:F3})";
+            }
+            else
+            {
+                spatialDetail = "bounds=<null>";
+            }
             Debug.Rendering(
-                "[SponzaFlickerDiag.CPU] frame={0} phase={1} line={2} cmd={3} stable={4} pass={5} cmdPass={6} enabled={7} renderEnabled={8} forceCpu={9} instances={10} sortKey={11} distance={12:F3} camera={13} sourceSubMesh='{14}' mesh='{15}' material='{16}' detail='{17}'",
+                "[SponzaFlickerDiag.CPU] frame={0} phase={1} line={2} cmd={3} stable={4} pass={5} cmdPass={6} enabled={7} renderEnabled={8} forceCpu={9} instances={10} sortKey={11} distance={12:F3} camera={13} sourceSubMesh='{14}' mesh='{15}' material='{16}' detail='{17}' spatial='{18}'",
                 RuntimeEngine.Rendering.State.RenderFrameId,
                 phase,
                 line,
@@ -1996,7 +2010,8 @@ namespace XREngine.Rendering.Commands
                 renderer?.SourceSubMeshAsset?.Name ?? "<null>",
                 mesh?.Name ?? "<null>",
                 material?.Name ?? "<null>",
-                detail);
+                detail,
+                spatialDetail);
         }
 
         private static bool ShouldLogSponzaCpuDiag(RenderCommand cmd)
