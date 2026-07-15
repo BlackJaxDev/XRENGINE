@@ -154,10 +154,24 @@ namespace XREngine.Rendering.Vulkan
             Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = _dynamicUiMeshDrawSlotsByRendererScratch;
             meshDrawSlotsByRenderer.Clear();
             meshDrawSlotsByRenderer.EnsureCapacity(_dynamicUiMeshDrawSlotCapacityHint);
-            EnsureMeshDrawUniformSlotCapacityForRecording(dynamicUiBatchTextOps, meshDrawSlotsByRenderer);
+            CommandBufferRecordingScratch recordingScratch = _commandBufferRecordingScratch.Value!;
+            if (!TryRegisterFrameWideMeshFrameDataRequirements(
+                    Array.Empty<FrameOp>(),
+                    dynamicUiBatchTextOps,
+                    unchecked((int)Math.Min(imageIndex, int.MaxValue)),
+                    sealAfterRegister: true,
+                    meshDrawSlotsByRenderer,
+                    recordingScratch,
+                    recordingScratch.DynamicUiMeshFrameDataFamilyBases,
+                    out _,
+                    out string frameWideReason))
+            {
+                throw new InvalidOperationException(
+                    $"Frame-wide mesh frame-data manifest rejected dynamic-UI recording: {frameWideReason}");
+            }
 
             VulkanMeshFrameDataReservationManifest frameDataManifest =
-                _commandBufferRecordingScratch.Value!.MeshFrameDataManifest;
+                recordingScratch.MeshFrameDataManifest;
             frameDataManifest.Begin(MeshFrameDataReservationGeneration, _dynamicUiMeshDrawSlotCapacityHint);
             foreach (KeyValuePair<VkMeshRenderer, int> reservation in meshDrawSlotsByRenderer)
             {
@@ -168,13 +182,23 @@ namespace XREngine.Rendering.Vulkan
                     $"Unable to reserve {reservation.Value} dynamic-UI mesh frame-data slots before secondary recording.");
             }
 
-            meshDrawSlotsByRenderer.Clear();
+            Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshDrawSlotsByRendererFamily =
+                _dynamicUiMeshDrawSlotsByRendererFamilyScratch;
+            Dictionary<VulkanMeshFrameDataFamilyKey, int> meshFrameDataFamilyBases =
+                recordingScratch.DynamicUiMeshFrameDataFamilyBases;
+            meshDrawSlotsByRendererFamily.Clear();
             for (int i = 0; i < dynamicUiBatchTextOps.Length; i++)
             {
                 if (dynamicUiBatchTextOps[i] is not MeshDrawOp drawOp)
                     continue;
-                meshDrawSlotsByRenderer.TryGetValue(drawOp.Draw.Renderer, out int drawSlot);
-                meshDrawSlotsByRenderer[drawOp.Draw.Renderer] = drawSlot + 1;
+                int drawSlot = GetFrameWideMeshDrawUniformSlot(
+                    meshDrawSlotsByRendererFamily,
+                    meshFrameDataFamilyBases,
+                    drawOp.Draw.Renderer,
+                    unchecked((int)Math.Min(imageIndex, int.MaxValue)),
+                    EVulkanMeshFrameDataStreamKind.DynamicUi,
+                    drawOp.Context,
+                    drawOp.Draw);
                 using IDisposable plannerScope =
                     EnterFrameOpResourcePlannerReadbackScope(drawOp.Context);
                 int descriptorFrameIndex = imageIndex > int.MaxValue ? int.MaxValue : (int)imageIndex;
@@ -188,7 +212,7 @@ namespace XREngine.Rendering.Vulkan
                 throw new InvalidOperationException(
                     $"Dynamic-UI frame-data reservation failed before secondary recording at slot {drawSlot}: {reason}");
             }
-            meshDrawSlotsByRenderer.Clear();
+            meshDrawSlotsByRendererFamily.Clear();
 
             if (!frameDataManifest.TrySeal(MeshFrameDataReservationGeneration, MeshFrameDataReservedBytes))
             {
@@ -203,14 +227,7 @@ namespace XREngine.Rendering.Vulkan
 
             ResetCommandBufferBindState(secondaryCommandBuffer);
 
-            meshDrawSlotsByRenderer.Clear();
-            int GetMeshDrawUniformSlot(VkMeshRenderer renderer)
-            {
-                ref int slotRef = ref CollectionsMarshal.GetValueRefOrAddDefault(meshDrawSlotsByRenderer, renderer, out _);
-                int slot = slotRef;
-                slotRef = slot + 1;
-                return slot;
-            }
+            meshDrawSlotsByRendererFamily.Clear();
 
             int recordedDrawCount = 0;
             for (int i = 0; i < dynamicUiBatchTextOps.Length; i++)
@@ -240,7 +257,14 @@ namespace XREngine.Rendering.Vulkan
                     SetViewportScissorTracked(secondaryCommandBuffer, viewport, scissor);
                 }
 
-                int drawUniformSlot = GetMeshDrawUniformSlot(drawOp.Draw.Renderer);
+                int drawUniformSlot = GetFrameWideMeshDrawUniformSlot(
+                    meshDrawSlotsByRendererFamily,
+                    meshFrameDataFamilyBases,
+                    drawOp.Draw.Renderer,
+                    unchecked((int)Math.Min(imageIndex, int.MaxValue)),
+                    EVulkanMeshFrameDataStreamKind.DynamicUi,
+                    drawOp.Context,
+                    drawOp.Draw);
                 bool recordedDraw = drawOp.Draw.Renderer.RecordDraw(
                     secondaryCommandBuffer,
                     drawOp.Draw,

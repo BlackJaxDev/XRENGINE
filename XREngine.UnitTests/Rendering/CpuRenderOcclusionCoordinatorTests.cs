@@ -62,7 +62,7 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         const uint queryKey = 44u;
 
         BeginPassForPolicyTest(coordinator, camera);
-        object queryState = SeedOccludedQuery(coordinator, camera, queryKey, TestFrameId - 3UL);
+        object queryState = SeedOccludedQuery(coordinator, camera, queryKey, TestFrameId - 2UL);
 
         camera.Transform.SetRenderMatrix(Matrix4x4.CreateTranslation(0.5f, 0.0f, 0.0f)).GetAwaiter().GetResult();
         BeginPassForPolicyTest(coordinator, camera);
@@ -107,7 +107,7 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         const uint queryKey = 45u;
 
         BeginPassForPolicyTest(coordinator, camera);
-        object queryState = SeedOccludedQuery(coordinator, camera, queryKey, TestFrameId - 1UL);
+        object queryState = SeedOccludedQuery(coordinator, camera, queryKey, TestFrameId);
 
         camera.Transform.SetRenderMatrix(Matrix4x4.CreateTranslation(3.0f, 0.0f, 0.0f)).GetAwaiter().GetResult();
         BeginPassForPolicyTest(coordinator, camera);
@@ -466,7 +466,8 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         changedRequest.Requested.ShouldBeFalse();
         GetNonPublicField(passState, "ForceVisibleReason")
             .ShouldBe(ECpuOcclusionForceVisibleReason.CommandSetChanged);
-        GetNonPublicField(queryState, "RecoveryStartedFrame").ShouldBe(TestFrameId);
+        GetNonPublicField(queryState, "RecoveryStartedFrame")
+            .ShouldBe(GetPassFrameEpoch(passState));
 
         _host.CurrentRenderFrameId++;
         coordinator.BeginPass(RenderPass, camera, 2u, 0x2222UL, ownership);
@@ -683,6 +684,27 @@ public sealed class CpuRenderOcclusionCoordinatorTests
     }
 
     [Test]
+    public void TryScheduleVisibleDrawProbe_RespectsVisibleBudget()
+    {
+        _host.CpuQueryOcclusionMaxQueriesPerFrame = 4;
+        _host.CpuQueryOcclusionVisibleDemotionBudgetFraction = 0.25f;
+
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        OcclusionViewOwnership ownership = OcclusionViewOwnership.Independent(505);
+        BeginPassForPolicyTest(coordinator, camera, ownership, sceneCommandCount: 2u);
+        CpuOcclusionProbeRequest request = new(
+            requested: true,
+            ECpuOcclusionQueryReason.StaleStateRefresh,
+            recoveryProbe: false);
+
+        coordinator.TryScheduleVisibleDrawProbe(RenderPass, camera, 64u, request, ownership)
+            .ShouldBeTrue();
+        coordinator.TryScheduleVisibleDrawProbe(RenderPass, camera, 65u, request, ownership)
+            .ShouldBeFalse();
+    }
+
+    [Test]
     public void SelectProbeCandidates_DoesNotSchedulePendingQuery()
     {
         CpuRenderOcclusionCoordinator coordinator = new();
@@ -864,7 +886,8 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         coordinator.ShouldRender(RenderPass, camera, queryKey, out CpuOcclusionProbeRequest cachedRequest, ownership)
             .ShouldBe(ECpuOcclusionDecision.Visible);
         cachedRequest.Requested.ShouldBeTrue();
-        GetNonPublicField(queryState, "RecoveryStartedFrame").ShouldBe(TestFrameId);
+        GetNonPublicField(queryState, "RecoveryStartedFrame")
+            .ShouldBe(GetPassFrameEpoch(GetPassState(coordinator, camera, ownership)));
     }
 
     [Test]
@@ -958,7 +981,7 @@ public sealed class CpuRenderOcclusionCoordinatorTests
     {
         object passState = GetPassState(coordinator, camera);
         object queryState = InvokeNonPublic(coordinator, "GetOrCreateQueryState", passState, queryKey).ShouldNotBeNull();
-        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+        ulong frameId = NormalizePassFrameEpoch(passState);
 
         SetNonPublicField(queryState, "StateKind", ECpuOcclusionQueryStateKind.PredictedOccluded);
         SetNonPublicField(queryState, "LastAnySamplesPassed", false);
@@ -1001,7 +1024,7 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         ulong lastQueryFrame)
     {
         object queryState = InvokeNonPublic(coordinator, "GetOrCreateQueryState", passState, queryKey).ShouldNotBeNull();
-        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+        ulong frameId = NormalizePassFrameEpoch(passState);
 
         SetNonPublicField(queryState, "StateKind", ECpuOcclusionQueryStateKind.PredictedOccluded);
         SetNonPublicField(queryState, "LastAnySamplesPassed", false);
@@ -1039,9 +1062,22 @@ public sealed class CpuRenderOcclusionCoordinatorTests
             "ApplyResolvedPovResult",
             passState,
             queryKey,
-            RuntimeEngine.Rendering.State.RenderFrameId,
+            GetPassFrameEpoch(passState),
             anySamplesPassed);
     }
+
+    private static ulong NormalizePassFrameEpoch(object passState)
+    {
+        ulong frameId = GetPassFrameEpoch(passState);
+        if (frameId >= TestFrameId)
+            return frameId;
+
+        SetNonPublicField(passState, "FrameEpoch", TestFrameId);
+        return TestFrameId;
+    }
+
+    private static ulong GetPassFrameEpoch(object passState)
+        => (ulong)GetNonPublicField(passState, "FrameEpoch");
 
     private static ECpuOcclusionMotionTier GetMotionTier(CpuRenderOcclusionCoordinator coordinator, XRCamera camera)
         => (ECpuOcclusionMotionTier)GetNonPublicField(GetPassState(coordinator, camera), "MotionTier");

@@ -1,7 +1,7 @@
 # Vulkan CPU-Query And Monado Regression Investigation
 
 Date: 2026-07-14
-Status: Correctness fixes implemented and short-smoke validated; throughput gate remains open
+Status: Every-third strict-SPS lifetime rejection fixed and short-smoke validated; exact live and throughput gates remain open
 Related TODO: [Vulkan core hardening and device-loss TODO](../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md)
 
 ## Problem
@@ -112,16 +112,104 @@ Desktop screenshots inspected during the query run are under the current task's
 `monado-target-rebase/reports/openxr-smoke-summary.json`; its filtered Vulkan
 log is `monado-target-rebase/logs/engine/log_vulkan.log`.
 
+## 2026-07-15 Exact-Draw And Every-Third-Eye Follow-Up
+
+### Exact visible-query recording
+
+The prior reusable-primary refresh fixed stale query epochs but did not make the
+visible demotion probe exact: a deferred proxy could still test a different draw
+shape than the mesh whose visibility decision it governed. Visible probes are
+now reserved within the bounded query budget during collection and bracket the
+exact contributing mesh draw during command recording. Hidden recovery probes
+remain deferred, query pools are reset before the first render operation, and
+motion-vector replay does not emit a second occlusion query for the same draw.
+
+The associated frame-data work also replaced independent command-stream
+manifests with one frame-wide root manifest. It gives compatible output families
+stable disjoint ranges, publishes power-of-two capacity blocks, and carries late
+families to the next frame boundary instead of growing a sealed generation.
+Focused query/arena/command-chain tests passed 128/128 before the final SPS
+change. The final strict-SPS, Phase 5.2.4, and command-chain subset passed
+102/102 after adding the external-image regression guard.
+
+An eight-frame exact-visible-query probe passed lifetime, validation, query-age,
+known-visible-sentinel, and bounded-churn gates. Its enabled/off final-image
+parity did not pass. Stage-by-stage inspection found identical albedo, normal,
+material/RMSE, and ambient-occlusion captures; the first difference was
+`DefaultPipelineSps_05_LightingAccum_layer0.png`. Independent occlusion-off
+cohorts also alternate between bright and dark lighting. The remaining parity
+failure is therefore a directional-light/shadow nondeterminism exposed by the
+gate, not evidence that exact-draw queries changed the G-buffer. Raw evidence is
+under
+`Build/_AgentValidation/20260710-openxr-strict-stereo/phase524c-final-current/inline-exact-visible-query-probe/`.
+
+### Why one eye frame failed every third render
+
+The later user report correlated with this exception in engine session
+`xrengine_2026-07-15_00-53-34_pid35420`:
+
+```text
+InvalidOperationException: Command buffer attempted to record retired Vulkan resource
+Image:0x1F4E46860D0 generation 776
+owner=resource-planner:... Depth24Stencil8 ... DepthStencil
+```
+
+The rejection occurred in `EndCommandBufferTracked` after
+`TryRecordStereoLayerBlitCommandBuffer`. Tracing proved the strict-SPS source was
+the healthy dedicated `OpenXRVulkanStereoColorArray`; the rejected handle was a
+previously destroyed desktop depth image. Monado rotates three images per eye,
+and the Vulkan driver reused that raw numerical handle for one runtime-owned
+swapchain image. This accounts for the user's every-third cadence.
+
+The direct-render path creates per-eye image views, and view registration also
+registers their externally owned backing images. Strict SPS instead publishes by
+transfer and does not create those views, so the raw destination images had not
+entered lifetime tracking. When the recycled handle appeared, command-buffer
+dependency tracking still found the destroyed engine generation.
+
+`TryPrepareStereoLayerBlit` now registers both raw destination images with
+`externallyOwned: true` before recording the transfer. Registration creates a
+fresh generation only for completed/destroyed ownership; reuse while an engine
+retirement is genuinely pending still fails loudly. A source-contract regression
+test requires both registrations to precede source lookup and recording.
+
+The post-fix untraced combined probe is under
+`Build/_AgentValidation/20260710-openxr-strict-stereo/phase524c-final-current/external-swapchain-lifetime-fix-probe/`.
+Its smoke runner exited 0 after 106 submitted frames and 106 successful strict-SPS
+submissions. Each eye recorded 106 acquire, publish, and release operations;
+there were zero end-frame failures, warnings, summary failures, filtered Vulkan
+matches, retired-resource exceptions, or sequential fallbacks. All six acquired
+eye captures (three motion samples per eye) and the desktop final were visually
+inspected and were nonblack. The validator itself reports failure only because
+this diagnostic retained eight rather than exactly 300 frames and intentionally
+omitted the strict-failure and occlusion-off companion reports.
+
+### Current performance interpretation
+
+The fixed combined sync-validation/capture run measured CPU frame p95 at
+146.90 ms and GPU p95 at 24.86 ms. Nearby runs without the extra draw trace or
+capture overhead measured GPU p95 near 4.8-5.5 ms while CPU p95 remained near
+138-149 ms. The low desktop and combined framerate is still primarily CPU/output
+orchestration; rendering two OpenXR eyes, the independent desktop, and the pickup
+preview together is the intended workload and must not be reduced to make the
+number look better.
+
 ## Gate And Next Work
 
 Do not treat the current worktree as ready for Phase 5.2.5 merely because the
-black flicker is gone. First close the new regression hold in Phase 5.2.4b with
-a longer current-binary run that proves:
+every-third lifetime rejection is fixed. First close the Phase 5.2.4b/5.2.4c
+regression hold with a longer current-binary run that proves:
 
 - zero retired-resource or validation submission rejection;
 - sustained independent desktop and SPS query submission/resolution/culling;
 - bounded output records, descriptors, resources, and command buffers; and
 - visually continuous desktop and both-eye images.
+
+Before enabled/off image parity can be promotion evidence, fix or isolate the
+directional-light/shadow instability that first appears in `LightingAccum`.
+Then run the exact occlusion-off companion and 300-retained-frame enabled cohort,
+plus the settled F5 resource/descriptor plateau baseline. The current eight-frame
+probe is a targeted exception regression, not a substitute for those gates.
 
 The remaining throughput root cause belongs to the already planned Phase 5.2.5
 through 5.2.7 architecture: persistent versioned output arenas, one immutable

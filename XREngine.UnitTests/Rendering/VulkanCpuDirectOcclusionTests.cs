@@ -45,8 +45,31 @@ public sealed class VulkanCpuDirectOcclusionTests
         cpuDirect.ShouldNotContain("XREngineEnvironmentVariables.VulkanCpuQueryOcclusion");
         cpuDirect.ShouldNotContain("return EOcclusionCullingMode.Disabled;");
 
+        string visibleDemotionPath = Slice(
+            cpuDirect,
+            "// A visible-demotion query must bracket the exact contributing draw",
+            "if (!useCpuQueryOcclusion && useCpuSocOcclusion",
+            StringComparison.Ordinal);
+        visibleDemotionPath.ShouldContain("TryScheduleVisibleDrawProbe(");
+        visibleDemotionPath.ShouldContain("s_cpuOcclusionCoordinator.BeginQuery(renderPass, camera, queryKey, occlusionOwnership);");
+        visibleDemotionPath.ShouldContain("RenderWithGpuScope(cmd, renderPass);");
+        visibleDemotionPath.ShouldContain("s_cpuOcclusionCoordinator.EndQuery(renderPass, camera, queryKey, occlusionOwnership);");
+        visibleDemotionPath.ShouldContain("CpuQueryProxyIsNearPlaneUnsafe(camera!, visibleProbeBounds)");
+        visibleDemotionPath.ShouldNotContain("CreateCpuOcclusionProbeCandidate(");
+
+        string recoveryProbePath = Slice(
+            cpuDirect,
+            "// Phase 3: deferred probe-only AABB draws for meshes that were not rendered.",
+            "private static CpuOcclusionProbeCandidate CreateCpuOcclusionProbeCandidate(",
+            StringComparison.Ordinal);
+        recoveryProbePath.ShouldContain("CpuOcclusionProxyRenderer.Draw(probe.WorldBounds);");
+
         string depthPrepass = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_ForwardDepthNormalPrePass.cs");
         depthPrepass.ShouldContain("commands.RenderCPU(pass, false, camera, suppressCpuOcclusionForPass: true);");
+
+        string motionVectors = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_RenderMotionVectorsPass.cs");
+        motionVectors.ShouldContain("commands.RenderCPU(pass, suppressCpuOcclusionForPass: true);");
+        motionVectors.ShouldNotContain("commands.RenderCPU(pass);");
 
         gpuOcclusion.ShouldContain("return VulkanFeatureProfile.ResolveOcclusionCullingMode(RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode);");
         gpuOcclusion.ShouldNotContain("_loggedCpuQueryModeSuppressedByProfile");
@@ -66,6 +89,12 @@ public sealed class VulkanCpuDirectOcclusionTests
         recorder.ShouldContain("activeInlineQuery = queryOp.Query.BeginQuery(");
         recorder.ShouldContain("queryOp.QueryTarget,");
         recorder.ShouldContain("queryOp.Query.EndQuery(commandBuffer);");
+        recorder.ShouldContain("recordingScratch.PreparedInlineQueries.Clear();");
+        recorder.ShouldContain("for (int prepareIndex = 0; prepareIndex < ops.Length; prepareIndex++)");
+        recorder.ShouldContain("recordingScratch.PreparedInlineQueries.Add(pendingQuery.Query)");
+        recorder.ShouldContain("pendingQuery.Query.PrepareForRecording(");
+        recorder.ShouldContain("recordingScratch.PreparedInlineQueries.Contains(queryOp.Query)");
+        recorder.ShouldNotContain("queryOp.Query.PrepareForRecording(commandBuffer");
         string fastPrimaryReuse = Slice(
             recorder,
             "private bool TryReuseCleanCommandChainPrimaryVariant(",

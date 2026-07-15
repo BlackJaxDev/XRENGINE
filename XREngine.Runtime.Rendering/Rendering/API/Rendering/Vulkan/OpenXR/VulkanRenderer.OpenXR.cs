@@ -33,113 +33,9 @@ public unsafe partial class VulkanRenderer
         XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
         XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw;
 
-    internal readonly record struct OpenXrDepthTarget(
-        Image Image,
-        DeviceMemory Memory,
-        ImageView View,
-        Format Format,
-        ImageAspectFlags Aspect);
-
     private readonly record struct OpenXrSwapchainImageViewCacheEntry(ImageView View, Format Format);
     private long _openXrRuntimeSessionStartDirtyWaitStartTimestamp;
     private long _openXrRuntimeSessionStartPendingFrameWaitStartTimestamp;
-
-    internal readonly record struct OpenXrEyeRenderTargetContext(
-        uint OpenXrViewIndex,
-        uint OpenXrImageIndex,
-        Image Image,
-        ImageView ImageView,
-        Format ImageFormat,
-        Extent2D Extent,
-        Image DepthImage,
-        DeviceMemory DepthMemory,
-        ImageView DepthView,
-        Format DepthFormat,
-        ImageAspectFlags DepthAspect,
-        BoundingRectangle ExternalTargetRegion,
-        uint CommandChainImageKey,
-        uint FrameDataSlotIndex,
-        int ResourcePlannerStateIndex,
-        ulong FoveationResourceKey,
-        EVrFoveationAttachmentKind FoveationAttachmentKind,
-        bool FoveationAttachmentOwnedByResourcePlanner)
-    {
-        public bool IsValid =>
-            Image.Handle != 0 &&
-            ImageView.Handle != 0 &&
-            Extent.Width != 0 &&
-            Extent.Height != 0 &&
-            DepthImage.Handle != 0 &&
-            DepthView.Handle != 0;
-    }
-
-    internal enum EOpenXrResourcePlannerPurpose : byte
-    {
-        Eye,
-        Mirror,
-        Publish,
-        EyePrewarm,
-        MirrorPrewarm,
-    }
-
-    internal readonly record struct OpenXrViewResourcePlannerContextKey(
-        EOpenXrResourcePlannerPurpose Purpose,
-        int ResourcePlannerStateIndex,
-        uint OpenXrViewIndex,
-        uint OpenXrImageIndex,
-        uint CommandChainImageKey,
-        uint FrameDataSlotIndex,
-        ulong FoveationResourceKey,
-        EVrFoveationAttachmentKind FoveationAttachmentKind,
-        bool FoveationAttachmentOwnedByResourcePlanner)
-    {
-        /// <summary>
-        /// Builds the identity for resources described by the render graph, not for the acquired
-        /// OpenXR swapchain image. The swapchain image/frame slot affects command recording, but the
-        /// intermediate G-buffer, post-process, and depth resources are stable per eye/foveation
-        /// configuration. Keeping image/frame indices out of this key prevents allocating a full
-        /// offscreen render pipeline for every swapchain-image/frame-slot combination.
-        /// </summary>
-        public static OpenXrViewResourcePlannerContextKey FromTarget(in OpenXrEyeRenderTargetContext target)
-            => new(
-                EOpenXrResourcePlannerPurpose.Eye,
-                target.ResourcePlannerStateIndex,
-                target.OpenXrViewIndex,
-                OpenXrExternalSwapchainTargetImageIndex,
-                target.OpenXrViewIndex,
-                target.OpenXrViewIndex,
-                target.FoveationResourceKey,
-                target.FoveationAttachmentKind,
-                target.FoveationAttachmentOwnedByResourcePlanner);
-    }
-
-    internal readonly record struct OpenXrEyeSwapchainRenderRequest(
-        Image Image,
-        Format Format,
-        Extent2D Extent,
-        int ResourcePlannerStateIndex,
-        uint OpenXrViewIndex,
-        uint OpenXrImageIndex,
-        ViewFoveationContext Foveation,
-        Action EmitFrameOps);
-
-    private readonly record struct OpenXrPreparedEyeCommandBufferInput(
-        OpenXrEyeSwapchainRenderRequest Request,
-        OpenXrEyeRenderTargetContext TargetContext,
-        FrameOp[] Ops,
-        FrameOpContext PlannerContext,
-        ulong FrameOpsSignature,
-        ulong PlannerRevision,
-        CommandChainSchedule? CommandChainSchedule);
-
-    internal readonly record struct OpenXrEyeMirrorRenderRequest(
-        XRFrameBuffer TargetFrameBuffer,
-        Extent2D Extent,
-        int ResourcePlannerStateIndex,
-        uint OpenXrViewIndex,
-        uint OpenXrImageIndex,
-        Action EmitFrameOps,
-        bool RendersExternalSwapchainTarget = true);
 
     internal static bool IsOpenXrStrictSpsFaultBoundary(
         EOpenXrStrictSpsFaultInjectionStage requested,
@@ -149,83 +45,6 @@ public unsafe partial class VulkanRenderer
     internal static bool ShouldFreeTemporaryOpenXrCommandBuffer(
         EVulkanQueueSubmissionDisposition disposition)
         => disposition != EVulkanQueueSubmissionDisposition.SubmittedIncomplete;
-
-    internal readonly record struct OpenXrEyeMirrorPublishRequest(
-        XRTexture2D? SourceTexture,
-        Image SwapchainImage,
-        Format SwapchainFormat,
-        Extent2D Extent,
-        XRTexture2D? PreviewTexture,
-        string DestinationLabel,
-        bool FlipPreviewY);
-
-    internal readonly record struct OpenXrEyePreviewCopyRequest(
-        Image SourceImage,
-        Format SourceFormat,
-        Extent2D SourceExtent,
-        XRTexture2D? DestinationTexture,
-        string DestinationLabel,
-        bool FlipY);
-
-    private readonly record struct OpenXrEyeMirrorPublishPlan(
-        IVkImageDescriptorSource Source,
-        Image SourceImage,
-        Format SourceFormat,
-        Extent2D SourceExtent,
-        ImageLayout SourceOldLayout,
-        ImageAspectFlags SourceAspect,
-        Image SwapchainImage,
-        Format SwapchainFormat,
-        Extent2D SwapchainExtent,
-        IVkImageDescriptorSource? PreviewSource,
-        Image PreviewImage,
-        Extent2D PreviewExtent,
-        ImageLayout PreviewOldLayout,
-        ImageAspectFlags PreviewAspect,
-        string DestinationLabel,
-        bool FlipPreviewY);
-
-    private readonly record struct OpenXrStereoLayerBlitPlan(
-        IVkImageDescriptorSource Source,
-        Image SourceImage,
-        Format SourceFormat,
-        ImageAspectFlags SourceAspect,
-        Extent2D LeftSourceExtent,
-        ImageLayout LeftSourceOldLayout,
-        Extent2D RightSourceExtent,
-        ImageLayout RightSourceOldLayout,
-        Image LeftDestinationImage,
-        Format LeftDestinationFormat,
-        Extent2D LeftDestinationExtent,
-        Image RightDestinationImage,
-        Format RightDestinationFormat,
-        Extent2D RightDestinationExtent,
-        bool FlipY);
-
-    private readonly record struct OpenXrRecordedEyeCommandBuffer(
-        CommandBuffer CommandBuffer,
-        uint OpenXrViewIndex,
-        uint OpenXrImageIndex,
-        uint FrameDataSlotIndex,
-        ulong FrameOpsSignature,
-        ulong PlannerRevision,
-        ulong FrameOpContextId,
-        ulong ResourceGeneration,
-        ulong DescriptorGeneration,
-        bool OwnedByOpenXrPrimaryCache);
-
-    private readonly record struct OpenXrEyePreviewCopyPlan(
-        Image SourceImage,
-        Format SourceFormat,
-        Extent2D SourceExtent,
-        ImageLayout SourceOldLayout,
-        IVkImageDescriptorSource DestinationSource,
-        Image DestinationImage,
-        Extent2D DestinationExtent,
-        ImageLayout DestinationOldLayout,
-        ImageAspectFlags DestinationAspect,
-        string DestinationLabel,
-        bool FlipY);
 
     private readonly Dictionary<ulong, OpenXrSwapchainImageViewCacheEntry> _openXrSwapchainImageViews = new();
     private readonly Dictionary<ulong, List<CommandBufferCacheVariant>> _openXrPrimaryCommandBufferVariants = new();
@@ -851,10 +670,18 @@ public unsafe partial class VulkanRenderer
                             refreshFailureReason);
                         return false;
                     }
-                    PrewarmOpenXrFrameOpResources(ops, targetContext.FrameDataSlotIndex);
+                    if (!PrewarmOpenXrFrameOpResources(
+                            ops,
+                            targetContext.FrameDataSlotIndex,
+                            sealFrameManifest: true))
+                    {
+                        return false;
+                    }
                     plannerRevision = ResourcePlannerRevision;
                     using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule.Signature"))
+                    {
                         frameOpsSignature = ComputeFrameOpsSignature(ops);
+                    }
                     if (RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuQueryAsync)
                     {
                         // Query probes and the visible mesh subset change as prior
@@ -1201,16 +1028,14 @@ public unsafe partial class VulkanRenderer
                 IsVulkanGpuProfilerCommandBufferInstrumentationEnabled &&
                 RenderPipelineGpuProfiler.Instance.IsProfilingActive;
             int commandBufferImageSlot = unchecked((int)Math.Min(recordImageIndex, int.MaxValue));
-            ulong commandChainPrimaryGroupSignature = 0;
-            int commandChainPrimaryGroupCount = 0;
             bool usingCommandChains = commandChainSchedule is not null;
             bool requiresExactFrameOps = true;
             if (!TryComputeOpenXrPrimaryCommandBufferGroupSignature(
                     commandChainImageIndex,
                     commandChainSchedule,
                     requireReusableChains: true,
-                    out commandChainPrimaryGroupSignature,
-                    out commandChainPrimaryGroupCount))
+                    out global::System.UInt64 commandChainPrimaryGroupSignature,
+                    out global::System.Int32 commandChainPrimaryGroupCount))
             {
                 if (OpenXrVulkanTraceEnabled)
                 {
@@ -2374,11 +2199,19 @@ public unsafe partial class VulkanRenderer
                 // This is the render-to-array path used by strict SPS. Reserve
                 // every repeated direct and indirect use before command-chain
                 // workers or the primary command buffer record any dependency.
-                PrewarmOpenXrFrameOpResources(ops, recordImageIndex);
+                if (!PrewarmOpenXrFrameOpResources(
+                        ops,
+                        recordImageIndex,
+                        sealFrameManifest: true))
+                {
+                    return false;
+                }
                 ulong plannerRevision = ResourcePlannerRevision;
                 ulong frameOpsSignature;
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordMirror.PlanAndSchedule.Signature"))
+                {
                     frameOpsSignature = ComputeFrameOpsSignature(ops);
+                }
                 uint mirrorCommandChainImageIndex = recordImageIndex;
 
                 CommandChainSchedule? commandChainSchedule = TryBuildOpenXrEyeCommandChainSchedule(
@@ -4104,6 +3937,21 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
+        // Strict SPS publishes with transfer commands and therefore does not create the
+        // per-eye image views used by the direct-render path. Register the runtime-owned
+        // images explicitly so a VkImage handle recycled from a completed engine resource
+        // receives a fresh lifetime generation before command-buffer dependency tracking.
+        RegisterVulkanResource(
+            ObjectType.Image,
+            leftDestinationImage.Handle,
+            $"OpenXR.SwapchainImage.{leftDestinationLabel}",
+            externallyOwned: true);
+        RegisterVulkanResource(
+            ObjectType.Image,
+            rightDestinationImage.Handle,
+            $"OpenXR.SwapchainImage.{rightDestinationLabel}",
+            externallyOwned: true);
+
         if (GetOrCreateAPIRenderObject(sourceTexture, generateNow: true) is not IVkImageDescriptorSource source)
             return false;
 
@@ -4993,31 +4841,50 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
-    private void PrewarmOpenXrFrameOpResources(FrameOp[] ops, uint frameDataImageIndex)
+    private bool PrewarmOpenXrFrameOpResources(
+        FrameOp[] ops,
+        uint frameDataImageIndex,
+        bool sealFrameManifest = false)
     {
         if (ops.Length == 0)
-            return;
+            return true;
 
-        Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = _refreshMeshDrawSlotsByRendererScratch;
+        CommandBufferRecordingScratch recordingScratch = _commandBufferRecordingScratch.Value!;
+        Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = recordingScratch.MeshDrawSlotsByRenderer;
         meshDrawSlotsByRenderer.EnsureCapacity(_refreshMeshDrawSlotCapacityHint);
 
         // Capacity must be final before the first descriptor/uniform prewarm. Growing a renderer's
         // draw-slot capacity destroys its old descriptors and uniform buffers; doing that midway
         // through this loop can retire resources captured by an earlier draw in the same command
         // buffer. Use the same count-then-reserve contract as normal Vulkan recording.
-        EnsureMeshDrawUniformSlotCapacityForRecording(ops, meshDrawSlotsByRenderer);
+        if (!TryRegisterFrameWideMeshFrameDataRequirements(
+                ops,
+                Array.Empty<FrameOp>(),
+                unchecked((int)Math.Min(frameDataImageIndex, int.MaxValue)),
+                sealFrameManifest,
+                meshDrawSlotsByRenderer,
+                recordingScratch,
+                recordingScratch.OpenXrMeshFrameDataFamilyBases,
+                out _,
+                out string frameWideReason))
+        {
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.FrameWideMeshFrameDataDeferred.{GetHashCode()}.{frameDataImageIndex}",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Deferring Vulkan frame-data preparation: {0}",
+                frameWideReason);
+            return false;
+        }
         int rendererCount = meshDrawSlotsByRenderer.Count;
         int descriptorFrameIndex = frameDataImageIndex > int.MaxValue
             ? int.MaxValue
             : (int)frameDataImageIndex;
-        meshDrawSlotsByRenderer.Clear();
-
-        static int GetMeshDrawUniformSlot(Dictionary<VkMeshRenderer, int> slots, VkMeshRenderer renderer)
-        {
-            slots.TryGetValue(renderer, out int slot);
-            slots[renderer] = slot + 1;
-            return slot;
-        }
+        Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshDrawSlotsByRendererFamily =
+            recordingScratch.OpenXrMeshDrawSlotsByRendererFamily;
+        Dictionary<VulkanMeshFrameDataFamilyKey, int> meshFrameDataFamilyBases =
+            recordingScratch.OpenXrMeshFrameDataFamilyBases;
+        meshDrawSlotsByRendererFamily.Clear();
+        bool allDrawsReady = true;
 
         for (int i = 0; i < ops.Length; i++)
         {
@@ -5033,10 +4900,18 @@ public unsafe partial class VulkanRenderer
         }
 
         _refreshMeshDrawSlotCapacityHint = Math.Max(1, rendererCount);
+        return allDrawsReady;
 
         void PrewarmDraw(VkMeshRenderer renderer, in PendingMeshDraw draw, in FrameOpContext context)
         {
-            int drawUniformSlot = GetMeshDrawUniformSlot(meshDrawSlotsByRenderer, renderer);
+            int drawUniformSlot = GetFrameWideMeshDrawUniformSlot(
+                meshDrawSlotsByRendererFamily,
+                meshFrameDataFamilyBases,
+                renderer,
+                descriptorFrameIndex,
+                EVulkanMeshFrameDataStreamKind.Primary,
+                context,
+                draw);
             using IDisposable plannerScope =
                 EnterFrameOpResourcePlannerReadbackScope(context);
             if (renderer.TryPrewarmFrameDataForRecording(
@@ -5054,6 +4929,7 @@ public unsafe partial class VulkanRenderer
                 (draw.MaterialOverride ?? renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>",
                 drawUniformSlot,
                 reason);
+            allDrawsReady = false;
         }
     }
 
@@ -5090,93 +4966,6 @@ public unsafe partial class VulkanRenderer
         => $"purpose={key.Purpose} planner={key.ResourcePlannerStateIndex} eye={key.OpenXrViewIndex} imageIndex={key.OpenXrImageIndex} " +
            $"commandKey={key.CommandChainImageKey} frameSlot={key.FrameDataSlotIndex} foveationKey=0x{key.FoveationResourceKey:X} " +
            $"foveationAttachment={key.FoveationAttachmentKind} foveationOwned={key.FoveationAttachmentOwnedByResourcePlanner}";
-
-    private readonly struct OpenXrResourcePlannerThreadScope : IDisposable
-    {
-        private readonly VulkanRenderer _renderer;
-        private readonly OpenXrViewResourcePlannerContextKey _contextKey;
-        private readonly ThreadResourcePlannerRuntimeStateScope _threadScope;
-        private readonly ThreadFrameOpResourcePlannerSwitchingStateScope _frameOpThreadScope;
-        private readonly VulkanRenderer? _previousScopeRenderer;
-        private readonly OpenXrViewResourcePlannerContextKey _previousScopeKey;
-        private readonly int _previousScopeDepth;
-        private readonly bool _ownsThreadScopes;
-
-        public OpenXrResourcePlannerThreadScope(
-            VulkanRenderer renderer,
-            in OpenXrViewResourcePlannerContextKey contextKey)
-        {
-            _renderer = renderer;
-            _contextKey = contextKey;
-            _previousScopeRenderer = _threadOpenXrResourcePlannerScopeRenderer;
-            _previousScopeKey = _threadOpenXrResourcePlannerScopeKey;
-            _previousScopeDepth = _threadOpenXrResourcePlannerScopeDepth;
-            bool reentrant = ReferenceEquals(_previousScopeRenderer, renderer) &&
-                _previousScopeDepth > 0 &&
-                _previousScopeKey.Equals(contextKey);
-            _threadOpenXrResourcePlannerScopeRenderer = renderer;
-            _threadOpenXrResourcePlannerScopeKey = contextKey;
-            _threadOpenXrResourcePlannerScopeDepth = reentrant ? _previousScopeDepth + 1 : 1;
-            _ownsThreadScopes = !reentrant;
-            if (reentrant)
-            {
-                _threadScope = default;
-                _frameOpThreadScope = default;
-                return;
-            }
-
-            ResourcePlannerRuntimeState openXrState;
-            lock (renderer._openXrResourcePlannerStatesLock)
-            {
-                openXrState = renderer._openXrResourcePlannerStates.TryGetValue(_contextKey, out ResourcePlannerRuntimeState existingState)
-                    ? existingState
-                    : ResourcePlannerRuntimeState.CreateEmpty();
-            }
-            openXrState.FrameOpResourcePlannerSwitchingState ??= new FrameOpResourcePlannerSwitchingState();
-            _threadScope = renderer.EnterThreadResourcePlannerRuntimeStateScope(in openXrState);
-            _frameOpThreadScope = renderer.EnterThreadFrameOpResourcePlannerSwitchingStateScope(
-                openXrState.FrameOpResourcePlannerSwitchingState);
-            if (OpenXrVulkanTraceEnabled)
-            {
-                Debug.Vulkan(
-                    "[OpenXrVulkan] enter thread planner context {0}",
-                    DescribeOpenXrResourcePlannerContextKey(in _contextKey));
-            }
-        }
-
-        public void Dispose()
-        {
-            if (!_ownsThreadScopes)
-            {
-                RestorePreviousScopeIdentity();
-                return;
-            }
-
-            ResourcePlannerRuntimeState state = _threadScope.CaptureCurrent(_renderer);
-            state.FrameOpResourcePlannerSwitchingState = _frameOpThreadScope.CaptureCurrent(_renderer);
-            if (_renderer.IsDeviceOperational)
-            {
-                lock (_renderer._openXrResourcePlannerStatesLock)
-                    _renderer._openXrResourcePlannerStates[_contextKey] = state;
-            }
-            if (OpenXrVulkanTraceEnabled)
-            {
-                Debug.Vulkan(
-                    "[OpenXrVulkan] leave thread planner context {0}",
-                    DescribeOpenXrResourcePlannerContextKey(in _contextKey));
-            }
-            _frameOpThreadScope.Dispose();
-            _threadScope.Dispose();
-            RestorePreviousScopeIdentity();
-        }
-
-        private void RestorePreviousScopeIdentity()
-        {
-            _threadOpenXrResourcePlannerScopeRenderer = _previousScopeRenderer;
-            _threadOpenXrResourcePlannerScopeKey = _previousScopeKey;
-            _threadOpenXrResourcePlannerScopeDepth = _previousScopeDepth;
-        }
-    }
 
     internal bool TryClearOpenXrSwapchainImage(Image image, Extent2D extent, ColorF4 color)
     {

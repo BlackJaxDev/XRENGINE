@@ -243,6 +243,9 @@ public unsafe partial class VulkanRenderer
 
     internal void ReleaseMeshFrameDataReservations(VkMeshRenderer owner)
     {
+        _frameWideMeshFrameDataManifest.RemoveRenderer(owner);
+        PublishFrameWideMeshFrameDataManifestGauges();
+
         // The arena is frame-slot owned and command buffers can retain its offsets. Do not
         // recycle released subranges inside the current arena generation. Removing the keys
         // releases the renderer object while keeping old offsets inert until arena teardown.
@@ -384,6 +387,8 @@ public unsafe partial class VulkanRenderer
             _meshFrameDataReservedBytes = 0;
             Interlocked.Exchange(ref _meshFrameDataReservationGeneration, 0);
         }
+        _frameWideMeshFrameDataManifest.Reset();
+        PublishFrameWideMeshFrameDataManifestGauges();
         PublishMeshFrameDataArenaGauges();
     }
 

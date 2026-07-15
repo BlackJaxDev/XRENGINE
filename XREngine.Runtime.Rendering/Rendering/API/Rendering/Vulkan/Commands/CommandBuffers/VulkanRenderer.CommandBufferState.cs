@@ -107,8 +107,19 @@ namespace XREngine.Rendering.Vulkan
         private int _vulkanLastFrameDroppedOps;
         private readonly ThreadLocal<CommandBufferRecordingScratch> _commandBufferRecordingScratch =
             new(static () => new CommandBufferRecordingScratch());
+        private readonly VulkanFrameWideMeshFrameDataReservationManifest _frameWideMeshFrameDataManifest = new();
+        public ulong MeshFrameDataManifestGeneration => _frameWideMeshFrameDataManifest.Generation;
+        public long MeshFrameDataManifestPublicationCount => _frameWideMeshFrameDataManifest.PublicationCount;
+        public long MeshFrameDataManifestLateRegistrationCount => _frameWideMeshFrameDataManifest.LateRegistrationCount;
+        public int MeshFrameDataManifestRendererCount => _frameWideMeshFrameDataManifest.PublishedRendererCount;
+        public int MeshFrameDataManifestFamilyCount => _frameWideMeshFrameDataManifest.PublishedFamilyCount;
+        public bool MeshFrameDataManifestIsSealed => _frameWideMeshFrameDataManifest.IsSealed;
         private readonly Dictionary<VkMeshRenderer, int> _refreshMeshDrawSlotsByRendererScratch = new(ReferenceEqualityComparer.Instance);
         private readonly Dictionary<VkMeshRenderer, int> _dynamicUiMeshDrawSlotsByRendererScratch = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> _refreshMeshDrawSlotsByRendererFamilyScratch =
+            new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+        private readonly Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> _dynamicUiMeshDrawSlotsByRendererFamilyScratch =
+            new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
         private bool _lastEnsureCommandBufferRecordedPrimary;
         private int _descriptorFrameSlotFrameCountOverride;
         internal int DescriptorFrameSlotFrameCount

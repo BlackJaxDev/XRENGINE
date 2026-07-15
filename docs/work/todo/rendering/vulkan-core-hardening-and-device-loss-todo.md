@@ -1,6 +1,6 @@
 # Vulkan Core Hardening And Device-Loss TODO
 
-Last Updated: 2026-07-14
+Last Updated: 2026-07-15
 Owner: Rendering
 Status: Phase 5.2.4b Live Closeout And Phase 5.2.4c Settled-Workload Proof Open; Phase 5.2.5 Blocked
 Execution: Current worktree only; do not create or switch branches for this effort.
@@ -375,6 +375,51 @@ not a reason to disable `CpuQueryAsync` or silently fall back from SPS. Phase
 shared-snapshot/view-family, and deadline-scheduler solution after the current
 correctness regression hold passes.
 
+#### 2026-07-15 exact-query and every-third-eye follow-up
+
+The current work now brackets the exact contributing mesh draw with its
+`CpuQueryAsync` query, resets every inline query pool before the first render
+operation, and suppresses query replay during the motion-vector pass. Hidden
+recovery proxies remain deferred. The frame-wide mesh frame-data manifest now
+assigns disjoint, stable output-family ranges from one root allocator and defers
+late families to the next frame boundary instead of mutating a sealed recording.
+Focused query, command-chain, arena, lifetime, and strict-SPS tests passed before
+the live probe; the final strict-SPS/Phase 5.2.4 contract subset passed 102/102.
+
+The user's later every-third-eye black flicker had a separate, precise lifetime
+cause. Strict SPS publishes with transfer commands and does not create the
+per-eye image views used by the direct-render path. Consequently, the raw
+runtime-owned `VkImage` handles were not registered as external resources before
+command-buffer dependency tracking. One of Monado's three swapchain handles was
+reused from a completed engine-owned desktop `DepthStencil` image, so every reuse
+of that acquired slot was rejected as generation 776 of the retired depth image.
+`TryPrepareStereoLayerBlit` now registers both runtime-owned destination images
+as external resources before recording the blit; genuine pending-retirement
+reuse still fails instead of being hidden.
+
+The untraced current-binary fix probe at
+`Build/_AgentValidation/20260710-openxr-strict-stereo/phase524c-final-current/external-swapchain-lifetime-fix-probe/`
+completed the smoke runner with exit code 0. It recorded 106 submitted frames,
+106 successful strict-SPS submissions, 106 acquire/publish/release operations
+per eye, zero end-frame failures, zero warnings/failures, and zero filtered
+Vulkan matches. No retired-resource exception, strict-SPS failure, or missing
+projection-layer diagnostic appeared. All six acquired-eye motion captures and
+the desktop final were visually inspected and were nonblack. The report is
+intentionally not promotion evidence: it retained only eight frames and omitted
+the strict-failure and occlusion-off companion reports.
+
+The combined workload remains CPU-bound. This sync-validation/capture probe
+measured CPU frame p95 146.90 ms versus GPU p95 24.86 ms; nearby untraced
+non-capture samples measured GPU p95 near 4.8-5.5 ms while CPU p95 remained near
+138-149 ms. A short exact-visible-query cohort passed its lifetime, boundedness,
+query-age, sentinel, and churn gates, but could not pass enabled/off image parity.
+The first differing stage is directional-light/shadow `LightingAccum`; separate
+occlusion-off cohorts independently alternate between bright and dark lighting.
+Treat that as an existing nondeterministic lighting/shadow blocker, not evidence
+that exact-draw occlusion queries changed the G-buffer. Keep the current-binary
+300-frame, settled-bound, and rendered-parity criteria open until that instability
+is fixed and the exact cohorts are rerun.
+
 ##### Durable strict-SPS failure evidence
 
 Captured 2026-07-13 22:42:49 UTC with matrix schema 1. The aggregate result was
@@ -610,7 +655,7 @@ mono-reference/TSR-correctness failures rather than missing temporal bindings.
 
 #### 5.2.4b.6 - Close The Live Correctness Gate
 
-- [ ] Re-run the current binary after the 2026-07-14 query-refresh and active-
+- [x] Re-run the current binary after the 2026-07-14 query-refresh and active-
   plan rebasing fixes. Require zero retired-resource/validation submission
   rejections, visually continuous desktop and both-eye output, and valid strict-
   SPS projection layers throughout the retained window.
@@ -618,7 +663,7 @@ mono-reference/TSR-correctness failures rather than missing temporal bindings.
   independently for the main desktop and true-SPS `OcclusionViewKey` instances
   under `FullIndependentRender`; the desktop-only diagnostic is necessary but
   is not sufficient for this combined-output gate.
-- [ ] Make output telemetry distinguish logical render requests from manifest,
+- [x] Make output telemetry distinguish logical render requests from manifest,
   command-buffer, publish, overlay, and present events; remove duplicate request
   accounting and require bounded output, descriptor, resource, and command-
   buffer high-water marks during the current-binary smoke.
@@ -697,7 +742,7 @@ fix makes recording ownership explicit and makes steady-state storage scale
 with active frame/output families and unique material/pass bindings rather than
 the historical number of draws and capacity shapes.
 
-Implementation wrap-up (2026-07-14):
+Implementation wrap-up (2026-07-14, updated 2026-07-15):
 
 - Replaced the per-renderer historical uniform-generation cache with five
   renderer-owned, persistently mapped 32 MiB frame-slot arenas. Engine and auto
@@ -751,19 +796,31 @@ Implementation wrap-up (2026-07-14):
   contained 335,498 `VkBufferUploadQueue` lines because the Diagnostics GPU
   profile implicitly enabled per-subrange upload logging. The final source edit
   now requires explicit upload-stage or push-subdata tracing for those lines;
-  this edit is intentionally recorded as **not yet rebuilt or live-validated**.
+  the later build, focused tests, and live probe completed with that edit.
+- Consolidated the command-stream manifests into one frame-wide root manifest.
+  Compatible output/view families receive disjoint power-of-two ranges with a
+  bounded minimum stride; late registration is counted and published at the
+  next frame boundary. The latest retained samples used one sealed generation,
+  a stable publication count of 22, ten families, 147 renderers, and a stable
+  cumulative late-registration count of four rather than post-seal mutation.
+- Exact visible-query brackets are recorded around contributing mesh draws and
+  all query pools are reset before rendering begins. The latest combined probe
+  independently submitted/resolved/cull-tested desktop and true-SPS work, but
+  eight retained frames are not the required sustained 300-frame proof.
+- Registered strict-SPS transfer destinations as externally owned Vulkan images
+  before dependency tracking, closing the raw-handle generation collision that
+  rejected every third Monado swapchain image. The post-fix live probe completed
+  106/106 strict-SPS submissions and visually nonblack acquired-eye captures.
 
 Remaining closeout work:
 
-- Build and rerun the focused tests after the final logging/lease changes.
-- Consolidate the command-stream-scoped pre-record manifests into the required
-  single frame-wide manifest before any output command buffer begins recording.
-  The current implementation seals each known recording path independently, so
-  5.2.4c.2's first checkbox remains open.
 - Run a settled current-binary F5 baseline and the exact occlusion-off plus
   enabled 200-warmup/300-retained cohorts. The enabled cohort must prove
   independent nonzero desktop and true-SPS query submission, resolution, and
   culling, not only aggregate work.
+- Fix or isolate the directional-light/shadow nondeterminism that first appears
+  in `LightingAccum`, then repeat enabled/off image parity. Do not weaken the
+  parity threshold or attribute bright/dark cohort variation to occlusion.
 - Confirm cached command-buffer leases and lifetime/resource counts plateau
   after Sponza import. The short run's recording leases were fixed, but cached
   leases rose from 104 to 129 while command buffers were still warming and the
@@ -796,7 +853,7 @@ Remaining closeout work:
 
 #### 5.2.4c.2 - Seal Frame-Data Capacity Before Recording
 
-- [ ] Build one frame-wide mesh frame-data reservation manifest before any
+- [x] Build one frame-wide mesh frame-data reservation manifest before any
   desktop, preview, capture, shadow, or OpenXR command buffer starts recording.
   Assign stable frame-data slots by compatible output/view family and bounded
   external-target variant, then count every use of each `VkMeshRenderer` in the

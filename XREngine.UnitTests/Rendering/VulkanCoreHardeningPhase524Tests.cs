@@ -224,11 +224,13 @@ public sealed class VulkanCoreHardeningPhase524Tests
     {
         string lifetime = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+        string lifetimeRecord = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.VulkanCommandBufferLifetimeRecord.cs");
         string layouts = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
 
         lifetime.ShouldContain("TouchedDependencies");
-        lifetime.ShouldContain("List<KeyValuePair<VulkanResourceLifetimeKey, ulong>> TouchedDependencies = new(64)");
+        lifetimeRecord.ShouldContain("List<KeyValuePair<VulkanResourceLifetimeKey, ulong>> TouchedDependencies = new(64)");
         lifetime.ShouldNotContain("TouchedDependencies = lifetime.Dependencies.ToArray()");
         lifetime.ShouldContain("foreach ((VulkanResourceLifetimeKey key, ulong recordedGeneration) in commandLifetime.TouchedDependencies)");
         layouts.ShouldContain("TouchedSubresources");
