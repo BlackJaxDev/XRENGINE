@@ -184,7 +184,7 @@ namespace XREngine.Rendering.Vulkan
 
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshDrawSlotsByRendererFamily =
                 _dynamicUiMeshDrawSlotsByRendererFamilyScratch;
-            Dictionary<VulkanMeshFrameDataFamilyKey, int> meshFrameDataFamilyBases =
+            Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshFrameDataFamilyBases =
                 recordingScratch.DynamicUiMeshFrameDataFamilyBases;
             meshDrawSlotsByRendererFamily.Clear();
             for (int i = 0; i < dynamicUiBatchTextOps.Length; i++)

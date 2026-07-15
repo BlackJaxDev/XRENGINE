@@ -95,6 +95,7 @@ public struct OpenXrSmokeFrameLedgerEntry
     public int ForceFlushCount { get; set; }
     public int UnapprovedPolicyEventCount { get; set; }
     public int PlannerPruneCount { get; set; }
+    public int OutputMissedDeadlineCount { get; set; }
     public ulong OutputManifestFrameId { get; set; }
     public ulong OutputWorkloadIdentityHash { get; set; }
     public int OutputRequestCount { get; set; }

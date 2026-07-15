@@ -2,6 +2,7 @@ using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Rendering.API.Rendering.OpenXR;
+using XREngine.Rendering.Vulkan;
 using XREngine.Runtime.Bootstrap;
 
 namespace XREngine.UnitTests.Rendering;
@@ -9,6 +10,51 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class OpenXrTimingPipelineContractTests
 {
+    [Test]
+    public void FrameOutputCompletionTelemetry_UsesObservedCompletionAndRealDeadlines()
+    {
+        long first = System.Diagnostics.Stopwatch.Frequency;
+        long second = first + (System.Diagnostics.Stopwatch.Frequency / 2);
+
+        double observedRate = Engine.Rendering.Stats.FrameOutputs.UpdateObservedCompletionRateHz(
+            previousRateHz: 0.0,
+            previousCompletionTimestamp: first,
+            completionTimestamp: second);
+
+        observedRate.ShouldBe(2.0, tolerance: 0.01);
+        Engine.Rendering.Stats.FrameOutputs.CalculateCompletionIntervalMilliseconds(first, second)
+            .ShouldBe(500.0, tolerance: 0.01);
+        Engine.Rendering.Stats.FrameOutputs.ResolveEffectiveDeadlineMilliseconds(
+                ERenderOutputClass.XrCritical,
+                requestedDeadlineMs: 500.0,
+                activeBudgetMs: 1000.0 / 90.0)
+            .ShouldBe(1000.0 / 90.0, tolerance: 0.01);
+        Engine.Rendering.Stats.FrameOutputs.IsCompletedOutputDeadlineMissed(
+            isDue: true,
+            completed: true,
+            completedFrameMs: 250.0,
+            deadlineMs: 1000.0 / 90.0,
+            hardDeadline: true).ShouldBeTrue();
+        Engine.Rendering.Stats.FrameOutputs.IsCompletedOutputDeadlineMissed(
+            isDue: true,
+            completed: false,
+            completedFrameMs: 0.0,
+            deadlineMs: 1000.0 / 90.0,
+            hardDeadline: true).ShouldBeTrue();
+        Engine.Rendering.Stats.FrameOutputs.IsCompletedOutputDeadlineMissed(
+            isDue: true,
+            completed: true,
+            completedFrameMs: 8.0,
+            deadlineMs: 1000.0 / 90.0,
+            hardDeadline: true).ShouldBeFalse();
+
+        string frameOutputs = ReadWorkspaceFile(
+            "XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.FrameOutputs.cs");
+        frameOutputs.ShouldContain("destination[copied++] = CreateObservedCompletionSnapshot(");
+        frameOutputs.ShouldContain("bool completed = IsOutputFamilyCompleted(output);");
+        frameOutputs.ShouldContain("candidate.Request.ViewFamilyId == output.Request.ViewFamilyId");
+    }
+
     [Test]
     public void FrameTiming_UsesDedicatedPacingThreadByDefault()
     {
@@ -699,7 +745,9 @@ public sealed class OpenXrTimingPipelineContractTests
             "private string BuildDescriptorAllocationMissReason");
 
         canReuse.ShouldContain("ulong schemaFingerprint = ComputeDescriptorSchemaFingerprint(bindings, setCount);");
-        canReuse.ShouldContain("ulong resourceFingerprint = ComputeDescriptorResourceFingerprint(material, frameCount, bindings);");
+        canReuse.ShouldContain("ulong resourceFingerprint = ComputeDescriptorResourceFingerprint(");
+        canReuse.ShouldContain("drawUniformSlot,");
+        canReuse.ShouldContain("usesSharedMaterialTier);");
         descriptors.ShouldContain("DescriptorSlotResourceFingerprintMatches(allocation, descriptorSlotIndex, resourceFingerprint)");
         descriptors.ShouldContain("EnsureDescriptorSlotReady(");
         canReuse.ShouldContain("schemaFingerprint,\n\t\t\t\t\tviewFamilyIdentity,\n\t\t\t\t\tresourceFingerprint,");
@@ -1170,6 +1218,10 @@ public sealed class OpenXrTimingPipelineContractTests
         program.ShouldContain("LeftPublishDelta = leftPublishDelta");
         program.ShouldContain("SubmissionRejectionCount = outputWork.SubmissionRejectionCount");
         program.ShouldContain("GlobalInFlightWaitCount = outputWork.GlobalInFlightWaitCount");
+        program.ShouldContain("OutputMissedDeadlineCount = outputWork.MissedDeadlineCount");
+        program.ShouldContain("AchievedRateHz = output.AchievedRateHz");
+        program.ShouldContain("DeadlineMissed = output.DeadlineMissed");
+        program.ShouldContain("OutputMissedDeadlineCount = observedMissedDeadlineCount");
         program.ShouldContain("LayerCount = ResolveRequiredLayerCount(target.ViewMask)");
         program.ShouldContain("RequestSmokeSessionExit");
         program.ShouldContain("CompletedOpenXrFrameCount");
@@ -1769,7 +1821,7 @@ public sealed class OpenXrTimingPipelineContractTests
 
     [Test]
     [NonParallelizable]
-    public void UnitTestingWorld_OpenXrVulkanStartupRequiresGpuRenderDispatch()
+    public void UnitTestingWorld_OpenXrVulkanStartupHonorsCpuDirectAndUsesNonDiagnosticProfile()
     {
         string? previousRuntimeJson = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
         string? previousPath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path);
@@ -1800,7 +1852,9 @@ public sealed class OpenXrTimingPipelineContractTests
 
             UnitTestingWorldSettingsStore.ApplyStartupOverrides(startupSettings, settings);
 
-            startupSettings.GPURenderDispatch.ShouldBeTrue();
+            startupSettings.GPURenderDispatch.ShouldBeFalse();
+            startupSettings.VulkanGpuDrivenProfileOverride.HasOverride.ShouldBeTrue();
+            startupSettings.VulkanGpuDrivenProfileOverride.Value.ShouldBe(EVulkanGpuDrivenProfile.DevParity);
         }
         finally
         {
@@ -1818,17 +1872,14 @@ public sealed class OpenXrTimingPipelineContractTests
     }
 
     [Test]
-    public void UnitTestingOpenXrVulkan_IgnoresPersistedCpuDirectForceButAllowsEnvOverride()
+    public void UnitTestingOpenXrVulkan_HonorsPersistedCpuDirectForceAndAllowsEnvOverride()
     {
         string effectiveSettings = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Engine.EffectiveSettings.cs");
 
-        effectiveSettings.ShouldContain("ShouldIgnorePersistedCpuDirectMeshSubmissionForceForUnitTestingOpenXrVulkan");
-        effectiveSettings.ShouldContain("XRE_FORCE_MESH_SUBMISSION_STRATEGY=CpuDirect");
-        effectiveSettings.ShouldContain("persistedForce == EMeshSubmissionStrategy.CpuDirect");
-        effectiveSettings.ShouldContain("IsUnitTestingOpenXrLaunch");
-        effectiveSettings.ShouldContain("XREngineEnvironmentVariables.UnitTestVrMode");
-        effectiveSettings.ShouldContain("MonadoOpenXR");
-        effectiveSettings.ShouldContain("PreferredRenderBackend == ERenderLibrary.Vulkan");
+        effectiveSettings.ShouldNotContain("ShouldIgnorePersistedCpuDirectMeshSubmissionForceForUnitTestingOpenXrVulkan");
+        effectiveSettings.ShouldNotContain("Ignoring persisted ForceMeshSubmissionStrategy=CpuDirect");
+        effectiveSettings.ShouldContain("return Rendering.Settings.ForceMeshSubmissionStrategy;");
+        effectiveSettings.ShouldContain("EffectiveSettingsEnvOverrides.ForceMeshSubmissionStrategy");
     }
 
     [Test]

@@ -660,13 +660,20 @@ try {
         throw "Editor DLL does not exist: $editorDll"
     }
 
+    $previewStereoViews = if ([string]::IsNullOrWhiteSpace($env:XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS)) {
+        "1"
+    }
+    else {
+        $env:XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS
+    }
+
     $environment = @{
         XR_RUNTIME_JSON                         = $runtimeJsonFullPath
         XRE_WORLD_MODE                          = "UnitTesting"
         XRE_UNIT_TEST_WORLD_KIND                = "Default"
         XRE_UNIT_TEST_RENDER_API                = $Renderer
         XRE_UNIT_TEST_VR_MODE                   = "MonadoOpenXR"
-        XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS   = "1"
+        XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS   = $previewStereoViews
         XRE_WINDOW_TITLE                        = "XRE OpenXR Monado Smoke"
         XRE_SMOKE_FRAMES                        = [string]$SmokeFrames
         XRE_SMOKE_WARMUP_FRAMES                 = [string]$WarmupFrames

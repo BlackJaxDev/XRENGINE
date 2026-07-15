@@ -2344,8 +2344,8 @@ internal static partial class RuntimeEngine
             public static void AllowDepthWrite(bool allow) => AbstractRenderer.Current?.AllowDepthWrite(allow);
             public static void DepthFunc(EComparison comparison) => AbstractRenderer.Current?.DepthFunc(MapDepthComparison(comparison));
             public static void ColorMask(bool red, bool green, bool blue, bool alpha) => AbstractRenderer.Current?.ColorMask(red, green, blue, alpha);
-            public static XRCamera.EDepthMode GetDepthMode() => RenderingPipelineState?.SceneCamera?.DepthMode ?? XRCamera.EDepthMode.Normal;
-            public static float GetDefaultDepthClearValue() => RenderingPipelineState?.SceneCamera?.GetDepthClearValue() ?? 1.0f;
+            public static XRCamera.EDepthMode GetDepthMode() => RenderingCamera?.DepthMode ?? XRCamera.EDepthMode.Normal;
+            public static float GetDefaultDepthClearValue() => RenderingCamera?.GetDepthClearValue() ?? 1.0f;
             public static EComparison MapDepthComparison(EComparison comparison)
             {
                 if (GetDepthMode() != XRCamera.EDepthMode.Reversed)
@@ -2431,7 +2431,10 @@ internal static partial class RuntimeEngine
                 get
                 {
                     XRRenderPipelineInstance? pipeline = CurrentRenderingPipeline;
+                    IRuntimeRenderCommandExecutionState? commandState = ActiveRenderCommandExecutionState;
                     return RenderingCameraOverride
+                        ?? commandState?.RenderingCamera as XRCamera
+                        ?? commandState?.SceneCamera as XRCamera
                         ?? pipeline?.RenderState.RenderingCamera
                         ?? pipeline?.RenderState.SceneCamera
                         ?? pipeline?.LastSceneCamera

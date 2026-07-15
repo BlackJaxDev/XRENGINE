@@ -226,6 +226,27 @@ public sealed class VulkanDesktopPlanStabilityTests
         swapchain.ShouldContain("_swapchainImageHasValidPresentedContent = null;");
     }
 
+    [Test]
+    public void DescriptorPendingDesktopFrameUsesInitializationClearWithoutImmediateSwapchainRecreate()
+    {
+        string frameLoop = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
+        string policy = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DesktopPresentationPolicy.cs");
+        string deferredRecovery = SliceBetween(
+            frameLoop,
+            "bool TryPresentAbortedDirtyFrame",
+            "stageStartTimestamp = Stopwatch.GetTimestamp();");
+
+        deferredRecovery.ShouldContain("string.Equals(rejectionStage, \"RecordDeferred\"");
+        deferredRecovery.ShouldContain("ERejectedDesktopFrameDisposition.PresentInitializationClear");
+        deferredRecovery.ShouldContain("policy.ShouldClearBeforePresent");
+        deferredRecovery.ShouldContain("CmdClearColorImageTracked");
+        policy.ShouldContain("DeferredInitializationClear");
+        policy.ShouldContain("public bool ShouldClearBeforePresent");
+        frameLoop.ShouldNotContain("RecreateSwapchainImmediately(\"Command buffer recording deferred");
+    }
+
     [TestCase(false, true, true)]
     [TestCase(true, true, false)]
     [TestCase(false, false, false)]

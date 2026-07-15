@@ -2,7 +2,7 @@
 
 Last Updated: 2026-07-15
 Owner: Rendering
-Status: Phase 5.2.4b Live Closeout And Phase 5.2.4c Settled-Workload Proof Open; Phase 5.2.5 Blocked
+Status: Phase 5.2.4c Immediate Safety Fixes Complete; Sustained Boundedness, Capture Parity, And Trusted Occlusion Gates Open; Unfinished Accelerated Cohorts Deferred; Phase 5.2.5 Blocked
 Execution: Current worktree only; do not create or switch branches for this effort.
 
 ## Goal
@@ -811,6 +811,43 @@ Implementation wrap-up (2026-07-14, updated 2026-07-15):
   before dependency tracking, closing the raw-handle generation collision that
   rejected every third Monado swapchain image. The post-fix live probe completed
   106/106 strict-SPS submissions and visually nonblack acquired-eye captures.
+- The July 15 combined Monado/SPS plus independent-desktop investigation
+  reproduced a descriptor-pending `InvalidOperationException`, a retirement
+  entry that remained pending for more than 350 seconds after its graphics
+  ticket had completed, and deadline/rate telemetry that reported zero misses
+  and 90 Hz while observed completion was approximately 1-1.5 Hz. It also found
+  that the Unit Testing World's explicit `GPURenderDispatch: false` was silently
+  forced to `true` for Vulkan OpenXR and then resolved through the persisted
+  `Diagnostics` profile to `GpuIndirectInstrumented`. Full evidence:
+  [OpenXR Monado and desktop framerate investigation](../../investigations/rendering/openxr-monado-desktop-framerate-invalidoperations-2026-07-15.md).
+- The July 15 CPU-direct closeout made the checked-in
+  `GPURenderDispatch: false` authoritative, replaced descriptor-pending throws
+  with an explicit pre-record defer, drained exact completed pipeline-layout
+  retirement tickets, and changed output-rate/deadline telemetry to consume
+  actual completion timestamps. The clean 100-warmup/30-retained F5 run used
+  `CpuDirect`, `CpuQueryAsync`, true SPS, independent desktop rendering, and
+  diagnostics off. It completed with zero `InvalidOperationException`, VUID,
+  submission rejection, sequential fallback, device loss, or pending
+  retirement. Retained CPU frame time averaged 27.546 ms (p95 30.536 ms), GPU
+  work averaged 3.766 ms (p95 4.069 ms), and command recording averaged
+  1.181 ms (p95 1.420 ms). True XR output completion was only 4.155 Hz with
+  30/30 retained samples over budget, proving that remaining throughput is
+  CPU/output orchestration rather than GPU execution. Evidence:
+  `Build/_AgentValidation/20260710-openxr-strict-stereo/20260715-cpudirect-closeout/f5-baseline-final/reports/openxr-smoke-summary.json`.
+- The frame-wide reservation root now charges each renderer only for families
+  that use it. A live proof reduced the pathological 186,000-reservation /
+  32 MiB-ceiling shape to 43,072 reservations and 15,453,120 bytes while
+  resolving 73/73 queries, testing 1,800 candidates, producing 1,460 culls,
+  and completing 118 strict-SPS submissions without fallback. The final clean
+  run used 28,992 reservations and 7,275,392 bytes.
+- Vulkan zero-sample CPU-query results remain untrusted: enabled/off visual
+  isolation showed valid Sponza foreground geometry disappearing when those
+  negatives controlled visibility. Vulkan now records and resolves the
+  queries but explicitly quarantines negative results as forced-visible with a
+  bounded diagnostic. This restores the missing geometry and prevents a false
+  cull from corrupting desktop or eye output, but it means the nonzero-culling
+  and exact image-parity acceptance items remain open. No GPU-instrumented or
+  zero-readback cohort was run.
 
 Remaining closeout work:
 
@@ -830,6 +867,28 @@ Remaining closeout work:
   descriptor/resource drift, multi-second stall, or shutdown-only noise is
   being admitted into the live acceptance window.
 
+#### 5.2.4c.0 - Freeze The Supported Validation Lane
+
+- [x] Make the checked-in `GPURenderDispatch: false` authoritative for the
+  current Vulkan OpenXR Unit Testing World. Remove
+  `RequiresGpuRenderDispatchForOpenXrVulkan`'s silent force-to-true behavior and
+  update its contract test. An unfinished accelerated lane may be selected only
+  by a separate explicit opt-in setting or launch profile that is recorded in
+  the result manifest.
+- [x] Define the current 5.2.4c F5/acceptance fingerprint as `CpuDirect` with GPU
+  CPU safety-net fallback disabled. It must not resolve to `Diagnostics`,
+  `GpuIndirectInstrumented`, `GpuIndirectZeroReadback`, or any meshlet path.
+  Emit the configured/requested/effective profile and submission strategy at
+  startup and reject an automated acceptance cohort whose fingerprint differs.
+- [x] Keep accelerated-path development diagnostic runs separate from CPU-direct
+  correctness and performance baselines. Do not use their timings, fallback
+  behavior, descriptor counts, exceptions, or images as 5.2.4c acceptance
+  evidence, and do not make them prerequisites for continuing through the
+  current CPU/output architecture phases.
+- [x] Prove CPU-direct Vulkan OpenXR can acquire, record, submit, publish, release,
+  and `xrEndFrame` true SPS without a hidden GPU-dispatch dependency or a CPU
+  fallback masquerading as an accelerated result.
+
 #### 5.2.4c.1 - Measure The Ownership Multipliers
 
 - [x] Add allocation-free counters, high-water marks, and bounded diagnostics
@@ -844,12 +903,18 @@ Remaining closeout work:
   as additional rendering work. Correlate actual draw counts with descriptor
   and uniform growth for `MainViewport`, UI preview, shadows, scene captures,
   and true SPS.
-- [ ] Capture a current-binary F5 baseline using the checked-in Unit Testing
+- [x] Capture a current-binary F5 baseline using the checked-in Unit Testing
   World settings and preserve the time series from startup through settled
   desktop/SPS rendering. Record draw-slot high-water changes, generation
   publication/retirement, pool create/destroy/reset, descriptor-set count,
   uniform-buffer count/bytes, lifetime live resources, retirement backlog,
   command-record time, render-thread waits, query work, and output continuity.
+- [x] Make output-rate telemetry use completed/published frame times rather than
+  requested source cadence. Add deterministic tests where 11.11 ms-budget work
+  completes in hundreds of milliseconds or seconds and require achieved Hz,
+  missed-deadline count, content age, and deferral/rejection counters to agree
+  with the known completion sequence. Cross-check the live counters against
+  profiler timestamps before accepting any cohort.
 
 #### 5.2.4c.2 - Seal Frame-Data Capacity Before Recording
 
@@ -862,10 +927,14 @@ Remaining closeout work:
   descriptor capacity as one immutable generation. `EnsureUniformDrawSlotCapacity`
   and equivalent helpers must not mutate capacity, dirty unrelated command
   buffers, allocate Vulkan objects, or replace generations after the seal.
-- [x] Treat a late capacity miss as an explicit bounded replan/re-record result
+- [x] Treat a late capacity or descriptor/program-readiness miss as an explicit
+  bounded whole-output replan/defer/re-record result
   before submission. Never resize shared mesh state midway through recording,
   silently clamp to the last slot, or continue with a partially prepared
-  descriptor/uniform generation.
+  descriptor/uniform generation. Do not throw `InvalidOperationException`,
+  recreate the swapchain, or enter the window circuit breaker for temporary
+  `descriptors pending`; the July 15 live reproduction must pass without a
+  first-chance exception.
 - [x] Make OpenXR prewarm consume the same complete reservation manifest as
   normal recording. It may populate the sealed generation, but it must not grow
   renderer-global capacity or invalidate desktop/preview command buffers.
@@ -893,7 +962,10 @@ Remaining closeout work:
 - [x] Retire ready generations and their descriptor pools as units with bounded
   per-frame work and backlog-aware draining. Capacity pressure may defer new
   optional work, but it must not call `WaitForAllInFlightWork`, force-flush, or
-  create a multi-second retirement backlog.
+  create a multi-second retirement backlog. Add an exact-ticket regression that
+  advances the graphics timeline beyond a pending pipeline/layout generation
+  and proves it drains; no ready retirement may age indefinitely while its
+  owning queue completion continues advancing.
 
 #### 5.2.4c.4 - Move Per-Draw Data Into Bounded Arenas
 
@@ -936,10 +1008,12 @@ Remaining closeout work:
   draw submissions multiplied by outputs and frame/draw slots. Prove uniform
   Vulkan buffer count scales with active arena chunks, not mesh renderers
   multiplied by uniform blocks and retained capacities.
-- [ ] Re-run the current F5 Unit Testing World workload with Vulkan, Monado,
-  true SPS, `FullIndependentRender`, TSR/bloom, Sponza, UI preview, and
+- [x] Re-run the current CPU-direct F5 Unit Testing World workload with Vulkan,
+  Monado, true SPS, `FullIndependentRender`, TSR/bloom, Sponza, UI preview, and
   `CpuQueryAsync`. Preserve desktop and both-eye captures plus profiler/log
-  evidence from startup through a settled retained window.
+  evidence from startup through a settled retained window. The manifest must
+  prove no unfinished GPU-instrumented, zero-readback, meshlet, or CPU safety-net
+  path became active.
 
 Acceptance criteria:
 
@@ -956,10 +1030,21 @@ Acceptance criteria:
   sealed. Every recorded-but-not-submitted, submitted, rejected, aborted, and
   cached command buffer holds and releases the exact generation lease without a
   premature retirement or indefinite retention.
+- [x] Descriptor/program readiness never escapes as a first-chance exception or
+  triggers swapchain recreation. The owning output defers before recording,
+  reports a bounded reason, and later completes from one fully published
+  generation.
+- [x] Every retirement whose exact queue tickets have completed drains within a
+  declared bounded number of frames. A static settled cohort has zero ready-but-
+  pending retirement age growth and no stale pipeline/layout retirement entry.
+- [x] Observed completed-frame timestamps, achieved Hz, output content age,
+  budget classification, and missed-deadline totals agree. A frame above the
+  active VR budget increments the appropriate miss/late accounting; telemetry
+  may not report requested 90 Hz as achieved throughput.
 - [ ] Main desktop and true-SPS `OcclusionViewKey` instances independently
   report sustained nonzero CPU-query submission, resolution, and valid culling.
   Desktop and both-eye output remain visually continuous and nonblack.
-- [ ] The live gate has zero submission rejection, sequential fallback, global
+- [x] The live gate has zero submission rejection, sequential fallback, global
   invalidation fallback, normal-path device-idle wait/force flush, engine-owned
   validation error, first-chance lifetime exception, or device loss.
 - [ ] Only after every 5.2.4c checkbox above is complete may 5.2.5 begin.
@@ -1139,6 +1224,14 @@ Acceptance criteria:
 
 ### 5.2.10 - Validation Matrix And Promotion Gate
 
+This promotion gate currently validates only the supported `CpuDirect` mesh
+submission lane. `GpuIndirectInstrumented`, `GpuIndirectZeroReadback`, and
+meshlet submission are unfinished and explicitly outside this matrix. Do not
+run, compare, or require those cohorts until their implementations have their
+own readiness checklist, that checklist is complete, and the owner explicitly
+opens a separate promotion lane. The former zero-readback comparison cohort is
+therefore deferred rather than a Phase 5.2 blocker.
+
 - [ ] Run validation-disabled performance and validation-enabled correctness as
   separate cohorts with identical workload/settings manifests.
 - [ ] Capture at least three 60-second stable repetitions for:
@@ -1151,7 +1244,7 @@ Acceptance criteria:
   - [ ] light-probe batch without XR;
   - [ ] OpenXR eyes plus mirrors plus a 36-probe batch;
   - [ ] explicit dynamic and legacy render-target modes;
-  - [ ] `CpuDirect` and a separate `GpuIndirectZeroReadback` cohort.
+  - [ ] `CpuDirect` with the startup/effective-strategy fingerprint preserved.
 - [ ] For every cohort record CPU frame p50/p95/p99/worst, observed render
   throughput, GPU family/pass p50/p95, missed XR deadlines, output content age,
   scene snapshots/visibility builds, record/reuse/dirty counts, allocation,

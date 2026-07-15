@@ -723,15 +723,25 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordPrimary"))
-                    swapchainLayoutAfterCommandBuffer = RecordCommandBuffer(
-                        imageIndex,
-                        variant.PrimaryCommandBuffer,
-                        variant.DynamicUiSecondaryCommandBuffer,
-                        ops,
-                        recordedDynamicUiSecondaryReady && !preserveSwapchainForOverlay ? dynamicUiBatchTextOps.Length : 0,
-                        commandChainSchedule,
-                        preserveSwapchainForOverlay,
-                        out recordedSwapchainWriteCount);
+                {
+                    if (!TryRecordCommandBuffer(
+                            imageIndex,
+                            variant.PrimaryCommandBuffer,
+                            variant.DynamicUiSecondaryCommandBuffer,
+                            ops,
+                            recordedDynamicUiSecondaryReady && !preserveSwapchainForOverlay ? dynamicUiBatchTextOps.Length : 0,
+                            commandChainSchedule,
+                            preserveSwapchainForOverlay,
+                            out recordedSwapchainWriteCount,
+                            out swapchainLayoutAfterCommandBuffer,
+                            out recordingDeferredReason))
+                    {
+                        _lastEnsureCommandBufferRecordedPrimary = false;
+                        CancelRecordedTextureUploadSubmitBatch(
+                            "command buffer recording deferred before vkBeginCommandBuffer");
+                        return default;
+                    }
+                }
             }
             catch
             {
@@ -1467,7 +1477,7 @@ namespace XREngine.Rendering.Vulkan
                 _refreshMeshDrawSlotsByRendererFamilyScratch;
             meshDrawSlotsByRendererFamily.Clear();
             meshDrawSlotsByRendererFamily.EnsureCapacity(_refreshMeshDrawSlotCapacityHint);
-            Dictionary<VulkanMeshFrameDataFamilyKey, int> familyBases =
+            Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> familyBases =
                 _commandBufferRecordingScratch.Value!.ReusableMeshFrameDataFamilyBases;
             int frameDataSlot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
 
@@ -1659,7 +1669,7 @@ namespace XREngine.Rendering.Vulkan
 
         private static int GetFrameWideMeshDrawUniformSlot(
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> slotsByRendererFamily,
-            Dictionary<VulkanMeshFrameDataFamilyKey, int> familyBases,
+            Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> familyBases,
             VkMeshRenderer renderer,
             int frameDataSlot,
             EVulkanMeshFrameDataStreamKind streamKind,
@@ -1668,13 +1678,13 @@ namespace XREngine.Rendering.Vulkan
         {
             VulkanMeshFrameDataFamilyKey family =
                 VulkanMeshFrameDataFamilyKey.From(frameDataSlot, streamKind, context, draw);
-            if (!familyBases.TryGetValue(family, out int baseSlot))
+            VulkanMeshFrameDataRendererFamilyKey rendererFamily = new(renderer, family);
+            if (!familyBases.TryGetValue(rendererFamily, out int baseSlot))
             {
                 throw new InvalidOperationException(
                     $"Mesh frame-data output family {family} was not published before draw-slot resolution.");
             }
 
-            VulkanMeshFrameDataRendererFamilyKey rendererFamily = new(renderer, family);
             ref int ordinalRef = ref CollectionsMarshal.GetValueRefOrAddDefault(
                 slotsByRendererFamily,
                 rendererFamily,
@@ -1691,7 +1701,7 @@ namespace XREngine.Rendering.Vulkan
             bool sealAfterRegister,
             Dictionary<VkMeshRenderer, int> requirements,
             CommandBufferRecordingScratch scratch,
-            Dictionary<VulkanMeshFrameDataFamilyKey, int> resolvedFamilyBases,
+            Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> resolvedFamilyBases,
             out ulong manifestGeneration,
             out string reason)
         {
@@ -2304,7 +2314,7 @@ namespace XREngine.Rendering.Vulkan
                 imageEverPresented);
         }
 
-        private ImageLayout RecordCommandBuffer(
+        private bool TryRecordCommandBuffer(
             uint imageIndex,
             CommandBuffer commandBuffer,
             CommandBuffer dynamicUiBatchTextSecondaryCommandBuffer,
@@ -2313,6 +2323,8 @@ namespace XREngine.Rendering.Vulkan
             CommandChainSchedule? commandChainSchedule,
             bool preserveSwapchainForOverlay,
             out int recordedSwapchainWriteCount,
+            out ImageLayout recordedSwapchainFinalLayout,
+            out string recordingDeferredReason,
             bool transitionSwapchainToPresent = true,
             uint? frameDataImageIndexOverride = null,
             OpenXrEyeRenderTargetContext? openXrTargetContext = null,
@@ -2321,6 +2333,8 @@ namespace XREngine.Rendering.Vulkan
             using DesktopSwapchainBarrierExclusionScope desktopSwapchainBarrierExclusion =
                 new(excludeDesktopSwapchainBarriers);
             recordedSwapchainWriteCount = 0;
+            recordedSwapchainFinalLayout = ImageLayout.Undefined;
+            recordingDeferredReason = string.Empty;
             int droppedDrawOps = 0;
             int droppedComputeOps = 0;
             int droppedFrameOps = 0;
@@ -2366,20 +2380,22 @@ namespace XREngine.Rendering.Vulkan
                     out string frameWideReason))
             {
                 frameDataManifest.End();
-                throw new InvalidOperationException(
-                    $"Frame-wide mesh frame-data manifest rejected command recording: {frameWideReason}");
+                recordingDeferredReason =
+                    $"Frame-wide mesh frame-data manifest deferred command recording: {frameWideReason}";
+                return false;
             }
             foreach (KeyValuePair<VkMeshRenderer, int> reservation in meshDrawSlotsByRenderer)
             {
                 if (frameDataManifest.TryReserve(reservation.Key, reservation.Value))
                     continue;
                 frameDataManifest.End();
-                throw new InvalidOperationException(
-                    $"Unable to reserve {reservation.Value} mesh frame-data slots before command recording.");
+                recordingDeferredReason =
+                    $"Unable to reserve {reservation.Value} mesh frame-data slots before command recording.";
+                return false;
             }
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshDrawSlotsByRendererFamily =
                 recordingScratch.PrimaryMeshDrawSlotsByRendererFamily;
-            Dictionary<VulkanMeshFrameDataFamilyKey, int> meshFrameDataFamilyBases =
+            Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshFrameDataFamilyBases =
                 recordingScratch.PrimaryMeshFrameDataFamilyBases;
             meshDrawSlotsByRendererFamily.Clear();
             for (int opIndex = 0; opIndex < ops.Length; opIndex++)
@@ -2424,9 +2440,10 @@ namespace XREngine.Rendering.Vulkan
                         drawSlot,
                         prewarmReason);
                     frameDataManifest.End();
-                    throw new InvalidOperationException(
-                        $"Mesh frame-data reservation failed before command recording for " +
-                        $"mesh '{meshRenderer.Mesh?.Name ?? "<unnamed mesh>"}', slot {drawSlot}: {prewarmReason}");
+                    recordingDeferredReason =
+                        $"Mesh frame-data reservation deferred before command recording for " +
+                        $"mesh '{meshRenderer.Mesh?.Name ?? "<unnamed mesh>"}', slot {drawSlot}: {prewarmReason}";
+                    return false;
                 }
             }
             recordingScratch.RecordMeshDrawSlotCapacityHint = Math.Max(
@@ -2439,8 +2456,9 @@ namespace XREngine.Rendering.Vulkan
                     MeshFrameDataReservedBytes))
             {
                 frameDataManifest.End();
-                throw new InvalidOperationException(
-                    "Mesh frame-data generation changed while the command-stream reservation manifest was being materialized.");
+                recordingDeferredReason =
+                    "Mesh frame-data generation changed while the command-stream reservation manifest was being materialized.";
+                return false;
             }
             using VulkanMeshFrameDataManifestRecordingScope frameDataManifestScope = new(frameDataManifest);
 
@@ -6458,7 +6476,8 @@ namespace XREngine.Rendering.Vulkan
             }
 
             recordedSwapchainWriteCount = actualSwapchainWriteCount;
-            return swapchainFinalLayout;
+            recordedSwapchainFinalLayout = swapchainFinalLayout;
+            return true;
         }
 
         internal static bool ShouldRefreshUnwrittenSwapchainForPresent(

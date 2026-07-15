@@ -128,11 +128,20 @@ namespace XREngine
                 /// This determines view and projection matrices for the current render pass.
                 /// </summary>
                 public static XRCamera? RenderingCamera
-                    => RenderingCameraOverride
-                    ?? CurrentRenderingPipeline?.RenderState.RenderingCamera
-                    ?? CurrentRenderingPipeline?.RenderState.SceneCamera
-                    ?? CurrentRenderingPipeline?.LastSceneCamera
-                    ?? CurrentRenderingPipeline?.LastRenderingCamera;
+                {
+                    get
+                    {
+                        IRuntimeRenderCommandExecutionState? commandState =
+                            RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState;
+                        return RenderingCameraOverride
+                            ?? commandState?.RenderingCamera as XRCamera
+                            ?? commandState?.SceneCamera as XRCamera
+                            ?? CurrentRenderingPipeline?.RenderState.RenderingCamera
+                            ?? CurrentRenderingPipeline?.RenderState.SceneCamera
+                            ?? CurrentRenderingPipeline?.LastSceneCamera
+                            ?? CurrentRenderingPipeline?.LastRenderingCamera;
+                    }
+                }
 
                 /// <summary>
                 /// The right eye camera for stereo/VR rendering.
@@ -859,13 +868,13 @@ namespace XREngine
                 /// Defaults to Normal if no camera is active.
                 /// </summary>
                 public static XRCamera.EDepthMode GetDepthMode()
-                    => RenderingPipelineState?.SceneCamera?.DepthMode ?? XRCamera.EDepthMode.Normal;
+                    => RenderingCamera?.DepthMode ?? XRCamera.EDepthMode.Normal;
 
                 /// <summary>
                 /// Returns the default depth clear value for the active camera.
                 /// </summary>
                 public static float GetDefaultDepthClearValue()
-                    => RenderingPipelineState?.SceneCamera?.GetDepthClearValue() ?? 1.0f;
+                    => RenderingCamera?.GetDepthClearValue() ?? 1.0f;
 
                 /// <summary>
                 /// Maps a depth comparison function based on the current depth mode.

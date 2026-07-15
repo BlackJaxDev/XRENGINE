@@ -22,6 +22,7 @@ public sealed class VulkanCpuDirectOcclusionTests
         string query = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Queries/VkRenderQuery.cs");
         string resourceLifetime = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
         string renderGraph = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderGraphCompiler.cs");
+        string runtimeEngine = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngine.cs");
 
         coordinator.ShouldContain("using XREngine.Rendering.Vulkan;");
         coordinator.ShouldContain("AbstractRenderer.Current is OpenGLRenderer or VulkanRenderer");
@@ -29,6 +30,9 @@ public sealed class VulkanCpuDirectOcclusionTests
         coordinator.ShouldContain("vk.EnqueueOcclusionQueryEnd(query)");
         coordinator.ShouldContain("VulkanQueryResolveMinLatencyFrames");
         coordinator.ShouldContain("ShouldDelayPendingQueryPoll(queryState, frameId)");
+        coordinator.ShouldContain("NormalizeBackendQueryResult(");
+        coordinator.ShouldContain("ECpuOcclusionForceVisibleReason.UntrustedBackendNegativeResult");
+        coordinator.ShouldContain("CpuOcclusion.VulkanNegativeResultQuarantined");
         coordinator.ShouldContain("AbstractRenderer.Current is not VulkanRenderer");
         coordinator.ShouldContain("ulong frameId = ++state.FrameEpoch;");
         coordinator.ShouldContain("EvictStaleOwnershipStates(globalFrameId)");
@@ -44,25 +48,32 @@ public sealed class VulkanCpuDirectOcclusionTests
         cpuDirect.ShouldNotContain("ResolveCpuDirectOcclusionMode");
         cpuDirect.ShouldNotContain("XREngineEnvironmentVariables.VulkanCpuQueryOcclusion");
         cpuDirect.ShouldNotContain("return EOcclusionCullingMode.Disabled;");
+        runtimeEngine.ShouldContain("commandState?.RenderingCamera as XRCamera");
+        runtimeEngine.ShouldContain("public static XRCamera.EDepthMode GetDepthMode() => RenderingCamera?.DepthMode");
 
         string visibleDemotionPath = Slice(
             cpuDirect,
-            "// A visible-demotion query must bracket the exact contributing draw",
+            "// Query the conservative AABB immediately before the contributing draw.",
             "if (!useCpuQueryOcclusion && useCpuSocOcclusion",
             StringComparison.Ordinal);
-        visibleDemotionPath.ShouldContain("TryScheduleVisibleDrawProbe(");
+        visibleDemotionPath.ShouldContain("TryScheduleVisibleProxyProbe(");
+        visibleDemotionPath.ShouldContain("CpuOcclusionProxyRenderer.Draw(visibleProbeBounds, camera!);");
         visibleDemotionPath.ShouldContain("s_cpuOcclusionCoordinator.BeginQuery(renderPass, camera, queryKey, occlusionOwnership);");
-        visibleDemotionPath.ShouldContain("RenderWithGpuScope(cmd, renderPass);");
         visibleDemotionPath.ShouldContain("s_cpuOcclusionCoordinator.EndQuery(renderPass, camera, queryKey, occlusionOwnership);");
+        visibleDemotionPath.ShouldContain("RenderWithGpuScope(cmd, renderPass);");
         visibleDemotionPath.ShouldContain("CpuQueryProxyIsNearPlaneUnsafe(camera!, visibleProbeBounds)");
-        visibleDemotionPath.ShouldNotContain("CreateCpuOcclusionProbeCandidate(");
 
         string recoveryProbePath = Slice(
             cpuDirect,
-            "// Phase 3: deferred probe-only AABB draws for meshes that were not rendered.",
+            "// Phase 3: deferred AABB probes for occluded recovery.",
             "private static CpuOcclusionProbeCandidate CreateCpuOcclusionProbeCandidate(",
             StringComparison.Ordinal);
-        recoveryProbePath.ShouldContain("CpuOcclusionProxyRenderer.Draw(probe.WorldBounds);");
+        recoveryProbePath.ShouldContain("CpuOcclusionProxyRenderer.Draw(probe.WorldBounds, camera!);");
+
+        string proxyRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Occlusion/CpuOcclusionProxyRenderer.cs");
+        proxyRenderer.ShouldContain("public static void Draw(in AABB worldBounds, XRCamera camera)");
+        proxyRenderer.ShouldContain("RuntimeEngine.Rendering.State.RenderingCameraOverride = camera;");
+        proxyRenderer.ShouldContain("RuntimeEngine.Rendering.State.RenderingCameraOverride = null;");
 
         string depthPrepass = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_ForwardDepthNormalPrePass.cs");
         depthPrepass.ShouldContain("commands.RenderCPU(pass, false, camera, suppressCpuOcclusionForPass: true);");

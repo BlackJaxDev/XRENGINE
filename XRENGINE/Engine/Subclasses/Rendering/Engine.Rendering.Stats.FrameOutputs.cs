@@ -21,6 +21,7 @@ namespace XREngine
                     private static readonly object Sync = new();
                     private static readonly Dictionary<OutputKey, OutputAccumulator> CurrentOutputs = [];
                     private static readonly Dictionary<OutputKey, PacingAccumulator> Pacing = [];
+                    private static readonly Dictionary<OutputKey, CompletionAccumulator> CompletionPacing = [];
                     private static readonly double[] WholeFrameHistory = new double[FrameHistoryCapacity];
 
                     private static FrameOutputEntrySnapshot[] _lastOutputs = [];
@@ -79,13 +80,21 @@ namespace XREngine
                     {
                         lock (Sync)
                         {
+                            long completionTimestamp = Stopwatch.GetTimestamp();
+                            double wholeFrameMs = StopwatchTicksToMilliseconds(Volatile.Read(ref _wholeFrameTicks));
+                            FrameBudgetSnapshot budget = ResolveCurrentBudget();
                             int copied = 0;
-                            foreach (OutputAccumulator output in CurrentOutputs.Values)
+                            foreach (KeyValuePair<OutputKey, OutputAccumulator> pair in CurrentOutputs)
                             {
                                 if (copied >= destination.Length)
                                     break;
 
-                                destination[copied++] = output.ToSnapshot();
+                                destination[copied++] = CreateObservedCompletionSnapshot(
+                                    pair.Key,
+                                    pair.Value,
+                                    completionTimestamp,
+                                    wholeFrameMs,
+                                    budget);
                             }
 
                             return CurrentOutputs.Count;
@@ -100,10 +109,20 @@ namespace XREngine
                     {
                         lock (Sync)
                         {
+                            long completionTimestamp = Stopwatch.GetTimestamp();
+                            double wholeFrameMs = StopwatchTicksToMilliseconds(Volatile.Read(ref _wholeFrameTicks));
+                            FrameBudgetSnapshot budget = ResolveCurrentBudget();
                             FrameOutputEntrySnapshot[] outputs = new FrameOutputEntrySnapshot[CurrentOutputs.Count];
                             int index = 0;
-                            foreach (OutputAccumulator output in CurrentOutputs.Values)
-                                outputs[index++] = output.ToSnapshot();
+                            foreach ((OutputKey key, OutputAccumulator output) in CurrentOutputs)
+                            {
+                                outputs[index++] = CreateObservedCompletionSnapshot(
+                                    key,
+                                    output,
+                                    completionTimestamp,
+                                    wholeFrameMs,
+                                    budget);
+                            }
 
                             Array.Sort(outputs, static (left, right) =>
                             {
@@ -117,8 +136,6 @@ namespace XREngine
                                 return name != 0 ? name : left.Request.OutputId.CompareTo(right.Request.OutputId);
                             });
 
-                            double wholeFrameMs = StopwatchTicksToMilliseconds(Volatile.Read(ref _wholeFrameTicks));
-                            FrameBudgetSnapshot budget = ResolveCurrentBudget();
                             FramePercentileSnapshot percentiles = ComputePercentilesNoLock();
                             FrameOutputWorkSnapshot work = CaptureWorkSnapshot(outputs);
                             ulong workloadIdentityHash = ComputeWorkloadIdentityHash(outputs);
@@ -145,6 +162,66 @@ namespace XREngine
                             _wholeFrameId = 0UL;
                             _wholeFrameTicks = 0L;
                         }
+                    }
+
+                    private static FrameOutputEntrySnapshot CreateObservedCompletionSnapshot(
+                        in OutputKey key,
+                        OutputAccumulator output,
+                        long completionTimestamp,
+                        double wholeFrameMs,
+                        in FrameBudgetSnapshot budget)
+                    {
+                        if (!CompletionPacing.TryGetValue(key, out CompletionAccumulator? completion))
+                        {
+                            completion = new CompletionAccumulator();
+                            CompletionPacing.Add(key, completion);
+                        }
+
+                        bool completed = IsOutputFamilyCompleted(output);
+                        if (output.FrameId != 0UL)
+                            completion.Observe(output.FrameId, completed, completionTimestamp);
+                        double deadlineMs = ResolveEffectiveDeadlineMilliseconds(
+                            output.Request.OutputClass,
+                            output.Request.Schedule.DeadlineMs,
+                            budget.BudgetMs);
+                        double completionIntervalMs = completion.LastCompletionIntervalMilliseconds > 0.0
+                            ? completion.LastCompletionIntervalMilliseconds
+                            : wholeFrameMs;
+                        bool deadlineMissed = output.DeadlineMissed || IsCompletedOutputDeadlineMissed(
+                            output.Due,
+                            completed,
+                            completionIntervalMs,
+                            deadlineMs,
+                            output.Request.Schedule.HardDeadline);
+                        return output.ToSnapshot(
+                            completion.ObservedRateHz,
+                            completion.ContentAgeFrames,
+                            deadlineMissed);
+                    }
+
+                    private static bool IsOutputFamilyCompleted(OutputAccumulator output)
+                    {
+                        if (output.CompletedThisFrame)
+                            return true;
+
+                        if (output.Skipped || !output.Rendered ||
+                            output.OutputKind is not (EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit) ||
+                            output.Request.ViewFamilyId == 0UL)
+                        {
+                            return false;
+                        }
+
+                        foreach (OutputAccumulator candidate in CurrentOutputs.Values)
+                        {
+                            if (!candidate.Skipped && candidate.SubmitObserved &&
+                                candidate.OutputKind == output.OutputKind &&
+                                candidate.Request.ViewFamilyId == output.Request.ViewFamilyId)
+                            {
+                                return true;
+                            }
+                        }
+
+                        return false;
                     }
 
                     public static void RecordWholeFrameRenderThread(ulong frameId, long stopwatchTicks)
@@ -432,6 +509,68 @@ namespace XREngine
                     private static double StopwatchTicksToMilliseconds(long ticks)
                         => ticks <= 0L ? 0.0 : ticks * 1000.0 / Stopwatch.Frequency;
 
+                    internal static double UpdateObservedCompletionRateHz(
+                        double previousRateHz,
+                        long previousCompletionTimestamp,
+                        long completionTimestamp)
+                    {
+                        double completionIntervalMs = CalculateCompletionIntervalMilliseconds(
+                            previousCompletionTimestamp,
+                            completionTimestamp);
+                        if (completionIntervalMs <= 0.0)
+                            return Math.Max(0.0, previousRateHz);
+
+                        double instantaneousRateHz = Math.Clamp(1000.0 / completionIntervalMs, 0.0, 1000.0);
+                        if (previousRateHz <= 0.0 || !double.IsFinite(previousRateHz))
+                            return instantaneousRateHz;
+
+                        const double smoothing = 0.25;
+                        return previousRateHz + ((instantaneousRateHz - previousRateHz) * smoothing);
+                    }
+
+                    internal static double CalculateCompletionIntervalMilliseconds(
+                        long previousCompletionTimestamp,
+                        long completionTimestamp)
+                    {
+                        if (previousCompletionTimestamp <= 0L || completionTimestamp <= previousCompletionTimestamp)
+                            return 0.0;
+
+                        double milliseconds =
+                            (completionTimestamp - previousCompletionTimestamp) * 1000.0 / Stopwatch.Frequency;
+                        return double.IsFinite(milliseconds) && milliseconds > 0.0 ? milliseconds : 0.0;
+                    }
+
+                    internal static bool IsCompletedOutputDeadlineMissed(
+                        bool isDue,
+                        bool completed,
+                        double completedFrameMs,
+                        double deadlineMs,
+                        bool hardDeadline)
+                    {
+                        if (!isDue || deadlineMs <= 0.0 || !double.IsFinite(deadlineMs))
+                            return false;
+                        if (!completed)
+                            return hardDeadline;
+                        return double.IsFinite(completedFrameMs) && completedFrameMs > deadlineMs;
+                    }
+
+                    internal static double ResolveEffectiveDeadlineMilliseconds(
+                        ERenderOutputClass outputClass,
+                        double requestedDeadlineMs,
+                        double activeBudgetMs)
+                    {
+                        if (outputClass != ERenderOutputClass.XrCritical ||
+                            activeBudgetMs <= 0.0 ||
+                            !double.IsFinite(activeBudgetMs))
+                        {
+                            return requestedDeadlineMs;
+                        }
+
+                        if (requestedDeadlineMs <= 0.0 || !double.IsFinite(requestedDeadlineMs))
+                            return activeBudgetMs;
+                        return Math.Min(requestedDeadlineMs, activeBudgetMs);
+                    }
+
                     private static RenderOutputRequest ResolveRequest(in FrameOutputTelemetry telemetry)
                     {
                         if (telemetry.Request.IsDefined)
@@ -624,6 +763,41 @@ namespace XREngine
                         public int SkipCount;
                     }
 
+                    private sealed class CompletionAccumulator
+                    {
+                        public ulong LastObservedFrameId;
+                        public long LastCompletionTimestamp;
+                        public double ObservedRateHz;
+                        public double LastCompletionIntervalMilliseconds;
+                        public uint ContentAgeFrames;
+
+                        public void Observe(ulong frameId, bool completed, long completionTimestamp)
+                        {
+                            if (frameId != 0UL && frameId == LastObservedFrameId)
+                                return;
+
+                            if (frameId != 0UL)
+                                LastObservedFrameId = frameId;
+
+                            if (!completed)
+                            {
+                                if (ContentAgeFrames < uint.MaxValue)
+                                    ContentAgeFrames++;
+                                return;
+                            }
+
+                            LastCompletionIntervalMilliseconds = CalculateCompletionIntervalMilliseconds(
+                                LastCompletionTimestamp,
+                                completionTimestamp);
+                            ObservedRateHz = UpdateObservedCompletionRateHz(
+                                ObservedRateHz,
+                                LastCompletionTimestamp,
+                                completionTimestamp);
+                            LastCompletionTimestamp = completionTimestamp;
+                            ContentAgeFrames = 0u;
+                        }
+                    }
+
                     private sealed class OutputAccumulator(EFrameOutputKind outputKind, EVrOutputViewKind viewKind, string name)
                     {
                         public ulong FrameId;
@@ -678,6 +852,15 @@ namespace XREngine
                         public int SubmitEventCount;
                         public int OverlayEventCount;
                         public int PresentEventCount;
+
+                        public bool CompletedThisFrame
+                            => !Skipped && Rendered && OutputKind switch
+                            {
+                                EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit => SubmitObserved,
+                                EFrameOutputKind.Present => PresentObserved,
+                                EFrameOutputKind.ImGuiOverlay or EFrameOutputKind.DynamicTextOverlay => OverlayEventCount > 0,
+                                _ => RenderPhaseSceneRendered || SceneRendered,
+                            };
 
                         public void Apply(in FrameOutputTelemetry telemetry, in RenderOutputRequest request)
                         {
@@ -767,7 +950,10 @@ namespace XREngine
                             }
                         }
 
-                        public FrameOutputEntrySnapshot ToSnapshot()
+                        public FrameOutputEntrySnapshot ToSnapshot(
+                            double observedRateHz,
+                            uint observedContentAgeFrames,
+                            bool observedDeadlineMissed)
                             => new(
                                 FrameId,
                                 OutputKind,
@@ -792,13 +978,13 @@ namespace XREngine
                                 SkipReason,
                                 ConfiguredTargetRateHz,
                                 SourceRateHz,
-                                AchievedRateHz,
+                                observedRateHz,
                                 TotalRenderCount,
                                 TotalSkipCount,
                                 Request,
                                 WorkDisposition,
-                                ContentAgeFrames,
-                                DeadlineMissed,
+                                Math.Max(ContentAgeFrames, observedContentAgeFrames),
+                                observedDeadlineMissed,
                                 PolicyAuthorized,
                                 PolicyReason,
                                 SubmitObserved,
@@ -821,6 +1007,9 @@ namespace XREngine
                                 OverlayCpuMs,
                                 PresentCpuMs,
                                 GpuMs);
+
+                        public FrameOutputEntrySnapshot ToSnapshot()
+                            => ToSnapshot(AchievedRateHz, ContentAgeFrames, DeadlineMissed);
 
                         private static ERenderOutputWorkDisposition ResolveDisposition(in FrameOutputTelemetry telemetry)
                         {

@@ -705,6 +705,7 @@ internal partial class Program
                     ForceFlushCount = outputWork.ForceFlushCount,
                     UnapprovedPolicyEventCount = outputWork.UnapprovedPolicyEventCount,
                     PlannerPruneCount = outputWork.PlannerPruneCount,
+                    OutputMissedDeadlineCount = outputWork.MissedDeadlineCount,
                     OutputManifestFrameId = outputManifest.FrameId,
                     OutputWorkloadIdentityHash = outputManifest.WorkloadIdentityHash,
                     OutputRequestCount = outputWork.OutputRequestCount + CountNewCurrentOpenXrViewFamilies(
@@ -746,6 +747,7 @@ internal partial class Program
 
                 if (outputs.Length + currentOpenXrOutputCount > MaxOutputSnapshotsPerFrame)
                     _outputLedgerOverflow = true;
+                int outputLedgerStartIndex = _outputLedgerCount;
                 int outputsWrittenThisFrame = 0;
                 int outputCount = Math.Min(outputs.Length, MaxOutputSnapshotsPerFrame);
                 for (int outputIndex = 0; outputIndex < outputCount; outputIndex++)
@@ -778,6 +780,14 @@ internal partial class Program
                         lastPresentResult,
                         ref outputsWrittenThisFrame);
                 }
+
+                int observedMissedDeadlineCount = 0;
+                for (int outputIndex = outputLedgerStartIndex; outputIndex < _outputLedgerCount; outputIndex++)
+                {
+                    if (_outputLedger[outputIndex].DeadlineMissed)
+                        observedMissedDeadlineCount++;
+                }
+                _frameLedger[_frameLedgerCount].OutputMissedDeadlineCount = observedMissedDeadlineCount;
 
                 Span<CpuOcclusionViewTelemetrySnapshot> viewSnapshots =
                     stackalloc CpuOcclusionViewTelemetrySnapshot[MaxOcclusionViewSnapshotsPerFrame];
@@ -954,7 +964,9 @@ internal partial class Program
                 Due = output.Due,
                 Skipped = output.Skipped,
                 WorkDisposition = output.WorkDisposition.ToString(),
+                AchievedRateHz = output.AchievedRateHz,
                 ContentAgeFrames = output.ContentAgeFrames,
+                DeadlineMissed = output.DeadlineMissed,
                 PolicyAuthorized = output.PolicyAuthorized,
                 CommandCount = output.CommandCount,
                 DrawCalls = output.DrawCalls,

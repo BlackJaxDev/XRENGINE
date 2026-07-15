@@ -810,6 +810,8 @@ public unsafe partial class VulkanRenderer
                             prepared.PlannerRevision,
                             imageLayoutStartSignature,
                             prepared.CommandChainSchedule);
+                        if (commandBuffer.Handle == 0)
+                            return false;
                     }
                 }
 
@@ -1234,7 +1236,7 @@ public unsafe partial class VulkanRenderer
                     ops.Length);
             }
 
-            swapchainLayoutAfterCommandBuffer = RecordCommandBuffer(
+            if (!TryRecordCommandBuffer(
                 imageIndex: OpenXrExternalSwapchainTargetImageIndex,
                 variant.PrimaryCommandBuffer,
                 dynamicUiBatchTextSecondaryCommandBuffer: default,
@@ -1243,9 +1245,21 @@ public unsafe partial class VulkanRenderer
                 commandChainSchedule,
                 preserveSwapchainForOverlay: false,
                 recordedSwapchainWriteCount: out recordedSwapchainWriteCount,
+                recordedSwapchainFinalLayout: out swapchainLayoutAfterCommandBuffer,
+                recordingDeferredReason: out string recordingDeferredReason,
                 transitionSwapchainToPresent: false,
                 frameDataImageIndexOverride: recordImageIndex,
-                openXrTargetContext: targetContext);
+                openXrTargetContext: targetContext))
+            {
+                CancelRecordedTextureUploadSubmitBatch(
+                    $"OpenXR eye command buffer recording deferred: {recordingDeferredReason}");
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.EyePrimaryRecordDeferred.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Deferring Vulkan eye primary command buffer recording before vkBeginCommandBuffer: {0}",
+                    recordingDeferredReason);
+                return default;
+            }
         }
         catch
         {
@@ -2259,6 +2273,8 @@ public unsafe partial class VulkanRenderer
                         plannerRevision,
                         imageLayoutStartSignature,
                         commandChainSchedule);
+                    if (commandBuffer.Handle == 0)
+                        return false;
                 }
 
                 recorded = new OpenXrRecordedEyeCommandBuffer(
@@ -2536,7 +2552,7 @@ public unsafe partial class VulkanRenderer
             // buffer must not inherit desktop swapchain image 0 ownership or a
             // present transition merely because it reuses the primary recorder.
             bool swapchainImageEverPresented = false;
-            ImageLayout swapchainLayoutAfterCommandBuffer = RecordCommandBuffer(
+            if (!TryRecordCommandBuffer(
                 OpenXrExternalSwapchainTargetImageIndex,
                 variant.PrimaryCommandBuffer,
                 dynamicUiBatchTextSecondaryCommandBuffer: default,
@@ -2545,9 +2561,21 @@ public unsafe partial class VulkanRenderer
                 commandChainSchedule,
                 preserveSwapchainForOverlay: false,
                 recordedSwapchainWriteCount: out int recordedSwapchainWriteCount,
+                recordedSwapchainFinalLayout: out ImageLayout swapchainLayoutAfterCommandBuffer,
+                recordingDeferredReason: out string recordingDeferredReason,
                 transitionSwapchainToPresent: false,
                 frameDataImageIndexOverride: recordImageIndex,
-                excludeDesktopSwapchainBarriers: true);
+                excludeDesktopSwapchainBarriers: true))
+            {
+                CancelRecordedTextureUploadSubmitBatch(
+                    $"OpenXR eye mirror command buffer recording deferred: {recordingDeferredReason}");
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.EyeMirrorPrimaryRecordDeferred.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Deferring Vulkan eye mirror primary command buffer recording before vkBeginCommandBuffer: {0}",
+                    recordingDeferredReason);
+                return default;
+            }
 
             bool wasDirty = variant.Dirty;
             variant.Dirty = false;
@@ -4881,7 +4909,7 @@ public unsafe partial class VulkanRenderer
             : (int)frameDataImageIndex;
         Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshDrawSlotsByRendererFamily =
             recordingScratch.OpenXrMeshDrawSlotsByRendererFamily;
-        Dictionary<VulkanMeshFrameDataFamilyKey, int> meshFrameDataFamilyBases =
+        Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshFrameDataFamilyBases =
             recordingScratch.OpenXrMeshFrameDataFamilyBases;
         meshDrawSlotsByRendererFamily.Clear();
         bool allDrawsReady = true;
@@ -5330,6 +5358,8 @@ public unsafe partial class VulkanRenderer
             if (drainableSlots[i]) DrainRetiredDescriptorPools(i, int.MaxValue);
         for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i]) DrainRetiredPipelines(i, int.MaxValue);
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i]) DrainRetiredPipelineLayouts(i, int.MaxValue);
         for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i]) DrainRetiredQueryPools(i, int.MaxValue);
         for (int i = 0; i < frameSlotCount; i++)

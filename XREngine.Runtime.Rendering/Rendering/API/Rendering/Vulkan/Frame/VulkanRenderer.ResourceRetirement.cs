@@ -1314,6 +1314,8 @@ namespace XREngine.Rendering.Vulkan
                 for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
                     DrainRetiredPipelines(i, int.MaxValue);
                 for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+                    DrainRetiredPipelineLayouts(i, int.MaxValue);
+                for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
                     DrainRetiredQueryPools(i, int.MaxValue);
                 for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
                     DrainRetiredBufferViews(i, int.MaxValue);
@@ -1364,6 +1366,8 @@ namespace XREngine.Rendering.Vulkan
                 DrainRetiredDescriptorPools(i, int.MaxValue);
             for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
                 DrainRetiredPipelines(i, int.MaxValue);
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+                DrainRetiredPipelineLayouts(i, int.MaxValue);
             for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
                 DrainRetiredQueryPools(i, int.MaxValue);
             for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
