@@ -1336,10 +1336,22 @@ internal static partial class RuntimeEngine
                     RuntimeRenderingHostServices.Current.RecordRenderVulkanDescriptorPoolReset();
             }
 
-            public static void RecordVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount)
+            public static void RecordVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount, int pendingRetirementCount, long oldestPendingRetirementAgeMilliseconds)
             {
                 if (HasHostStats)
-                    RuntimeRenderingHostServices.Current.RecordRenderVulkanResourceLifetimeGauges(liveResourceCount, trackedDescriptorSetCount);
+                    RuntimeRenderingHostServices.Current.RecordRenderVulkanResourceLifetimeGauges(liveResourceCount, trackedDescriptorSetCount, pendingRetirementCount, oldestPendingRetirementAgeMilliseconds);
+            }
+
+            public static void RecordVulkanMeshFrameDataGauges(int arenaChunkCount, long mappedBytes, long reservedBytes, int reservationCount, ulong generation, int recordingLeases, int cachedLeases, int submittedLeases, int activeGenerationCount, int leaseRetainedGenerationCount)
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVulkanMeshFrameDataGauges(arenaChunkCount, mappedBytes, reservedBytes, reservationCount, generation, recordingLeases, cachedLeases, submittedLeases, activeGenerationCount, leaseRetainedGenerationCount);
+            }
+
+            public static void AdjustVulkanMeshDescriptorOwnership(int allocationVariants, int pools, int allocatedSets, int reservedSets)
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.AdjustRenderVulkanMeshDescriptorOwnership(allocationVariants, pools, allocatedSets, reservedSets);
             }
 
             public static void RecordVulkanDynamicUniformAllocation(long bytes)
@@ -1943,8 +1955,12 @@ internal static partial class RuntimeEngine
                 public static void RecordVulkanDescriptorPoolCreate() => Stats.RecordVulkanDescriptorPoolCreate();
                 public static void RecordVulkanDescriptorPoolDestroy() => Stats.RecordVulkanDescriptorPoolDestroy();
                 public static void RecordVulkanDescriptorPoolReset() => Stats.RecordVulkanDescriptorPoolReset();
-                public static void RecordVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount)
-                    => Stats.RecordVulkanResourceLifetimeGauges(liveResourceCount, trackedDescriptorSetCount);
+                public static void RecordVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount, int pendingRetirementCount, long oldestPendingRetirementAgeMilliseconds)
+                    => Stats.RecordVulkanResourceLifetimeGauges(liveResourceCount, trackedDescriptorSetCount, pendingRetirementCount, oldestPendingRetirementAgeMilliseconds);
+                public static void RecordVulkanMeshFrameDataGauges(int arenaChunkCount, long mappedBytes, long reservedBytes, int reservationCount, ulong generation, int recordingLeases, int cachedLeases, int submittedLeases, int activeGenerationCount, int leaseRetainedGenerationCount)
+                    => Stats.RecordVulkanMeshFrameDataGauges(arenaChunkCount, mappedBytes, reservedBytes, reservationCount, generation, recordingLeases, cachedLeases, submittedLeases, activeGenerationCount, leaseRetainedGenerationCount);
+                public static void AdjustVulkanMeshDescriptorOwnership(int allocationVariants, int pools, int allocatedSets, int reservedSets)
+                    => Stats.AdjustVulkanMeshDescriptorOwnership(allocationVariants, pools, allocatedSets, reservedSets);
                 public static void RecordVulkanDynamicUniformAllocation(long bytes) => Stats.RecordVulkanDynamicUniformAllocation(bytes);
                 public static void RecordVulkanDynamicUniformExhaustion() => Stats.RecordVulkanDynamicUniformExhaustion();
                 public static void RecordVulkanRecordCommandBufferAllocation(long bytes) => Stats.RecordVulkanRecordCommandBufferAllocation(bytes);

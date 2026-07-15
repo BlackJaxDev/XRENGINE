@@ -62,7 +62,8 @@ public static partial class EditorUnitTests
         MathIntersections,
         MeshEditing,
         UberShader,
-        PhysxTesting,
+        PhysicsTesting,
+        PhysxTesting = PhysicsTesting,
         NetworkingPose,
     }
 

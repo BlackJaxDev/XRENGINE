@@ -290,6 +290,10 @@ public unsafe partial class VulkanRenderer
             {
                 bindingFlags = new DescriptorBindingFlags[layoutBindings.Length];
                 bool hasUpdateAfterBindBinding = false;
+                bool hasDynamicBufferBinding = Array.Exists(
+                    layoutBindings,
+                    static binding => binding.DescriptorType is
+                        DescriptorType.UniformBufferDynamic or DescriptorType.StorageBufferDynamic);
                 for (int i = 0; i < layoutBindings.Length; i++)
                 {
                     DescriptorBindingFlags flagsForBinding = 0;
@@ -298,7 +302,9 @@ public unsafe partial class VulkanRenderer
                     if (_supportsDescriptorBindingPartiallyBound)
                         flagsForBinding |= DescriptorBindingFlags.PartiallyBoundBit;
 
-                    if (CanUseUpdateAfterBind(layoutBindings[i].DescriptorType))
+                    // Vulkan forbids mixing any dynamic buffer descriptor with any
+                    // update-after-bind binding in the same descriptor set layout.
+                    if (!hasDynamicBufferBinding && CanUseUpdateAfterBind(layoutBindings[i].DescriptorType))
                     {
                         flagsForBinding |= DescriptorBindingFlags.UpdateAfterBindBit;
                         hasUpdateAfterBindBinding = true;
@@ -377,8 +383,8 @@ public unsafe partial class VulkanRenderer
         return descriptorType switch
         {
             DescriptorType.SampledImage or DescriptorType.CombinedImageSampler or DescriptorType.Sampler => true,
-            DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic => true,
-            DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic => true,
+            DescriptorType.UniformBuffer => true,
+            DescriptorType.StorageBuffer => true,
             DescriptorType.StorageImage => _supportsDescriptorBindingStorageImageUpdateAfterBind,
             _ => false,
         };

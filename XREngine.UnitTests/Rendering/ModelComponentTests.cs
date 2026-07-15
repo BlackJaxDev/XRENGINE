@@ -6,6 +6,7 @@ using Shouldly;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
 using XREngine.Rendering;
+using XREngine.Rendering.Physics.Jitter;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Models;
 using XREngine.Scene;

@@ -337,6 +337,7 @@ namespace XREngine.Rendering.Vulkan
                 SampleFrameTimingQueries(currentFrame);
             }
 
+            DrainInvalidatedCommandBufferRecordings();
             DrainRetiredDescriptorPools();
             DrainRetiredPipelines();
             DrainRetiredBuffers();
@@ -818,6 +819,7 @@ namespace XREngine.Rendering.Vulkan
                     stageStartTimestamp = Stopwatch.GetTimestamp();
                     using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.DrainRetiredResources"))
                     {
+                        DrainInvalidatedCommandBufferRecordings();
                         DrainRetiredCommandBuffers(currentFrame);
                         DrainRetiredDescriptorSets(currentFrame);
                         DrainRetiredDescriptorPools();
@@ -1148,7 +1150,7 @@ namespace XREngine.Rendering.Vulkan
 
                             ResetCommandBufferBindState(abortCommandBuffer);
 
-                            if (Api!.EndCommandBuffer(abortCommandBuffer) != Result.Success)
+                            if (EndCommandBufferTracked(abortCommandBuffer, cacheVariant: false) != Result.Success)
                                 throw new Exception("Failed to end swapchain abort-present transition command buffer.");
 
                             abortCommandBufferCount = 1;

@@ -37,7 +37,10 @@ internal sealed class Phase524bDesktopRejectionInjection
         if (!enabled || _completed || !eligible)
             return new(EPhase524bDesktopRejectionAction.Wait, 0.0, _history, diagnostic);
 
-        if (!sampleSucceeded)
+        // The HDR validation scene requires positive exposure. Startup clears
+        // are valid readbacks but are not completed exposure history and must
+        // not arm the rejection sample.
+        if (!sampleSucceeded || !double.IsFinite(exposure) || exposure <= double.Epsilon)
             return new(EPhase524bDesktopRejectionAction.Wait, 0.0, _history, diagnostic);
 
         if (!_armed)

@@ -1174,12 +1174,19 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
-            if (activeGroup is not null && !ReferenceEquals(activeGroup, _physicalGroup))
-            {
-                SaveCurrentPhysicalImageViewCache();
-                _physicalGroup = activeGroup;
-                physicalGroupChanged = true;
-                switchedPhysicalGroup = true;
+			if (activeGroup is not null && !ReferenceEquals(activeGroup, _physicalGroup))
+			{
+				// Views are reusable only while their physical group still owns a live image.
+				// Keeping views from a destroyed group alive creates an ownership cycle: the
+				// views prevent the old image retirement from draining, but this wrapper will
+				// never revisit that dead group to retire the cached views.
+				if (_physicalGroup.IsAllocated)
+					SaveCurrentPhysicalImageViewCache();
+				else
+					DestroyCurrentViews(removeActiveCacheEntry: true);
+				_physicalGroup = activeGroup;
+				physicalGroupChanged = true;
+				switchedPhysicalGroup = true;
             }
 
             if (!_physicalGroup.IsAllocated)
@@ -3599,13 +3606,24 @@ public unsafe partial class VulkanRenderer
         }
 
         /// <summary>
-        /// Full texture uploads replace the whole mip chain. Recreate any active
-        /// dedicated image so imported low-res resident images cannot be reused
-        /// as storage for a later larger CPU mip chain.
+        /// Full texture uploads replace the whole mip chain. Recreate an active
+        /// dedicated image only when its storage no longer matches the CPU texture.
+        /// Reusing compatible storage keeps descriptors and command buffers valid
+        /// across the initial generate-then-upload sequence.
         /// </summary>
         protected void RecreateImageForFullTextureDataUpload(string reason)
         {
             if (!IsActive || _image.Handle == 0 || Renderer.IsDeviceLost)
+                return;
+
+            TextureLayout requestedLayout = NormalizeLayout(DescribeTexture());
+            Format requestedFormat = ReadFormatFromData();
+            bool canReuseDedicatedStorage =
+                _physicalGroup is null &&
+                _ownsImageMemory &&
+                requestedLayout == _layout &&
+                requestedFormat == ResolvedFormat;
+            if (canReuseDedicatedStorage)
                 return;
 
             WaitForInFlightWorkBeforeImportedTextureReplacement(reason);

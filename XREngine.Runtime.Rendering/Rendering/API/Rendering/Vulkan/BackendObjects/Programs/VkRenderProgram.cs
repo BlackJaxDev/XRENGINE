@@ -87,6 +87,7 @@ public unsafe partial class VulkanRenderer
         private readonly Dictionary<ComputeUniformBufferKey, ComputeUniformBuffer> _computeUniformBuffers = new();
         private Pipeline _computePipeline;
         private DescriptorHeapProgramLayout? _descriptorHeapLayout;
+        private bool[] _descriptorSetUsesUpdateAfterBind = Array.Empty<bool>();
         private bool _descriptorSetsRequireUpdateAfterBind;
         private bool _descriptorSetsRequireVariableDescriptorCount;
         private int _linkedShaderConfigVersion = -1;
@@ -115,6 +116,8 @@ public unsafe partial class VulkanRenderer
         public IReadOnlyDictionary<string, AutoUniformBlockInfo> AutoUniformBlocks => _autoUniformBlocks;
         public bool DescriptorSetsRequireUpdateAfterBind => _descriptorSetsRequireUpdateAfterBind;
         public bool DescriptorSetsRequireVariableDescriptorCount => _descriptorSetsRequireVariableDescriptorCount;
+        public bool DescriptorSetUsesUpdateAfterBind(uint setIndex)
+            => setIndex < _descriptorSetUsesUpdateAfterBind.Length && _descriptorSetUsesUpdateAfterBind[setIndex];
 
         protected override uint CreateObjectInternal() => CacheObject(this);
 
@@ -1109,6 +1112,7 @@ public unsafe partial class VulkanRenderer
             _descriptorSetLayouts = result.Layouts;
             _programDescriptorBindings.Clear();
             _programDescriptorBindings.AddRange(result.Bindings);
+            _descriptorSetUsesUpdateAfterBind = result.SetUsesUpdateAfterBind;
             _descriptorSetsRequireUpdateAfterBind = result.RequiresUpdateAfterBind;
             _descriptorSetsRequireVariableDescriptorCount = result.RequiresVariableDescriptorCount;
             _descriptorHeapLayout = null;
@@ -1252,6 +1256,7 @@ public unsafe partial class VulkanRenderer
 
             _programDescriptorBindings.Clear();
             _descriptorHeapLayout = null;
+            _descriptorSetUsesUpdateAfterBind = Array.Empty<bool>();
             _descriptorSetsRequireUpdateAfterBind = false;
             _descriptorSetsRequireVariableDescriptorCount = false;
             IsLinked = false;
@@ -3144,7 +3149,9 @@ public unsafe partial class VulkanRenderer
 
         private static DescriptorLayoutBuildResult BuildDescriptorLayoutsShared(VulkanRenderer renderer, Device device, IEnumerable<DescriptorBindingInfo> bindings, string programName)
         {
-            List<DescriptorBindingInfo> reflectedBindings = bindings.ToList();
+            List<DescriptorBindingInfo> reflectedBindings = bindings
+                .Select(NormalizeGraphicsFrameDataBinding)
+                .ToList();
             if (VulkanFeatureProfile.EnableDescriptorContractValidation &&
                 !VulkanDescriptorContracts.TryValidateContract(reflectedBindings, out string contractError))
             {
@@ -3167,9 +3174,15 @@ public unsafe partial class VulkanRenderer
             }
 
             if (builders.Count == 0)
-                return new DescriptorLayoutBuildResult(Array.Empty<DescriptorSetLayout>(), new List<DescriptorBindingInfo>(), false, false);
+                return new DescriptorLayoutBuildResult(
+                    Array.Empty<DescriptorSetLayout>(),
+                    new List<DescriptorBindingInfo>(),
+                    Array.Empty<bool>(),
+                    false,
+                    false);
 
             List<DescriptorSetLayout> layouts = new();
+            List<bool> setUsesUpdateAfterBind = new();
             bool requiresUpdateAfterBind = false;
             bool requiresVariableDescriptorCount = false;
             uint maxDeclaredSet = builders.Values.Max(b => b.Set);
@@ -3196,6 +3209,7 @@ public unsafe partial class VulkanRenderer
                 requiresUpdateAfterBind |= usesUpdateAfterBind;
                 requiresVariableDescriptorCount |= usesVariableDescriptorCount;
                 layouts.Add(layout);
+                setUsesUpdateAfterBind.Add(usesUpdateAfterBind);
             }
 
             List<DescriptorBindingInfo> mergedBindings = builders.Values
@@ -3204,7 +3218,22 @@ public unsafe partial class VulkanRenderer
                 .Select(b => b.ToDescriptorBindingInfo())
                 .ToList();
 
-            return new DescriptorLayoutBuildResult(layouts.ToArray(), mergedBindings, requiresUpdateAfterBind, requiresVariableDescriptorCount);
+            return new DescriptorLayoutBuildResult(
+                layouts.ToArray(),
+                mergedBindings,
+                setUsesUpdateAfterBind.ToArray(),
+                requiresUpdateAfterBind,
+                requiresVariableDescriptorCount);
+        }
+
+        private static DescriptorBindingInfo NormalizeGraphicsFrameDataBinding(DescriptorBindingInfo binding)
+        {
+            bool graphicsUniform = binding.Set == DescriptorSetGlobals &&
+                binding.DescriptorType == DescriptorType.UniformBuffer &&
+                (binding.StageFlags & ShaderStageFlags.ComputeBit) == 0;
+            return graphicsUniform
+                ? binding with { DescriptorType = DescriptorType.UniformBufferDynamic }
+                : binding;
         }
 
         private static readonly EProgramStageMask[] StageOrder =

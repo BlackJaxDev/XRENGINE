@@ -1231,7 +1231,9 @@ public interface IRuntimeRenderingHostServices
     void RecordRenderVulkanDescriptorPoolCreate();
     void RecordRenderVulkanDescriptorPoolDestroy();
     void RecordRenderVulkanDescriptorPoolReset();
-    void RecordRenderVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount);
+    void RecordRenderVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount, int pendingRetirementCount, long oldestPendingRetirementAgeMilliseconds);
+    void RecordRenderVulkanMeshFrameDataGauges(int arenaChunkCount, long mappedBytes, long reservedBytes, int reservationCount, ulong generation, int recordingLeases, int cachedLeases, int submittedLeases, int activeGenerationCount, int leaseRetainedGenerationCount);
+    void AdjustRenderVulkanMeshDescriptorOwnership(int allocationVariants, int pools, int allocatedSets, int reservedSets);
     void RecordRenderVulkanDynamicUniformAllocation(long bytes);
     void RecordRenderVulkanDynamicUniformExhaustion();
     void RecordRenderVulkanRecordCommandBufferAllocation(long bytes);

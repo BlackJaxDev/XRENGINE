@@ -30,6 +30,7 @@ public sealed class VPRC_CaptureFrame : ViewportRenderCommand
     public bool CapturePhase524bTemporalScenarios { get; set; }
     public bool CompletesPhase524bTemporalScenarioFrame { get; set; }
     public bool RequireStableImportedTextureStreaming { get; set; }
+    public int RequiredPhase524bBoundaryMotionIndex { get; set; } = -1;
     public string? TemporalScenarioPipelineName { get; set; }
     public string? TemporalScenarioStage { get; set; }
 
@@ -42,7 +43,13 @@ public sealed class VPRC_CaptureFrame : ViewportRenderCommand
         bool standardCaptureDue = false;
         if (MaxCaptures <= 0 || _captureCount < MaxCaptures)
         {
-            if (_framesSkipped < SkipFramesBeforeCapture)
+            if (RequiredPhase524bBoundaryMotionIndex >= 0)
+            {
+                standardCaptureDue = Phase524bTemporalScenarioDiagnostics.TryGetBoundaryCaptureMotionTick(out uint motionTick) &&
+                    motionTick == checked((uint)(RequiredPhase524bBoundaryMotionIndex *
+                        Phase524bTemporalScenarioDiagnostics.BoundaryCaptureMotionTickStep));
+            }
+            else if (_framesSkipped < SkipFramesBeforeCapture)
                 _framesSkipped++;
             else
                 standardCaptureDue = true;

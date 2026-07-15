@@ -54,6 +54,9 @@ public sealed class XRTextureVulkanParityContractTests
         source.ShouldContain("HasUploadedData = true;");
         source.ShouldContain("MarkDescriptorClean();");
         source.ShouldContain("InvalidateTextureData();");
+        source.ShouldContain("bool canReuseDedicatedStorage =");
+        source.ShouldContain("requestedLayout == _layout");
+        source.ShouldContain("requestedFormat == ResolvedFormat");
         baseSource.ShouldContain("if (IsInvalidated)");
         baseSource.ShouldContain("PushData();");
     }

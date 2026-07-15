@@ -333,11 +333,24 @@ public static class CpuOcclusionValidationEvidence
 
             FrameSlot slot = GetSlot(frameId);
             ref MutableEntry entry = ref slot.Entries[index];
-            entry.Rendered |= rendered;
-            entry.Culled |= culled;
-            entry.OcclusionProofCoverageMask |= proofCoverageMask;
+            if (rendered)
+            {
+                // A command can be encountered more than once while compatible command
+                // collections are merged. Rendering in any occurrence means it belongs to
+                // the final rendered set; a later probe-only/skip observation must not also
+                // classify the same evidence key as culled.
+                entry.Rendered = true;
+                entry.Culled = false;
+                entry.OcclusionProofCoverageMask = 0u;
+                entry.Decision = decision;
+            }
+            else if (!entry.Rendered && culled)
+            {
+                entry.Culled = true;
+                entry.OcclusionProofCoverageMask |= proofCoverageMask;
+                entry.Decision = decision;
+            }
             entry.HasDecision = true;
-            entry.Decision = decision;
         }
     }
 

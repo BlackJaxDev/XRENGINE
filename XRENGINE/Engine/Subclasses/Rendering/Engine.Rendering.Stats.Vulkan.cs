@@ -136,6 +136,30 @@ namespace XREngine
                     private static int _vulkanDescriptorPoolResetCount;
                     private static int _vulkanLifetimeLiveResourceCount;
                     private static int _vulkanTrackedDescriptorSetCount;
+                    private static int _vulkanLifetimePendingRetirementCount;
+                    private static long _vulkanLifetimeOldestPendingRetirementAgeMilliseconds;
+                    private static int _vulkanMeshFrameDataArenaChunkCount;
+                    private static long _vulkanMeshFrameDataMappedBytes;
+                    private static long _vulkanMeshFrameDataReservedBytes;
+                    private static int _vulkanMeshFrameDataReservationCount;
+                    private static long _vulkanMeshFrameDataGeneration;
+                    private static int _vulkanMeshFrameDataRecordingLeases;
+                    private static int _vulkanMeshFrameDataCachedLeases;
+                    private static int _vulkanMeshFrameDataSubmittedLeases;
+                    private static int _vulkanMeshFrameDataActiveGenerationCount;
+                    private static int _vulkanMeshFrameDataLeaseRetainedGenerationCount;
+                    private static int _vulkanMeshDescriptorAllocationVariants;
+                    private static int _vulkanMeshDescriptorPools;
+                    private static int _vulkanMeshDescriptorAllocatedSets;
+                    private static int _vulkanMeshDescriptorReservedSets;
+                    private static int _vulkanMeshFrameDataArenaChunkHighWater;
+                    private static long _vulkanMeshFrameDataMappedBytesHighWater;
+                    private static long _vulkanMeshFrameDataReservedBytesHighWater;
+                    private static int _vulkanMeshFrameDataReservationHighWater;
+                    private static int _vulkanMeshFrameDataLeaseHighWater;
+                    private static int _vulkanMeshDescriptorAllocationVariantHighWater;
+                    private static int _vulkanMeshDescriptorPoolHighWater;
+                    private static int _vulkanMeshDescriptorSetHighWater;
                     private static int _vulkanQueueSubmitCount;
                     private static int _vulkanPresentAttemptCount;
                     private static int _vulkanPresentAcceptedCount;
@@ -423,6 +447,30 @@ namespace XREngine
                     public static int VulkanDescriptorPoolResetCount => _lastFrameVulkanDescriptorPoolResetCount;
                     public static int VulkanLifetimeLiveResourceCount => Volatile.Read(ref _vulkanLifetimeLiveResourceCount);
                     public static int VulkanTrackedDescriptorSetCount => Volatile.Read(ref _vulkanTrackedDescriptorSetCount);
+                    public static int VulkanLifetimePendingRetirementCount => Volatile.Read(ref _vulkanLifetimePendingRetirementCount);
+                    public static long VulkanLifetimeOldestPendingRetirementAgeMilliseconds => Volatile.Read(ref _vulkanLifetimeOldestPendingRetirementAgeMilliseconds);
+                    public static int VulkanMeshFrameDataArenaChunkCount => Volatile.Read(ref _vulkanMeshFrameDataArenaChunkCount);
+                    public static long VulkanMeshFrameDataMappedBytes => Volatile.Read(ref _vulkanMeshFrameDataMappedBytes);
+                    public static long VulkanMeshFrameDataReservedBytes => Volatile.Read(ref _vulkanMeshFrameDataReservedBytes);
+                    public static int VulkanMeshFrameDataReservationCount => Volatile.Read(ref _vulkanMeshFrameDataReservationCount);
+                    public static ulong VulkanMeshFrameDataGeneration => unchecked((ulong)Math.Max(Volatile.Read(ref _vulkanMeshFrameDataGeneration), 0L));
+                    public static int VulkanMeshFrameDataRecordingLeases => Volatile.Read(ref _vulkanMeshFrameDataRecordingLeases);
+                    public static int VulkanMeshFrameDataCachedLeases => Volatile.Read(ref _vulkanMeshFrameDataCachedLeases);
+                    public static int VulkanMeshFrameDataSubmittedLeases => Volatile.Read(ref _vulkanMeshFrameDataSubmittedLeases);
+                    public static int VulkanMeshFrameDataActiveGenerationCount => Volatile.Read(ref _vulkanMeshFrameDataActiveGenerationCount);
+                    public static int VulkanMeshFrameDataLeaseRetainedGenerationCount => Volatile.Read(ref _vulkanMeshFrameDataLeaseRetainedGenerationCount);
+                    public static int VulkanMeshDescriptorAllocationVariants => Volatile.Read(ref _vulkanMeshDescriptorAllocationVariants);
+                    public static int VulkanMeshDescriptorPools => Volatile.Read(ref _vulkanMeshDescriptorPools);
+                    public static int VulkanMeshDescriptorAllocatedSets => Volatile.Read(ref _vulkanMeshDescriptorAllocatedSets);
+                    public static int VulkanMeshDescriptorReservedSets => Volatile.Read(ref _vulkanMeshDescriptorReservedSets);
+                    public static int VulkanMeshFrameDataArenaChunkHighWater => Volatile.Read(ref _vulkanMeshFrameDataArenaChunkHighWater);
+                    public static long VulkanMeshFrameDataMappedBytesHighWater => Volatile.Read(ref _vulkanMeshFrameDataMappedBytesHighWater);
+                    public static long VulkanMeshFrameDataReservedBytesHighWater => Volatile.Read(ref _vulkanMeshFrameDataReservedBytesHighWater);
+                    public static int VulkanMeshFrameDataReservationHighWater => Volatile.Read(ref _vulkanMeshFrameDataReservationHighWater);
+                    public static int VulkanMeshFrameDataLeaseHighWater => Volatile.Read(ref _vulkanMeshFrameDataLeaseHighWater);
+                    public static int VulkanMeshDescriptorAllocationVariantHighWater => Volatile.Read(ref _vulkanMeshDescriptorAllocationVariantHighWater);
+                    public static int VulkanMeshDescriptorPoolHighWater => Volatile.Read(ref _vulkanMeshDescriptorPoolHighWater);
+                    public static int VulkanMeshDescriptorSetHighWater => Volatile.Read(ref _vulkanMeshDescriptorSetHighWater);
                     public static int VulkanQueueSubmitCount => _lastFrameVulkanQueueSubmitCount;
                     public static int VulkanPresentAttemptCount => _lastFrameVulkanPresentAttemptCount;
                     public static int VulkanPresentAcceptedCount => _lastFrameVulkanPresentAcceptedCount;
@@ -604,13 +652,102 @@ namespace XREngine
                         Interlocked.Add(ref _vulkanDescriptorPoolResetCount, count);
                     }
 
-                    public static void RecordVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount)
+                    public static void RecordVulkanResourceLifetimeGauges(
+                        int liveResourceCount,
+                        int trackedDescriptorSetCount,
+                        int pendingRetirementCount,
+                        long oldestPendingRetirementAgeMilliseconds)
                     {
                         if (!EnableTracking)
                             return;
 
                         Volatile.Write(ref _vulkanLifetimeLiveResourceCount, Math.Max(liveResourceCount, 0));
                         Volatile.Write(ref _vulkanTrackedDescriptorSetCount, Math.Max(trackedDescriptorSetCount, 0));
+                        Volatile.Write(ref _vulkanLifetimePendingRetirementCount, Math.Max(pendingRetirementCount, 0));
+                        Volatile.Write(ref _vulkanLifetimeOldestPendingRetirementAgeMilliseconds, Math.Max(oldestPendingRetirementAgeMilliseconds, 0L));
+                    }
+
+                    public static void RecordVulkanMeshFrameDataGauges(
+                        int arenaChunkCount,
+                        long mappedBytes,
+                        long reservedBytes,
+                        int reservationCount,
+                        ulong generation,
+                        int recordingLeases = 0,
+                        int cachedLeases = 0,
+                        int submittedLeases = 0,
+                        int activeGenerationCount = 0,
+                        int leaseRetainedGenerationCount = 0)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        Volatile.Write(ref _vulkanMeshFrameDataArenaChunkCount, Math.Max(arenaChunkCount, 0));
+                        Volatile.Write(ref _vulkanMeshFrameDataMappedBytes, Math.Max(mappedBytes, 0L));
+                        Volatile.Write(ref _vulkanMeshFrameDataReservedBytes, Math.Max(reservedBytes, 0L));
+                        Volatile.Write(ref _vulkanMeshFrameDataReservationCount, Math.Max(reservationCount, 0));
+						Volatile.Write(ref _vulkanMeshFrameDataGeneration, unchecked((long)Math.Min(generation, (ulong)long.MaxValue)));
+                        Volatile.Write(ref _vulkanMeshFrameDataRecordingLeases, Math.Max(recordingLeases, 0));
+                        Volatile.Write(ref _vulkanMeshFrameDataCachedLeases, Math.Max(cachedLeases, 0));
+                        Volatile.Write(ref _vulkanMeshFrameDataSubmittedLeases, Math.Max(submittedLeases, 0));
+                        Volatile.Write(ref _vulkanMeshFrameDataActiveGenerationCount, Math.Max(activeGenerationCount, 0));
+                        Volatile.Write(ref _vulkanMeshFrameDataLeaseRetainedGenerationCount, Math.Max(leaseRetainedGenerationCount, 0));
+                        UpdateHighWater(ref _vulkanMeshFrameDataArenaChunkHighWater, Math.Max(arenaChunkCount, 0));
+                        UpdateHighWater(ref _vulkanMeshFrameDataMappedBytesHighWater, Math.Max(mappedBytes, 0L));
+                        UpdateHighWater(ref _vulkanMeshFrameDataReservedBytesHighWater, Math.Max(reservedBytes, 0L));
+                        UpdateHighWater(ref _vulkanMeshFrameDataReservationHighWater, Math.Max(reservationCount, 0));
+                        UpdateHighWater(
+                            ref _vulkanMeshFrameDataLeaseHighWater,
+                            Math.Max(recordingLeases, 0) + Math.Max(cachedLeases, 0) + Math.Max(submittedLeases, 0));
+                    }
+
+                    public static void AdjustVulkanMeshDescriptorOwnership(
+                        int allocationVariants,
+                        int pools,
+                        int allocatedSets,
+                        int reservedSets)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        int allocationVariantCount = allocationVariants == 0
+                            ? Volatile.Read(ref _vulkanMeshDescriptorAllocationVariants)
+                            : Interlocked.Add(ref _vulkanMeshDescriptorAllocationVariants, allocationVariants);
+                        int poolCount = pools == 0
+                            ? Volatile.Read(ref _vulkanMeshDescriptorPools)
+                            : Interlocked.Add(ref _vulkanMeshDescriptorPools, pools);
+                        int allocatedSetCount = allocatedSets == 0
+                            ? Volatile.Read(ref _vulkanMeshDescriptorAllocatedSets)
+                            : Interlocked.Add(ref _vulkanMeshDescriptorAllocatedSets, allocatedSets);
+                        if (reservedSets != 0)
+                            Interlocked.Add(ref _vulkanMeshDescriptorReservedSets, reservedSets);
+                        UpdateHighWater(ref _vulkanMeshDescriptorAllocationVariantHighWater, Math.Max(allocationVariantCount, 0));
+                        UpdateHighWater(ref _vulkanMeshDescriptorPoolHighWater, Math.Max(poolCount, 0));
+                        UpdateHighWater(ref _vulkanMeshDescriptorSetHighWater, Math.Max(allocatedSetCount, 0));
+                    }
+
+                    private static void UpdateHighWater(ref int target, int value)
+                    {
+                        int observed = Volatile.Read(ref target);
+                        while (value > observed)
+                        {
+                            int prior = Interlocked.CompareExchange(ref target, value, observed);
+                            if (prior == observed)
+                                return;
+                            observed = prior;
+                        }
+                    }
+
+                    private static void UpdateHighWater(ref long target, long value)
+                    {
+                        long observed = Volatile.Read(ref target);
+                        while (value > observed)
+                        {
+                            long prior = Interlocked.CompareExchange(ref target, value, observed);
+                            if (prior == observed)
+                                return;
+                            observed = prior;
+                        }
                     }
 
                     public static void RecordVulkanQueueSubmit(int count = 1)

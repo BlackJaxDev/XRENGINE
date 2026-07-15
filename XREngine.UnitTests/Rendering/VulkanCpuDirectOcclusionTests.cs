@@ -15,7 +15,10 @@ public sealed class VulkanCpuDirectOcclusionTests
         string cpuDirect = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs");
         string gpuOcclusion = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Occlusion.cs");
         string frameOps = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
+        string queryFrameOp = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.QueryOp.cs");
         string recorder = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string commandChains = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string openXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
         string query = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Queries/VkRenderQuery.cs");
         string resourceLifetime = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
         string renderGraph = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderGraphCompiler.cs");
@@ -27,6 +30,9 @@ public sealed class VulkanCpuDirectOcclusionTests
         coordinator.ShouldContain("VulkanQueryResolveMinLatencyFrames");
         coordinator.ShouldContain("ShouldDelayPendingQueryPoll(queryState, frameId)");
         coordinator.ShouldContain("AbstractRenderer.Current is not VulkanRenderer");
+        coordinator.ShouldContain("ulong frameId = ++state.FrameEpoch;");
+        coordinator.ShouldContain("EvictStaleOwnershipStates(globalFrameId)");
+        coordinator.ShouldContain("ulong frameId = state.FrameEpoch;");
 
         cpuDirect.ShouldContain("EOcclusionCullingMode occlusionMode = RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode;");
         cpuDirect.ShouldContain("occlusionMode == EOcclusionCullingMode.CpuQueryAsync");
@@ -47,7 +53,7 @@ public sealed class VulkanCpuDirectOcclusionTests
         gpuOcclusion.ShouldNotContain("CpuQueryAsync && VulkanFeatureProfile.ActiveProfile != EVulkanGpuDrivenProfile.Diagnostics");
         gpuOcclusion.ShouldNotContain("Occlusion mode {0} suppressed");
 
-        frameOps.ShouldContain("internal sealed record QueryOp(");
+        queryFrameOp.ShouldContain("internal sealed record QueryOp(");
         frameOps.ShouldContain("internal bool EnqueueOcclusionQueryBegin(XRRenderQuery query, EQueryTarget target)");
         frameOps.ShouldContain("internal bool EnqueueOcclusionQueryEnd(XRRenderQuery query)");
         frameOps.ShouldContain("EnqueueFrameOp(new QueryOp(");
@@ -60,6 +66,36 @@ public sealed class VulkanCpuDirectOcclusionTests
         recorder.ShouldContain("activeInlineQuery = queryOp.Query.BeginQuery(");
         recorder.ShouldContain("queryOp.QueryTarget,");
         recorder.ShouldContain("queryOp.Query.EndQuery(commandBuffer);");
+        string fastPrimaryReuse = Slice(
+            recorder,
+            "private bool TryReuseCleanCommandChainPrimaryVariant(",
+            "private bool TryRefreshReusableCommandBufferFrameData(",
+            StringComparison.Ordinal);
+        fastPrimaryReuse.ShouldContain("PrepareQueryFrameOpsForCommandBufferReuse(ops)");
+        string scheduledMeshSecondary = Slice(
+            recorder,
+            "bool TryExecuteScheduledMeshCommandChainSecondaryRun(",
+            "bool TryExecuteMeshCommandChainSecondaryRun(",
+            StringComparison.Ordinal);
+        scheduledMeshSecondary.ShouldNotContain("CommandChainsEnabledForCurrentRecording");
+        scheduledMeshSecondary.ShouldContain("scheduledCommandChainKeysByOpIndex is null");
+
+        commandChains.ShouldContain("LowerFrameOpsToRenderPacketsExcludingQueryBrackets");
+        commandChains.ShouldContain("ordinal == -1 ? int.MaxValue : ordinal");
+        commandChains.ShouldContain("MaxCommandChainsPerSchedule");
+        commandChains.ShouldContain("queryBracketDepth == 0");
+        commandChains.ShouldContain("Keeping occlusion query brackets inline while scheduling the remaining frame ops as command chains");
+        commandChains.ShouldContain("allowExternalSwapchainTarget");
+        commandChains.ShouldContain("allowExternalSwapchainTarget\n            ? CommandChainsEnabled");
+        commandChains.ShouldContain("Dictionary<ulong, int> structuralOccurrences");
+        commandChains.ShouldNotContain("return HashCode.Combine(sourceOrdinal, foldedStructuralSignature);");
+        openXr.ShouldContain("commandChainSchedule = null;");
+        openXr.ShouldContain("allowExternalSwapchainTarget: true");
+        openXr.ShouldContain("openxr-primary-miss:cpu-query-async");
+        openXr.ShouldContain("RebaseFrameOpResourcesToActiveResourcePlan(ops, plannerContext.ResourceRegistry)");
+        openXr.ShouldContain("RebaseFrameOpTargetsToActiveResourcePlan");
+        openXr.ShouldContain("snapshot.SamplersByName[pair.Key] = currentTexture");
+        openXr.ShouldContain("? capturedTexture.Name");
 
         query.ShouldContain("Api!.CmdResetQueryPool(commandBuffer, _queryPool, 0, _queryPoolCapacity);");
         query.ShouldContain("PrepareForCommandBufferReuse(EQueryTarget target)");

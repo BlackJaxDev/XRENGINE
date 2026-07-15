@@ -94,17 +94,10 @@ public unsafe partial class VulkanRenderer
 			while (newCapacity < requiredSlots)
 				newCapacity <<= 1;
 
-			// Descriptor allocations are already keyed by frame/slot count. Keep the old
-			// allocation and uniform-buffer generations live: a desktop or eye command
-			// buffer may have completed recording and still be waiting to submit while a
-			// different output discovers a larger repeated-renderer count. Retiring the old
-			// generation here makes that otherwise valid command buffer fail lifetime
-			// validation. The geometric capacity growth bounds retained storage to less than
-			// the current generation, and a matching generation is reused if the frame layout
-			// is encountered again.
+			// This is a CPU-side logical reservation only. Vulkan storage lives in the
+			// renderer-owned frame arenas and descriptor capacity no longer scales with draw
+			// slots, so discovering another use cannot invalidate an already-recorded output.
 			_uniformDrawSlotCapacity = newCapacity;
-			_descriptorDirty = true;
-			Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
 		}
 
 		private int ResolveUniformBufferIndex(int frameIndex, int drawUniformSlot, int bufferCount)
@@ -126,19 +119,24 @@ public unsafe partial class VulkanRenderer
 		{
 			size = Math.Max(size, 1u);
 			int bufferCount = UniformBufferArrayLength;
+			bool useFrameArena = Renderer.MeshFrameDataArenaEnabled &&
+				!string.Equals(name, FallbackDescriptorUniformName, StringComparison.Ordinal);
 			if (_engineUniformBuffers.TryGetValue(name, out EngineUniformBuffer[]? existing))
 			{
-				bool valid = EngineUniformBuffersValid(existing, bufferCount, size);
+				bool valid = EngineUniformBuffersValid(existing, bufferCount, size) &&
+					(!useFrameArena || !existing[0].OwnsBuffer);
 				if (valid)
 					return true;
 
-				RetainEngineUniformBufferGeneration(name, existing);
+				DestroyEngineUniformBufferArray(existing);
 				_engineUniformBuffers.Remove(name);
 			}
 
-			if (_retainedEngineUniformBufferGenerations.TryTake(name, bufferCount, size, out EngineUniformBuffer[] retained))
+			if (useFrameArena)
 			{
-				_engineUniformBuffers[name] = retained;
+				if (!TryCreateEngineUniformArenaViews(name, size, out EngineUniformBuffer[] arenaBuffers))
+					return false;
+				_engineUniformBuffers[name] = arenaBuffers;
 				return true;
 			}
 
@@ -178,19 +176,23 @@ public unsafe partial class VulkanRenderer
 		{
 			size = Math.Max(size, 1u);
 			int bufferCount = UniformBufferArrayLength;
+			bool useFrameArena = Renderer.MeshFrameDataArenaEnabled;
 			if (_autoUniformBuffers.TryGetValue(name, out AutoUniformBuffer[]? existing))
 			{
-				bool valid = AutoUniformBuffersValid(existing, bufferCount, size);
+				bool valid = AutoUniformBuffersValid(existing, bufferCount, size) &&
+					(!useFrameArena || !existing[0].OwnsBuffer);
 				if (valid)
 					return true;
 
-				RetainAutoUniformBufferGeneration(name, existing);
+				DestroyAutoUniformBufferArray(existing);
 				_autoUniformBuffers.Remove(name);
 			}
 
-			if (_retainedAutoUniformBufferGenerations.TryTake(name, bufferCount, size, out AutoUniformBuffer[] retained))
+			if (useFrameArena)
 			{
-				_autoUniformBuffers[name] = retained;
+				if (!TryCreateAutoUniformArenaViews(name, size, out AutoUniformBuffer[] arenaBuffers))
+					return false;
+				_autoUniformBuffers[name] = arenaBuffers;
 				return true;
 			}
 
@@ -216,6 +218,44 @@ public unsafe partial class VulkanRenderer
 			}
 
 			_autoUniformBuffers[name] = buffers;
+			return true;
+		}
+
+		private bool TryCreateEngineUniformArenaViews(string name, uint size, out EngineUniformBuffer[] buffers)
+		{
+			buffers = new EngineUniformBuffer[UniformBufferArrayLength];
+			for (int drawSlot = 0; drawSlot < UniformBufferSlotCount; drawSlot++)
+			{
+				if (!Renderer.TryReserveMeshFrameDataRange(this, name, isAutoUniform: false, drawSlot, size, out ulong offset))
+					return false;
+
+				for (int frame = 0; frame < UniformBufferFrameCount; frame++)
+				{
+					if (!Renderer.TryGetMeshFrameDataArenaRange(frame, offset, size, out var buffer, out var memory, out void* mappedPtr))
+						return false;
+					int index = frame * UniformBufferSlotCount + drawSlot;
+					buffers[index] = new EngineUniformBuffer(buffer, memory, size, mappedPtr, offset, ownsBuffer: false);
+				}
+			}
+			return true;
+		}
+
+		private bool TryCreateAutoUniformArenaViews(string name, uint size, out AutoUniformBuffer[] buffers)
+		{
+			buffers = new AutoUniformBuffer[UniformBufferArrayLength];
+			for (int drawSlot = 0; drawSlot < UniformBufferSlotCount; drawSlot++)
+			{
+				if (!Renderer.TryReserveMeshFrameDataRange(this, name, isAutoUniform: true, drawSlot, size, out ulong offset))
+					return false;
+
+				for (int frame = 0; frame < UniformBufferFrameCount; frame++)
+				{
+					if (!Renderer.TryGetMeshFrameDataArenaRange(frame, offset, size, out var buffer, out var memory, out void* mappedPtr))
+						return false;
+					int index = frame * UniformBufferSlotCount + drawSlot;
+					buffers[index] = new AutoUniformBuffer(buffer, memory, size, mappedPtr, offset, ownsBuffer: false);
+				}
+			}
 			return true;
 		}
 

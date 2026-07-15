@@ -20,6 +20,7 @@ namespace XREngine.Rendering.Vulkan
             public Dictionary<int, int> SwapchainWriterOpIndexByPipeline { get; } = new();
             public Dictionary<int, string> PipelineNameByIdentity { get; } = new();
             public Dictionary<VkMeshRenderer, int> MeshDrawSlotsByRenderer { get; } = new(ReferenceEqualityComparer.Instance);
+            public VulkanMeshFrameDataReservationManifest MeshFrameDataManifest { get; } = new();
             public Dictionary<XRFrameBuffer, ImageLayout[]> FboLayoutTracking { get; } = new(ReferenceEqualityComparer.Instance);
             public List<KeyValuePair<int, int>> SwapchainWriterCountSort { get; } = new();
             public StringBuilder SwapchainWriterSummaryBuilder { get; } = new(256);

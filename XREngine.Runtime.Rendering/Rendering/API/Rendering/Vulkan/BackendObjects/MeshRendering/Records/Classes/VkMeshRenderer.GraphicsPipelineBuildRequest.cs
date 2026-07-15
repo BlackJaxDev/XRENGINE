@@ -4,7 +4,6 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-
     public partial class VkMeshRenderer
     {
         internal sealed class GraphicsPipelineBuildRequest(
@@ -33,8 +32,7 @@ public unsafe partial class VulkanRenderer
             public VkMeshRenderer Owner { get; } = owner;
             public VkRenderProgram Program { get; } = program;
             public PipelineKey Key { get; } = key;
-            public GraphicsPipelineCompileKey CompileKey { get; } = new GraphicsPipelineCompileKey(
-                    key);
+            public GraphicsPipelineCompileKey CompileKey { get; } = new GraphicsPipelineCompileKey(key);
             public string PipelineName { get; } = pipelineName;
             public uint ColorAttachmentCount { get; } = colorAttachmentCount;
             public PipelineLayout PipelineLayout { get; } = pipelineLayout;
@@ -56,11 +54,3 @@ public unsafe partial class VulkanRenderer
         }
     }
 }
-
-// Remaining VkMeshRenderer implementation lives in partial files:
-// - VkMeshRenderer.Buffers.cs
-// - VkMeshRenderer.Pipeline.cs
-// - VkMeshRenderer.Drawing.cs
-// - VkMeshRenderer.Descriptors.cs
-// - VkMeshRenderer.Uniforms.cs
-// - VkMeshRenderer.Cleanup.cs

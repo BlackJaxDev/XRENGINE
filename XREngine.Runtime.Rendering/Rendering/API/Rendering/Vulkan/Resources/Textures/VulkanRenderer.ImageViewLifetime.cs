@@ -124,12 +124,13 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private void RetireInternedImageViewsForBackingImage(ulong imageHandle)
+    private void RetireImageViewsForBackingImage(ulong imageHandle)
     {
         if (imageHandle == 0)
             return;
 
         List<ImageView>? retiredViews = null;
+        HashSet<ulong>? retiredHandles = null;
         lock (_internedImageViewsLock)
         {
             foreach ((VulkanImageViewStructuralKey key, InternedImageViewEntry entry) in _internedImageViews)
@@ -138,7 +139,9 @@ public unsafe partial class VulkanRenderer
                     continue;
 
                 retiredViews ??= [];
+                retiredHandles ??= [];
                 retiredViews.Add(entry.View);
+                retiredHandles.Add(entry.View.Handle);
             }
 
             if (retiredViews is not null)
@@ -150,6 +153,25 @@ public unsafe partial class VulkanRenderer
                         _internedImageViews.Remove(key);
                 }
             }
+        }
+
+        // Texture wrappers also create non-interned primary/attachment views. The
+        // image owns every one of those Vulkan objects even when a wrapper caches
+        // the handle for a planner context. Retire the complete backing-image set
+        // so a dormant wrapper cannot keep its destroyed physical image pending.
+        foreach (KeyValuePair<ulong, ImageViewCreateInfo> pair in _descriptorHeapImageViewCreateInfos)
+        {
+            if (pair.Value.Image.Handle != imageHandle ||
+                !_liveImageViewHandles.ContainsKey(pair.Key) ||
+                (retiredHandles is not null && retiredHandles.Contains(pair.Key)))
+            {
+                continue;
+            }
+
+            retiredViews ??= [];
+            retiredHandles ??= [];
+            retiredHandles.Add(pair.Key);
+            retiredViews.Add(new ImageView { Handle = pair.Key });
         }
 
         if (retiredViews is null)

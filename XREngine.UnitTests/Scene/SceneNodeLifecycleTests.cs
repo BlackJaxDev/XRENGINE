@@ -9,6 +9,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Editor;
 using XREngine.Rendering;
+using XREngine.Rendering.Physics.Jitter;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;

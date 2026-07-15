@@ -1566,8 +1566,7 @@ namespace XREngine.Rendering.Vulkan
             private void TraceQueuedUpload(string reason)
             {
                 if (!RenderDiagnosticsFlags.UploadStageLogging &&
-                    !RenderDiagnosticsFlags.PushSubDataTrace &&
-                    !RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging)
+                    !RenderDiagnosticsFlags.PushSubDataTrace)
                 {
                     return;
                 }

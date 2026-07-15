@@ -650,7 +650,8 @@ public sealed class OpenXrTimingPipelineContractTests
             "internal void EnsureUniformDrawSlotCapacity",
             "private int ResolveUniformBufferIndex");
 
-        ensureUniformSlots.ShouldContain("Renderer.MarkCommandBuffersDirtyForLegacyMeshState();");
+        ensureUniformSlots.ShouldContain("CPU-side logical reservation only");
+        ensureUniformSlots.ShouldNotContain("Renderer.MarkCommandBuffersDirtyForLegacyMeshState();");
         ensureUniformSlots.ShouldNotContain("Renderer.MarkCommandBuffersDirty();");
     }
 
@@ -701,7 +702,7 @@ public sealed class OpenXrTimingPipelineContractTests
         canReuse.ShouldContain("ulong resourceFingerprint = ComputeDescriptorResourceFingerprint(material, frameCount, bindings);");
         descriptors.ShouldContain("DescriptorSlotResourceFingerprintMatches(allocation, descriptorSlotIndex, resourceFingerprint)");
         descriptors.ShouldContain("EnsureDescriptorSlotReady(");
-        canReuse.ShouldContain("schemaFingerprint,\n\t\t\t\t\tresourceFingerprint,");
+        canReuse.ShouldContain("schemaFingerprint,\n\t\t\t\t\tviewFamilyIdentity,\n\t\t\t\t\tresourceFingerprint,");
 
         string capturedReuse = SliceMethod(
             descriptors,

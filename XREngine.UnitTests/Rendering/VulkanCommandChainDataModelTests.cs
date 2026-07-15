@@ -299,7 +299,7 @@ public sealed class VulkanCommandChainDataModelTests
         openXrSource.ShouldContain("_openXrResourcePlannerStates.TryGetValue(_contextKey");
         openXrSource.ShouldContain("_openXrResourcePlannerStates[_contextKey] = state;");
         openXrSource.ShouldNotContain("EnterOpenXrResourcePlannerScope");
-        openXrSource.ShouldNotContain("OpenXrResourcePlannerScope");
+        openXrSource.ShouldNotContain("private sealed class OpenXrResourcePlannerScope");
         openXrSource.ShouldNotContain("renderer.RestoreResourcePlannerRuntimeState(openXrState)");
         openXrSource.ShouldNotContain("private readonly ResourcePlannerRuntimeState[] _openXrResourcePlannerStates");
         openXrSource.ShouldNotContain("_hasOpenXrResourcePlannerStates");
@@ -482,12 +482,35 @@ public sealed class VulkanCommandChainDataModelTests
     public void AllocatorBackedTextures_CacheViewsPerPhysicalImageContext()
     {
         string textureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string viewLifetimeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Textures/VulkanRenderer.ImageViewLifetime.cs");
+        string resourceLifetimeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
 
         textureSource.ShouldContain("private readonly List<PhysicalImageViewCacheEntry> _physicalImageViewCache = [];");
         textureSource.ShouldContain("SaveCurrentPhysicalImageViewCache();");
+        textureSource.ShouldContain("if (_physicalGroup.IsAllocated)");
+        textureSource.ShouldContain("else\n\t\t\t\t\tDestroyCurrentViews(removeActiveCacheEntry: true);");
         textureSource.ShouldContain("if (!TryRestorePhysicalImageViewCache(_physicalGroup, current))");
         textureSource.ShouldContain("private sealed record class PhysicalImageViewCacheEntry");
         textureSource.ShouldContain("DestroyCurrentViews(removeActiveCacheEntry: true);");
+        viewLifetimeSource.ShouldContain("private void RetireImageViewsForBackingImage(ulong imageHandle)");
+        viewLifetimeSource.ShouldContain("foreach (KeyValuePair<ulong, ImageViewCreateInfo> pair in _descriptorHeapImageViewCreateInfos)");
+        viewLifetimeSource.ShouldContain("pair.Value.Image.Handle != imageHandle");
+        resourceLifetimeSource.ShouldContain("RetireImageViewsForBackingImage(handle);");
+    }
+
+    [Test]
+    public void DescriptorPrewarmReuseAndIndirectPreparationUseTheFrameOpPlannerContext()
+    {
+        string recordingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string secondarySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
+
+        recordingSource.ShouldContain("private bool TryRefreshReusableCommandBufferFrameData(uint imageIndex, FrameOp[] ops");
+        recordingSource.ShouldContain("using IDisposable plannerScope = EnterFrameOpResourcePlannerReadbackScope(op.Context);");
+        recordingSource.ShouldContain("case IndirectDrawOp indirectDrawOp:");
+        recordingSource.ShouldContain("indirectDrawOp.MeshRenderer.TryRefreshReusableCommandBufferFrameData(");
+
+        recordingSource.ShouldContain("using IDisposable plannerScope = EnterFrameOpResourcePlannerReadbackScope(indirectOp.Context);");
+        secondarySource.ShouldContain("using IDisposable plannerScope = EnterFrameOpResourcePlannerReadbackScope(runOp.Context);");
     }
 
     [Test]
@@ -506,7 +529,7 @@ public sealed class VulkanCommandChainDataModelTests
     public void DescriptorImageInfoAndAllocationKeys_AreScopedToActivePhysicalPlannerContext()
     {
         string textureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
-        string descriptorKeySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.DescriptorAllocationKey.cs");
+        string descriptorKeySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Structs/VkMeshRenderer.DescriptorAllocationKey.cs");
         string descriptorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
 
         textureSource.ShouldContain("public DescriptorImageInfo CreateImageInfo()");
@@ -516,11 +539,15 @@ public sealed class VulkanCommandChainDataModelTests
         textureSource.ShouldContain("if (!TryRestorePhysicalImageViewCache(_physicalGroup, current))");
         descriptorKeySource.ShouldContain("ulong LayoutFingerprint");
         descriptorKeySource.ShouldNotContain("ProgramBindingId");
-        descriptorKeySource.ShouldNotContain("ulong ResourceFingerprint");
+        descriptorKeySource.ShouldContain("ulong ResourceVariantFingerprint");
         descriptorKeySource.ShouldContain("int DescriptorFrameSlotCount");
-        descriptorSource.ShouldContain("hash.Add(Renderer.ResourceAllocatorIdentity);");
+        descriptorSource.ShouldContain("hash.Add(info.ImageView.Handle);");
+        descriptorSource.ShouldContain("hash.Add(info.Sampler.Handle);");
+        descriptorSource.ShouldContain("hash.Add((int)info.ImageLayout);");
         descriptorSource.ShouldContain("AppendComponent(builder, \"resourceAllocator\", unchecked((ulong)Renderer.ResourceAllocatorIdentity));");
-        descriptorSource.ShouldContain("DescriptorAllocationKey allocationKey = new(layoutFingerprint, schemaFingerprint, descriptorFrameSlotCount, setCount);");
+        descriptorSource.ShouldContain("DescriptorAllocationKey allocationKey = new(");
+        descriptorSource.ShouldContain("viewFamilyIdentity,");
+        descriptorSource.ShouldContain("resourceFingerprint);");
         descriptorSource.ShouldContain("EnsureDescriptorSlotReady(cachedAllocation, material, bindings, frameIndex, drawUniformSlot, resourceFingerprint)");
     }
 
@@ -888,7 +915,7 @@ public sealed class VulkanCommandChainDataModelTests
         workerSource.ShouldContain("DispatchOpenXrEyeRecordWorkers(preparedFirstEye, preparedSecondEye)");
         workerSource.ShouldContain("private OpenXrPreparedEyeCommandBufferInput _prepared;");
         openXrSource.ShouldContain("RefreshFrameOpResourceWrappers(");
-        openXrSource.ShouldContain("PrewarmOpenXrFrameOpResources(ops);");
+        openXrSource.ShouldContain("PrewarmOpenXrFrameOpResources(ops, targetContext.FrameDataSlotIndex);");
         openXrSource.ShouldContain("EnsureMeshDrawUniformSlotCapacityForRecording(ops, meshDrawSlotsByRenderer);");
         openXrSource.ShouldContain("int rendererCount = meshDrawSlotsByRenderer.Count;");
         openXrSource.ShouldContain("meshDrawSlotsByRenderer.Clear();");

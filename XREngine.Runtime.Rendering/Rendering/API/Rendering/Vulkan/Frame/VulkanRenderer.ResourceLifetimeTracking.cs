@@ -233,6 +233,7 @@ public unsafe partial class VulkanRenderer
         public readonly List<KeyValuePair<VulkanResourceLifetimeKey, ulong>> TouchedDependencies = new(64);
         public ulong RecordingGeneration;
         public int QueuedSubmissionCount;
+        public VulkanFrameDataGenerationLease FrameDataLease;
 
         public void RefreshTouchedDependencies()
         {
@@ -504,6 +505,7 @@ public unsafe partial class VulkanRenderer
             return;
 
         ulong handle = unchecked((ulong)commandBuffer.Handle);
+        _invalidatedCommandBuffersPendingReset.TryRemove(handle, out _);
         RegisterVulkanResource(ObjectType.CommandBuffer, handle, "CommandBuffer");
         lock (_vulkanResourceLifetimeLock)
         {
@@ -535,6 +537,8 @@ public unsafe partial class VulkanRenderer
             }
 
             ReleaseVulkanCommandBufferDependencies_NoLock(handle, lifetime);
+            lifetime.FrameDataLease.EvictCachedVariant();
+            lifetime.FrameDataLease.Reset();
             lifetime.RecordingGeneration++;
         }
     }
@@ -545,6 +549,7 @@ public unsafe partial class VulkanRenderer
             return;
 
         ulong handle = unchecked((ulong)commandBuffer.Handle);
+        _invalidatedCommandBuffersPendingReset.TryRemove(handle, out _);
         lock (_vulkanResourceLifetimeLock)
         {
             if (_vulkanCommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? lifetime) &&
@@ -1470,7 +1475,10 @@ public unsafe partial class VulkanRenderer
                         out VulkanCommandBufferTrackingBatch? batch))
                 {
                     lock (batch)
+                    {
+                        batch.IsRecording = false;
                         batch.QueuedSubmissionCount++;
+                    }
                 }
             }
         }
@@ -1931,6 +1939,10 @@ public unsafe partial class VulkanRenderer
             }
 
             commandLifetime.QueuedSubmissionCount--;
+            // The gateway pin is released for both accepted and rejected submissions. At
+            // this point recording has ended, so a rejected submit retains only the cached
+            // variant owner; an accepted submit has already added its exact queue ticket.
+            commandLifetime.FrameDataLease.CompleteRecording(cacheVariant: true);
             if (_commandBufferTrackingBatches.TryGetValue(
                     commandBufferHandle,
                     out VulkanCommandBufferTrackingBatch? trackingBatch))
@@ -2038,6 +2050,8 @@ public unsafe partial class VulkanRenderer
 
                 if (!_vulkanCommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? commandLifetime))
                     continue;
+
+                commandLifetime.FrameDataLease.TryTransferToSubmission(domain, queueSequence);
 
                 foreach ((VulkanResourceLifetimeKey key, _) in commandLifetime.TouchedDependencies)
                 {
@@ -2259,10 +2273,12 @@ public unsafe partial class VulkanRenderer
         if (handle == 0)
             return VulkanRetirementTicket.None;
 
-        if (type == ObjectType.Image)
-            RetireInternedImageViewsForBackingImage(handle);
-
         VulkanResourceLifetimeKey key = ResourceKey(type, handle);
+        PublishCommandBufferTrackingDependenciesBeforeResourceRetirement(key);
+
+        if (type == ObjectType.Image)
+            RetireImageViewsForBackingImage(handle);
+
         VulkanRetirementTicket ticket;
         ulong generation;
         string resourceOwner;
@@ -2412,6 +2428,25 @@ public unsafe partial class VulkanRenderer
             return ticket;
 
         ulong poolGeneration = ticket.ResourceGeneration;
+        ulong[] ownedSetHandles;
+        lock (_vulkanResourceLifetimeLock)
+        {
+            ownedSetHandles = _vulkanDescriptorSetsByPool.TryGetValue(
+                pool.Handle,
+                out HashSet<ulong>? trackedSets)
+                    ? [.. trackedSets]
+                    : [];
+        }
+
+        // A pool destroy implicitly destroys every set allocated from it. Close the
+        // command-local publication window for each owned set before any of them is
+        // marked pending retirement, just as the single-resource path does.
+        for (int i = 0; i < ownedSetHandles.Length; i++)
+        {
+            PublishCommandBufferTrackingDependenciesBeforeResourceRetirement(
+                ResourceKey(ObjectType.DescriptorSet, ownedSetHandles[i]));
+        }
+
         HashSet<ulong>? dependentCommandBuffers = null;
         lock (_vulkanResourceLifetimeLock)
         {
@@ -2963,6 +2998,7 @@ public unsafe partial class VulkanRenderer
             int destroyed = 0;
             long oldestTimestamp = 0;
             ulong oldestRetirementSerial = 0;
+            VulkanResourceLifetimeRecord? oldestPendingResource = null;
 
             foreach (VulkanResourceLifetimeRecord resource in _vulkanResourceLifetimes.Values)
             {
@@ -2985,7 +3021,10 @@ public unsafe partial class VulkanRenderer
                     pending++;
                     long timestamp = resource.RetirementTicket.EnqueuedTimestamp;
                     if (timestamp != 0 && (oldestTimestamp == 0 || timestamp < oldestTimestamp))
+                    {
                         oldestTimestamp = timestamp;
+                        oldestPendingResource = resource;
+                    }
                     if (resource.RetirementSerial != 0 &&
                         (oldestRetirementSerial == 0 || resource.RetirementSerial < oldestRetirementSerial))
                     {
@@ -3001,9 +3040,77 @@ public unsafe partial class VulkanRenderer
             ulong oldestGenerationAge = oldestRetirementSerial == 0
                 ? 0
                 : latestRetirementSerial - oldestRetirementSerial + 1;
+            if (oldestAgeMilliseconds >= 5_000 && oldestPendingResource is not null)
+            {
+                VulkanRetirementTicket ticket = oldestPendingResource.RetirementTicket;
+                Debug.VulkanEvery(
+                    "Vulkan.ResourceLifetime.OldestPendingRetirement",
+                    TimeSpan.FromSeconds(5),
+                    "[Vulkan.ResourceLifetime] Oldest pending retirement key={0} owner='{1}' ageMs={2} generation={3} " +
+                    "ticketGraphics={4}/{5} ticketTransfer={6}/{7} ticketOther={8}/{9} external={10}.",
+                    oldestPendingResource.Key,
+                    oldestPendingResource.Owner,
+                    oldestAgeMilliseconds,
+                    oldestPendingResource.Generation,
+                    ticket.GraphicsSequence,
+                    _vulkanCompletedGraphicsSequence,
+                    ticket.TransferSequence,
+                    _vulkanCompletedTransferSequence,
+                    ticket.OtherSequence,
+                    _vulkanCompletedOtherSequence,
+                    ticket.ExternalOwnershipPending);
+            }
+            int frameDataRecordingLeases = 0;
+            int frameDataCachedLeases = 0;
+            int frameDataSubmittedLeases = 0;
+            int frameDataLeaseRetainedGenerationCount = 0;
+            Span<ulong> leaseRetainedGenerations = stackalloc ulong[8];
+            ulong activeFrameDataGeneration = MeshFrameDataReservationGeneration;
+            foreach (VulkanCommandBufferLifetimeRecord commandLifetime in _vulkanCommandBufferLifetimes.Values)
+            {
+                commandLifetime.FrameDataLease.ObserveQueueCompletion(
+                    _vulkanCompletedGraphicsSequence,
+                    _vulkanCompletedTransferSequence,
+                    _vulkanCompletedOtherSequence);
+                if (commandLifetime.FrameDataLease.HasRecordingOwner)
+                    frameDataRecordingLeases++;
+                if (commandLifetime.FrameDataLease.HasCachedVariantOwner)
+                    frameDataCachedLeases++;
+                if (commandLifetime.FrameDataLease.HasSubmittedOwner)
+                    frameDataSubmittedLeases++;
+                ulong leaseGeneration = commandLifetime.FrameDataLease.Generation;
+                if (leaseGeneration != 0 && leaseGeneration != activeFrameDataGeneration)
+                {
+                    bool alreadyCounted = false;
+                    for (int index = 0; index < frameDataLeaseRetainedGenerationCount; index++)
+                    {
+                        if (leaseRetainedGenerations[index] == leaseGeneration)
+                        {
+                            alreadyCounted = true;
+                            break;
+                        }
+                    }
+
+                    if (!alreadyCounted && frameDataLeaseRetainedGenerationCount < leaseRetainedGenerations.Length)
+                        leaseRetainedGenerations[frameDataLeaseRetainedGenerationCount++] = leaseGeneration;
+                }
+            }
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResourceLifetimeGauges(
                 live,
-                _vulkanDescriptorSetLifetimes.Count);
+                _vulkanDescriptorSetLifetimes.Count,
+                pending,
+                oldestAgeMilliseconds);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanMeshFrameDataGauges(
+                _dynamicUniformRingBuffers.Length,
+                checked((long)((ulong)_dynamicUniformRingBuffers.Length * DynamicUniformRingBufferCapacity)),
+                checked((long)Math.Min(MeshFrameDataReservedBytes, (ulong)long.MaxValue)),
+                MeshFrameDataReservationCount,
+                MeshFrameDataReservationGeneration,
+                frameDataRecordingLeases,
+                frameDataCachedLeases,
+                frameDataSubmittedLeases,
+                activeFrameDataGeneration == 0 ? 0 : 1,
+                frameDataLeaseRetainedGenerationCount);
             return new VulkanResourceLifetimeSnapshot(
                 live,
                 recorded,

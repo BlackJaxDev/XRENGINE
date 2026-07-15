@@ -83,6 +83,7 @@ namespace XREngine.Rendering.Occlusion
             public ECpuOcclusionForceVisibleReason ForceVisibleReason;
             public ulong LastResolvedFrameId;
             public ulong LastBudgetFrameId = ulong.MaxValue;
+            public ulong FrameEpoch;
             public int VisibleBudgetUsed;
             public int RecoveryBudgetUsed;
             public uint LastSceneCommandCount;
@@ -193,14 +194,15 @@ namespace XREngine.Rendering.Occlusion
             lock (_lock)
             {
                 PassState state = GetPassStateForOwnership(renderPass, camera, ownership);
-                ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+                ulong globalFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+                ulong frameId = ++state.FrameEpoch;
                 bool commandSetChanged = state.HasCommandSetSignature &&
                     state.CommandSetSignature != commandSetSignature;
                 state.LastSceneCommandCount = sceneCommandCount;
                 state.CommandSetSignature = commandSetSignature;
                 state.HasCommandSetSignature = true;
-                state.LastTouchedFrame = frameId;
-                state.Pov.LastTouchedFrame = frameId;
+                state.LastTouchedFrame = globalFrameId;
+                state.Pov.LastTouchedFrame = globalFrameId;
                 state.ForceVisibleThisFrame = false;
                 state.ForceVisibleReason = ECpuOcclusionForceVisibleReason.None;
 
@@ -225,7 +227,7 @@ namespace XREngine.Rendering.Occlusion
                     ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.UnsupportedStereoMode);
 
                 ResolveAvailableResultsForPov(state.Pov);
-                EvictStaleOwnershipStates(frameId);
+                EvictStaleOwnershipStates(globalFrameId);
                 OcclusionTelemetry.RecordCpuMotionTier(state.MotionTier);
                 OcclusionTelemetry.RecordCpuActiveViewScope(state.ViewKey.Scope);
                 state.Telemetry.RecordPassBegin((int)sceneCommandCount);
@@ -291,7 +293,7 @@ namespace XREngine.Rendering.Occlusion
             {
                 PassState state = GetPassStateForOwnership(renderPass, camera, ownership);
                 QueryState queryState = GetOrCreateQueryState(state, sourceCommandIndex);
-                ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+                ulong frameId = state.FrameEpoch;
 
                 if (queryState.LastDecidedFrameId == frameId)
                 {
@@ -467,12 +469,12 @@ namespace XREngine.Rendering.Occlusion
                         state,
                         sourceCommandIndex,
                         queryState,
-                        RuntimeEngine.Rendering.State.RenderFrameId,
+                        state.FrameEpoch,
                         out _))
                     return true;
                 if (ShouldForceVisibleForStaleOcclusion(
                         queryState,
-                        RuntimeEngine.Rendering.State.RenderFrameId,
+                        state.FrameEpoch,
                         state.MotionTier))
                     return true;
                 if (queryState.QueryPending && queryState.PendingQueryWasVisibleDraw)
@@ -523,7 +525,7 @@ namespace XREngine.Rendering.Occlusion
                 return IsHierarchyFreshOccluded(
                     state,
                     sourceCommandIndex,
-                    RuntimeEngine.Rendering.State.RenderFrameId)
+                    state.FrameEpoch)
                     ? state.ViewKey.CoverageMask & required
                     : 0u;
             }
@@ -622,7 +624,7 @@ namespace XREngine.Rendering.Occlusion
             {
                 PassState state = GetPassStateForOwnership(renderPass, camera, ownership);
                 QueryState queryState = GetOrCreateQueryState(state, sourceCommandIndex);
-                BeginQueryCore(queryState);
+                BeginQueryCore(state, queryState);
             }
         }
 
@@ -648,7 +650,7 @@ namespace XREngine.Rendering.Occlusion
                 if (!state.Queries.TryGetValue(sourceCommandIndex, out QueryState? queryState))
                     return;
 
-                if (EndQueryCore(queryState, queryState.LastProbeRequest))
+                if (EndQueryCore(state, queryState, queryState.LastProbeRequest))
                     MarkPovQueryPending(state, sourceCommandIndex);
             }
         }
@@ -670,7 +672,7 @@ namespace XREngine.Rendering.Occlusion
             {
                 PassState state = GetPassStateForOwnership(renderPass, camera, ownership);
                 HierarchyGroupState group = GetOrCreateHierarchyGroup(state, hierarchyGroupKey);
-                BeginQueryCore(group.Query);
+                BeginQueryCore(state, group.Query);
             }
         }
 
@@ -694,6 +696,7 @@ namespace XREngine.Rendering.Occlusion
                     return;
 
                 if (EndQueryCore(
+                    state,
                     group.Query,
                     new CpuOcclusionProbeRequest(
                         true,
@@ -720,7 +723,7 @@ namespace XREngine.Rendering.Occlusion
             {
                 PassState state = GetPassStateForOwnership(renderPass, camera, ownership);
                 QueryState queryState = GetOrCreateQueryState(state, sourceCommandIndex);
-                ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+                ulong frameId = state.FrameEpoch;
 
                 queryState.LastTouchedFrame = frameId;
                 queryState.LastDecision = ECpuOcclusionDecision.Visible;
@@ -776,7 +779,7 @@ namespace XREngine.Rendering.Occlusion
             {
                 PassState state = GetPassStateForOwnership(renderPass, camera, ownership);
                 QueryState queryState = GetOrCreateQueryState(state, sourceCommandIndex);
-                ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+                ulong frameId = state.FrameEpoch;
                 if (ShouldTrackRecovery(reason))
                     BeginRecovery(state, queryState, frameId);
                 else
@@ -975,7 +978,7 @@ namespace XREngine.Rendering.Occlusion
             if (state.Queries.TryGetValue(sourceCommandIndex, out QueryState? existing))
                 return existing;
 
-            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            ulong frameId = state.FrameEpoch;
             var created = new QueryState
             {
                 Query = _queryManager.Acquire(EQueryTarget.AnySamplesPassedConservative),
@@ -999,7 +1002,7 @@ namespace XREngine.Rendering.Occlusion
                 return group;
             }
 
-            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            ulong frameId = state.FrameEpoch;
             group = new HierarchyGroupState
             {
                 Query = new QueryState
@@ -1015,12 +1018,12 @@ namespace XREngine.Rendering.Occlusion
             return group;
         }
 
-        private void BeginQueryCore(QueryState queryState)
+        private void BeginQueryCore(PassState state, QueryState queryState)
         {
             if (queryState.Query is null)
                 return;
 
-            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            ulong frameId = state.FrameEpoch;
             if (queryState.QueryIssuedFrameId == frameId || queryState.QueryPending)
                 return;
 
@@ -1028,12 +1031,15 @@ namespace XREngine.Rendering.Occlusion
                 queryState.QueryIssuedFrameId = frameId;
         }
 
-        private static bool EndQueryCore(QueryState queryState, CpuOcclusionProbeRequest request)
+        private static bool EndQueryCore(
+            PassState state,
+            QueryState queryState,
+            CpuOcclusionProbeRequest request)
         {
             if (queryState.Query is null)
                 return false;
 
-            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            ulong frameId = state.FrameEpoch;
             if (queryState.QueryIssuedFrameId != frameId)
                 return false;
 
@@ -1090,7 +1096,7 @@ namespace XREngine.Rendering.Occlusion
 
         private void ResolveAvailableResults(PassState state)
         {
-            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            ulong frameId = state.FrameEpoch;
             if (state.LastResolvedFrameId == frameId)
                 return;
 
@@ -1359,7 +1365,7 @@ namespace XREngine.Rendering.Occlusion
 
         private static void RefreshBudgets(PassState state)
         {
-            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            ulong frameId = state.FrameEpoch;
             if (state.LastBudgetFrameId == frameId)
                 return;
 
@@ -1446,7 +1452,7 @@ namespace XREngine.Rendering.Occlusion
                 }
             }
 
-            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            ulong frameId = state.FrameEpoch;
             foreach (var (groupKey, scratch) in state.HierarchyScratch)
             {
                 if (recoveryRemaining <= 0)
@@ -1486,7 +1492,7 @@ namespace XREngine.Rendering.Occlusion
             if (remaining <= 0)
                 return;
 
-            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            ulong frameId = state.FrameEpoch;
             int skipped = 0;
             for (int i = 0; i < candidates.Count && remaining > 0; i++)
             {
@@ -1539,7 +1545,7 @@ namespace XREngine.Rendering.Occlusion
             query.ValidCoverageMask &= ~coverage;
             query.PendingCoverageMask |= coverage;
             if (query.LastRecoveryStartFrame == 0UL)
-                query.LastRecoveryStartFrame = RuntimeEngine.Rendering.State.RenderFrameId;
+                query.LastRecoveryStartFrame = state.FrameEpoch;
             state.Telemetry.RecordSubmission();
         }
 
@@ -1858,7 +1864,7 @@ namespace XREngine.Rendering.Occlusion
             if (reason == ECpuOcclusionForceVisibleReason.UnsupportedStereoMode)
                 OcclusionTelemetry.RecordCpuUnsupportedStereoQueryMode();
 
-            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            ulong frameId = state.FrameEpoch;
             foreach (QueryState queryState in state.Queries.Values)
             {
                 if (ShouldTrackRecovery(reason))

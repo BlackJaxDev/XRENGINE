@@ -9,7 +9,6 @@ using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
-using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Textures;
 using XREngine.Rendering.Pipelines.Commands;
@@ -44,161 +43,6 @@ public unsafe partial class VulkanRenderer
     private const int FrameOpKindTextureUpload = 11;
     private const int FrameOpKindQuery = 12;
     private const int FrameOpKindPublishFramebufferForSampling = 13;
-
-    internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpContext Context);
-
-    internal sealed record ClearOp(
-        int PassIndex,
-        XRFrameBuffer? Target,
-        bool ClearColor,
-        bool ClearDepth,
-        bool ClearStencil,
-        ColorF4 Color,
-        float Depth,
-        uint Stencil,
-        Rect2D Rect,
-        FrameOpContext Context) : FrameOp(PassIndex, Target, Context);
-
-    internal readonly record struct VulkanBindlessMaterialDescriptorBinding(
-        VkRenderProgram Program,
-        string Consumer);
-
-    internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingMeshDraw Draw, FrameOpContext Context) : FrameOp(PassIndex, Target, Context)
-    {
-        /// <summary>
-        /// True when this draw was enqueued inside an occlusion QueryOp Begin/End bracket
-        /// (CPU occlusion proxy AABB draws). Such draws must keep their enqueue position
-        /// relative to the surrounding QueryOps: canonical opaque-draw reordering would
-        /// make the frame-op sort comparer intransitive and scramble Begin/End pairing
-        /// (observed as VUID-vkCmdBeginQuery-queryPool-01922 and
-        /// VUID-vkEndCommandBuffer-commandBuffer-00061).
-        /// </summary>
-        internal bool PreserveSubmissionOrder { get; init; }
-    }
-
-    internal enum EVulkanQueryFrameOpKind
-    {
-        Begin,
-        End,
-    }
-
-    internal sealed record QueryOp(
-        int PassIndex,
-        XRFrameBuffer? Target,
-        VkRenderQuery Query,
-        EQueryTarget QueryTarget,
-        EVulkanQueryFrameOpKind Operation,
-        FrameOpContext Context) : FrameOp(PassIndex, Target, Context);
-
-    internal readonly record struct VulkanFrameDrawStats(int DrawCalls, int MultiDrawCalls, int TrianglesRendered);
-
-    internal sealed record BlitOp(
-        int PassIndex,
-        XRFrameBuffer? InFbo,
-        XRFrameBuffer? OutFbo,
-        int InX,
-        int InY,
-        uint InW,
-        uint InH,
-        int OutX,
-        int OutY,
-        uint OutW,
-        uint OutH,
-        EReadBufferMode ReadBufferMode,
-        bool ColorBit,
-        bool DepthBit,
-        bool StencilBit,
-        bool LinearFilter,
-        FrameOpContext Context) : FrameOp(PassIndex, OutFbo, Context);
-
-    internal sealed record IndirectDrawOp(
-        int PassIndex,
-        XRFrameBuffer? Target,
-        VkDataBuffer IndirectBuffer,
-        VkDataBuffer? ParameterBuffer,
-        VkMeshRenderer MeshRenderer,
-        PendingMeshDraw Draw,
-        uint DrawCount,
-        uint Stride,
-        nuint ByteOffset,
-        nuint CountByteOffset,
-        bool UseCount,
-        VulkanBindlessMaterialDescriptorBinding? BindlessMaterialTextures,
-        FrameOpContext Context) : FrameOp(PassIndex, Target, Context);
-
-    internal sealed record MeshTaskDispatchIndirectCountOp(
-        int PassIndex,
-        VkDataBuffer IndirectBuffer,
-        VkDataBuffer CountBuffer,
-        uint MaxDrawCount,
-        uint Stride,
-        nuint ByteOffset,
-        nuint CountByteOffset,
-        VulkanBindlessMaterialDescriptorBinding? BindlessMaterialTextures,
-        FrameOpContext Context) : FrameOp(PassIndex, null, Context);
-
-    internal sealed record MemoryBarrierOp(
-        int PassIndex,
-        EMemoryBarrierMask Mask,
-        FrameOpContext Context) : FrameOp(PassIndex, null, Context);
-
-    internal sealed record PublishFramebufferForSamplingOp(
-        int PassIndex,
-        XRFrameBuffer FrameBuffer,
-        FrameOpContext Context) : FrameOp(PassIndex, FrameBuffer, Context);
-
-    internal sealed record DlssUpscaleOp(
-        int PassIndex,
-        NvidiaDlssManager.Native.NativeVulkanSession Session,
-        VulkanStreamlineImage SourceColor,
-        VulkanStreamlineImage Depth,
-        VulkanStreamlineImage Motion,
-        VulkanStreamlineImage OutputColor,
-        VulkanStreamlineImage? Exposure,
-        VulkanUpscaleBridgeDispatchParameters Parameters,
-        FrameOpContext Context) : FrameOp(PassIndex, null, Context);
-
-    internal sealed record DlssFrameGenerationOp(
-        int PassIndex,
-        NvidiaDlssManager.Native.NativeFrameGenerationSession Session,
-        VulkanStreamlineImage Depth,
-        VulkanStreamlineImage Motion,
-        VulkanStreamlineImage HudlessColor,
-        VulkanUpscaleBridgeDispatchParameters Parameters,
-        FrameOpContext Context) : FrameOp(PassIndex, null, Context);
-
-    internal sealed record TransformFeedbackOp(
-        int PassIndex,
-        XRFrameBuffer? Target,
-        VkTransformFeedback TransformFeedback,
-        EXRTransformFeedbackOperation Operation,
-        XRDataBuffer? CounterBuffer,
-        ulong FeedbackBufferOffset,
-        ulong? FeedbackBufferSize,
-        ulong CounterBufferOffset,
-        uint CounterOffset,
-        uint VertexStride,
-        uint InstanceCount,
-        uint FirstInstance,
-        FrameOpContext Context) : FrameOp(PassIndex, Target, Context);
-
-    internal readonly record struct ProgramUniformValue(EShaderVarType Type, object Value, bool IsArray);
-
-    internal readonly record struct ProgramImageBinding(
-        XRTexture Texture,
-        int Level,
-        bool Layered,
-        int Layer,
-        XRRenderProgram.EImageAccess Access,
-        XRRenderProgram.EImageFormat Format);
-
-    internal sealed record ComputeDispatchSnapshot(
-        Dictionary<string, ProgramUniformValue> Uniforms,
-        Dictionary<uint, XRTexture> Samplers,
-        Dictionary<uint, string> SamplerNamesByUnit,
-        Dictionary<string, XRTexture> SamplersByName,
-        Dictionary<uint, ProgramImageBinding> Images,
-        Dictionary<uint, XRDataBuffer> Buffers);
 
     private const ulong FrameSourceMutableDescriptorSignature = 0x4652534D55544453UL;
 
@@ -1478,10 +1322,8 @@ public unsafe partial class VulkanRenderer
         private int _uniformDrawSlotCapacity = 1;
         private readonly HashSet<string> _descriptorWarnings = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, EngineUniformBuffer[]> _engineUniformBuffers = new(StringComparer.Ordinal);
-        private readonly VulkanUniformBufferGenerationCache<EngineUniformBuffer[]> _retainedEngineUniformBufferGenerations = new();
         private readonly HashSet<string> _engineUniformWarnings = new(StringComparer.Ordinal);
         private readonly Dictionary<string, AutoUniformBuffer[]> _autoUniformBuffers = new(StringComparer.Ordinal);
-        private readonly VulkanUniformBufferGenerationCache<AutoUniformBuffer[]> _retainedAutoUniformBufferGenerations = new();
         private readonly HashSet<string> _autoUniformWarnings = new(StringComparer.Ordinal);
         private const string VertexUniformSuffix = "_VTX";
         private const string TransformIdUniformName = "TransformId";
@@ -1523,6 +1365,7 @@ public unsafe partial class VulkanRenderer
             Renderer.DrainVulkanPipelineCompileJobsForOwner(this);
             DestroyPipelines();
             DestroyGeneratedPrograms();
+            Renderer.ReleaseMeshFrameDataReservations(this);
             RemoveCachedObject(BindingId);
         }
 
@@ -1554,6 +1397,7 @@ public unsafe partial class VulkanRenderer
             Renderer.DrainVulkanPipelineCompileJobsForOwner(this);
             DestroyPipelines();
             DestroyGeneratedPrograms();
+            Renderer.ReleaseMeshFrameDataReservations(this);
             lock (_bufferStateSync)
             {
                 _bufferCache.Clear();
@@ -2336,11 +2180,3 @@ public unsafe partial class VulkanRenderer
             };
     }
 }
-
-// Remaining VkMeshRenderer implementation lives in partial files:
-// - VkMeshRenderer.Buffers.cs
-// - VkMeshRenderer.Pipeline.cs
-// - VkMeshRenderer.Drawing.cs
-// - VkMeshRenderer.Descriptors.cs
-// - VkMeshRenderer.Uniforms.cs
-// - VkMeshRenderer.Cleanup.cs

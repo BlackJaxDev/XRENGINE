@@ -589,8 +589,8 @@ public unsafe partial class VulkanRenderer
             // recorded, so no recorded generation can retire between eyes.
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.FinalizeSharedCapacity"))
             {
-                PrewarmOpenXrFrameOpResources(firstPrepared.Ops);
-                PrewarmOpenXrFrameOpResources(secondPrepared.Ops);
+                PrewarmOpenXrFrameOpResources(firstPrepared.Ops, firstPrepared.TargetContext.FrameDataSlotIndex);
+                PrewarmOpenXrFrameOpResources(secondPrepared.Ops, secondPrepared.TargetContext.FrameDataSlotIndex);
             }
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.RecordLeftEye"))
@@ -851,24 +851,29 @@ public unsafe partial class VulkanRenderer
                             refreshFailureReason);
                         return false;
                     }
-                    PrewarmOpenXrFrameOpResources(ops);
+                    PrewarmOpenXrFrameOpResources(ops, targetContext.FrameDataSlotIndex);
                     plannerRevision = ResourcePlannerRevision;
                     using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule.Signature"))
                         frameOpsSignature = ComputeFrameOpsSignature(ops);
-                    commandChainSchedule = TryBuildOpenXrEyeCommandChainSchedule(
-                        targetContext.CommandChainImageKey,
-                        targetContext.OpenXrViewIndex,
-                        targetContext.OpenXrImageIndex,
-                        targetContext.Image,
-                        ops,
-                        frameOpsSignature,
-                        plannerRevision);
                     if (RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuQueryAsync)
                     {
-                        // Mesh visibility and query probes are selected while frame ops are
-                        // lowered. A reusable secondary chain would freeze the startup
-                        // decision set even when the primary command buffer is re-recorded.
+                        // Query probes and the visible mesh subset change as prior
+                        // results arrive. The current per-draw secondary cache is
+                        // neither bounded nor sufficiently reusable for that
+                        // external-image workload, so keep the OpenXR primary inline.
+                        // CpuQueryAsync itself remains enabled and submits fresh probes.
                         commandChainSchedule = null;
+                    }
+                    else
+                    {
+                        commandChainSchedule = TryBuildOpenXrEyeCommandChainSchedule(
+                            targetContext.CommandChainImageKey,
+                            targetContext.OpenXrViewIndex,
+                            targetContext.OpenXrImageIndex,
+                            targetContext.Image,
+                            ops,
+                            frameOpsSignature,
+                            plannerRevision);
                     }
                 }
 
@@ -2369,7 +2374,7 @@ public unsafe partial class VulkanRenderer
                 // This is the render-to-array path used by strict SPS. Reserve
                 // every repeated direct and indirect use before command-chain
                 // workers or the primary command buffer record any dependency.
-                PrewarmOpenXrFrameOpResources(ops);
+                PrewarmOpenXrFrameOpResources(ops, recordImageIndex);
                 ulong plannerRevision = ResourcePlannerRevision;
                 ulong frameOpsSignature;
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordMirror.PlanAndSchedule.Signature"))
@@ -2832,6 +2837,7 @@ public unsafe partial class VulkanRenderer
             frameOpsSignature: frameOpsSignature,
             volatileSignature: 0,
             resourcePlanRevision: resourcePlanRevision,
+            allowExternalSwapchainTarget: true,
             stats: out CommandChainLoweringStats stats);
         if (schedule is null)
             return null;
@@ -3174,7 +3180,7 @@ public unsafe partial class VulkanRenderer
             RecordOpenXrEyeMirrorPublish(commandBuffer, in firstPlan, out firstPreviewCopied);
             RecordOpenXrEyeMirrorPublish(commandBuffer, in secondPlan, out secondPreviewCopied);
 
-            Result endResult = Api.EndCommandBuffer(commandBuffer);
+            Result endResult = EndCommandBufferTracked(commandBuffer);
             if (endResult != Result.Success)
             {
                 Debug.VulkanWarning($"[OpenXR] Failed to end eye mirror publish command buffer: {endResult}");
@@ -4047,7 +4053,7 @@ public unsafe partial class VulkanRenderer
             ResetCommandBufferBindState(commandBuffer);
             RecordStereoLayerBlits(commandBuffer, in plan);
 
-            Result endResult = Api.EndCommandBuffer(commandBuffer);
+            Result endResult = EndCommandBufferTracked(commandBuffer);
             if (endResult != Result.Success)
             {
                 Debug.VulkanWarning($"[OpenXR] Failed to end stereo layer publish command buffer: {endResult}");
@@ -4441,7 +4447,9 @@ public unsafe partial class VulkanRenderer
                         refreshFailureReason);
                     return;
                 }
-                PrewarmOpenXrFrameOpResources(ops);
+                PrewarmOpenXrFrameOpResources(
+                    ops,
+                    ResolveOpenXrRecordImageIndex(resourcePlannerStateIndex, swapChainImages?.Length ?? 0));
             }
         }
         catch (Exception ex)
@@ -4557,7 +4565,9 @@ public unsafe partial class VulkanRenderer
                         refreshFailureReason);
                     return;
                 }
-                PrewarmOpenXrFrameOpResources(ops);
+                PrewarmOpenXrFrameOpResources(
+                    ops,
+                    ResolveOpenXrRecordImageIndex(resourcePlannerStateIndex, swapChainImages?.Length ?? 0));
             }
         }
         catch (Exception ex)
@@ -4784,6 +4794,8 @@ public unsafe partial class VulkanRenderer
         out string failureReason)
     {
         failureReason = string.Empty;
+        if (IsRenderingExternalSwapchainTarget)
+            RebaseFrameOpResourcesToActiveResourcePlan(ops, plannerContext.ResourceRegistry);
         HashSet<object>? visitedRegistries = null;
         if (!TryRefreshResourceRegistryWrappers(plannerContext.ResourceRegistry, ref visitedRegistries, reason, allowSynchronousUpload, out failureReason))
             return false;
@@ -4795,6 +4807,151 @@ public unsafe partial class VulkanRenderer
         }
 
         return true;
+    }
+
+    private static void RebaseFrameOpResourcesToActiveResourcePlan(
+        FrameOp[] ops,
+        RenderResourceRegistry? activeRegistry)
+    {
+        if (activeRegistry is null)
+            return;
+
+        for (int opIndex = 0; opIndex < ops.Length; opIndex++)
+        {
+            FrameOp op = RebaseFrameOpTargetsToActiveResourcePlan(ops[opIndex], activeRegistry);
+            ops[opIndex] = op;
+            XRRenderPipelineInstance? pipeline = op.Context.PipelineInstance;
+            if (pipeline is null)
+                continue;
+
+            ComputeDispatchSnapshot? snapshot = op switch
+            {
+                MeshDrawOp meshDraw => meshDraw.Draw.ProgramBindingSnapshot,
+                ComputeDispatchOp compute => compute.Snapshot,
+                _ => null,
+            };
+            if (snapshot is null)
+                continue;
+
+            // Frame ops are emitted before the Vulkan resource planner publishes the
+            // output-specific physical plan. A captured post-process binding can
+            // therefore still reference the previous viewport's texture (desktop,
+            // preview, or another eye). Rebase only named pipeline resources; material
+            // textures remain immutable draw inputs.
+            foreach (KeyValuePair<string, XRTexture> pair in snapshot.SamplersByName)
+            {
+                if (TryResolveActiveFrameSourceTexture(
+                    pair.Key,
+                    pair.Value,
+                    activeRegistry,
+                    pipeline,
+                    out XRTexture currentTexture))
+                {
+                    snapshot.SamplersByName[pair.Key] = currentTexture;
+                }
+            }
+
+            foreach (KeyValuePair<uint, string> pair in snapshot.SamplerNamesByUnit)
+            {
+                if (snapshot.Samplers.TryGetValue(pair.Key, out XRTexture? capturedTexture) &&
+                    TryResolveActiveFrameSourceTexture(
+                        pair.Value,
+                        capturedTexture,
+                        activeRegistry,
+                        pipeline,
+                        out XRTexture currentTexture))
+                {
+                    snapshot.Samplers[pair.Key] = currentTexture;
+                }
+            }
+        }
+    }
+
+    private static FrameOp RebaseFrameOpTargetsToActiveResourcePlan(
+        FrameOp op,
+        RenderResourceRegistry activeRegistry)
+    {
+        XRFrameBuffer? target = ResolveActiveFrameBuffer(op.Target, activeRegistry);
+        return op switch
+        {
+            ClearOp clear => clear with { Target = target },
+            MeshDrawOp meshDraw => meshDraw with { Target = target },
+            QueryOp query => query with { Target = target },
+            IndirectDrawOp indirect => indirect with { Target = target },
+            TransformFeedbackOp transformFeedback => transformFeedback with { Target = target },
+            BlitOp blit => RebaseBlitTargets(blit, activeRegistry),
+            PublishFramebufferForSamplingOp publish => RebasePublishedFramebuffer(publish, activeRegistry),
+            _ => op,
+        };
+    }
+
+    private static BlitOp RebaseBlitTargets(BlitOp blit, RenderResourceRegistry activeRegistry)
+    {
+        XRFrameBuffer? inFbo = ResolveActiveFrameBuffer(blit.InFbo, activeRegistry);
+        XRFrameBuffer? outFbo = ResolveActiveFrameBuffer(blit.OutFbo, activeRegistry);
+        return blit with
+        {
+            InFbo = inFbo,
+            OutFbo = outFbo,
+            Target = outFbo,
+        };
+    }
+
+    private static PublishFramebufferForSamplingOp RebasePublishedFramebuffer(
+        PublishFramebufferForSamplingOp publish,
+        RenderResourceRegistry activeRegistry)
+    {
+        XRFrameBuffer frameBuffer = ResolveActiveFrameBuffer(publish.FrameBuffer, activeRegistry) ?? publish.FrameBuffer;
+        return publish with
+        {
+            FrameBuffer = frameBuffer,
+            Target = frameBuffer,
+        };
+    }
+
+    private static XRFrameBuffer? ResolveActiveFrameBuffer(
+        XRFrameBuffer? captured,
+        RenderResourceRegistry activeRegistry)
+    {
+        if (captured is null || string.IsNullOrWhiteSpace(captured.Name))
+            return captured;
+
+        return activeRegistry.TryGetFrameBuffer(captured.Name, out XRFrameBuffer? active)
+            ? active
+            : captured;
+    }
+
+    private static bool TryResolveActiveFrameSourceTexture(
+        string bindingName,
+        XRTexture capturedTexture,
+        RenderResourceRegistry? activeRegistry,
+        XRRenderPipelineInstance pipeline,
+        out XRTexture currentTexture)
+    {
+        // Generic post-process bindings such as SourceTexture identify the logical
+        // pipeline resource through the captured texture's name. Named bindings use
+        // their binding name directly.
+        string? resourceName = IsFrameSourceSamplerName(bindingName)
+            ? capturedTexture.Name
+            : bindingName;
+        if (!string.IsNullOrWhiteSpace(resourceName) &&
+            activeRegistry?.TryGetTexture(resourceName, out XRTexture? registryTexture) == true &&
+            registryTexture is not null)
+        {
+            currentTexture = registryTexture;
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(resourceName) &&
+            pipeline.TryGetTexture(resourceName, out XRTexture? pipelineTexture) &&
+            pipelineTexture is not null)
+        {
+            currentTexture = pipelineTexture;
+            return true;
+        }
+
+        currentTexture = null!;
+        return false;
     }
 
     private bool TryRefreshResourceRegistryWrappers(
@@ -4836,7 +4993,7 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
-    private void PrewarmOpenXrFrameOpResources(FrameOp[] ops)
+    private void PrewarmOpenXrFrameOpResources(FrameOp[] ops, uint frameDataImageIndex)
     {
         if (ops.Length == 0)
             return;
@@ -4850,6 +5007,9 @@ public unsafe partial class VulkanRenderer
         // buffer. Use the same count-then-reserve contract as normal Vulkan recording.
         EnsureMeshDrawUniformSlotCapacityForRecording(ops, meshDrawSlotsByRenderer);
         int rendererCount = meshDrawSlotsByRenderer.Count;
+        int descriptorFrameIndex = frameDataImageIndex > int.MaxValue
+            ? int.MaxValue
+            : (int)frameDataImageIndex;
         meshDrawSlotsByRenderer.Clear();
 
         static int GetMeshDrawUniformSlot(Dictionary<VkMeshRenderer, int> slots, VkMeshRenderer renderer)
@@ -4864,20 +5024,26 @@ public unsafe partial class VulkanRenderer
             switch (ops[i])
             {
                 case MeshDrawOp drawOp:
-                    PrewarmDraw(drawOp.Draw.Renderer, drawOp.Draw);
+                    PrewarmDraw(drawOp.Draw.Renderer, drawOp.Draw, drawOp.Context);
                     break;
                 case IndirectDrawOp indirectDrawOp:
-                    PrewarmDraw(indirectDrawOp.MeshRenderer, indirectDrawOp.Draw);
+                    PrewarmDraw(indirectDrawOp.MeshRenderer, indirectDrawOp.Draw, indirectDrawOp.Context);
                     break;
             }
         }
 
         _refreshMeshDrawSlotCapacityHint = Math.Max(1, rendererCount);
 
-        void PrewarmDraw(VkMeshRenderer renderer, in PendingMeshDraw draw)
+        void PrewarmDraw(VkMeshRenderer renderer, in PendingMeshDraw draw, in FrameOpContext context)
         {
             int drawUniformSlot = GetMeshDrawUniformSlot(meshDrawSlotsByRenderer, renderer);
-            if (renderer.TryPrewarmFrameDataForRecording(draw, drawUniformSlot, out string reason))
+            using IDisposable plannerScope =
+                EnterFrameOpResourcePlannerReadbackScope(context);
+            if (renderer.TryPrewarmFrameDataForRecording(
+                    draw,
+                    drawUniformSlot,
+                    descriptorFrameIndex,
+                    out string reason))
                 return;
 
             Debug.VulkanWarningEvery(

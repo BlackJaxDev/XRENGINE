@@ -24,8 +24,6 @@ public unsafe partial class VulkanRenderer
 {
 	public partial class VkMeshRenderer
 	{
-		#region Buffer Management
-
 		/// <summary>
 		/// Gathers all named GPU data buffers from both the Mesh and the MeshRenderer,
 		/// converting them to Vulkan-side VkDataBuffer wrappers. MeshRenderer buffers
@@ -64,16 +62,6 @@ public unsafe partial class VulkanRenderer
 				}
 			}
 		}
-
-		private readonly record struct BufferStructuralIdentity(
-			ulong Handle,
-			ulong AllocationGeneration,
-			ulong Range,
-			uint Binding,
-			EBufferTarget Target,
-			EComponentType ComponentType,
-			uint ComponentCount,
-			uint ElementCount);
 
 		private BufferStructuralIdentity CaptureBufferStructuralIdentity(VkDataBuffer? buffer)
 		{
@@ -499,10 +487,6 @@ public unsafe partial class VulkanRenderer
 		private static bool HasIndexData(VkDataBuffer? buffer)
 			=> buffer is not null && buffer.Data.ElementCount > 0;
 
-		#endregion // Buffer Management
-
-		#region Material Resolution
-
 		/// <summary>
 		/// Resolves the effective material for a draw call by checking overrides
 		/// in priority order: global override > pipeline override > local override >
@@ -514,7 +498,5 @@ public unsafe partial class VulkanRenderer
 				localOverride,
 				instances,
 				RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.InvalidMaterial).Material;
-
-		#endregion // Material Resolution
 	}
 }

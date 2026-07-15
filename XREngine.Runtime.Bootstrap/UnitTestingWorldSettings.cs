@@ -52,7 +52,8 @@ public enum UnitTestWorldKind
     MathIntersections,
     MeshEditing,
     UberShader,
-    PhysxTesting,
+    PhysicsTesting,
+    PhysxTesting = PhysicsTesting,
     NetworkingPose,
 }
 

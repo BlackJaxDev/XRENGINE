@@ -42,7 +42,7 @@ public static class BootstrapEditorHookRegistration
                 UnitTestWorldKind.MathIntersections => EditorUnitTests.CreateMathIntersectionsWorld(setUI, isServer),
                 UnitTestWorldKind.MeshEditing => EditorUnitTests.CreateMeshEditingWorld(setUI, isServer),
                 UnitTestWorldKind.UberShader => EditorUnitTests.CreateUberShaderWorld(setUI, isServer),
-                UnitTestWorldKind.PhysxTesting => EditorUnitTests.CreatePhysxTestingWorld(setUI, isServer),
+                UnitTestWorldKind.PhysicsTesting => EditorUnitTests.CreatePhysicsTestingWorld(setUI, isServer),
                 _ => null,
             };
 

@@ -546,6 +546,13 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "frame_output_whole_frame_worst_ms", frameOutputs.WholeFrameWorstMs, ref first);
             AppendNumberField(s_lineBuilder, "frame_output_workload_identity_hash", frameOutputs.WorkloadIdentityHash, ref first);
             AppendNumberField(s_lineBuilder, "frame_output_request_count", frameOutputs.Work.OutputRequestCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_event_count", frameOutputs.Work.OutputEventCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_collect_event_count", frameOutputs.Work.CollectEventCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_swap_event_count", frameOutputs.Work.SwapEventCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_render_event_count", frameOutputs.Work.RenderEventCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_submit_event_count", frameOutputs.Work.SubmitEventCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_overlay_event_count", frameOutputs.Work.OverlayEventCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_present_event_count", frameOutputs.Work.PresentEventCount, ref first);
             AppendNumberField(s_lineBuilder, "frame_output_unique_view_family_count", frameOutputs.Work.UniqueViewFamilyCount, ref first);
             AppendNumberField(s_lineBuilder, "frame_output_target_variant_count", frameOutputs.Work.TargetVariantCount, ref first);
             AppendNumberField(s_lineBuilder, "frame_output_scene_snapshot_count", frameOutputs.Work.SceneSnapshotCount, ref first);
@@ -800,6 +807,30 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_descriptor_pool_create_count", Engine.Rendering.Stats.Vulkan.VulkanDescriptorPoolCreateCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_lifetime_live_resource_count", Engine.Rendering.Stats.Vulkan.VulkanLifetimeLiveResourceCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_tracked_descriptor_set_count", Engine.Rendering.Stats.Vulkan.VulkanTrackedDescriptorSetCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_lifetime_pending_retirement_count", Engine.Rendering.Stats.Vulkan.VulkanLifetimePendingRetirementCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_lifetime_oldest_pending_retirement_age_ms", Engine.Rendering.Stats.Vulkan.VulkanLifetimeOldestPendingRetirementAgeMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_frame_data_arena_chunks", Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataArenaChunkCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_frame_data_mapped_bytes", Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataMappedBytes, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_frame_data_reserved_bytes", Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataReservedBytes, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_frame_data_reservations", Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataReservationCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_frame_data_generation", Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataGeneration, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_frame_data_recording_leases", Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataRecordingLeases, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_frame_data_cached_leases", Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataCachedLeases, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_frame_data_submitted_leases", Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataSubmittedLeases, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_frame_data_active_generations", Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataActiveGenerationCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_frame_data_lease_retained_generations", Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataLeaseRetainedGenerationCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_descriptor_allocation_variants", Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorAllocationVariants, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_descriptor_pools", Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorPools, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_descriptor_allocated_sets", Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorAllocatedSets, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_descriptor_reserved_sets", Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorReservedSets, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_frame_data_arena_chunk_high_water", Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataArenaChunkHighWater, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_frame_data_mapped_bytes_high_water", Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataMappedBytesHighWater, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_frame_data_reserved_bytes_high_water", Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataReservedBytesHighWater, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_frame_data_reservation_high_water", Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataReservationHighWater, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_frame_data_lease_high_water", Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataLeaseHighWater, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_descriptor_allocation_variant_high_water", Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorAllocationVariantHighWater, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_descriptor_pool_high_water", Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorPoolHighWater, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_mesh_descriptor_set_high_water", Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorSetHighWater, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_layout_lock_contentions", Engine.Rendering.Stats.Vulkan.VulkanLayoutLockContentions, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_record_command_buffer_allocated_bytes", Engine.Rendering.Stats.Vulkan.VulkanRecordCommandBufferAllocatedBytes, ref first);
             AppendStringField(s_lineBuilder, "vulkan_command_buffer_dirty_summary", Engine.Rendering.Stats.Vulkan.VulkanCommandBufferDirtySummary, ref first);
@@ -1072,6 +1103,13 @@ public static partial class Engine
                 whole_frame_worst_ms = snapshot.WholeFrameWorstMs,
                 workload_identity_hash = snapshot.WorkloadIdentityHash,
                 output_request_count = snapshot.Work.OutputRequestCount,
+                output_event_count = snapshot.Work.OutputEventCount,
+                collect_event_count = snapshot.Work.CollectEventCount,
+                swap_event_count = snapshot.Work.SwapEventCount,
+                render_event_count = snapshot.Work.RenderEventCount,
+                submit_event_count = snapshot.Work.SubmitEventCount,
+                overlay_event_count = snapshot.Work.OverlayEventCount,
+                present_event_count = snapshot.Work.PresentEventCount,
                 unique_view_family_count = snapshot.Work.UniqueViewFamilyCount,
                 target_variant_count = snapshot.Work.TargetVariantCount,
                 scene_snapshot_count = snapshot.Work.SceneSnapshotCount,

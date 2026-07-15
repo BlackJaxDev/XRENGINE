@@ -213,4 +213,43 @@ public sealed class CpuOcclusionValidationEvidenceTests
         snapshots[0].Decision.ShouldBe(ECpuOcclusionDecision.Skip);
         snapshots[0].Culled.ShouldBeTrue();
     }
+
+    [Test]
+    public void EvidenceRing_RenderedOccurrenceWinsOverRepeatedCulledOccurrence()
+    {
+        const ulong frameId = 92UL;
+        var key = new OcclusionViewKey(
+            renderPass: 3,
+            scope: EOcclusionViewScope.VrSinglePassStereo,
+            pipelineInstanceId: 405,
+            povId: -405,
+            coverageMask: 0x3u,
+            requiredCoverageMask: 0x3u,
+            declaredViewCount: 2,
+            outputId: 0xD005UL);
+
+        CpuOcclusionValidationEvidence.RecordCandidateForTests(
+            frameId, key, 22u, ECpuOcclusionValidationRole.HiddenTarget,
+            EOcclusionCullingMode.CpuQueryAsync);
+        CpuOcclusionValidationEvidence.RecordOutcomeForTests(
+            frameId, key, 22u, ECpuOcclusionValidationRole.HiddenTarget,
+            EOcclusionCullingMode.CpuQueryAsync, rendered: false, culled: true,
+            proofCoverageMask: 0x3u, decision: ECpuOcclusionDecision.Skip);
+        CpuOcclusionValidationEvidence.RecordOutcomeForTests(
+            frameId, key, 22u, ECpuOcclusionValidationRole.HiddenTarget,
+            EOcclusionCullingMode.CpuQueryAsync, rendered: true, culled: false,
+            proofCoverageMask: 0u, decision: ECpuOcclusionDecision.Visible);
+        CpuOcclusionValidationEvidence.RecordOutcomeForTests(
+            frameId, key, 22u, ECpuOcclusionValidationRole.HiddenTarget,
+            EOcclusionCullingMode.CpuQueryAsync, rendered: false, culled: true,
+            proofCoverageMask: 0x3u, decision: ECpuOcclusionDecision.ProbeOnly);
+
+        Span<CpuOcclusionValidationEvidenceSnapshot> snapshots =
+            stackalloc CpuOcclusionValidationEvidenceSnapshot[1];
+        CpuOcclusionValidationEvidence.CopyFrame(frameId, snapshots).ShouldBe(1);
+        snapshots[0].Rendered.ShouldBeTrue();
+        snapshots[0].Culled.ShouldBeFalse();
+        snapshots[0].OcclusionProofCoverageMask.ShouldBe(0u);
+        snapshots[0].Decision.ShouldBe(ECpuOcclusionDecision.Visible);
+    }
 }

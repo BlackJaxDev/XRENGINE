@@ -174,7 +174,7 @@ if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) {
 }
 
 $captureMotionSampleCount = 3
-$captureMotionIntervalFrames = 15
+$captureMotionIntervalFrames = 3
 $temporalScenarioSequenceCompleteFrame = 72
 $boundaryKeyProbe = @{}
 $probeStage = "PublishStaging"

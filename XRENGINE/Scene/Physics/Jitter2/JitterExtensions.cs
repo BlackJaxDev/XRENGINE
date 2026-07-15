@@ -1,7 +1,7 @@
 ﻿using Jitter2.LinearMath;
 using System.Numerics;
 
-namespace XREngine.Rendering.Physics.Physx
+namespace XREngine.Rendering.Physics.Jitter
 {
     public static class JitterExtensions
     {

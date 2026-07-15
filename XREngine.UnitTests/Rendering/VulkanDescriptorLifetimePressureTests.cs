@@ -55,22 +55,78 @@ public sealed class VulkanDescriptorLifetimePressureTests
     }
 
     [Test]
-    public void MeshDescriptorsUseStructuralPoolsBoundedVariantsAndLazySlots()
+    public void MeshDescriptorsUseStructuralSharedSlabsAndFrameOnlySlots()
     {
         string key = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.DescriptorAllocationKey.cs");
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Structs/VkMeshRenderer.DescriptorAllocationKey.cs");
         string descriptors = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
+        string slabs = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.MeshDescriptorPoolSlabs.cs");
+        string sharedAllocations = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.MeshDescriptorAllocations.cs");
 
         key.ShouldContain("ulong LayoutFingerprint");
+        key.ShouldNotContain("ProgramIdentity");
+        key.ShouldContain("int ViewFamilyIdentity");
         key.ShouldNotContain("ProgramBindingId");
-        key.ShouldNotContain("ResourceFingerprint");
+        key.ShouldContain("ResourceVariantFingerprint");
         descriptors.ShouldContain("ComputeDescriptorLayoutFingerprint");
-        descriptors.ShouldContain("MaxDescriptorAllocationVariants = 32");
-        descriptors.ShouldContain("TrimDescriptorAllocationVariantsForInsert");
+        descriptors.ShouldContain("ResolveMeshDescriptorViewFamilyIdentity");
+        descriptors.ShouldContain("allocation.ViewFamilyIdentity != viewFamilyIdentity");
+        descriptors.ShouldContain("candidate.ViewFamilyIdentity != viewFamilyIdentity");
+        descriptors.ShouldContain("candidate.ResourceFingerprint != resourceFingerprint");
+        descriptors.ShouldContain("DescriptorSlotResourceFingerprintMatches(allocation, descriptorSlotIndex, resourceFingerprint)");
+        descriptors.ShouldNotContain("_descriptorDirty && DescriptorSlotResourceFingerprintMatches");
+        descriptors.ShouldContain("AddTextureDescriptorResourceFingerprint(ref hash, texture);");
+        descriptors.ShouldContain("ViewFamilyIdentity = viewFamilyIdentity");
+        descriptors.ShouldNotContain("ProgramIdentity = programIdentity");
+        descriptors.ShouldNotContain("ReferenceEquals(allocation.Program, _program)");
+        descriptors.ShouldNotContain("MaxDescriptorAllocationVariants");
+        descriptors.ShouldContain("int descriptorFrameSlotCount = frameCount;");
+        descriptors.ShouldNotContain("frameCount * Math.Max(drawUniformSlot");
         descriptors.ShouldContain("Array.Fill(descriptorSets, Array.Empty<DescriptorSet>())");
         descriptors.ShouldContain("MeshRendererDescriptorSets.AllocatedLazySlot");
         descriptors.ShouldContain("DescriptorSlotResourceFingerprintMatches");
+        descriptors.ShouldContain("TryAcquireMeshDescriptorPoolSlab");
+        descriptors.ShouldContain("UsesSharedMaterialTier");
+        descriptors.ShouldContain("Renderer.TryAcquireSharedMeshDescriptorAllocation");
+        descriptors.ShouldContain("usesSharedMaterialTier: true");
+        sharedAllocations.ShouldContain("_sharedMeshDescriptorAllocations");
+        sharedAllocations.ShouldContain("candidate.SharedReferenceCount++");
+        sharedAllocations.ShouldContain("allocation.SharedReferenceCount--");
+        slabs.ShouldContain("MeshDescriptorPoolSlabAllocationCapacity = 64");
+        slabs.ShouldContain("DescriptorPoolCreateFlags.FreeDescriptorSetBit");
+        slabs.ShouldContain("RetireDescriptorSet(pool, sets[setIndex])");
+        slabs.ShouldContain("RetireDescriptorPool(pool)");
+        slabs.ShouldContain("Exclude the rotating external target/image identity");
+        slabs.ShouldContain("MeshOwnershipDiagnosticLimit = 64");
+        slabs.ShouldContain("program='{2}' layout=0x{3:X16} material='{4}'");
+        slabs.ShouldContain("output={5} outputTarget='{6}' pipeline={7} viewport={8} frameSlots={9}");
+        slabs.ShouldContain("planGeneration={12} descriptorGeneration={13}");
+
+    }
+
+    [Test]
+    public void ExactRetirementInvalidationResetsCompletedRecordingsBeforeResourceDrain()
+    {
+        string allocation = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs");
+        string trackingBatch = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
+        string frameLoop = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
+
+        allocation.ShouldContain("_invalidatedCommandBuffersPendingReset.TryAdd");
+        allocation.ShouldContain("private void DrainInvalidatedCommandBufferRecordings(int maxItems = 64)");
+        allocation.ShouldContain("batch.IsRecording || batch.QueuedSubmissionCount != 0");
+        allocation.ShouldContain("Api.ResetCommandBuffer(commandBuffer, 0)");
+        allocation.ShouldContain("ReleaseVulkanCommandBufferDependencies_NoLock(handle, lifetime)");
+        allocation.ShouldContain("_invalidatedCommandBuffersPendingReset.TryRemove(handle, out _)");
+        trackingBatch.ShouldContain("public bool IsRecording;");
+        frameLoop.ShouldContain("DrainInvalidatedCommandBufferRecordings();");
+        frameLoop.IndexOf("DrainInvalidatedCommandBufferRecordings();", StringComparison.Ordinal)
+            .ShouldBeLessThan(frameLoop.IndexOf("DrainRetiredDescriptorPools();", StringComparison.Ordinal));
     }
 
     [Test]
