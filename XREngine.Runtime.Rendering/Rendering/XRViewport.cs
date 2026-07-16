@@ -1593,6 +1593,13 @@ namespace XREngine.Rendering
             long elapsedTicks,
             double gpuMs = 0.0)
         {
+            // Shadow/capture viewports are auxiliary render work, not independently
+            // paced presentation outputs. Publishing them as DesktopScene entries
+            // contaminates the retained output ledger with atlas dimensions and a
+            // target that can never be presented.
+            if (_renderPipeline.IsShadowPipeline)
+                return;
+
             double cpuMs = elapsedTicks <= 0L
                 ? 0.0
                 : elapsedTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;

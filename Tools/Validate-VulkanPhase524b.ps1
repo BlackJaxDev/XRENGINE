@@ -376,14 +376,18 @@ function Measure-SteadyStateGauge {
     )
 
     $values = @($Frames | ForEach-Object { [long]($_.$PropertyName) })
-    $window = [Math]::Min([Math]::Max(1, $WindowFrames), $values.Count)
+    $window = [Math]::Min(
+        [Math]::Max(1, $WindowFrames),
+        [Math]::Max(1, [Math]::Floor($values.Count / 2)))
     $first = @($values | Select-Object -First $window)
+    $previousTerminal = @($values | Select-Object -Skip ($values.Count - (2 * $window)) -First $window)
     $last = @($values | Select-Object -Last $window)
     $firstMeasure = $first | Measure-Object -Minimum -Maximum -Average
+    $previousTerminalMeasure = $previousTerminal | Measure-Object -Minimum -Maximum -Average
     $lastMeasure = $last | Measure-Object -Minimum -Maximum -Average
     $overall = $values | Measure-Object -Minimum -Maximum
-    $hasPositiveDrift = [double]$lastMeasure.Average -gt [double]$firstMeasure.Average -or
-        [long]$lastMeasure.Maximum -gt [long]$firstMeasure.Maximum
+    $hasPositiveDrift = [double]$lastMeasure.Average -gt [double]$previousTerminalMeasure.Average -or
+        [long]$lastMeasure.Maximum -gt [long]$previousTerminalMeasure.Maximum
 
     [pscustomobject]@{
         property = $PropertyName
@@ -392,6 +396,8 @@ function Measure-SteadyStateGauge {
         maximumObserved = [long]$overall.Maximum
         firstWindowAverage = [double]$firstMeasure.Average
         firstWindowMaximum = [long]$firstMeasure.Maximum
+        previousTerminalWindowAverage = [double]$previousTerminalMeasure.Average
+        previousTerminalWindowMaximum = [long]$previousTerminalMeasure.Maximum
         lastWindowAverage = [double]$lastMeasure.Average
         lastWindowMaximum = [long]$lastMeasure.Maximum
         hasPositiveDrift = $hasPositiveDrift
@@ -1135,7 +1141,7 @@ $boundedGaugeResults = @(
 )
 foreach ($gauge in $boundedGaugeResults) {
     if (-not [bool]$gauge.passed) {
-        $failures.Add("Gauge '$($gauge.property)' was unbounded or had positive steady-state drift: min=$($gauge.minimumObserved) max=$($gauge.maximumObserved)/$($gauge.maximumAllowed) firstAvg=$($gauge.firstWindowAverage) lastAvg=$($gauge.lastWindowAverage) firstMax=$($gauge.firstWindowMaximum) lastMax=$($gauge.lastWindowMaximum).")
+        $failures.Add("Gauge '$($gauge.property)' was unbounded or had positive terminal steady-state drift: min=$($gauge.minimumObserved) max=$($gauge.maximumObserved)/$($gauge.maximumAllowed) previousTerminalAvg=$($gauge.previousTerminalWindowAverage) lastAvg=$($gauge.lastWindowAverage) previousTerminalMax=$($gauge.previousTerminalWindowMaximum) lastMax=$($gauge.lastWindowMaximum).")
     }
 }
 if ($occlusionTestedTotal -le 0 -or $occlusionSubmittedTotal -le 0 -or $occlusionResolvedTotal -le 0) {

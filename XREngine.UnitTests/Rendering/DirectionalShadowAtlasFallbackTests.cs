@@ -2,6 +2,12 @@ using NUnit.Framework;
 using Shouldly;
 using System;
 using System.IO;
+using System.Numerics;
+using XREngine.Components.Lights;
+using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
+using XREngine.Rendering.Commands;
+using XREngine.Rendering.Shadows;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -71,6 +77,139 @@ public sealed class DirectionalShadowAtlasFallbackTests
 
         primarySubmit.ShouldContain("fallback: ShadowFallbackMode.StaleTile");
         primarySubmit.ShouldNotContain("fallback: ShadowFallbackMode.Legacy");
+    }
+
+    [Test]
+    public void DirectionalPrimaryAtlas_RemainsSharedBecauseItsCameraIsLightOwned()
+    {
+        string source = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.Shadows.cs")
+            .Replace("\r\n", "\n");
+        string submitBody = ExtractRegion(
+            source,
+            "private void SubmitDirectionalShadowAtlasRequests()",
+            "private void SubmitDirectionalCascadeShadowAtlasRequests");
+        string primarySubmit = ExtractRegion(
+            submitBody,
+            "if (submitPrimary && light.ShadowCamera is XRCamera primaryCamera)",
+            "            }\n        }");
+
+        primarySubmit.ShouldContain("EShadowProjectionType.DirectionalPrimary");
+        primarySubmit.ShouldNotContain("source:");
+    }
+
+    [Test]
+    public void DirectionalPrimaryAtlas_UnwrittenPublicationPreservesMatchingResidentGeneration()
+    {
+        ShadowAtlasAllocation allocation = CreatePrimaryAllocation();
+        DirectionalLightComponent.DirectionalCascadeAtlasSlot previous = CreatePrimarySlot(allocation) with
+        {
+            Fallback = ShadowFallbackMode.None,
+        };
+        allocation = allocation with { ActiveFallback = ShadowFallbackMode.StaleTile };
+
+        bool preserved = DirectionalLightComponent.TryRefreshPreservedPrimaryAtlasSlot(
+            previous,
+            allocation,
+            out DirectionalLightComponent.DirectionalCascadeAtlasSlot refreshed);
+
+        preserved.ShouldBeTrue();
+        refreshed.ShouldBe(previous with { Fallback = ShadowFallbackMode.StaleTile });
+    }
+
+    [Test]
+    public void DirectionalPrimaryAtlas_UnwrittenPublicationRejectsReallocatedOrNewContent()
+    {
+        ShadowAtlasAllocation allocation = CreatePrimaryAllocation();
+        DirectionalLightComponent.DirectionalCascadeAtlasSlot previous = CreatePrimarySlot(allocation);
+
+        DirectionalLightComponent.TryRefreshPreservedPrimaryAtlasSlot(
+            previous,
+            allocation with { AtlasId = allocation.AtlasId + 1 },
+            out _).ShouldBeFalse();
+        DirectionalLightComponent.TryRefreshPreservedPrimaryAtlasSlot(
+            previous,
+            allocation with { ContentVersion = allocation.ContentVersion + 1 },
+            out _).ShouldBeFalse();
+        DirectionalLightComponent.TryRefreshPreservedPrimaryAtlasSlot(
+            previous,
+            allocation with { IsResident = false },
+            out _).ShouldBeFalse();
+    }
+
+    [Test]
+    public void DirectionalPrimaryAtlas_PublicationDistinguishesOmissionFromExplicitClear()
+    {
+        string directionalSource = ReadRepoFile("XREngine.Runtime.Rendering/Scene/Components/Lights/Types/DirectionalLightComponent.CascadeShadows.cs")
+            .Replace("\r\n", "\n");
+        string lightsSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.Shadows.cs")
+            .Replace("\r\n", "\n");
+
+        directionalSource.ShouldContain("_previousPrimaryAtlasSlot = _primaryAtlasSlot;");
+        directionalSource.ShouldContain("_pendingPrimaryAtlasSlotWritten = false;");
+        directionalSource.ShouldContain("if (_pendingPrimaryAtlasSlotWritten)");
+        directionalSource.ShouldContain("TryRefreshPreservedPrimaryAtlasSlot");
+        directionalSource.ShouldContain("shadowAtlas.TryGetPlanningAllocation(_previousPrimaryAtlasSlot.Key");
+        lightsSource.ShouldContain("CompleteDirectionalAtlasSlotPublish(publishDirectionalSlots, ShadowAtlas)");
+
+        string clearBody = ExtractRegion(
+            directionalSource,
+            "internal void ClearDirectionalAtlasSlots()",
+            "internal void ApplyDirectionalShadowAtlasMode");
+        clearBody.ShouldContain("_primaryAtlasSlot = default;");
+        clearBody.ShouldContain("_previousPrimaryAtlasSlot = default;");
+    }
+
+    [Test]
+    public void DirectionalShadowAtlas_ContentHashTracksPublishedCasterMembershipAndState()
+    {
+        string commandCollectionSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs")
+            .Replace("\r\n", "\n");
+        string directionalSource = ReadRepoFile("XREngine.Runtime.Rendering/Scene/Components/Lights/Types/DirectionalLightComponent.CascadeShadows.cs")
+            .Replace("\r\n", "\n");
+        string lightsSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.Shadows.cs")
+            .Replace("\r\n", "\n");
+
+        commandCollectionSource.ShouldContain("_renderingShadowCasterCommandSetSignature = ComputeShadowCasterCommandSetSignature();");
+        commandCollectionSource.ShouldContain("internal ulong ShadowCasterCommandSetSignature");
+        commandCollectionSource.ShouldContain("AddShadowCasterPassSignature(ref hash, EDefaultRenderPass.OpaqueDeferred);");
+        commandCollectionSource.ShouldContain("AddShadowCasterPassSignature(ref hash, EDefaultRenderPass.OpaqueForward);");
+        commandCollectionSource.ShouldContain("AddShadowCasterPassSignature(ref hash, EDefaultRenderPass.MaskedForward);");
+        commandCollectionSource.ShouldContain("ComputeShadowCasterPassContentSignature(commands)");
+        commandCollectionSource.ShouldContain("ComputeShadowCasterCommandStateSignature(command)");
+        commandCollectionSource.ShouldContain("AddShadowState(ref hash, meshCommand.WorldMatrix);");
+        commandCollectionSource.ShouldContain("if (command.CullingVolume is AABB bounds)");
+        directionalSource.ShouldContain("GetShadowCasterCommandSetSignature(");
+        directionalSource.ShouldContain("PrimaryShadowViewport.RenderPipelineInstance.MeshRenderCommands.ShadowCasterCommandSetSignature");
+        lightsSource.ShouldContain("directionalLight.GetShadowCasterCommandSetSignature(");
+    }
+
+    [Test]
+    public void DirectionalShadowAtlas_CasterMotionChangesContentSignature()
+    {
+        RenderCommandMesh3D command = new(EDefaultRenderPass.OpaqueDeferred)
+        {
+            WorldMatrix = Matrix4x4.Identity,
+        };
+        ulong initial = RenderCommandCollection.ComputeShadowCasterCommandStateSignature(command);
+
+        command.WorldMatrix = Matrix4x4.CreateTranslation(3.0f, -2.0f, 7.0f);
+        ulong moved = RenderCommandCollection.ComputeShadowCasterCommandStateSignature(command);
+
+        moved.ShouldNotBe(initial);
+    }
+
+    [Test]
+    public void ShadowViewport_IsExcludedFromPresentationOutputLedger()
+    {
+        string source = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/XRViewport.cs")
+            .Replace("\r\n", "\n");
+        string recordBody = ExtractRegion(
+            source,
+            "private void RecordFrameOutput(",
+            "private static ulong MixFrameOutputIdentity");
+
+        recordBody.ShouldContain("if (_renderPipeline.IsShadowPipeline)");
+        recordBody.ShouldContain("return;");
     }
 
     [Test]
@@ -229,6 +368,7 @@ public sealed class DirectionalShadowAtlasFallbackTests
         string drawingSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
         string renderStateSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.RenderState.cs");
         string resolverSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/MeshRenderMaterialResolver.cs");
+        string shadowStateSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/LayeredShadowUniformState.cs");
 
         meshRendererSource.ShouldContain("LayeredShadowUniformState ShadowUniformState");
         meshRendererSource.ShouldContain("LayeredShadowUniformState.CaptureFromCurrentRenderingState()");
@@ -237,7 +377,7 @@ public sealed class DirectionalShadowAtlasFallbackTests
         drawingSource.ShouldContain("MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material, draw.ShadowUniformState);");
         renderStateSource.ShouldContain("SetMaterialUniforms(material, program, LayeredShadowUniformState.CaptureFromCurrentRenderingState())");
         renderStateSource.ShouldContain("if (shadowState.IsShadowPass)");
-        resolverSource.ShouldContain("public struct LayeredShadowUniformState");
+        shadowStateSource.ShouldContain("public struct LayeredShadowUniformState");
         resolverSource.ShouldContain("ApplyShadowUniforms(XRRenderProgram program, XRMaterial material, in LayeredShadowUniformState shadowState)");
     }
 
@@ -273,6 +413,63 @@ public sealed class DirectionalShadowAtlasFallbackTests
 
         throw new FileNotFoundException("Could not locate repository root from test directory.");
     }
+
+    private static ShadowAtlasAllocation CreatePrimaryAllocation()
+    {
+        ShadowRequestKey key = new(
+            Guid.NewGuid(),
+            ShadowRequestDomain.Live,
+            ShadowRequestSource.Default,
+            EShadowProjectionType.DirectionalPrimary,
+            0,
+            EShadowMapEncoding.Depth);
+        BoundingRectangle pixelRect = new(32, 64, 512, 512);
+        BoundingRectangle innerPixelRect = new(34, 66, 508, 508);
+        return new ShadowAtlasAllocation(
+            key,
+            EShadowAtlasKind.Directional,
+            AtlasId: 7,
+            PageIndex: 1,
+            pixelRect,
+            innerPixelRect,
+            new Vector4(0.25f, 0.25f, 0.5f, 0.5f),
+            Resolution: 508u,
+            LodLevel: 0,
+            ContentVersion: 42u,
+            LastRenderedFrame: 100u,
+            IsResident: true,
+            IsStaticCacheBacked: false,
+            ActiveFallback: ShadowFallbackMode.None,
+            SkipReason.None);
+    }
+
+    private static DirectionalLightComponent.DirectionalCascadeAtlasSlot CreatePrimarySlot(
+        in ShadowAtlasAllocation allocation)
+        => new(
+            HasAllocation: true,
+            IsResident: allocation.IsResident,
+            Key: allocation.Key,
+            AtlasId: allocation.AtlasId,
+            PageIndex: allocation.PageIndex,
+            RecordIndex: 3,
+            UvScaleBias: allocation.UvScaleBias,
+            NearPlane: 0.1f,
+            FarPlane: 100.0f,
+            TexelSize: 1.0f / allocation.Resolution,
+            ResolutionScale: 1.0f,
+            Resolution: allocation.Resolution,
+            Fallback: allocation.ActiveFallback,
+            PixelRect: allocation.PixelRect,
+            InnerPixelRect: allocation.InnerPixelRect,
+            LastRenderedFrame: allocation.LastRenderedFrame,
+            ContentVersion: allocation.ContentVersion,
+            HasCascadeUniformData: false,
+            SplitFarDistance: 100.0f,
+            BlendWidth: 0.0f,
+            BiasMin: 0.0f,
+            BiasMax: 1.0f,
+            ReceiverOffset: 0.0f,
+            WorldToLightSpaceMatrix: Matrix4x4.Identity);
 
     private static string ExtractRegion(string source, string startMarker, string endMarker)
     {

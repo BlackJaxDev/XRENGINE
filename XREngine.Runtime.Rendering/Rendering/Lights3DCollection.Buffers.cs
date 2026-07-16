@@ -9,8 +9,6 @@ namespace XREngine.Scene
 {
     public partial class Lights3DCollection
     {
-        #region Buffer Management
-
         public void SwapBuffers()
         {
             using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.SwapBuffers");
@@ -74,7 +72,5 @@ namespace XREngine.Scene
             }
 
         }
-
-        #endregion
     }
 }

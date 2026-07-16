@@ -1333,6 +1333,8 @@ public sealed class OpenXrTimingPipelineContractTests
         frameLoop.ShouldContain("RecordVulkanPresentResult((int)result, presentAccepted)");
 
         validator.ShouldContain("Measure-SteadyStateGauge");
+        validator.ShouldContain("previousTerminalWindowAverage");
+        validator.ShouldContain("$values.Count - (2 * $window)");
         validator.ShouldContain("XRE_CAPTURE_DEFAULT_PIPELINE_FBO");
         validator.ShouldContain("phase524b-filtered-log-matches.log");
         validator.ShouldContain("[Math]::Floor([double]$ExpectedSpsWidth * $TsrResolutionScale)");

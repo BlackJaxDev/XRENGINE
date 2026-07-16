@@ -42,9 +42,3 @@ public interface IRuntimeRenderWorld : IRuntimeWorldContext
         Action<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> finishedCallback,
         ERaycastHitMode hitMode = ERaycastHitMode.Faces);
 }
-
-public interface IRuntimeAmbientSettings
-{
-    ColorF3 AmbientLightColor { get; set; }
-    float AmbientLightIntensity { get; set; }
-}

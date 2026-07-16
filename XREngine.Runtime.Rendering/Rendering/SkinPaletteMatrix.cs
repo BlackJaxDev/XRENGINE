@@ -8,20 +8,13 @@ namespace XREngine.Rendering;
 /// Each row is dotted with vec4(position, 1) in shaders.
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
-public readonly struct SkinPaletteMatrix : IEquatable<SkinPaletteMatrix>
+public readonly struct SkinPaletteMatrix(Vector4 row0, Vector4 row1, Vector4 row2) : IEquatable<SkinPaletteMatrix>
 {
-    public readonly Vector4 Row0;
-    public readonly Vector4 Row1;
-    public readonly Vector4 Row2;
+    public readonly Vector4 Row0 = row0;
+    public readonly Vector4 Row1 = row1;
+    public readonly Vector4 Row2 = row2;
 
     public static SkinPaletteMatrix Identity { get; } = FromRowVectorMatrix(Matrix4x4.Identity);
-
-    public SkinPaletteMatrix(Vector4 row0, Vector4 row1, Vector4 row2)
-    {
-        Row0 = row0;
-        Row1 = row1;
-        Row2 = row2;
-    }
 
     public static SkinPaletteMatrix FromRowVectorMatrix(in Matrix4x4 matrix)
         => new(

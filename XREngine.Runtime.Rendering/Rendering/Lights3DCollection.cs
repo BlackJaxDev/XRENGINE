@@ -298,24 +298,5 @@ namespace XREngine.Scene
             => Interlocked.Decrement(ref _captureWorkQueueDepth);
 
         #endregion
-
-        #region Capture Work Items
-
-        public enum ECaptureWorkType : byte
-        {
-            /// <summary>Render a single cubemap face (collect + swap + render).</summary>
-            CubemapFace,
-            /// <summary>Finalize a cubemap capture cycle (mip gen, octa encode, IBL).</summary>
-            CaptureFinalize,
-            /// <summary>Full non-progressive capture (all faces + finalize in one call).</summary>
-            FullCapture,
-        }
-
-        public readonly record struct CaptureWorkItem(
-            SceneCaptureComponentBase Component,
-            ECaptureWorkType WorkType,
-            int FaceIndex = -1);
-
-        #endregion
     }
 }

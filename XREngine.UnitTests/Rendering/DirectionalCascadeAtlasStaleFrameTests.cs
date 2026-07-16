@@ -96,7 +96,7 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
             .Replace("\r\n", "\n");
 
         directionalSource.ShouldContain("DirectionalCascadeAtlasSlot[] PendingAtlasSlots");
-        directionalSource.ShouldContain("CompleteDirectionalAtlasSlotPublish(bool publish)");
+        directionalSource.ShouldContain("CompleteDirectionalAtlasSlotPublish(bool publish, ShadowAtlasManager shadowAtlas)");
         directionalSource.ShouldContain("state.AtlasSlots = state.PendingAtlasSlots;");
         directionalSource.ShouldContain("GetAtlasSlotWriteTarget(state)");
         directionalSource.ShouldContain("CommitRenderedCascadeAtlasSlots(ReadOnlySpan<DirectionalCascadeAtlasRenderCommit> commits)");
@@ -109,7 +109,7 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
             "private static void AccumulateShadowAtlasDiagnostic(");
         publishDiagnostics.ShouldContain("bool publishDirectionalSlots = false;");
         publishDiagnostics.ShouldContain("finally");
-        publishDiagnostics.ShouldContain("CompleteDirectionalAtlasSlotPublish(publishDirectionalSlots)");
+        publishDiagnostics.ShouldContain("CompleteDirectionalAtlasSlotPublish(publishDirectionalSlots, ShadowAtlas)");
 
         atlasManager.ShouldContain("EnqueueDirectionalCascadePlanMemberCompletions(plan, entry, light);");
         atlasManager.ShouldContain("light.CommitRenderedCascadeAtlasSlots(commits[..commitCount]);");
@@ -180,6 +180,7 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
         string pipelineSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs")
             .Replace("\r\n", "\n");
         string forwardGpu = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.ForwardLighting.cs")
+            + ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.ForwardDirectionalLightGpu.cs")
             .Replace("\r\n", "\n");
 
         lightStructs.ShouldContain("mat4 RenderedCascadeMatrices[XRENGINE_MAX_CASCADES];");

@@ -4,32 +4,6 @@ using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering;
 
-public enum MaterialTextureBindingRung
-{
-    Missing,
-    ProgramSamplerName,
-    MaterialSamplerName,
-    IndexedTextureAlias,
-    NumericTextureSlot,
-    BindlessMaterialArray,
-}
-
-public readonly record struct MaterialTextureBindingResolution(
-    int TextureIndex,
-    string SamplerName,
-    XRTexture? Texture,
-    MaterialTextureBindingRung Rung,
-    string Reason)
-{
-    public bool HasTexture => Texture is not null;
-}
-
-public sealed class MaterialShadowBindingPlan(ShaderVar[] parameters, int[] textureIndices)
-{
-    public ShaderVar[] Parameters { get; } = parameters;
-    public int[] TextureIndices { get; } = textureIndices;
-}
-
 public static class MaterialTextureBindingResolver
 {
     public static MaterialTextureBindingResolution Resolve(
@@ -179,10 +153,8 @@ public static class MaterialTextureBindingResolver
     private static int IndexOf(XRMaterialBase material, XRTexture texture)
     {
         for (int textureIndex = 0; textureIndex < material.Textures.Count; textureIndex++)
-        {
             if (ReferenceEquals(material.Textures[textureIndex], texture))
                 return textureIndex;
-        }
 
         return -1;
     }

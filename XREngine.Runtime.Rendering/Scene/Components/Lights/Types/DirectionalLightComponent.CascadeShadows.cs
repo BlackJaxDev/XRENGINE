@@ -192,6 +192,8 @@ namespace XREngine.Components.Lights
         public readonly record struct DirectionalCascadeAtlasSlot(
             bool HasAllocation,
             bool IsResident,
+            ShadowRequestKey Key,
+            int AtlasId,
             int PageIndex,
             int RecordIndex,
             Vector4 UvScaleBias,
@@ -231,7 +233,9 @@ namespace XREngine.Components.Lights
         private readonly CascadeAabbView _cascadeAabbView;
         private readonly BoundingRectangle[] _groupedAtlasClearRects = new BoundingRectangle[MaxCascadeRenderCount];
         private DirectionalCascadeAtlasSlot _primaryAtlasSlot;
+        private DirectionalCascadeAtlasSlot _previousPrimaryAtlasSlot;
         private DirectionalCascadeAtlasSlot _pendingPrimaryAtlasSlot;
+        private bool _pendingPrimaryAtlasSlotWritten;
         private bool _directionalAtlasSlotPublishInProgress;
         private readonly Frustum[] _cascadeSourceFrusta = new Frustum[MaxCascadeSourceFrustumCount];
         private readonly XRCamera?[] _cascadeSourceCameras = new XRCamera?[MaxCascadeSourceFrustumCount];
@@ -1205,7 +1209,9 @@ namespace XREngine.Components.Lights
 
                 CopyAtlasSlotsForPublish(_desktopCascadeState);
                 CopyAtlasSlotsForPublish(_hmdCascadeState);
+                _previousPrimaryAtlasSlot = _primaryAtlasSlot;
                 _pendingPrimaryAtlasSlot = default;
+                _pendingPrimaryAtlasSlotWritten = false;
                 _directionalAtlasSlotPublishInProgress = true;
             }
         }
@@ -1216,7 +1222,7 @@ namespace XREngine.Components.Lights
             Array.Clear(state.PendingAtlasSlots);
         }
 
-        internal void CompleteDirectionalAtlasSlotPublish(bool publish)
+        internal void CompleteDirectionalAtlasSlotPublish(bool publish, ShadowAtlasManager shadowAtlas)
         {
             lock (_cascadeDataLock)
             {
@@ -1227,14 +1233,66 @@ namespace XREngine.Components.Lights
                 {
                     PublishPendingAtlasSlots(_desktopCascadeState);
                     PublishPendingAtlasSlots(_hmdCascadeState);
-                    _primaryAtlasSlot = _pendingPrimaryAtlasSlot;
+                    if (_pendingPrimaryAtlasSlotWritten)
+                    {
+                        _primaryAtlasSlot = _pendingPrimaryAtlasSlot;
+                    }
+                    else if (_previousPrimaryAtlasSlot.HasAllocation &&
+                        shadowAtlas.TryGetPlanningAllocation(_previousPrimaryAtlasSlot.Key, out ShadowAtlasAllocation allocation) &&
+                        TryRefreshPreservedPrimaryAtlasSlot(_previousPrimaryAtlasSlot, allocation, out DirectionalCascadeAtlasSlot preserved))
+                    {
+                        _primaryAtlasSlot = preserved;
+                    }
+                    else
+                    {
+                        _primaryAtlasSlot = default;
+                    }
                 }
 
                 Array.Clear(_desktopCascadeState.PendingAtlasSlots);
                 Array.Clear(_hmdCascadeState.PendingAtlasSlots);
+                _previousPrimaryAtlasSlot = default;
                 _pendingPrimaryAtlasSlot = default;
+                _pendingPrimaryAtlasSlotWritten = false;
                 _directionalAtlasSlotPublishInProgress = false;
             }
+        }
+
+        internal static bool TryRefreshPreservedPrimaryAtlasSlot(
+            in DirectionalCascadeAtlasSlot previous,
+            in ShadowAtlasAllocation allocation,
+            out DirectionalCascadeAtlasSlot preserved)
+        {
+            bool allocationMatchesPublishedTile =
+                previous.HasAllocation &&
+                previous.IsResident &&
+                previous.LastRenderedFrame != 0u &&
+                allocation.IsResident &&
+                allocation.LastRenderedFrame != 0u &&
+                allocation.Key == previous.Key &&
+                allocation.AtlasKind == EShadowAtlasKind.Directional &&
+                allocation.AtlasId == previous.AtlasId &&
+                allocation.PageIndex == previous.PageIndex &&
+                allocation.PixelRect.Equals(previous.PixelRect) &&
+                allocation.InnerPixelRect.Equals(previous.InnerPixelRect) &&
+                allocation.ContentVersion == previous.ContentVersion &&
+                allocation.LastRenderedFrame == previous.LastRenderedFrame &&
+                allocation.ActiveFallback is ShadowFallbackMode.None
+                    or ShadowFallbackMode.StaleTile
+                    or ShadowFallbackMode.ContactOnly;
+
+            if (!allocationMatchesPublishedTile)
+            {
+                preserved = default;
+                return false;
+            }
+
+            preserved = previous with
+            {
+                IsResident = allocation.IsResident,
+                Fallback = allocation.ActiveFallback,
+            };
+            return true;
         }
 
         private static void PublishPendingAtlasSlots(DirectionalCascadeSourceState state)
@@ -1477,7 +1535,9 @@ namespace XREngine.Components.Lights
             lock (_cascadeDataLock)
             {
                 _primaryAtlasSlot = default;
+                _previousPrimaryAtlasSlot = default;
                 _pendingPrimaryAtlasSlot = default;
+                _pendingPrimaryAtlasSlotWritten = false;
                 _directionalAtlasSlotPublishInProgress = false;
                 Array.Clear(_desktopCascadeState.AtlasSlots);
                 Array.Clear(_desktopCascadeState.PendingAtlasSlots);
@@ -1556,6 +1616,8 @@ namespace XREngine.Components.Lights
             return new DirectionalCascadeAtlasSlot(
                 HasAllocation: true,
                 IsResident: allocation.IsResident,
+                Key: allocation.Key,
+                AtlasId: allocation.AtlasId,
                 PageIndex: allocation.PageIndex,
                 RecordIndex: recordIndex,
                 UvScaleBias: allocation.UvScaleBias,
@@ -2047,7 +2109,10 @@ namespace XREngine.Components.Lights
                     receiverOffset: 0.0f,
                     worldToLightSpaceMatrix: Matrix4x4.Identity);
                 if (_directionalAtlasSlotPublishInProgress)
+                {
                     _pendingPrimaryAtlasSlot = slot;
+                    _pendingPrimaryAtlasSlotWritten = true;
+                }
                 else
                     _primaryAtlasSlot = slot;
             }
@@ -3302,6 +3367,29 @@ namespace XREngine.Components.Lights
 
             CollectCascadeSourceVisibleItems(ShadowRequestSource.Desktop);
             CollectCascadeSourceVisibleItems(ShadowRequestSource.Hmd);
+        }
+
+        internal ulong GetShadowCasterCommandSetSignature(
+            EShadowProjectionType projectionType,
+            ShadowRequestSource source,
+            int faceOrCascadeIndex)
+        {
+            if (projectionType == EShadowProjectionType.DirectionalPrimary)
+                return PrimaryShadowViewport.RenderPipelineInstance.MeshRenderCommands.ShadowCasterCommandSetSignature;
+
+            if (projectionType != EShadowProjectionType.DirectionalCascade)
+                return 0u;
+
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+            lock (_cascadeDataLock)
+            {
+                XRViewport[] viewports = GetCascadeSourceState(resolvedSource).Viewports;
+                return (uint)faceOrCascadeIndex < (uint)viewports.Length
+                    ? viewports[faceOrCascadeIndex].RenderPipelineInstance.MeshRenderCommands.ShadowCasterCommandSetSignature
+                    : 0u;
+            }
         }
 
         private void CollectCascadeSourceVisibleItems(ShadowRequestSource source)

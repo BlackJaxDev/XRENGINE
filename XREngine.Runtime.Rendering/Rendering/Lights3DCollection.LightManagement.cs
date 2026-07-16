@@ -10,8 +10,6 @@ namespace XREngine.Scene
 {
     public partial class Lights3DCollection
     {
-        #region Light Management
-
         public void Clear()
         {
             using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.Clear");
@@ -79,7 +77,5 @@ namespace XREngine.Scene
                         AddLightProbe(probe);
             }
         }
-
-        #endregion
     }
 }

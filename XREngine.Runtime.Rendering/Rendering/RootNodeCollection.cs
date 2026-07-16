@@ -16,109 +16,109 @@ namespace XREngine.Rendering
         public Action<SceneNode>? NodeCacheAction { get; set; }
         public Action<SceneNode>? NodeUncacheAction { get; set; }
 
-            private readonly List<SceneNode> _rootNodes = [];
+        private readonly List<SceneNode> _rootNodes = [];
 
-            public SceneNode this[int index] => _rootNodes[index];
+        public SceneNode this[int index] => _rootNodes[index];
 
-            public int Count => _rootNodes.Count;
+        public int Count => _rootNodes.Count;
 
-            public SceneNode NewRootNode(string name = "RootNode")
+        public SceneNode NewRootNode(string name = "RootNode")
+        {
+            var node = new SceneNode(name);
+            Add(node);
+            return node;
+        }
+
+        public void Remove(SceneNode node)
+        {
+            RemoveInternal(node, notifyLifecycle: true, clearWorld: true);
+        }
+
+        public void Add(SceneNode node)
+        {
+            if (node is null)
+                return;
+
+            node.Destroying -= RootNodeDestroying;
+            node.Destroying += RootNodeDestroying;
+            node.SetWorldContext(_world);
+
+            _rootNodes.Add(node);
+            CacheComponents(node);
+
+            if (_world.IsPlaySessionActive)
             {
-                var node = new SceneNode(name);
-                Add(node);
-                return node;
+                if (!node.HasBegunPlay)
+                    node.OnBeginPlay();
+                if (node.IsActiveSelf)
+                    node.OnActivated();
+            }
+        }
+
+        private bool RootNodeDestroying(XRObjectBase obj)
+        {
+            if (obj is SceneNode node)
+                _onRootNodeDestroying?.Invoke(node);
+
+            return true;
+        }
+
+        private bool RemoveInternal(SceneNode node, bool notifyLifecycle, bool clearWorld)
+        {
+            if (node is null)
+                return false;
+
+            if (!_rootNodes.Remove(node))
+                return false;
+
+            node.Destroying -= RootNodeDestroying;
+
+            if (notifyLifecycle && _world.IsPlaySessionActive)
+            {
+                if (node.IsActiveSelf)
+                    node.OnDeactivated();
+                if (node.HasBegunPlay)
+                    node.OnEndPlay();
             }
 
-            public void Remove(SceneNode node)
+            UncacheComponents(node);
+
+            if (clearWorld && node.Transform?.Parent is null && ReferenceEquals(node.World, _world))
+                node.SetWorldContext(null);
+
+            return true;
+        }
+
+        internal bool RemoveDuringNodeDestroy(SceneNode node)
+            => RemoveInternal(node, notifyLifecycle: false, clearWorld: false);
+
+        private void CacheComponents(SceneNode node)
+            => node.IterateHierarchy(c =>
             {
-                RemoveInternal(node, notifyLifecycle: true, clearWorld: true);
-            }
+                NodeCacheAction?.Invoke(c);
 
-            public void Add(SceneNode node)
-            {
-                if (node is null)
-                    return;
-
-                node.Destroying -= RootNodeDestroying;
-                node.Destroying += RootNodeDestroying;
-                node.SetWorldContext(_world);
-
-                _rootNodes.Add(node);
-                CacheComponents(node);
-
-                if (_world.IsPlaySessionActive)
+                lock (c.Components)
                 {
-                    if (!node.HasBegunPlay)
-                        node.OnBeginPlay();
-                    if (node.IsActiveSelf)
-                        node.OnActivated();
+                    foreach (var comp in c.Components)
+                        ComponentCacheAction?.Invoke(comp);
                 }
-            }
+            });
 
-            private bool RootNodeDestroying(XRObjectBase obj)
+        private void UncacheComponents(SceneNode node)
+            => node.IterateHierarchy(c =>
             {
-                if (obj is SceneNode node)
-                    _onRootNodeDestroying?.Invoke(node);
+                NodeUncacheAction?.Invoke(c);
 
-                return true;
-            }
-
-            private bool RemoveInternal(SceneNode node, bool notifyLifecycle, bool clearWorld)
-            {
-                if (node is null)
-                    return false;
-
-                if (!_rootNodes.Remove(node))
-                    return false;
-
-                node.Destroying -= RootNodeDestroying;
-
-                if (notifyLifecycle && _world.IsPlaySessionActive)
+                lock (c.Components)
                 {
-                    if (node.IsActiveSelf)
-                        node.OnDeactivated();
-                    if (node.HasBegunPlay)
-                        node.OnEndPlay();
+                    foreach (var comp in c.Components)
+                        ComponentUncacheAction?.Invoke(comp);
                 }
+            });
 
-                UncacheComponents(node);
-
-                if (clearWorld && node.Transform?.Parent is null && ReferenceEquals(node.World, _world))
-                    node.SetWorldContext(null);
-
-                return true;
-            }
-
-            internal bool RemoveDuringNodeDestroy(SceneNode node)
-                => RemoveInternal(node, notifyLifecycle: false, clearWorld: false);
-
-            private void CacheComponents(SceneNode node)
-                => node.IterateHierarchy(c =>
-                {
-                    NodeCacheAction?.Invoke(c);
-
-                    lock (c.Components)
-                    {
-                        foreach (var comp in c.Components)
-                            ComponentCacheAction?.Invoke(comp);
-                    }
-                });
-
-            private void UncacheComponents(SceneNode node)
-                => node.IterateHierarchy(c =>
-                {
-                    NodeUncacheAction?.Invoke(c);
-
-                    lock (c.Components)
-                    {
-                        foreach (var comp in c.Components)
-                            ComponentUncacheAction?.Invoke(comp);
-                    }
-                });
-
-            public IEnumerator<SceneNode> GetEnumerator()
-                => _rootNodes.GetEnumerator();
-            IEnumerator IEnumerable.GetEnumerator()
-                => ((IEnumerable)_rootNodes).GetEnumerator();
+        public IEnumerator<SceneNode> GetEnumerator()
+            => _rootNodes.GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator()
+            => ((IEnumerable)_rootNodes).GetEnumerator();
     }
 }

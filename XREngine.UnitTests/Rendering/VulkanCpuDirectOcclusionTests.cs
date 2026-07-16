@@ -30,10 +30,8 @@ public sealed class VulkanCpuDirectOcclusionTests
         coordinator.ShouldContain("vk.EnqueueOcclusionQueryEnd(query)");
         coordinator.ShouldContain("VulkanQueryResolveMinLatencyFrames");
         coordinator.ShouldContain("ShouldDelayPendingQueryPoll(queryState, frameId)");
-        coordinator.ShouldContain("NormalizeBackendQueryResult(");
-        coordinator.ShouldContain("ECpuOcclusionForceVisibleReason.UntrustedBackendNegativeResult");
-        coordinator.ShouldContain("CpuOcclusion.VulkanNegativeResultQuarantined");
-        coordinator.ShouldContain("AbstractRenderer.Current is not VulkanRenderer");
+        coordinator.ShouldNotContain("NormalizeBackendQueryResult(");
+        coordinator.ShouldNotContain("CpuOcclusion.VulkanNegativeResultQuarantined");
         coordinator.ShouldContain("ulong frameId = ++state.FrameEpoch;");
         coordinator.ShouldContain("EvictStaleOwnershipStates(globalFrameId)");
         coordinator.ShouldContain("ulong frameId = state.FrameEpoch;");

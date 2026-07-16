@@ -678,6 +678,7 @@ namespace XREngine.Scene
                 light,
                 projectionType,
                 faceOrCascadeIndex,
+                source,
                 encoding,
                 view,
                 projection,
@@ -1235,7 +1236,7 @@ namespace XREngine.Scene
             finally
             {
                 for (int i = 0; i < DynamicDirectionalLights.Count; i++)
-                    DynamicDirectionalLights[i].CompleteDirectionalAtlasSlotPublish(publishDirectionalSlots);
+                    DynamicDirectionalLights[i].CompleteDirectionalAtlasSlotPublish(publishDirectionalSlots, ShadowAtlas);
             }
         }
 
@@ -1572,6 +1573,7 @@ namespace XREngine.Scene
             LightComponent light,
             EShadowProjectionType projectionType,
             int faceOrCascadeIndex,
+            ShadowRequestSource source,
             EShadowMapEncoding encoding,
             in Matrix4x4 view,
             in Matrix4x4 projection,
@@ -1583,6 +1585,7 @@ namespace XREngine.Scene
             AddGuid(ref hash, light.ID);
             Add(ref hash, (uint)projectionType);
             Add(ref hash, (uint)faceOrCascadeIndex);
+            Add(ref hash, (uint)source);
             Add(ref hash, (uint)encoding);
             Add(ref hash, light.MovementVersion);
             Add(ref hash, light.ShadowMapResolutionWidth);
@@ -1590,6 +1593,15 @@ namespace XREngine.Scene
             Add(ref hash, (uint)light.SoftShadowMode);
             AddFloat(ref hash, light.ShadowMinBias);
             AddFloat(ref hash, light.ShadowMaxBias);
+            if (light is DirectionalLightComponent directionalLight)
+            {
+                Add(
+                    ref hash,
+                    directionalLight.GetShadowCasterCommandSetSignature(
+                        projectionType,
+                        source,
+                        faceOrCascadeIndex));
+            }
             if (projectionType is EShadowProjectionType.DirectionalCascade or EShadowProjectionType.DirectionalPrimary)
                 AddDirectionalCascadeMatrix(ref hash, view, projection, desiredResolution);
             else
@@ -1661,6 +1673,12 @@ namespace XREngine.Scene
             AddByte(ref hash, (byte)(value >> 8));
             AddByte(ref hash, (byte)(value >> 16));
             AddByte(ref hash, (byte)(value >> 24));
+        }
+
+        private static void Add(ref ulong hash, ulong value)
+        {
+            Add(ref hash, (uint)value);
+            Add(ref hash, (uint)(value >> 32));
         }
 
         private static void AddByte(ref ulong hash, byte value)
