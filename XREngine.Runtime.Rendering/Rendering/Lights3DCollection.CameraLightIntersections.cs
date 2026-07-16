@@ -15,8 +15,6 @@ namespace XREngine.Scene
 {
     public partial class Lights3DCollection
     {
-        #region Camera-Light Intersections
-
         /// <summary>
         /// Tests the active player camera frustum against each light's shadow frusta and records intersection AABBs for cascaded shadows.
         /// </summary>
@@ -352,7 +350,5 @@ namespace XREngine.Scene
                 RuntimeEngine.Rendering.Debug.RenderBox(cascade.HalfExtents, cascade.Center, rotation, false, color);
             }
         }
-
-        #endregion
     }
 }

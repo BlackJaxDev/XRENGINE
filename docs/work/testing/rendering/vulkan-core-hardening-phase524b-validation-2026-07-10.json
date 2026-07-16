@@ -1,0 +1,146 @@
+{
+  "phase": "5.2.4b-5.2.4c-closeout",
+  "status": "passed",
+  "date": "2026-07-16",
+  "sourceRevision": {
+    "commit": "e0938ecd61482aed80f6f5f5626d8c79dff1fbc0",
+    "branch": "rendering-vulkan-core-hardening",
+    "dirtyWorktree": true,
+    "porcelainEntryCount": 55
+  },
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 3090",
+    "vendorId": "0x10DE",
+    "deviceId": "0x2204",
+    "driverVersionRaw": "0x988F8000",
+    "vulkanApiVersion": "1.4.341"
+  },
+  "software": {
+    "vulkanSdk": "1.4.350.0",
+    "validationLayerApiVersion": "1.4.350",
+    "openXrRuntime": "Monado",
+    "openXrRuntimeManifest": "Build/Deps/Monado/openxr_monado.json",
+    "diagnosticPreset": "SyncValidation",
+    "validationLayers": [
+      "VK_LAYER_KHRONOS_validation"
+    ],
+    "validationFeatures": [
+      "SynchronizationValidation"
+    ]
+  },
+  "workload": {
+    "renderer": "Vulkan",
+    "renderTargetMode": "DynamicRendering",
+    "viewRenderMode": "SinglePassStereo",
+    "implementationPath": "TrueSinglePassStereo",
+    "mirrorMode": "FullIndependentRender",
+    "occlusionMode": "CpuQueryAsync",
+    "meshSubmissionStrategy": "CpuDirect",
+    "antiAliasing": "Tsr",
+    "foveation": "Off",
+    "eyeExtent": "896x1007",
+    "settingsPath": "Assets/UnitTestingWorldSettings.jsonc",
+    "settingsSha256": "9CE5947419E7CC32EE014B79549C125C872B4F8A5ABBE82F2D6C9AFA10FDD082"
+  },
+  "validation": {
+    "targetedTests": {
+      "passed": 87,
+      "failed": 0
+    },
+    "strictSpsFailureMatrix": {
+      "passed": true,
+      "stages": [
+        "Capability",
+        "Target",
+        "Recording",
+        "LifetimeValidation",
+        "Submit",
+        "Publish"
+      ]
+    },
+    "native": {
+      "passed": true,
+      "warmupFrames": 120,
+      "retainedFrames": 300,
+      "tsrResolutionScale": 1.0,
+      "observedFramesPerSecond": 2.3394493040087854,
+      "cpuFrameP95Milliseconds": 184.10898,
+      "gpuFrameP95Milliseconds": 28.720885,
+      "maximumOffEnabledParityRmse": 0.0018063165186516007,
+      "maximumAllowedParityRmse": 0.01
+    },
+    "subNative": {
+      "passed": true,
+      "warmupFrames": 120,
+      "retainedFrames": 300,
+      "tsrResolutionScale": 0.6700000166893005,
+      "observedFramesPerSecond": 2.4750450642795365,
+      "cpuFrameP95Milliseconds": 149.378985,
+      "gpuFrameP95Milliseconds": 31.61625,
+      "maximumOffEnabledParityRmse": 0.0019267951403085038,
+      "maximumAllowedParityRmse": 0.01
+    }
+  },
+  "occlusion": {
+    "native": {
+      "tested": 15900,
+      "culled": 5206,
+      "desktopSubmissions": 694,
+      "desktopResolutions": 694,
+      "desktopCulls": 5006,
+      "spsSubmissions": 650,
+      "spsResolutions": 650,
+      "spsCulls": 200,
+      "maximumResultAgeFrames": 2,
+      "namedEvidenceEntries": 30000,
+      "namedEvidenceOverflow": 0
+    },
+    "subNative": {
+      "tested": 15900,
+      "culled": 5206,
+      "desktopSubmissions": 537,
+      "desktopResolutions": 537,
+      "desktopCulls": 4546,
+      "spsSubmissions": 650,
+      "spsResolutions": 650,
+      "spsCulls": 200,
+      "maximumResultAgeFrames": 2,
+      "namedEvidenceEntries": 30000,
+      "namedEvidenceOverflow": 0
+    }
+  },
+  "boundedness": {
+    "allocationFrames": 0,
+    "descriptorChurnFrames": 0,
+    "resourcePlanReplacementFrames": 0,
+    "retirementFrames": 0,
+    "terminalSteadyStateWindowFrames": 30,
+    "lifetimeLiveResourceCount": {
+      "minimum": 3965,
+      "maximum": 3969,
+      "previousTerminalAverage": 3969,
+      "lastTerminalAverage": 3969,
+      "passed": true
+    },
+    "trackedDescriptorSetCount": {
+      "minimum": 1434,
+      "maximum": 1438,
+      "previousTerminalAverage": 1438,
+      "lastTerminalAverage": 1438,
+      "passed": true
+    },
+    "plannerStateCount": 3,
+    "commandVariantCount": 3,
+    "allRetainedFrameDataManifestsSealed": true
+  },
+  "artifacts": {
+    "nativeReport": "Build/_AgentValidation/p524b-final-w120/reports/vulkan-phase524b-validation.json",
+    "nativeOffSummary": "Build/_AgentValidation/p524b-off-w120/reports/openxr-smoke-summary.json",
+    "nativeFrameLedger": "Build/_AgentValidation/p524b-final-w120/reports/openxr-smoke-summary.json#frameLedger",
+    "nativeCaptureInventory": "Build/_AgentValidation/p524b-final-w120/reports/vulkan-phase524b-capture-inventory.json",
+    "nativeFilteredLogs": "Build/_AgentValidation/p524b-final-w120/logs/phase524b-filtered-log-matches.log",
+    "subNativeReport": "Build/_AgentValidation/p524b-final-w120/subnative-companion/reports/vulkan-phase524b-validation.json",
+    "subNativeOffSummary": "Build/_AgentValidation/p524b-final-w120/subnative-occlusion-off/reports/openxr-smoke-summary.json",
+    "strictSpsFailureMatrix": "Build/_AgentValidation/20260710-openxr-strict-stereo/20260715-remaining-closeout/final-shadow-fix-strict-sps/reports/openxr-strict-sps-failure-matrix.json"
+  }
+}

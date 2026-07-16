@@ -229,6 +229,7 @@ namespace XREngine.Rendering.Commands
                 _renderingPasses = [];
                 _renderingPassCommandCounts = [];
                 _renderingPassCommandSetSignatures.Clear();
+                _renderingShadowCasterCommandSetSignature = 0u;
                 _renderingCommandCount = 0;
                 _gpuPasses = [];
 
@@ -366,6 +367,7 @@ namespace XREngine.Rendering.Commands
         private Dictionary<int, ICollection<RenderCommand>> _renderingPasses = [];
         private Dictionary<int, int> _renderingPassCommandCounts = [];
         private readonly Dictionary<int, ulong> _renderingPassCommandSetSignatures = [];
+        private ulong _renderingShadowCasterCommandSetSignature;
         private int _renderingCommandCount = 0;
         private Dictionary<int, GPURenderPassCollection> _gpuPasses = [];
         private Dictionary<int, RenderPassMetadata> _passMetadata = [];
@@ -953,10 +955,11 @@ namespace XREngine.Rendering.Commands
                     }
 
                     // Query the conservative AABB immediately before the contributing draw.
-                    // Deferring a visible-demotion proxy until after the draw lets the mesh
-                    // occlude its own bounds and manufacture a zero-sample result. Running
-                    // the bounds query first is fail-visible with respect to later occluders:
-                    // it may preserve extra work, but it cannot hide visible geometry.
+                    // The color pass can follow a depth-normal prepass, in which case an
+                    // exact draw may correctly produce zero samples at Equal depth. The
+                    // proxy uses LEQUAL so it measures visibility without mistaking that
+                    // prepass coverage for occlusion. Running it before the real draw also
+                    // prevents the mesh from occluding its own bounds.
                     if (needsHardwareQuery &&
                         cmd.CullingVolume is AABB visibleProbeBounds)
                     {
@@ -1891,8 +1894,112 @@ namespace XREngine.Rendering.Commands
                 total += count;
             }
 
+            _renderingShadowCasterCommandSetSignature = ComputeShadowCasterCommandSetSignature();
+
             Volatile.Write(ref _renderingPassCommandCounts, counts);
             Volatile.Write(ref _renderingCommandCount, total);
+        }
+
+        internal ulong ShadowCasterCommandSetSignature
+            => Volatile.Read(ref _renderingShadowCasterCommandSetSignature);
+
+        private ulong ComputeShadowCasterCommandSetSignature()
+        {
+            ulong hash = 14695981039346656037UL;
+            AddShadowCasterPassSignature(ref hash, EDefaultRenderPass.PreRender);
+            AddShadowCasterPassSignature(ref hash, EDefaultRenderPass.OpaqueDeferred);
+            AddShadowCasterPassSignature(ref hash, EDefaultRenderPass.OpaqueForward);
+            AddShadowCasterPassSignature(ref hash, EDefaultRenderPass.MaskedForward);
+            AddShadowCasterPassSignature(ref hash, EDefaultRenderPass.PostRender);
+            return MixOcclusionCommandKey(hash);
+        }
+
+        private void AddShadowCasterPassSignature(ref ulong hash, EDefaultRenderPass renderPass)
+        {
+            int passIndex = (int)renderPass;
+            ulong membershipSignature = _renderingPassCommandSetSignatures.TryGetValue(passIndex, out ulong signature)
+                ? signature
+                : 0u;
+            ulong contentSignature = _renderingPasses.TryGetValue(passIndex, out ICollection<RenderCommand>? commands)
+                ? ComputeShadowCasterPassContentSignature(commands)
+                : 0u;
+            hash ^= MixOcclusionCommandKey(
+                membershipSignature ^
+                BitOperations.RotateLeft(contentSignature, 17) ^
+                (uint)passIndex);
+            hash *= 1099511628211UL;
+        }
+
+        private static ulong ComputeShadowCasterPassContentSignature(ICollection<RenderCommand> commands)
+        {
+            // Shadow-atlas reuse depends on the content that will be rendered, not only
+            // command membership. Keep the aggregate order-independent because normal
+            // camera motion can change pass sorting without changing shadow content.
+            ulong xor = 0UL;
+            ulong sum = 0xD6E8FEB86659FD93UL;
+            foreach (RenderCommand command in commands)
+            {
+                ulong mixed = MixOcclusionCommandKey(
+                    ComputeShadowCasterCommandStateSignature(command) ^ command.StableQueryKey);
+                xor ^= mixed;
+                sum += mixed;
+            }
+
+            return MixOcclusionCommandKey(xor ^ BitOperations.RotateLeft(sum, 29) ^ (uint)commands.Count);
+        }
+
+        internal static ulong ComputeShadowCasterCommandStateSignature(RenderCommand command)
+        {
+            ulong hash = 14695981039346656037UL;
+            AddShadowState(ref hash, command.Enabled ? 1u : 0u);
+            AddShadowState(ref hash, command.RenderPass);
+
+            if (command is not IRenderCommandMesh meshCommand)
+                return MixOcclusionCommandKey(hash);
+
+            AddShadowState(ref hash, meshCommand.WorldMatrix);
+            AddShadowState(ref hash, meshCommand.WorldMatrixIsModelMatrix ? 1u : 0u);
+            AddShadowState(ref hash, meshCommand.Instances);
+            AddShadowState(ref hash, meshCommand.Mesh is null ? 0 : RuntimeHelpers.GetHashCode(meshCommand.Mesh));
+            AddShadowState(ref hash, meshCommand.MaterialOverride is null ? 0 : RuntimeHelpers.GetHashCode(meshCommand.MaterialOverride));
+            AddShadowState(ref hash, meshCommand.RenderOptionsOverride is null ? 0 : RuntimeHelpers.GetHashCode(meshCommand.RenderOptionsOverride));
+
+            // Non-model/skinned commands commonly publish identity as WorldMatrix and
+            // carry their animated world extent through the culling-volume override.
+            if (command.CullingVolume is AABB bounds)
+            {
+                AddShadowState(ref hash, bounds.Min);
+                AddShadowState(ref hash, bounds.Max);
+            }
+
+            return MixOcclusionCommandKey(hash);
+        }
+
+        private static void AddShadowState(ref ulong hash, Matrix4x4 value)
+        {
+            AddShadowState(ref hash, value.M11); AddShadowState(ref hash, value.M12); AddShadowState(ref hash, value.M13); AddShadowState(ref hash, value.M14);
+            AddShadowState(ref hash, value.M21); AddShadowState(ref hash, value.M22); AddShadowState(ref hash, value.M23); AddShadowState(ref hash, value.M24);
+            AddShadowState(ref hash, value.M31); AddShadowState(ref hash, value.M32); AddShadowState(ref hash, value.M33); AddShadowState(ref hash, value.M34);
+            AddShadowState(ref hash, value.M41); AddShadowState(ref hash, value.M42); AddShadowState(ref hash, value.M43); AddShadowState(ref hash, value.M44);
+        }
+
+        private static void AddShadowState(ref ulong hash, Vector3 value)
+        {
+            AddShadowState(ref hash, value.X);
+            AddShadowState(ref hash, value.Y);
+            AddShadowState(ref hash, value.Z);
+        }
+
+        private static void AddShadowState(ref ulong hash, float value)
+            => AddShadowState(ref hash, BitConverter.SingleToUInt32Bits(value));
+
+        private static void AddShadowState(ref ulong hash, int value)
+            => AddShadowState(ref hash, unchecked((uint)value));
+
+        private static void AddShadowState(ref ulong hash, uint value)
+        {
+            hash ^= value;
+            hash *= 1099511628211UL;
         }
 
         private static ulong ComputeOcclusionCommandSetSignature(ICollection<RenderCommand> commands)

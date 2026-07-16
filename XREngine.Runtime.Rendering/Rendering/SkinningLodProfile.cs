@@ -3,12 +3,9 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering;
 
-public sealed class SkinningLodProfile
+public sealed class SkinningLodProfile(params SkinningLodTier[] tiers)
 {
-    private readonly SkinningLodTier[] _tiers;
-
-    public SkinningLodProfile(params SkinningLodTier[] tiers)
-        => _tiers = tiers ?? [];
+    private readonly SkinningLodTier[] _tiers = tiers ?? [];
 
     public bool TryGetTier(int tierIndex, out SkinningLodTier tier)
     {

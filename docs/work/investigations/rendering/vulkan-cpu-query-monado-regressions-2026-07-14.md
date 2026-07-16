@@ -1,7 +1,7 @@
 # Vulkan CPU-Query And Monado Regression Investigation
 
 Date: 2026-07-14
-Status: Every-third strict-SPS lifetime rejection fixed and short-smoke validated; exact live and throughput gates remain open
+Status: Closed 2026-07-16; Phase 5.2.4b/5.2.4c live, parity, and boundedness gates passed
 Related TODO: [Vulkan core hardening and device-loss TODO](../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md)
 
 ## Problem
@@ -218,6 +218,71 @@ scheduling. In particular, grouped secondary buffers must replace the rejected
 per-draw pool/buffer model, and duplicate output telemetry/render requests must
 be separated and deduplicated before capacity checks.
 
+## 2026-07-15 Final Closeout Attempt
+
+The remaining 5.2.4 work is being resumed against the current worktree. The
+acceptance target is the CPU-direct Vulkan lane with Monado, true single-pass
+stereo, `FullIndependentRender`, Sponza, TSR/bloom, and independent desktop and
+SPS `OcclusionViewKey` ownership.
+
+The immediate diagnostic order is:
+
+1. reproduce the trusted-negative-query failure with the current binary and
+   correlate the exact proxy/query command stream with owning camera, target,
+   render area, depth state, and query results;
+2. isolate the independent directional-light/shadow variation whose first
+   captured difference is `LightingAccum`;
+3. change one variable, rebuild, and repeat the short enabled/off cohort until
+   query culls are both nonzero and image-safe;
+4. run the settled boundedness/lease cohort and the exact retained-frame
+   validator, preserve desktop and both-eye captures, and publish the tracked
+   Phase 5.2.4b validation manifest.
+
+New raw evidence for this attempt is stored under
+`Build/_AgentValidation/20260710-openxr-strict-stereo/20260715-remaining-closeout/`.
+The existing ten immediate validation roots are retained because durable work
+docs reference them; continuing below the active strict-stereo root avoids
+creating an eleventh root.
+
+### 2026-07-15 Query Correction And Exact-Gate Result
+
+The original Vulkan zero-result quarantine was removed after correcting the
+visible-demotion probe path. A brief attempt to bracket the contributing colour
+draw was rejected: the colour pass follows the depth-normal prepass, so equal
+depth produces valid zero samples and falsely culls visible geometry. The final
+path instead retains the conservative AABB proxy, which uses `LEQUAL`, before
+the contributing draw. It therefore measures the prepass depth safely without
+allowing the mesh to self-occlude its probe.
+
+`VulkanCpuDirectOcclusionTests` passed after the correction. The paired
+100-warmup/60-retained diagnostic recorded 131 query submissions, 131
+resolutions, and 1,049 culls with no output-parity, Vulkan-validation, or
+ownership failure. The independent desktop and true-SPS view ledgers both had
+nonzero query submission/resolution/culling.
+
+The strict SPS injected-failure matrix also passed all six stages (Capability,
+Target, Recording, LifetimeValidation, Submit, Publish), with no sequential
+eye fallback. Its aggregate report is
+`strict-sps-failures/reports/openxr-strict-sps-failure-matrix.json` below the
+active evidence root.
+
+The exact occlusion-off companion completed 100 warmup and 300 retained frames:
+398 submissions, zero frame validation errors, clean teardown, and 125 required
+desktop/SPS capture artifacts. The corresponding enabled 300-frame validator
+passed the query, lease, resource, command-record, and strict-SPS gates, but
+correctly rejected rendered-output promotion: all three desktop captures and
+both eyes diverged from the off baseline (desktop RMSE about 1.339; eye RMSE
+about 0.326-0.331, vs 0.01 tolerance). Visual inspection places the first and
+largest divergence in `DefaultPipelineSps_05_LightingAccum_layer0`: one capture
+is dark while the counterpart is strongly lit, before final post processing.
+Geometry remains coherent, so this is the pre-existing directional primary
+shadow/lighting nondeterminism, not false occlusion culling.
+
+The Phase 5.2.4b/c promotion hold therefore remains open solely on making the
+directional-light shadow sample deterministic (or otherwise isolating the
+lighting source without weakening image parity). Do not check the todo gates or
+begin 5.2.5 yet.
+
 ## F5 Freeze Follow-Up
 
 A later current-worktree F5 run, engine session
@@ -256,3 +321,72 @@ later startup/teardown work and logged render-thread waits up to 4.5 seconds.
 The indexed lookup removes the quadratic freeze, but the separate descriptor,
 uniform-buffer, and multi-output resource growth remains an open throughput
 issue for the Phase 5.2.5-5.2.7 architecture work.
+
+## 2026-07-16 Shadow Stabilization And Phase Closeout
+
+The lighting-parity hold had two coupled shadow-state causes.
+
+First, directional primary-atlas publication was not transactional. An omitted
+publication could clear the last sampleable primary tile even when the current
+plan still owned the same request and allocation. Primary planning now snapshots
+the prior slot and preserves it only when the current allocation matches the
+request key, atlas/page/rect identity, content revision, residency, and fallback
+state. Explicit clears still clear immediately, and a stale or reallocated tile
+cannot survive by omission.
+
+Second, the directional content revision hashed caster membership but not caster
+state. The moving temporal caster therefore left the atlas tile frozen at
+whichever startup frame happened to render last; enabled/off runs first diverged
+in `LightingAccum` according to startup timing. The allocation-free caster
+content signature now includes enabled/pass state, current mesh world matrix,
+model-matrix use, instance count, renderer/material/render-option identities,
+and culling bounds. Caster motion consequently invalidates and redraws the tile
+without treating unchanged membership as unchanged content.
+
+The shadow viewport was also removed from the presentation-output ledger. It is
+an auxiliary render and must not masquerade as a desktop or OpenXR output during
+shape and ownership validation.
+
+The final resource audit exposed a validator semantic issue rather than an
+ongoing leak: scenario initialization could add a bounded descriptor set and
+lifetime record before settling for the rest of the cohort, while the old gate
+compared the first retained window to the last. The gate now compares adjacent
+terminal windows and still enforces the global declared maximum. A direct
+PowerShell regression accepted a bounded early step and rejected continuing
+terminal growth. Warmup was increased from 100 to 120 frames so two resources
+observed retiring at retained index 1 drain before acceptance begins; retained
+retirements remain forbidden. Final capture roots were shortened after
+ImageMagick demonstrated that the longest sub-native
+`13c_MonoTsrReference` filenames exceeded its Windows path handling.
+
+Final evidence:
+
+- Focused directional-shadow, CPU-query, stale-frame, and OpenXR timing
+  contracts passed 87/87.
+- The refreshed strict-SPS injected-failure matrix passed Capability, Target,
+  Recording, LifetimeValidation, Submit, and Publish without sequential eye
+  fallback.
+- Matched native occlusion-off/enabled cohorts each completed 120 warmup and
+  300 retained frames. The enabled cohort recorded 694 desktop and 650 true-SPS
+  query submissions/resolutions, with 5,006 desktop and 200 SPS culls.
+- All nine native desktop/left/right off-enabled image comparisons passed; the
+  maximum RMSE was 0.001807 against the 0.01 limit.
+- Matched 0.67-scale sub-native off/enabled cohorts also completed 120+300 and
+  passed all nine parity comparisons; maximum RMSE was 0.001927.
+- Retained allocation, descriptor-pool churn, resource-plan replacement, and
+  retirement frame counts were all zero. Live resources settled at 3,969 and
+  tracked descriptor sets at 1,438 in both adjacent terminal 30-frame windows;
+  planner and command-variant counts remained three.
+- The filtered Vulkan log manifest contained zero accepted or rejected
+  validation matches, with no device loss or lifetime rejection.
+
+The durable result manifest is
+[`vulkan-core-hardening-phase524b-validation-2026-07-10.json`](../../testing/rendering/vulkan-core-hardening-phase524b-validation-2026-07-10.json).
+Raw final artifacts are under `Build/_AgentValidation/p524b-final-w120/`, the
+matching native off baseline is under `Build/_AgentValidation/p524b-off-w120/`,
+and the refreshed strict matrix remains under
+`Build/_AgentValidation/20260710-openxr-strict-stereo/20260715-remaining-closeout/final-shadow-fix-strict-sps/`.
+
+Phase 5.2.4b and 5.2.4c are closed. Phase 5.2.5 may now begin; the remaining CPU
+recording cost and absent primary reuse are owned by the versioned-plan and
+multi-output throughput phases rather than this correctness closeout.

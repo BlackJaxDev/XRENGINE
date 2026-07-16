@@ -3,27 +3,9 @@ using System.Collections.Generic;
 
 namespace XREngine.Rendering;
 
-public enum BlendshapeLodEvaluation
+public sealed class BlendshapeLodProfile(params BlendshapeLodTier[] tiers)
 {
-    Full = 0,
-    ProtectedAndHighImpact = 1,
-    VisemeOrSilhouette = 2,
-    Disabled = 3,
-}
-
-public enum BlendshapeLodAvatarRole
-{
-    Primary = 0,
-    Secondary = 1,
-    Crowd = 2,
-}
-
-public sealed class BlendshapeLodProfile
-{
-    private readonly BlendshapeLodTier[] _tiers;
-
-    public BlendshapeLodProfile(params BlendshapeLodTier[] tiers)
-        => _tiers = tiers ?? [];
+    private readonly BlendshapeLodTier[] _tiers = tiers ?? [];
 
     public bool TryGetTier(int tierIndex, out BlendshapeLodTier tier)
     {
@@ -63,10 +45,3 @@ public sealed class BlendshapeLodProfile
         return _tiers.Length - 1;
     }
 }
-
-public readonly record struct BlendshapeLodTier(
-    BlendshapeLodEvaluation Evaluation,
-    IReadOnlyList<int>? ShapeIndices = null,
-    IReadOnlyList<string>? ProtectedShapeNames = null,
-    float MaxDistance = 0.0f,
-    float MinScreenCoverage = 0.0f);

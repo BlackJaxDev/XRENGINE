@@ -284,7 +284,6 @@ public enum ECpuOcclusionForceVisibleReason
     NoBounds,
     MissingOwnership,
     StaleResult,
-    UntrustedBackendNegativeResult,
     ResourceGenerationChanged,
     CommandSetChanged,
     Diagnostic,
