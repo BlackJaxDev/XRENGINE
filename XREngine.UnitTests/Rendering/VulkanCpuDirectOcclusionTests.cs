@@ -22,6 +22,7 @@ public sealed class VulkanCpuDirectOcclusionTests
         string query = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Queries/VkRenderQuery.cs");
         string resourceLifetime = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
         string renderGraph = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderGraphCompiler.cs");
+        string commandContainer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/ViewportRenderCommandContainer.cs");
         string runtimeEngine = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngine.cs");
 
         coordinator.ShouldContain("using XREngine.Rendering.Vulkan;");
@@ -109,6 +110,8 @@ public sealed class VulkanCpuDirectOcclusionTests
             "private bool TryReuseCleanCommandChainPrimaryVariant(",
             "private bool TryRefreshReusableCommandBufferFrameData(",
             StringComparison.Ordinal);
+        fastPrimaryReuse.ShouldContain("variant.RecordedGenerations.Query != currentGenerations.Query");
+        fastPrimaryReuse.ShouldNotContain("variant.FrameOpsSignature != frameOpsSignature");
         fastPrimaryReuse.ShouldContain("PrepareQueryFrameOpsForCommandBufferReuse(ops)");
         string scheduledMeshSecondary = Slice(
             recorder,
@@ -137,7 +140,9 @@ public sealed class VulkanCpuDirectOcclusionTests
 
         query.ShouldContain("Api!.CmdResetQueryPool(commandBuffer, _queryPool, 0, _queryPoolCapacity);");
         query.ShouldContain("PrepareForCommandBufferReuse(EQueryTarget target)");
-        query.ShouldContain("ResetQueryPoolForCommandBufferReuse");
+        query.ShouldNotContain("Api!.ResetQueryPool(Device");
+        query.ShouldNotContain("ResetQueryPoolBeforeRecording");
+        query.ShouldNotContain("ResetQueryPoolForCommandBufferReuse");
         query.ShouldContain("QueryCount = queryPoolCapacity");
         query.ShouldContain("_activeQueryCount = Math.Clamp(queryCount, 1u, _queryPoolCapacity)");
         query.ShouldContain("ResolveOcclusionQueryViewSlotCount(viewMask)");
@@ -150,6 +155,10 @@ public sealed class VulkanCpuDirectOcclusionTests
 
         renderGraph.ShouldContain("op is MeshDrawOp or QueryOp or BlitOp");
         renderGraph.ShouldContain("QueryOp q => q.Target is null");
+
+        commandContainer.ShouldContain("if (instance is null || AbstractRenderer.Current?.IsDeviceLost == true)");
+        commandContainer.ShouldContain("if (AbstractRenderer.Current?.IsDeviceLost == true)\n                    break;");
+        commandContainer.ShouldContain("// Device loss is already diagnosed by the backend.");
     }
 
     [Test]

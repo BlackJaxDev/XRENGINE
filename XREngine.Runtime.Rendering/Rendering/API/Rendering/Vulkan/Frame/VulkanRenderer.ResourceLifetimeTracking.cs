@@ -1425,11 +1425,6 @@ public unsafe partial class VulkanRenderer
 
                     batch.RecordDependency(ResourceKey(ObjectType.DescriptorSet, descriptorSet.Handle));
                     expandedSnapshot = batch.MarkDescriptorExpanded(descriptorSet.Handle, snapshot.Generation);
-                    if (expandedSnapshot)
-                    {
-                        for (int i = 0; i < snapshot.References.Length; i++)
-                            batch.RecordDependency(snapshot.References[i]);
-                    }
 
                     if (batch.MarkDescriptorValidated(descriptorSet.Handle, snapshot.Generation))
                         snapshotToValidate = snapshot;
@@ -1455,21 +1450,8 @@ public unsafe partial class VulkanRenderer
                 ResourceKey(ObjectType.DescriptorSet, descriptorSet.Handle),
                 "DescriptorSet.Bind");
 
-            if (!_vulkanDescriptorSetLifetimes.TryGetValue(descriptorSet.Handle, out VulkanDescriptorSetLifetimeRecord? setState) ||
-                setState.References.Count == 0)
-            {
-                return;
-            }
-
-            foreach (VulkanDescriptorReferencePair pair in setState.References.Values)
-            {
-                if (pair.First.IsValid)
-                    TrackVulkanCommandBufferResource_NoLock(commandBufferHandle, pair.First, "DescriptorSet.Reference");
-                if (pair.Second.IsValid)
-                    TrackVulkanCommandBufferResource_NoLock(commandBufferHandle, pair.Second, "DescriptorSet.Reference");
-            }
-
-            ValidateVulkanDescriptorImageLayouts(commandBuffer, descriptorSet, setState);
+            if (_vulkanDescriptorSetLifetimes.TryGetValue(descriptorSet.Handle, out VulkanDescriptorSetLifetimeRecord? setState))
+                ValidateVulkanDescriptorImageLayouts(commandBuffer, descriptorSet, setState);
         }
     }
 
@@ -1643,7 +1625,6 @@ public unsafe partial class VulkanRenderer
                     }
 
                 if (!RefreshSubmittedDescriptorDependencies_NoLock(
-                        commandBufferHandle,
                         commandLifetime,
                         out VulkanResourceLifetimeKey descriptorFailureKey,
                         out string descriptorFailure))
@@ -1868,11 +1849,17 @@ public unsafe partial class VulkanRenderer
     }
 
     private bool RefreshSubmittedDescriptorDependencies_NoLock(
-        ulong commandBufferHandle,
         VulkanCommandBufferLifetimeRecord commandLifetime,
         out VulkanResourceLifetimeKey failureKey,
         out string failureReason)
     {
+        // Descriptor contents are mutable per completed frame slot. They are not
+        // structural command-buffer dependencies: only the descriptor-set handle
+        // is baked into vkCmdBindDescriptorSets. Rebuild the concrete resource
+        // snapshot for each submission so old image generations retain the exact
+        // submissions that observed them without dirtying the reusable command
+        // buffer when another slot publishes compatible content.
+        commandLifetime.RefreshTouchedDependencies();
         List<KeyValuePair<VulkanResourceLifetimeKey, ulong>> touched = commandLifetime.TouchedDependencies;
         int descriptorScanCount = touched.Count;
         for (int i = 0; i < descriptorScanCount; i++)
@@ -1887,12 +1874,10 @@ public unsafe partial class VulkanRenderer
             for (int referenceIndex = 0; referenceIndex < snapshot.References.Length; referenceIndex++)
             {
                 VulkanResourceLifetimeKey referenceKey = snapshot.References[referenceIndex];
-                if (!TryTrackVulkanCommandBufferResource_NoLock(
-                        commandBufferHandle,
+                if (!TryAppendSubmittedDescriptorDependency_NoLock(
+                        touched,
                         referenceKey,
-                        "DescriptorSet.SubmitSnapshot",
-                        out failureReason,
-                        allowQueuedSubmission: true))
+                        out failureReason))
                 {
                     failureKey = referenceKey;
                     return false;
@@ -1900,8 +1885,69 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        commandLifetime.RefreshTouchedDependencies();
         failureKey = default;
+        failureReason = string.Empty;
+        return true;
+    }
+
+    private bool TryAppendSubmittedDescriptorDependency_NoLock(
+        List<KeyValuePair<VulkanResourceLifetimeKey, ulong>> touched,
+        VulkanResourceLifetimeKey key,
+        out string failureReason)
+    {
+        if (!_vulkanResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource))
+        {
+            failureReason = $"descriptor submission dependency {key} is no longer tracked";
+            return false;
+        }
+
+        if ((resource.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) != 0)
+        {
+            failureReason = $"descriptor submission dependency {key} is pending retirement or destroyed";
+            return false;
+        }
+
+        bool alreadyTracked = false;
+        for (int i = 0; i < touched.Count; i++)
+        {
+            if (touched[i].Key != key)
+                continue;
+
+            if (touched[i].Value != resource.Generation)
+            {
+                failureReason = $"descriptor submission dependency {key} changed generation while the submission was prepared";
+                return false;
+            }
+
+            alreadyTracked = true;
+            break;
+        }
+
+        if (!alreadyTracked)
+            touched.Add(new KeyValuePair<VulkanResourceLifetimeKey, ulong>(key, resource.Generation));
+
+        if (key.Type == ObjectType.ImageView &&
+            _vulkanImageViewBackingImages.TryGetValue(key.Handle, out ulong backingImageHandle) &&
+            backingImageHandle != 0 &&
+            !TryAppendSubmittedDescriptorDependency_NoLock(
+                touched,
+                ResourceKey(ObjectType.Image, backingImageHandle),
+                out failureReason))
+        {
+            return false;
+        }
+
+        if (key.Type == ObjectType.BufferView &&
+            _vulkanBufferViewBackingBuffers.TryGetValue(key.Handle, out ulong backingBufferHandle) &&
+            backingBufferHandle != 0 &&
+            !TryAppendSubmittedDescriptorDependency_NoLock(
+                touched,
+                ResourceKey(ObjectType.Buffer, backingBufferHandle),
+                out failureReason))
+        {
+            return false;
+        }
+
         failureReason = string.Empty;
         return true;
     }

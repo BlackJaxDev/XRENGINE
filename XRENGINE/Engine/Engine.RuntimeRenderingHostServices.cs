@@ -1099,13 +1099,21 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         TimeSpan drainRetiredResources,
         TimeSpan acquireBridgeSubmit,
         TimeSpan waitSwapchainImage,
-        TimeSpan resetDynamicUniformRing)
+        TimeSpan resetDynamicUniformRing,
+        TimeSpan snapshotImGuiOverlay,
+        TimeSpan recordSceneCommandBuffer,
+        TimeSpan recordImGuiOverlay,
+        TimeSpan recordDynamicUiTextOverlay)
         => Engine.Rendering.Stats.Vulkan.RecordVulkanFrameLifecycleDetailTiming(
             sampleTimingQueries,
             drainRetiredResources,
             acquireBridgeSubmit,
             waitSwapchainImage,
-            resetDynamicUniformRing);
+            resetDynamicUniformRing,
+            snapshotImGuiOverlay,
+            recordSceneCommandBuffer,
+            recordImGuiOverlay,
+            recordDynamicUiTextOverlay);
 
     public void RecordRenderVulkanFrameOpCensus(
         int totalCount,
@@ -1141,7 +1149,11 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         bool frameOpSignatureDirty,
         bool plannerDirty,
         bool profilerDirty,
-        string? dirtyReason)
+        string? dirtyReason,
+        EVulkanCommandBufferDecisionReason detailReasons,
+        ulong structuralSignature,
+        ulong descriptorGeneration,
+        int swapchainSlot)
     {
         Engine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
             reusedClean,
@@ -1150,11 +1162,18 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
             frameOpSignatureDirty,
             plannerDirty,
             profilerDirty,
-            dirtyReason);
+            dirtyReason,
+            detailReasons,
+            structuralSignature,
+            descriptorGeneration,
+            swapchainSlot);
         Engine.Rendering.Stats.FrameOutputs.RecordWork(new FrameOutputWorkTelemetry(
             CompiledPlanCacheHits: reusedClean ? 1 : 0,
             CompiledPlanCacheMisses: recorded ? 1 : 0));
     }
+
+    public void RecordRenderVulkanCpuStage(EVulkanCpuStage stage, TimeSpan elapsed, long allocatedBytes)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanCpuStage(stage, elapsed, allocatedBytes);
 
     public void RecordRenderVulkanCommandBuffersDirty(string? reason)
         => Engine.Rendering.Stats.Vulkan.RecordVulkanCommandBuffersDirty(reason);
@@ -1249,6 +1268,21 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public void RecordRenderVulkanPipelineCacheMiss(string? summary)
         => Engine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheMiss(summary);
+
+    public void RecordRenderVulkanPipelineTelemetry(
+        EVulkanPipelineTelemetryEvent eventKind,
+        EVulkanDriverPipelineCacheOutcome cacheOutcome,
+        bool backgroundCompile,
+        double compileMilliseconds,
+        int queueDepth,
+        int queueCapacity)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
+            eventKind,
+            cacheOutcome,
+            backgroundCompile,
+            compileMilliseconds,
+            queueDepth,
+            queueCapacity);
 
     public void RecordRenderVulkanQueueOverlapWindow(int overlapCandidatePasses, int transferCost, TimeSpan frameDelta, bool promotedMode, bool demotedMode)
         => Engine.Rendering.Stats.Vulkan.RecordVulkanQueueOverlapWindow(overlapCandidatePasses, transferCost, frameDelta, promotedMode, demotedMode);

@@ -30,6 +30,8 @@ public unsafe partial class VulkanRenderer
             public ulong LayoutFingerprint;
             public ulong SchemaFingerprint;
             public int ViewFamilyIdentity;
+            public int DrawUniformSlot;
+            public ulong BindingIdentityFingerprint;
             public ulong ResourceFingerprint;
             public ulong[] SlotResourceFingerprints = [];
             public string ResourceFingerprintDetails = string.Empty;

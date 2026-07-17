@@ -1506,6 +1506,27 @@ public unsafe partial class VulkanRenderer
             graphicsPipelineLibraryExtensionEnabled &&
             graphicsPipelineLibraryFeatureSupported;
 
+        bool pipelineCreationCacheControlAvailable =
+            vulkan13PromotedToCore ||
+            extensionsArray.Contains("VK_EXT_pipeline_creation_cache_control");
+        PhysicalDevicePipelineCreationCacheControlFeatures supportedPipelineCreationCacheControlFeatures = new()
+        {
+            SType = StructureType.PhysicalDevicePipelineCreationCacheControlFeatures,
+        };
+        if (pipelineCreationCacheControlAvailable)
+        {
+            PhysicalDeviceFeatures2 pipelineCreationCacheControlFeatures2 = new()
+            {
+                SType = StructureType.PhysicalDeviceFeatures2,
+                PNext = &supportedPipelineCreationCacheControlFeatures,
+            };
+            Api.GetPhysicalDeviceFeatures2(_physicalDevice, &pipelineCreationCacheControlFeatures2);
+        }
+        bool enablePipelineCreationCacheControlFeature =
+            pipelineCreationCacheControlAvailable &&
+            supportedPipelineCreationCacheControlFeatures.PipelineCreationCacheControl;
+        _supportsPipelineCreationCacheControl = enablePipelineCreationCacheControlFeature;
+
         bool transformFeedbackExtensionEnabled = extensionsArray.Contains(ExtTransformFeedback.ExtensionName);
         QueryTransformFeedbackCapabilities(
             transformFeedbackExtensionEnabled,
@@ -1692,6 +1713,13 @@ public unsafe partial class VulkanRenderer
             SType = StructureType.PhysicalDeviceGraphicsPipelineLibraryFeaturesExt,
             PNext = null,
             GraphicsPipelineLibrary = enableGraphicsPipelineLibraryFeature,
+        };
+
+        PhysicalDevicePipelineCreationCacheControlFeatures pipelineCreationCacheControlFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDevicePipelineCreationCacheControlFeatures,
+            PNext = null,
+            PipelineCreationCacheControl = enablePipelineCreationCacheControlFeature,
         };
 
         PhysicalDeviceTransformFeedbackFeaturesEXT transformFeedbackFeatureEnable = new()
@@ -1897,6 +1925,12 @@ public unsafe partial class VulkanRenderer
         {
             graphicsPipelineLibraryFeatureEnable.PNext = enabledFeaturesPNext;
             enabledFeaturesPNext = &graphicsPipelineLibraryFeatureEnable;
+        }
+
+        if (enablePipelineCreationCacheControlFeature)
+        {
+            pipelineCreationCacheControlFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &pipelineCreationCacheControlFeatureEnable;
         }
 
         if (enableTransformFeedbackFeature)

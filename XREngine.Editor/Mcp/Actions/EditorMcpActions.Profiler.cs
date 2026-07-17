@@ -67,6 +67,19 @@ namespace XREngine.Editor.Mcp
                 "Retrieved render profiler stats.",
                 new
                 {
+                    frame_lifecycle = new
+                    {
+                        collect_visible_late_policy = Engine.Rendering.Stats.FrameLifecycle.CollectVisibleLatePolicy,
+                        requested_collect_generation = Engine.Rendering.Stats.FrameLifecycle.RequestedCollectGeneration,
+                        completed_collect_generation = Engine.Rendering.Stats.FrameLifecycle.CompletedCollectGeneration,
+                        published_collect_generation = Engine.Rendering.Stats.FrameLifecycle.PublishedCollectGeneration,
+                        consumed_collect_generation = Engine.Rendering.Stats.FrameLifecycle.ConsumedCollectGeneration,
+                        required_collect_generation = Engine.Rendering.Stats.FrameLifecycle.RequiredCollectGeneration,
+                        collect_wait_for_render_ms = Engine.Rendering.Stats.FrameLifecycle.CollectWaitForRenderMs,
+                        render_wait_for_collect_ms = Engine.Rendering.Stats.FrameLifecycle.RenderWaitForCollectMs,
+                        render_wait_reason = Engine.Rendering.Stats.FrameLifecycle.RenderWaitReason,
+                        stale_collect_reuse_frames = Engine.Rendering.Stats.FrameLifecycle.StaleCollectReuseFrames,
+                    },
                     gpu_pipeline = new
                     {
                         enabled = GpuPipelineStats.GpuRenderPipelineProfilingEnabled,
@@ -149,9 +162,24 @@ namespace XREngine.Editor.Mcp
                             wait_swapchain_image_ms = VulkanStats.VulkanFrameWaitSwapchainImageMs,
                             reset_dynamic_uniform_ring_ms = VulkanStats.VulkanFrameResetDynamicUniformRingMs,
                             record_command_buffer_ms = VulkanStats.VulkanFrameRecordCommandBufferMs,
+                            snapshot_imgui_overlay_ms = VulkanStats.VulkanFrameSnapshotImGuiOverlayMs,
+                            record_scene_command_buffer_ms = VulkanStats.VulkanFrameRecordSceneCommandBufferMs,
+                            record_imgui_overlay_ms = VulkanStats.VulkanFrameRecordImGuiOverlayMs,
+                            record_dynamic_ui_text_overlay_ms = VulkanStats.VulkanFrameRecordDynamicUiTextOverlayMs,
                             submit_ms = VulkanStats.VulkanFrameSubmitMs,
                             trim_ms = VulkanStats.VulkanFrameTrimMs,
                             present_ms = VulkanStats.VulkanFramePresentMs,
+                        },
+                        cpu_stages = new
+                        {
+                            frame_op_preparation = VulkanCpuStage(EVulkanCpuStage.FrameOpPreparation),
+                            resource_planning = VulkanCpuStage(EVulkanCpuStage.ResourcePlanning),
+                            frame_data_refresh = VulkanCpuStage(EVulkanCpuStage.FrameDataRefresh),
+                            packet_construction = VulkanCpuStage(EVulkanCpuStage.PacketConstruction),
+                            primary_recording = VulkanCpuStage(EVulkanCpuStage.PrimaryRecording),
+                            secondary_recording = VulkanCpuStage(EVulkanCpuStage.SecondaryRecording),
+                            descriptor_publication = VulkanCpuStage(EVulkanCpuStage.DescriptorPublication),
+                            submission = VulkanCpuStage(EVulkanCpuStage.Submission),
                         },
                         command_buffer_cache = new
                         {
@@ -161,6 +189,12 @@ namespace XREngine.Editor.Mcp
                             frame_op_signature_dirty_count = VulkanStats.VulkanCommandBufferFrameOpSignatureDirtyCount,
                             planner_dirty_count = VulkanStats.VulkanCommandBufferPlannerDirtyCount,
                             profiler_dirty_count = VulkanStats.VulkanCommandBufferProfilerDirtyCount,
+                            decision_reason_mask = (int)VulkanStats.VulkanCommandBufferDecisionReasonMask,
+                            decision_reasons = VulkanStats.VulkanCommandBufferDecisionReasonMask.ToString(),
+                            decision_visibility_generation = VulkanStats.VulkanCommandBufferDecisionVisibilityGeneration,
+                            decision_structural_signature = VulkanStats.VulkanCommandBufferDecisionStructuralSignature,
+                            decision_descriptor_generation = VulkanStats.VulkanCommandBufferDecisionDescriptorGeneration,
+                            decision_swapchain_slot = VulkanStats.VulkanCommandBufferDecisionSwapchainSlot,
                             dirty_summary = VulkanStats.VulkanCommandBufferDirtySummary,
                             record_allocated_bytes = VulkanStats.VulkanRecordCommandBufferAllocatedBytes,
                         },
@@ -395,6 +429,14 @@ namespace XREngine.Editor.Mcp
                 outputs = outputData,
             };
         }
+
+        private static object VulkanCpuStage(EVulkanCpuStage stage)
+            => new
+            {
+                elapsed_ms = VulkanStats.VulkanCpuStageMs(stage),
+                allocated_bytes = VulkanStats.VulkanCpuStageAllocatedBytes(stage),
+                allocation_high_water_bytes = VulkanStats.VulkanCpuStageAllocationHighWaterBytes(stage),
+            };
 
         private static double? JsonFinite(double value)
             => double.IsFinite(value) ? value : null;

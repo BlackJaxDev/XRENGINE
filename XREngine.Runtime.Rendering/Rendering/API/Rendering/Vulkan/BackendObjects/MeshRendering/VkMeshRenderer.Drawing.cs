@@ -27,6 +27,8 @@ public unsafe partial class VulkanRenderer
 {
 	public partial class VkMeshRenderer
 	{
+		private readonly object _recordDrawSync = new();
+
 		private static IDisposable? StartMeshDrawDetailScope(string name)
 			=> CommandRecordingDetailProfilingEnabled
 				? RuntimeRenderingHostServices.Current.StartProfileScope(name)
@@ -40,6 +42,38 @@ public unsafe partial class VulkanRenderer
 		/// data upload, and descriptor set binding.
 		/// </summary>
 		internal bool RecordDraw(
+			CommandBuffer commandBuffer,
+			in PendingMeshDraw draw,
+			RenderPass renderPass,
+			bool useDynamicRendering,
+			DynamicRenderingFormatSignature dynamicRenderingFormats,
+			int passIndex,
+			IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+			bool depthStencilReadOnly,
+			string pipelineName,
+			string targetName,
+			int drawUniformSlot,
+			int frameDataImageIndex)
+		{
+			lock (_recordDrawSync)
+			{
+				return RecordDrawNoLock(
+					commandBuffer,
+					draw,
+					renderPass,
+					useDynamicRendering,
+					dynamicRenderingFormats,
+					passIndex,
+					passMetadata,
+					depthStencilReadOnly,
+					pipelineName,
+					targetName,
+					drawUniformSlot,
+					frameDataImageIndex);
+			}
+		}
+
+		private bool RecordDrawNoLock(
 			CommandBuffer commandBuffer,
 			in PendingMeshDraw draw,
 			RenderPass renderPass,
@@ -1006,6 +1040,109 @@ public unsafe partial class VulkanRenderer
 			return true;
 		}
 
+		internal bool TryPrewarmGraphicsPipelinesForRecording(
+			in PendingMeshDraw draw,
+			RenderPass renderPass,
+			bool useDynamicRendering,
+			DynamicRenderingFormatSignature dynamicRenderingFormats,
+			int passIndex,
+			IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+			bool depthStencilReadOnly,
+			string pipelineName,
+			out string reason)
+		{
+			lock (_recordDrawSync)
+			{
+				XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
+				bool triangleIndexed = (_triangleIndexBuffer?.BufferHandle?.Handle ?? 0UL) != 0UL;
+				bool lineIndexed = (_lineIndexBuffer?.BufferHandle?.Handle ?? 0UL) != 0UL;
+				bool pointIndexed = (_pointIndexBuffer?.BufferHandle?.Handle ?? 0UL) != 0UL;
+				bool triangleOnly = MeshRenderMaterialResolver.RequiresTriangleOnlyDrawsForCurrentPass();
+				bool anyIndexed = triangleIndexed || (!triangleOnly && (lineIndexed || pointIndexed));
+				bool ready = true;
+
+				if (triangleIndexed)
+				{
+					ready &= EnsurePipeline(
+						material,
+						PrimitiveTopology.TriangleList,
+						draw,
+						renderPass,
+						useDynamicRendering,
+						dynamicRenderingFormats,
+						passIndex,
+						passMetadata,
+						depthStencilReadOnly,
+						pipelineName,
+						out _);
+				}
+
+				if (!triangleOnly && lineIndexed)
+				{
+					ready &= EnsurePipeline(
+						material,
+						PrimitiveTopology.LineList,
+						draw,
+						renderPass,
+						useDynamicRendering,
+						dynamicRenderingFormats,
+						passIndex,
+						passMetadata,
+						depthStencilReadOnly,
+						pipelineName,
+						out _);
+				}
+
+				if (!triangleOnly && pointIndexed)
+				{
+					ready &= EnsurePipeline(
+						material,
+						PrimitiveTopology.PointList,
+						draw,
+						renderPass,
+						useDynamicRendering,
+						dynamicRenderingFormats,
+						passIndex,
+						passMetadata,
+						depthStencilReadOnly,
+						pipelineName,
+						out _);
+				}
+
+				if (!anyIndexed && Mesh is not null && Mesh.VertexCount > 0)
+				{
+					PrimitiveTopology fallbackTopology = Mesh.Type switch
+					{
+						EPrimitiveType.Points => PrimitiveTopology.PointList,
+						EPrimitiveType.Lines => PrimitiveTopology.LineList,
+						EPrimitiveType.LineStrip => PrimitiveTopology.LineStrip,
+						EPrimitiveType.TriangleStrip => PrimitiveTopology.TriangleStrip,
+						EPrimitiveType.TriangleFan => PrimitiveTopology.TriangleFan,
+						EPrimitiveType.Patches => PrimitiveTopology.PatchList,
+						_ => PrimitiveTopology.TriangleList,
+					};
+					if (!triangleOnly || IsTriangleClassTopology(fallbackTopology))
+					{
+						ready &= EnsurePipeline(
+							material,
+							fallbackTopology,
+							draw,
+							renderPass,
+							useDynamicRendering,
+							dynamicRenderingFormats,
+							passIndex,
+							passMetadata,
+							depthStencilReadOnly,
+							pipelineName,
+							out _);
+					}
+				}
+
+				reason = ready ? "Ready" : "pipeline compile queued or pending";
+				return ready;
+			}
+		}
+
 		internal bool TryRefreshReusableCommandBufferFrameData(
 			uint imageIndex,
 			in PendingMeshDraw draw,
@@ -1124,7 +1261,7 @@ public unsafe partial class VulkanRenderer
 		/// </summary>
 		private ulong ComputeVertexLayoutHash()
 		{
-			HashCode hash = new();
+			VulkanStableHash64 hash = new(schemaVersion: 2);
 			hash.Add(_geometryLayoutSignature.StableHash);
 			hash.Add(_geometryLayoutSignature.VertexBufferCount);
 			hash.Add(_geometryLayoutSignature.VertexAttributeCount);
@@ -1146,7 +1283,7 @@ public unsafe partial class VulkanRenderer
 				hash.Add(_vertexAttributes[i].Offset);
 			}
 
-			return unchecked((ulong)hash.ToHashCode());
+			return hash.Value;
 		}
 
 		/// <summary>

@@ -62,6 +62,20 @@ public sealed partial class RenderStatsPacket
     public int VulkanPipelineCacheLookupHits { get; set; }
     public int VulkanPipelineCacheLookupMisses { get; set; }
     public double VulkanPipelineCacheLookupHitRate { get; set; }
+    public int VulkanDriverPipelineCachePersistedHits { get; set; }
+    public int VulkanDriverPipelineCacheRuntimeHits { get; set; }
+    public int VulkanDriverPipelineCacheMisses { get; set; }
+    public int VulkanDriverPipelineCacheUnknown { get; set; }
+    public int VulkanPipelineCompileRequiredCount { get; set; }
+    public int VulkanPipelineCompileCompletedCount { get; set; }
+    public int VulkanPipelineBackgroundCompileCompletedCount { get; set; }
+    public double VulkanPipelineCompileTotalMs { get; set; }
+    public double VulkanPipelineCompileMaxMs { get; set; }
+    public int VulkanPipelineAsyncQueuedCount { get; set; }
+    public int VulkanPipelineQueueRejectedCount { get; set; }
+    public int VulkanPipelineDrawNotReadyCount { get; set; }
+    public int VulkanPipelineQueueDepthHighWater { get; set; }
+    public int VulkanPipelineQueueCapacity { get; set; }
     public string VulkanPipelineCacheMissSummary { get; set; } = string.Empty;
     public double VulkanFrameWaitFenceMs { get; set; }
     public double VulkanFrameAcquireImageMs { get; set; }
@@ -343,6 +357,11 @@ public sealed partial class FrameLifecycleTelemetryData
     public ulong SwapFrameId { get; set; }
     public ulong RenderFrameId { get; set; }
     public ulong PresentFrameId { get; set; }
+    public long RequestedCollectGeneration { get; set; }
+    public long CompletedCollectGeneration { get; set; }
+    public long PublishedCollectGeneration { get; set; }
+    public long ConsumedCollectGeneration { get; set; }
+    public long RequiredCollectGeneration { get; set; }
     public string CollectVisibleLatePolicy { get; set; } = string.Empty;
     public double CollectWaitForRenderMs { get; set; }
     public string CollectWaitReason { get; set; } = string.Empty;

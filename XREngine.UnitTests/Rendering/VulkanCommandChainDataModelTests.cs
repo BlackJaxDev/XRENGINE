@@ -326,7 +326,9 @@ public sealed class VulkanCommandChainDataModelTests
         openXrSource.ShouldContain("state.FrameOpResourcePlannerSwitchingState = _frameOpThreadScope.CaptureCurrent(_renderer);");
         resourcePlannerSource.ShouldContain("FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;");
         commandChainSource.ShouldContain("FrameOpResourcePlannerSwitchingState frameOpSwitchingState = ActiveFrameOpResourcePlannerSwitchingState;");
-        commandBufferSource.ShouldContain("if (ActiveFrameOpResourcePlannerSwitchingState.SwitchingActive)");
+        commandBufferSource.ShouldContain("FrameOpPlannerStateKey packetPlannerKey = BuildFrameOpPlannerStateKey(packetContext);");
+        commandBufferSource.ShouldContain("using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(packetContext);");
+        commandBufferSource.ShouldNotContain("if (ActiveFrameOpResourcePlannerSwitchingState.SwitchingActive)\n                return false;");
         stateTrackingSource.ShouldNotContain("private bool _frameOpResourcePlannerSwitchingActive;");
         stateTrackingSource.ShouldNotContain("private bool _frameOpResourcePlannerRecordingScopeActive;");
         stateTrackingSource.ShouldNotContain("private bool _hasActiveFrameOpResourcePlannerStateKey;");
@@ -507,12 +509,14 @@ public sealed class VulkanCommandChainDataModelTests
 
         recordingSource.ShouldContain(
             "private bool TryRefreshReusableCommandBufferFrameData(\n            uint imageIndex,\n            FrameOp[] ops,");
-        recordingSource.ShouldContain("using IDisposable plannerScope = EnterFrameOpResourcePlannerReadbackScope(op.Context);");
+        recordingSource.ShouldContain("FrameOpPlannerStateKey packetPlannerKey = BuildFrameOpPlannerStateKey(packetContext);");
+        recordingSource.ShouldContain("using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(packetContext);");
+        recordingSource.ShouldNotContain("using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(op.Context);");
         recordingSource.ShouldContain("case IndirectDrawOp indirectDrawOp:");
         recordingSource.ShouldContain("indirectDrawOp.MeshRenderer.TryRefreshReusableCommandBufferFrameData(");
 
-        recordingSource.ShouldContain("using IDisposable plannerScope = EnterFrameOpResourcePlannerReadbackScope(indirectOp.Context);");
-        secondarySource.ShouldContain("using IDisposable plannerScope = EnterFrameOpResourcePlannerReadbackScope(runOp.Context);");
+        recordingSource.ShouldContain("using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(indirectOp.Context);");
+        secondarySource.ShouldContain("using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(runOp.Context);");
     }
 
     [Test]
@@ -541,7 +545,8 @@ public sealed class VulkanCommandChainDataModelTests
         textureSource.ShouldContain("if (!TryRestorePhysicalImageViewCache(_physicalGroup, current))");
         descriptorKeySource.ShouldContain("ulong LayoutFingerprint");
         descriptorKeySource.ShouldNotContain("ProgramBindingId");
-        descriptorKeySource.ShouldContain("ulong ResourceVariantFingerprint");
+        descriptorKeySource.ShouldContain("ulong BindingIdentityFingerprint");
+        descriptorKeySource.ShouldContain("ulong ImmutableResourceFingerprint");
         descriptorKeySource.ShouldContain("int DescriptorFrameSlotCount");
         descriptorSource.ShouldContain("hash.Add(info.ImageView.Handle);");
         descriptorSource.ShouldContain("hash.Add(info.Sampler.Handle);");
@@ -549,7 +554,7 @@ public sealed class VulkanCommandChainDataModelTests
         descriptorSource.ShouldContain("AppendComponent(builder, \"resourceAllocator\", unchecked((ulong)Renderer.ResourceAllocatorIdentity));");
         descriptorSource.ShouldContain("DescriptorAllocationKey allocationKey = new(");
         descriptorSource.ShouldContain("viewFamilyIdentity,");
-        descriptorSource.ShouldContain("resourceFingerprint);");
+        descriptorSource.ShouldContain("immutableResourceFingerprint);");
         descriptorSource.ShouldContain("EnsureDescriptorSlotReady(cachedAllocation, material, bindings, frameIndex, drawUniformSlot, resourceFingerprint)");
     }
 
@@ -1380,7 +1385,7 @@ public sealed class VulkanCommandChainDataModelTests
     }
 
     [Test]
-    public void TryRefreshReusableCommandChainFrameData_RejectsDescriptorGenerationChange()
+    public void TryRefreshReusableCommandChainFrameData_AllowsCompatibleDescriptorContentPublication()
     {
         RenderPacket baseline = CreatePacket(
             structuralSignature: 0x100,
@@ -1405,10 +1410,143 @@ public sealed class VulkanCommandChainDataModelTests
         VulkanRenderer.EvaluateCommandChainDirtyReason(chain, packet)
             .ShouldBe(CommandChainDirtyReason.DescriptorGeneration);
         VulkanRenderer.TryRefreshReusableCommandChainFrameData(chain, packet)
-            .ShouldBeFalse();
-        chain.FrameDataSignature.ShouldBe(baseline.FrameDataSignature);
-        chain.DescriptorGeneration.ShouldBe(baseline.DescriptorSnapshot.DescriptorGeneration);
+            .ShouldBeTrue();
+        chain.FrameDataSignature.ShouldBe(packet.FrameDataSignature);
+        chain.DescriptorGeneration.ShouldBe(packet.DescriptorSnapshot.DescriptorGeneration);
         chain.FrameDataRefreshTouchedDescriptors.ShouldBeFalse();
+    }
+
+    [Test]
+    public void P04ResourceScenarios_InvalidateOnlyTheirExactPacketClass()
+    {
+        RenderPacket baseline = CreatePacket(
+            structuralSignature: 0x100,
+            frameDataSignature: 0x200,
+            resourcePlanRevision: 0x300,
+            descriptorGeneration: 0x400,
+            pipelineGeneration: 0x500,
+            descriptorSetCount: 1,
+            descriptorSetSignature: 0x600,
+            physicalImageSignature: 0x700,
+            framebufferSignature: 0x800,
+            volatility: RenderPacketVolatility.FrameDataOnly);
+
+        CommandChain materialEditChain = CreateRecordedChain(baseline);
+        RenderPacket materialEdit = CreatePacket(
+            baseline.StructuralSignature,
+            baseline.FrameDataSignature + 1,
+            baseline.ResourcePlanSnapshot.Revision,
+            baseline.DescriptorSnapshot.DescriptorGeneration,
+            baseline.ResourcePlanSnapshot.PipelineGeneration,
+            RenderPacketVolatility.FrameDataOnly,
+            baseline.DescriptorSnapshot.DescriptorSetCount,
+            baseline.DescriptorSnapshot.DescriptorSetSignature,
+            baseline.ResourcePlanSnapshot.PhysicalImageSignature,
+            baseline.ResourcePlanSnapshot.FramebufferSignature);
+        VulkanRenderer.EvaluateCommandChainDirtyReason(materialEditChain, materialEdit)
+            .ShouldBe(CommandChainDirtyReason.None);
+
+        CommandChain texturePublicationChain = CreateRecordedChain(baseline);
+        RenderPacket texturePublication = CreatePacket(
+            baseline.StructuralSignature,
+            baseline.FrameDataSignature + 1,
+            baseline.ResourcePlanSnapshot.Revision,
+            baseline.DescriptorSnapshot.DescriptorGeneration + 1,
+            baseline.ResourcePlanSnapshot.PipelineGeneration,
+            RenderPacketVolatility.FrameDataOnly,
+            baseline.DescriptorSnapshot.DescriptorSetCount,
+            baseline.DescriptorSnapshot.DescriptorSetSignature,
+            baseline.ResourcePlanSnapshot.PhysicalImageSignature,
+            baseline.ResourcePlanSnapshot.FramebufferSignature);
+        VulkanRenderer.EvaluateCommandChainDirtyReason(texturePublicationChain, texturePublication)
+            .ShouldBe(CommandChainDirtyReason.DescriptorGeneration);
+        VulkanRenderer.TryRefreshReusableCommandChainFrameData(texturePublicationChain, texturePublication)
+            .ShouldBeTrue();
+
+        CommandChain resizeChain = CreateRecordedChain(baseline);
+        RenderPacket resize = CreatePacket(
+            baseline.StructuralSignature,
+            baseline.FrameDataSignature,
+            baseline.ResourcePlanSnapshot.Revision + 1,
+            baseline.DescriptorSnapshot.DescriptorGeneration,
+            baseline.ResourcePlanSnapshot.PipelineGeneration,
+            RenderPacketVolatility.FrameDataOnly,
+            baseline.DescriptorSnapshot.DescriptorSetCount,
+            baseline.DescriptorSnapshot.DescriptorSetSignature,
+            baseline.ResourcePlanSnapshot.PhysicalImageSignature + 1,
+            baseline.ResourcePlanSnapshot.FramebufferSignature + 1);
+        VulkanRenderer.EvaluateCommandChainDirtyReason(resizeChain, resize)
+            .ShouldBe(CommandChainDirtyReason.ResourcePlan);
+
+        CommandChain hotReloadChain = CreateRecordedChain(baseline);
+        RenderPacket hotReload = CreatePacket(
+            baseline.StructuralSignature,
+            baseline.FrameDataSignature,
+            baseline.ResourcePlanSnapshot.Revision,
+            baseline.DescriptorSnapshot.DescriptorGeneration,
+            baseline.ResourcePlanSnapshot.PipelineGeneration + 1,
+            RenderPacketVolatility.FrameDataOnly,
+            baseline.DescriptorSnapshot.DescriptorSetCount,
+            baseline.DescriptorSnapshot.DescriptorSetSignature,
+            baseline.ResourcePlanSnapshot.PhysicalImageSignature,
+            baseline.ResourcePlanSnapshot.FramebufferSignature);
+        VulkanRenderer.EvaluateCommandChainDirtyReason(hotReloadChain, hotReload)
+            .ShouldBe(CommandChainDirtyReason.PipelineGeneration);
+    }
+
+    [Test]
+    public void P04SwapchainRotation_DelaysPublicationAndRetirementPerOccupiedSlot()
+    {
+        RenderPacket baseline = CreatePacket(
+            structuralSignature: 0x100,
+            frameDataSignature: 0x200,
+            resourcePlanRevision: 0x300,
+            descriptorGeneration: 0x400,
+            pipelineGeneration: 0x500,
+            descriptorSetCount: 1,
+            descriptorSetSignature: 0x600,
+            volatility: RenderPacketVolatility.FrameDataOnly);
+        RenderPacket publication = CreatePacket(
+            structuralSignature: baseline.StructuralSignature,
+            frameDataSignature: baseline.FrameDataSignature + 1,
+            resourcePlanRevision: baseline.ResourcePlanSnapshot.Revision,
+            descriptorGeneration: baseline.DescriptorSnapshot.DescriptorGeneration + 1,
+            pipelineGeneration: baseline.ResourcePlanSnapshot.PipelineGeneration,
+            descriptorSetCount: baseline.DescriptorSnapshot.DescriptorSetCount,
+            descriptorSetSignature: baseline.DescriptorSnapshot.DescriptorSetSignature,
+            volatility: RenderPacketVolatility.FrameDataOnly);
+        CommandChain[] slots =
+        [
+            CreateRecordedChain(baseline, frameSlot: 0),
+            CreateRecordedChain(baseline, frameSlot: 1),
+            CreateRecordedChain(baseline, frameSlot: 2),
+        ];
+
+        VulkanRenderer.TryRefreshReusableCommandChainFrameData(slots[0], publication).ShouldBeTrue();
+        slots[0].DescriptorGeneration.ShouldBe(publication.DescriptorSnapshot.DescriptorGeneration);
+        slots[1].DescriptorGeneration.ShouldBe(baseline.DescriptorSnapshot.DescriptorGeneration);
+        slots[2].DescriptorGeneration.ShouldBe(baseline.DescriptorSnapshot.DescriptorGeneration);
+
+        VulkanRenderer.VulkanResourceLifetimeRecord retiredImage =
+            CreateLifetimeRecord(ObjectType.Image, 0x991, 73, "P04.StreamedTexture.OldImage");
+        for (ulong completionSequence = 11; completionSequence <= 13; completionSequence++)
+        {
+            VulkanRenderer.MarkVulkanResourceSubmitted_NoLock(
+                retiredImage,
+                VulkanRenderer.EVulkanLifetimeQueueDomain.Graphics,
+                completionSequence,
+                submissionSerial: completionSequence,
+                frameOpContextId: completionSequence,
+                frameOpKind: "P04.ForcedPublicationDelay");
+        }
+
+        retiredImage.Pins.IsRetirementReady(12, 0, 0).ShouldBeFalse();
+        retiredImage.Pins.IsRetirementReady(13, 0, 0).ShouldBeTrue();
+
+        VulkanRenderer.TryRefreshReusableCommandChainFrameData(slots[1], publication).ShouldBeTrue();
+        VulkanRenderer.TryRefreshReusableCommandChainFrameData(slots[2], publication).ShouldBeTrue();
+        slots.ShouldAllBe(chain => chain.DescriptorGeneration == publication.DescriptorSnapshot.DescriptorGeneration);
+        slots.Select(static chain => chain.Key.FrameSlot).ShouldBe([0, 1, 2]);
     }
 
     [Test]
@@ -1809,7 +1947,7 @@ public sealed class VulkanCommandChainDataModelTests
             groups: new[] { CreateGroupForKeys(firstKey, secondKey) });
         Dictionary<CommandChainKey, CommandChain> chains = new()
         {
-            [firstKey] = new CommandChain(firstKey) { SourceStartIndex = 2, SourceCount = 1 },
+            [firstKey] = new CommandChain(firstKey) { SourceStartIndex = 2, SourceCount = 3 },
             [secondKey] = new CommandChain(secondKey) { SourceStartIndex = 5, SourceCount = 1 },
         };
 
@@ -1818,8 +1956,8 @@ public sealed class VulkanCommandChainDataModelTests
         keysByOp[0].ChainOrdinal.ShouldBe(-1);
         keysByOp[1].ChainOrdinal.ShouldBe(-1);
         keysByOp[2].ShouldBe(firstKey);
-        keysByOp[3].ChainOrdinal.ShouldBe(-1);
-        keysByOp[4].ChainOrdinal.ShouldBe(-1);
+        keysByOp[3].ShouldBe(firstKey);
+        keysByOp[4].ShouldBe(firstKey);
         keysByOp[5].ShouldBe(secondKey);
         keysByOp[6].ChainOrdinal.ShouldBe(-1);
     }
@@ -1964,9 +2102,9 @@ public sealed class VulkanCommandChainDataModelTests
         return CreateRecordedChain(packet);
     }
 
-    private static CommandChain CreateRecordedChain(RenderPacket packet)
+    private static CommandChain CreateRecordedChain(RenderPacket packet, int frameSlot = 0)
     {
-        CommandChain chain = new(new CommandChainKey(0, new RenderViewKey(1, 2, 0, RenderViewKind.Main, 0, -1), 3, 4, false, 5))
+        CommandChain chain = new(new CommandChainKey(frameSlot, new RenderViewKey(1, 2, 0, RenderViewKind.Main, 0, -1), 3, 4, false, 5))
         {
             State = CommandChainState.Recorded,
             StructuralSignature = packet.StructuralSignature,

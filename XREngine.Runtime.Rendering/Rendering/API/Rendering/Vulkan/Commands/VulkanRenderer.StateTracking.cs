@@ -438,6 +438,8 @@ public unsafe partial class VulkanRenderer
     private readonly List<MergedFrameOpRegistryCacheEntry> _mergedFrameOpRegistryCache = new(MaxMergedFrameOpRegistryCacheEntries);
     private readonly List<FrameOpPlannerStateKey> _frameOpPlannerStateKeyScratch = [];
     private readonly List<FrameOpPlannerStateKey> _frameOpPlannerStateEvictionScratch = [];
+    private readonly List<RenderResourceRegistry> _frameOpRegistryScratch = [];
+    private readonly List<FrameOpRegistryCacheSource> _frameOpRegistryCacheSourceScratch = [];
     private IReadOnlyCollection<RenderPassMetadata>? _lastActiveFilterSourcePassMetadata;
     private IReadOnlyCollection<RenderPassMetadata>? _lastActiveFilterResult;
     private RenderResourceRegistry? _lastActiveFilterResourceRegistry;

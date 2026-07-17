@@ -1840,9 +1840,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             _pipeline?.OnTextureBound(this, name, texture, existingTexture);
 
         bool bindingChanged = !ReferenceEquals(existingTexture, texture);
+        RenderResourceChangeKind changeKind = ClassifyTextureBindingChange(Resources, name, descriptor, existingTexture);
         Resources.BindTexture(texture, descriptor);
         if (bindingChanged)
-            NotifyRenderResourcesChanged();
+            NotifyRenderResourcesChanged(changeKind);
     }
 
     /// <summary>
@@ -1893,9 +1894,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         }
 
         bool bindingChanged = !ReferenceEquals(existingBuffer, buffer);
+        RenderResourceChangeKind changeKind = ClassifyBufferBindingChange(Resources, name, descriptor, existingBuffer);
         Resources.BindBuffer(buffer, descriptor);
         if (bindingChanged)
-            NotifyRenderResourcesChanged();
+            NotifyRenderResourcesChanged(changeKind);
     }
 
     internal void BindImportedTexture(XRTexture texture)
@@ -1910,9 +1912,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             Name = name,
             Lifetime = RenderResourceLifetime.External,
         };
+        RenderResourceChangeKind changeKind = ClassifyTextureBindingChange(registry, name, descriptor, existingTexture);
         registry.BindTexture(texture, descriptor, ownsInstance: false);
         if (!ReferenceEquals(existingTexture, texture))
-            NotifyRenderResourcesChanged();
+            NotifyRenderResourcesChanged(changeKind);
     }
 
     internal void BindImportedBuffer(XRDataBuffer buffer)
@@ -1929,9 +1932,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             Name = name,
             Lifetime = RenderResourceLifetime.External,
         };
+        RenderResourceChangeKind changeKind = ClassifyBufferBindingChange(registry, name, descriptor, existingBuffer);
         registry.BindBuffer(buffer, descriptor, ownsInstance: false);
         if (!ReferenceEquals(existingBuffer, buffer))
-            NotifyRenderResourcesChanged();
+            NotifyRenderResourcesChanged(changeKind);
     }
 
     internal bool UnbindImportedTexture(string name)
@@ -2063,7 +2067,61 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// Notifies the current renderer that the render resources have changed, prompting it to update its state accordingly.
     /// </summary>
     internal void NotifyRenderResourcesChanged([CallerMemberName] string? reason = null)
-        => AbstractRenderer.Current?.NotifyRenderResourcesChanged(DescribeRenderResourceChangeReason(reason));
+        => NotifyRenderResourcesChanged(RenderResourceChangeKind.StructuralLayout, reason);
+
+    internal void NotifyRenderResourcesChanged(
+        RenderResourceChangeKind kind,
+        [CallerMemberName] string? reason = null)
+        => AbstractRenderer.Current?.NotifyRenderResourcesChanged(kind, DescribeRenderResourceChangeReason(reason));
+
+    private static RenderResourceChangeKind ClassifyTextureBindingChange(
+        RenderResourceRegistry registry,
+        string name,
+        TextureResourceDescriptor? descriptor,
+        XRTexture? existingTexture)
+    {
+        if (existingTexture is null)
+            return RenderResourceChangeKind.BindingIdentity;
+
+        if (descriptor is not null &&
+            registry.TextureRecords.TryGetValue(name, out RenderTextureResource? record) &&
+            !IsTextureBindingLayoutCompatible(record.Descriptor, descriptor))
+        {
+            return RenderResourceChangeKind.StructuralLayout;
+        }
+
+        return RenderResourceChangeKind.CompatibleContentPublication;
+    }
+
+    private static RenderResourceChangeKind ClassifyBufferBindingChange(
+        RenderResourceRegistry registry,
+        string name,
+        BufferResourceDescriptor? descriptor,
+        XRDataBuffer? existingBuffer)
+    {
+        if (existingBuffer is null)
+            return RenderResourceChangeKind.BindingIdentity;
+
+        if (descriptor is not null &&
+            registry.BufferRecords.TryGetValue(name, out RenderBufferResource? record) &&
+            !IsBufferBindingLayoutCompatible(record.Descriptor, descriptor))
+        {
+            return RenderResourceChangeKind.StructuralLayout;
+        }
+
+        return RenderResourceChangeKind.CompatibleContentPublication;
+    }
+
+    private static bool IsTextureBindingLayoutCompatible(
+        TextureResourceDescriptor previous,
+        TextureResourceDescriptor current)
+        => previous.Kind == current.Kind &&
+           previous.RequiresStorageUsage == current.RequiresStorageUsage;
+
+    private static bool IsBufferBindingLayoutCompatible(
+        BufferResourceDescriptor previous,
+        BufferResourceDescriptor current)
+        => previous.Target == current.Target;
 
     /// <summary>
     /// Provides a human-readable description of the reason for a render resource change, based on the caller member name. 

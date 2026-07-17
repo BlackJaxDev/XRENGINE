@@ -162,12 +162,8 @@ namespace XREngine.Timers
 
         private readonly Stopwatch _watch = new();
 
-        private ManualResetEventSlim
-            _renderDone = new(false),
-            _swapDone = new(true);//,
-            //_updateDone = new(false);
-
-        private int _hasCompletedCollectSwap;
+        private ManualResetEventSlim _renderDone = new(false);
+        private readonly CollectVisibleGenerationGate _visibilityGenerationGate = new();
         private int _renderReadyForNextCollectSignaled;
         private long _fixedUpdateAccumulatorTicks;
         private long _fixedUpdateClockTimestampTicks;
@@ -183,6 +179,11 @@ namespace XREngine.Timers
         public ulong CollectFrameId { get; private set; }
         public ulong SwapFrameId { get; private set; }
         public ulong PresentFrameId { get; private set; }
+        public long RequestedCollectGeneration => _visibilityGenerationGate.RequestedGeneration;
+        public long CompletedCollectGeneration => _visibilityGenerationGate.CompletedGeneration;
+        public long PublishedCollectGeneration => _visibilityGenerationGate.PublishedGeneration;
+        public long ConsumedCollectGeneration => _visibilityGenerationGate.ConsumedGeneration;
+        public long RequiredCollectGeneration => _visibilityGenerationGate.RequiredGeneration;
 
         public bool IsRunning => _watch.IsRunning;
 
@@ -217,8 +218,7 @@ namespace XREngine.Timers
 
             _watch.Start();
             _renderDone = new ManualResetEventSlim(false);
-            _swapDone = new ManualResetEventSlim(true);
-            _hasCompletedCollectSwap = 0;
+            _visibilityGenerationGate.Reset();
             _renderReadyForNextCollectSignaled = 0;
             _collectVisibleLatePolicy = ReadCollectVisibleLatePolicyFromEnvironment();
 
@@ -264,10 +264,11 @@ namespace XREngine.Timers
         {
             string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CollectVisibleLatePolicy);
             if (string.IsNullOrWhiteSpace(raw))
-                return ECollectVisibleLatePolicy.ReusePreviousVisibility;
+                return ECollectVisibleLatePolicy.BlockUntilFresh;
 
             string value = raw.Trim();
-            if (Enum.TryParse(value, ignoreCase: true, out ECollectVisibleLatePolicy parsed))
+            if (Enum.TryParse(value, ignoreCase: true, out ECollectVisibleLatePolicy parsed) &&
+                Enum.IsDefined(parsed))
                 return parsed;
 
             return value.ToLowerInvariant() switch
@@ -276,7 +277,7 @@ namespace XREngine.Timers
                 "fresh" => ECollectVisibleLatePolicy.BlockUntilFresh,
                 "reuse" => ECollectVisibleLatePolicy.ReusePreviousVisibility,
                 "stale" => ECollectVisibleLatePolicy.ReusePreviousVisibility,
-                _ => ECollectVisibleLatePolicy.ReusePreviousVisibility,
+                _ => ECollectVisibleLatePolicy.BlockUntilFresh,
             };
         }
 
@@ -358,24 +359,47 @@ namespace XREngine.Timers
         {
             while (IsRunning)
             {
-#if !XRE_PUBLISHED
-                long allocStart = 0;
-                Engine.AllocationScope allocationScope = default;
-                bool trackAlloc = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking;
-                if (trackAlloc)
+                try
                 {
-                    allocStart = GC.GetAllocatedBytesForCurrentThread();
-                    allocationScope = Engine.Allocations.BeginScope("CollectSwap.Frame", AllocationScopeCategory.RenderSubmission);
+                    RunCollectVisibleIteration();
                 }
+                catch (Exception e)
+                {
+                    Debug.LogException(e);
+                    Stop();
+                    return;
+                }
+            }
+        }
+
+        private void RunCollectVisibleIteration()
+        {
+            long collectGeneration = _visibilityGenerationGate.RequestNextCollect();
+#if !XRE_PUBLISHED
+            long allocStart = 0;
+            Engine.AllocationScope allocationScope = default;
+            bool trackAlloc = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking;
+            if (trackAlloc)
+            {
+                allocStart = GC.GetAllocatedBytesForCurrentThread();
+                allocationScope = Engine.Allocations.BeginScope("CollectSwap.Frame", AllocationScopeCategory.RenderSubmission);
+            }
 #endif
 
+            try
+            {
                 using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread", ProfilerScopeKind.AlwaysOnHotPathLoop))
                 {
                     //Collects visible object and generates render commands for the game's current state
                     using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchCollectVisible", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
-                        DispatchCollectVisible();
+                        if (!DispatchCollectVisible())
+                        {
+                            Stop();
+                            return;
+                        }
                     }
+                    _visibilityGenerationGate.MarkCollectCompleted(collectGeneration);
 
                     //Wait for the render thread to swap update buffers with render buffers
                     using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.WaitForRender", ProfilerScopeKind.AlwaysOnHotPathLoop))
@@ -385,7 +409,16 @@ namespace XREngine.Timers
                         Engine.Rendering.Stats.FrameLifecycle.RecordCollectWaitForRender(TimeTicks() - waitStartTicks);
                     }
 
+                    if (!IsRunning)
+                        return;
+
                     _renderDone.Reset();
+
+#if !XRE_PUBLISHED
+                    using var collectSwapPublicationAllocationScope = trackAlloc
+                        ? Engine.Allocations.BeginScope("Visibility.CollectSwapPublication", AllocationScopeCategory.RenderSubmission)
+                        : default;
+#endif
 
                     using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.ProcessCollectVisibleSwapJobs", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
@@ -396,8 +429,14 @@ namespace XREngine.Timers
                     {
                         DispatchSwapBuffers();
                     }
-                }
 
+                    // Publish only after every swap listener completed. A failed listener leaves
+                    // this generation unavailable and terminates the loop through the outer catch.
+                    _visibilityGenerationGate.Publish(collectGeneration);
+                }
+            }
+            finally
+            {
 #if !XRE_PUBLISHED
                 if (trackAlloc)
                 {
@@ -406,10 +445,6 @@ namespace XREngine.Timers
                     Engine.Allocations.RecordCollectSwap(allocEnd - allocStart);
                 }
 #endif
-
-                //Inform the render thread that the swap is done
-                Volatile.Write(ref _hasCompletedCollectSwap, 1);
-                _swapDone.Set();
             }
         }
 
@@ -498,27 +533,34 @@ namespace XREngine.Timers
             bool reusedPreviousVisibility = false;
             while (IsRunning)
             {
-                if (_swapDone.IsSet)
+                if (_visibilityGenerationGate.TryConsumeFresh(out _))
                 {
-                    _swapDone.Reset();
                     break;
                 }
 
-                if (CanReusePreviousVisibilityThisFrame())
+                if (_visibilityGenerationGate.CanReusePreviousForRequiredGeneration(CollectVisibleLatePolicy))
                 {
+                    long requiredGeneration = _visibilityGenerationGate.RequiredGeneration;
                     if (!DispatchRender())
                     {
+                        if (!IsRunning)
+                            return;
+
                         WaitUntilNextRenderDispatch();
                         continue;
                     }
 
-                    Engine.Rendering.Stats.FrameLifecycle.RecordStaleCollectReuse();
-                    reusedPreviousVisibility = true;
-                    break;
+                    if (_visibilityGenerationGate.TryRecordStaleReuse(requiredGeneration))
+                    {
+                        Engine.Rendering.Stats.FrameLifecycle.RecordStaleCollectReuse();
+                        reusedPreviousVisibility = true;
+                        break;
+                    }
                 }
 
                 long waitStartTicks = TimeTicks();
-                _swapDone.Wait();
+                if (!_visibilityGenerationGate.WaitForPublication())
+                    return;
                 Engine.Rendering.Stats.FrameLifecycle.RecordRenderWaitForCollect(TimeTicks() - waitStartTicks);
             }
 
@@ -552,17 +594,8 @@ namespace XREngine.Timers
             _renderDone.Set();
         }
 
-        private bool CanReusePreviousVisibilityThisFrame()
-            => CollectVisibleLatePolicy == ECollectVisibleLatePolicy.ReusePreviousVisibility &&
-               Volatile.Read(ref _hasCompletedCollectSwap) != 0;
-
         public bool IsCollectVisibleDone
-            => _swapDone.IsSet;
-
-        //public void ResetCollectVisible()
-        //{
-        //    _swapDone.Reset();
-        //}
+            => _visibilityGenerationGate.IsFreshGenerationAvailable;
 
         //public void SetRenderDone()
         //{
@@ -573,7 +606,7 @@ namespace XREngine.Timers
         {
             _watch.Stop();
 
-            _swapDone?.Set();
+            _visibilityGenerationGate.Terminate();
             _renderDone?.Set();
             //_updatingDone?.Set();
 
@@ -662,11 +695,12 @@ namespace XREngine.Timers
             catch (Exception e)
             {
                 Debug.LogException(e);
+                Stop();
                 return false;
             }
         }
 
-        public void DispatchCollectVisible()
+        public bool DispatchCollectVisible()
         {
             try
             {
@@ -690,10 +724,12 @@ namespace XREngine.Timers
                 PostCollectVisible?.Invoke();
                 timestampTicks = TimeTicks();
                 Collect.ElapsedTicks = Math.Max(0L, timestampTicks - Collect.LastTimestampTicks);
+                return true;
             }
             catch (Exception e)
             {
                 Debug.LogException(e);
+                return false;
             }
         }
 

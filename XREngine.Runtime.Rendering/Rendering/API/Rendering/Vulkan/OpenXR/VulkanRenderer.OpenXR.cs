@@ -2732,11 +2732,6 @@ public unsafe partial class VulkanRenderer
             firstDescriptorGenerationMismatch: stats.FirstDescriptorGenerationMismatch,
             firstResourcePlanRevisionMismatch: stats.FirstResourcePlanRevisionMismatch);
 
-        CommandChainWorkerTiming workerTiming = DispatchCommandChainRecordingWorkers(schedule);
-        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(
-            chainWorkerRecordTime: workerTiming.WorkerRecordTime,
-            renderThreadWaitForWorkersTime: workerTiming.WaitForWorkersTime);
-
         return schedule;
     }
 
@@ -4940,7 +4935,7 @@ public unsafe partial class VulkanRenderer
                 EVulkanMeshFrameDataStreamKind.Primary,
                 context,
                 draw);
-            using IDisposable plannerScope =
+            using var plannerScope =
                 EnterFrameOpResourcePlannerReadbackScope(context);
             if (renderer.TryPrewarmFrameDataForRecording(
                     draw,

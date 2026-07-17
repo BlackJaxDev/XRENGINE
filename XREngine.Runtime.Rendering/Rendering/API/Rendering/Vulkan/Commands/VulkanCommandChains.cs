@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.InteropServices;
 using System.Threading;
 using Silk.NET.Vulkan;
 
@@ -175,9 +176,21 @@ internal sealed class RenderPacket(
             dynamicOverlay)
     {
         if (draws.Length > 1)
-            _draws = draws.ToArray();
+        {
+            _draws = MemoryMarshal.TryGetArray(draws, out ArraySegment<DrawPacket> drawSegment) &&
+                drawSegment.Offset == 0 &&
+                drawSegment.Count == drawSegment.Array!.Length
+                    ? drawSegment.Array
+                    : draws.ToArray();
+        }
         if (dispatches.Length > 1)
-            _dispatches = dispatches.ToArray();
+        {
+            _dispatches = MemoryMarshal.TryGetArray(dispatches, out ArraySegment<DispatchPacket> dispatchSegment) &&
+                dispatchSegment.Offset == 0 &&
+                dispatchSegment.Count == dispatchSegment.Array!.Length
+                    ? dispatchSegment.Array
+                    : dispatches.ToArray();
+        }
     }
 
     public RenderViewKey ViewKey { get; } = viewKey;
@@ -263,6 +276,8 @@ internal sealed class CommandChain(CommandChainKey key)
     public int SourceStartIndex { get; set; } = -1;
     public int SourceCount { get; set; }
     public int LastRecordedFrameSlot { get; set; } = -1;
+    public ulong LastUsedScheduleGeneration { get; set; }
+    public bool ScheduledPacket { get; set; }
     public CommandChainDirtyReason DirtyReason { get; set; }
 }
 

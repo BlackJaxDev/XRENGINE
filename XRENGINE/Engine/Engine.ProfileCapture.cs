@@ -529,6 +529,11 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "collect_visible_ms", collectVisibleMs, ref first);
             AppendNumberField(s_lineBuilder, "fixed_update_ms", fixedUpdateMs, ref first);
             AppendStringField(s_lineBuilder, "collect_visible_late_policy", Engine.Rendering.Stats.FrameLifecycle.CollectVisibleLatePolicy, ref first);
+            AppendNumberField(s_lineBuilder, "collect_generation_requested", Engine.Rendering.Stats.FrameLifecycle.RequestedCollectGeneration, ref first);
+            AppendNumberField(s_lineBuilder, "collect_generation_completed", Engine.Rendering.Stats.FrameLifecycle.CompletedCollectGeneration, ref first);
+            AppendNumberField(s_lineBuilder, "collect_generation_published", Engine.Rendering.Stats.FrameLifecycle.PublishedCollectGeneration, ref first);
+            AppendNumberField(s_lineBuilder, "collect_generation_consumed", Engine.Rendering.Stats.FrameLifecycle.ConsumedCollectGeneration, ref first);
+            AppendNumberField(s_lineBuilder, "collect_generation_required", Engine.Rendering.Stats.FrameLifecycle.RequiredCollectGeneration, ref first);
             AppendNumberField(s_lineBuilder, "collect_wait_for_render_ms", Engine.Rendering.Stats.FrameLifecycle.CollectWaitForRenderMs, ref first);
             AppendStringField(s_lineBuilder, "collect_wait_reason", Engine.Rendering.Stats.FrameLifecycle.CollectWaitReason, ref first);
             AppendNumberField(s_lineBuilder, "render_wait_for_collect_ms", Engine.Rendering.Stats.FrameLifecycle.RenderWaitForCollectMs, ref first);
@@ -772,6 +777,10 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_frame_wait_swapchain_image_ms", Engine.Rendering.Stats.Vulkan.VulkanFrameWaitSwapchainImageMs, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_reset_dynamic_uniform_ring_ms", Engine.Rendering.Stats.Vulkan.VulkanFrameResetDynamicUniformRingMs, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_record_command_buffer_ms", Engine.Rendering.Stats.Vulkan.VulkanFrameRecordCommandBufferMs, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_snapshot_imgui_overlay_ms", Engine.Rendering.Stats.Vulkan.VulkanFrameSnapshotImGuiOverlayMs, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_record_scene_command_buffer_ms", Engine.Rendering.Stats.Vulkan.VulkanFrameRecordSceneCommandBufferMs, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_record_imgui_overlay_ms", Engine.Rendering.Stats.Vulkan.VulkanFrameRecordImGuiOverlayMs, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_record_dynamic_ui_text_overlay_ms", Engine.Rendering.Stats.Vulkan.VulkanFrameRecordDynamicUiTextOverlayMs, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_submit_ms", Engine.Rendering.Stats.Vulkan.VulkanFrameSubmitMs, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_trim_ms", Engine.Rendering.Stats.Vulkan.VulkanFrameTrimMs, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_present_ms", Engine.Rendering.Stats.Vulkan.VulkanFramePresentMs, ref first);
@@ -793,6 +802,11 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_command_buffer_frame_op_signature_dirty_count", Engine.Rendering.Stats.Vulkan.VulkanCommandBufferFrameOpSignatureDirtyCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_buffer_planner_dirty_count", Engine.Rendering.Stats.Vulkan.VulkanCommandBufferPlannerDirtyCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_buffer_profiler_dirty_count", Engine.Rendering.Stats.Vulkan.VulkanCommandBufferProfilerDirtyCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_command_buffer_decision_reason_mask", (int)Engine.Rendering.Stats.Vulkan.VulkanCommandBufferDecisionReasonMask, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_command_buffer_decision_visibility_generation", Engine.Rendering.Stats.Vulkan.VulkanCommandBufferDecisionVisibilityGeneration, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_command_buffer_decision_structural_signature", Engine.Rendering.Stats.Vulkan.VulkanCommandBufferDecisionStructuralSignature, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_command_buffer_decision_descriptor_generation", Engine.Rendering.Stats.Vulkan.VulkanCommandBufferDecisionDescriptorGeneration, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_command_buffer_decision_swapchain_slot", Engine.Rendering.Stats.Vulkan.VulkanCommandBufferDecisionSwapchainSlot, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_exact_variants_dirtied", Engine.Rendering.Stats.Vulkan.VulkanExactVariantsDirtied, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_exact_command_chains_dirtied", Engine.Rendering.Stats.Vulkan.VulkanExactCommandChainsDirtied, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_unrelated_variants_preserved", Engine.Rendering.Stats.Vulkan.VulkanUnrelatedVariantsPreserved, ref first);
@@ -833,6 +847,14 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_mesh_descriptor_set_high_water", Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorSetHighWater, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_layout_lock_contentions", Engine.Rendering.Stats.Vulkan.VulkanLayoutLockContentions, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_record_command_buffer_allocated_bytes", Engine.Rendering.Stats.Vulkan.VulkanRecordCommandBufferAllocatedBytes, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_preparation", EVulkanCpuStage.FrameOpPreparation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "resource_planning", EVulkanCpuStage.ResourcePlanning, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "frame_data_refresh", EVulkanCpuStage.FrameDataRefresh, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "packet_construction", EVulkanCpuStage.PacketConstruction, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_recording", EVulkanCpuStage.PrimaryRecording, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "secondary_recording", EVulkanCpuStage.SecondaryRecording, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "descriptor_publication", EVulkanCpuStage.DescriptorPublication, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "submission", EVulkanCpuStage.Submission, ref first);
             AppendStringField(s_lineBuilder, "vulkan_command_buffer_dirty_summary", Engine.Rendering.Stats.Vulkan.VulkanCommandBufferDirtySummary, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_chains_scheduled", Engine.Rendering.Stats.Vulkan.VulkanCommandChainsScheduled, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_chains_recorded", Engine.Rendering.Stats.Vulkan.VulkanCommandChainsRecorded, ref first);
@@ -1131,6 +1153,17 @@ public static partial class Engine
                 force_flush_count = snapshot.Work.ForceFlushCount,
                 outputs = rows,
             };
+        }
+
+        private static void AppendVulkanCpuStageFields(
+            StringBuilder builder,
+            string name,
+            EVulkanCpuStage stage,
+            ref bool first)
+        {
+            AppendNumberField(builder, $"vulkan_cpu_{name}_ms", Engine.Rendering.Stats.Vulkan.VulkanCpuStageMs(stage), ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_allocated_bytes", Engine.Rendering.Stats.Vulkan.VulkanCpuStageAllocatedBytes(stage), ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_allocation_high_water_bytes", Engine.Rendering.Stats.Vulkan.VulkanCpuStageAllocationHighWaterBytes(stage), ref first);
         }
 
         private static void AppendStringField(StringBuilder builder, string name, string value, ref bool first)

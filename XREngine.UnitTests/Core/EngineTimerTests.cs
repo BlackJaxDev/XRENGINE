@@ -71,7 +71,7 @@ public sealed class EngineTimerTests
     }
 
     [Test]
-    public void CollectVisibleLatePolicy_DefaultsToReusePreviousVisibility()
+    public void CollectVisibleLatePolicy_DefaultsToBlockUntilFresh()
     {
         string? previous = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CollectVisibleLatePolicy);
         try
@@ -79,7 +79,31 @@ public sealed class EngineTimerTests
             Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CollectVisibleLatePolicy, null);
             var timer = new EngineTimer();
 
-            timer.CollectVisibleLatePolicy.ShouldBe(ECollectVisibleLatePolicy.ReusePreviousVisibility);
+            timer.CollectVisibleLatePolicy.ShouldBe(ECollectVisibleLatePolicy.BlockUntilFresh);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CollectVisibleLatePolicy, previous);
+        }
+    }
+
+    [TestCase("invalid", ECollectVisibleLatePolicy.BlockUntilFresh)]
+    [TestCase("999", ECollectVisibleLatePolicy.BlockUntilFresh)]
+    [TestCase("block", ECollectVisibleLatePolicy.BlockUntilFresh)]
+    [TestCase("fresh", ECollectVisibleLatePolicy.BlockUntilFresh)]
+    [TestCase("reuse", ECollectVisibleLatePolicy.ReusePreviousVisibility)]
+    [TestCase("stale", ECollectVisibleLatePolicy.ReusePreviousVisibility)]
+    public void CollectVisibleLatePolicy_RequiresExplicitValidStaleReuse(
+        string configuredValue,
+        ECollectVisibleLatePolicy expected)
+    {
+        string? previous = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CollectVisibleLatePolicy);
+        try
+        {
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CollectVisibleLatePolicy, configuredValue);
+            var timer = new EngineTimer();
+
+            timer.CollectVisibleLatePolicy.ShouldBe(expected);
         }
         finally
         {

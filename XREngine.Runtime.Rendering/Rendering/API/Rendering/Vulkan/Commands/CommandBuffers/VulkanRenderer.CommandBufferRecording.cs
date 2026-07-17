@@ -109,6 +109,7 @@ namespace XREngine.Rendering.Vulkan
             ulong rawFrameOpsSignature;
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.DrainFrameOps"))
             {
+                using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.FrameOpPreparation);
                 ops = DrainFrameOpsExcludingTextureUploads(
                     out rawFrameOpsSignature,
                     computeSignature: FrameOpSignatureDiffDiagnosticsEnabled);
@@ -124,6 +125,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.NormalizeFrameOps"))
                 {
+                    using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.FrameOpPreparation);
                     using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.NormalizeFrameOps.Sort"))
                         ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
                     using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.NormalizeFrameOps.SplitDynamicUiBatchText"))
@@ -184,6 +186,7 @@ namespace XREngine.Rendering.Vulkan
             ulong plannerRevision;
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.ResourcePlan"))
             {
+                using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.ResourcePlanning);
                 if (hasStaticFrameOps)
                 {
                     if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
@@ -359,6 +362,7 @@ namespace XREngine.Rendering.Vulkan
             CommandChainLoweringStats commandChainStats = default;
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.CommandChainLowering"))
             {
+                using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.PacketConstruction);
                 FrameOp[] scheduledDynamicUiBatchTextOps = preserveSwapchainForOverlay
                     ? Array.Empty<FrameOp>()
                     : dynamicUiBatchTextOps;
@@ -554,6 +558,7 @@ namespace XREngine.Rendering.Vulkan
                 _lastReusableFrameDataRefreshFailureReason = null;
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RefreshFrameData"))
                 {
+                    using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.FrameDataRefresh);
                     refreshedReusableFrameData = !hasStaticFrameOps ||
                         TryRefreshReusableCommandBufferFrameData(imageIndex, ops, EVulkanMeshFrameDataStreamKind.Primary);
                     if (refreshedReusableFrameData && dynamicUiBatchTextOps.Length > 0)
@@ -583,6 +588,7 @@ namespace XREngine.Rendering.Vulkan
                     if (!delayDynamicUiBatchTextOverlayRecording)
                     {
                         using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordDynamicUiSecondary"))
+                        using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.SecondaryRecording))
                             dynamicUiSecondaryReady = RecordDynamicUiBatchTextSecondaryCommandBuffer(
                                 imageIndex,
                                 variant,
@@ -631,7 +637,10 @@ namespace XREngine.Rendering.Vulkan
                             frameOpSignatureDirty: false,
                             plannerDirty: false,
                             profilerDirty: false,
-                            dirtyReason: null);
+                            dirtyReason: null,
+                            structuralSignature: currentGenerations.Structural,
+                            descriptorGeneration: currentGenerations.Descriptor,
+                            swapchainSlot: commandBufferImageSlot);
                         if (commandChainSchedule is not null)
                         {
                             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(
@@ -662,28 +671,30 @@ namespace XREngine.Rendering.Vulkan
 
         ReuseRejected:
 
-            string dirtyReason = DescribePrimaryReuseMiss(
-                variant,
-                currentGenerations,
-                forcedDirty,
-                imageForcedDirty,
-                forcedVariantDirtyReason,
-                frameOpSignatureDirty,
-                plannerDirty,
-                profilerDirty,
-                frameDataDirty,
-                dynamicUiDirty,
-                swapchainLifecycleDirty,
-                commandChainPrimaryDirty,
-                commandChainPrimaryDirtyReason,
-                commandChainSchedule?.StructuralSignature ?? ulong.MaxValue,
-                commandChainPrimaryGroupSignature,
-                commandChainPrimaryGroupCount,
-                primaryFrameStateDirty,
-                primaryFrameStateDirtyReason,
-                plannerRevision,
-                imageLayoutStartSignature,
-                swapchainImageEverPresentedAtRecord);
+            string? dirtyReason = VulkanFrameDiagnosticsTraceEnabled
+                ? DescribePrimaryReuseMiss(
+                    variant,
+                    currentGenerations,
+                    forcedDirty,
+                    imageForcedDirty,
+                    forcedVariantDirtyReason,
+                    frameOpSignatureDirty,
+                    plannerDirty,
+                    profilerDirty,
+                    frameDataDirty,
+                    dynamicUiDirty,
+                    swapchainLifecycleDirty,
+                    commandChainPrimaryDirty,
+                    commandChainPrimaryDirtyReason,
+                    commandChainSchedule?.StructuralSignature ?? ulong.MaxValue,
+                    commandChainPrimaryGroupSignature,
+                    commandChainPrimaryGroupCount,
+                    primaryFrameStateDirty,
+                    primaryFrameStateDirtyReason,
+                    plannerRevision,
+                    imageLayoutStartSignature,
+                    swapchainImageEverPresentedAtRecord)
+                : null;
 
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
                 reusedClean: false,
@@ -692,14 +703,22 @@ namespace XREngine.Rendering.Vulkan
                 frameOpSignatureDirty,
                 plannerDirty,
                 profilerDirty,
-                dirtyReason);
+                dirtyReason,
+                detailReasons:
+                    (frameDataDirty ? EVulkanCommandBufferDecisionReason.FrameData : 0) |
+                    (dynamicUiDirty ? EVulkanCommandBufferDecisionReason.DynamicOverlay : 0) |
+                    (swapchainLifecycleDirty ? EVulkanCommandBufferDecisionReason.SwapchainLifecycle : 0) |
+                    (commandChainPrimaryDirty ? EVulkanCommandBufferDecisionReason.CommandChainPrimary : 0) |
+                    (primaryFrameStateDirty ? EVulkanCommandBufferDecisionReason.PrimaryFrameState : 0) |
+                    (variant.RecordedGenerations.Descriptor != currentGenerations.Descriptor ? EVulkanCommandBufferDecisionReason.DescriptorGeneration : 0) |
+                    (variant.RecordedGenerations.ResourceAllocation != currentGenerations.ResourceAllocation ? EVulkanCommandBufferDecisionReason.ResourceAllocation : 0),
+                structuralSignature: currentGenerations.Structural,
+                descriptorGeneration: currentGenerations.Descriptor,
+                swapchainSlot: commandBufferImageSlot);
             if (commandChainSchedule is not null)
             {
-                CommandChainWorkerTiming workerTiming = DispatchCommandChainRecordingWorkers(commandChainSchedule);
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(
-                    primaryCommandBuffersRecorded: 1,
-                    chainWorkerRecordTime: workerTiming.WorkerRecordTime,
-                    renderThreadWaitForWorkersTime: workerTiming.WaitForWorkersTime);
+                    primaryCommandBuffersRecorded: 1);
             }
 
             _lastEnsureCommandBufferRecordedPrimary = true;
@@ -711,6 +730,7 @@ namespace XREngine.Rendering.Vulkan
                 if (!delayDynamicUiBatchTextOverlayRecording)
                 {
                     using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordDynamicUiSecondary"))
+                    using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.SecondaryRecording))
                         recordedDynamicUiSecondaryReady = RecordDynamicUiBatchTextSecondaryCommandBuffer(
                             imageIndex,
                             variant,
@@ -724,6 +744,7 @@ namespace XREngine.Rendering.Vulkan
 
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordPrimary"))
                 {
+                    using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.PrimaryRecording);
                     if (!TryRecordCommandBuffer(
                             imageIndex,
                             variant.PrimaryCommandBuffer,
@@ -1313,9 +1334,6 @@ namespace XREngine.Rendering.Vulkan
             dynamicUiBatchTextOverlayOpCount = 0;
             dynamicUiBatchTextOverlayVariant = null;
             swapchainLayoutAfterCommandBuffer = ImageLayout.PresentSrcKhr;
-            if (ActiveFrameOpResourcePlannerSwitchingState.SwitchingActive)
-                return false;
-
             if (!CommandChainsEnabledForCurrentRecording ||
                 _commandBufferVariants is null ||
                 imageIndex >= _commandBufferVariants.Length)
@@ -1352,13 +1370,17 @@ namespace XREngine.Rendering.Vulkan
                     variant.CommandChainScheduleSignature != cachedSchedule.StructuralSignature ||
                     variant.CommandChainPrimaryGroupSignature != currentPrimaryGroupSignature ||
                     variant.CommandChainPrimaryGroupCount != currentPrimaryGroupCount ||
+                    // Query brackets stay inline and are deliberately omitted from the
+                    // command-chain schedule. They therefore need their own primary-cache
+                    // identity; otherwise a primary recorded for query A can be replayed
+                    // while the current frame refreshes proxy data for query B.
+                    variant.RecordedGenerations.Query != currentGenerations.Query ||
                     !TryValidateCommandBufferVariantContext(
                         imageIndex,
                         variant,
                         frameOpContextFingerprint,
                         frameOpContextId,
                         "command-chain-primary") ||
-                    variant.FrameOpsSignature != frameOpsSignature ||
                     variant.PlannerRevision != plannerRevision ||
                     IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature) ||
                     variant.PreserveSwapchainForOverlay != preserveSwapchainForOverlay ||
@@ -1375,6 +1397,7 @@ namespace XREngine.Rendering.Vulkan
                 bool refreshedReusableFrameData;
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.FastReuse.RefreshFrameData"))
                 {
+                    using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.FrameDataRefresh);
                     refreshedReusableFrameData = ops.Length == 0 ||
                         TryRefreshReusableCommandBufferFrameData(imageIndex, ops, EVulkanMeshFrameDataStreamKind.Primary);
                     if (refreshedReusableFrameData && dynamicUiBatchTextOps.Length > 0)
@@ -1393,6 +1416,7 @@ namespace XREngine.Rendering.Vulkan
                 if (!delayDynamicUiSecondaryRecording)
                 {
                     using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.FastReuse.RecordDynamicUiSecondary"))
+                    using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.SecondaryRecording))
                         dynamicUiSecondaryReady = RecordDynamicUiBatchTextSecondaryCommandBuffer(
                             imageIndex,
                             variant,
@@ -1481,93 +1505,111 @@ namespace XREngine.Rendering.Vulkan
                 _commandBufferRecordingScratch.Value!.ReusableMeshFrameDataFamilyBases;
             int frameDataSlot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
 
-            for (int i = 0; i < ops.Length; i++)
+            int packetStart = 0;
+            while (packetStart < ops.Length)
             {
-                FrameOp op = ops[i];
-                using IDisposable plannerScope = EnterFrameOpResourcePlannerReadbackScope(op.Context);
-                switch (op)
+                FrameOpContext packetContext = ops[packetStart].Context;
+                FrameOpPlannerStateKey packetPlannerKey = BuildFrameOpPlannerStateKey(packetContext);
+                int packetEnd = packetStart + 1;
+                while (packetEnd < ops.Length &&
+                       BuildFrameOpPlannerStateKey(ops[packetEnd].Context) == packetPlannerKey)
                 {
-                    case MeshDrawOp drawOp:
+                    packetEnd++;
+                }
+
+                // Resource-planner state is packet state, not draw state. Keep one
+                // readback scope for a contiguous compatible range so warmed primary
+                // reuse does not serialize a full planner save/restore around every op.
+                using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(packetContext);
+                for (int i = packetStart; i < packetEnd; i++)
+                {
+                    FrameOp op = ops[i];
+                    switch (op)
                     {
-                        int drawUniformSlot = GetFrameWideMeshDrawUniformSlot(
-                            meshDrawSlotsByRendererFamily,
-                            familyBases,
-                            drawOp.Draw.Renderer,
-                            frameDataSlot,
-                            streamKind,
-                            drawOp.Context,
-                            drawOp.Draw);
-                        if (!drawOp.Draw.Renderer.TryRefreshReusableCommandBufferFrameData(imageIndex, drawOp.Draw, drawUniformSlot, out string reason, refreshMaterialUniforms))
+                        case MeshDrawOp drawOp:
                         {
-                            _lastReusableFrameDataRefreshFailureReason =
-                                $"mesh op={i}/{ops.Length} mesh='{drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' material='{(drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>"}' slot={drawUniformSlot}: {reason}";
-                            if (FrameDataReuseDiagnosticsEnabled)
+                            int drawUniformSlot = GetFrameWideMeshDrawUniformSlot(
+                                meshDrawSlotsByRendererFamily,
+                                familyBases,
+                                drawOp.Draw.Renderer,
+                                frameDataSlot,
+                                streamKind,
+                                drawOp.Context,
+                                drawOp.Draw);
+                            if (!drawOp.Draw.Renderer.TryRefreshReusableCommandBufferFrameData(imageIndex, drawOp.Draw, drawUniformSlot, out string reason, refreshMaterialUniforms))
                             {
-                                Debug.VulkanEvery(
-                                    $"Vulkan.FrameDataReuse.Mesh.{GetHashCode()}",
-                                    TimeSpan.FromSeconds(1),
-                                    "[Vulkan] Reusable command-buffer frame-data refresh failed image={0} op={1}/{2} mesh='{3}' material='{4}' drawSlot={5}: {6}",
+                                _lastReusableFrameDataRefreshFailureReason =
+                                    $"mesh op={i}/{ops.Length} mesh='{drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' material='{(drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>"}' slot={drawUniformSlot}: {reason}";
+                                if (FrameDataReuseDiagnosticsEnabled)
+                                {
+                                    Debug.VulkanEvery(
+                                        $"Vulkan.FrameDataReuse.Mesh.{GetHashCode()}",
+                                        TimeSpan.FromSeconds(1),
+                                        "[Vulkan] Reusable command-buffer frame-data refresh failed image={0} op={1}/{2} mesh='{3}' material='{4}' drawSlot={5}: {6}",
+                                        imageIndex,
+                                        i,
+                                        ops.Length,
+                                        drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>",
+                                        (drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>",
+                                        drawUniformSlot,
+                                        reason);
+                                }
+                                return false;
+                            }
+                            break;
+                        }
+                        case IndirectDrawOp indirectDrawOp:
+                        {
+                            int drawUniformSlot = GetFrameWideMeshDrawUniformSlot(
+                                meshDrawSlotsByRendererFamily,
+                                familyBases,
+                                indirectDrawOp.MeshRenderer,
+                                frameDataSlot,
+                                streamKind,
+                                indirectDrawOp.Context,
+                                indirectDrawOp.Draw);
+                            if (!indirectDrawOp.MeshRenderer.TryRefreshReusableCommandBufferFrameData(
                                     imageIndex,
-                                    i,
-                                    ops.Length,
-                                    drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>",
-                                    (drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>",
+                                    indirectDrawOp.Draw,
                                     drawUniformSlot,
-                                    reason);
-                            }
-                            return false;
-                        }
-                        break;
-                    }
-                    case IndirectDrawOp indirectDrawOp:
-                    {
-                        int drawUniformSlot = GetFrameWideMeshDrawUniformSlot(
-                            meshDrawSlotsByRendererFamily,
-                            familyBases,
-                            indirectDrawOp.MeshRenderer,
-                            frameDataSlot,
-                            streamKind,
-                            indirectDrawOp.Context,
-                            indirectDrawOp.Draw);
-                        if (!indirectDrawOp.MeshRenderer.TryRefreshReusableCommandBufferFrameData(
-                                imageIndex,
-                                indirectDrawOp.Draw,
-                                drawUniformSlot,
-                                out string reason,
-                                refreshMaterialUniforms))
-                        {
-                            _lastReusableFrameDataRefreshFailureReason =
-                                $"indirect op={i}/{ops.Length} mesh='{indirectDrawOp.MeshRenderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' material='{(indirectDrawOp.Draw.MaterialOverride ?? indirectDrawOp.MeshRenderer.MeshRenderer.Material)?.Name ?? "<unnamed material>"}' slot={drawUniformSlot}: {reason}";
-                            return false;
-                        }
-                        break;
-                    }
-                    case ComputeDispatchOp computeOp:
-                    {
-                        ulong reusableDescriptorKey = ComputeReusableComputeDescriptorBindingKey(computeOp, i);
-                        if (!computeOp.Program.TryRefreshReusableComputeDispatchFrameData(imageIndex, computeOp.Snapshot, reusableDescriptorKey))
-                        {
-                            _lastReusableFrameDataRefreshFailureReason =
-                                $"compute op={i}/{ops.Length} program='{computeOp.Program.Data?.Name ?? "<unnamed program>"}'";
-                            if (FrameDataReuseDiagnosticsEnabled)
+                                    out string reason,
+                                    refreshMaterialUniforms))
                             {
-                                Debug.VulkanEvery(
-                                    $"Vulkan.FrameDataReuse.Compute.{GetHashCode()}",
-                                    TimeSpan.FromSeconds(1),
-                                    "[Vulkan] Reusable command-buffer compute frame-data refresh failed image={0} op={1}/{2} program='{3}' groups={4}x{5}x{6}.",
-                                    imageIndex,
-                                    i,
-                                    ops.Length,
-                                    computeOp.Program.Data?.Name ?? "<unnamed program>",
-                                    computeOp.GroupsX,
-                                    computeOp.GroupsY,
-                                    computeOp.GroupsZ);
+                                _lastReusableFrameDataRefreshFailureReason =
+                                    $"indirect op={i}/{ops.Length} mesh='{indirectDrawOp.MeshRenderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' material='{(indirectDrawOp.Draw.MaterialOverride ?? indirectDrawOp.MeshRenderer.MeshRenderer.Material)?.Name ?? "<unnamed material>"}' slot={drawUniformSlot}: {reason}";
+                                return false;
                             }
-                            return false;
+                            break;
                         }
-                        break;
+                        case ComputeDispatchOp computeOp:
+                        {
+                            ulong reusableDescriptorKey = ComputeReusableComputeDescriptorBindingKey(computeOp, i);
+                            if (!computeOp.Program.TryRefreshReusableComputeDispatchFrameData(imageIndex, computeOp.Snapshot, reusableDescriptorKey))
+                            {
+                                _lastReusableFrameDataRefreshFailureReason =
+                                    $"compute op={i}/{ops.Length} program='{computeOp.Program.Data?.Name ?? "<unnamed program>"}'";
+                                if (FrameDataReuseDiagnosticsEnabled)
+                                {
+                                    Debug.VulkanEvery(
+                                        $"Vulkan.FrameDataReuse.Compute.{GetHashCode()}",
+                                        TimeSpan.FromSeconds(1),
+                                        "[Vulkan] Reusable command-buffer compute frame-data refresh failed image={0} op={1}/{2} program='{3}' groups={4}x{5}x{6}.",
+                                        imageIndex,
+                                        i,
+                                        ops.Length,
+                                        computeOp.Program.Data?.Name ?? "<unnamed program>",
+                                        computeOp.GroupsX,
+                                        computeOp.GroupsY,
+                                        computeOp.GroupsZ);
+                                }
+                                return false;
+                            }
+                            break;
+                        }
                     }
                 }
+
+                packetStart = packetEnd;
             }
 
             _refreshMeshDrawSlotCapacityHint = Math.Max(1, meshDrawSlotsByRendererFamily.Count);
@@ -2314,6 +2356,87 @@ namespace XREngine.Rendering.Vulkan
                 imageEverPresented);
         }
 
+        private bool TryResolveGraphicsPipelinePrewarmTarget(
+            XRFrameBuffer? target,
+            int passIndex,
+            in FrameOpContext context,
+            in SwapchainRecordingTarget swapchainTarget,
+            out bool useDynamicRendering,
+            out RenderPass renderPass,
+            out DynamicRenderingFormatSignature dynamicRenderingFormats,
+            out bool depthStencilReadOnly,
+            out string reason)
+        {
+            useDynamicRendering = false;
+            renderPass = default;
+            dynamicRenderingFormats = default;
+            depthStencilReadOnly = false;
+            reason = string.Empty;
+
+            if (target is null)
+            {
+                useDynamicRendering = UseDynamicRenderingRenderTargets && swapchainTarget.IsValid;
+                if (useDynamicRendering)
+                {
+                    dynamicRenderingFormats = CreateSwapchainDynamicRenderingFormatSignature(
+                        swapchainTarget.ImageFormat,
+                        swapchainTarget.DepthFormat);
+                    return true;
+                }
+
+                renderPass = _renderPass;
+                if (renderPass.Handle != 0)
+                    return true;
+
+                reason = "legacy swapchain render pass is unavailable";
+                return false;
+            }
+
+            VkFrameBuffer? vkFrameBuffer = GenericToAPI<VkFrameBuffer>(target);
+            if (vkFrameBuffer is null)
+            {
+                reason = $"target '{target.Name ?? "<unnamed>"}' has no Vulkan framebuffer";
+                return false;
+            }
+
+            vkFrameBuffer.EnsureCurrent();
+            ImageLayout[]? trackedLayouts = QueryCurrentAttachmentLayouts(target, vkFrameBuffer);
+            FrameBufferAttachmentSignature[] attachmentSignature = vkFrameBuffer.ResolveAttachmentSignatureForPass(
+                passIndex,
+                context.PassMetadata,
+                trackedLayouts,
+                CompiledRenderGraph.Synchronization,
+                preserveTrackedClearLoads: false);
+            depthStencilReadOnly = vkFrameBuffer.UsesReadOnlyDepthStencilForPass(
+                passIndex,
+                context.PassMetadata,
+                trackedLayouts,
+                preserveTrackedClearLoads: false);
+
+            if (UseDynamicRenderingRenderTargets)
+            {
+                useDynamicRendering = true;
+                uint viewMask = vkFrameBuffer.MultiviewViewMask;
+                dynamicRenderingFormats = CreateDynamicRenderingFormatSignature(
+                    attachmentSignature,
+                    viewMask,
+                    ResolveDynamicRenderingLayerCount(vkFrameBuffer.FramebufferLayers, viewMask));
+                return true;
+            }
+
+            renderPass = vkFrameBuffer.ResolveRenderPassForPass(
+                passIndex,
+                context.PassMetadata,
+                trackedLayouts,
+                CompiledRenderGraph.Synchronization,
+                preserveTrackedClearLoads: false);
+            if (renderPass.Handle != 0)
+                return true;
+
+            reason = $"target '{target.Name ?? "<unnamed>"}' has no compatible legacy render pass";
+            return false;
+        }
+
         private bool TryRecordCommandBuffer(
             uint imageIndex,
             CommandBuffer commandBuffer,
@@ -2398,19 +2521,24 @@ namespace XREngine.Rendering.Vulkan
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshFrameDataFamilyBases =
                 recordingScratch.PrimaryMeshFrameDataFamilyBases;
             meshDrawSlotsByRendererFamily.Clear();
+            bool graphicsPipelinesReady = true;
+            string firstGraphicsPipelinePendingReason = string.Empty;
             for (int opIndex = 0; opIndex < ops.Length; opIndex++)
             {
                 VkMeshRenderer? meshRenderer;
                 PendingMeshDraw pendingDraw;
+                XRFrameBuffer? target;
                 switch (ops[opIndex])
                 {
                     case MeshDrawOp drawOp:
                         meshRenderer = drawOp.Draw.Renderer;
                         pendingDraw = drawOp.Draw;
+                        target = drawOp.Target;
                         break;
                     case IndirectDrawOp indirectDrawOp:
                         meshRenderer = indirectDrawOp.MeshRenderer;
                         pendingDraw = indirectDrawOp.Draw;
+                        target = indirectDrawOp.Target;
                         break;
                     default:
                         continue;
@@ -2424,7 +2552,9 @@ namespace XREngine.Rendering.Vulkan
                     EVulkanMeshFrameDataStreamKind.Primary,
                     ops[opIndex].Context,
                     pendingDraw);
-                using IDisposable plannerScope =
+                using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(
+                    ops[opIndex].Context.PipelineInstance);
+                using var plannerScope =
                     EnterFrameOpResourcePlannerReadbackScope(ops[opIndex].Context);
                 if (!meshRenderer.TryPrewarmFrameDataForRecording(
                         pendingDraw,
@@ -2445,11 +2575,72 @@ namespace XREngine.Rendering.Vulkan
                         $"mesh '{meshRenderer.Mesh?.Name ?? "<unnamed mesh>"}', slot {drawSlot}: {prewarmReason}";
                     return false;
                 }
+
+                int pipelinePassIndex = EnsureValidPassIndex(
+                    ops[opIndex].PassIndex,
+                    ops[opIndex].GetType().Name,
+                    ops[opIndex].Context.PassMetadata);
+                if (pipelinePassIndex == int.MinValue)
+                    continue;
+
+                if (!TryResolveGraphicsPipelinePrewarmTarget(
+                        target,
+                        pipelinePassIndex,
+                        ops[opIndex].Context,
+                        swapchainTarget,
+                        out bool useDynamicRendering,
+                        out RenderPass prewarmRenderPass,
+                        out DynamicRenderingFormatSignature prewarmDynamicRenderingFormats,
+                        out bool depthStencilReadOnly,
+                        out string targetReason))
+                {
+                    graphicsPipelinesReady = false;
+                    if (firstGraphicsPipelinePendingReason.Length == 0)
+                    {
+                        firstGraphicsPipelinePendingReason =
+                            $"op={opIndex} target='{target?.Name ?? "<swapchain>"}': {targetReason}";
+                    }
+                    continue;
+                }
+
+                if (meshRenderer.TryPrewarmGraphicsPipelinesForRecording(
+                        pendingDraw,
+                        prewarmRenderPass,
+                        useDynamicRendering,
+                        prewarmDynamicRenderingFormats,
+                        pipelinePassIndex,
+                        ops[opIndex].Context.PassMetadata,
+                        depthStencilReadOnly,
+                        ops[opIndex].Context.PipelineInstance?.DebugName ?? "<no pipeline>",
+                        out string pipelineReason))
+                {
+                    continue;
+                }
+
+                graphicsPipelinesReady = false;
+                if (firstGraphicsPipelinePendingReason.Length == 0)
+                {
+                    firstGraphicsPipelinePendingReason =
+                        $"op={opIndex} mesh='{meshRenderer.Mesh?.Name ?? "<unnamed mesh>"}': {pipelineReason}";
+                }
             }
             recordingScratch.RecordMeshDrawSlotCapacityHint = Math.Max(
                 recordingScratch.RecordMeshDrawSlotCapacityHint,
                 meshDrawSlotsByRendererFamily.Count);
             meshDrawSlotsByRendererFamily.Clear();
+
+            if (!graphicsPipelinesReady)
+            {
+                frameDataManifest.End();
+                recordingDeferredReason =
+                    $"Graphics pipeline prewarm deferred before vkBeginCommandBuffer: {firstGraphicsPipelinePendingReason}";
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Primary.PipelinePrewarmPending.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Primary command recording deferred before vkBeginCommandBuffer because required graphics pipelines are pending. detail={0}",
+                    firstGraphicsPipelinePendingReason);
+                return false;
+            }
 
             if (!frameDataManifest.TrySeal(
                     MeshFrameDataReservationGeneration,
@@ -2532,16 +2723,26 @@ namespace XREngine.Rendering.Vulkan
                     recordingScratch.SecondaryBucketByStartCapacityHint = Math.Max(1, secondaryBucketByStart.Count);
                 }
 
-                if (commandChainSchedule is not null && CommandChainValidationEnabled)
-                    ValidatePrimaryCommandChainSchedule(commandChainSchedule, ops, dynamicUiBatchTextOpCount);
-
                 if (commandChainSchedule is not null &&
                     TryGetCommandChainScheduleFrameSlot(commandChainSchedule, out int commandChainScheduleFrameSlot))
                 {
                     scheduledCommandChainCache = GetCommandChainCache(unchecked((uint)commandChainScheduleFrameSlot));
-                    scheduledCommandChainKeysByOpIndex = BuildCommandChainKeysByFrameOpIndex(
+                    if (CommandChainValidationEnabled)
+                        ValidatePrimaryCommandChainSchedule(
+                            commandChainSchedule,
+                            ops,
+                            dynamicUiBatchTextOpCount,
+                            scheduledCommandChainCache);
+                    if (recordingScratch.ScheduledCommandChainKeysByOpIndex.Length < ops.Length)
+                    {
+                        int capacity = Math.Max(ops.Length, Math.Max(recordingScratch.ScheduledCommandChainKeysByOpIndex.Length * 2, 16));
+                        recordingScratch.ScheduledCommandChainKeysByOpIndex = new CommandChainKey[capacity];
+                    }
+                    scheduledCommandChainKeysByOpIndex = recordingScratch.ScheduledCommandChainKeysByOpIndex;
+                    PopulateCommandChainKeysByFrameOpIndex(
                         commandChainSchedule,
                         scheduledCommandChainCache,
+                        scheduledCommandChainKeysByOpIndex.AsSpan(),
                         ops.Length);
                 }
             }
@@ -2946,7 +3147,8 @@ namespace XREngine.Rendering.Vulkan
             bool hasPlannerContext = false;
             bool renderPassLabelActive = false;
             bool passIndexLabelActive = false;
-            IDisposable? activePipelineOverrideScope = null;
+            RuntimeEngine.Rendering.RenderingPipelineOverrideScope activePipelineOverrideScope = default;
+            bool activePipelineOverrideScopeSet = false;
 
             // Track whether the swapchain has already had its first render pass
             // this frame. Subsequent re-entries (e.g. after a compute dispatch
@@ -3058,8 +3260,10 @@ namespace XREngine.Rendering.Vulkan
 
             void ApplyPipelineOverride(in FrameOpContext context)
             {
-                activePipelineOverrideScope?.Dispose();
+                if (activePipelineOverrideScopeSet)
+                    activePipelineOverrideScope.Dispose();
                 activePipelineOverrideScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(context.PipelineInstance);
+                activePipelineOverrideScopeSet = true;
             }
 
             void TransitionSwapchainToPresent()
@@ -4123,7 +4327,7 @@ namespace XREngine.Rendering.Vulkan
                 int passIndex,
                 int? drawUniformSlotOverride = null)
             {
-                using IDisposable plannerScope = EnterFrameOpResourcePlannerReadbackScope(drawOp.Context);
+                using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(drawOp.Context);
                 Viewport viewport = drawOp.Draw.Viewport;
                 Rect2D scissor = drawOp.Draw.Scissor;
                 uint viewportScissorCount = drawOp.Draw.ViewportScissorCount;
@@ -4242,7 +4446,7 @@ namespace XREngine.Rendering.Vulkan
 
             void RecordIndirectDrawIntoCommandBuffer(CommandBuffer targetCommandBuffer, IndirectDrawOp indirectOp, int passIndex)
             {
-                using IDisposable plannerScope = EnterFrameOpResourcePlannerReadbackScope(indirectOp.Context);
+                using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(indirectOp.Context);
                 Viewport viewport = indirectOp.Draw.Viewport;
                 Rect2D scissor = indirectOp.Draw.Scissor;
                 uint viewportScissorCount = indirectOp.Draw.ViewportScissorCount;
@@ -4624,8 +4828,8 @@ namespace XREngine.Rendering.Vulkan
                     for (int i = 0; i < runCount; i++)
                     {
                         IndirectDrawOp indirectOp = (IndirectDrawOp)ops[startIndex + i];
-                        using IDisposable? pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(indirectOp.Context.PipelineInstance);
-                        using IDisposable plannerScope = EnterFrameOpResourcePlannerReadbackScope(indirectOp.Context);
+                        using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(indirectOp.Context.PipelineInstance);
+                        using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(indirectOp.Context);
                         if (!indirectOp.MeshRenderer.TryPrepareIndirectDrawRecordingState(
                                 frameDataImageIndex,
                                 indirectOp.Draw,
@@ -4867,7 +5071,10 @@ namespace XREngine.Rendering.Vulkan
                 if (!scheduledCommandChainCache.TryGetValue(key, out CommandChain? scheduledChain))
                     return false;
 
-                if (scheduledChain.SourceStartIndex != opIndex || scheduledChain.SourceCount != 1)
+                if (scheduledChain.SourceStartIndex < 0 ||
+                    scheduledChain.SourceCount <= 0 ||
+                    opIndex < scheduledChain.SourceStartIndex ||
+                    opIndex >= scheduledChain.SourceStartIndex + scheduledChain.SourceCount)
                     return false;
 
                 chain = scheduledChain;
@@ -4884,9 +5091,7 @@ namespace XREngine.Rendering.Vulkan
 
                 if (chain.State == CommandChainState.FrameDataRefreshed &&
                     chain.FrameDataRefreshTouchedDescriptors)
-                {
                     return true;
-                }
 
                 return chain.State is not (CommandChainState.Reused or CommandChainState.FrameDataRefreshed);
             }
@@ -4916,55 +5121,28 @@ namespace XREngine.Rendering.Vulkan
                         out RenderPass inheritedRenderPass,
                         out Framebuffer inheritedFramebuffer,
                         out DynamicRenderingFormatSignature inheritedDynamicRenderingFormats,
-                        out FrameBufferAttachmentSignature[]? inheritedFboAttachmentSignature,
+                        out _,
                         out bool inheritedDepthStencilReadOnly,
                         out SampleCountFlags inheritedSamples))
                 {
                     return false;
                 }
 
-                Format* scheduledColorAttachmentFormats = stackalloc Format[(int)Math.Max(inheritedDynamicRenderingFormats.ColorAttachmentCount, 1u)];
-                CommandBufferInheritanceRenderingInfo scheduledRenderingInheritanceInfo = default;
-                    if (inheritedDynamicRendering)
-                    {
-                        inheritedDynamicRenderingFormats.CopyColorAttachmentFormats(
-                            scheduledColorAttachmentFormats,
-                        inheritedDynamicRenderingFormats.ColorAttachmentCount);
-
-                    scheduledRenderingInheritanceInfo = new CommandBufferInheritanceRenderingInfo
-                    {
-                        SType = StructureType.CommandBufferInheritanceRenderingInfo,
-                        Flags = 0,
-                        ViewMask = inheritedDynamicRenderingFormats.ViewMask,
-                        ColorAttachmentCount = inheritedDynamicRenderingFormats.ColorAttachmentCount,
-                        PColorAttachmentFormats = inheritedDynamicRenderingFormats.ColorAttachmentCount > 0 ? scheduledColorAttachmentFormats : null,
-                        DepthAttachmentFormat = inheritedDynamicRenderingFormats.DepthAttachmentFormat,
-                        StencilAttachmentFormat = inheritedDynamicRenderingFormats.StencilAttachmentFormat,
-                        RasterizationSamples = inheritedSamples
-                    };
-                    DynamicRenderingLocalReadPlan localReadInheritance = default;
-                    void* localReadInheritancePNext = scheduledRenderingInheritanceInfo.PNext;
-                    TryAppendDynamicRenderingLocalReadPNext(
-                        in localReadInheritance,
-                        inheritedDynamicRenderingFormats.ColorAttachmentCount,
-                        ref localReadInheritancePNext,
-                        null,
-                        null,
-                        null,
-                        null,
-                        null,
-                        null);
-                        scheduledRenderingInheritanceInfo.PNext = localReadInheritancePNext;
-                    }
-
-                    CommandBuffer[] secondaryBuffers = ArrayPool<CommandBuffer>.Shared.Rent(runCount);
+                CommandBuffer[] secondaryBuffers = ArrayPool<CommandBuffer>.Shared.Rent(runCount);
                 CommandChain[] secondaryChains = ArrayPool<CommandChain>.Shared.Rent(runCount);
+                int[] recordJobChainIndices = ArrayPool<int>.Shared.Rent(runCount);
+                int[] recordJobWorkerIndices = ArrayPool<int>.Shared.Rent(runCount);
+                int[] uniformSlots = ArrayPool<int>.Shared.Rent(runCount);
                 Array.Clear(secondaryBuffers, 0, runCount);
                 Array.Clear(secondaryChains, 0, runCount);
+                int secondaryCount = 0;
+                int scheduledOpCount = 0;
+                int recordJobCount = 0;
                 bool meshLabelActive = false;
+                CommandChainRecordingBatch batch = _commandChainRecordingBatch;
 
                 if (CanRecordCommandBufferDebugLabels)
-                    meshLabelActive = CmdBeginLabel(commandBuffer, $"ScheduledMeshCommandChainSecondary[{runCount}]");
+                    meshLabelActive = CmdBeginLabel(commandBuffer, "ScheduledMeshCommandChainSecondary");
 
                 try
                 {
@@ -4978,132 +5156,153 @@ namespace XREngine.Rendering.Vulkan
                         {
                             return false;
                         }
+
+                        uniformSlots[i] = GetMeshDrawUniformSlot(
+                            drawOp.Draw.Renderer,
+                            drawOp.Context,
+                            drawOp.Draw);
                     }
 
                     for (int i = 0; i < runCount; i++)
                     {
                         int opIndex = startIndex + i;
-                        MeshDrawOp drawOp = (MeshDrawOp)ops[opIndex];
                         _ = TryGetScheduledCommandChainForOp(opIndex, out CommandChain chain, out _);
+                        if (opIndex != chain.SourceStartIndex)
+                            continue;
 
-                        if (!TryEnsureMutableCommandChainSecondaryCommandBuffer(chain, frameDataImageIndex, executedCommandChainSecondaryHandles, out CommandBuffer secondary))
+                        if (chain.SourceCount > runCount - i)
+                            return false;
+
+                        secondaryChains[secondaryCount] = chain;
+
+                        bool needsRecording = ScheduledCommandChainSecondaryNeedsRecording(chain);
+                        if (!needsRecording)
+                        {
+                            for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
+                            {
+                                MeshDrawOp refreshDraw = (MeshDrawOp)ops[chain.SourceStartIndex + drawIndex];
+                                int refreshUniformSlot = uniformSlots[chain.SourceStartIndex + drawIndex - startIndex];
+                                if (!refreshDraw.Draw.Renderer.TryRefreshReusableCommandBufferFrameData(
+                                        frameDataImageIndex,
+                                        refreshDraw.Draw,
+                                        refreshUniformSlot,
+                                        refreshMaterialUniforms: true))
+                                {
+                                    needsRecording = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (needsRecording)
+                        {
+                            recordJobChainIndices[recordJobCount++] = secondaryCount;
+                        }
+                        else
+                        {
+                            CommandBuffer reusable = chain.SecondaryCommandBuffer;
+                            if (reusable.Handle == 0 || !chain.SecondaryCommandBufferExecutable)
+                                return false;
+                            secondaryBuffers[secondaryCount] = reusable;
+                        }
+
+                        secondaryCount++;
+                        scheduledOpCount += chain.SourceCount;
+                    }
+
+                    if (secondaryCount == 0 || scheduledOpCount != runCount)
+                        return false;
+
+                    batch.Ops = ops;
+                    batch.Chains = secondaryChains;
+                    batch.SecondaryBuffers = secondaryBuffers;
+                    batch.RecordJobChainIndices = recordJobChainIndices;
+                    batch.RecordJobWorkerIndices = recordJobWorkerIndices;
+                    batch.UniformSlots = uniformSlots;
+                    batch.StartIndex = startIndex;
+                    batch.JobCount = recordJobCount;
+                    batch.PassIndex = passIndex;
+                    batch.FrameSlot = commandBufferImageSlot;
+                    batch.DynamicRendering = inheritedDynamicRendering;
+                    batch.RenderPass = inheritedRenderPass;
+                    batch.Framebuffer = inheritedFramebuffer;
+                    batch.DynamicRenderingFormats = inheritedDynamicRenderingFormats;
+                    batch.DepthStencilReadOnly = inheritedDepthStencilReadOnly;
+                    batch.Samples = inheritedSamples;
+                    batch.TargetName = firstDraw.Target?.Name ?? "<swapchain>";
+                    batch.Error = null;
+
+                    bool useWorkers = TryPrepareCommandChainRecordingWorkers(
+                        recordJobCount,
+                        frameDataImageIndex,
+                        out CommandChainRecordingWorkerState[] workers,
+                        out int workerCount,
+                        out int workerFrameSlot);
+                    for (int jobIndex = 0; jobIndex < recordJobCount; jobIndex++)
+                    {
+                        int chainIndex = recordJobChainIndices[jobIndex];
+                        CommandChain chain = secondaryChains[chainIndex];
+                        int recordingWorkerIndex = useWorkers
+                            ? ResolveCommandChainRecordingWorkerIndex(chain.Key, workerCount)
+                            : 0;
+                        recordJobWorkerIndices[jobIndex] = recordingWorkerIndex;
+                        bool allocated = useWorkers
+                            ? TryEnsureMutableCommandChainSecondaryCommandBufferFromWorkerPool(
+                                chain,
+                                frameDataImageIndex,
+                                workers[recordingWorkerIndex].GraphicsCommandPoolsByFrameSlot[workerFrameSlot],
+                                executedCommandChainSecondaryHandles,
+                                out CommandBuffer secondary)
+                            : TryEnsureMutableCommandChainSecondaryCommandBuffer(
+                                chain,
+                                frameDataImageIndex,
+                                executedCommandChainSecondaryHandles,
+                                out secondary);
+                        if (!allocated)
                             throw new InvalidOperationException("Failed to allocate Vulkan scheduled mesh command-chain secondary command buffer.");
 
-                        secondaryChains[i] = chain;
-                        secondaryBuffers[i] = secondary;
+                        secondaryBuffers[chainIndex] = secondary;
+                    }
 
-                        int drawUniformSlot = GetMeshDrawUniformSlot(
-                            drawOp.Draw.Renderer,
-                            drawOp.Context,
-                            drawOp.Draw);
-
-                        if (!ScheduledCommandChainSecondaryNeedsRecording(chain) &&
-                            drawOp.Draw.Renderer.TryRefreshReusableCommandBufferFrameData(
-                                frameDataImageIndex,
-                                drawOp.Draw,
-                                drawUniformSlot,
-                                refreshMaterialUniforms: true))
-                        {
-                            continue;
-                        }
-
-                        MarkCommandChainSecondaryCommandBufferInvalid(chain);
-                        Api!.ResetCommandBuffer(secondary, 0);
-
-                        CommandBufferInheritanceInfo inheritanceInfo = new()
-                        {
-                            SType = StructureType.CommandBufferInheritanceInfo,
-                            RenderPass = inheritedDynamicRendering ? default : inheritedRenderPass,
-                            Subpass = 0,
-                            Framebuffer = inheritedDynamicRendering ? default : inheritedFramebuffer,
-                            OcclusionQueryEnable = Vk.False,
-                            QueryFlags = QueryControlFlags.None,
-                            PipelineStatistics = QueryPipelineStatisticFlags.None
-                        };
-                        if (inheritedDynamicRendering)
-                            inheritanceInfo.PNext = &scheduledRenderingInheritanceInfo;
-
-                        CommandBufferInheritanceDescriptorHeapInfoEXTNative descriptorHeapInheritanceInfo = default;
-                        BindHeapInfoEXTNative inheritedSamplerHeapInfo = default;
-                        BindHeapInfoEXTNative inheritedResourceHeapInfo = default;
-                        TryAppendDescriptorHeapInheritancePNext(
-                            ref inheritanceInfo,
-                            &descriptorHeapInheritanceInfo,
-                            &inheritedSamplerHeapInfo,
-                            &inheritedResourceHeapInfo);
-
-                        CommandBufferBeginInfo beginInfo = new()
-                        {
-                            SType = StructureType.CommandBufferBeginInfo,
-                            Flags = CommandBufferUsageFlags.RenderPassContinueBit | CommandBufferUsageFlags.SimultaneousUseBit,
-                            PInheritanceInfo = &inheritanceInfo
-                        };
-
-                        if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
-                            throw new Exception("Failed to begin Vulkan scheduled mesh command-chain secondary command buffer.");
-
-                        ResetCommandBufferBindState(secondary);
-
-                        bool savedActiveDynamicRendering = activeDynamicRendering;
-                        RenderPass savedActiveRenderPass = activeRenderPass;
-                        Framebuffer savedActiveFramebuffer = activeFramebuffer;
-                        DynamicRenderingFormatSignature savedActiveDynamicRenderingFormats = activeDynamicRenderingFormats;
-                        FrameBufferAttachmentSignature[]? savedActiveFboAttachmentSignature = activeFboAttachmentSignature;
-                        bool savedActiveDepthStencilReadOnly = activeDepthStencilReadOnly;
-                        XRFrameBuffer? savedActiveTarget = activeTarget;
-
-                        activeDynamicRendering = inheritedDynamicRendering;
-                        activeRenderPass = inheritedRenderPass;
-                        activeFramebuffer = inheritedFramebuffer;
-                        activeDynamicRenderingFormats = inheritedDynamicRenderingFormats;
-                        activeFboAttachmentSignature = inheritedFboAttachmentSignature;
-                        activeDepthStencilReadOnly = inheritedDepthStencilReadOnly;
-                        activeTarget = firstDraw.Target;
-
-                        try
-                        {
-                            using IDisposable? pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(drawOp.Context.PipelineInstance);
-                            RecordMeshDrawIntoCommandBuffer(secondary, drawOp, passIndex, drawUniformSlot);
-                        }
-                        finally
-                        {
-                            activeDynamicRendering = savedActiveDynamicRendering;
-                            activeRenderPass = savedActiveRenderPass;
-                            activeFramebuffer = savedActiveFramebuffer;
-                            activeDynamicRenderingFormats = savedActiveDynamicRenderingFormats;
-                            activeFboAttachmentSignature = savedActiveFboAttachmentSignature;
-                            activeDepthStencilReadOnly = savedActiveDepthStencilReadOnly;
-                            activeTarget = savedActiveTarget;
-                        }
-
-                        if (EndCommandBufferTracked(secondary) != Result.Success)
-                            throw new Exception("Failed to end Vulkan scheduled mesh command-chain secondary command buffer.");
-
-                        chain.State = CommandChainState.Recorded;
-                        chain.FrameDataRefreshTouchedDescriptors = false;
-                        MarkCommandChainSecondaryCommandBufferRecorded(chain);
+                    if (useWorkers)
+                    {
+                        CommandChainWorkerTiming timing = DispatchCommandChainRecordingWorkers(batch, workers, workerCount);
+                        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(
+                            chainWorkerRecordTime: timing.WorkerRecordTime,
+                            renderThreadWaitForWorkersTime: timing.WaitForWorkersTime);
+                    }
+                    else
+                    {
+                        using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.SecondaryRecording);
+                        for (int jobIndex = 0; jobIndex < recordJobCount; jobIndex++)
+                            RecordScheduledMeshCommandChainWorker(batch, recordJobChainIndices[jobIndex]);
                     }
 
                     BeginRenderPassForTarget(firstDraw.Target, passIndex, firstDraw.Context, secondaryContents: true);
                     fixed (CommandBuffer* secondaryPtr = secondaryBuffers)
-                        CmdExecuteCommandsTracked(commandBuffer, (uint)runCount, secondaryPtr);
-                    for (int i = 0; i < runCount; i++)
+                        CmdExecuteCommandsTracked(commandBuffer, (uint)secondaryCount, secondaryPtr);
+                    for (int i = 0; i < secondaryCount; i++)
                     {
                         if (secondaryBuffers[i].Handle != 0)
                             executedCommandChainSecondaryHandles.Add(secondaryBuffers[i].Handle);
                     }
 
-                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(secondaryCommandBuffers: runCount);
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(secondaryCommandBuffers: secondaryCount);
                     return true;
                 }
                 finally
                 {
                     EndActiveRenderPass();
 
+                    batch.ClearReferences();
+
                     Array.Clear(secondaryBuffers, 0, runCount);
                     Array.Clear(secondaryChains, 0, runCount);
                     ArrayPool<CommandBuffer>.Shared.Return(secondaryBuffers);
                     ArrayPool<CommandChain>.Shared.Return(secondaryChains);
+                    ArrayPool<int>.Shared.Return(recordJobChainIndices);
+                    ArrayPool<int>.Shared.Return(recordJobWorkerIndices);
+                    ArrayPool<int>.Shared.Return(uniformSlots);
 
                     if (meshLabelActive)
                         CmdEndLabel(commandBuffer);
@@ -5112,7 +5311,7 @@ namespace XREngine.Rendering.Vulkan
 
             bool TryExecuteMeshCommandChainSecondaryRun(int startIndex, int runCount, int passIndex, MeshDrawOp firstDraw)
             {
-                const int minMeshDrawsPerSecondaryChain = 4;
+                const int minMeshDrawsPerSecondaryChain = MinMeshDrawsPerRenderPacket;
 
                 if (!CommandChainsEnabledForCurrentRecording ||
                     !_enableSecondaryCommandBuffers ||
@@ -5250,7 +5449,7 @@ namespace XREngine.Rendering.Vulkan
                     CommandBufferBeginInfo beginInfo = new()
                     {
                         SType = StructureType.CommandBufferBeginInfo,
-                        Flags = CommandBufferUsageFlags.RenderPassContinueBit | CommandBufferUsageFlags.SimultaneousUseBit,
+                        Flags = CommandBufferUsageFlags.RenderPassContinueBit | CommandBufferUsageFlags.OneTimeSubmitBit,
                         PInheritanceInfo = &inheritanceInfo
                     };
 
@@ -5280,7 +5479,7 @@ namespace XREngine.Rendering.Vulkan
                         for (int i = startIndex; !meshSecondaryNoOp && i < startIndex + runCount; i++)
                         {
                             MeshDrawOp drawOp = (MeshDrawOp)ops[i];
-                            using IDisposable? pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(drawOp.Context.PipelineInstance);
+                            using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(drawOp.Context.PipelineInstance);
                             RecordMeshDrawIntoCommandBuffer(secondary, drawOp, passIndex, drawUniformSlots[i - startIndex]);
                         }
                     }
@@ -6073,6 +6272,36 @@ namespace XREngine.Rendering.Vulkan
                         break;
 
                     case MeshDrawOp drawOp:
+                        if (CommandRecordingDiagnosticsEnabled &&
+                            string.Equals(
+                                drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name,
+                                "CpuOcclusionProxy.UnitCube",
+                                StringComparison.Ordinal))
+                        {
+                            Debug.VulkanEvery(
+                                "Vulkan.CpuOcclusionProxy.RecordState",
+                                TimeSpan.FromSeconds(1),
+                                "[Vulkan][CpuQueryDiag] activeQuery={0} viewport=({1},{2},{3},{4}) scissor=({5},{6},{7},{8}) modelT=({9:F3},{10:F3},{11:F3}) modelS=({12:F3},{13:F3},{14:F3}) cameraT=({15:F3},{16:F3},{17:F3}).",
+                                activeInlineQuery is not null,
+                                drawOp.Draw.Viewport.X,
+                                drawOp.Draw.Viewport.Y,
+                                drawOp.Draw.Viewport.Width,
+                                drawOp.Draw.Viewport.Height,
+                                drawOp.Draw.Scissor.Offset.X,
+                                drawOp.Draw.Scissor.Offset.Y,
+                                drawOp.Draw.Scissor.Extent.Width,
+                                drawOp.Draw.Scissor.Extent.Height,
+                                drawOp.Draw.ModelMatrix.M41,
+                                drawOp.Draw.ModelMatrix.M42,
+                                drawOp.Draw.ModelMatrix.M43,
+                                drawOp.Draw.ModelMatrix.M11,
+                                drawOp.Draw.ModelMatrix.M22,
+                                drawOp.Draw.ModelMatrix.M33,
+                                drawOp.Draw.CameraPosition.X,
+                                drawOp.Draw.CameraPosition.Y,
+                                drawOp.Draw.CameraPosition.Z);
+                        }
+
                         int meshCommandChainRunCount = CountContiguousMeshCommandChainRun(opIndex, drawOp, opPassIndex);
                         if (TryExecuteScheduledMeshCommandChainSecondaryRun(opIndex, meshCommandChainRunCount, opPassIndex, drawOp) ||
                             TryExecuteMeshCommandChainSecondaryRun(opIndex, meshCommandChainRunCount, opPassIndex, drawOp))
@@ -6471,8 +6700,8 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                activePipelineOverrideScope?.Dispose();
-                activePipelineOverrideScope = null;
+                if (activePipelineOverrideScopeSet)
+                    activePipelineOverrideScope.Dispose();
             }
 
             recordedSwapchainWriteCount = actualSwapchainWriteCount;

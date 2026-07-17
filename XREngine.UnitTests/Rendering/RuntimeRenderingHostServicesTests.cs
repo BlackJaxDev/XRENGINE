@@ -1205,7 +1205,11 @@ public sealed class RuntimeRenderingHostServicesTests
             TimeSpan drainRetiredResources,
             TimeSpan acquireBridgeSubmit,
             TimeSpan waitSwapchainImage,
-            TimeSpan resetDynamicUniformRing)
+            TimeSpan resetDynamicUniformRing,
+            TimeSpan snapshotImGuiOverlay,
+            TimeSpan recordSceneCommandBuffer,
+            TimeSpan recordImGuiOverlay,
+            TimeSpan recordDynamicUiTextOverlay)
         {
         }
 
@@ -1232,7 +1236,15 @@ public sealed class RuntimeRenderingHostServicesTests
             bool frameOpSignatureDirty,
             bool plannerDirty,
             bool profilerDirty,
-            string? dirtyReason)
+            string? dirtyReason,
+            EVulkanCommandBufferDecisionReason detailReasons,
+            ulong structuralSignature,
+            ulong descriptorGeneration,
+            int swapchainSlot)
+        {
+        }
+
+        public void RecordRenderVulkanCpuStage(EVulkanCpuStage stage, TimeSpan elapsed, long allocatedBytes)
         {
         }
 
@@ -1288,6 +1300,16 @@ public sealed class RuntimeRenderingHostServicesTests
         }
 
         public void RecordRenderVulkanPipelineCacheMiss(string? summary)
+        {
+        }
+
+        public void RecordRenderVulkanPipelineTelemetry(
+            EVulkanPipelineTelemetryEvent eventKind,
+            EVulkanDriverPipelineCacheOutcome cacheOutcome,
+            bool backgroundCompile,
+            double compileMilliseconds,
+            int queueDepth,
+            int queueCapacity)
         {
         }
 

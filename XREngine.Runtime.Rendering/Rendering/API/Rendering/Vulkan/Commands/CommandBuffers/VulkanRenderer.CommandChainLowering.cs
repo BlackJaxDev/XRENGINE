@@ -37,9 +37,13 @@ public unsafe partial class VulkanRenderer
     private readonly Dictionary<uint, CommandChainStabilityGuardState> _commandChainStabilityGuardStates = [];
     private int _commandChainTraceDumped;
     private long _commandChainTraceLastDumpTimestamp;
+    private ulong _commandChainScheduleGeneration;
     private const int CommandChainZeroReuseBackoffThreshold = 1;
     private const int CommandChainZeroReuseProbeInterval = 120;
-    private const int MaxCommandChainsPerSchedule = 64;
+    private const int MaxCommandChainsPerSchedule = MaxCachedScheduledCommandChainsPerFrameSlot;
+    private const int MaxCachedScheduledCommandChainsPerFrameSlot = 128;
+    internal const int MinMeshDrawsPerRenderPacket = 10;
+    internal const int MaxMeshDrawsPerRenderPacket = 64;
 
     private static bool CommandChainsEnabled => IsCommandChainFlagEnabled(CommandChainsEnvVar);
     private static bool CommandChainsSingleThread => IsCommandChainFlagEnabled(CommandChainsSingleThreadEnvVar);
@@ -130,6 +134,18 @@ public unsafe partial class VulkanRenderer
                string.Equals(value, "false", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(value, "no", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(value, "off", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static int ResolveCommandChainRecordingWorkerIndex(in CommandChainKey key, int workerCount)
+    {
+        if (workerCount <= 1)
+            return 0;
+
+        // A secondary command buffer belongs to the command pool of the worker
+        // that records it. Assign by stable chain identity rather than by the
+        // compacted dirty-job index: otherwise any change in the dirty subset
+        // migrates unchanged chains between pools and forces a rebuild.
+        return unchecked((int)((uint)key.GetHashCode() % (uint)workerCount));
     }
 
     private static bool ContainsQueryFrameOp(FrameOp[] ops)
@@ -269,6 +285,9 @@ public unsafe partial class VulkanRenderer
         }
 
         Dictionary<CommandChainKey, CommandChain> cache = GetCommandChainCache(imageIndex);
+        ulong scheduleGeneration = unchecked(++_commandChainScheduleGeneration);
+        if (scheduleGeneration == 0)
+            scheduleGeneration = unchecked(++_commandChainScheduleGeneration);
         List<string>? commandChainTraceRows = traceCommandChains ? [] : null;
         List<RenderPassChainGroup> groups = _commandChainGroupScratch;
         groups.Clear();
@@ -291,6 +310,7 @@ public unsafe partial class VulkanRenderer
         string? firstStructuralDirtyReason = null;
         string? firstDescriptorMismatch = null;
         string? firstResourcePlanMismatch = null;
+        EVulkanCommandBufferDecisionReason secondaryDecisionReasons = EVulkanCommandBufferDecisionReason.None;
 
         for (int i = 0; i < packets.Count; i++)
         {
@@ -320,6 +340,8 @@ public unsafe partial class VulkanRenderer
                 chainOrdinal);
 
             CommandChain chain = GetOrCreateCommandChain(cache, key);
+            chain.ScheduledPacket = true;
+            chain.LastUsedScheduleGeneration = scheduleGeneration;
             CommandChainDirtyReason dirtyReason = EvaluateCommandChainDirtyReason(chain, packet);
             bool secondaryExecutable = chain.SecondaryCommandBuffer.Handle != 0 && chain.SecondaryCommandBufferExecutable;
             CommandChainDirtyReason effectiveDirtyReason = dirtyReason == CommandChainDirtyReason.None && !secondaryExecutable
@@ -333,6 +355,8 @@ public unsafe partial class VulkanRenderer
 
             if (packet.Volatility == RenderPacketVolatility.DynamicCommand)
             {
+                secondaryDecisionReasons |= EVulkanCommandBufferDecisionReason.SecondaryRecorded |
+                    EVulkanCommandBufferDecisionReason.VolatileCommand;
                 chain.State = CommandChainState.Recorded;
                 chain.DirtyReason = CommandChainDirtyReason.VolatileCommand;
                 chain.FrameDataRefreshTouchedDescriptors = false;
@@ -341,6 +365,9 @@ public unsafe partial class VulkanRenderer
             }
             else if (canReuse || refreshedFrameData)
             {
+                secondaryDecisionReasons |= refreshedFrameData
+                    ? EVulkanCommandBufferDecisionReason.SecondaryFrameDataRefreshed
+                    : EVulkanCommandBufferDecisionReason.SecondaryReused;
                 if (CommandChainValidationEnabled && dirtyReason == CommandChainDirtyReason.None)
                     ValidateReusableCommandChainReferences(chain, packet);
 
@@ -354,18 +381,32 @@ public unsafe partial class VulkanRenderer
             }
             else
             {
+                secondaryDecisionReasons |= EVulkanCommandBufferDecisionReason.SecondaryRecorded;
+                if ((effectiveDirtyReason & CommandChainDirtyReason.Structure) != 0)
+                    secondaryDecisionReasons |= EVulkanCommandBufferDecisionReason.FrameOpSignature;
+                if ((effectiveDirtyReason & CommandChainDirtyReason.ResourcePlan) != 0)
+                    secondaryDecisionReasons |= EVulkanCommandBufferDecisionReason.ResourcePlan;
+                if ((effectiveDirtyReason & CommandChainDirtyReason.DescriptorGeneration) != 0)
+                    secondaryDecisionReasons |= EVulkanCommandBufferDecisionReason.DescriptorGeneration;
+                if ((effectiveDirtyReason & CommandChainDirtyReason.PipelineGeneration) != 0)
+                    secondaryDecisionReasons |= EVulkanCommandBufferDecisionReason.PipelineGeneration;
+                if ((effectiveDirtyReason & CommandChainDirtyReason.SecondaryCommandBufferInvalid) != 0)
+                    secondaryDecisionReasons |= EVulkanCommandBufferDecisionReason.SecondaryInvalid;
                 chain.State = CommandChainState.Recorded;
                 chain.DirtyReason = effectiveDirtyReason == CommandChainDirtyReason.None
                     ? CommandChainDirtyReason.Structure
                     : effectiveDirtyReason;
                 chain.FrameDataRefreshTouchedDescriptors = false;
                 chainsRecorded++;
-                firstStructuralDirtyReason ??= DescribeCommandChainDirtyReason(chain, packet);
+                if (traceCommandChains || CommandChainValidationEnabled)
+                    firstStructuralDirtyReason ??= DescribeCommandChainDirtyReason(chain, packet);
                 if ((chain.DirtyReason & CommandChainDirtyReason.DescriptorGeneration) != 0 &&
-                    (chain.DirtyReason & CommandChainDirtyReason.Structure) == 0)
+                    (chain.DirtyReason & CommandChainDirtyReason.Structure) == 0 &&
+                    (traceCommandChains || CommandChainValidationEnabled))
                     firstDescriptorMismatch ??= $"chain={key} previous={chain.DescriptorGeneration} current={packet.DescriptorSnapshot.DescriptorGeneration}";
                 if ((chain.DirtyReason & CommandChainDirtyReason.ResourcePlan) != 0 &&
-                    (chain.DirtyReason & CommandChainDirtyReason.Structure) == 0)
+                    (chain.DirtyReason & CommandChainDirtyReason.Structure) == 0 &&
+                    (traceCommandChains || CommandChainValidationEnabled))
                     firstResourcePlanMismatch ??= $"chain={key} previous={chain.ResourcePlanRevision} current={packet.ResourcePlanSnapshot.Revision}";
             }
 
@@ -397,12 +438,26 @@ public unsafe partial class VulkanRenderer
         }
 
         AddCurrentGroup();
+        TrimScheduledCommandChainCache(cache);
 
         RenderPassChainGroup[] groupArray = groups.ToArray();
         ulong scheduleSignature = ComputeScheduleStructuralSignature(groupArray);
         CommandChainSchedule schedule = new(scheduleSignature, resourcePlanRevision, groupArray);
         int visibilityPacketCount = CountDistinctViewKeys(packets);
         TimeSpan workerRecordTime = Stopwatch.GetElapsedTime(start);
+        RenderPacket lastPacket = packets[^1];
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
+            reusedClean: false,
+            recorded: false,
+            forcedDirty: false,
+            frameOpSignatureDirty: false,
+            plannerDirty: false,
+            profilerDirty: false,
+            dirtyReason: null,
+            detailReasons: secondaryDecisionReasons,
+            structuralSignature: lastPacket.StructuralSignature,
+            descriptorGeneration: lastPacket.DescriptorSnapshot.DescriptorGeneration,
+            swapchainSlot: unchecked((int)imageIndex));
 
         if (traceCommandChains)
             TraceCommandChainSchedule(schedule, packets, staticOps, volatileOps, commandChainTraceRows);
@@ -698,37 +753,16 @@ public unsafe partial class VulkanRenderer
         bool excludeStaticQueryBrackets,
         List<RenderPacket> packets)
     {
-        bool useParallelBuild =
-            ParallelPacketBuildEnabled &&
-            !CommandChainsSingleThread &&
-            !excludeStaticQueryBrackets &&
-            staticOps.Length + volatileOps.Length > 1;
-        if (!useParallelBuild)
-        {
-            if (excludeStaticQueryBrackets)
-                LowerFrameOpsToRenderPacketsExcludingQueryBrackets(staticOps, resourcePlanRevision, packets);
-            else
-                LowerFrameOpsToRenderPackets(staticOps, dynamicOverlay: false, resourcePlanRevision, packets);
-            LowerFrameOpsToRenderPackets(volatileOps, dynamicOverlay: true, resourcePlanRevision, packets);
-            return;
-        }
-
-        RenderPacket[] staticPackets = new RenderPacket[staticOps.Length];
-        RenderPacket[] volatilePackets = new RenderPacket[volatileOps.Length];
-        Parallel.For(0, staticOps.Length, i =>
-        {
-            staticPackets[i] = CreateRenderPacket(staticOps[i], i, dynamicOverlay: false, resourcePlanRevision);
-        });
-        Parallel.For(0, volatileOps.Length, i =>
-        {
-            volatilePackets[i] = CreateRenderPacket(volatileOps[i], i, dynamicOverlay: true, resourcePlanRevision);
-        });
-
-        packets.AddRange(staticPackets);
-        packets.AddRange(volatilePackets);
-
-        if (CommandChainValidationEnabled)
-            ValidateParallelRenderPacketBuild(staticOps, volatileOps, resourcePlanRevision, packets);
+        // Packet lowering is deliberately deterministic and allocation-free on a
+        // schedule-cache hit. Parallelizing this cheap classification previously
+        // allocated two exact-length arrays and captured two closures every time
+        // visibility changed; actual Vulkan recording belongs on the persistent
+        // command-chain workers instead.
+        if (excludeStaticQueryBrackets)
+            LowerFrameOpsToRenderPacketsExcludingQueryBrackets(staticOps, resourcePlanRevision, packets);
+        else
+            LowerFrameOpsToRenderPackets(staticOps, dynamicOverlay: false, resourcePlanRevision, packets);
+        LowerFrameOpsToRenderPackets(volatileOps, dynamicOverlay: true, resourcePlanRevision, packets);
     }
 
     private void LowerFrameOpsToRenderPacketsExcludingQueryBrackets(
@@ -749,7 +783,13 @@ public unsafe partial class VulkanRenderer
             }
 
             if (queryBracketDepth == 0)
-                packets.Add(CreateRenderPacket(ops[i], i, dynamicOverlay: false, resourcePlanRevision));
+            {
+                int consumed = TryLowerCompatibleMeshPacket(ops, i, dynamicOverlay: false, resourcePlanRevision, packets);
+                if (consumed > 0)
+                    i += consumed - 1;
+                else
+                    packets.Add(CreateRenderPacket(ops[i], i, dynamicOverlay: false, resourcePlanRevision));
+            }
         }
 
         if (queryBracketDepth != 0)
@@ -769,7 +809,111 @@ public unsafe partial class VulkanRenderer
         List<RenderPacket> packets)
     {
         for (int i = 0; i < ops.Length; i++)
-            packets.Add(CreateRenderPacket(ops[i], i, dynamicOverlay, resourcePlanRevision));
+        {
+            int consumed = TryLowerCompatibleMeshPacket(ops, i, dynamicOverlay, resourcePlanRevision, packets);
+            if (consumed > 0)
+                i += consumed - 1;
+            else
+                packets.Add(CreateRenderPacket(ops[i], i, dynamicOverlay, resourcePlanRevision));
+        }
+    }
+
+    private static int TryLowerCompatibleMeshPacket(
+        FrameOp[] ops,
+        int startIndex,
+        bool dynamicOverlay,
+        ulong resourcePlanRevision,
+        List<RenderPacket> packets)
+    {
+        if (dynamicOverlay || ops[startIndex] is not MeshDrawOp first)
+            return 0;
+
+        DrawPacket firstDraw = CreateDrawPacket(startIndex, first);
+        RenderViewKey viewKey = BuildRenderViewKey(first, dynamicOverlay: false);
+        int targetIdentity = ResolveCommandChainTargetIdentity(first);
+        DescriptorBindingSnapshot descriptorSnapshot = CreateDescriptorSnapshot(first);
+        int runCount = 1;
+        int available = Math.Min(ops.Length - startIndex, MaxMeshDrawsPerRenderPacket);
+        while (runCount < available &&
+               ops[startIndex + runCount] is MeshDrawOp next &&
+               IsMeshDrawPacketCompatible(
+                   first,
+                   firstDraw,
+                   viewKey,
+                   targetIdentity,
+                   descriptorSnapshot,
+                   next,
+                   startIndex + runCount))
+        {
+            runCount++;
+        }
+
+        if (runCount < MinMeshDrawsPerRenderPacket)
+            return 0;
+
+        DrawPacket[] draws = new DrawPacket[runCount];
+        FrameOpSignatureHasher structuralHash = new();
+        FrameOpSignatureHasher frameDataHash = new();
+        for (int i = 0; i < runCount; i++)
+        {
+            MeshDrawOp drawOp = (MeshDrawOp)ops[startIndex + i];
+            DrawPacket draw = CreateDrawPacket(startIndex + i, drawOp);
+            draws[i] = draw;
+            structuralHash.Add(draw.StructuralSignature);
+            frameDataHash.Add(draw.FrameDataSignature);
+        }
+
+        string targetName = ResolveCommandChainTargetName(first);
+        ResourcePlanSnapshot resourceSnapshot = new(
+            resourcePlanRevision,
+            unchecked((ulong)targetIdentity),
+            unchecked((ulong)targetName.GetHashCode(StringComparison.Ordinal)),
+            ResolvePipelineGeneration(first));
+        packets.Add(new RenderPacket(
+            viewKey,
+            first.PassIndex,
+            targetIdentity,
+            targetName,
+            RenderPacketVolatility.FrameDataOnly,
+            draws,
+            ReadOnlyMemory<DispatchPacket>.Empty,
+            descriptorSnapshot,
+            resourceSnapshot,
+            structuralHash.ToHash(),
+            frameDataHash.ToHash(),
+            startIndex,
+            runCount,
+            dynamicOverlay: false));
+        return runCount;
+    }
+
+    private static bool IsMeshDrawPacketCompatible(
+        MeshDrawOp first,
+        DrawPacket firstDraw,
+        RenderViewKey viewKey,
+        int targetIdentity,
+        DescriptorBindingSnapshot descriptorSnapshot,
+        MeshDrawOp candidate,
+        int candidateIndex)
+    {
+        if (candidate.PassIndex != first.PassIndex ||
+            ResolveCommandChainTargetIdentity(candidate) != targetIdentity ||
+            BuildRenderViewKey(candidate, dynamicOverlay: false) != viewKey)
+        {
+            return false;
+        }
+
+        DrawPacket candidateDraw = CreateDrawPacket(candidateIndex, candidate);
+        if (candidateDraw.ProgramIdentity != firstDraw.ProgramIdentity ||
+            candidateDraw.Transparent != firstDraw.Transparent)
+        {
+            return false;
+        }
+
+        DescriptorBindingSnapshot candidateDescriptors = CreateDescriptorSnapshot(candidate);
+        return candidateDescriptors.DescriptorSetCount == descriptorSnapshot.DescriptorSetCount &&
+               candidateDescriptors.DescriptorSetSignature == descriptorSnapshot.DescriptorSetSignature &&
+               BuildFrameOpPlannerStateKey(candidate.Context) == BuildFrameOpPlannerStateKey(first.Context);
     }
 
     private static RenderPacket CreateRenderPacket(FrameOp op, int opIndex, bool dynamicOverlay, ulong resourcePlanRevision)
@@ -915,17 +1059,29 @@ public unsafe partial class VulkanRenderer
     }
 
     internal void NotifyTextureDescriptorPublished(string reason)
-        => InvalidateCommandChainScheduleForResourceChange(reason);
+        => InvalidateCommandChainScheduleForResourceChange(
+            RenderResourceChangeKind.CompatibleContentPublication,
+            reason);
 
     private void InvalidateCommandChainScheduleForResourceChange(string reason)
+        => InvalidateCommandChainScheduleForResourceChange(RenderResourceChangeKind.BindingIdentity, reason);
+
+    private void InvalidateCommandChainScheduleForResourceChange(RenderResourceChangeKind kind, string reason)
     {
+        if (kind == RenderResourceChangeKind.FrameData)
+            return;
+
         bool commandChainsAvailable =
             _commandChainCaches is not null ||
             _externalCommandChainCaches is not null ||
             CommandChainsEnabledForCurrentRecording;
         if (!commandChainsAvailable)
         {
-            MarkCommandBuffersDirty(reason);
+            // Compatible publication updates the contents of stable per-frame
+            // descriptor sets after that frame slot completes. The recorded bind
+            // command and descriptor layout identity do not change.
+            if (kind is RenderResourceChangeKind.BindingIdentity or RenderResourceChangeKind.StructuralLayout)
+                MarkCommandBuffersDirty(reason);
             return;
         }
 
@@ -1013,6 +1169,54 @@ public unsafe partial class VulkanRenderer
         return chain;
     }
 
+    private void TrimScheduledCommandChainCache(Dictionary<CommandChainKey, CommandChain> cache)
+    {
+        int scheduledCount = 0;
+        foreach (CommandChain chain in cache.Values)
+        {
+            if (chain.ScheduledPacket)
+                scheduledCount++;
+        }
+
+        while (scheduledCount > MaxCachedScheduledCommandChainsPerFrameSlot)
+        {
+            bool found = false;
+            CommandChainKey oldestKey = default;
+            CommandChain? oldest = null;
+            foreach ((CommandChainKey key, CommandChain chain) in cache)
+            {
+                if (!chain.ScheduledPacket ||
+                    (oldest is not null && chain.LastUsedScheduleGeneration >= oldest.LastUsedScheduleGeneration))
+                {
+                    continue;
+                }
+
+                oldestKey = key;
+                oldest = chain;
+                found = true;
+            }
+
+            if (!found || oldest is null)
+                break;
+
+            DestroyCommandChainSecondaryCommandBuffer(oldest);
+            cache.Remove(oldestKey);
+            scheduledCount--;
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
+                reusedClean: false,
+                recorded: false,
+                forcedDirty: false,
+                frameOpSignatureDirty: false,
+                plannerDirty: false,
+                profilerDirty: false,
+                dirtyReason: null,
+                detailReasons: EVulkanCommandBufferDecisionReason.Evicted,
+                structuralSignature: oldest.StructuralSignature,
+                descriptorGeneration: oldest.DescriptorGeneration,
+                swapchainSlot: oldest.Key.FrameSlot);
+        }
+    }
+
     private bool TryEnsureCommandChainSecondaryCommandBuffer(
         CommandChain chain,
         uint imageIndex,
@@ -1098,6 +1302,84 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
+    private bool TryEnsureMutableCommandChainSecondaryCommandBufferFromWorkerPool(
+        CommandChain chain,
+        uint imageIndex,
+        CommandPool workerPool,
+        HashSet<nint> executedSecondaryHandles,
+        out CommandBuffer secondary)
+    {
+        secondary = chain.SecondaryCommandBuffer;
+        if (workerPool.Handle == 0)
+            return false;
+
+        if (secondary.Handle != 0 && chain.SecondaryCommandPool.Handle != workerPool.Handle)
+        {
+            DestroyCommandChainSecondaryCommandBuffer(chain);
+            secondary = default;
+        }
+
+        if (secondary.Handle == 0)
+        {
+            CommandBufferAllocateInfo allocInfo = new()
+            {
+                SType = StructureType.CommandBufferAllocateInfo,
+                CommandPool = workerPool,
+                Level = CommandBufferLevel.Secondary,
+                CommandBufferCount = 1,
+            };
+            Result allocateResult = AllocateVulkanCommandBuffersTracked(
+                ref allocInfo,
+                out secondary,
+                "CommandChain.WorkerSecondary");
+            if (allocateResult != Result.Success || secondary.Handle == 0)
+            {
+                secondary = default;
+                return false;
+            }
+
+            chain.SecondaryCommandBuffer = secondary;
+            chain.SecondaryCommandPool = workerPool;
+            chain.OwnsSecondaryCommandPool = false;
+            chain.SecondaryCommandBufferExecutable = false;
+            RegisterCommandBufferImageIndex(secondary, imageIndex);
+            SetDebugObjectName(
+                ObjectType.CommandBuffer,
+                unchecked((ulong)secondary.Handle),
+                BuildCommandChainSecondaryDebugName(chain, imageIndex, "WorkerSecondary"));
+            MarkCommandChainSecondaryCommandBufferChanged(chain);
+        }
+
+        if (!executedSecondaryHandles.Contains(secondary.Handle))
+            return true;
+
+        CommandBufferAllocateInfo replacementAllocInfo = new()
+        {
+            SType = StructureType.CommandBufferAllocateInfo,
+            CommandPool = workerPool,
+            Level = CommandBufferLevel.Secondary,
+            CommandBufferCount = 1,
+        };
+        Result replacementResult = AllocateVulkanCommandBuffersTracked(
+            ref replacementAllocInfo,
+            out CommandBuffer replacement,
+            "CommandChain.WorkerSecondaryReplacement");
+        if (replacementResult != Result.Success || replacement.Handle == 0)
+            return false;
+
+        DeferSecondaryCommandBufferFree(imageIndex, workerPool, secondary);
+        chain.SecondaryCommandBuffer = replacement;
+        chain.SecondaryCommandBufferExecutable = false;
+        RegisterCommandBufferImageIndex(replacement, imageIndex);
+        SetDebugObjectName(
+            ObjectType.CommandBuffer,
+            unchecked((ulong)replacement.Handle),
+            BuildCommandChainSecondaryDebugName(chain, imageIndex, "WorkerSecondary"));
+        MarkCommandChainSecondaryCommandBufferChanged(chain);
+        secondary = replacement;
+        return true;
+    }
+
     private static string BuildCommandChainSecondaryDebugName(CommandChain chain, uint imageIndex, string suffix)
         => $"CommandChain.{suffix} image={imageIndex} frameSlot={chain.Key.FrameSlot} pass={chain.Key.PassIndex} target={chain.Key.TargetIdentity} view={chain.Key.ViewKey.Kind}:{chain.Key.ViewKey.ViewIndex} ordinal={chain.Key.ChainOrdinal}";
 
@@ -1170,6 +1452,8 @@ public unsafe partial class VulkanRenderer
             return CommandChainDirtyReason.Structure;
 
         CommandChainDirtyReason reason = CommandChainDirtyReason.None;
+        if (chain.State == CommandChainState.NotReady)
+            reason |= CommandChainDirtyReason.PipelineGeneration;
         if (chain.StructuralSignature != packet.StructuralSignature)
             reason |= CommandChainDirtyReason.Structure;
         if (chain.DrawCount != packet.DrawCount ||
@@ -1226,17 +1510,18 @@ public unsafe partial class VulkanRenderer
             return false;
 
         CommandChainDirtyReason dirtyReason = EvaluateCommandChainDirtyReason(chain, packet);
-        if (dirtyReason != CommandChainDirtyReason.None)
+        if ((dirtyReason & ~CommandChainDirtyReason.DescriptorGeneration) != CommandChainDirtyReason.None)
             return false;
 
         chain.FrameDataSignature = packet.FrameDataSignature;
+        chain.DescriptorGeneration = packet.DescriptorSnapshot.DescriptorGeneration;
         chain.FrameDataRefreshTouchedDescriptors = false;
         return true;
     }
 
     private static bool CanRefreshCommandChainFrameData(CommandChainDirtyReason dirtyReason, RenderPacket packet)
         => packet.Volatility == RenderPacketVolatility.FrameDataOnly &&
-            dirtyReason == CommandChainDirtyReason.None;
+            (dirtyReason & ~CommandChainDirtyReason.DescriptorGeneration) == CommandChainDirtyReason.None;
 
     internal static PrimaryCommandBufferDirtyReason EvaluatePrimaryCommandBufferDirtyReason(
         CommandChainSchedule schedule,
@@ -1381,8 +1666,28 @@ public unsafe partial class VulkanRenderer
             return [];
 
         CommandChainKey[] keysByOpIndex = new CommandChainKey[staticOpCount];
+        PopulateCommandChainKeysByFrameOpIndex(
+            schedule,
+            commandChains,
+            keysByOpIndex.AsSpan(),
+            staticOpCount);
+        return keysByOpIndex;
+    }
+
+    private static void PopulateCommandChainKeysByFrameOpIndex(
+        CommandChainSchedule schedule,
+        IReadOnlyDictionary<CommandChainKey, CommandChain> commandChains,
+        Span<CommandChainKey> keysByOpIndex,
+        int staticOpCount)
+    {
+        if (staticOpCount <= 0)
+            return;
+        if (keysByOpIndex.Length < staticOpCount)
+            throw new ArgumentException("The command-chain key scratch span is smaller than the frame-op count.", nameof(keysByOpIndex));
+
+        keysByOpIndex = keysByOpIndex[..staticOpCount];
         CommandChainKey unmappedKey = new(0, default, 0, 0, false, -1);
-        Array.Fill(keysByOpIndex, unmappedKey);
+        keysByOpIndex.Fill(unmappedKey);
         ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
         for (int groupIndex = 0; groupIndex < groups.Length; groupIndex++)
         {
@@ -1407,7 +1712,6 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        return keysByOpIndex;
     }
 
     internal static bool TryGetCommandChainScheduleFrameSlot(
@@ -1432,7 +1736,8 @@ public unsafe partial class VulkanRenderer
     internal static void ValidatePrimaryCommandChainSchedule(
         CommandChainSchedule schedule,
         FrameOp[] staticOps,
-        int dynamicOverlayOpCount)
+        int dynamicOverlayOpCount,
+        IReadOnlyDictionary<CommandChainKey, CommandChain>? chains = null)
     {
         ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
         int groupIndex = 0;
@@ -1472,7 +1777,8 @@ public unsafe partial class VulkanRenderer
                     ref groupIndex,
                     currentPassIndex,
                     currentTargetIdentity,
-                    currentGroupOpCount);
+                    currentGroupOpCount,
+                    chains);
                 currentPassIndex = passIndex;
                 currentTargetIdentity = targetIdentity;
                 currentGroupOpCount = 1;
@@ -1489,7 +1795,8 @@ public unsafe partial class VulkanRenderer
                 ref groupIndex,
                 currentPassIndex,
                 currentTargetIdentity,
-                currentGroupOpCount);
+                currentGroupOpCount,
+                chains);
         }
 
         int dynamicChainCount = 0;
@@ -1499,7 +1806,7 @@ public unsafe partial class VulkanRenderer
             if (!group.DynamicOverlay)
                 throw new InvalidOperationException("Command-chain primary schedule placed a static group after dynamic overlay groups.");
 
-            dynamicChainCount += group.ChainKeys.Length;
+            dynamicChainCount += CountScheduledSourceOps(group.ChainKeys.Span, chains);
         }
 
         if (dynamicChainCount != dynamicOverlayOpCount)
@@ -1514,7 +1821,8 @@ public unsafe partial class VulkanRenderer
         ref int groupIndex,
         int passIndex,
         int targetIdentity,
-        int groupOpCount)
+        int groupOpCount,
+        IReadOnlyDictionary<CommandChainKey, CommandChain>? chains)
     {
         if (groupIndex >= groups.Length)
             throw new InvalidOperationException("Command-chain primary schedule ended before all static frame-op groups were represented.");
@@ -1527,13 +1835,33 @@ public unsafe partial class VulkanRenderer
             throw new InvalidOperationException(
                 $"Command-chain primary schedule group {groupIndex} does not match static frame-op group: expected pass={passIndex} target={targetIdentity}, current pass={group.PassIndex} target={group.TargetIdentity}.");
         }
-        if (group.ChainKeys.Length != groupOpCount)
+        int scheduledSourceOpCount = CountScheduledSourceOps(group.ChainKeys.Span, chains);
+        if (scheduledSourceOpCount != groupOpCount)
         {
             throw new InvalidOperationException(
-                $"Command-chain primary schedule group {groupIndex} has {group.ChainKeys.Length} chains for {groupOpCount} static frame ops.");
+                $"Command-chain primary schedule group {groupIndex} covers {scheduledSourceOpCount} source ops with {group.ChainKeys.Length} chains for {groupOpCount} static frame ops.");
         }
 
         groupIndex++;
+    }
+
+    private static int CountScheduledSourceOps(
+        ReadOnlySpan<CommandChainKey> keys,
+        IReadOnlyDictionary<CommandChainKey, CommandChain>? chains)
+    {
+        if (chains is null)
+            return keys.Length;
+
+        int count = 0;
+        for (int i = 0; i < keys.Length; i++)
+        {
+            if (!chains.TryGetValue(keys[i], out CommandChain? chain) || chain.SourceCount <= 0)
+                throw new InvalidOperationException($"Command-chain primary schedule references an unmapped chain '{keys[i]}'.");
+
+            count += chain.SourceCount;
+        }
+
+        return count;
     }
 
     internal static ulong ComputePacketInstanceCountSignature(RenderPacket packet)

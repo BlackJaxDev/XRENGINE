@@ -620,7 +620,7 @@ public sealed class VulkanP0ValidationTests
 
         method.ShouldContain("ImageLayout requestedLayout = GetDefaultSampledDescriptorLayout(source);");
         method.ShouldContain("CanSampleFromTrackedGeneralLayout(source.DescriptorUsage, trackedLayout)");
-        method.ShouldContain("return requestedLayout;");
+        method.ShouldContain(": requestedLayout;");
         method.ShouldNotContain("TryTransitionDedicatedImageLayout");
     }
 
@@ -1216,7 +1216,7 @@ public sealed class VulkanP0ValidationTests
         string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
         string extensionsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs");
 
-        prewarmSource.ShouldContain("internal const int CurrentVersion = 2");
+        prewarmSource.ShouldContain("internal const int CurrentVersion = 5");
         prewarmSource.ShouldContain("RenderPassSignature");
         prewarmSource.ShouldContain("BuildDynamicRenderingSignature");
         prewarmSource.ShouldNotContain("RenderPassHandle");

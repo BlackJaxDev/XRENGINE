@@ -10,7 +10,10 @@ public unsafe partial class VulkanRenderer
             int DescriptorFrameSlotCount,
             int SetCount,
             int MaterialIdentity,
+            ulong MaterialBindingLayoutVersion,
             int ViewFamilyIdentity,
-            ulong ResourceVariantFingerprint);
+            int DrawUniformSlot,
+            ulong BindingIdentityFingerprint,
+            ulong ImmutableResourceFingerprint);
     }
 }

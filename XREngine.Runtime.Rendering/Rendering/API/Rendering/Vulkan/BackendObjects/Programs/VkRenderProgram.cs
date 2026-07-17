@@ -1575,7 +1575,7 @@ public unsafe partial class VulkanRenderer
 
         public ulong ComputeGraphicsPipelineFingerprint()
         {
-            HashCode hash = new();
+            VulkanStableHash64 hash = new(schemaVersion: 2);
             hash.Add(CommonPushConstantSize);
 
             foreach (EProgramStageMask flag in EnumerateStages(GraphicsStageMask))
@@ -1587,11 +1587,11 @@ public unsafe partial class VulkanRenderer
                     continue;
 
                 hash.Add((int)shader.StageFlags);
-                hash.Add(shader.LastArtifact?.Identity ?? shader.CompileStatus.ArtifactIdentity ?? shader.StageDebugLabel, StringComparer.Ordinal);
+                hash.Add(shader.LastArtifact?.Identity ?? shader.CompileStatus.ArtifactIdentity ?? shader.StageDebugLabel);
             }
 
             hash.Add(_descriptorSetLayouts.Length);
-            hash.Add(Renderer.ActiveDescriptorBackend);
+            hash.Add((int)Renderer.ActiveDescriptorBackend);
             hash.Add(_descriptorHeapLayout?.PushByteCount ?? 0u);
             DescriptorBindingInfo[] bindings = _programDescriptorBindings
                 .OrderBy(static binding => binding.Set)
@@ -1608,22 +1608,22 @@ public unsafe partial class VulkanRenderer
                 hash.Add((int)binding.StageFlags);
             }
 
-            return unchecked((ulong)hash.ToHashCode());
+            return hash.Value;
         }
 
         public ulong ComputeComputePipelineFingerprint()
         {
-            HashCode hash = new();
+            VulkanStableHash64 hash = new(schemaVersion: 2);
             hash.Add(CommonPushConstantSize);
 
             if (_stageLookup.TryGetValue(EProgramStageMask.ComputeShaderBit, out VkShader? shader))
             {
                 hash.Add((int)shader.StageFlags);
-                hash.Add(shader.LastArtifact?.Identity ?? shader.CompileStatus.ArtifactIdentity ?? shader.StageDebugLabel, StringComparer.Ordinal);
+                hash.Add(shader.LastArtifact?.Identity ?? shader.CompileStatus.ArtifactIdentity ?? shader.StageDebugLabel);
             }
 
             hash.Add(_descriptorSetLayouts.Length);
-            hash.Add(Renderer.ActiveDescriptorBackend);
+            hash.Add((int)Renderer.ActiveDescriptorBackend);
             hash.Add(_descriptorHeapLayout?.PushByteCount ?? 0u);
             foreach (DescriptorBindingInfo binding in _programDescriptorBindings
                 .OrderBy(static binding => binding.Set)
@@ -1636,7 +1636,7 @@ public unsafe partial class VulkanRenderer
                 hash.Add((int)binding.StageFlags);
             }
 
-            return unchecked((ulong)hash.ToHashCode());
+            return hash.Value;
         }
 
         private string ComputeProgramArtifactFingerprint()

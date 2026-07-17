@@ -95,6 +95,14 @@ public unsafe partial class VulkanRenderer
 
     internal override void NotifyRenderResourcesChanged(string? reason)
         => InvalidateCommandChainScheduleForResourceChange(
+            RenderResourceChangeKind.BindingIdentity,
+            string.IsNullOrWhiteSpace(reason)
+                ? nameof(NotifyRenderResourcesChanged)
+                : reason);
+
+    internal override void NotifyRenderResourcesChanged(RenderResourceChangeKind kind, string? reason)
+        => InvalidateCommandChainScheduleForResourceChange(
+            kind,
             string.IsNullOrWhiteSpace(reason)
                 ? nameof(NotifyRenderResourcesChanged)
                 : reason);

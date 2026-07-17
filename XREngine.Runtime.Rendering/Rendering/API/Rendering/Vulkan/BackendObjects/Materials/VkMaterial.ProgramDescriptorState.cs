@@ -60,6 +60,12 @@ namespace XREngine.Rendering.Vulkan
                 /// </summary>
                 public ulong ResourceFingerprint;
 
+				/// <summary>
+				/// Concrete resource fingerprint last published to each frame slot. A slot is
+				/// rewritten only after that frame slot has completed and becomes current.
+				/// </summary>
+				public required ulong[] SlotResourceFingerprints { get; init; }
+
                 /// <summary>The Vulkan descriptor pool from which all sets in this state were allocated.</summary>
                 public DescriptorPool DescriptorPool;
 

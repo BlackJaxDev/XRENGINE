@@ -70,7 +70,8 @@ public sealed class VulkanDescriptorLifetimePressureTests
         key.ShouldNotContain("ProgramIdentity");
         key.ShouldContain("int ViewFamilyIdentity");
         key.ShouldNotContain("ProgramBindingId");
-        key.ShouldContain("ResourceVariantFingerprint");
+        key.ShouldContain("BindingIdentityFingerprint");
+        key.ShouldContain("ImmutableResourceFingerprint");
         descriptors.ShouldContain("ComputeDescriptorLayoutFingerprint");
         descriptors.ShouldContain("ResolveMeshDescriptorViewFamilyIdentity");
         descriptors.ShouldContain("allocation.ViewFamilyIdentity != viewFamilyIdentity");

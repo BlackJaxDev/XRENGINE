@@ -61,6 +61,7 @@ namespace XREngine.Rendering.Occlusion
                 rp.DepthTest.Enabled = ERenderParamUsage.Enabled;
                 rp.DepthTest.UpdateDepth = false;
                 rp.DepthTest.Function = EComparison.Lequal;
+                rp.StencilTest.Enabled = ERenderParamUsage.Disabled;
 
                 probeMat.RenderOptions = rp;
 

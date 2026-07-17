@@ -46,6 +46,47 @@ public static class MaterialTextureBindingResolver
             "descriptor binding index plus array index");
     }
 
+    public static MaterialTextureBindingResolution Resolve<TState>(
+        XRMaterialBase material,
+        string? bindingName,
+        int bindingIndex,
+        int arrayIndex,
+        bool bindlessMaterialArray,
+        TState state,
+        Func<TState, string, XRTexture?> programSamplerResolver)
+    {
+        if (bindlessMaterialArray)
+            return ResolveIndexed(material, arrayIndex, bindingName, MaterialTextureBindingRung.BindlessMaterialArray, "bindless material texture array index");
+
+        if (!string.IsNullOrWhiteSpace(bindingName))
+        {
+            XRTexture? programTexture = programSamplerResolver(state, bindingName);
+            if (programTexture is not null)
+            {
+                int programTextureIndex = IndexOf(material, programTexture);
+                return new MaterialTextureBindingResolution(
+                    programTextureIndex,
+                    bindingName,
+                    programTexture,
+                    MaterialTextureBindingRung.ProgramSamplerName,
+                    "program-bound sampler name");
+            }
+
+            if (TryResolveMaterialSamplerName(material, bindingName, out MaterialTextureBindingResolution named))
+                return named;
+
+            if (TryResolveIndexedTextureAlias(material, bindingName, out MaterialTextureBindingResolution alias))
+                return alias;
+        }
+
+        return ResolveIndexed(
+            material,
+            bindingIndex + arrayIndex,
+            bindingName,
+            MaterialTextureBindingRung.NumericTextureSlot,
+            "descriptor binding index plus array index");
+    }
+
     public static MaterialShadowBindingPlan BuildShadowBindingPlan(XRRenderProgram program, XRMaterialBase sourceMaterial)
     {
         List<ShaderVar> parameterBindings = [];

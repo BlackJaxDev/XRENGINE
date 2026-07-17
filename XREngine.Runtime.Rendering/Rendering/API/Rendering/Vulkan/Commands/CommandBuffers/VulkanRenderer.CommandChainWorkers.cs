@@ -1,8 +1,6 @@
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
-using System.Threading.Tasks;
 using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
@@ -10,26 +8,81 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private readonly object _commandChainRecordingWorkersLock = new();
+    private readonly ManualResetEventSlim _commandChainRecordingWorkersIdle = new(initialState: true);
+    private readonly CountdownEvent _commandChainRecordingWorkerCountdown = new(initialCount: 1);
+    private readonly CommandChainRecordingBatch _commandChainRecordingBatch = new();
     private CommandChainRecordingWorkerState[]? _commandChainRecordingWorkers;
-    private CancellationTokenSource? _commandChainRecordingWorkerCancellation;
     private int _commandChainRecordingWorkerGeneration;
+    private int _activeCommandChainRecordingWorkerCount;
 
     private readonly record struct CommandChainWorkerTiming(TimeSpan WorkerRecordTime, TimeSpan WaitForWorkersTime);
+
+    private sealed class CommandChainRecordingBatch
+    {
+        public FrameOp[] Ops = [];
+        public CommandChain[] Chains = [];
+        public CommandBuffer[] SecondaryBuffers = [];
+        public int[] RecordJobChainIndices = [];
+        public int[] RecordJobWorkerIndices = [];
+        public int[] UniformSlots = [];
+        public int StartIndex;
+        public int JobCount;
+        public int PassIndex;
+        public int FrameSlot;
+        public bool DynamicRendering;
+        public RenderPass RenderPass;
+        public Framebuffer Framebuffer;
+        public DynamicRenderingFormatSignature DynamicRenderingFormats;
+        public bool DepthStencilReadOnly;
+        public SampleCountFlags Samples;
+        public string TargetName = "<swapchain>";
+        public Exception? Error;
+
+        public void ClearReferences()
+        {
+            Ops = [];
+            Chains = [];
+            SecondaryBuffers = [];
+            RecordJobChainIndices = [];
+            RecordJobWorkerIndices = [];
+            UniformSlots = [];
+            JobCount = 0;
+            TargetName = "<swapchain>";
+            Error = null;
+        }
+    }
 
     private sealed class CommandChainRecordingWorkerState(int workerIndex)
     {
         public int WorkerIndex { get; } = workerIndex;
-        public CommandPool GraphicsCommandPool;
-        public CommandPool ComputeCommandPool;
-        public readonly List<CommandChainKey> ChainScratch = new(128);
-        public CommandBufferBindState BindState;
+        public readonly AutoResetEvent WorkAvailable = new(initialState: false);
+        public CommandPool[] GraphicsCommandPoolsByFrameSlot = [];
+        public Thread? Thread;
+        public VulkanRenderer? Owner;
+        public volatile bool StopRequested;
         public ulong LastFrameId;
 
-        public void Reset(ulong frameId)
+        public void Start(VulkanRenderer owner)
         {
-            LastFrameId = frameId;
-            ChainScratch.Clear();
-            BindState = default;
+            Owner = owner;
+            Thread = new Thread(static state => ((CommandChainRecordingWorkerState)state!).Run())
+            {
+                IsBackground = true,
+                Name = $"Vulkan Command Chain {WorkerIndex}",
+            };
+            Thread.Start(this);
+        }
+
+        private void Run()
+        {
+            while (true)
+            {
+                WorkAvailable.WaitOne();
+                if (StopRequested)
+                    return;
+
+                Owner!.RunCommandChainRecordingWorker(this);
+            }
         }
     }
 
@@ -46,65 +99,92 @@ public unsafe partial class VulkanRenderer
         return Math.Clamp(independentChainCount, 1, Math.Min(usableProcessors, 8));
     }
 
-    private CommandChainWorkerTiming DispatchCommandChainRecordingWorkers(CommandChainSchedule? schedule)
+    private bool TryPrepareCommandChainRecordingWorkers(
+        int recordJobCount,
+        uint frameDataImageIndex,
+        out CommandChainRecordingWorkerState[] workers,
+        out int workerCount,
+        out int frameSlot)
     {
-        if (schedule is null || schedule.Groups.Length == 0)
-            return default;
-
-        int independentChainCount = CountCommandChainWorkerJobs(schedule);
-        int workerCount = ResolveCommandChainRecordingWorkerCount(
-            independentChainCount,
+        workers = [];
+        frameSlot = -1;
+        workerCount = ResolveCommandChainRecordingWorkerCount(
+            recordJobCount,
             Environment.ProcessorCount,
             CommandChainsSingleThread,
             ParallelCommandChainRecordingDisabled);
-        if (workerCount <= 1)
+        if (workerCount <= 1 || !TryGetIndexedCommandChainCacheSlot(frameDataImageIndex, out frameSlot))
+            return false;
+
+        workers = EnsureCommandChainRecordingWorkers(workerCount);
+        int frameSlotCount = ResolveIndexedCommandChainCacheCount();
+        EnsureCommandChainWorkerFrameSlotPools(workers, frameSlotCount);
+        return frameSlot < frameSlotCount;
+    }
+
+    private CommandChainWorkerTiming DispatchCommandChainRecordingWorkers(
+        CommandChainRecordingBatch batch,
+        CommandChainRecordingWorkerState[] workers,
+        int workerCount)
+    {
+        if (batch.JobCount <= 0 || workerCount <= 1)
             return default;
 
-        CommandChainRecordingWorkerState[] workers = EnsureCommandChainRecordingWorkers(workerCount);
-        CancellationToken token = ResetCommandChainRecordingWorkerCancellation();
         long dispatchStart = Stopwatch.GetTimestamp();
-        Task[] tasks = new Task[workerCount];
-        for (int workerIndex = 0; workerIndex < workerCount; workerIndex++)
+        _commandChainRecordingWorkersIdle.Reset();
+        _commandChainRecordingWorkerCountdown.Reset(workerCount);
+        Volatile.Write(ref _activeCommandChainRecordingWorkerCount, workerCount);
+        unchecked
         {
-            int capturedWorkerIndex = workerIndex;
-            tasks[workerIndex] = Task.Run(
-                () => RunCommandChainRecordingWorker(schedule, workers[capturedWorkerIndex], workerCount, token),
-                token);
+            _commandChainRecordingWorkerGeneration++;
         }
 
+        for (int i = 0; i < workerCount; i++)
+            workers[i].WorkAvailable.Set();
+
         long waitStart = Stopwatch.GetTimestamp();
-        Task.WaitAll(tasks);
+        _commandChainRecordingWorkerCountdown.Wait();
+        _commandChainRecordingWorkersIdle.Set();
+        Volatile.Write(ref _activeCommandChainRecordingWorkerCount, 0);
+
+        if (batch.Error is not null)
+            throw new InvalidOperationException("A Vulkan command-chain worker failed to record a secondary command buffer.", batch.Error);
+
         return new CommandChainWorkerTiming(
             Stopwatch.GetElapsedTime(dispatchStart),
             Stopwatch.GetElapsedTime(waitStart));
     }
 
-    private static int CountCommandChainWorkerJobs(CommandChainSchedule schedule)
+    private void RunCommandChainRecordingWorker(CommandChainRecordingWorkerState worker)
     {
-        int count = 0;
-        ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
-        for (int i = 0; i < groups.Length; i++)
-            count += groups[i].ChainKeys.Length;
-        return count;
-    }
-
-    private void RunCommandChainRecordingWorker(
-        CommandChainSchedule schedule,
-        CommandChainRecordingWorkerState worker,
-        int workerCount,
-        CancellationToken token)
-    {
-        token.ThrowIfCancellationRequested();
-        worker.Reset(VulkanFrameCounter);
-
-        ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
-        for (int groupIndex = worker.WorkerIndex; groupIndex < groups.Length; groupIndex += workerCount)
+        using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.SecondaryRecording);
+        try
         {
-            token.ThrowIfCancellationRequested();
-            ReadOnlySpan<CommandChainKey> keys = groups[groupIndex].ChainKeys.Span;
-            worker.ChainScratch.EnsureCapacity(worker.ChainScratch.Count + keys.Length);
-            for (int keyIndex = 0; keyIndex < keys.Length; keyIndex++)
-                worker.ChainScratch.Add(keys[keyIndex]);
+            CommandChainRecordingBatch batch = _commandChainRecordingBatch;
+            worker.LastFrameId = VulkanFrameCounter;
+            for (int jobIndex = 0; jobIndex < batch.JobCount; jobIndex++)
+            {
+                if (Volatile.Read(ref batch.Error) is not null)
+                    break;
+
+                if (batch.RecordJobWorkerIndices[jobIndex] != worker.WorkerIndex)
+                    continue;
+
+                try
+                {
+                    int chainIndex = batch.RecordJobChainIndices[jobIndex];
+                    RecordScheduledMeshCommandChainWorker(batch, chainIndex);
+                }
+                catch (Exception ex)
+                {
+                    Interlocked.CompareExchange(ref batch.Error, ex, null);
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            _commandChainRecordingWorkerCountdown.Signal();
         }
     }
 
@@ -115,22 +195,15 @@ public unsafe partial class VulkanRenderer
             if (_commandChainRecordingWorkers is { Length: var existingCount } && existingCount >= workerCount)
                 return _commandChainRecordingWorkers;
 
-            DestroyCommandChainRecordingWorkersLocked();
+            if (_commandChainRecordingWorkers is not null)
+                throw new InvalidOperationException("Vulkan command-chain worker capacity cannot grow while worker-owned command pools are live.");
 
-            CommandChainRecordingWorkerState[] workers = new CommandChainRecordingWorkerState[workerCount];
-            var queueFamilyIndices = FamilyQueueIndices;
-            uint graphicsFamily = queueFamilyIndices.GraphicsFamilyIndex
-                ?? throw new InvalidOperationException("Graphics queue family is not available.");
-            uint computeFamily = queueFamilyIndices.ComputeFamilyIndex ?? graphicsFamily;
+            int capacity = Math.Clamp(Math.Max(Environment.ProcessorCount - 1, 1), 1, 8);
+            CommandChainRecordingWorkerState[] workers = new CommandChainRecordingWorkerState[capacity];
             for (int i = 0; i < workers.Length; i++)
             {
-                CommandChainRecordingWorkerState worker = new(i)
-                {
-                    GraphicsCommandPool = CreateCommandPoolForFamily(graphicsFamily),
-                };
-                worker.ComputeCommandPool = computeFamily == graphicsFamily
-                    ? worker.GraphicsCommandPool
-                    : CreateCommandPoolForFamily(computeFamily);
+                CommandChainRecordingWorkerState worker = new(i);
+                worker.Start(this);
                 workers[i] = worker;
             }
 
@@ -139,30 +212,33 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private CancellationToken ResetCommandChainRecordingWorkerCancellation()
+    private void EnsureCommandChainWorkerFrameSlotPools(
+        CommandChainRecordingWorkerState[] workers,
+        int frameSlotCount)
     {
-        lock (_commandChainRecordingWorkersLock)
+        uint graphicsFamily = FamilyQueueIndices.GraphicsFamilyIndex
+            ?? throw new InvalidOperationException("Graphics queue family is not available.");
+        for (int workerIndex = 0; workerIndex < workers.Length; workerIndex++)
         {
-            _commandChainRecordingWorkerCancellation?.Cancel();
-            _commandChainRecordingWorkerCancellation?.Dispose();
-            _commandChainRecordingWorkerCancellation = new CancellationTokenSource();
-            unchecked
-            {
-                _commandChainRecordingWorkerGeneration++;
-            }
-            return _commandChainRecordingWorkerCancellation.Token;
+            CommandChainRecordingWorkerState worker = workers[workerIndex];
+            if (worker.GraphicsCommandPoolsByFrameSlot.Length == frameSlotCount)
+                continue;
+
+            if (worker.GraphicsCommandPoolsByFrameSlot.Length != 0)
+                throw new InvalidOperationException("Vulkan command-chain frame-slot pool count changed while cached secondaries are live.");
+
+            worker.GraphicsCommandPoolsByFrameSlot = new CommandPool[frameSlotCount];
+            for (int frameSlot = 0; frameSlot < frameSlotCount; frameSlot++)
+                worker.GraphicsCommandPoolsByFrameSlot[frameSlot] = CreateCommandPoolForFamily(graphicsFamily);
         }
     }
 
     private void CancelCommandChainRecordingWorkers()
     {
-        lock (_commandChainRecordingWorkersLock)
+        _commandChainRecordingWorkersIdle.Wait();
+        unchecked
         {
-            _commandChainRecordingWorkerCancellation?.Cancel();
-            unchecked
-            {
-                _commandChainRecordingWorkerGeneration++;
-            }
+            _commandChainRecordingWorkerGeneration++;
         }
     }
 
@@ -174,33 +250,56 @@ public unsafe partial class VulkanRenderer
 
     private void DestroyCommandChainRecordingWorkersLocked()
     {
-        _commandChainRecordingWorkerCancellation?.Cancel();
-        _commandChainRecordingWorkerCancellation?.Dispose();
-        _commandChainRecordingWorkerCancellation = null;
-
+        _commandChainRecordingWorkersIdle.Wait();
         if (_commandChainRecordingWorkers is null)
             return;
 
-        HashSet<ulong> destroyed = [];
         for (int i = 0; i < _commandChainRecordingWorkers.Length; i++)
         {
             CommandChainRecordingWorkerState worker = _commandChainRecordingWorkers[i];
-            DestroyWorkerCommandPool(worker.GraphicsCommandPool, destroyed);
-            DestroyWorkerCommandPool(worker.ComputeCommandPool, destroyed);
-            worker.GraphicsCommandPool = default;
-            worker.ComputeCommandPool = default;
-            worker.ChainScratch.Clear();
-            worker.BindState = default;
+            worker.StopRequested = true;
+            worker.WorkAvailable.Set();
         }
 
+        for (int i = 0; i < _commandChainRecordingWorkers.Length; i++)
+        {
+            CommandChainRecordingWorkerState worker = _commandChainRecordingWorkers[i];
+            worker.Thread?.Join();
+            worker.WorkAvailable.Dispose();
+            worker.Thread = null;
+            worker.Owner = null;
+        }
+
+        DestroyCommandChainRecordingWorkerPoolsLocked();
         _commandChainRecordingWorkers = null;
+        _commandChainRecordingBatch.ClearReferences();
     }
 
-    private void DestroyWorkerCommandPool(CommandPool pool, HashSet<ulong> destroyed)
+    private void DestroyCommandChainRecordingWorkerPools()
     {
-        if (pool.Handle == 0 || !destroyed.Add(pool.Handle))
+        lock (_commandChainRecordingWorkersLock)
+        {
+            _commandChainRecordingWorkersIdle.Wait();
+            DestroyCommandChainRecordingWorkerPoolsLocked();
+        }
+    }
+
+    private void DestroyCommandChainRecordingWorkerPoolsLocked()
+    {
+        if (_commandChainRecordingWorkers is null)
             return;
 
-        Api!.DestroyCommandPool(device, pool, null);
+        for (int workerIndex = 0; workerIndex < _commandChainRecordingWorkers.Length; workerIndex++)
+        {
+            CommandChainRecordingWorkerState worker = _commandChainRecordingWorkers[workerIndex];
+            for (int frameSlot = 0; frameSlot < worker.GraphicsCommandPoolsByFrameSlot.Length; frameSlot++)
+            {
+                CommandPool pool = worker.GraphicsCommandPoolsByFrameSlot[frameSlot];
+                if (pool.Handle != 0)
+                    Api!.DestroyCommandPool(device, pool, null);
+            }
+
+            worker.GraphicsCommandPoolsByFrameSlot = [];
+        }
     }
 }

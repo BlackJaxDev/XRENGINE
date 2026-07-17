@@ -227,7 +227,8 @@ namespace XREngine.Rendering.Commands
                 _updatingPassSortOrderCounters = passIndicesAndSorters.Keys.ToDictionary(static key => key, static _ => 0L);
 
                 _renderingPasses = [];
-                _renderingPassCommandCounts = [];
+                _renderingPassCommandCounts.Clear();
+                _renderingPassCommandCounts.EnsureCapacity(_renderingPasses.Count);
                 _renderingPassCommandSetSignatures.Clear();
                 _renderingShadowCasterCommandSetSignature = 0u;
                 _renderingCommandCount = 0;
@@ -365,7 +366,7 @@ namespace XREngine.Rendering.Commands
 
         private Dictionary<int, ICollection<RenderCommand>> _updatingPasses = [];
         private Dictionary<int, ICollection<RenderCommand>> _renderingPasses = [];
-        private Dictionary<int, int> _renderingPassCommandCounts = [];
+        private readonly Dictionary<int, int> _renderingPassCommandCounts = [];
         private readonly Dictionary<int, ulong> _renderingPassCommandSetSignatures = [];
         private ulong _renderingShadowCasterCommandSetSignature;
         private int _renderingCommandCount = 0;
@@ -456,8 +457,8 @@ namespace XREngine.Rendering.Commands
 
         public int GetRenderingPassCommandCount(int renderPass)
         {
-            Dictionary<int, int> counts = Volatile.Read(ref _renderingPassCommandCounts);
-            return counts.TryGetValue(renderPass, out int count)
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+            return _renderingPassCommandCounts.TryGetValue(renderPass, out int count)
                 ? count
                 : 0;
         }
@@ -1518,8 +1519,8 @@ namespace XREngine.Rendering.Commands
 
         public bool HasRenderingCommands(int renderPass)
         {
-            Dictionary<int, int> counts = Volatile.Read(ref _renderingPassCommandCounts);
-            return counts.TryGetValue(renderPass, out int count) && count > 0;
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+            return _renderingPassCommandCounts.TryGetValue(renderPass, out int count) && count > 0;
         }
 
         public bool HasGpuEligibleMeshCommands(int renderPass)
@@ -1868,12 +1869,11 @@ namespace XREngine.Rendering.Commands
                         pass.Clear();
                 }
 
-                // Reset the per-pass sort-order counters. Keys can be added by AddCPU on other
-                // threads in the future, so we snapshot before mutating values. The collection is
-                // typically small (one entry per render pass) so the ToArray() cost is negligible.
+                // The collection lock excludes AddCPU while existing values are reset. Replacing
+                // a Dictionary value does not invalidate its key enumerator.
                 if (_updatingPassSortOrderCounters.Count > 0)
                 {
-                    foreach (int passIndex in _updatingPassSortOrderCounters.Keys.ToArray())
+                    foreach (int passIndex in _updatingPassSortOrderCounters.Keys)
                         _updatingPassSortOrderCounters[passIndex] = 0L;
                 }
 
@@ -1883,20 +1883,20 @@ namespace XREngine.Rendering.Commands
 
         private void PublishRenderingCommandCountsNoLock()
         {
-            Dictionary<int, int> counts = new(_renderingPasses.Count);
+            _renderingPassCommandCounts.Clear();
+            _renderingPassCommandCounts.EnsureCapacity(_renderingPasses.Count);
             _renderingPassCommandSetSignatures.Clear();
             int total = 0;
             foreach ((int passIndex, ICollection<RenderCommand> pass) in _renderingPasses)
             {
                 int count = pass.Count;
-                counts[passIndex] = count;
+                _renderingPassCommandCounts[passIndex] = count;
                 _renderingPassCommandSetSignatures[passIndex] = ComputeOcclusionCommandSetSignature(pass);
                 total += count;
             }
 
             _renderingShadowCasterCommandSetSignature = ComputeShadowCasterCommandSetSignature();
 
-            Volatile.Write(ref _renderingPassCommandCounts, counts);
             Volatile.Write(ref _renderingCommandCount, total);
         }
 

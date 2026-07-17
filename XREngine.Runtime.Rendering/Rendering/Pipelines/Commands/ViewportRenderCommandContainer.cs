@@ -392,7 +392,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("ViewportRenderCommandContainer.Execute");
             var instance = ViewportRenderCommand.ActivePipelineInstance;
-            if (instance is null)
+            if (instance is null || AbstractRenderer.Current?.IsDeviceLost == true)
                 return;
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("ViewportRenderCommandContainer.EnsureResourcesAllocated"))
@@ -400,12 +400,21 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             for (int i = 0; i < _commands.Count; i++)
             {
+                if (AbstractRenderer.Current?.IsDeviceLost == true)
+                    break;
+
                 try
                 {
                     _commands[i].ExecuteIfShould();
                 }
                 catch (Exception ex)
                 {
+                    // Device loss is already diagnosed by the backend. Continuing the
+                    // pipeline only turns the remaining commands into redundant
+                    // descriptor/resource exceptions and delays renderer recovery.
+                    if (AbstractRenderer.Current?.IsDeviceLost == true)
+                        break;
+
                     // Isolate individual command failures so one bad factory (e.g., a
                     // missing texture during FBO recreation after resize) does not abort
                     // the entire command chain. Subsequent commands that succeed will

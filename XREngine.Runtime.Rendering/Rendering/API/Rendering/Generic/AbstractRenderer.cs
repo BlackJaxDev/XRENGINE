@@ -21,6 +21,14 @@ using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering
 {
+    internal enum RenderResourceChangeKind
+    {
+        FrameData,
+        CompatibleContentPublication,
+        BindingIdentity,
+        StructuralLayout,
+    }
+
     internal interface IRenderResourceGenerationTransaction : IDisposable
     {
         void Commit();
@@ -170,6 +178,9 @@ namespace XREngine.Rendering
 
         internal virtual void NotifyRenderResourcesChanged(string? reason)
             => NotifyRenderResourcesChanged();
+
+        internal virtual void NotifyRenderResourcesChanged(RenderResourceChangeKind kind, string? reason)
+            => NotifyRenderResourcesChanged(reason);
 
         internal virtual IDisposable? EnterRenderPipelineFrameResourceScope(
             XRRenderPipelineInstance pipeline,

@@ -730,6 +730,10 @@ namespace XREngine.Rendering.Vulkan
             DestroyIndexedCommandChainCaches();
             for (int i = 0; i < indexedFrameSlotCount; i++)
                 ReleaseDeferredSecondaryCommandBuffers(unchecked((uint)i));
+            // Indexed worker pools own only buffers from the caches destroyed
+            // above. Recreate the per-slot pools lazily so a swapchain image-
+            // count change cannot retain an incompatible pool array.
+            DestroyCommandChainRecordingWorkerPools();
 
             DestroyCommandBufferVariants();
             DestroyDynamicUiBatchTextSecondaryCommandBuffers();

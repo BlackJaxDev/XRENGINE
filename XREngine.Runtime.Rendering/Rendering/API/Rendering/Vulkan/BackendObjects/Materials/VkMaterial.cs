@@ -168,29 +168,46 @@ namespace XREngine.Rendering.Vulkan
 			{
 				descriptorSet = default;
 				heapPayload = null;
-				if (program is null || !program.Link() || Renderer.DescriptorFrameSlotFrameCount <= 0 ||
-					!TryEnsureState(program, out ProgramDescriptorState? state) || state is null)
+				lock (_stateSync)
 				{
-					return false;
+					if (program is null || !program.Link() || Renderer.DescriptorFrameSlotFrameCount <= 0 ||
+						!TryEnsureState(program, out ProgramDescriptorState? state) || state is null)
+					{
+						return false;
+					}
+
+					int resolvedFrame = Math.Clamp(frameIndex, 0, state.FrameCount - 1);
+					if (!UpdateUniformBuffers(state, resolvedFrame))
+						return false;
+
+					ulong resourceFingerprint = ComputeResourceFingerprint(program);
+					if (state.Dirty || _materialDirty)
+					{
+						Array.Fill(state.SlotResourceFingerprints, ulong.MaxValue);
+						state.Dirty = false;
+						_materialDirty = false;
+					}
+
+					if (DescriptorSlotRequiresPublication(state.SlotResourceFingerprints, resolvedFrame, resourceFingerprint))
+					{
+						if (!UpdateFrameDescriptorSet(state, resolvedFrame))
+							return false;
+						state.SlotResourceFingerprints[resolvedFrame] = resourceFingerprint;
+					}
+
+					state.ResourceFingerprint = resourceFingerprint;
+					descriptorSet = state.DescriptorSets[resolvedFrame][DescriptorSetMaterial];
+					heapPayload = state.DescriptorHeapPushData[resolvedFrame];
+					return descriptorSet.Handle != 0 || Renderer.IsDescriptorHeapDrawBindingActive;
 				}
-
-				int resolvedFrame = Math.Clamp(frameIndex, 0, state.FrameCount - 1);
-				if (!UpdateUniformBuffers(state, resolvedFrame))
-					return false;
-
-				ulong resourceFingerprint = ComputeResourceFingerprint(program);
-				if (state.ResourceFingerprint != resourceFingerprint)
-					state.Dirty = true;
-				if ((state.Dirty || _materialDirty) && !UpdateDescriptorSets(state))
-					return false;
-
-				state.ResourceFingerprint = resourceFingerprint;
-				state.Dirty = false;
-				_materialDirty = false;
-				descriptorSet = state.DescriptorSets[resolvedFrame][DescriptorSetMaterial];
-				heapPayload = state.DescriptorHeapPushData[resolvedFrame];
-				return descriptorSet.Handle != 0 || Renderer.IsDescriptorHeapDrawBindingActive;
 			}
+
+			internal static bool DescriptorSlotRequiresPublication(
+				ReadOnlySpan<ulong> slotResourceFingerprints,
+				int frameSlot,
+				ulong resourceFingerprint)
+				=> (uint)frameSlot >= (uint)slotResourceFingerprints.Length ||
+					slotResourceFingerprints[frameSlot] != resourceFingerprint;
 
             #endregion
 
@@ -477,6 +494,7 @@ namespace XREngine.Rendering.Vulkan
                     FrameCount = frameCount,
                     SetCount = setCount,
 					SchemaFingerprint = ComputeMaterialSchemaFingerprint(bindings, frameCount, setCount),
+					SlotResourceFingerprints = new ulong[frameCount],
                     DescriptorPool = descriptorPool,
                     Dirty = true,
                 };
@@ -723,20 +741,6 @@ namespace XREngine.Rendering.Vulkan
                 {
                     hash.Add(0UL);
                 }
-            }
-
-            /// <summary>
-            /// Re-writes descriptor sets for every frame in <paramref name="state"/>.
-            /// Called when the material or program state is marked dirty.
-            /// </summary>
-            /// <returns><c>true</c> if all frames were successfully updated.</returns>
-            private bool UpdateDescriptorSets(ProgramDescriptorState state)
-            {
-                for (int frame = 0; frame < state.FrameCount; frame++)
-                    if (!UpdateFrameDescriptorSet(state, frame))
-                        return false;
-
-                return true;
             }
 
             /// <summary>

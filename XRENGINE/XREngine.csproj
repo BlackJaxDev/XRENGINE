@@ -19,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="XREngine.UnitTests" />
   </ItemGroup>
 
   <Target Name="GenerateAotFactoryRegistrations" BeforeTargets="CoreCompile" Condition="'$(DesignTimeBuild)' != 'true' and Exists('$(AotFactoryRegistrationGenerator)')">
