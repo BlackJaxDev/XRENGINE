@@ -14,6 +14,12 @@ public unsafe partial class VulkanRenderer
 {
     [ThreadStatic]
     private static bool t_excludeDesktopSwapchainBarriers;
+    [ThreadStatic]
+    private static SemaphoreSubmitInfo[]? t_submitWaitInfoScratch;
+    [ThreadStatic]
+    private static SemaphoreSubmitInfo[]? t_submitSignalInfoScratch;
+    [ThreadStatic]
+    private static CommandBufferSubmitInfo[]? t_submitCommandBufferInfoScratch;
 
     private readonly ref struct DesktopSwapchainBarrierExclusionScope
     {
@@ -587,84 +593,82 @@ public unsafe partial class VulkanRenderer
         int commandBufferCount = (int)submitInfo.CommandBufferCount;
 
         TimelineSemaphoreSubmitInfo* timelineInfo = FindTimelineSemaphoreSubmitInfo(submitInfo.PNext);
-        SemaphoreSubmitInfo[] waitInfosArray = waitCount > 0
-            ? ArrayPool<SemaphoreSubmitInfo>.Shared.Rent(waitCount)
-            : Array.Empty<SemaphoreSubmitInfo>();
-        SemaphoreSubmitInfo[] signalInfosArray = signalCount > 0
-            ? ArrayPool<SemaphoreSubmitInfo>.Shared.Rent(signalCount)
-            : Array.Empty<SemaphoreSubmitInfo>();
-        CommandBufferSubmitInfo[] commandBufferInfosArray = commandBufferCount > 0
-            ? ArrayPool<CommandBufferSubmitInfo>.Shared.Rent(commandBufferCount)
-            : Array.Empty<CommandBufferSubmitInfo>();
+        SemaphoreSubmitInfo[] waitInfosArray = EnsureThreadScratchCapacity(
+            ref t_submitWaitInfoScratch,
+            waitCount);
+        SemaphoreSubmitInfo[] signalInfosArray = EnsureThreadScratchCapacity(
+            ref t_submitSignalInfoScratch,
+            signalCount);
+        CommandBufferSubmitInfo[] commandBufferInfosArray = EnsureThreadScratchCapacity(
+            ref t_submitCommandBufferInfoScratch,
+            commandBufferCount);
 
-        try
+        for (int i = 0; i < waitCount; i++)
         {
-            for (int i = 0; i < waitCount; i++)
+            waitInfosArray[i] = new SemaphoreSubmitInfo
             {
-                waitInfosArray[i] = new SemaphoreSubmitInfo
-                {
-                    SType = StructureType.SemaphoreSubmitInfo,
-                    Semaphore = submitInfo.PWaitSemaphores[i],
-                    Value = timelineInfo is not null && timelineInfo->PWaitSemaphoreValues is not null
-                        ? timelineInfo->PWaitSemaphoreValues[i]
-                        : 0UL,
-                    StageMask = NormalizePipelineStages2(submitInfo.PWaitDstStageMask[i]),
-                    DeviceIndex = 0,
-                };
-            }
-
-            PipelineStageFlags2 signalStageMask = ResolveSignalStageMask2((uint)commandBufferCount);
-            for (int i = 0; i < signalCount; i++)
-            {
-                signalInfosArray[i] = new SemaphoreSubmitInfo
-                {
-                    SType = StructureType.SemaphoreSubmitInfo,
-                    Semaphore = submitInfo.PSignalSemaphores[i],
-                    Value = timelineInfo is not null && timelineInfo->PSignalSemaphoreValues is not null
-                        ? timelineInfo->PSignalSemaphoreValues[i]
-                        : 0UL,
-                    StageMask = signalStageMask,
-                    DeviceIndex = 0,
-                };
-            }
-
-            for (int i = 0; i < commandBufferCount; i++)
-            {
-                commandBufferInfosArray[i] = new CommandBufferSubmitInfo
-                {
-                    SType = StructureType.CommandBufferSubmitInfo,
-                    CommandBuffer = submitInfo.PCommandBuffers[i],
-                    DeviceMask = 0,
-                };
-            }
-
-            fixed (SemaphoreSubmitInfo* waitInfosFixed = waitInfosArray)
-            fixed (SemaphoreSubmitInfo* signalInfosFixed = signalInfosArray)
-            fixed (CommandBufferSubmitInfo* commandBufferInfosFixed = commandBufferInfosArray)
-            {
-                SubmitInfo2 submitInfo2 = new()
-                {
-                    SType = StructureType.SubmitInfo2,
-                    WaitSemaphoreInfoCount = (uint)waitCount,
-                    PWaitSemaphoreInfos = waitCount > 0 ? waitInfosFixed : null,
-                    CommandBufferInfoCount = (uint)commandBufferCount,
-                    PCommandBufferInfos = commandBufferCount > 0 ? commandBufferInfosFixed : null,
-                    SignalSemaphoreInfoCount = (uint)signalCount,
-                    PSignalSemaphoreInfos = signalCount > 0 ? signalInfosFixed : null,
-                };
-
-                return QueueSubmit2Compat(queue, 1, &submitInfo2, fence);
-            }
+                SType = StructureType.SemaphoreSubmitInfo,
+                Semaphore = submitInfo.PWaitSemaphores[i],
+                Value = timelineInfo is not null && timelineInfo->PWaitSemaphoreValues is not null
+                    ? timelineInfo->PWaitSemaphoreValues[i]
+                    : 0UL,
+                StageMask = NormalizePipelineStages2(submitInfo.PWaitDstStageMask[i]),
+                DeviceIndex = 0,
+            };
         }
-        finally
+
+        PipelineStageFlags2 signalStageMask = ResolveSignalStageMask2((uint)commandBufferCount);
+        for (int i = 0; i < signalCount; i++)
         {
-            if (waitCount > 0)
-                ArrayPool<SemaphoreSubmitInfo>.Shared.Return(waitInfosArray, clearArray: true);
-            if (signalCount > 0)
-                ArrayPool<SemaphoreSubmitInfo>.Shared.Return(signalInfosArray, clearArray: true);
-            if (commandBufferCount > 0)
-                ArrayPool<CommandBufferSubmitInfo>.Shared.Return(commandBufferInfosArray, clearArray: true);
+            signalInfosArray[i] = new SemaphoreSubmitInfo
+            {
+                SType = StructureType.SemaphoreSubmitInfo,
+                Semaphore = submitInfo.PSignalSemaphores[i],
+                Value = timelineInfo is not null && timelineInfo->PSignalSemaphoreValues is not null
+                    ? timelineInfo->PSignalSemaphoreValues[i]
+                    : 0UL,
+                StageMask = signalStageMask,
+                DeviceIndex = 0,
+            };
         }
+
+        for (int i = 0; i < commandBufferCount; i++)
+        {
+            commandBufferInfosArray[i] = new CommandBufferSubmitInfo
+            {
+                SType = StructureType.CommandBufferSubmitInfo,
+                CommandBuffer = submitInfo.PCommandBuffers[i],
+                DeviceMask = 0,
+            };
+        }
+
+        fixed (SemaphoreSubmitInfo* waitInfosFixed = waitInfosArray)
+        fixed (SemaphoreSubmitInfo* signalInfosFixed = signalInfosArray)
+        fixed (CommandBufferSubmitInfo* commandBufferInfosFixed = commandBufferInfosArray)
+        {
+            SubmitInfo2 submitInfo2 = new()
+            {
+                SType = StructureType.SubmitInfo2,
+                WaitSemaphoreInfoCount = (uint)waitCount,
+                PWaitSemaphoreInfos = waitCount > 0 ? waitInfosFixed : null,
+                CommandBufferInfoCount = (uint)commandBufferCount,
+                PCommandBufferInfos = commandBufferCount > 0 ? commandBufferInfosFixed : null,
+                SignalSemaphoreInfoCount = (uint)signalCount,
+                PSignalSemaphoreInfos = signalCount > 0 ? signalInfosFixed : null,
+            };
+
+            return QueueSubmit2Compat(queue, 1, &submitInfo2, fence);
+        }
+    }
+
+    private static T[] EnsureThreadScratchCapacity<T>(ref T[]? scratch, int requiredCount)
+        where T : struct
+    {
+        if (requiredCount == 0)
+            return Array.Empty<T>();
+        if (scratch is null || scratch.Length < requiredCount)
+            scratch = new T[Math.Max(requiredCount, 4)];
+        return scratch;
     }
 
     private unsafe void CmdPipelineBarrierTracked(

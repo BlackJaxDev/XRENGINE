@@ -17,6 +17,102 @@ public sealed class VulkanStablePacketAndDescriptorTests
     }
 
     [Test]
+    public void CommandChainContainers_RebuildWithoutSteadyStateAllocations()
+    {
+        const int drawCount = VulkanRenderer.MaxMeshDrawsPerRenderPacket;
+        const string targetName = "SteadyTarget";
+        RenderViewKey viewKey = new(1, 2, 0, RenderViewKind.Main, 0, -1);
+        DrawPacket[] draws = new DrawPacket[drawCount];
+        for (int i = 0; i < draws.Length; i++)
+        {
+            draws[i] = new DrawPacket(
+                i,
+                RendererIdentity: 3,
+                MeshIdentity: i + 4,
+                MaterialIdentity: 5,
+                ProgramIdentity: 6,
+                InstanceCount: 1,
+                Transparent: false,
+                StructuralSignature: (ulong)(i + 7),
+                FrameDataSignature: (ulong)(i + 8));
+        }
+
+        CommandChainKey[] chainKeys = new CommandChainKey[drawCount];
+        for (int i = 0; i < chainKeys.Length; i++)
+            chainKeys[i] = new CommandChainKey(0, viewKey, 9, 10, false, i);
+
+        RenderPacket packet = new();
+        RenderPassChainGroup group = new();
+        CommandChainSchedule schedule = new();
+        RenderPassChainGroup[] groups = [group];
+        DescriptorBindingSnapshot descriptors = new(11, 3, 12);
+        ResourcePlanSnapshot resources = new(13, 14, 15, 16);
+
+        ResetContainers();
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int iteration = 0; iteration < 1_000; iteration++)
+            ResetContainers();
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        allocated.ShouldBe(0);
+        packet.DrawCount.ShouldBe(drawCount);
+        packet.GetDraw(drawCount - 1).OpIndex.ShouldBe(drawCount - 1);
+        group.ChainKeys.Length.ShouldBe(drawCount);
+        schedule.Groups.Length.ShouldBe(1);
+
+        void ResetContainers()
+        {
+            packet.Reset(
+                viewKey,
+                passIndex: 9,
+                targetIdentity: 10,
+                targetName,
+                RenderPacketVolatility.FrameDataOnly,
+                draws,
+                ReadOnlySpan<DispatchPacket>.Empty,
+                descriptors,
+                resources,
+                structuralSignature: 17,
+                frameDataSignature: 18,
+                sourceStartIndex: 0,
+                sourceCount: drawCount,
+                dynamicOverlay: false);
+            group.Reset(9, 10, targetName, chainKeys, 17, supportsSecondaryCommandBuffers: true, dynamicOverlay: false);
+            schedule.Reset(17, 13, groups);
+        }
+    }
+
+    [Test]
+    public void IndirectDrawStateScope_IsAValueTypeToAvoidPerBucketAllocation()
+        => typeof(VulkanRenderer.IndirectDrawStateScope).IsValueType.ShouldBeTrue();
+
+    [Test]
+    public void AsyncBackendCompile_IsExplicitAndOptIn()
+    {
+        XRRenderProgram program = new();
+        program.AllowAsyncBackendCompile.ShouldBeFalse();
+
+        program.AllowAsyncBackendCompile = true;
+
+        program.AllowAsyncBackendCompile.ShouldBeTrue();
+    }
+
+    [TestCase(XRRenderProgram.EShaderProgramBackendStage.SourceQueued)]
+    [TestCase(XRRenderProgram.EShaderProgramBackendStage.Compiling)]
+    [TestCase(XRRenderProgram.EShaderProgramBackendStage.Linking)]
+    [TestCase(XRRenderProgram.EShaderProgramBackendStage.QueueBackpressure)]
+    public void IndirectProgramReadinessDeferral_IsNotAForbiddenFallback(
+        XRRenderProgram.EShaderProgramBackendStage stage)
+        => HybridRenderingManager.IsIndirectGraphicsProgramTerminalFailure(stage).ShouldBeFalse();
+
+    [TestCase(XRRenderProgram.EShaderProgramBackendStage.BinaryUploadFailed)]
+    [TestCase(XRRenderProgram.EShaderProgramBackendStage.Failed)]
+    [TestCase(XRRenderProgram.EShaderProgramBackendStage.Abandoned)]
+    public void IndirectProgramTerminalFailure_IsAForbiddenFallback(
+        XRRenderProgram.EShaderProgramBackendStage stage)
+        => HybridRenderingManager.IsIndirectGraphicsProgramTerminalFailure(stage).ShouldBeTrue();
+
+    [Test]
     public void DescriptorChanges_HaveExplicitContentIdentityAndLayoutClasses()
     {
         RenderResourceChangeKind.FrameData.ShouldNotBe(RenderResourceChangeKind.CompatibleContentPublication);
@@ -42,7 +138,9 @@ public sealed class VulkanStablePacketAndDescriptorTests
         worker.ShouldContain("using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(firstDraw.Context);");
         worker.IndexOf("EnterFrameOpResourcePlannerReadbackScope(firstDraw.Context)", StringComparison.Ordinal)
             .ShouldBeLessThan(worker.IndexOf("for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)", StringComparison.Ordinal));
-        worker.ShouldContain("chain.State = allDrawsRecorded ? CommandChainState.Recorded : CommandChainState.NotReady;");
+        worker.ShouldContain("chain.State = CommandChainState.Recorded;");
+        worker.ShouldContain("A prewarmed Vulkan command-chain draw became unavailable during secondary recording.");
+        worker.ShouldNotContain("bool pipelinesReady");
         source.ShouldContain("CommandBufferUsageFlags.RenderPassContinueBit | CommandBufferUsageFlags.OneTimeSubmitBit");
     }
 

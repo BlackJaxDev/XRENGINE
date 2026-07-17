@@ -1602,19 +1602,36 @@ namespace XREngine.Rendering.Commands
             if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list) || list.Count == 0)
                 return false;
 
-            foreach (var cmd in list)
+            if (list is List<RenderCommand> commands)
             {
-                if (cmd is not IRenderCommandMesh meshCmd)
-                    continue;
-
-                var material = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
-                if (meshCmd.ForceCpuRendering || material?.RenderOptions?.ExcludeFromGpuIndirect == true)
-                    continue;
-
-                return true;
+                for (int i = 0; i < commands.Count; i++)
+                    if (IsGpuEligibleMeshCommand(commands[i]))
+                        return true;
+                return false;
             }
 
+            if (list is SnapshotSortedRenderCommandCollection sortedCommands)
+            {
+                foreach (RenderCommand command in sortedCommands)
+                    if (IsGpuEligibleMeshCommand(command))
+                        return true;
+                return false;
+            }
+
+            foreach (RenderCommand command in list)
+                if (IsGpuEligibleMeshCommand(command))
+                    return true;
+
             return false;
+        }
+
+        private static bool IsGpuEligibleMeshCommand(RenderCommand command)
+        {
+            if (command is not IRenderCommandMesh meshCommand)
+                return false;
+
+            var material = meshCommand.MaterialOverride ?? meshCommand.Mesh?.Material;
+            return !meshCommand.ForceCpuRendering && material?.RenderOptions?.ExcludeFromGpuIndirect != true;
         }
 
         private static void GetActiveViewportSize(out int width, out int height)

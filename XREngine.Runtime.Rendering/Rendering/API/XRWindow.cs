@@ -3013,6 +3013,19 @@ namespace XREngine.Rendering
             {
                 _lastRenderException = ex;
 
+                // Profile captures normally keep broad file logging disabled to avoid perturbing
+                // frame timings. Preserve the full exception on this cold path so a circuit-breaker
+                // render stop remains diagnosable after the harness terminates the process.
+                if (string.Equals(
+                        Environment.GetEnvironmentVariable("XRE_PROFILE_CAPTURE"),
+                        "1",
+                        StringComparison.Ordinal))
+                {
+                    Debug.WriteAuxiliaryLog(
+                        "profiler-render-exceptions.log",
+                        $"[{DateTimeOffset.Now:O}] RenderFrame={RuntimeEngine.Rendering.State.RenderFrameId} Failures={_consecutiveRenderFailures + 1}\n{ex}");
+                }
+
                 if (frameRenderer.IsDeviceLost)
                 {
                     TryRecreateRendererAfterDeviceLoss(

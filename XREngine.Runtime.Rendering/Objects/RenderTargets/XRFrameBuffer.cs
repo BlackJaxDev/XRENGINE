@@ -119,8 +119,8 @@ namespace XREngine.Rendering
         /// </summary>
         public static XRFrameBuffer? CurrentlyBound => _bindStack is { Count: > 0 } stack ? stack.Peek() : null;
 
-        public uint Width => Targets?.FirstOrDefault().Target?.Width ?? 0u;
-        public uint Height => Targets?.FirstOrDefault().Target?.Height ?? 0u;
+        public uint Width => Targets is { Length: > 0 } targets ? targets[0].Target.Width : 0u;
+        public uint Height => Targets is { Length: > 0 } targets ? targets[0].Target.Height : 0u;
         public bool IsMultisampled => EffectiveSampleCount > 1u;
         public uint EffectiveSampleCount
         {

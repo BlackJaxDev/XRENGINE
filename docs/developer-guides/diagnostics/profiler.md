@@ -330,6 +330,8 @@ pwsh Tools/Measure-GameLoopRenderPipeline.ps1 `
   -Strategies CpuDirect,GpuIndirectZeroReadback,GpuMeshletZeroReadback `
   -WarmupSec 25 `
   -CaptureSec 60 `
+  -Repetitions 3 `
+  -OcclusionCullingMode Disabled `
   -ProfileScene "AvatarDeferred" `
   -ProfileLights "None" `
   -GpuClockPolicy "Pinned manually in vendor control panel"
@@ -342,6 +344,15 @@ renderer comparisons. Reports separate startup, warmup, steady-state capture,
 and streaming interpretation and include p50/p90/p95/p99 frame timings, dropped
 sample notes, state churn totals, asset counters, readback totals, fallback
 events, and GPU-driven compactness counters.
+
+Use `-OcclusionCullingMode Disabled`, `CpuQueryAsync`,
+`CpuSoftwareOcclusion`, or `GpuHiZ` to make visibility cohorts explicit. For
+correctness cohorts, select `-VulkanDiagnosticPreset StandardValidation` or
+`SyncValidation`; `-VulkanCommandBufferLabels` enables Vulkan Debug Utils
+command-buffer regions without passing environment overrides through an
+external profiler. These selections are included in the JSON and text
+manifests. The focused `Tools/Measure-VulkanFrameLoop.ps1` wrapper forwards the
+same options.
 
 After the minimum `-WarmupSec`, capture begins only after a measured quiet
 window (default: five seconds, with a 120-second timeout): output workload

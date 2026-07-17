@@ -1,4 +1,3 @@
-using System.Linq;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Lights;
@@ -582,6 +581,10 @@ public sealed partial class XRRenderPipelineInstance
         private readonly Stack<ScopedBufferBinding> _bufferBindings = new();
         private readonly Stack<ScopedShaderGlobals> _shaderGlobals = new();
         private readonly Stack<ScopedProgramBindings> _programBindings = new();
+        private ScopedTextureBinding[] _textureBindingScratch = [];
+        private ScopedBufferBinding[] _bufferBindingScratch = [];
+        private ScopedShaderGlobals[] _shaderGlobalsScratch = [];
+        private ScopedProgramBindings[] _programBindingsScratch = [];
 
         public StateObject PushTextureBinding(ScopedTextureBinding binding)
         {
@@ -639,17 +642,35 @@ public sealed partial class XRRenderPipelineInstance
 
             pipeline.Variables.Apply(program);
 
-            foreach (var binding in _textureBindings.Reverse())
-                binding.Apply(pipeline, program);
+            int textureBindingCount = CopyStackToScratch(_textureBindings, ref _textureBindingScratch);
+            for (int i = textureBindingCount - 1; i >= 0; i--)
+                _textureBindingScratch[i].Apply(pipeline, program);
+            Array.Clear(_textureBindingScratch, 0, textureBindingCount);
 
-            foreach (var binding in _bufferBindings.Reverse())
-                binding.Apply(pipeline, program);
+            int bufferBindingCount = CopyStackToScratch(_bufferBindings, ref _bufferBindingScratch);
+            for (int i = bufferBindingCount - 1; i >= 0; i--)
+                _bufferBindingScratch[i].Apply(pipeline, program);
+            Array.Clear(_bufferBindingScratch, 0, bufferBindingCount);
 
-            foreach (var globals in _shaderGlobals.Reverse())
-                globals.Apply(program);
+            int shaderGlobalsCount = CopyStackToScratch(_shaderGlobals, ref _shaderGlobalsScratch);
+            for (int i = shaderGlobalsCount - 1; i >= 0; i--)
+                _shaderGlobalsScratch[i].Apply(program);
+            Array.Clear(_shaderGlobalsScratch, 0, shaderGlobalsCount);
 
-            foreach (var bindings in _programBindings.Reverse())
-                bindings.Apply(program);
+            int programBindingsCount = CopyStackToScratch(_programBindings, ref _programBindingsScratch);
+            for (int i = programBindingsCount - 1; i >= 0; i--)
+                _programBindingsScratch[i].Apply(program);
+            Array.Clear(_programBindingsScratch, 0, programBindingsCount);
+        }
+
+        private static int CopyStackToScratch<T>(Stack<T> stack, ref T[] scratch)
+        {
+            int count = stack.Count;
+            if (scratch.Length < count)
+                Array.Resize(ref scratch, Math.Max(count, scratch.Length == 0 ? 4 : scratch.Length * 2));
+            if (count > 0)
+                stack.CopyTo(scratch, 0);
+            return count;
         }
 
         /// <summary>

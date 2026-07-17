@@ -34,6 +34,14 @@ public unsafe partial class VulkanRenderer
         XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw;
 
     private readonly record struct OpenXrSwapchainImageViewCacheEntry(ImageView View, Format Format);
+    private readonly record struct ResourceRegistryWrapperRefreshStamp(
+        int InstanceRevision,
+        int DescriptorRevision,
+        ulong ResourcePlannerRevision,
+        int ResourceAllocatorIdentity);
+
+    private readonly Dictionary<RenderResourceRegistry, ResourceRegistryWrapperRefreshStamp>
+        _resourceRegistryWrapperRefreshStamps = new(ReferenceEqualityComparer.Instance);
     private long _openXrRuntimeSessionStartDirtyWaitStartTimestamp;
     private long _openXrRuntimeSessionStartPendingFrameWaitStartTimestamp;
 
@@ -4679,13 +4687,14 @@ public unsafe partial class VulkanRenderer
         failureReason = string.Empty;
         if (IsRenderingExternalSwapchainTarget)
             RebaseFrameOpResourcesToActiveResourcePlan(ops, plannerContext.ResourceRegistry);
-        HashSet<object>? visitedRegistries = null;
-        if (!TryRefreshResourceRegistryWrappers(plannerContext.ResourceRegistry, ref visitedRegistries, reason, allowSynchronousUpload, out failureReason))
+        HashSet<object> visitedRegistries = _commandBufferRecordingScratch.Value!.VisitedResourceRegistries;
+        visitedRegistries.Clear();
+        if (!TryRefreshResourceRegistryWrappers(plannerContext.ResourceRegistry, visitedRegistries, reason, allowSynchronousUpload, out failureReason))
             return false;
 
         foreach (FrameOp op in ops)
         {
-            if (!TryRefreshResourceRegistryWrappers(op.Context.ResourceRegistry, ref visitedRegistries, reason, allowSynchronousUpload, out failureReason))
+            if (!TryRefreshResourceRegistryWrappers(op.Context.ResourceRegistry, visitedRegistries, reason, allowSynchronousUpload, out failureReason))
                 return false;
         }
 
@@ -4839,7 +4848,7 @@ public unsafe partial class VulkanRenderer
 
     private bool TryRefreshResourceRegistryWrappers(
         RenderResourceRegistry? registry,
-        ref HashSet<object>? visitedRegistries,
+        HashSet<object> visitedRegistries,
         string reason,
         bool allowSynchronousUpload,
         out string failureReason)
@@ -4848,12 +4857,25 @@ public unsafe partial class VulkanRenderer
         if (registry is null)
             return true;
 
-        visitedRegistries ??= new HashSet<object>(ReferenceEqualityComparer.Instance);
         if (!visitedRegistries.Add(registry))
             return true;
 
-        foreach (XRTexture texture in registry.EnumerateTextureInstances())
+        ResourceRegistryWrapperRefreshStamp refreshStamp = new(
+            registry.InstanceRevision,
+            registry.DescriptorRevision,
+            ResourcePlannerRevision,
+            ResourceAllocatorIdentity);
+        if (_resourceRegistryWrapperRefreshStamps.TryGetValue(registry, out ResourceRegistryWrapperRefreshStamp previousStamp) &&
+            previousStamp == refreshStamp)
         {
+            return true;
+        }
+
+        XRTexture[] textures = registry.GetTextureInstanceSnapshot();
+        for (int textureIndex = 0; textureIndex < textures.Length; textureIndex++)
+        {
+            XRTexture texture = textures[textureIndex];
+
             // The physical render graph allocator currently materializes graph textures as 2D/layered images.
             // Do not force-generate dormant 3D texture wrappers during frame-op resource refresh.
             if (texture is XRTexture3D)
@@ -4866,13 +4888,14 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
         }
-
-        foreach (XRRenderBuffer renderBuffer in registry.EnumerateRenderBufferInstances())
+        XRRenderBuffer[] renderBuffers = registry.GetRenderBufferInstanceSnapshot();
+        for (int renderBufferIndex = 0; renderBufferIndex < renderBuffers.Length; renderBufferIndex++)
         {
-            if (GetOrCreateAPIRenderObject(renderBuffer, generateNow: true) is VkRenderBuffer vkRenderBuffer)
+            if (GetOrCreateAPIRenderObject(renderBuffers[renderBufferIndex], generateNow: true) is VkRenderBuffer vkRenderBuffer)
                 vkRenderBuffer.RefreshIfStale();
         }
 
+        _resourceRegistryWrapperRefreshStamps[registry] = refreshStamp;
         return true;
     }
 

@@ -7,6 +7,7 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -21,6 +22,7 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -76,6 +78,9 @@ public unsafe partial class VulkanRenderer
 
 	public partial class VkMeshRenderer
 	{
+		private static readonly ConcurrentDictionary<(string Prefix, string Field), string> StructUniformFieldNames = new();
+		private static readonly ConcurrentDictionary<(string Prefix, uint Index), string> IndexedUniformNames = new();
+
 		#region Uniform Buffer Allocation
 
 		private int UniformBufferSlotCount => Math.Max(_uniformDrawSlotCapacity, 1);
@@ -380,7 +385,7 @@ public unsafe partial class VulkanRenderer
 
 			LogGizmoAutoUniformBlocks(material, skipped: false);
 
-			foreach (var pair in _program.AutoUniformBlocks)
+			foreach (KeyValuePair<string, AutoUniformBlockInfo> pair in _program.AutoUniformBlockMap)
 			{
 				string name = pair.Key;
 				AutoUniformBlockInfo block = pair.Value;
@@ -408,8 +413,9 @@ public unsafe partial class VulkanRenderer
 			Span<byte> data = new(buffer.MappedPtr, (int)buffer.Size);
 			data.Clear();
 
-			foreach (AutoUniformMember member in block.Members)
+			for (int memberIndex = 0; memberIndex < block.Members.Count; memberIndex++)
 			{
+				AutoUniformMember member = block.Members[memberIndex];
 				if (member.Offset + member.Size > buffer.Size)
 					continue;
 
@@ -432,17 +438,19 @@ public unsafe partial class VulkanRenderer
 			if (TryWriteTemporalViewProjectionUniform(data, member, draw, out wrote))
 				return wrote;
 
-			if (TryResolveEngineUniformValue(member.Name, draw, out object? engineValue, out EShaderVarType engineType))
+			if (TryResolveEngineUniformValue(member.Name, draw, out EngineUniformValue engineValue, out EShaderVarType engineType))
 			{
-				wrote = engineValue is not null && TryWriteAutoUniformValue(data, member, engineValue, engineType);
-				LogMaterialAutoUniform(member, material, "engine", engineValue, engineType, wrote);
+				wrote = TryWriteAutoUniformValue(data, member, in engineValue, engineType);
+				if (MaterialBindingDiagnosticsEnabled)
+					LogMaterialAutoUniform(member, material, "engine", engineValue.ToDiagnosticObject(engineType), engineType, wrote);
 				return wrote;
 			}
 
 			if (_program is not null && _program.TryGetUniformValue(member.Name, out ProgramUniformValue programValue))
 			{
 				wrote = TryWriteProgramUniformValue(data, member, programValue);
-				LogMaterialAutoUniform(member, material, "program", programValue.Value, programValue.Type, wrote);
+				if (MaterialBindingDiagnosticsEnabled)
+					LogMaterialAutoUniform(member, material, "program", programValue.Value, programValue.Type, wrote);
 				return wrote;
 			}
 
@@ -455,31 +463,69 @@ public unsafe partial class VulkanRenderer
 				if (member.IsArray)
 				{
 					wrote = TryWriteAutoUniformArray(data, member, parameter);
-					LogMaterialAutoUniform(member, material, "material-array", parameter.GenericValue, parameter.TypeName, wrote);
+					if (MaterialBindingDiagnosticsEnabled)
+						LogMaterialAutoUniform(member, material, "material-array", parameter.GenericValue, parameter.TypeName, wrote);
 					return wrote;
 				}
 
-				wrote = TryWriteAutoUniformValue(data, member, parameter.GenericValue, parameter.TypeName);
-				LogMaterialAutoUniform(member, material, "material", parameter.GenericValue, parameter.TypeName, wrote);
+				wrote = TryWriteMaterialUniformValue(data, member, parameter);
+				if (MaterialBindingDiagnosticsEnabled)
+					LogMaterialAutoUniform(member, material, "material", parameter.GenericValue, parameter.TypeName, wrote);
 				return wrote;
 			}
 
 			if (member.IsArray && member.DefaultArrayValues is { Count: > 0 })
 			{
 				wrote = TryWriteAutoUniformArrayDefaults(data, member);
-				LogMaterialAutoUniform(member, material, "default-array", $"count={member.DefaultArrayValues.Count}", member.EngineType ?? EShaderVarType._float, wrote);
+				if (MaterialBindingDiagnosticsEnabled)
+					LogMaterialAutoUniform(member, material, "default-array", $"count={member.DefaultArrayValues.Count}", member.EngineType ?? EShaderVarType._float, wrote);
 				return wrote;
 			}
 
 			if (member.DefaultValue is { } defaultValue)
 			{
 				wrote = TryWriteAutoUniformValue(data, member, defaultValue.Value, defaultValue.Type);
-				LogMaterialAutoUniform(member, material, "default", defaultValue.Value, defaultValue.Type, wrote);
+				if (MaterialBindingDiagnosticsEnabled)
+					LogMaterialAutoUniform(member, material, "default", defaultValue.Value, defaultValue.Type, wrote);
 				return wrote;
 			}
 
-			LogMaterialAutoUniform(member, material, "missing", null, member.EngineType ?? EShaderVarType._float, false);
+			if (MaterialBindingDiagnosticsEnabled)
+				LogMaterialAutoUniform(member, material, "missing", null, member.EngineType ?? EShaderVarType._float, false);
 			return false;
+		}
+
+		private bool TryWriteMaterialUniformValue(Span<byte> data, AutoUniformMember member, ShaderVar parameter)
+		{
+			EngineUniformValue value;
+			switch (parameter)
+			{
+				case ShaderFloat shaderFloat:
+					value = shaderFloat.Value;
+					break;
+				case ShaderInt shaderInt:
+					value = shaderInt.Value;
+					break;
+				case ShaderUInt shaderUInt:
+					value = shaderUInt.Value;
+					break;
+				case ShaderVector2 shaderVector2:
+					value = shaderVector2.Value;
+					break;
+				case ShaderVector3 shaderVector3:
+					value = shaderVector3.Value;
+					break;
+				case ShaderVector4 shaderVector4:
+					value = shaderVector4.Value;
+					break;
+				case ShaderMat4 shaderMatrix:
+					value = shaderMatrix.Value;
+					break;
+				default:
+					return TryWriteAutoUniformValue(data, member, parameter.GenericValue, parameter.TypeName);
+			}
+
+			return TryWriteAutoUniformValue(data, member, in value, parameter.TypeName);
 		}
 
 		private bool TryWriteTemporalViewProjectionUniform(
@@ -644,10 +690,13 @@ public unsafe partial class VulkanRenderer
 				return false;
 
 			bool wroteAny = false;
-			foreach (AutoUniformMember field in fields)
+			for (int fieldIndex = 0; fieldIndex < fields.Count; fieldIndex++)
 			{
+				AutoUniformMember field = fields[fieldIndex];
 				uint fieldOffset = baseOffset + field.Offset;
-				string fieldName = $"{uniformPrefix}.{field.Name}";
+				string fieldName = StructUniformFieldNames.GetOrAdd(
+					(uniformPrefix, field.Name),
+					static key => $"{key.Prefix}.{key.Field}");
 				AutoUniformMember absoluteField = field with { Offset = fieldOffset };
 
 				if (field.StructMembers is { Count: > 0 })
@@ -688,7 +737,10 @@ public unsafe partial class VulkanRenderer
 			{
 				uint elementOffset = member.Offset + i * member.ArrayStride;
 				AutoUniformMember element = member with { Offset = elementOffset, IsArray = false, ArrayLength = 0, ArrayStride = 0 };
-				wroteAny |= TryWriteStructUniformValue(data, element, $"{uniformPrefix}[{i}]", elementOffset);
+				string elementName = IndexedUniformNames.GetOrAdd(
+					(uniformPrefix, i),
+					static key => $"{key.Prefix}[{key.Index}]");
+				wroteAny |= TryWriteStructUniformValue(data, element, elementName, elementOffset);
 			}
 
 			return wroteAny;
@@ -707,13 +759,15 @@ public unsafe partial class VulkanRenderer
 			bool wroteAny = false;
 			for (uint i = 0; i < member.ArrayLength; i++)
 			{
-				string elementName = $"{uniformName}[{i}]";
-				if (!_program.TryGetUniformValue(elementName, out ProgramUniformValue elementValue) || elementValue.IsArray || elementValue.Value is Array)
+				string elementName = IndexedUniformNames.GetOrAdd(
+					(uniformName, i),
+					static key => $"{key.Prefix}[{key.Index}]");
+				if (!_program.TryGetUniformValue(elementName, out ProgramUniformValue elementValue) || elementValue.IsArray)
 					continue;
 
 				uint elementOffset = member.Offset + i * member.ArrayStride;
 				AutoUniformMember elementMember = member with { Offset = elementOffset, IsArray = false, ArrayLength = 0, ArrayStride = 0 };
-				wroteAny |= TryWriteAutoUniformValue(data, elementMember, elementValue.Value, elementValue.Type);
+				wroteAny |= TryWriteProgramUniformValue(data, elementMember, elementValue);
 			}
 
 			return wroteAny;
@@ -724,8 +778,11 @@ public unsafe partial class VulkanRenderer
 		{
 			if (member.IsArray)
 			{
-				if (!value.IsArray || value.Value is not Array array || member.ArrayStride == 0 || member.ArrayLength == 0)
+				if (!value.IsArray || value.ReferenceValue is not Array array || member.ArrayStride == 0 || member.ArrayLength == 0)
 					return false;
+
+				if (TryWriteInlineProgramUniformArray(data, member, array, value.Type))
+					return true;
 
 				int max = Math.Min(array.Length, (int)member.ArrayLength);
 				for (int i = 0; i < max; i++)
@@ -742,10 +799,235 @@ public unsafe partial class VulkanRenderer
 				return true;
 			}
 
-			if (value.IsArray || value.Value is Array)
+			if (value.IsArray)
 				return false;
 
-			return TryWriteAutoUniformValue(data, member, value.Value, value.Type);
+			if (!value.HasInlineValue)
+				return value.ReferenceValue is { } reference &&
+					TryWriteAutoUniformValue(data, member, reference, value.Type);
+
+			return TryWriteInlineProgramUniformValue(data, member, in value);
+		}
+
+		private bool TryWriteInlineProgramUniformArray(
+			Span<byte> data,
+			AutoUniformMember member,
+			Array array,
+			EShaderVarType valueType)
+		{
+			int max = Math.Min(array.Length, (int)member.ArrayLength);
+			switch (array)
+			{
+				case float[] values when valueType == EShaderVarType._float:
+					for (int i = 0; i < max; i++)
+					{
+						EngineUniformValue element = values[i];
+						TryWriteInlineProgramUniformArrayElement(data, member, i, in element, valueType);
+					}
+					return true;
+				case int[] values when valueType is EShaderVarType._int or EShaderVarType._bool:
+					for (int i = 0; i < max; i++)
+					{
+						EngineUniformValue element = values[i];
+						TryWriteInlineProgramUniformArrayElement(data, member, i, in element, valueType);
+					}
+					return true;
+				case bool[] values when valueType == EShaderVarType._bool:
+					for (int i = 0; i < max; i++)
+					{
+						EngineUniformValue element = values[i] ? 1 : 0;
+						TryWriteInlineProgramUniformArrayElement(data, member, i, in element, valueType);
+					}
+					return true;
+				case uint[] values when valueType == EShaderVarType._uint:
+					for (int i = 0; i < max; i++)
+					{
+						EngineUniformValue element = values[i];
+						TryWriteInlineProgramUniformArrayElement(data, member, i, in element, valueType);
+					}
+					return true;
+				case Vector2[] values when valueType == EShaderVarType._vec2:
+					for (int i = 0; i < max; i++)
+					{
+						EngineUniformValue element = values[i];
+						TryWriteInlineProgramUniformArrayElement(data, member, i, in element, valueType);
+					}
+					return true;
+				case Vector3[] values when valueType == EShaderVarType._vec3:
+					for (int i = 0; i < max; i++)
+					{
+						EngineUniformValue element = values[i];
+						TryWriteInlineProgramUniformArrayElement(data, member, i, in element, valueType);
+					}
+					return true;
+				case Vector4[] values when valueType == EShaderVarType._vec4:
+					for (int i = 0; i < max; i++)
+					{
+						EngineUniformValue element = values[i];
+						TryWriteInlineProgramUniformArrayElement(data, member, i, in element, valueType);
+					}
+					return true;
+				case Matrix4x4[] values when valueType == EShaderVarType._mat4:
+					for (int i = 0; i < max; i++)
+					{
+						EngineUniformValue element = values[i];
+						TryWriteInlineProgramUniformArrayElement(data, member, i, in element, valueType);
+					}
+					return true;
+				case double[] values when valueType == EShaderVarType._double:
+					return TryWriteUnmanagedProgramUniformArray(data, member, values, valueType);
+				case DVector2[] values when valueType == EShaderVarType._dvec2:
+					return TryWriteUnmanagedProgramUniformArray(data, member, values, valueType);
+				case DVector3[] values when valueType == EShaderVarType._dvec3:
+					return TryWriteUnmanagedProgramUniformArray(data, member, values, valueType);
+				case DVector4[] values when valueType == EShaderVarType._dvec4:
+					return TryWriteUnmanagedProgramUniformArray(data, member, values, valueType);
+				case IVector2[] values when valueType == EShaderVarType._ivec2:
+					return TryWriteUnmanagedProgramUniformArray(data, member, values, valueType);
+				case IVector3[] values when valueType == EShaderVarType._ivec3:
+					return TryWriteUnmanagedProgramUniformArray(data, member, values, valueType);
+				case IVector4[] values when valueType == EShaderVarType._ivec4:
+					return TryWriteUnmanagedProgramUniformArray(data, member, values, valueType);
+				case UVector2[] values when valueType == EShaderVarType._uvec2:
+					return TryWriteUnmanagedProgramUniformArray(data, member, values, valueType);
+				case UVector3[] values when valueType == EShaderVarType._uvec3:
+					return TryWriteUnmanagedProgramUniformArray(data, member, values, valueType);
+				case UVector4[] values when valueType == EShaderVarType._uvec4:
+					return TryWriteUnmanagedProgramUniformArray(data, member, values, valueType);
+				case BoolVector2[] values when valueType == EShaderVarType._bvec2:
+					for (int i = 0; i < max; i++)
+					{
+						int offset = (int)(member.Offset + (uint)i * member.ArrayStride);
+						Unsafe.WriteUnaligned(ref data[offset], new IVector2(values[i].X ? 1 : 0, values[i].Y ? 1 : 0));
+					}
+					return true;
+				case BoolVector3[] values when valueType == EShaderVarType._bvec3:
+					for (int i = 0; i < max; i++)
+					{
+						int offset = (int)(member.Offset + (uint)i * member.ArrayStride);
+						Unsafe.WriteUnaligned(ref data[offset], new IVector3(values[i].X ? 1 : 0, values[i].Y ? 1 : 0, values[i].Z ? 1 : 0));
+					}
+					return true;
+				case BoolVector4[] values when valueType == EShaderVarType._bvec4:
+					for (int i = 0; i < max; i++)
+					{
+						int offset = (int)(member.Offset + (uint)i * member.ArrayStride);
+						Unsafe.WriteUnaligned(ref data[offset], new IVector4(values[i].X ? 1 : 0, values[i].Y ? 1 : 0, values[i].Z ? 1 : 0, values[i].W ? 1 : 0));
+					}
+					return true;
+				default:
+					return false;
+			}
+		}
+
+		private static bool TryWriteUnmanagedProgramUniformArray<T>(
+			Span<byte> data,
+			AutoUniformMember member,
+			T[] values,
+			EShaderVarType valueType)
+			where T : unmanaged
+		{
+			if (member.EngineType != valueType)
+				return false;
+
+			int max = Math.Min(values.Length, (int)member.ArrayLength);
+			for (int i = 0; i < max; i++)
+			{
+				int offset = (int)(member.Offset + (uint)i * member.ArrayStride);
+				Unsafe.WriteUnaligned(ref data[offset], values[i]);
+			}
+			return true;
+		}
+
+		private bool TryWriteInlineProgramUniformArrayElement(
+			Span<byte> data,
+			AutoUniformMember member,
+			int index,
+			in EngineUniformValue value,
+			EShaderVarType valueType)
+		{
+			uint elementOffset = member.Offset + (uint)index * member.ArrayStride;
+			AutoUniformMember elementMember = member with
+			{
+				Offset = elementOffset,
+				IsArray = false,
+				ArrayLength = 0,
+				ArrayStride = 0
+			};
+			return TryWriteAutoUniformValue(data, elementMember, in value, valueType);
+		}
+
+		private static bool TryWriteInlineProgramUniformValue(
+			Span<byte> data,
+			AutoUniformMember member,
+			in ProgramUniformValue value)
+		{
+			if (member.EngineType is not { } engineType || !AreCompatible(engineType, value.Type))
+				return false;
+
+			int offset = (int)member.Offset;
+			switch (engineType)
+			{
+				case EShaderVarType._float when value.Type == EShaderVarType._float:
+					Unsafe.WriteUnaligned(ref data[offset], value.Float);
+					return true;
+				case EShaderVarType._int when value.Type is EShaderVarType._int or EShaderVarType._bool:
+					Unsafe.WriteUnaligned(ref data[offset], value.Int);
+					return true;
+				case EShaderVarType._uint when value.Type is EShaderVarType._uint or EShaderVarType._bool:
+					Unsafe.WriteUnaligned(ref data[offset], value.Type == EShaderVarType._uint ? value.UInt : (uint)value.Int);
+					return true;
+				case EShaderVarType._bool when value.Type is EShaderVarType._int or EShaderVarType._bool:
+					Unsafe.WriteUnaligned(ref data[offset], value.Int != 0 ? 1 : 0);
+					return true;
+				case EShaderVarType._bool when value.Type == EShaderVarType._uint:
+					Unsafe.WriteUnaligned(ref data[offset], value.UInt != 0u ? 1 : 0);
+					return true;
+				case EShaderVarType._double when value.Type == EShaderVarType._double:
+					Unsafe.WriteUnaligned(ref data[offset], value.Double);
+					return true;
+				case EShaderVarType._vec2 when value.Type == EShaderVarType._vec2:
+					Unsafe.WriteUnaligned(ref data[offset], value.Vector2);
+					return true;
+				case EShaderVarType._vec3 when value.Type == EShaderVarType._vec3:
+					Unsafe.WriteUnaligned(ref data[offset], value.Vector3);
+					return true;
+				case EShaderVarType._vec3 when value.Type == EShaderVarType._vec4:
+					Unsafe.WriteUnaligned(ref data[offset], new Vector3(value.Vector4.X, value.Vector4.Y, value.Vector4.Z));
+					return true;
+				case EShaderVarType._vec4 when value.Type == EShaderVarType._vec3:
+					Unsafe.WriteUnaligned(ref data[offset], new Vector4(value.Vector3, 0f));
+					return true;
+				case EShaderVarType._vec4 when value.Type == EShaderVarType._vec4:
+					Unsafe.WriteUnaligned(ref data[offset], value.Vector4);
+					return true;
+				case EShaderVarType._mat4 when value.Type == EShaderVarType._mat4:
+					Unsafe.WriteUnaligned(ref data[offset], value.Matrix4x4);
+					return true;
+				case EShaderVarType._dvec2 when value.Type == EShaderVarType._dvec2:
+					Unsafe.WriteUnaligned(ref data[offset], new DVector2(value.DVector4.X, value.DVector4.Y));
+					return true;
+				case EShaderVarType._dvec3 when value.Type == EShaderVarType._dvec3:
+				case EShaderVarType._dvec4 when value.Type == EShaderVarType._dvec4:
+					Unsafe.WriteUnaligned(ref data[offset], value.DVector4);
+					return true;
+				case EShaderVarType._ivec2 when value.Type == EShaderVarType._ivec2:
+					Unsafe.WriteUnaligned(ref data[offset], new IVector2(value.IVector4.X, value.IVector4.Y));
+					return true;
+				case EShaderVarType._ivec3 when value.Type == EShaderVarType._ivec3:
+				case EShaderVarType._ivec4 when value.Type == EShaderVarType._ivec4:
+					Unsafe.WriteUnaligned(ref data[offset], value.IVector4);
+					return true;
+				case EShaderVarType._uvec2 when value.Type == EShaderVarType._uvec2:
+					Unsafe.WriteUnaligned(ref data[offset], new UVector2(value.UVector4.X, value.UVector4.Y));
+					return true;
+				case EShaderVarType._uvec3 when value.Type == EShaderVarType._uvec3:
+				case EShaderVarType._uvec4 when value.Type == EShaderVarType._uvec4:
+					Unsafe.WriteUnaligned(ref data[offset], value.UVector4);
+					return true;
+				default:
+					return false;
+			}
 		}
 
 		/// <summary>Writes an array-typed material parameter into auto uniform buffer memory.</summary>
@@ -808,9 +1090,9 @@ public unsafe partial class VulkanRenderer
 		/// Engine-owned values come from the draw snapshot; UI bounds may still come
 		/// from program-level overrides because they are authored per program.
 		/// </summary>
-		private bool TryResolveEngineUniformValue(string name, in PendingMeshDraw draw, out object? value, out EShaderVarType type)
+		private bool TryResolveEngineUniformValue(string name, in PendingMeshDraw draw, out EngineUniformValue value, out EShaderVarType type)
 		{
-			value = null;
+			value = default;
 			type = EShaderVarType._float;
 			string normalized = NormalizeEngineUniformName(name);
 			// Use camera state captured at enqueue time; by the time the command
@@ -1059,7 +1341,7 @@ public unsafe partial class VulkanRenderer
 				case nameof(EEngineUniform.UIXYWH):
 					if (_program is not null && _program.TryGetUniformValue(nameof(EEngineUniform.UIXYWH), out ProgramUniformValue bounds))
 					{
-						value = bounds.Value;
+						value = EngineUniformValue.FromProgramValue(in bounds);
 						type = bounds.Type;
 						return true;
 					}
@@ -1072,13 +1354,14 @@ public unsafe partial class VulkanRenderer
 				case nameof(EEngineUniform.UIY):
 					if (_program is not null && _program.TryGetUniformValue(normalized, out ProgramUniformValue uiScalar))
 					{
-						value = uiScalar.Value;
+						value = EngineUniformValue.FromProgramValue(in uiScalar);
 						type = uiScalar.Type;
 						return true;
 					}
 					if (_program is not null && _program.TryGetUniformValue(nameof(EEngineUniform.UIXYWH), out ProgramUniformValue uiBounds) &&
-						uiBounds.Value is Vector4 b)
+						uiBounds.HasInlineValue && uiBounds.Type == EShaderVarType._vec4)
 					{
+						Vector4 b = uiBounds.Vector4;
 						value = normalized switch
 						{
 							nameof(EEngineUniform.UIX) => b.X,
@@ -1145,6 +1428,53 @@ public unsafe partial class VulkanRenderer
 					return TryWriteUVector4(data, offset, value);
 				case EShaderVarType._mat4:
 					return TryWriteMatrix4(data, offset, value);
+				default:
+					return false;
+			}
+		}
+
+		private bool TryWriteAutoUniformValue(
+			Span<byte> data,
+			AutoUniformMember member,
+			in EngineUniformValue value,
+			EShaderVarType valueType)
+		{
+			if (value.Reference is { } reference)
+				return TryWriteAutoUniformValue(data, member, reference, valueType);
+
+			if (member.EngineType is not { } engineType || !AreCompatible(engineType, valueType))
+				return false;
+
+			int offset = (int)member.Offset;
+			switch (engineType)
+			{
+				case EShaderVarType._float:
+					Unsafe.WriteUnaligned(ref data[offset], value.Float);
+					return true;
+				case EShaderVarType._int:
+					Unsafe.WriteUnaligned(ref data[offset], value.Int);
+					return true;
+				case EShaderVarType._uint:
+					Unsafe.WriteUnaligned(ref data[offset], value.UInt);
+					return true;
+				case EShaderVarType._bool:
+					int booleanValue = valueType == EShaderVarType._uint
+						? value.UInt != 0u ? 1 : 0
+						: value.Int != 0 ? 1 : 0;
+					Unsafe.WriteUnaligned(ref data[offset], booleanValue);
+					return true;
+				case EShaderVarType._vec2:
+					Unsafe.WriteUnaligned(ref data[offset], value.Vector2);
+					return true;
+				case EShaderVarType._vec3:
+					Unsafe.WriteUnaligned(ref data[offset], new Vector4(value.Vector3, 0f));
+					return true;
+				case EShaderVarType._vec4:
+					Unsafe.WriteUnaligned(ref data[offset], value.Vector4);
+					return true;
+				case EShaderVarType._mat4:
+					Unsafe.WriteUnaligned(ref data[offset], value.Matrix4x4);
+					return true;
 				default:
 					return false;
 			}
@@ -1553,13 +1883,21 @@ public unsafe partial class VulkanRenderer
 			return false;
 		}
 
-        /// <summary>Strips the vertex-stage suffix ("_VTX") from engine uniform names.</summary>
+        private static readonly ConcurrentDictionary<string, string> NormalizedEngineUniformNames =
+            new(StringComparer.Ordinal);
+
+        /// <summary>Strips and caches the vertex-stage suffix ("_VTX") from engine uniform names.</summary>
         private static string NormalizeEngineUniformName(string name)
-			=> string.IsNullOrWhiteSpace(name)
-                ? string.Empty
-                : name.EndsWith(VertexUniformSuffix, StringComparison.Ordinal)
-                ? name[..^VertexUniformSuffix.Length]
-                : name;
+		{
+			if (string.IsNullOrWhiteSpace(name))
+				return string.Empty;
+
+			return name.EndsWith(VertexUniformSuffix, StringComparison.Ordinal)
+				? NormalizedEngineUniformNames.GetOrAdd(
+					name,
+					static uniformName => uniformName[..^VertexUniformSuffix.Length])
+				: name;
+		}
 
         /// <summary>
         /// Returns the byte size of a named engine uniform.

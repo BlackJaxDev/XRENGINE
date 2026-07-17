@@ -538,7 +538,9 @@ public unsafe partial class VulkanRenderer
             backingImageHandle != 0)
         {
             VulkanResourceLifetimeKey imageKey = ResourceKey(ObjectType.Image, backingImageHandle);
-            VulkanResourceLifetimeRecord image = GetOrRegisterVulkanResource_NoLock(imageKey, $"{owner}.BackingImage");
+            VulkanResourceLifetimeRecord image = GetOrRegisterVulkanResource_NoLock(
+                imageKey,
+                "CommandBufferDependency.BackingImage");
             if ((image.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) != 0)
             {
                 failureReason =
@@ -554,7 +556,9 @@ public unsafe partial class VulkanRenderer
             backingBufferHandle != 0)
         {
             VulkanResourceLifetimeKey bufferKey = ResourceKey(ObjectType.Buffer, backingBufferHandle);
-            VulkanResourceLifetimeRecord buffer = GetOrRegisterVulkanResource_NoLock(bufferKey, $"{owner}.BackingBuffer");
+            VulkanResourceLifetimeRecord buffer = GetOrRegisterVulkanResource_NoLock(
+                bufferKey,
+                "CommandBufferDependency.BackingBuffer");
             if ((buffer.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) != 0)
             {
                 failureReason =
@@ -642,11 +646,7 @@ public unsafe partial class VulkanRenderer
             ReleaseVulkanRecordedGenerationPin(resource);
 
             if (_vulkanResourceCommandBufferDependencies.TryGetValue(key, out HashSet<ulong>? commandBuffers))
-            {
                 commandBuffers.Remove(commandBufferHandle);
-                if (commandBuffers.Count == 0)
-                    _vulkanResourceCommandBufferDependencies.Remove(key);
-            }
         }
 
         commandLifetime.Dependencies.Clear();
@@ -3112,6 +3112,9 @@ public unsafe partial class VulkanRenderer
 
     private void LogVulkanResourceLifetimeDiagnostics(string reason)
     {
+        if (!VulkanFrameDiagnosticsTraceEnabled)
+            return;
+
         VulkanResourceLifetimeSnapshot snapshot = GetVulkanResourceLifetimeSnapshot();
         if (snapshot.PendingRetirementCount == 0 && snapshot.InFlightSubmissionCount == 0)
             return;

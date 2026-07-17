@@ -1,5 +1,4 @@
 using System;
-using System.Buffers;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -20,6 +19,8 @@ public unsafe partial class VulkanRenderer
     {
         private const string ScreenSpaceUiPassName = "VPRC_RenderScreenSpaceUI";
         private const string RenderUiBatchedPassNamePrefix = "RenderUIBatched_";
+        [ThreadStatic]
+        private static FrameOpSortKey[]? _threadFrameOpSortKeyScratch;
         private readonly List<SecondaryRecordingBucket> _secondaryRecordingBucketScratch = new(32);
 
         /// <summary>
@@ -231,11 +232,12 @@ public unsafe partial class VulkanRenderer
                 return ops;
 
             int opCount = ops.Length;
-            FrameOpSortKey[]? sortKeys = null;
+            FrameOpSortKey[] sortKeys = _threadFrameOpSortKeyScratch is { } existing && existing.Length >= opCount
+                ? existing
+                : _threadFrameOpSortKeyScratch = new FrameOpSortKey[opCount];
 
             try
             {
-                sortKeys = ArrayPool<FrameOpSortKey>.Shared.Rent(opCount);
                 bool preserveContextBlocks = HasSubmissionOrderBlock(ops);
                 int queryOrderBlock = 0;
 
@@ -267,7 +269,7 @@ public unsafe partial class VulkanRenderer
                 }
 
                 if (!alreadySorted)
-                    Array.Sort(sortKeys, 0, opCount, FrameOpSortKeyComparer.Instance);
+                    SortFrameOpKeysInPlace(sortKeys, opCount);
 
                 bool movedTargetClear = MoveTargetClearsBeforeFirstSameTargetUse(sortKeys, opCount);
                 if (alreadySorted && !movedTargetClear)
@@ -280,8 +282,32 @@ public unsafe partial class VulkanRenderer
             }
             finally
             {
-                if (sortKeys is not null)
-                    ArrayPool<FrameOpSortKey>.Shared.Return(sortKeys, clearArray: true);
+                // The thread-local scratch persists across frames. Clear live operation references
+                // so the cache cannot extend the lifetime of frame-owned render resources.
+                Array.Clear(sortKeys, 0, opCount);
+            }
+        }
+
+        /// <summary>
+        /// Sorts the warmed frame-op scratch without the small helper allocation made by
+        /// <see cref="Array.Sort{T}(T[], int, int, IComparer{T}?)"/> on every changed frame.
+        /// Frame ops arrive nearly sorted, so insertion sort also avoids unnecessary partitioning.
+        /// </summary>
+        private static void SortFrameOpKeysInPlace(FrameOpSortKey[] sortKeys, int opCount)
+        {
+            for (int i = 1; i < opCount; i++)
+            {
+                FrameOpSortKey current = sortKeys[i];
+                int insertIndex = i;
+                while (insertIndex > 0 &&
+                       FrameOpSortKeyComparer.Instance.Compare(sortKeys[insertIndex - 1], current) > 0)
+                {
+                    sortKeys[insertIndex] = sortKeys[insertIndex - 1];
+                    insertIndex--;
+                }
+
+                if (insertIndex != i)
+                    sortKeys[insertIndex] = current;
             }
         }
 
@@ -394,14 +420,23 @@ public unsafe partial class VulkanRenderer
             if (op.Context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
                 return true;
 
-            if (op.Context.PassMetadata is null)
+            if (op.Context.PassMetadata is not { } metadata)
                 return false;
 
-            foreach (RenderPassMetadata pass in op.Context.PassMetadata)
+            if (metadata is IReadOnlyList<RenderPassMetadata> list)
             {
+                for (int i = 0; i < list.Count; i++)
+                    if (list[i].Name.StartsWith(RenderUiBatchedPassNamePrefix, StringComparison.Ordinal))
+                        return true;
+
+                return false;
+            }
+
+            // Pipeline pass metadata is normally array/list-backed. Preserve support for
+            // custom collection implementations outside the frame-wide desktop fast path.
+            foreach (RenderPassMetadata pass in metadata)
                 if (pass.Name.StartsWith(RenderUiBatchedPassNamePrefix, StringComparison.Ordinal))
                     return true;
-            }
 
             return false;
         }

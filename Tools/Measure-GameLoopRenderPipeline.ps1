@@ -40,10 +40,56 @@ param(
     [string]$VulkanRenderTargetMode = 'Configured',
     [ValidateSet('Configured', 'Enabled', 'Disabled')]
     [string]$VulkanPrimaryReuse = 'Configured',
+    [ValidateSet('Configured', 'Enabled', 'Disabled')]
+    [string]$VulkanCommandChains = 'Configured',
+    [ValidateSet('Configured', 'Enabled', 'Disabled')]
+    [string]$VulkanParallelCommandChainRecording = 'Configured',
+    [ValidateSet('Configured', 'Enabled', 'Disabled')]
+    [string]$VulkanParallelSecondaryRecording = 'Configured',
+    [ValidateSet('Configured', 'Disabled', 'CpuQueryAsync', 'CpuSoftwareOcclusion', 'GpuHiZ')]
+    [string]$OcclusionCullingMode = 'Configured',
+    [ValidateSet('Configured', 'Off', 'StandardValidation', 'SyncValidation', 'GpuAssisted', 'BestPractices', 'CrashDiagnostics', 'RenderDocFriendly')]
+    [string]$VulkanDiagnosticPreset = 'Configured',
+    [switch]$VulkanCommandBufferLabels,
     [switch]$VulkanValidation
 )
 
 $ErrorActionPreference = 'Stop'
+
+if (-not ('XREngineMeasurementNativeWindow' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class XREngineMeasurementNativeWindow
+{
+    private delegate bool EnumWindowsProc(IntPtr window, IntPtr state);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr state);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+
+    public static bool PostCloseToProcess(int processId)
+    {
+        bool posted = false;
+        EnumWindows((window, state) =>
+        {
+            uint ownerProcessId;
+            GetWindowThreadProcessId(window, out ownerProcessId);
+            if (ownerProcessId == (uint)processId)
+                posted |= PostMessage(window, 0x0010u, IntPtr.Zero, IntPtr.Zero);
+            return true;
+        }, IntPtr.Zero);
+        return posted;
+    }
+}
+'@
+}
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $exe = Join-Path $repoRoot "Build\Editor\$Configuration\AnyCPU\$Configuration\net10.0-windows7.0\XREngine.Editor.exe"
 if (-not (Test-Path -LiteralPath $exe)) {
@@ -431,7 +477,8 @@ function Sum-NumericProperty {
 function Test-RenderStatsStability {
     param(
         [string]$LogDir,
-        [int]$WindowSec
+        [int]$WindowSec,
+        [string]$Strategy
     )
 
     $allSamples = Read-AllRenderStatsSamples -LogDir $LogDir
@@ -494,8 +541,6 @@ function Test-RenderStatsStability {
         'vulkan_retired_buffer_view_count',
         'vulkan_retired_pipeline_count',
         'vulkan_retired_framebuffer_count',
-        'vulkan_retired_buffer_count',
-        'vulkan_retired_buffer_memory_count',
         'vulkan_retired_image_count',
         'vulkan_retired_image_view_count',
         'vulkan_retired_sampler_count',
@@ -504,6 +549,13 @@ function Test-RenderStatsStability {
         'frame_output_global_in_flight_wait_count',
         'frame_output_force_flush_count'
     )
+    # GPU-driven strategies stream their current indirect command payload through
+    # one bounded staging buffer per frame. Those retirements are steady upload
+    # work, not evidence that startup/resource publication is still changing.
+    if ($Strategy -notin @('GpuIndirectInstrumented', 'GpuIndirectZeroReadback', 'GpuMeshletInstrumented', 'GpuMeshletZeroReadback')) {
+        $quietProperties += 'vulkan_retired_buffer_count'
+        $quietProperties += 'vulkan_retired_buffer_memory_count'
+    }
     $busy = New-Object System.Collections.Generic.List[string]
     foreach ($property in $quietProperties) {
         $total = Sum-NumericProperty -Samples $samples -Property $property
@@ -553,6 +605,12 @@ function Stop-EditorGracefully {
         $requested = $false
     }
 
+    try {
+        $requested = [XREngineMeasurementNativeWindow]::PostCloseToProcess($Process.Id) -or $requested
+    } catch {
+        # Keep the normal Process API result when native window enumeration is unavailable.
+    }
+
     if ($requested -and $Process.WaitForExit($GraceSeconds * 1000)) {
         return $false
     }
@@ -579,7 +637,13 @@ function Measure-Variant {
         'XRE_UNIT_TEST_VR_MODE',
         'XRE_VK_RENDER_TARGET_MODE',
         'XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE',
+        'XRE_VULKAN_COMMAND_CHAINS',
+        'XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING',
+        'XRE_VULKAN_DISABLE_PARALLEL_SECONDARY_RECORDING',
         'XRE_VULKAN_VALIDATION',
+        'XRE_VULKAN_DIAGNOSTIC_PRESET',
+        'XRE_VULKAN_COMMAND_BUFFER_LABELS',
+        'XRE_OCCLUSION_CULLING_MODE',
         'XRE_PROFILER_ENABLED',
         'XRE_PROFILE_CAPTURE',
         'XRE_PROFILE_AUTO_DUMP',
@@ -651,10 +715,40 @@ function Measure-Variant {
         } else {
             Set-BenchmarkEnvValue 'XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE' $(if ($VulkanPrimaryReuse -eq 'Enabled') { '1' } else { '0' }) -Boolean
         }
+        if ($VulkanCommandChains -eq 'Configured') {
+            Clear-EnvValue 'XRE_VULKAN_COMMAND_CHAINS'
+        } else {
+            Set-BenchmarkEnvValue 'XRE_VULKAN_COMMAND_CHAINS' $(if ($VulkanCommandChains -eq 'Enabled') { '1' } else { '0' }) -Boolean
+        }
+        if ($VulkanParallelCommandChainRecording -eq 'Disabled') {
+            Set-BenchmarkEnvValue 'XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING' '1' -Boolean
+        } else {
+            Clear-EnvValue 'XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING'
+        }
+        if ($VulkanParallelSecondaryRecording -eq 'Disabled') {
+            Set-BenchmarkEnvValue 'XRE_VULKAN_DISABLE_PARALLEL_SECONDARY_RECORDING' '1' -Boolean
+        } else {
+            Clear-EnvValue 'XRE_VULKAN_DISABLE_PARALLEL_SECONDARY_RECORDING'
+        }
         if ($VulkanValidation) {
             Set-BenchmarkEnvValue 'XRE_VULKAN_VALIDATION' '1' -Boolean
         } else {
             Clear-EnvValue 'XRE_VULKAN_VALIDATION'
+        }
+        if ($VulkanDiagnosticPreset -eq 'Configured') {
+            Clear-EnvValue 'XRE_VULKAN_DIAGNOSTIC_PRESET'
+        } else {
+            Set-BenchmarkEnvValue 'XRE_VULKAN_DIAGNOSTIC_PRESET' $VulkanDiagnosticPreset -AllowedValues @('Off', 'StandardValidation', 'SyncValidation', 'GpuAssisted', 'BestPractices', 'CrashDiagnostics', 'RenderDocFriendly')
+        }
+        if ($VulkanCommandBufferLabels) {
+            Set-BenchmarkEnvValue 'XRE_VULKAN_COMMAND_BUFFER_LABELS' '1' -Boolean
+        } else {
+            Clear-EnvValue 'XRE_VULKAN_COMMAND_BUFFER_LABELS'
+        }
+        if ($OcclusionCullingMode -eq 'Configured') {
+            Clear-EnvValue 'XRE_OCCLUSION_CULLING_MODE'
+        } else {
+            Set-BenchmarkEnvValue 'XRE_OCCLUSION_CULLING_MODE' $OcclusionCullingMode -AllowedValues @('Disabled', 'CpuQueryAsync', 'CpuSoftwareOcclusion', 'GpuHiZ')
         }
         Set-BenchmarkEnvValue 'XRE_PROFILER_ENABLED' '1' -Boolean
         Set-BenchmarkEnvValue 'XRE_PROFILE_CAPTURE' '1' -Boolean
@@ -762,7 +856,7 @@ function Measure-Variant {
                     break
                 }
 
-                $stability = Test-RenderStatsStability -LogDir $logDir -WindowSec $StabilityWindowSec
+                $stability = Test-RenderStatsStability -LogDir $logDir -WindowSec $StabilityWindowSec -Strategy $strategy
                 $stabilityReason = $stability.Reason
                 $stableWorkloadIdentityHash = $stability.WorkloadIdentityHash
                 if ($stability.Stable) {
@@ -830,7 +924,10 @@ function Measure-Variant {
     $render = Get-NumericStats -Samples $samples -Property 'render_dispatch_ms' -PositiveOnly
     $update = Get-NumericStats -Samples $samples -Property 'update_ms' -PositiveOnly
     $collect = Get-NumericStats -Samples $samples -Property 'collect_visible_ms' -PositiveOnly
+    $collectWaitForRender = Get-NumericStats -Samples $samples -Property 'collect_wait_for_render_ms' -PositiveOnly
+    $renderWaitForCollect = Get-NumericStats -Samples $samples -Property 'render_wait_for_collect_ms' -PositiveOnly
     $gpu = Get-NumericStats -Samples $samples -Property 'gpu_pipeline_frame_ms' -PositiveOnly
+    $vulkanGpuCommandBuffer = Get-NumericStats -Samples $samples -Property 'vulkan_frame_gpu_command_buffer_ms' -PositiveOnly
     $gap = Get-NumericStats -Samples $samples -Property 'render_thread_minus_gpu_ms' -PositiveOnly
     $gpuReadyCount = @($samples | Where-Object { $_.gpu_pipeline_timings_ready -eq $true }).Count
     $lastSample = if ($allSamples.Count -gt 0) { $allSamples[$allSamples.Count - 1] } else { $null }
@@ -859,6 +956,14 @@ function Measure-Variant {
     $vkResetDynamicUniformRing = Get-NumericStats -Samples $samples -Property 'vulkan_frame_reset_dynamic_uniform_ring_ms' -PositiveOnly
     $vkRecordCommandBuffer = Get-NumericStats -Samples $samples -Property 'vulkan_frame_record_command_buffer_ms' -PositiveOnly
     $vkRecordCommandBufferAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_record_command_buffer_allocated_bytes'
+    $vkFrameOpPreparationAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_cpu_frame_op_preparation_allocated_bytes'
+    $vkResourcePlanningAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_cpu_resource_planning_allocated_bytes'
+    $vkFrameDataRefreshAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_cpu_frame_data_refresh_allocated_bytes'
+    $vkPacketConstructionAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_cpu_packet_construction_allocated_bytes'
+    $vkPrimaryRecordingAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_cpu_primary_recording_allocated_bytes'
+    $vkSecondaryRecordingAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_cpu_secondary_recording_allocated_bytes'
+    $vkDescriptorPublicationAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_cpu_descriptor_publication_allocated_bytes'
+    $vkSubmissionAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_cpu_submission_allocated_bytes'
     $vkSubmit = Get-NumericStats -Samples $samples -Property 'vulkan_frame_submit_ms' -PositiveOnly
     $vkTrimStaging = Get-NumericStats -Samples $samples -Property 'vulkan_frame_trim_ms' -PositiveOnly
     $vkQueuePresent = Get-NumericStats -Samples $samples -Property 'vulkan_frame_present_ms' -PositiveOnly
@@ -866,6 +971,7 @@ function Measure-Variant {
     $vkCommandChainsScheduled = Get-NumericStats -Samples $samples -Property 'vulkan_command_chains_scheduled'
     $vkCommandChainsRecorded = Get-NumericStats -Samples $samples -Property 'vulkan_command_chains_recorded'
     $vkCommandChainsReused = Get-NumericStats -Samples $samples -Property 'vulkan_command_chains_reused'
+    $vkIndirectParallelSecondaryRecordOpsTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_indirect_parallel_secondary_record_ops'
     $vkCommandChainWorkerRecord = Get-NumericStats -Samples $samples -Property 'vulkan_command_chain_worker_record_ms' -PositiveOnly
     $vkRenderThreadWaitForChainWorkers = Get-NumericStats -Samples $samples -Property 'vulkan_render_thread_wait_for_chain_workers_ms' -PositiveOnly
     $vkResourcePlanReplacementsTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_retired_resource_plan_replacements'
@@ -918,6 +1024,21 @@ function Measure-Variant {
         $value = Get-SamplePropertyValue -Sample $_ -Property 'frame_output_workload_identity_hash'
         if ($null -ne $value -and [string]$value -ne '0') { [string]$value }
     } | Select-Object -Unique)
+    [double]$collectGenerationAgeMax = 0
+    foreach ($sample in $samples) {
+        [double]$requestedGeneration = Get-SamplePropertyValue -Sample $sample -Property 'collect_generation_requested'
+        [double]$consumedGeneration = Get-SamplePropertyValue -Sample $sample -Property 'collect_generation_consumed'
+        $collectGenerationAgeMax = [Math]::Max($collectGenerationAgeMax, [Math]::Max(0, $requestedGeneration - $consumedGeneration))
+    }
+    $validationLayersEnabledSamples = @($samples | Where-Object { $_.validation_layers_enabled -eq $true }).Count
+    $vulkanValidationVuidCount = 0
+    $vulkanValidationUniqueVuids = @()
+    $vulkanLogPath = if ($logDir) { Join-Path $logDir 'log_vulkan.log' } else { '' }
+    if ($vulkanLogPath -and (Test-Path -LiteralPath $vulkanLogPath)) {
+        $vuidMatches = @(Select-String -LiteralPath $vulkanLogPath -Pattern 'VUID-[A-Za-z0-9_-]+' -AllMatches -ErrorAction SilentlyContinue)
+        $vulkanValidationVuidCount = @($vuidMatches | ForEach-Object { $_.Matches } | ForEach-Object { $_.Value }).Count
+        $vulkanValidationUniqueVuids = @($vuidMatches | ForEach-Object { $_.Matches } | ForEach-Object { $_.Value } | Sort-Object -Unique)
+    }
     $gpuDumpCount = if ($logDir -and (Test-Path -LiteralPath $logDir)) {
         @(Get-ChildItem -LiteralPath $logDir -Filter 'profiler-gpu-pipeline-*.log' -File -ErrorAction SilentlyContinue).Count
     } else {
@@ -959,6 +1080,12 @@ function Measure-Variant {
     if ($submissionRejectionTotal -gt 0) {
         $noteParts.Add("rejected submissions=$submissionRejectionTotal") | Out-Null
     }
+    if ($VulkanDiagnosticPreset -in @('StandardValidation', 'SyncValidation', 'GpuAssisted', 'BestPractices') -and $validationLayersEnabledSamples -eq 0) {
+        $noteParts.Add("requested Vulkan diagnostic preset $VulkanDiagnosticPreset but no retained sample reported validation layers enabled") | Out-Null
+    }
+    if ($vulkanValidationVuidCount -gt 0) {
+        $noteParts.Add("Vulkan validation VUIDs=$vulkanValidationVuidCount unique=$($vulkanValidationUniqueVuids -join ',')") | Out-Null
+    }
 
     return [pscustomobject]@{
         Strategy = $Strategy
@@ -968,7 +1095,13 @@ function Measure-Variant {
         UnitTestVrMode = $UnitTestVrMode
         VulkanRenderTargetMode = $VulkanRenderTargetMode
         VulkanPrimaryReuse = $VulkanPrimaryReuse
+        VulkanCommandChains = $VulkanCommandChains
+        VulkanParallelCommandChainRecording = $VulkanParallelCommandChainRecording
+        VulkanParallelSecondaryRecording = $VulkanParallelSecondaryRecording
         VulkanValidation = [bool]$VulkanValidation
+        VulkanDiagnosticPreset = $VulkanDiagnosticPreset
+        VulkanCommandBufferLabels = [bool]$VulkanCommandBufferLabels
+        OcclusionCullingMode = $OcclusionCullingMode
         ZeroReadbackMaterialDrawPath = $ZeroReadbackMaterialDrawPath
         ProfileScene = $ProfileScene
         ProfileCamera = $ProfileCamera
@@ -997,12 +1130,33 @@ function Measure-Variant {
         RenderP50Ms = $render.P50
         RenderP95Ms = $render.P95
         RenderP99Ms = $render.P99
+        RenderWorstMs = $render.Max
+        UpdateP50Ms = $update.P50
         UpdateP95Ms = $update.P95
+        UpdateP99Ms = $update.P99
+        UpdateWorstMs = $update.Max
+        CollectVisibleP50Ms = $collect.P50
         CollectVisibleP95Ms = $collect.P95
+        CollectVisibleP99Ms = $collect.P99
+        CollectVisibleWorstMs = $collect.Max
+        CollectWaitForRenderP50Ms = $collectWaitForRender.P50
+        CollectWaitForRenderP95Ms = $collectWaitForRender.P95
+        CollectWaitForRenderWorstMs = $collectWaitForRender.Max
+        RenderWaitForCollectP50Ms = $renderWaitForCollect.P50
+        RenderWaitForCollectP95Ms = $renderWaitForCollect.P95
+        RenderWaitForCollectWorstMs = $renderWaitForCollect.Max
+        CollectGenerationAgeMaxFrames = $collectGenerationAgeMax
+        StaleCollectReuseFramesTotal = Sum-NumericProperty -Samples $samples -Property 'stale_collect_reuse_frames'
         GpuSamples = $gpu.Count
         GpuReadySamples = $gpuReadyCount
         GpuP50Ms = $gpu.P50
         GpuP95Ms = $gpu.P95
+        GpuP99Ms = $gpu.P99
+        GpuWorstMs = $gpu.Max
+        VulkanGpuCommandBufferP50Ms = $vulkanGpuCommandBuffer.P50
+        VulkanGpuCommandBufferP95Ms = $vulkanGpuCommandBuffer.P95
+        VulkanGpuCommandBufferP99Ms = $vulkanGpuCommandBuffer.P99
+        VulkanGpuCommandBufferWorstMs = $vulkanGpuCommandBuffer.Max
         RenderMinusGpuP95Ms = $gap.P95
         VulkanFrameP50Ms = $vkFrame.P50
         VulkanFrameP95Ms = $vkFrame.P95
@@ -1032,6 +1186,14 @@ function Measure-Variant {
         VulkanRecordCommandBufferP95Ms = $vkRecordCommandBuffer.P95
         VulkanRecordCommandBufferMaxMs = $vkRecordCommandBuffer.Max
         VulkanRecordCommandBufferAllocatedBytesTotal = $vkRecordCommandBufferAllocatedBytesTotal
+        VulkanFrameOpPreparationAllocatedBytesTotal = $vkFrameOpPreparationAllocatedBytesTotal
+        VulkanResourcePlanningAllocatedBytesTotal = $vkResourcePlanningAllocatedBytesTotal
+        VulkanFrameDataRefreshAllocatedBytesTotal = $vkFrameDataRefreshAllocatedBytesTotal
+        VulkanPacketConstructionAllocatedBytesTotal = $vkPacketConstructionAllocatedBytesTotal
+        VulkanPrimaryRecordingAllocatedBytesTotal = $vkPrimaryRecordingAllocatedBytesTotal
+        VulkanSecondaryRecordingAllocatedBytesTotal = $vkSecondaryRecordingAllocatedBytesTotal
+        VulkanDescriptorPublicationAllocatedBytesTotal = $vkDescriptorPublicationAllocatedBytesTotal
+        VulkanSubmissionAllocatedBytesTotal = $vkSubmissionAllocatedBytesTotal
         VulkanSubmitP50Ms = $vkSubmit.P50
         VulkanSubmitP95Ms = $vkSubmit.P95
         VulkanSubmitMaxMs = $vkSubmit.Max
@@ -1071,11 +1233,20 @@ function Measure-Variant {
         VulkanCommandChainsReusedTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_command_chains_reused'
         VulkanCommandChainsFrameDataRefreshedTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_command_chains_frame_data_refreshed'
         VulkanVolatileCommandChainsRecordedTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_volatile_command_chains_recorded'
+        VulkanIndirectParallelSecondaryRecordOpsTotal = $vkIndirectParallelSecondaryRecordOpsTotal
         VulkanPrimaryCommandBuffersReusedTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_primary_command_buffers_reused'
         VulkanPrimaryCommandBuffersRecordedTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_primary_command_buffers_recorded'
         VulkanVisibilityPacketsTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_visibility_packet_count'
         VulkanRenderPacketsTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_render_packet_count'
         VulkanSecondaryCommandBuffersTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_secondary_command_buffer_count'
+        VulkanIndirectApiCallsTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_indirect_api_calls'
+        VulkanIndirectSubmittedDrawsTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_indirect_submitted_draws'
+        VulkanRequestedDrawsTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_requested_draws'
+        VulkanConsumedDrawsTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_consumed_draws'
+        AllVulkanIndirectApiCallsTotal = Sum-NumericProperty -Samples $allSamples -Property 'vulkan_indirect_api_calls'
+        AllVulkanIndirectSubmittedDrawsTotal = Sum-NumericProperty -Samples $allSamples -Property 'vulkan_indirect_submitted_draws'
+        AllVulkanRequestedDrawsTotal = Sum-NumericProperty -Samples $allSamples -Property 'vulkan_requested_draws'
+        AllVulkanConsumedDrawsTotal = Sum-NumericProperty -Samples $allSamples -Property 'vulkan_consumed_draws'
         VulkanCommandChainWorkerRecordP50Ms = $vkCommandChainWorkerRecord.P50
         VulkanCommandChainWorkerRecordP95Ms = $vkCommandChainWorkerRecord.P95
         VulkanRenderThreadWaitForChainWorkersP50Ms = $vkRenderThreadWaitForChainWorkers.P50
@@ -1129,6 +1300,12 @@ function Measure-Variant {
         ShaderVariantsRequestedTotal = Sum-NumericProperty -Samples $allSamples -Property 'shader_variants_requested'
         ShaderVariantsLinkedTotal = Sum-NumericProperty -Samples $allSamples -Property 'shader_variants_linked'
         ShaderVariantsFailedTotal = Sum-NumericProperty -Samples $allSamples -Property 'shader_variants_failed'
+        ShaderVariantsWarmingTotal = Sum-NumericProperty -Samples $allSamples -Property 'shader_variants_warming'
+        ShaderVariantsLoadedFromDiskCacheTotal = Sum-NumericProperty -Samples $allSamples -Property 'shader_variants_loaded_from_disk_cache'
+        ShaderVariantsGeneratedThisRunTotal = Sum-NumericProperty -Samples $allSamples -Property 'shader_variants_generated_this_run'
+        ValidationLayersEnabledSamples = $validationLayersEnabledSamples
+        VulkanValidationVuidCount = $vulkanValidationVuidCount
+        VulkanValidationUniqueVuids = $vulkanValidationUniqueVuids
         GpuDrivenActiveBucketsP50 = (Get-NumericStats -Samples $samples -Property 'gpu_driven_active_bucket_count').P50
         GpuDrivenEmptyBucketSkipsTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_driven_empty_bucket_skips'
         GpuDrivenFullBucketScansTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_driven_full_bucket_scans'
@@ -1188,6 +1365,12 @@ $results | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $summaryJson -Enco
     "ZeroReadbackMaterialDrawPath: $ZeroReadbackMaterialDrawPath"
     "Scene: $ProfileScene"
     "Camera: $ProfileCamera"
+    "OcclusionCullingMode: $OcclusionCullingMode"
+    "VulkanCommandChains: $VulkanCommandChains"
+    "VulkanParallelCommandChainRecording: $VulkanParallelCommandChainRecording"
+    "VulkanParallelSecondaryRecording: $VulkanParallelSecondaryRecording"
+    "VulkanDiagnosticPreset: $VulkanDiagnosticPreset"
+    "VulkanCommandBufferLabels: $([bool]$VulkanCommandBufferLabels)"
     "Lights: $ProfileLights"
     "Viewport: $ProfileViewport"
     "RenderScale: $RenderScale"

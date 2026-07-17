@@ -1,5 +1,4 @@
 using System;
-using System.Runtime.InteropServices;
 using System.Threading;
 using Silk.NET.Vulkan;
 
@@ -121,26 +120,49 @@ internal readonly record struct ResourcePlanSnapshot(
     ulong FramebufferSignature,
     ulong PipelineGeneration);
 
-internal sealed class RenderPacket(
-    RenderViewKey viewKey,
-    int passIndex,
-    int targetIdentity,
-    string targetName,
-    RenderPacketVolatility volatility,
-    DrawPacket firstDraw,
-    int drawCount,
-    DispatchPacket firstDispatch,
-    int dispatchCount,
-    DescriptorBindingSnapshot descriptorSnapshot,
-    ResourcePlanSnapshot resourcePlanSnapshot,
-    ulong structuralSignature,
-    ulong frameDataSignature,
-    int sourceStartIndex,
-    int sourceCount,
-    bool dynamicOverlay)
+internal sealed class RenderPacket
 {
-    private readonly DrawPacket[]? _draws;
-    private readonly DispatchPacket[]? _dispatches;
+    private DrawPacket[]? _draws;
+    private DispatchPacket[]? _dispatches;
+
+    public RenderPacket()
+    {
+    }
+
+    public RenderPacket(
+        RenderViewKey viewKey,
+        int passIndex,
+        int targetIdentity,
+        string targetName,
+        RenderPacketVolatility volatility,
+        DrawPacket firstDraw,
+        int drawCount,
+        DispatchPacket firstDispatch,
+        int dispatchCount,
+        DescriptorBindingSnapshot descriptorSnapshot,
+        ResourcePlanSnapshot resourcePlanSnapshot,
+        ulong structuralSignature,
+        ulong frameDataSignature,
+        int sourceStartIndex,
+        int sourceCount,
+        bool dynamicOverlay)
+        => Reset(
+            viewKey,
+            passIndex,
+            targetIdentity,
+            targetName,
+            volatility,
+            firstDraw,
+            drawCount,
+            firstDispatch,
+            dispatchCount,
+            descriptorSnapshot,
+            resourcePlanSnapshot,
+            structuralSignature,
+            frameDataSignature,
+            sourceStartIndex,
+            sourceCount,
+            dynamicOverlay);
 
     public RenderPacket(
         RenderViewKey viewKey,
@@ -157,15 +179,100 @@ internal sealed class RenderPacket(
         int sourceStartIndex,
         int sourceCount,
         bool dynamicOverlay)
-        : this(
+        => Reset(
             viewKey,
             passIndex,
             targetIdentity,
             targetName,
             volatility,
-            draws.Length > 0 ? draws.Span[0] : default,
+            draws.Span,
+            dispatches.Span,
+            descriptorSnapshot,
+            resourcePlanSnapshot,
+            structuralSignature,
+            frameDataSignature,
+            sourceStartIndex,
+            sourceCount,
+            dynamicOverlay);
+
+    public RenderViewKey ViewKey { get; private set; }
+    public int PassIndex { get; private set; }
+    public int TargetIdentity { get; private set; }
+    public string TargetName { get; private set; } = string.Empty;
+    public RenderPacketVolatility Volatility { get; private set; }
+    public DrawPacket FirstDraw { get; private set; }
+    public int DrawCount { get; private set; }
+    public DispatchPacket FirstDispatch { get; private set; }
+    public int DispatchCount { get; private set; }
+    public DescriptorBindingSnapshot DescriptorSnapshot { get; private set; }
+    public ResourcePlanSnapshot ResourcePlanSnapshot { get; private set; }
+    public ulong StructuralSignature { get; private set; }
+    public ulong FrameDataSignature { get; private set; }
+    public int SourceStartIndex { get; private set; }
+    public int SourceCount { get; private set; }
+    public bool DynamicOverlay { get; private set; }
+
+    public void Reset(
+        RenderViewKey viewKey,
+        int passIndex,
+        int targetIdentity,
+        string targetName,
+        RenderPacketVolatility volatility,
+        DrawPacket firstDraw,
+        int drawCount,
+        DispatchPacket firstDispatch,
+        int dispatchCount,
+        DescriptorBindingSnapshot descriptorSnapshot,
+        ResourcePlanSnapshot resourcePlanSnapshot,
+        ulong structuralSignature,
+        ulong frameDataSignature,
+        int sourceStartIndex,
+        int sourceCount,
+        bool dynamicOverlay)
+    {
+        ViewKey = viewKey;
+        PassIndex = passIndex;
+        TargetIdentity = targetIdentity;
+        TargetName = targetName;
+        Volatility = volatility;
+        FirstDraw = firstDraw;
+        DrawCount = drawCount;
+        FirstDispatch = firstDispatch;
+        DispatchCount = dispatchCount;
+        DescriptorSnapshot = descriptorSnapshot;
+        ResourcePlanSnapshot = resourcePlanSnapshot;
+        StructuralSignature = structuralSignature;
+        FrameDataSignature = frameDataSignature;
+        SourceStartIndex = sourceStartIndex;
+        SourceCount = sourceCount;
+        DynamicOverlay = dynamicOverlay;
+    }
+
+    public void Reset(
+        RenderViewKey viewKey,
+        int passIndex,
+        int targetIdentity,
+        string targetName,
+        RenderPacketVolatility volatility,
+        ReadOnlySpan<DrawPacket> draws,
+        ReadOnlySpan<DispatchPacket> dispatches,
+        DescriptorBindingSnapshot descriptorSnapshot,
+        ResourcePlanSnapshot resourcePlanSnapshot,
+        ulong structuralSignature,
+        ulong frameDataSignature,
+        int sourceStartIndex,
+        int sourceCount,
+        bool dynamicOverlay)
+    {
+        Reset(
+            viewKey,
+            passIndex,
+            targetIdentity,
+            targetName,
+            volatility,
+            draws.Length > 0 ? draws[0] : default,
             draws.Length,
-            dispatches.Length > 0 ? dispatches.Span[0] : default,
+            dispatches.Length > 0 ? dispatches[0] : default,
             dispatches.Length,
             descriptorSnapshot,
             resourcePlanSnapshot,
@@ -173,42 +280,38 @@ internal sealed class RenderPacket(
             frameDataSignature,
             sourceStartIndex,
             sourceCount,
-            dynamicOverlay)
-    {
+            dynamicOverlay);
+
         if (draws.Length > 1)
         {
-            _draws = MemoryMarshal.TryGetArray(draws, out ArraySegment<DrawPacket> drawSegment) &&
-                drawSegment.Offset == 0 &&
-                drawSegment.Count == drawSegment.Array!.Length
-                    ? drawSegment.Array
-                    : draws.ToArray();
+            EnsureDrawCapacity(draws.Length);
+            draws.CopyTo(_draws);
         }
+
         if (dispatches.Length > 1)
         {
-            _dispatches = MemoryMarshal.TryGetArray(dispatches, out ArraySegment<DispatchPacket> dispatchSegment) &&
-                dispatchSegment.Offset == 0 &&
-                dispatchSegment.Count == dispatchSegment.Array!.Length
-                    ? dispatchSegment.Array
-                    : dispatches.ToArray();
+            EnsureDispatchCapacity(dispatches.Length);
+            dispatches.CopyTo(_dispatches);
         }
     }
 
-    public RenderViewKey ViewKey { get; } = viewKey;
-    public int PassIndex { get; } = passIndex;
-    public int TargetIdentity { get; } = targetIdentity;
-    public string TargetName { get; } = targetName;
-    public RenderPacketVolatility Volatility { get; } = volatility;
-    public DrawPacket FirstDraw { get; } = firstDraw;
-    public int DrawCount { get; } = drawCount;
-    public DispatchPacket FirstDispatch { get; } = firstDispatch;
-    public int DispatchCount { get; } = dispatchCount;
-    public DescriptorBindingSnapshot DescriptorSnapshot { get; } = descriptorSnapshot;
-    public ResourcePlanSnapshot ResourcePlanSnapshot { get; } = resourcePlanSnapshot;
-    public ulong StructuralSignature { get; } = structuralSignature;
-    public ulong FrameDataSignature { get; } = frameDataSignature;
-    public int SourceStartIndex { get; } = sourceStartIndex;
-    public int SourceCount { get; } = sourceCount;
-    public bool DynamicOverlay { get; } = dynamicOverlay;
+    private void EnsureDrawCapacity(int required)
+    {
+        if (_draws is not null && _draws.Length >= required)
+            return;
+
+        int capacity = Math.Max(required, _draws is null ? 16 : _draws.Length * 2);
+        Array.Resize(ref _draws, capacity);
+    }
+
+    private void EnsureDispatchCapacity(int required)
+    {
+        if (_dispatches is not null && _dispatches.Length >= required)
+            return;
+
+        int capacity = Math.Max(required, _dispatches is null ? 4 : _dispatches.Length * 2);
+        Array.Resize(ref _dispatches, capacity);
+    }
 
     public DrawPacket GetDraw(int index)
     {
@@ -281,32 +384,111 @@ internal sealed class CommandChain(CommandChainKey key)
     public CommandChainDirtyReason DirtyReason { get; set; }
 }
 
-internal sealed class RenderPassChainGroup(
-    int passIndex,
-    int targetIdentity,
-    string targetName,
-    ReadOnlyMemory<CommandChainKey> chainKeys,
-    ulong structuralSignature,
-    bool supportsSecondaryCommandBuffers,
-    bool dynamicOverlay)
+internal sealed class RenderPassChainGroup
 {
-    public int PassIndex { get; } = passIndex;
-    public int TargetIdentity { get; } = targetIdentity;
-    public string TargetName { get; } = targetName;
-    public ReadOnlyMemory<CommandChainKey> ChainKeys { get; } = chainKeys;
-    public ulong StructuralSignature { get; } = structuralSignature;
-    public bool SupportsSecondaryCommandBuffers { get; } = supportsSecondaryCommandBuffers;
-    public bool DynamicOverlay { get; } = dynamicOverlay;
+    private CommandChainKey[] _chainKeys = [];
+    private int _chainKeyCount;
+
+    public RenderPassChainGroup()
+    {
+    }
+
+    public RenderPassChainGroup(
+        int passIndex,
+        int targetIdentity,
+        string targetName,
+        ReadOnlyMemory<CommandChainKey> chainKeys,
+        ulong structuralSignature,
+        bool supportsSecondaryCommandBuffers,
+        bool dynamicOverlay)
+        => Reset(
+            passIndex,
+            targetIdentity,
+            targetName,
+            chainKeys.Span,
+            structuralSignature,
+            supportsSecondaryCommandBuffers,
+            dynamicOverlay);
+
+    public int PassIndex { get; private set; }
+    public int TargetIdentity { get; private set; }
+    public string TargetName { get; private set; } = string.Empty;
+    public ReadOnlyMemory<CommandChainKey> ChainKeys => _chainKeys.AsMemory(0, _chainKeyCount);
+    public ulong StructuralSignature { get; private set; }
+    public bool SupportsSecondaryCommandBuffers { get; private set; }
+    public bool DynamicOverlay { get; private set; }
+
+    public void Reset(
+        int passIndex,
+        int targetIdentity,
+        string targetName,
+        ReadOnlySpan<CommandChainKey> chainKeys,
+        ulong structuralSignature,
+        bool supportsSecondaryCommandBuffers,
+        bool dynamicOverlay)
+    {
+        if (_chainKeys.Length < chainKeys.Length)
+        {
+            int capacity = Math.Max(chainKeys.Length, _chainKeys.Length == 0 ? 8 : _chainKeys.Length * 2);
+            Array.Resize(ref _chainKeys, capacity);
+        }
+
+        chainKeys.CopyTo(_chainKeys);
+        _chainKeyCount = chainKeys.Length;
+        PassIndex = passIndex;
+        TargetIdentity = targetIdentity;
+        TargetName = targetName;
+        StructuralSignature = structuralSignature;
+        SupportsSecondaryCommandBuffers = supportsSecondaryCommandBuffers;
+        DynamicOverlay = dynamicOverlay;
+    }
 }
 
-internal sealed class CommandChainSchedule(
-    ulong structuralSignature,
-    ulong resourcePlanRevision,
-    ReadOnlyMemory<RenderPassChainGroup> groups)
+internal sealed class CommandChainSchedule
 {
-    public ulong StructuralSignature { get; } = structuralSignature;
-    public ulong ResourcePlanRevision { get; } = resourcePlanRevision;
-    public ReadOnlyMemory<RenderPassChainGroup> Groups { get; } = groups;
+    private RenderPassChainGroup[] _groups = [];
+    private int _groupCount;
+
+    public CommandChainSchedule()
+    {
+    }
+
+    public CommandChainSchedule(
+        ulong structuralSignature,
+        ulong resourcePlanRevision,
+        ReadOnlyMemory<RenderPassChainGroup> groups)
+        => Reset(structuralSignature, resourcePlanRevision, groups.Span);
+
+    public ulong StructuralSignature { get; private set; }
+    public ulong ResourcePlanRevision { get; private set; }
+    public ReadOnlyMemory<RenderPassChainGroup> Groups => _groups.AsMemory(0, _groupCount);
+
+    public RenderPassChainGroup RentGroup(int index)
+    {
+        EnsureGroupCapacity(index + 1);
+        return _groups[index] ??= new RenderPassChainGroup();
+    }
+
+    public void Reset(
+        ulong structuralSignature,
+        ulong resourcePlanRevision,
+        ReadOnlySpan<RenderPassChainGroup> groups)
+    {
+        EnsureGroupCapacity(groups.Length);
+        groups.CopyTo(_groups);
+        _groupCount = groups.Length;
+        StructuralSignature = structuralSignature;
+        ResourcePlanRevision = resourcePlanRevision;
+    }
+
+    private void EnsureGroupCapacity(int required)
+    {
+        if (_groups.Length >= required)
+            return;
+
+        int capacity = Math.Max(required, _groups.Length == 0 ? 8 : _groups.Length * 2);
+        Array.Resize(ref _groups, capacity);
+    }
 }
 
 internal readonly record struct CommandChainQueueDependency(

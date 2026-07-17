@@ -1197,18 +1197,28 @@ public unsafe partial class VulkanRenderer
 				NotifyDrawUniforms(material, programData, draw);
 
 			int frameIndex = unchecked((int)Math.Min(imageIndex, int.MaxValue));
-			if (!CanReuseRecordedDescriptorSets(material, drawUniformSlot, draw.ProgramBindingSnapshot is not null, frameIndex, out string descriptorReason))
+			bool descriptorSetsReusable = CanReuseRecordedDescriptorSets(
+				material,
+				drawUniformSlot,
+				draw.ProgramBindingSnapshot is not null,
+				frameIndex,
+				out string descriptorReason);
+			if (!descriptorSetsReusable)
 			{
 				reason = $"descriptors {descriptorReason}; snapshot={(draw.ProgramBindingSnapshot is null ? "none" : "captured")} program='{_program?.Data?.Name ?? "<unnamed program>"}'";
 				return false;
 			}
-
-			if (!TryRefreshFrameSourceDescriptorSetsForDraw(frameIndex, drawUniformSlot, material, draw.ProgramBindingSnapshot, out string frameSourceDescriptorReason))
+			bool frameSourceDescriptorsReady = TryRefreshFrameSourceDescriptorSetsForDraw(
+				frameIndex,
+				drawUniformSlot,
+				material,
+				draw.ProgramBindingSnapshot,
+				out string frameSourceDescriptorReason);
+			if (!frameSourceDescriptorsReady)
 			{
 				reason = $"descriptors {frameSourceDescriptorReason}; snapshot={(draw.ProgramBindingSnapshot is null ? "none" : "captured")} program='{_program?.Data?.Name ?? "<unnamed program>"}'";
 				return false;
 			}
-
 			UpdateEngineUniformBuffersForDraw(frameIndex, drawUniformSlot, draw);
 			if (refreshMaterialUniforms)
 				UpdateAutoUniformBuffersForDraw(frameIndex, drawUniformSlot, material, draw);

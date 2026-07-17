@@ -582,51 +582,14 @@ namespace XREngine.Rendering.Vulkan
             using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(firstDraw.Context.PipelineInstance);
             using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(firstDraw.Context);
 
-            bool pipelinesReady = true;
-            string firstPipelinePendingReason = string.Empty;
-            for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
-            {
-                int opIndex = chain.SourceStartIndex + drawIndex;
-                if (batch.Ops[opIndex] is not MeshDrawOp drawOp)
-                    throw new InvalidOperationException($"Scheduled mesh packet contains non-mesh op at source index {opIndex}.");
-
-                if (drawOp.Draw.Renderer.TryPrewarmGraphicsPipelinesForRecording(
-                        drawOp.Draw,
-                        batch.RenderPass,
-                        batch.DynamicRendering,
-                        batch.DynamicRenderingFormats,
-                        batch.PassIndex,
-                        drawOp.Context.PassMetadata,
-                        batch.DepthStencilReadOnly,
-                        drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
-                        out string pipelineReason))
-                {
-                    continue;
-                }
-
-                pipelinesReady = false;
-                if (firstPipelinePendingReason.Length == 0)
-                    firstPipelinePendingReason = $"sourceIndex={opIndex} {pipelineReason}";
-            }
-
-            if (!pipelinesReady)
-            {
-                chain.State = CommandChainState.NotReady;
-                chain.DirtyReason |= CommandChainDirtyReason.PipelineGeneration;
-                Debug.VulkanWarningEvery(
-                    $"Vulkan.CommandChain.PipelinePrewarmPending.{chain.Key.GetHashCode()}",
-                    TimeSpan.FromSeconds(1),
-                    "[Vulkan] Command-chain packet recording deferred before vkBeginCommandBuffer because required graphics pipelines are pending. chain={0} detail={1}",
-                    chain.Key,
-                    firstPipelinePendingReason);
-                return;
-            }
+            // Graphics pipeline materialization is deliberately owned by the render thread before
+            // vkBeginCommandBuffer. Repeating it here can race pipeline creation across workers and,
+            // previously, allowed the caller to execute a secondary that was never begun.
 
             if (Api.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
                 throw new InvalidOperationException("Failed to begin Vulkan worker mesh command-chain secondary command buffer.");
 
             ResetCommandBufferBindState(secondary);
-            bool allDrawsRecorded = true;
             for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
             {
                 int opIndex = chain.SourceStartIndex + drawIndex;
@@ -665,25 +628,20 @@ namespace XREngine.Rendering.Vulkan
                     batch.FrameSlot);
                 if (!recorded)
                 {
-                    allDrawsRecorded = false;
-                    Debug.VulkanWarningEvery(
-                        $"Vulkan.CommandChain.DrawNotReady.{chain.Key.GetHashCode()}",
-                        TimeSpan.FromSeconds(1),
-                        "[Vulkan] Command-chain packet is not ready and will be retried next frame. sourceIndex={0} mesh='{1}' material='{2}' reason={3}",
-                        opIndex,
-                        drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>",
-                        (drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>",
-                        drawOp.Draw.Renderer.DescribeReusableCommandBufferFrameDataBlocker(drawOp.Draw, uniformSlot));
-                    break;
+                    chain.State = CommandChainState.NotReady;
+                    chain.DirtyReason |= CommandChainDirtyReason.PipelineGeneration;
+                    throw new InvalidOperationException(
+                        $"A prewarmed Vulkan command-chain draw became unavailable during secondary recording. " +
+                        $"sourceIndex={opIndex} mesh='{drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' " +
+                        $"material='{(drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>"}' " +
+                        $"reason={drawOp.Draw.Renderer.DescribeReusableCommandBufferFrameDataBlocker(drawOp.Draw, uniformSlot)}");
                 }
             }
 
             if (EndCommandBufferTracked(secondary) != Result.Success)
                 throw new InvalidOperationException("Failed to end Vulkan worker mesh command-chain secondary command buffer.");
 
-            chain.State = allDrawsRecorded ? CommandChainState.Recorded : CommandChainState.NotReady;
-            if (!allDrawsRecorded)
-                chain.DirtyReason |= CommandChainDirtyReason.PipelineGeneration;
+            chain.State = CommandChainState.Recorded;
             chain.FrameDataRefreshTouchedDescriptors = false;
             MarkCommandChainSecondaryCommandBufferRecorded(chain);
         }
@@ -702,6 +660,7 @@ namespace XREngine.Rendering.Vulkan
 
             bool useParallelSecondary =
                 _enableParallelSecondaryCommandBufferRecording &&
+                !CommandChainsEnabledForCurrentRecording &&
                 bucket.Count >= Math.Max(_parallelSecondaryIndirectRunThreshold, 2);
 
             if (CommandChainsEnabledForCurrentRecording)

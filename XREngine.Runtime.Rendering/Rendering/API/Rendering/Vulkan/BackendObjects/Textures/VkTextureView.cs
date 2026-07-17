@@ -199,7 +199,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 lock (_viewLifetimeLock)
                 {
-                    if (allowSynchronousUpload)
+                    if (allowSynchronousUpload && !IsDescriptorReadyNoLock())
                         EnsureDescriptorReadyForVulkanUse(reason);
                     else
                         RefreshFromViewedTextureIfStale();

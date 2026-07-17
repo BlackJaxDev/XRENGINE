@@ -440,6 +440,17 @@ public static class UnitTestingWorldSettingsStore
 
         ApplyLegacySinglePassStereoMigration(settings);
         ApplyVrModeToFlatFields(settings);
+
+        // Loading the JSONC happens before launch overrides are applied. Defer all process-wide
+        // OpenXR mutations so a Desktop/Emulated override cannot inherit XR_RUNTIME_JSON or an
+        // OpenXR loader path from the configured Monado mode and accidentally bootstrap Vulkan
+        // through an unavailable XR runtime.
+        if (HasPendingVrLaunchEnvironmentOverrides())
+        {
+            Debug.Out("[UnitTestingWorldSettings] Deferred OpenXR process environment setup until VR launch environment overrides are applied.");
+            return;
+        }
+
         ApplyOpenXrRuntimeJson(settings);
         ApplyOpenXrLoaderPath(settings);
         ApplyMonadoServiceStartup(settings);

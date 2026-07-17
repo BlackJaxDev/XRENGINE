@@ -16,6 +16,7 @@ namespace XREngine.Rendering.Vulkan
             public HashSet<nint> ExecutedCommandChainSecondaryHandles { get; } = new();
             public HashSet<VkRenderQuery> PreparedInlineQueries { get; } = new(ReferenceEqualityComparer.Instance);
             public HashSet<VkRenderQuery> BegunInlineQueries { get; } = new(ReferenceEqualityComparer.Instance);
+            public HashSet<object> VisitedResourceRegistries { get; } = new(ReferenceEqualityComparer.Instance);
             public Dictionary<int, int> SwapchainWriterPassByPipeline { get; } = new();
             public Dictionary<int, int> SwapchainWriterOpIndexByPipeline { get; } = new();
             public Dictionary<int, string> PipelineNameByIdentity { get; } = new();

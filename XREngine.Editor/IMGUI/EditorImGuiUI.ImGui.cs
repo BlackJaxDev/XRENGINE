@@ -864,6 +864,19 @@ public static partial class EditorImGuiUI
             if (!Engine.IsEditor)
                 return Engine.WindowCloseRequestResult.Allow;
 
+            // Automated profile captures have no operator available to answer the
+            // dirty-asset modal. The measurement harness launches an isolated editor
+            // process and requests a normal window close after the capture, so allow
+            // that request to proceed through the regular disposal path.
+            if (string.Equals(
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileCapture),
+                "1",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                FlushImGuiLayoutImmediate();
+                return Engine.WindowCloseRequestResult.Allow;
+            }
+
             if (_closePromptBypassWindow == window)
             {
                 _closePromptBypassWindow = null;

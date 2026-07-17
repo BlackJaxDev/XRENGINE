@@ -866,6 +866,7 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_visibility_packet_count", Engine.Rendering.Stats.Vulkan.VulkanVisibilityPacketCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_render_packet_count", Engine.Rendering.Stats.Vulkan.VulkanRenderPacketCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_secondary_command_buffer_count", Engine.Rendering.Stats.Vulkan.VulkanSecondaryCommandBufferCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_parallel_secondary_record_ops", Engine.Rendering.Stats.Vulkan.VulkanIndirectParallelSecondaryRecordOps, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_chain_worker_record_ms", Engine.Rendering.Stats.Vulkan.VulkanCommandChainWorkerRecordMs, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_render_thread_wait_for_chain_workers_ms", Engine.Rendering.Stats.Vulkan.VulkanRenderThreadWaitForChainWorkersMs, ref first);
             AppendStringField(s_lineBuilder, "vulkan_first_command_chain_structural_dirty_reason", Engine.Rendering.Stats.Vulkan.VulkanFirstCommandChainStructuralDirtyReason, ref first);

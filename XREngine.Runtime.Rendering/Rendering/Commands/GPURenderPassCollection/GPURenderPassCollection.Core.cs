@@ -574,6 +574,14 @@ namespace XREngine.Rendering.Commands
         public XRRenderProgram? _debugDrawProgram;
         private XRRenderProgram? _copyCommandsProgram; // new: passthrough copy
         private XRRenderProgram? _bvhFrustumCullProgram; // BVH-accelerated frustum culling
+        private XRRenderProgram[] _gpuPreparationPrograms = [];
+        private bool _gpuProgramsReady;
+
+        /// <summary>
+        /// True when this pass deliberately deferred GPU work while its fixed compute-program set
+        /// was still compiling in the background.
+        /// </summary>
+        public bool GpuProgramsPendingThisFrame { get; private set; }
 
         // Phase 3: Hi-Z occlusion (GPU_HiZ)
         private XRRenderProgram? _hiZInitProgram;

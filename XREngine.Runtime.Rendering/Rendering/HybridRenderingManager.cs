@@ -5447,9 +5447,9 @@ namespace XREngine.Rendering
             if (!TryUseIndirectGraphicsProgram(graphicsProgram, "RenderIndirectCountBucket"))
                 return;
 
-            bool TryBeginVulkanIndirectDrawState(out IDisposable? scope)
+            bool TryBeginVulkanIndirectDrawState(out VulkanRenderer.IndirectDrawStateScope scope)
             {
-                scope = null;
+                scope = default;
                 if (renderer is not VulkanRenderer vulkanRenderer)
                     return true;
 
@@ -5550,7 +5550,7 @@ namespace XREngine.Rendering
 
                     using (RuntimeEngine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirectWithOffset"))
                     {
-                        if (!TryBeginVulkanIndirectDrawState(out IDisposable? indirectDrawStateScope))
+                        if (!TryBeginVulkanIndirectDrawState(out VulkanRenderer.IndirectDrawStateScope indirectDrawStateScope))
                             return;
 
                         using (indirectDrawStateScope)
@@ -5644,7 +5644,7 @@ namespace XREngine.Rendering
                         ? renderer as VulkanRenderer
                         : null;
                     bool bindlessScopeActive = false;
-                    if (!TryBeginVulkanIndirectDrawState(out IDisposable? indirectDrawStateScope))
+                    if (!TryBeginVulkanIndirectDrawState(out VulkanRenderer.IndirectDrawStateScope indirectDrawStateScope))
                         return;
 
                     using (indirectDrawStateScope)
@@ -5769,8 +5769,11 @@ namespace XREngine.Rendering
                 return true;
             }
 
-            RuntimeEngine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(1);
             var backend = graphicsProgram.ShaderMetadata.Backend;
+            if (IsIndirectGraphicsProgramTerminalFailure(backend.Stage))
+            {
+                RuntimeEngine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(1);
+            }
             XREngine.Debug.RenderingWarningEvery(
                 $"RenderDispatch.ProgramNotReady.{context}.{RuntimeHelpers.GetHashCode(graphicsProgram)}",
                 TimeSpan.FromSeconds(2),
@@ -5783,6 +5786,11 @@ namespace XREngine.Rendering
                 backend.FailureReason ?? "<none>");
             return false;
         }
+
+        internal static bool IsIndirectGraphicsProgramTerminalFailure(XRRenderProgram.EShaderProgramBackendStage stage)
+            => stage is XRRenderProgram.EShaderProgramBackendStage.BinaryUploadFailed or
+                XRRenderProgram.EShaderProgramBackendStage.Failed or
+                XRRenderProgram.EShaderProgramBackendStage.Abandoned;
 
         public struct RenderingStats
         {

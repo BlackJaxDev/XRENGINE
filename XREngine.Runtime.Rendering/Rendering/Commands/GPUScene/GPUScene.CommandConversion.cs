@@ -121,7 +121,6 @@ namespace XREngine.Rendering.Commands
 
             using (_lock.EnterScope())
             {
-                SyncLodTransitionBufferFromGpu();
                 if (!_commandIndicesPerMeshCommand.TryGetValue(meshCmd, out var indices) || indices.Count == 0)
                 {
                     var missingMaterial = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
@@ -258,7 +257,10 @@ namespace XREngine.Rendering.Commands
                         WriteDrawMetadata(index, updated);
                         WriteBounds(index, updatedBounds);
                         if (existing.MeshID != updated.MeshID || existing.LogicalMeshID != updated.LogicalMeshID)
+                        {
                             LodTransitionBuffer.SetDataRawAtIndex(index, default(GPULodTransitionState));
+                            QueueCpuLodTransitionWrite(index);
+                        }
                         if (_useInternalBvh)
                             WriteTightCommandAabb(index, renderInfo, mesh.Bounds, modelMatrix);
                         anyChanged = true;
@@ -279,7 +281,7 @@ namespace XREngine.Rendering.Commands
                     uint byteOffset = minIndex * elementSize;
                     uint byteCount = (maxIndex - minIndex + 1) * elementSize;
                     UpdatingCommandsBuffer.PushSubData((int)byteOffset, byteCount);
-                    LodTransitionBuffer.PushSubData((int)(minIndex * LodTransitionBuffer.ElementSize), (maxIndex - minIndex + 1) * LodTransitionBuffer.ElementSize);
+                    FlushCpuLodTransitionWrites();
                     MarkUpdatingCommandsDirty();
 
                     FlushMeshDataDirtyRange();
@@ -315,6 +317,8 @@ namespace XREngine.Rendering.Commands
         {
             foreach (uint idx in indices.OrderByDescending(v => v))
                 RemoveCommandAtIndex(idx);
+
+            FlushCpuLodTransitionWrites();
 
             indices.Clear();
             _commandIndicesPerMeshCommand.Remove(meshCmd);
