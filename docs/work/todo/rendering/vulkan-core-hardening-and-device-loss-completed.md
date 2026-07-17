@@ -91,6 +91,37 @@ behind explicit pipeline policy; diagnostics use composable flags plus curated
 presets; and rotating external image handles are variants, not physical-plan
 identity.
 
+### Zero-Readback BVH-Refit Device-Loss Fix - 2026-07-17
+
+- Dispatch-level isolation proved the recurring Sponza-loaded TDR was not the
+  indirect-count command or the `GPURender*` cull/build/scatter programs. The
+  reset persisted with every `GPURender*` compute shader skipped, stopped when
+  BVH shaders were skipped, and remained absent for 113 seconds when only
+  `bvh_refit` was skipped.
+- `bvh_build.comp` can flag malformed parent connectivity from duplicate Morton
+  codes, but the immediately queued refit previously followed those parent
+  pointers without a termination bound. `bvh_refit.comp` now validates its
+  buffer indices and caps propagation to the safe node count. This prevents a
+  parent cycle from becoming an unbounded GPU loop without introducing a CPU
+  readback, device wait, fallback, or extra frame resource.
+- Deferred Vulkan compute snapshots retain immutable buffer handles, ranges,
+  and usage, so later command recording does not silently resolve a replacement
+  backend generation.
+- With refit active and no dispatch skipped, two traced Release launches stayed
+  healthy for 121 and 120 seconds. The later clean StandardValidation
+  performance runs completed with zero VUIDs, readback, mapping, or fallback;
+  their workload identity, draw count, multi-draw count, and triangle count
+  matched the retained baseline.
+- Focused validation passes 23/23, including refit shader compile/link,
+  build-plus-refit root bounds, and the malformed-parent guard invariant. The
+  Release editor builds with zero errors.
+- Visual Sponza parity and the multi-hundred-millisecond CPU recording cost are
+  intentionally not recorded as complete. They remain in the active P0.3,
+  P0.6, and P0.7 checklist.
+
+Detailed evidence:
+[zero-readback Sponza device-loss investigation](../../investigations/rendering/vulkan-zero-readback-sponza-device-loss-2026-07-17.md).
+
 ### Evidence Index
 
 - [Phase 0 baseline and crash taxonomy](../../progress/rendering/vulkan-core-hardening-phase0-2026-07-09.md)

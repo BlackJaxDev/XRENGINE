@@ -14,7 +14,6 @@ layout(std430, binding = 1) readonly buffer CulledCountBuffer
 };
 layout(std430, binding = 2) writeonly buffer SortKeyBuffer { uint sortKeys[]; };
 
-uniform int CurrentRenderPass;
 uniform int MaxSortKeys;
 uniform uint StateBitMask;
 uniform int SortDomain;
@@ -37,22 +36,22 @@ void main()
 {
     uint logicalIdx = gl_GlobalInvocationID.x;
     uint total = CulledCount;
+    uint availableKeyCount = uint(sortKeys.length()) / KEY_UINTS;
 
-    if (logicalIdx >= total || logicalIdx >= uint(MaxSortKeys))
+    if (logicalIdx >= total ||
+        logicalIdx >= uint(MaxSortKeys) ||
+        logicalIdx >= availableKeyCount)
         return;
 
     uint base = logicalIdx * COMMAND_FLOATS;
     if (base + COMMAND_FLOATS > uint(culled.length()))
         return;
 
+    // Publish a key for every compacted command. Material scatter walks the
+    // full CulledCount and performs the render-pass filter from DrawMetadata.
+    // Leaving a key slot unwritten here lets stale draw IDs from an earlier
+    // pass/frame turn into duplicate or malformed indirect commands.
     uint renderPass = floatBitsToUint(culled[base + 8u]);
-    if (CurrentRenderPass >= 0 &&
-        renderPass != uint(CurrentRenderPass) &&
-        renderPass != 0xFFFFFFFFu)
-    {
-        return;
-    }
-
     uint materialID = floatBitsToUint(culled[base + 6u]);
     uint meshID = floatBitsToUint(culled[base + 4u]);
     uint shaderProgramID = floatBitsToUint(culled[base + 9u]);

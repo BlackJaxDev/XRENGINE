@@ -52,6 +52,18 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         private bool _supportsDrawIndirectCount;
         /// <summary>
+        /// Indicates whether indirect-count commands are dispatched through the Vulkan 1.2 core entry point.
+        /// </summary>
+        private bool _usesCoreDrawIndirectCountCommands;
+        /// <summary>
+        /// Indicates whether the logical device enabled the core multi-draw-indirect feature.
+        /// </summary>
+        private bool _supportsMultiDrawIndirect;
+        /// <summary>
+        /// Indicates whether the logical device enabled nonzero firstInstance values for indirect draws.
+        /// </summary>
+        private bool _supportsDrawIndirectFirstInstance;
+        /// <summary>
         /// Indicates whether the Vulkan task shader feature is supported.
         /// </summary>
         private bool _supportsVulkanTaskShaderFeature;

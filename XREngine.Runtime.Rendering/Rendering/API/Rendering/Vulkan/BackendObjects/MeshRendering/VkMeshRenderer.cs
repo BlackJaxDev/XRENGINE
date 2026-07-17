@@ -933,7 +933,7 @@ public unsafe partial class VulkanRenderer
         return hash.ToHash();
     }
 
-    private static ulong HashBufferBindings(Dictionary<uint, XRDataBuffer> buffers)
+    private static ulong HashBufferBindings(Dictionary<uint, VulkanComputeBufferBinding> buffers)
     {
         ulong xor = 0;
         ulong sum = 0;
@@ -941,7 +941,9 @@ public unsafe partial class VulkanRenderer
         {
             FrameOpSignatureHasher item = new();
             item.Add(pair.Key);
-            item.Add(pair.Value.GetHashCode());
+            item.Add(pair.Value.Data.GetHashCode());
+            item.Add(pair.Value.Buffer.Handle);
+            item.Add(pair.Value.Range);
             AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
         }
 

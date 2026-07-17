@@ -1,0 +1,86 @@
+name: Windows CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+
+jobs:
+  build-and-test:
+    name: Build and test
+    if: >-
+      github.event_name != 'pull_request' ||
+      (
+        !contains(github.event.pull_request.user.login, 'codex') &&
+        !contains(github.event.pull_request.user.login, 'claude') &&
+        !contains(github.event.pull_request.user.login, 'copilot') &&
+        !startsWith(github.event.pull_request.head.ref, 'codex/') &&
+        !startsWith(github.event.pull_request.head.ref, 'claude/') &&
+        !startsWith(github.event.pull_request.head.ref, 'copilot/')
+      )
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository and submodules
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Build managed and native submodules
+        shell: cmd
+        run: Tools\Build-Submodules.bat Release AnyCPU
+
+      - name: Generate unit-testing settings
+        shell: pwsh
+        run: ./Tools/Generate-UnitTestingWorldSettings.ps1 -Configuration Release
+
+      - name: Restore
+        run: dotnet restore XRENGINE.slnx
+
+      - name: Build
+        run: dotnet build XRENGINE.slnx --configuration Release --no-restore
+
+      - name: Run unit tests
+        run: >-
+          dotnet test XREngine.UnitTests/XREngine.UnitTests.csproj
+          --configuration Release
+          --no-build
+          --no-restore
+          --logger "trx;LogFileName=unit-tests.trx"
+          --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-ci-test-results
+          path: TestResults
+          if-no-files-found: ignore
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-ci-failure-logs
+          path: Build/Logs
+          if-no-files-found: ignore

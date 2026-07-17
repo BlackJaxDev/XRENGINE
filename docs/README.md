@@ -26,6 +26,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 
 ## Developer Guides
 
+- [Continuous Integration And Releases](developer-guides/ci-cd.md)
 - [MCP Server Implementation](developer-guides/ai/mcp-server.md)
 - [MCP Assistant](developer-guides/ai/mcp-assistant.md)
 - [Animation API](developer-guides/animation/animation-api.md)

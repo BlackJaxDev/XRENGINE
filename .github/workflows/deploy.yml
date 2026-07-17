@@ -1,0 +1,200 @@
+name: Deploy gate
+
+on:
+  push:
+    branches:
+      - deploy
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-gate
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+
+jobs:
+  security-and-tests:
+    name: CodeQL and unit tests
+    if: github.ref == 'refs/heads/deploy'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository and submodules
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Build managed and native submodules
+        shell: cmd
+        run: Tools\Build-Submodules.bat Release AnyCPU
+
+      - name: Generate unit-testing settings
+        shell: pwsh
+        run: ./Tools/Generate-UnitTestingWorldSettings.ps1 -Configuration Release
+
+      - name: Restore
+        run: dotnet restore XRENGINE.slnx
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: csharp
+          build-mode: manual
+          queries: security-extended
+
+      - name: Build
+        run: dotnet build XRENGINE.slnx --configuration Release --no-restore
+
+      - name: Run full unit-test suite
+        run: >-
+          dotnet test XREngine.UnitTests/XREngine.UnitTests.csproj
+          --configuration Release
+          --no-build
+          --no-restore
+          --logger "trx;LogFileName=deploy-unit-tests.trx"
+          --results-directory TestResults
+
+      - name: Analyze with CodeQL
+        uses: github/codeql-action/analyze@v4
+
+      - name: Upload security-gate test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-unit-test-results
+          path: TestResults
+          if-no-files-found: ignore
+
+  gpu-validation:
+    name: Vulkan and OpenGL validation
+    if: github.ref == 'refs/heads/deploy'
+    runs-on:
+      - self-hosted
+      - Windows
+      - X64
+      - gpu
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository and submodules
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Build managed and native submodules
+        shell: cmd
+        run: Tools\Build-Submodules.bat Release AnyCPU
+
+      - name: Generate unit-testing settings
+        shell: pwsh
+        run: ./Tools/Generate-UnitTestingWorldSettings.ps1 -Configuration Release
+
+      - name: Restore
+        run: dotnet restore XRENGINE.slnx
+
+      - name: Build
+        run: dotnet build XRENGINE.slnx --configuration Release --no-restore
+
+      - name: Run targeted GPU regression tests
+        shell: pwsh
+        run: |
+          $filter = @(
+            "FullyQualifiedName~XREngine.UnitTests.Rendering.SurfelGiComputeIntegrationTests"
+            "FullyQualifiedName~XREngine.UnitTests.Rendering.GpuIndirectPhase3PolicyTests"
+            "FullyQualifiedName~XREngine.UnitTests.Rendering.GpuIndirectPhase3ScaffoldTests"
+            "FullyQualifiedName~XREngine.UnitTests.Rendering.GpuCullingPipelineTests"
+            "FullyQualifiedName~XREngine.UnitTests.Rendering.GpuRenderingBacklogTests"
+          ) -join "|"
+
+          dotnet test XREngine.UnitTests/XREngine.UnitTests.csproj `
+            --configuration Release `
+            --no-build `
+            --no-restore `
+            --filter $filter `
+            --logger "trx;LogFileName=gpu-regressions.trx" `
+            --results-directory GpuTestResults
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Targeted GPU regression tests failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Run interactive GPU smoke and validation passes
+        shell: pwsh
+        run: >-
+          ./Tools/Run-DeployGpuValidation.ps1
+          -Configuration Release
+          -OutputRoot "Build/_AgentValidation/deploy-$env:GITHUB_RUN_ID"
+
+      - name: Upload GPU validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-gpu-validation
+          path: |
+            Build/_AgentValidation/deploy-*
+            Build/Logs
+            GpuTestResults
+          if-no-files-found: warn
+
+  promote:
+    name: Promote deploy to release
+    if: github.ref == 'refs/heads/deploy'
+    needs:
+      - security-and-tests
+      - gpu-validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: write
+
+    steps:
+      - name: Checkout validated deploy commit
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fast-forward release branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git ls-remote --exit-code --heads origin release >/dev/null 2>&1; then
+            git fetch origin release:refs/remotes/origin/release
+            if ! git merge-base --is-ancestor origin/release HEAD; then
+              echo "The release branch has diverged from deploy; refusing to overwrite it." >&2
+              exit 1
+            fi
+          fi
+
+          git push origin HEAD:refs/heads/release
+
+      - name: Run release-branch documentation workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: >-
+          gh workflow run release.yml
+          --repo "$GITHUB_REPOSITORY"
+          --ref release
+          -f expected_sha="$GITHUB_SHA"

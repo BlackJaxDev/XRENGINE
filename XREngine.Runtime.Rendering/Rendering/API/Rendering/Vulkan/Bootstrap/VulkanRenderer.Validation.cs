@@ -381,6 +381,15 @@ public unsafe partial class VulkanRenderer
                     .Append('-')
                     .Append(aggregate.LastFrameId)
                     .Append(']');
+                if (aggregate.ErrorCount > 0 && !string.IsNullOrWhiteSpace(aggregate.LastSample))
+                {
+                    const int sampleLimit = 768;
+                    string sample = aggregate.LastSample
+                        .Replace('\r', ' ')
+                        .Replace('\n', ' ');
+                    builder.Append(" sample=")
+                        .Append(sample.AsSpan(0, Math.Min(sample.Length, sampleLimit)));
+                }
                 emitted++;
             }
 

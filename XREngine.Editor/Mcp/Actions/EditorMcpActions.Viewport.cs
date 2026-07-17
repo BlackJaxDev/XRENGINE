@@ -65,6 +65,13 @@ namespace XREngine.Editor.Mcp
 
             static void BeginCapture(AbstractRenderer renderer, XRViewport viewport, string path, TaskCompletionSource<string> tcs)
             {
+                if (renderer is VulkanRenderer)
+                {
+                    tcs.TrySetException(new NotSupportedException(
+                        "Vulkan viewport screenshot readback is temporarily disabled because its synchronous transfer path can trigger a GPU watchdog reset. Use an OS window capture until Vulkan readback synchronization is hardened."));
+                    return;
+                }
+
                 using IDisposable? readbackScope = renderer is VulkanRenderer
                     ? viewport.EnterRenderPipelineReadbackScope()
                     : null;

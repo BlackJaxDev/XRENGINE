@@ -458,7 +458,7 @@ public unsafe partial class VulkanRenderer
                     _imagesByUnit[pair.Key] = pair.Value;
 
                 foreach (var pair in snapshot.Buffers)
-                    _buffersByBinding[pair.Key] = pair.Value;
+                    _buffersByBinding[pair.Key] = pair.Value.Data;
             }
         }
 
@@ -466,11 +466,21 @@ public unsafe partial class VulkanRenderer
         {
             lock (_bindingLock)
             {
-                Dictionary<string, XRDataBuffer> buffersByName = new(StringComparer.Ordinal);
-                foreach (XRDataBuffer buffer in _buffersByBinding.Values)
+                Dictionary<uint, VulkanComputeBufferBinding> buffers = new(_buffersByBinding.Count);
+                Dictionary<string, VulkanComputeBufferBinding> buffersByName = new(StringComparer.Ordinal);
+                bool allowSynchronousUpload = Renderer.AllowSynchronousResourceUploads;
+                foreach (KeyValuePair<uint, XRDataBuffer> pair in _buffersByBinding)
                 {
+                    XRDataBuffer buffer = pair.Value;
+                    if (Renderer.GetOrCreateAPIRenderObject(buffer, generateNow: allowSynchronousUpload) is not VkDataBuffer vkBuffer ||
+                        !vkBuffer.TryCaptureComputeBufferSnapshot(allowSynchronousUpload, out VulkanComputeBufferBinding bufferBinding))
+                    {
+                        bufferBinding = new VulkanComputeBufferBinding(buffer, default, 0UL, 0);
+                    }
+
+                    buffers[pair.Key] = bufferBinding;
                     if (!string.IsNullOrWhiteSpace(buffer.AttributeName))
-                        buffersByName.TryAdd(buffer.AttributeName, buffer);
+                        buffersByName.TryAdd(buffer.AttributeName, bufferBinding);
                 }
 
                 return new ComputeDispatchSnapshot(
@@ -479,7 +489,7 @@ public unsafe partial class VulkanRenderer
                     new Dictionary<uint, string>(_samplerNamesByUnit),
                     new Dictionary<string, XRTexture>(_samplersByName, StringComparer.Ordinal),
                     new Dictionary<uint, ProgramImageBinding>(_imagesByUnit),
-                    new Dictionary<uint, XRDataBuffer>(_buffersByBinding),
+                    buffers,
                     buffersByName);
             }
         }
@@ -2211,7 +2221,7 @@ public unsafe partial class VulkanRenderer
         {
             bufferInfo = default;
 
-            if (snapshot.Buffers.TryGetValue(binding.Binding, out XRDataBuffer? boundBuffer))
+            if (snapshot.Buffers.TryGetValue(binding.Binding, out VulkanComputeBufferBinding boundBuffer))
                 return TryCreateDescriptorBufferInfo(binding, boundBuffer, out bufferInfo);
 
             if (binding.DescriptorType == DescriptorType.UniformBuffer &&
@@ -2223,7 +2233,7 @@ public unsafe partial class VulkanRenderer
 
             if (!string.IsNullOrWhiteSpace(binding.Name))
             {
-                if (snapshot.BuffersByName.TryGetValue(binding.Name, out XRDataBuffer? namedBuffer) &&
+                if (snapshot.BuffersByName.TryGetValue(binding.Name, out VulkanComputeBufferBinding namedBuffer) &&
                     TryCreateDescriptorBufferInfo(binding, namedBuffer, out bufferInfo))
                 {
                     return true;
@@ -2621,6 +2631,27 @@ public unsafe partial class VulkanRenderer
                 Buffer = handle,
                 Offset = 0,
                 Range = requestedRange
+            };
+            return true;
+        }
+
+        private bool TryCreateDescriptorBufferInfo(
+            DescriptorBindingInfo binding,
+            VulkanComputeBufferBinding snapshot,
+            out DescriptorBufferInfo bufferInfo)
+        {
+            bufferInfo = default;
+            if (snapshot.Buffer.Handle == 0 || snapshot.Range == 0)
+                return false;
+
+            if (!VkDataBuffer.SupportsDescriptorType(binding.DescriptorType, snapshot.UsageFlags))
+                return false;
+
+            bufferInfo = new DescriptorBufferInfo
+            {
+                Buffer = snapshot.Buffer,
+                Offset = 0,
+                Range = snapshot.Range
             };
             return true;
         }

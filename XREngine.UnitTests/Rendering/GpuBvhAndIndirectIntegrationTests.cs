@@ -235,6 +235,36 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
     }
 
     [Test]
+    public void BvhRefitShader_BoundsMalformedParentPropagation()
+    {
+        string shaderPath = Path.Combine(ShaderBasePath, "Scene3D", "RenderPipeline", "bvh_refit.comp");
+        File.Exists(shaderPath).ShouldBeTrue($"BVH refit shader not found: {shaderPath}");
+
+        string source = File.ReadAllText(shaderPath);
+
+        source.ShouldContain("uint propagationGuard = safeNodeCount;");
+        source.ShouldContain("if (propagationGuard == 0u || parent >= safeNodeCount || parent >= uint(counters.length()))");
+        source.ShouldContain("propagationGuard--;");
+        source.ShouldContain("if (primIndex >= uint(aabbs.length()))");
+    }
+
+    [Test]
+    public void BvhFrustumCullShader_DoesNotTraverseMalformedParents()
+    {
+        string shaderPath = Path.Combine(ShaderBasePath, "Scene3D", "RenderPipeline", "bvh_frustum_cull.comp");
+        File.Exists(shaderPath).ShouldBeTrue($"BVH frustum-cull shader not found: {shaderPath}");
+
+        string source = File.ReadAllText(shaderPath);
+
+        source.ShouldContain("uint safeNodeCount = min(nodeCount, uint(nodes.length()));");
+        source.ShouldContain("BvhNode leaf = nodes[gid];");
+        source.ShouldContain("(leaf.flags & BVH_FLAG_LEAF) == 0u");
+        source.ShouldContain("!AabbVisible(leaf.minBounds, leaf.maxBounds)");
+        source.ShouldNotContain("node.parentIndex");
+        source.ShouldNotContain("uint stack[32]");
+    }
+
+    [Test]
     public void BvhBuildShaders_DoNotClampSceneBvhTo1024Objects()
     {
         string buildPath = Path.Combine(ShaderBasePath, "Scene3D", "RenderPipeline", "bvh_build.comp");
@@ -1206,6 +1236,12 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             culledCommands[0 * CommandFloats + 17] = BitConverter.UInt32BitsToSingle(201u);
             culledCommands[1 * CommandFloats + 17] = BitConverter.UInt32BitsToSingle(202u);
             culledCommands[2 * CommandFloats + 17] = BitConverter.UInt32BitsToSingle(203u);
+            culledCommands[0 * CommandFloats + 8] = BitConverter.UInt32BitsToSingle(0u);
+            culledCommands[1 * CommandFloats + 8] = BitConverter.UInt32BitsToSingle(1u);
+            culledCommands[2 * CommandFloats + 8] = BitConverter.UInt32BitsToSingle(0u);
+            culledCommands[0 * CommandFloats + 19] = BitConverter.UInt32BitsToSingle(41u);
+            culledCommands[1 * CommandFloats + 19] = BitConverter.UInt32BitsToSingle(42u);
+            culledCommands[2 * CommandFloats + 19] = BitConverter.UInt32BitsToSingle(43u);
 
             uint culledBuffer = gl.GenBuffer();
             uint culledCountBuffer = gl.GenBuffer();
@@ -1234,7 +1270,6 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 3, materialIdsBuffer);
 
             gl.UseProgram(program);
-            gl.Uniform1(gl.GetUniformLocation(program, "CurrentRenderPass"), -1);
             gl.Uniform1(gl.GetUniformLocation(program, "MaxSortKeys"), numCommands);
             gl.Uniform1(gl.GetUniformLocation(program, "StateBitMask"), 0u);
             gl.Uniform1(gl.GetUniformLocation(program, "SortDomain"), 0);
@@ -1247,9 +1282,12 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             uint* outPtr = (uint*)gl.MapBuffer(BufferTargetARB.ShaderStorageBuffer, BufferAccessARB.ReadOnly);
 
             // Shader emits 4 uint lanes per command: packed key, primary key, secondary key, drawID.
-            outPtr[3].ShouldBe(0u);
-            outPtr[7].ShouldBe(1u);
-            outPtr[11].ShouldBe(2u);
+            // BuildKeys must initialize every culled slot even when commands span
+            // render passes. Material scatter owns pass filtering; stale key slots
+            // can otherwise duplicate an unrelated draw into an indirect bucket.
+            outPtr[3].ShouldBe(41u);
+            outPtr[7].ShouldBe(42u);
+            outPtr[11].ShouldBe(43u);
 
             uint k0 = outPtr[0];
             uint k1 = outPtr[4];
@@ -1262,9 +1300,10 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             outPtr[10].ShouldBe(103u);
             gl.UnmapBuffer(BufferTargetARB.ShaderStorageBuffer);
 
-            // renderPass, shaderProgramID and flags are all zero in this setup
+            // Shader program ID and flags are zero; the middle command belongs
+            // to render pass 1 and must still publish a complete key.
             k0.ShouldBe(0u);
-            k1.ShouldBe(0u);
+            k1.ShouldBe(1u << 24);
             k2.ShouldBe(0u);
 
             gl.DeleteBuffer(culledBuffer);

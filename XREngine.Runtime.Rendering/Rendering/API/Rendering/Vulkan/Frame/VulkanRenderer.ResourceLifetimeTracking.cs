@@ -449,6 +449,88 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Verifies that a command buffer is no longer recording, queued, submitted, or
+    /// pending retirement before a native reset is issued. Vulkan requires this
+    /// check to happen before <c>vkResetCommandBuffer</c>; doing it from the
+    /// post-begin bind-state reset is too late to prevent invalid pending reuse.
+    /// </summary>
+    private bool CanResetVulkanCommandBuffer(CommandBuffer commandBuffer, out string reason)
+    {
+        if (commandBuffer.Handle == 0)
+        {
+            reason = "command buffer handle is null";
+            return false;
+        }
+
+        ulong handle = unchecked((ulong)commandBuffer.Handle);
+        lock (_vulkanResourceLifetimeLock)
+        {
+            if (_commandBufferTrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
+            {
+                lock (batch)
+                {
+                    if (batch.IsRecording)
+                    {
+                        reason = "command buffer is still recording";
+                        return false;
+                    }
+
+                    if (batch.QueuedSubmissionCount != 0)
+                    {
+                        reason = "command buffer is queued for submission";
+                        return false;
+                    }
+                }
+            }
+
+            if (_vulkanCommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? lifetime) &&
+                lifetime.QueuedSubmissionCount != 0)
+            {
+                reason = "command buffer occupies the submission gateway";
+                return false;
+            }
+
+            VulkanResourceLifetimeRecord commandRecord = GetOrRegisterVulkanResource_NoLock(
+                ResourceKey(ObjectType.CommandBuffer, handle),
+                "CommandBuffer.Reset");
+            if ((commandRecord.State & EVulkanResourceLifetimeState.PendingRetirement) != 0)
+            {
+                reason = "command buffer is pending retirement";
+                return false;
+            }
+
+            if ((commandRecord.State & EVulkanResourceLifetimeState.Destroyed) != 0)
+            {
+                reason = "command buffer is destroyed";
+                return false;
+            }
+
+            if (!UpdateVulkanResourceCompletionState_NoLock(commandRecord))
+            {
+                reason =
+                    $"submission is incomplete (graphics={commandRecord.Pins.LastGraphicsSequence}/{_vulkanCompletedGraphicsSequence}, " +
+                    $"transfer={commandRecord.Pins.LastTransferSequence}/{_vulkanCompletedTransferSequence}, " +
+                    $"other={commandRecord.Pins.LastOtherSequence}/{_vulkanCompletedOtherSequence})";
+                return false;
+            }
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private Result ResetVulkanCommandBufferTracked(CommandBuffer commandBuffer)
+    {
+        if (!CanResetVulkanCommandBuffer(commandBuffer, out string reason))
+        {
+            throw new InvalidOperationException(
+                $"Command buffer 0x{unchecked((ulong)commandBuffer.Handle):X} cannot be reset: {reason}.");
+        }
+
+        return Api!.ResetCommandBuffer(commandBuffer, 0);
+    }
+
     private void RemoveVulkanCommandBufferLifetime(CommandBuffer commandBuffer, bool destroyed = false)
     {
         if (commandBuffer.Handle == 0)

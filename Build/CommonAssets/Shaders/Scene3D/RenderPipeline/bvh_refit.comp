@@ -62,29 +62,18 @@ layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 void refitLeaf(uint nodeIndex)
 {
+    uint safeNodeCount = min(nodeCount, uint(nodes.length()));
+    if (nodeIndex >= safeNodeCount || nodeIndex >= uint(ranges.length()))
+        return;
+
     BvhNode node = nodes[nodeIndex];
     uvec2 range = ranges[nodeIndex];
-
-    if (debugValidation != 0u)
-    {
-        if (range.x + range.y > mortonObjects.length())
-            return;
-        if ((node.flags & BVH_FLAG_LEAF) != 0u)
-        {
-            if (range.y == 0u)
-                return;
-        }
-        else
-        {
-            if ((node.leftChild != uint(-1) && node.leftChild >= nodeCount) || (node.rightChild != uint(-1) && node.rightChild >= nodeCount))
-                return;
-        }
-    }
 
     if ((node.flags & BVH_FLAG_LEAF) != 0u)
     {
         // Leaf: recompute bounds from primitives in the range.
-        if (range.y == 0u)
+        uint mortonCount = uint(mortonObjects.length());
+        if (range.y == 0u || range.x > mortonCount || range.y > mortonCount - range.x)
             return;
 
         vec3 minB = vec3(1e30);
@@ -92,6 +81,8 @@ void refitLeaf(uint nodeIndex)
         for (uint i = 0u; i < range.y; ++i)
         {
             uint primIndex = mortonObjects[range.x + i].objectId;
+            if (primIndex >= uint(aabbs.length()))
+                return;
             minB = combineMin(minB, aabbs[primIndex].minBounds.xyz);
             maxB = combineMax(maxB, aabbs[primIndex].maxBounds.xyz);
         }
@@ -104,8 +95,15 @@ void refitLeaf(uint nodeIndex)
         // Bottom-up propagation using per-node counters.
         // Each internal node is processed exactly once, by the second child that arrives.
         uint parent = node.parentIndex;
+        uint propagationGuard = safeNodeCount;
         while (parent != uint(-1))
         {
+            // Malformed LBVH connectivity can contain a parent-pointer cycle.
+            // Never let that cycle become an unbounded GPU loop and trigger a TDR.
+            if (propagationGuard == 0u || parent >= safeNodeCount || parent >= uint(counters.length()))
+                return;
+            propagationGuard--;
+
             uint prior = atomicAdd(counters[parent], 1u);
             if (prior == 1u)
             {
@@ -115,12 +113,9 @@ void refitLeaf(uint nodeIndex)
                 uint left = nodes[parent].leftChild;
                 uint right = nodes[parent].rightChild;
 
-                // Defensive bounds checks when validation is enabled.
-                if (debugValidation != 0u)
-                {
-                    if ((left != uint(-1) && left >= nodeCount) || (right != uint(-1) && right >= nodeCount))
-                        return;
-                }
+                if ((left != uint(-1) && left >= safeNodeCount) ||
+                    (right != uint(-1) && right >= safeNodeCount))
+                    return;
 
                 vec3 minP = vec3(1e30);
                 vec3 maxP = vec3(-1e30);
@@ -154,7 +149,7 @@ void main()
     if (refitStage == 0u)
     {
         uint gid = gl_GlobalInvocationID.x;
-        if (gid < nodeCount)
+        if (gid < nodeCount && gid < uint(counters.length()))
             counters[gid] = 0u;
         return;
     }

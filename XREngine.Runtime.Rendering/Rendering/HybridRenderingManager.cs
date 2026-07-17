@@ -86,6 +86,7 @@ namespace XREngine.Rendering
             "FrustumPlanes[5]",
         ];
         private XRRenderProgram? _indirectCompProgram;
+        private readonly XRMeshRenderer?[] _zeroReadbackTierRenderers = new XRMeshRenderer?[(int)GPUBatchingBindings.MaterialTierCount];
 
         private bool _useMeshletPipeline = false;
         public bool UseMeshletPipeline
@@ -4902,7 +4903,8 @@ namespace XREngine.Rendering
                 for (uint tier = 0; tier < GPUBatchingBindings.MaterialTierCount; ++tier)
                 {
                     P3Diagnostics.IncTierIterated();
-                    if (!ConfigureIndirectRendererForTier(scene, vaoRenderer, (EAtlasTier)tier))
+                    XRMeshRenderer? tierRenderer = ConfigureIndirectRendererForTier(scene, (EAtlasTier)tier);
+                    if (tierRenderer is null)
                     {
                         P3Diagnostics.IncTierSkippedConfigure();
                         continue;
@@ -4916,7 +4918,7 @@ namespace XREngine.Rendering
 
                     DispatchRenderIndirectCountBucket(
                         indirectDrawBuffer,
-                        vaoRenderer,
+                        tierRenderer,
                         culledCommandsBuffer,
                         scene.DrawMetadataBuffer,
                         scene.LodTransitionBuffer,
@@ -5049,7 +5051,8 @@ namespace XREngine.Rendering
                 renderer.SetMaterialUniforms(material, program);
                 renderer.ApplyRenderParameters(material.RenderOptions);
 
-                if (!ConfigureIndirectRendererForTier(scene, vaoRenderer, (EAtlasTier)tier))
+                XRMeshRenderer? tierRenderer = ConfigureIndirectRendererForTier(scene, (EAtlasTier)tier);
+                if (tierRenderer is null)
                     continue;
 
                 nuint indirectByteOffset = (nuint)(bucketIndex * maxDrawsPerBucket * stride);
@@ -5057,7 +5060,7 @@ namespace XREngine.Rendering
 
                 DispatchRenderIndirectCountBucket(
                     indirectDrawBuffer,
-                    vaoRenderer,
+                    tierRenderer,
                     culledCommandsBuffer,
                     scene.DrawMetadataBuffer,
                     scene.LodTransitionBuffer,
@@ -5230,7 +5233,8 @@ namespace XREngine.Rendering
             foreach (uint bucketIndex in activeBuckets)
             {
                 uint tier = bucketIndex % GPUBatchingBindings.MaterialTierCount;
-                if (!ConfigureIndirectRendererForTier(scene, vaoRenderer, (EAtlasTier)tier))
+                XRMeshRenderer? tierRenderer = ConfigureIndirectRendererForTier(scene, (EAtlasTier)tier);
+                if (tierRenderer is null)
                     continue;
 
                 nuint indirectByteOffset = (nuint)(bucketIndex * maxDrawsPerBucket * stride);
@@ -5238,7 +5242,7 @@ namespace XREngine.Rendering
 
                 DispatchRenderIndirectCountBucket(
                     indirectDrawBuffer,
-                    vaoRenderer,
+                    tierRenderer,
                     culledCommandsBuffer,
                     scene.DrawMetadataBuffer,
                     scene.LodTransitionBuffer,
@@ -5261,12 +5265,25 @@ namespace XREngine.Rendering
             }
         }
 
-        private static bool ConfigureIndirectRendererForTier(GPUScene scene, XRMeshRenderer? vaoRenderer, EAtlasTier tier)
+        private XRMeshRenderer? ConfigureIndirectRendererForTier(GPUScene scene, EAtlasTier tier)
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.ConfigureIndirectRendererForTier");
 
+            int tierIndex = (int)tier;
+            if ((uint)tierIndex >= (uint)_zeroReadbackTierRenderers.Length)
+                return null;
+
+            XRMeshRenderer? vaoRenderer = _zeroReadbackTierRenderers[tierIndex];
             if (vaoRenderer is null)
-                return false;
+            {
+                vaoRenderer = new XRMeshRenderer
+                {
+                    GenerateAsync = false,
+                    Name = $"ZeroReadbackAtlasTier_{tier}"
+                };
+                vaoRenderer.GetDefaultVersion().Generate();
+                _zeroReadbackTierRenderers[tierIndex] = vaoRenderer;
+            }
 
             XRDataBuffer? positions = scene.GetAtlasPositions(tier);
             XRDataBuffer? normals = scene.GetAtlasNormals(tier);
@@ -5274,7 +5291,7 @@ namespace XREngine.Rendering
             XRDataBuffer? uv0 = scene.GetAtlasUV0(tier);
             XRDataBuffer? indices = scene.GetAtlasIndices(tier);
             if (positions is null || indices is null)
-                return false;
+                return null;
 
             static void SetOrRemoveBuffer(XRMeshRenderer renderer, string key, XRDataBuffer? buffer)
             {
@@ -5292,9 +5309,11 @@ namespace XREngine.Rendering
 
             var renderer = AbstractRenderer.Current;
             if (renderer is null)
-                return false;
+                return null;
 
-            return renderer.TrySyncMeshRendererIndexBuffer(vaoRenderer, indices, scene.GetAtlasIndexElementSize(tier));
+            return renderer.TrySyncMeshRendererIndexBuffer(vaoRenderer, indices, scene.GetAtlasIndexElementSize(tier))
+                ? vaoRenderer
+                : null;
         }
 
         private static bool TryBindSceneDatabaseDeviceAddressUniforms(
@@ -5819,6 +5838,8 @@ namespace XREngine.Rendering
             _indirectTextTexCoordsBuffer?.Destroy();
             _indirectTextRotationsBuffer?.Destroy();
             _indirectTextGlyphOffsetsBuffer?.Destroy();
+            foreach (XRMeshRenderer? tierRenderer in _zeroReadbackTierRenderers)
+                tierRenderer?.Destroy();
             GC.SuppressFinalize(this);
         }
     }

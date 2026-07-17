@@ -518,7 +518,7 @@ namespace XREngine.Rendering.Vulkan
                         continue;
                     }
 
-                    Result result = Api.ResetCommandBuffer(commandBuffer, 0);
+                    Result result = ResetVulkanCommandBufferTracked(commandBuffer);
                     if (result != Result.Success)
                     {
                         Debug.VulkanWarningEvery(

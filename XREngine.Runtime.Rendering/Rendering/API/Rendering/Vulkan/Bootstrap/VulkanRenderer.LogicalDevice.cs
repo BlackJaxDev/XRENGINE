@@ -1069,6 +1069,9 @@ public unsafe partial class VulkanRenderer
         Api!.GetPhysicalDeviceFeatures(_physicalDevice, out supportedFeatures);
 
         PhysicalDeviceFeatures deviceFeatures = new();
+        if (supportedFeatures.RobustBufferAccess)
+            deviceFeatures.RobustBufferAccess = Vk.True;
+
         if (supportedFeatures.SamplerAnisotropy)
         {
             deviceFeatures.SamplerAnisotropy = Vk.True;
@@ -1102,6 +1105,18 @@ public unsafe partial class VulkanRenderer
 
         if (supportedFeatures.IndependentBlend)
             deviceFeatures.IndependentBlend = Vk.True;
+
+        if (supportedFeatures.MultiDrawIndirect)
+        {
+            deviceFeatures.MultiDrawIndirect = Vk.True;
+            _supportsMultiDrawIndirect = true;
+        }
+
+        if (supportedFeatures.DrawIndirectFirstInstance)
+        {
+            deviceFeatures.DrawIndirectFirstInstance = Vk.True;
+            _supportsDrawIndirectFirstInstance = true;
+        }
 
         QueryVulkan12Capabilities(
             out PhysicalDeviceVulkan12Features supportedVulkan12Features,
@@ -1324,7 +1339,6 @@ public unsafe partial class VulkanRenderer
         bool enableShaderOutputLayerFeature = shaderOutputLayerFeatureSupported;
         bool enableDrawIndirectCountFeature =
             vulkan12PromotedToCore &&
-            drawIndirectCountExtensionEnabled &&
             supportedVulkan12Features.DrawIndirectCount;
 
         // Host query reset (core 1.2). Occlusion query pools must be reset outside a render
@@ -2101,7 +2115,7 @@ public unsafe partial class VulkanRenderer
         _supportsVulkanMeshShaderFeature = enableMeshShaderFeature;
 
         // Load optional extension command tables before resolving backend modes that depend on them.
-        LoadOptionalDeviceExtensions(extensionsArray);
+        LoadOptionalDeviceExtensions(extensionsArray, enableDrawIndirectCountFeature);
         LogVulkanDiagnosticDeviceCapabilities(
             khrDeviceFaultExtensionAvailable,
             khrDeviceFaultExtensionEnabled,
@@ -2346,7 +2360,9 @@ public unsafe partial class VulkanRenderer
     /// <summary>
     /// Loads optional device extension handles after device creation.
     /// </summary>
-    private void LoadOptionalDeviceExtensions(string[] enabledExtensions)
+    private void LoadOptionalDeviceExtensions(
+        string[] enabledExtensions,
+        bool enableDrawIndirectCountFeature)
     {
         bool descriptorIndexingExtensionLoaded = enabledExtensions.Contains("VK_EXT_descriptor_indexing");
 
@@ -2380,13 +2396,33 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        // Check if VK_KHR_draw_indirect_count was enabled
-        if (enabledExtensions.Contains("VK_KHR_draw_indirect_count"))
+        bool indirectCountCoreFeaturesReady =
+            _supportsMultiDrawIndirect &&
+            _supportsDrawIndirectFirstInstance;
+        if (enableDrawIndirectCountFeature && indirectCountCoreFeaturesReady)
+        {
+            _usesCoreDrawIndirectCountCommands = true;
+            _supportsDrawIndirectCount = true;
+            Debug.Vulkan("[Vulkan] Vulkan 1.2 core indirect-count drawing enabled with required core indirect features.");
+        }
+        // Vulkan 1.1 and older expose the command through VK_KHR_draw_indirect_count.
+        else if (enabledExtensions.Contains("VK_KHR_draw_indirect_count"))
         {
             if (Api!.TryGetDeviceExtension(instance, device, out _khrDrawIndirectCount))
             {
-                _supportsDrawIndirectCount = true;
-                Debug.Vulkan("[Vulkan] VK_KHR_draw_indirect_count extension loaded successfully.");
+                _supportsDrawIndirectCount = indirectCountCoreFeaturesReady;
+                if (_supportsDrawIndirectCount)
+                {
+                    Debug.Vulkan("[Vulkan] VK_KHR_draw_indirect_count extension loaded with required core indirect features.");
+                }
+                else
+                {
+                    Debug.VulkanWarning(
+                        "[Vulkan] VK_KHR_draw_indirect_count loaded but disabled for engine submission " +
+                        "because required core features are unavailable (multiDrawIndirect={0}, drawIndirectFirstInstance={1}).",
+                        _supportsMultiDrawIndirect,
+                        _supportsDrawIndirectFirstInstance);
+                }
             }
             else
             {

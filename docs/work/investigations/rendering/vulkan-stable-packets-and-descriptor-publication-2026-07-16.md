@@ -127,3 +127,95 @@ editor instance owns the GPU workload and normal output files.
 - End-to-end zero-allocation is closed for the warmed production desktop lanes.
   Parallel-performance parity and the repeated 60-second static/moving-camera
   matrix remain open; short smoke runs are not substituted for either gate.
+
+## 2026-07-17 Device-loss continuation
+
+- Renderer-family worker affinity now hashes the mutable `VkMeshRenderer`
+  identity, keeps every family of that renderer on one fixed worker pool, and
+  routes heterogeneous chains through serial recording. Dirty worker batches
+  are invalidated before dispatch so an incomplete batch cannot retain an old
+  executable secondary.
+- Every core renderer-owned `vkResetCommandBuffer` now passes an engine lifetime
+  preflight first. Cached command-chain secondaries whose exact submission is
+  incomplete are replaced and retired instead of being reset in place.
+- Worker planner readback scopes are serialized because they temporarily swap
+  renderer-wide resource-planner state. This reduced one failure from startup
+  frame 2-5 to frame 46 but did not close the device loss, proving it was a real
+  race but not the sole cause.
+- The focused stable-packet/OpenXR/command-chain selection passes 157/157, and
+  the Release editor builds with zero compile errors. Existing Magick.NET
+  vulnerability warnings and unrelated Surfel GI field warnings remain.
+- A worker-disabled StandardValidation run completed 158 frames, passed its
+  stability gate, and reported zero VUIDs:
+  `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_11-16-28/summary.json`.
+  A later worker-enabled proof also completed 178 frames cleanly:
+  `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_11-26-02/summary.json`.
+  Neither single run is accepted as causal or sufficient.
+- Repeated worker-enabled cohorts remained nondeterministic. The 30-second
+  acceptance attempt at
+  `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_11-28-53/summary.json`
+  completed only repetition two. The retained repetition-three exception names
+  pending `SwapchainPrimary[1]`, `ImGuiOverlay.Primary[1]`, and
+  `texture upload command buffer` objects immediately before `vkQueueSubmit`
+  returned `VK_ERROR_DEVICE_LOST`.
+- An explicit per-swapchain-image submission-fence experiment did not help and
+  was reverted. Its three launches failed at
+  `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_11-40-18/summary.json`;
+  one failure reported no validation error before device loss, while another
+  observed the graphics timeline at `ulong.MaxValue` only after the device was
+  already failing. This is treated as fallout, not a proven signal source.
+- Parallel command-chain workers are now quarantined while the serial
+  command-chain secondary path remains active. The quarantine cohort still
+  failed nondeterministically with a validation-clean `vkQueueSubmit` device
+  loss:
+  `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_11-47-14/summary.json`.
+  Therefore worker recording is independently unsafe but is not the sole
+  originating cause.
+- The RenderDoc skill workflow could not produce a capture: `rdc-cli` is not
+  installed, and the installed `renderdoccmd.exe` fallback launched an injected
+  process without a visible editor frame/capture boundary. The bounded attempt
+  root is
+  `Build/_AgentValidation/20260717-vulkan-device-loss-renderdoc/renderdoc/`;
+  it contains no valid `.rdc` and is not GPU evidence.
+
+Current conclusion: P0 remains blocked by a validation-clean, startup-time GPU
+command/submission failure. The next useful step is an interactive RenderDoc or
+equivalent capture that can identify the last valid pass and inspect the
+zero-readback indirect command/count buffers. More slot, timeline, or worker
+affinity changes without that GPU evidence are not justified.
+
+## 2026-07-17 Strategy-wide zero-readback containment
+
+- A profiled command-chain run survived 163 frames with exact requested/consumed
+  indirect parity, zero readback, zero fallback, and zero VUIDs, but profiling
+  forced primary re-recording. An unprofiled run continued to reset the driver.
+- Quarantining clean primary reuse and indirect-draw secondaries did not close
+  the reset. Entering play mode still produced `nvlddmkm` event 153 followed by
+  a `vulkan-1.dll` `0xc0000409` fail-fast. The remaining flaw was scope: static
+  command-buffer segments could still schedule persistent secondaries even when
+  mutable zero-readback publications lived in another segment.
+- Command-chain scheduling now rejects the resolved GPU zero-readback strategy
+  for the entire frame. A second per-segment mutable-op guard remains as defense
+  in depth. The renderer still executes GPU compute culling, scatter, and
+  indirect-count draws on a freshly recorded primary.
+- The same StandardValidation play-mode run then remained responsive for 20
+  seconds with command chains requested and produced no new watchdog event.
+  Capture:
+  `Build/_AgentValidation/20260717-vulkan-device-loss-renderdoc/mcp-captures/zero-readback-fixed/os-window-playing-strategy-quarantine.png`.
+- Visual parity is still open. The capture proves Sponza is loaded and active in
+  the hierarchy but shows only the skybox. MCP accepted a known camera pose and
+  the renderer remained responsive; however, OS compositing returned a black
+  Vulkan client surface in that session, so it cannot prove geometry presence
+  or absence. A GPU debugger or a correctly synchronized Vulkan readback is
+  required to inspect the final target and indirect buckets.
+- Vulkan MCP screenshot readback is now rejected explicitly before transfer
+  because the synchronous path independently reproduced a watchdog reset.
+- Validation: Release editor build succeeded with zero errors. The focused P0
+  source/runtime contracts pass 53/53. The larger selection passed 67 and failed
+  17 stale P1 source-contract path/token assertions after the command-buffer
+  folder split; no full-suite-clean claim is made.
+
+Revised conclusion: the immediate zero-readback/command-chain device-loss risk
+is contained by an explicit strategy-wide quarantine. P0 remains open for
+missing-Sponza visual parity, repeated Standard/SyncValidation cohorts, external
+marker proof, and the required performance/motion/resize/hot-reload matrix.
