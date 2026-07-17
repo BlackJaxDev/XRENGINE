@@ -40,12 +40,25 @@ namespace XREngine.Rendering.Occlusion
             return query;
         }
 
-        public void Release(XRRenderQuery query)
+        /// <summary>
+        /// Releases a query after its owner is finished with it. Queries whose result
+        /// epoch is still pending are destroyed instead of pooled: assigning one to a
+        /// new owner would let that owner consume the previous owner's result.
+        /// Backend wrappers retire their native resources through normal lifetime
+        /// tracking, so destruction remains safe while GPU work is in flight.
+        /// </summary>
+        public void Release(XRRenderQuery query, bool pendingResult = false)
         {
             if (query is null)
                 return;
 
             query.CurrentQuery = null;
+            if (pendingResult)
+            {
+                query.Destroy();
+                return;
+            }
+
             lock (_lock)
                 _pool.Enqueue(query);
         }
@@ -91,9 +104,6 @@ namespace XREngine.Rendering.Occlusion
             anySamplesPassed = true;
             VulkanRenderer.VkRenderQuery? vkQuery = renderer.GenericToAPI<VulkanRenderer.VkRenderQuery>(query);
             if (vkQuery is null)
-                return false;
-
-            if (!vkQuery.TryGetResultAvailable(out bool available) || !available)
                 return false;
 
             if (!vkQuery.TryGetResult(out ulong result, wait: false))

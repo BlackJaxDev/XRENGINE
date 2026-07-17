@@ -16,10 +16,23 @@ namespace XREngine.Rendering.Vulkan
             private QueryPool _queryPool;
             private QueryType _queryType = QueryType.Occlusion;
             private uint _queryPoolCapacity;
-            private uint _resultQueryCount = 1u;
             private bool _queryActive;
             private uint _activeQueryCount = 1u;
-            private int _hasSubmittedResultEpoch;
+            private readonly object _resultEpochLock = new();
+            private readonly Dictionary<ulong, RecordedResultEpoch> _recordedResultEpochs = [];
+            private SubmittedResultEpoch _submittedResultEpoch;
+            private ulong _nextSubmittedResultEpochSerial;
+
+            private readonly record struct RecordedResultEpoch(uint QueryCount, bool ForceVisible);
+
+            private readonly record struct SubmittedResultEpoch(
+                ulong Serial,
+                ulong CommandBufferHandle,
+                uint QueryCount,
+                bool ForceVisible)
+            {
+                public bool IsValid => Serial != 0ul;
+            }
 
             private const uint MaxOcclusionQueryViewSlots = 32u;
 
@@ -91,7 +104,18 @@ namespace XREngine.Rendering.Vulkan
                 // multiview scopes pass their slot count through PrepareForRecording.
                 if (viewMask != 0u)
                     _activeQueryCount = ResolveOcclusionQueryViewSlotCount(viewMask);
-                _resultQueryCount = _activeQueryCount;
+
+                ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+                lock (_resultEpochLock)
+                {
+                    if (!_recordedResultEpochs.TryGetValue(commandBufferHandle, out RecordedResultEpoch recordedEpoch))
+                        return false;
+
+                    _recordedResultEpochs[commandBufferHandle] = recordedEpoch with
+                    {
+                        QueryCount = _activeQueryCount,
+                    };
+                }
 
                 // Track the query pool resource usage for the current command buffer.
                 Renderer.TrackVulkanCommandBufferResource(
@@ -123,19 +147,38 @@ namespace XREngine.Rendering.Vulkan
                     !EnsureQueryPool(queryType))
                     return false;
 
+                ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+                if (commandBufferHandle == 0)
+                    return false;
+
+                uint clampedQueryCount = Math.Clamp(queryCount, 1u, _queryPoolCapacity);
+                lock (_resultEpochLock)
+                {
+                    // One VkQueryPool range represents exactly one unresolved epoch.
+                    // Recording another use while that epoch is pending would let a
+                    // queued reset overwrite the result before the CPU consumes it.
+                    if (_submittedResultEpoch.IsValid)
+                    {
+                        _recordedResultEpochs.Remove(commandBufferHandle);
+                        return false;
+                    }
+
+                    _recordedResultEpochs[commandBufferHandle] = new RecordedResultEpoch(
+                        clampedQueryCount,
+                        ForceVisible: false);
+                }
+
                 // Track the query pool resource usage for the current command buffer.
                 Renderer.TrackVulkanCommandBufferResource(
                     commandBuffer,
                     ObjectType.QueryPool,
                     _queryPool.Handle,
                     "Query.Reset");
-                _activeQueryCount = Math.Clamp(queryCount, 1u, _queryPoolCapacity);
-                _resultQueryCount = _activeQueryCount;
+                _activeQueryCount = clampedQueryCount;
                 // The queued reset is the sole epoch boundary. A host reset here is not
                 // safe merely because a result was available: Vulkan requires all
                 // submitted commands that refer to the range to have completed.
                 Api!.CmdResetQueryPool(commandBuffer, _queryPool, 0, _queryPoolCapacity);
-                Volatile.Write(ref _hasSubmittedResultEpoch, 0);
                 return true;
             }
 
@@ -174,7 +217,7 @@ namespace XREngine.Rendering.Vulkan
             /// </summary>
             /// <param name="target">The query target indicating the type of query to prepare for reuse.</param>
             /// <returns>True if the query was successfully prepared for reuse; otherwise, false.</returns>
-            internal bool PrepareForCommandBufferReuse(EQueryTarget target)
+            internal bool PrepareForCommandBufferReuse(CommandBuffer commandBuffer, EQueryTarget target)
             {
                 // Only occlusion queries are currently supported for command buffer reuse.
                 if (!TryMapQueryType(target, out QueryType queryType, out bool isOcclusion) || !isOcclusion)
@@ -185,10 +228,14 @@ namespace XREngine.Rendering.Vulkan
                 if (!EnsureQueryPool(queryType))
                     return false;
 
-                // Hide the resolved epoch until the reused command buffer is submitted;
-                // resource tracking marks the new result epoch at submission time.
-                Volatile.Write(ref _hasSubmittedResultEpoch, 0);
-                return true;
+                ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+                lock (_resultEpochLock)
+                {
+                    // Reuse is legal only after the prior epoch was consumed and only
+                    // for a command buffer whose recorded view-slot metadata is known.
+                    return !_submittedResultEpoch.IsValid &&
+                        _recordedResultEpochs.ContainsKey(commandBufferHandle);
+                }
             }
 
             /// <summary>
@@ -203,6 +250,17 @@ namespace XREngine.Rendering.Vulkan
                 if (!EnsureQueryPool(QueryType.Timestamp))
                     return false;
 
+                ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+                lock (_resultEpochLock)
+                {
+                    if (_submittedResultEpoch.IsValid || commandBufferHandle == 0)
+                        return false;
+
+                    _recordedResultEpochs[commandBufferHandle] = new RecordedResultEpoch(
+                        QueryCount: 1u,
+                        ForceVisible: false);
+                }
+
                 // Track the query pool resource usage for the command buffer.
                 Renderer.TrackVulkanCommandBufferResource(
                     commandBuffer,
@@ -214,8 +272,6 @@ namespace XREngine.Rendering.Vulkan
                 Api!.CmdResetQueryPool(commandBuffer, _queryPool, 0, 1);
                 Api.CmdWriteTimestamp(commandBuffer, stage, _queryPool, 0);
                 _activeQueryCount = 1u;
-                _resultQueryCount = 1u;
-                Volatile.Write(ref _hasSubmittedResultEpoch, 0);
 
                 // Mark the current query as a timestamp query and indicate that it is no longer active.
                 Data.CurrentQuery = EQueryTarget.Timestamp;
@@ -235,20 +291,47 @@ namespace XREngine.Rendering.Vulkan
             {
                 result = 0ul;
 
-                // Ensure that the query pool is valid before attempting to retrieve the result.
-                if (_queryPool.Handle == 0 || Volatile.Read(ref _hasSubmittedResultEpoch) == 0)
+                // A queued CmdResetQueryPool does not make the previous result unavailable
+                // until the reset actually executes. Do not poll the pool until submission
+                // completion proves that this epoch's reset, begin, draw, and end all ran.
+                if (_queryPool.Handle == 0 || !TryGetSubmittedResultEpoch(out SubmittedResultEpoch epoch))
                     return false;
+                if (!Renderer.IsVulkanResourceUseCompleted(ObjectType.QueryPool, _queryPool.Handle))
+                {
+                    if (!wait)
+                        return false;
 
-                // Determine the appropriate flags for retrieving the query result based on whether waiting is allowed.
-                QueryResultFlags flags = QueryResultFlags.Result64Bit;
+                    // Waiting on the query alone is insufficient: availability from the
+                    // previous pool use remains observable until the queued reset executes.
+                    // An explicit wait therefore establishes submission completion first.
+                    Renderer.DeviceWaitIdle();
+                    if (!Renderer.IsVulkanResourceUseCompleted(ObjectType.QueryPool, _queryPool.Handle))
+                        return false;
+                }
+
+                // A recorder-side scope interruption ended the Vulkan query without its
+                // intended draw. Never turn that legal empty result into false occlusion.
+                if (epoch.ForceVisible)
+                {
+                    if (!TryConsumeSubmittedResultEpoch(epoch.Serial))
+                        return false;
+
+                    result = 1ul;
+                    return true;
+                }
+
+                // Read each value and its availability atomically. An unavailable value is
+                // undefined without PARTIAL, so it must never drive a culling decision.
+                QueryResultFlags flags = QueryResultFlags.Result64Bit |
+                    QueryResultFlags.ResultWithAvailabilityBit;
                 if (wait)
                     flags |= QueryResultFlags.ResultWaitBit;
 
                 // Clamp the number of queries to retrieve to the valid range of the query pool.
-                uint queryCount = Math.Clamp(_resultQueryCount, 1u, _queryPoolCapacity);
-                Span<ulong> values = stackalloc ulong[checked((int)queryCount)];
+                uint queryCount = Math.Clamp(epoch.QueryCount, 1u, _queryPoolCapacity);
+                Span<ulong> data = stackalloc ulong[checked((int)queryCount * 2)];
                 Result queryResult;
-                fixed (ulong* pValues = values)
+                fixed (ulong* pData = data)
                 {
                     // Retrieve the query results from the Vulkan query pool into the allocated span.
                     queryResult = Api!.GetQueryPoolResults(
@@ -256,30 +339,19 @@ namespace XREngine.Rendering.Vulkan
                         _queryPool,
                         0,
                         queryCount,
-                        checked((nuint)(queryCount * sizeof(ulong))),
-                        pValues,
-                        (ulong)sizeof(ulong),
+                        checked((nuint)(queryCount * sizeof(ulong) * 2u)),
+                        pData,
+                        (ulong)(sizeof(ulong) * 2),
                         flags);
                 }
 
-                // Check if the query results were successfully retrieved.
-                if (queryResult == Result.Success)
+                if (queryResult == Result.Success || queryResult == Result.NotReady)
                 {
-                    // Notify the renderer that the Vulkan query pool resource has been used.
-                    Renderer.NotifyVulkanResourceUseCompleted(ObjectType.QueryPool, _queryPool.Handle);
-                    Volatile.Write(ref _hasSubmittedResultEpoch, 0);
+                    if (!TryDecodeOcclusionResult(data, out result))
+                        return false;
+                    if (!TryConsumeSubmittedResultEpoch(epoch.Serial))
+                        return false;
 
-                    // Check the retrieved query results and set the result accordingly.
-                    // Iterate through the retrieved query results to determine if any of them indicate a successful query.
-                    for (int index = 0; index < values.Length; index++)
-                    {
-                        // Check if the current query result is non-zero, indicating a successful query.
-                        if (values[index] != 0ul)
-                        {
-                            result = 1ul;
-                            break;
-                        }
-                    }
                     return true;
                 }
 
@@ -302,11 +374,19 @@ namespace XREngine.Rendering.Vulkan
                 available = false;
 
                 // Check if the Vulkan query pool handle is valid before attempting to retrieve the query results.
-                if (_queryPool.Handle == 0 || Volatile.Read(ref _hasSubmittedResultEpoch) == 0)
+                if (_queryPool.Handle == 0 || !TryGetSubmittedResultEpoch(out SubmittedResultEpoch epoch))
                     return false;
+                if (!Renderer.IsVulkanResourceUseCompleted(ObjectType.QueryPool, _queryPool.Handle))
+                    return true;
+
+                if (epoch.ForceVisible)
+                {
+                    available = true;
+                    return true;
+                }
 
                 // Determine the number of queries to retrieve, clamping it to the valid range.
-                uint queryCount = Math.Clamp(_resultQueryCount, 1u, _queryPoolCapacity);
+                uint queryCount = Math.Clamp(epoch.QueryCount, 1u, _queryPoolCapacity);
                 // Allocate a span to hold the query results, with space for both the result and availability status for each query.
                 Span<ulong> data = stackalloc ulong[checked((int)queryCount * 2)];
                 fixed (ulong* pData = data)
@@ -326,23 +406,7 @@ namespace XREngine.Rendering.Vulkan
                     // Check if the query results retrieval was successful or if the results are not yet ready.
                     if (queryResult == Result.Success || queryResult == Result.NotReady)
                     {
-                        // Initially assume that the query results are available.
-                        available = true;
-                        // Iterate through the query results to check their availability.
-                        for (int index = 0; index < data.Length; index += 2)
-                        {
-                            // Check the availability status of the current query.
-                            if (data[index + 1] == 0ul)
-                            {
-                                // If the availability status is 0, it means the query result is not yet available.
-                                available = false;
-                                break;
-                            }
-                        }
-
-                        // If all queries are available, notify that the Vulkan resource use is completed.
-                        if (available)
-                            Renderer.NotifyVulkanResourceUseCompleted(ObjectType.QueryPool, _queryPool.Handle);
+                        available = TryDecodeOcclusionResult(data, out _);
 
                         // Return true to indicate that the query results were successfully retrieved (or are not yet ready).
                         return true;
@@ -351,6 +415,35 @@ namespace XREngine.Rendering.Vulkan
                     // If the query results retrieval was not successful and the results are not yet ready, return false.
                     return false;
                 }
+            }
+
+            /// <summary>
+            /// Decodes Vulkan's interleaved 64-bit result/availability pairs. Every
+            /// multiview slot must be available before the epoch can resolve; visibility
+            /// is the OR of all slot results.
+            /// </summary>
+            internal static bool TryDecodeOcclusionResult(
+                ReadOnlySpan<ulong> resultAndAvailability,
+                out ulong result)
+            {
+                result = 0ul;
+                if (resultAndAvailability.Length == 0 ||
+                    (resultAndAvailability.Length & 1) != 0)
+                {
+                    return false;
+                }
+
+                bool anyVisible = false;
+                for (int index = 0; index < resultAndAvailability.Length; index += 2)
+                {
+                    if (resultAndAvailability[index + 1] == 0ul)
+                        return false;
+                    if (resultAndAvailability[index] != 0ul)
+                        anyVisible = true;
+                }
+
+                result = anyVisible ? 1ul : 0ul;
+                return true;
             }
 
             /// <summary>
@@ -450,6 +543,17 @@ namespace XREngine.Rendering.Vulkan
                 if (!EnsureQueryPool(QueryType.TransformFeedbackStreamExt))
                     return false;
 
+                ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+                lock (_resultEpochLock)
+                {
+                    if (_submittedResultEpoch.IsValid || commandBufferHandle == 0)
+                        return false;
+
+                    _recordedResultEpochs[commandBufferHandle] = new RecordedResultEpoch(
+                        QueryCount: 1u,
+                        ForceVisible: false);
+                }
+
                 // Track the query pool resource for the command buffer before resetting and beginning the query.
                 Renderer.TrackVulkanCommandBufferResource(
                     commandBuffer,
@@ -485,19 +589,92 @@ namespace XREngine.Rendering.Vulkan
                     _queryPool = default;
                 }
 
-                // Reset the query pool capacity and result query count to their default values.
+                // Reset query metadata. Keep the serial monotonic so a racing stale
+                // consumer cannot match an epoch created after pool recreation.
                 _queryPoolCapacity = 0u;
                 _activeQueryCount = 1u;
-                _resultQueryCount = 1u;
-                Volatile.Write(ref _hasSubmittedResultEpoch, 0);
+                lock (_resultEpochLock)
+                {
+                    _submittedResultEpoch = default;
+                    _recordedResultEpochs.Clear();
+                }
 
                 // Mark the query as inactive and clear the current query data.
                 _queryActive = false;
                 Data.CurrentQuery = null;
             }
 
-            internal void MarkResultEpochSubmitted()
-                => Volatile.Write(ref _hasSubmittedResultEpoch, 1);
+            internal void InvalidateRecordedResultEpoch(CommandBuffer commandBuffer)
+            {
+                ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+                if (commandBufferHandle == 0)
+                    return;
+
+                lock (_resultEpochLock)
+                {
+                    if (_recordedResultEpochs.TryGetValue(commandBufferHandle, out RecordedResultEpoch epoch))
+                    {
+                        _recordedResultEpochs[commandBufferHandle] = epoch with
+                        {
+                            ForceVisible = true,
+                        };
+                    }
+                    else
+                    {
+                        _recordedResultEpochs[commandBufferHandle] = new RecordedResultEpoch(
+                            Math.Max(_activeQueryCount, 1u),
+                            ForceVisible: true);
+                    }
+                }
+            }
+
+            internal void MarkResultEpochSubmitted(ulong commandBufferHandle)
+            {
+                lock (_resultEpochLock)
+                {
+                    bool overlappingEpoch = _submittedResultEpoch.IsValid;
+                    if (!_recordedResultEpochs.TryGetValue(commandBufferHandle, out RecordedResultEpoch recordedEpoch))
+                    {
+                        recordedEpoch = new RecordedResultEpoch(
+                            QueryCount: 1u,
+                            ForceVisible: true);
+                    }
+
+                    ulong serial = ++_nextSubmittedResultEpochSerial;
+                    if (serial == 0ul)
+                        serial = ++_nextSubmittedResultEpochSerial;
+
+                    _submittedResultEpoch = new SubmittedResultEpoch(
+                        serial,
+                        commandBufferHandle,
+                        Math.Clamp(recordedEpoch.QueryCount, 1u, Math.Max(_queryPoolCapacity, 1u)),
+                        recordedEpoch.ForceVisible || overlappingEpoch);
+                }
+            }
+
+            private bool TryGetSubmittedResultEpoch(out SubmittedResultEpoch epoch)
+            {
+                lock (_resultEpochLock)
+                {
+                    epoch = _submittedResultEpoch;
+                    return epoch.IsValid;
+                }
+            }
+
+            private bool TryConsumeSubmittedResultEpoch(ulong serial)
+            {
+                lock (_resultEpochLock)
+                {
+                    if (!_submittedResultEpoch.IsValid ||
+                        _submittedResultEpoch.Serial != serial)
+                    {
+                        return false;
+                    }
+
+                    _submittedResultEpoch = default;
+                    return true;
+                }
+            }
 
             /// <summary>
             /// Attempts to map a high-level query target to the corresponding Vulkan query type and occlusion status.

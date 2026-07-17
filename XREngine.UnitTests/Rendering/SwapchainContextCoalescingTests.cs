@@ -69,6 +69,44 @@ public sealed class SwapchainContextCoalescingTests
     private static MeshDrawOp SwapchainDraw(int passIndex, FrameOpContext ctx) =>
         new(passIndex, Target: null, Draw: default, Context: ctx);
 
+    private static MeshDrawOp OpaqueSwapchainDraw(
+        int passIndex,
+        FrameOpContext context,
+        VkMeshRenderer renderer,
+        bool preserveSubmissionOrder = false)
+        => new(
+            passIndex,
+            Target: null,
+            default(PendingMeshDraw) with
+            {
+                Renderer = renderer,
+                Instances = 1,
+                BlendEnabled = false,
+            },
+            context)
+        {
+            PreserveSubmissionOrder = preserveSubmissionOrder,
+        };
+
+    private static (VkMeshRenderer Higher, VkMeshRenderer Lower) CreateCanonicalRendererPair()
+    {
+        for (int attempt = 0; attempt < 32; attempt++)
+        {
+            var first = (VkMeshRenderer)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+                typeof(VkMeshRenderer));
+            var second = (VkMeshRenderer)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+                typeof(VkMeshRenderer));
+
+            int comparison = first.GetHashCode().CompareTo(second.GetHashCode());
+            if (comparison > 0)
+                return (first, second);
+            if (comparison < 0)
+                return (second, first);
+        }
+
+        throw new InvalidOperationException("Could not create renderers with distinct canonical identities.");
+    }
+
     /// <summary>Creates a <see cref="MeshDrawOp"/> targeting an FBO (Target != null).</summary>
     private static MeshDrawOp FboDraw(int passIndex, FrameOpContext ctx, XREngine.Rendering.XRFrameBuffer fbo) =>
         new(passIndex, Target: fbo, Draw: default, Context: ctx);
@@ -144,6 +182,68 @@ public sealed class SwapchainContextCoalescingTests
         }
 
         throw new DirectoryNotFoundException("Could not locate repository root from test directory.");
+    }
+
+    #endregion
+
+    #region Frame-op recording compatibility
+
+    [Test]
+    public void RecordingCompatibility_IgnoresPerCaptureDiagnosticContextId()
+    {
+        FrameOpContext first = CtxPipelineA with
+        {
+            ContextId = 41,
+            RecordingFingerprint = ulong.MaxValue,
+        };
+        FrameOpContext second = first with { ContextId = 42 };
+
+        VulkanRenderer.AreFrameOpContextsRecordingCompatible(first, second).ShouldBeTrue();
+        VulkanRenderer.AreFrameOpContextsRecordingCompatible(
+            first,
+            second with { PreserveSubmissionOrderBlock = true }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void RecordingCompatibility_RejectsDifferentPipelineState()
+    {
+        FrameOpContext first = CtxPipelineA with
+        {
+            ContextId = 41,
+            RecordingFingerprint = ulong.MaxValue,
+        };
+        FrameOpContext second = CtxPipelineB with
+        {
+            ContextId = 42,
+            RecordingFingerprint = ulong.MaxValue,
+        };
+
+        VulkanRenderer.AreFrameOpContextsRecordingCompatible(first, second).ShouldBeFalse();
+    }
+
+    [Test]
+    public void QueryScopeCompatibility_AllowsDescriptorAdvanceButRejectsRenderScopeChanges()
+    {
+        FrameOpContext first = CtxPipelineA with
+        {
+            ContextId = 41,
+            RecordingFingerprint = 100,
+            DescriptorGeneration = 10,
+        };
+        FrameOpContext descriptorAdvanced = first with
+        {
+            ContextId = 42,
+            RecordingFingerprint = 101,
+            DescriptorGeneration = 11,
+        };
+
+        VulkanRenderer.AreFrameOpContextsQueryScopeCompatible(first, descriptorAdvanced).ShouldBeTrue();
+        VulkanRenderer.AreFrameOpContextsQueryScopeCompatible(
+            first,
+            descriptorAdvanced with { MultiviewEnabled = true }).ShouldBeFalse();
+        VulkanRenderer.AreFrameOpContextsQueryScopeCompatible(
+            first,
+            descriptorAdvanced with { ResourceGeneration = 11 }).ShouldBeFalse();
     }
 
     #endregion
@@ -446,6 +546,150 @@ public sealed class SwapchainContextCoalescingTests
     }
 
     [Test]
+    public void SortFrameOps_QueryBracketPreservesSamePassOrder_WhenOpaqueDrawsWouldCanonicalize()
+    {
+        const int passIndex = 7;
+        (VkMeshRenderer higherHash, VkMeshRenderer lowerHash) = CreateCanonicalRendererPair();
+
+        MeshDrawOp higherDraw = OpaqueSwapchainDraw(passIndex, CtxPipelineA, higherHash);
+        MeshDrawOp lowerDraw = OpaqueSwapchainDraw(passIndex, CtxPipelineA, lowerHash);
+
+        // Establish that this pair is normally eligible for canonical reordering.
+        FrameOp[] canonicalControl = [higherDraw, lowerDraw];
+        VulkanRenderGraphCompiler.SortFrameOps(canonicalControl, VulkanCompiledRenderGraph.Empty);
+        canonicalControl[0].ShouldBeSameAs(lowerDraw);
+        canonicalControl[1].ShouldBeSameAs(higherDraw);
+
+        var query = (VkRenderQuery)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+            typeof(VkRenderQuery));
+        var proxyRenderer = (VkMeshRenderer)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+            typeof(VkMeshRenderer));
+
+        QueryOp begin = new(
+            passIndex,
+            Target: null,
+            query,
+            XREngine.Data.Rendering.EQueryTarget.AnySamplesPassedConservative,
+            EVulkanQueryFrameOpKind.Begin,
+            CtxPipelineA);
+        MeshDrawOp proxy = OpaqueSwapchainDraw(
+            passIndex,
+            CtxPipelineA,
+            proxyRenderer,
+            preserveSubmissionOrder: true);
+        QueryOp end = new(
+            passIndex,
+            Target: null,
+            query,
+            XREngine.Data.Rendering.EQueryTarget.AnySamplesPassedConservative,
+            EVulkanQueryFrameOpKind.End,
+            CtxPipelineA);
+
+        FrameOp[] ops = [higherDraw, lowerDraw, begin, proxy, end];
+
+        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(
+            ops,
+            VulkanCompiledRenderGraph.Empty);
+
+        // The unrelated pre-bracket region keeps canonical batching, while the
+        // begin/draw/end bracket remains an indivisible ordered region.
+        sorted[0].ShouldBeSameAs(lowerDraw);
+        sorted[1].ShouldBeSameAs(higherDraw);
+        sorted[2].ShouldBeSameAs(begin);
+        sorted[3].ShouldBeSameAs(proxy);
+        sorted[4].ShouldBeSameAs(end);
+    }
+
+    [Test]
+    public void SortFrameOps_QueryBracketFencesOpaqueDrawFromEqualRankedPass()
+    {
+        const int queryPass = 7;
+        const int unrelatedPass = 8;
+        (VkMeshRenderer higherHash, VkMeshRenderer lowerHash) = CreateCanonicalRendererPair();
+        MeshDrawOp beforeBracket = OpaqueSwapchainDraw(queryPass, CtxPipelineA, higherHash);
+        MeshDrawOp afterBracket = OpaqueSwapchainDraw(unrelatedPass, CtxPipelineA, lowerHash);
+
+        // With no graph metadata both pass IDs have the same fallback rank, and
+        // ordinary opaque sorting would move the lower-hash draw first.
+        FrameOp[] canonicalControl = [beforeBracket, afterBracket];
+        VulkanRenderGraphCompiler.SortFrameOps(canonicalControl, VulkanCompiledRenderGraph.Empty);
+        canonicalControl[0].ShouldBeSameAs(afterBracket);
+
+        var query = (VkRenderQuery)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+            typeof(VkRenderQuery));
+        var proxyRenderer = (VkMeshRenderer)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+            typeof(VkMeshRenderer));
+        QueryOp begin = new(
+            queryPass,
+            Target: null,
+            query,
+            XREngine.Data.Rendering.EQueryTarget.AnySamplesPassedConservative,
+            EVulkanQueryFrameOpKind.Begin,
+            CtxPipelineA);
+        MeshDrawOp proxy = OpaqueSwapchainDraw(
+            queryPass,
+            CtxPipelineA,
+            proxyRenderer,
+            preserveSubmissionOrder: true);
+        QueryOp end = new(
+            queryPass,
+            Target: null,
+            query,
+            XREngine.Data.Rendering.EQueryTarget.AnySamplesPassedConservative,
+            EVulkanQueryFrameOpKind.End,
+            CtxPipelineA);
+
+        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(
+            [beforeBracket, begin, proxy, end, afterBracket],
+            VulkanCompiledRenderGraph.Empty);
+
+        sorted[0].ShouldBeSameAs(beforeBracket);
+        sorted[1].ShouldBeSameAs(begin);
+        sorted[2].ShouldBeSameAs(proxy);
+        sorted[3].ShouldBeSameAs(end);
+        sorted[4].ShouldBeSameAs(afterBracket);
+    }
+
+    [Test]
+    public void SortFrameOps_LiftsSameTargetClearAcrossWholeQueryBracket()
+    {
+        const int passIndex = 7;
+        var query = (VkRenderQuery)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+            typeof(VkRenderQuery));
+        var renderer = (VkMeshRenderer)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+            typeof(VkMeshRenderer));
+        QueryOp begin = new(
+            passIndex,
+            Target: null,
+            query,
+            XREngine.Data.Rendering.EQueryTarget.AnySamplesPassedConservative,
+            EVulkanQueryFrameOpKind.Begin,
+            CtxPipelineA);
+        MeshDrawOp draw = OpaqueSwapchainDraw(
+            passIndex,
+            CtxPipelineA,
+            renderer,
+            preserveSubmissionOrder: true);
+        QueryOp end = new(
+            passIndex,
+            Target: null,
+            query,
+            XREngine.Data.Rendering.EQueryTarget.AnySamplesPassedConservative,
+            EVulkanQueryFrameOpKind.End,
+            CtxPipelineA);
+        ClearOp clear = SwapchainClear(passIndex, CtxPipelineA);
+
+        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(
+            [begin, draw, end, clear],
+            VulkanCompiledRenderGraph.Empty);
+
+        sorted[0].ShouldBeSameAs(clear);
+        sorted[1].ShouldBeSameAs(begin);
+        sorted[2].ShouldBeSameAs(draw);
+        sorted[3].ShouldBeSameAs(end);
+    }
+
+    [Test]
     public void SecondaryBuckets_SplitBlitsByResolvedTarget()
     {
         var compiler = new VulkanRenderGraphCompiler();
@@ -485,6 +729,33 @@ public sealed class SwapchainContextCoalescingTests
         buckets.Count.ShouldBe(2);
         buckets[0].TargetIdentity.ShouldBe(firstFbo.GetHashCode());
         buckets[1].TargetIdentity.ShouldBe(secondFbo.GetHashCode());
+    }
+
+    [Test]
+    public void SecondaryBuckets_CoalesceContextsThatDifferOnlyByDiagnosticId()
+    {
+        var compiler = new VulkanRenderGraphCompiler();
+        var fbo = new XREngine.Rendering.XRFrameBuffer { Name = "SharedTarget" };
+        FrameOpContext firstContext = CtxPipelineA with { ContextId = 41 };
+        FrameOpContext recapturedContext = firstContext with { ContextId = 42 };
+        FrameOp[] ops =
+        [
+            FboIndirectDraw(1, firstContext, fbo),
+            FboIndirectDraw(1, recapturedContext, fbo),
+        ];
+
+        IReadOnlyList<SecondaryRecordingBucket> buckets = compiler.BuildSecondaryRecordingBuckets(ops);
+
+        buckets.Count.ShouldBe(1);
+        buckets[0].Count.ShouldBe(2);
+
+        ops[1] = FboIndirectDraw(
+            1,
+            recapturedContext with { PreserveSubmissionOrderBlock = true },
+            fbo);
+        buckets = compiler.BuildSecondaryRecordingBuckets(ops);
+
+        buckets.Count.ShouldBe(2);
     }
 
     [Test]

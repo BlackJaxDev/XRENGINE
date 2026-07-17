@@ -105,18 +105,23 @@ public static partial class EditorUnitTests
 
         internal static ModelImportOptions? CreateImportOptions(Settings.ModelImportSettings model, string[] textureLoadDirSearchPaths)
         {
+            const int CpuOcclusionPartitionTriangleLimit = 4096;
             bool generateCoacdColliders = HasPostImportFlag(model, ModelPostImportFlags.GenerateCoacdCollidersPerSubmesh);
             bool generateSceneNodesPerSubmesh = HasPostImportFlag(model, ModelPostImportFlags.GenerateIndividualSceneNodesPerSubmesh);
             bool splitSubmeshes = HasPostImportFlag(model, ModelPostImportFlags.SplitSubmeshesIntoSeparateModelComponents)
                 || generateSceneNodesPerSubmesh
                 || (model.Kind is UnitTestModelImportKind.Static && generateCoacdColliders);
             bool separateMeshIslands = HasPostImportFlag(model, ModelPostImportFlags.SeparateMeshIslands);
+            bool spatiallyPartitionForOcclusion = HasPostImportFlag(
+                model,
+                ModelPostImportFlags.SpatiallyPartitionMeshesForOcclusion);
 
             bool alwaysCreateImportOptions = model.Kind is UnitTestModelImportKind.Static;
 
             bool needsImportOptions = alwaysCreateImportOptions
                 || splitSubmeshes
                 || separateMeshIslands
+                || spatiallyPartitionForOcclusion
                 || generateSceneNodesPerSubmesh
                 || model.ImporterBackend is ModelImportBackendPreference.AssimpOnly
                 || textureLoadDirSearchPaths.Length > 0;
@@ -135,6 +140,9 @@ public static partial class EditorUnitTests
                 SplitSubmeshesIntoSeparateModelComponents = splitSubmeshes,
                 GenerateSceneNodesPerSubmesh = generateSceneNodesPerSubmesh,
                 SeparateMeshIslands = separateMeshIslands,
+                SpatialPartitionMaxTriangles = spatiallyPartitionForOcclusion
+                    ? CpuOcclusionPartitionTriangleLimit
+                    : 0,
                 // Keep static models hidden until every submesh has finished CPU-side processing.
                 // Dependent systems such as light-probe model bounds should only see complete geometry.
                 BatchSubmeshAddsDuringAsyncImport = true,

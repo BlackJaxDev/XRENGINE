@@ -32,7 +32,7 @@ namespace XREngine.Scene
         private bool _hasSceneBounds = false;
         private bool _isGpuDispatchActive = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.CpuDirect;
         private bool _isCpuGpuCommandMirrorActive = false;
-        private bool _useGpuBvhActive = VulkanFeatureProfile.ResolveGpuBvhPreference(RuntimeEngine.EffectiveSettings.UseGpuBvh);
+        private bool _useGpuBvhActive;
         private ECpuSceneCullingStructure _cpuSceneCullingStructureActive = RuntimeEngine.EffectiveSettings.CpuSceneCullingStructure;
         private I3DRenderTree<RenderInfo3D> ActiveCpuRenderTree
             => _cpuSceneCullingStructureActive == ECpuSceneCullingStructure.Bvh ? _bvhRenderTree : RenderTree;
@@ -40,8 +40,10 @@ namespace XREngine.Scene
 
         public VisualScene3D()
         {
+            EMeshSubmissionStrategy strategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
+            _useGpuBvhActive = VulkanFeatureProfile.ResolveGpuBvhUsage(strategy);
             GPUCommands.UseGpuBvh = _useGpuBvhActive;
-            GPUCommands.UseInternalBvh = _useGpuBvhActive; // Enable internal command BVH for GPU culling
+            GPUCommands.UseInternalBvh = _useGpuBvhActive;
             BvhRaycasts.WarmShaders();
         }
 
@@ -336,7 +338,9 @@ namespace XREngine.Scene
         {
             // Always re-resolve through the central strategy so backend capability changes
             // override any stale caller value.
-            useGpu = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(useGpu) != EMeshSubmissionStrategy.CpuDirect;
+            EMeshSubmissionStrategy strategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(useGpu);
+            useGpu = strategy != EMeshSubmissionStrategy.CpuDirect;
+            ApplyGpuBvhUsage(strategy);
 
             if (useGpu == _isGpuDispatchActive)
                 return;
@@ -385,24 +389,25 @@ namespace XREngine.Scene
             SyncCpuGpuCommandMirrorState();
         }
 
-        public void ApplyGpuBvhPreference(bool useGpuBvh)
+        private void ApplyGpuBvhUsage(EMeshSubmissionStrategy strategy)
         {
+            bool useGpuBvh = VulkanFeatureProfile.ResolveGpuBvhUsage(strategy);
             if (_useGpuBvhActive == useGpuBvh)
                 return;
 
             _useGpuBvhActive = useGpuBvh;
             GPUCommands.UseGpuBvh = useGpuBvh;
-            GPUCommands.UseInternalBvh = useGpuBvh; // Sync internal BVH with UseGpuBvh
+            GPUCommands.UseInternalBvh = useGpuBvh;
 
             if (useGpuBvh)
             {
-                Debug.Out("[VisualScene3D] GPU BVH enabled; warming shaders and rebuilding GPU buffers for traversal.");
-                BvhRaycasts.SetEnabled(true, "settings toggled on");
+                Debug.Out($"[VisualScene3D] GPU BVH selected for {strategy}; warming shaders and rebuilding GPU buffers for traversal.");
+                BvhRaycasts.SetEnabled(true, $"{strategy} selected");
                 BvhRaycasts.WarmShaders();
             }
             else
             {
-                Debug.LogWarning("[VisualScene3D] GPU BVH disabled for scene traversal; explicit BVH raycasts remain available for tools and picking.");
+                Debug.Out("[VisualScene3D] CPU Direct selected; scene visibility uses the CPU spatial BVH.");
             }
         }
 

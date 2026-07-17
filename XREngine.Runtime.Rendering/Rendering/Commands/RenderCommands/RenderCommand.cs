@@ -136,6 +136,14 @@ namespace XREngine.Rendering.Commands
         public abstract void Render();
 
         /// <summary>
+        /// Captures the sort distance for one destination collection. Commands can be
+        /// shared by concurrently collecting viewports, so this value must be derived
+        /// from the supplied camera instead of another viewport's mutable live state.
+        /// </summary>
+        internal virtual float CaptureSortDistance(IRuntimeRenderCamera? camera)
+            => 0.0f;
+
+        /// <summary>
         /// Called in the collect visible thread.
         /// </summary>
         /// <param name="camera"></param>

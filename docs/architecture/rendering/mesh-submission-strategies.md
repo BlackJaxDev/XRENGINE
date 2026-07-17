@@ -16,6 +16,8 @@ Mesh drawing is selected by an explicit `EMeshSubmissionStrategy` instead of by 
 
 `GPURenderDispatch` remains a compatibility shim during migration. Setting it to `true` maps through the resolver; older boolean-only call sites still map `true` to `GpuIndirectInstrumented` to preserve legacy behavior.
 
+The strategy also owns scene visibility acceleration. `CpuDirect` uses the CPU scene hierarchy (CPU BVH by default). Every GPU indirect and meshlet strategy requests the internal `GPUScene` command BVH. There is no independent GPU-BVH setting or Vulkan environment gate; if the BVH shader or provider buffers are not ready, the pass reports the condition and temporarily uses flat GPU frustum culling.
+
 ## Resolver
 
 `Engine.Rendering.ResolveMeshSubmissionStrategy()` uses:

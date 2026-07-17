@@ -298,7 +298,7 @@ XRViewport.CollectVisible()
 
 Important note:
 
-- This is the structure that answers the practical question "what are we culling 3D renderables with on the CPU today?" The default is still the octree, but `Engine.Rendering.Settings.CpuSceneCullingStructure`, `GameStartupSettings.CpuSceneCullingStructureOverride`, or `XRE_CPU_SCENE_CULLING_STRUCTURE=Bvh` can switch CPU-dispatch visibility to the CPU BVH path.
+- This is the structure that answers the practical question "what are we culling 3D renderables with on the CPU today?" `CpuDirect` defaults to the CPU BVH. The `CpuSceneCullingStructure` setting and `XRE_CPU_SCENE_CULLING_STRUCTURE` remain diagnostic overrides for comparing the legacy octree.
 - The profiler's render stats now report CPU spatial tree mode, collect time, total nodes/items, root-held items, max items per node, max depth, and unbounded items. High octree root-held counts are the signal for origin-crossing bounds piling up in the main octree region.
 
 ### GPUScene command mirror: GPU-driven collection handoff
@@ -339,9 +339,9 @@ What it is not:
 
 Current behavior:
 
-- `VisualScene3D` propagates `UseGpuBvh` into `GPUCommands.UseGpuBvh` and `GPUCommands.UseInternalBvh`.
+- `VisualScene3D` derives `GPUCommands.UseGpuBvh` and `GPUCommands.UseInternalBvh` from the effective `EMeshSubmissionStrategy`.
 - `GPUScene.PrepareBvhForCulling()` rebuilds or refits the internal command BVH as needed.
-- `GPURenderPassCollection` chooses BVH culling only if `scene.UseGpuBvh` is enabled and the provider is ready.
+- All GPU instrumented, GPU zero-readback, and GPU meshlet strategies request BVH culling. `GPURenderPassCollection` uses the flat GPU frustum path only when the BVH shader or provider resources are not ready.
 
 ### CPU mesh BVH: per-mesh triangle acceleration
 
@@ -465,7 +465,7 @@ else:
     FrustumCull
 ```
 
-That means "GPU dispatch enabled" does not automatically mean "BVH enabled." BVH is a second toggle layered on top of GPU dispatch.
+That means the submission strategy selects the scene hierarchy: `CpuDirect` uses the CPU hierarchy, while GPU-driven strategies use the GPU command BVH when available.
 
 ## Settings and Policy That Influence Path Selection
 
@@ -482,19 +482,13 @@ Effects:
 
 `GPURenderDispatch` remains as a compatibility input. Boolean call sites that pass `true` preserve the legacy instrumented GPU indirect behavior.
 
-### `UseGpuBvh`
+### Strategy-driven scene hierarchy
 
-This is a narrower toggle than `GPURenderDispatch`.
+There is no independent `UseGpuBvh` setting or Vulkan GPU-BVH environment gate. The effective mesh submission strategy owns the choice:
 
-Effects:
-
-- enables the internal `GPUScene` BVH path when supported
-- allows `GPURenderPassCollection` to prefer `BvhCull()` over plain frustum culling
-- also enables GPU BVH raycast helpers and related profiling/timing paths
-
-Default state today:
-
-- `UseGpuBvh` defaults to `false`
+- `CpuDirect` uses the CPU scene hierarchy, whose default is `CpuBvhRenderTree`.
+- `GpuIndirectInstrumented`, `GpuIndirectZeroReadback`, and both GPU meshlet strategies request the internal `GPUScene` BVH.
+- Missing or not-yet-ready BVH shaders/buffers cause a visible GPU flat-frustum fallback; they do not switch submission back to the CPU.
 
 ### Vulkan feature-profile resolution
 

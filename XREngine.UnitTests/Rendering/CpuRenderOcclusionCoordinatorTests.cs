@@ -74,6 +74,10 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         decision.ShouldBe(ECpuOcclusionDecision.ProbeOnly);
         request.Requested.ShouldBeTrue();
         request.Reason.ShouldBe(ECpuOcclusionQueryReason.CameraMotionRevalidation);
+        coordinator.PeekShouldRender(RenderPass, camera, queryKey).ShouldBeFalse();
+        coordinator.TryGetCurrentDecision(RenderPass, camera, queryKey, default, out ECpuOcclusionDecision replayed)
+            .ShouldBeTrue();
+        replayed.ShouldBe(ECpuOcclusionDecision.ProbeOnly);
     }
 
     [Test]
@@ -97,6 +101,65 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         request.RecoveryProbe.ShouldBeFalse();
         request.Reason.ShouldBe(ECpuOcclusionQueryReason.StaleStateRefresh);
         coordinator.PeekShouldRender(RenderPass, camera, queryKey).ShouldBeTrue();
+    }
+
+    [Test]
+    public void PeekShouldRender_ReusesPrimaryDecisionAtOcclusionHysteresisBoundary()
+    {
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        const uint queryKey = 145u;
+
+        BeginPassForPolicyTest(coordinator, camera);
+        object queryState = SeedOccludedQuery(coordinator, camera, queryKey, TestFrameId);
+        SetNonPublicField(queryState, "ConsecutiveOccludedFrames", 1);
+
+        coordinator.ShouldRender(RenderPass, camera, queryKey, out CpuOcclusionProbeRequest request)
+            .ShouldBe(ECpuOcclusionDecision.Visible);
+
+        request.Reason.ShouldBe(ECpuOcclusionQueryReason.VisibleDemotion);
+        GetNonPublicField(queryState, "ConsecutiveOccludedFrames").ShouldBe(2);
+        coordinator.PeekShouldRender(RenderPass, camera, queryKey).ShouldBeTrue();
+    }
+
+    [Test]
+    public void StableLargePass_RetainsNegativeEvidenceLongEnoughForTwoBudgetSweeps()
+    {
+        _host.CpuQueryOcclusionMaxQueriesPerFrame = 32;
+        _host.CpuQueryOcclusionVisibleDemotionBudgetFraction = 0.5f;
+
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        const uint queryKey = 65u;
+
+        BeginPassForPolicyTest(coordinator, camera, sceneCommandCount: 393u);
+        SeedOccludedQuery(coordinator, camera, queryKey, TestFrameId - 20UL);
+
+        ECpuOcclusionDecision decision = coordinator.ShouldRender(
+            RenderPass,
+            camera,
+            queryKey,
+            out CpuOcclusionProbeRequest request);
+
+        decision.ShouldBe(ECpuOcclusionDecision.Skip);
+        request.Requested.ShouldBeFalse();
+        coordinator.PeekShouldRender(RenderPass, camera, queryKey).ShouldBeFalse();
+        coordinator.TryGetCurrentDecision(RenderPass, camera, queryKey, default, out ECpuOcclusionDecision replayed)
+            .ShouldBeTrue();
+        replayed.ShouldBe(ECpuOcclusionDecision.Skip);
+    }
+
+    [Test]
+    public void TryGetCurrentDecision_MissingStateFailsWithoutCreatingPassState()
+    {
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+
+        coordinator.TryGetCurrentDecision(RenderPass, camera, 501u, default, out ECpuOcclusionDecision decision)
+            .ShouldBeFalse();
+
+        decision.ShouldBe(ECpuOcclusionDecision.Visible);
+        ((IDictionary)GetNonPublicField(coordinator, "_passStates")).Count.ShouldBe(0);
     }
 
     [Test]
@@ -714,6 +777,153 @@ public sealed class CpuRenderOcclusionCoordinatorTests
     }
 
     [Test]
+    public void SelectVisibleDrawCandidates_GatesNextPassByGlobalPriority()
+    {
+        _host.CpuQueryOcclusionMaxQueriesPerFrame = 4;
+        _host.CpuQueryOcclusionVisibleDemotionBudgetFraction = 0.25f;
+
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        OcclusionViewOwnership ownership = OcclusionViewOwnership.Independent(509);
+        BeginPassForPolicyTest(coordinator, camera, ownership, sceneCommandCount: 2u);
+
+        coordinator.ShouldRender(RenderPass, camera, 64u, out CpuOcclusionProbeRequest lowRequest, ownership);
+        coordinator.ShouldRender(RenderPass, camera, 65u, out CpuOcclusionProbeRequest highRequest, ownership);
+        List<CpuOcclusionProbeCandidate> candidates =
+        [
+            new(64u, UnitBounds(), lowRequest, screenPriority: 1.0f, distanceMeters: 2.0f),
+            new(65u, UnitBounds(), highRequest, screenPriority: 2.0f, distanceMeters: 1.0f),
+        ];
+
+        coordinator.SelectVisibleDrawCandidates(RenderPass, camera, candidates, ownership);
+
+        coordinator.TryScheduleVisibleDrawQuery(
+            RenderPass,
+            camera,
+            64u,
+            lowRequest,
+            ownership).ShouldBeFalse();
+        coordinator.TryScheduleVisibleDrawQuery(
+            RenderPass,
+            camera,
+            65u,
+            highRequest,
+            ownership).ShouldBeTrue();
+    }
+
+    [Test]
+    public void SelectVisibleDrawCandidates_RequestTierOutranksProjectedArea()
+    {
+        _host.CpuQueryOcclusionMaxQueriesPerFrame = 4;
+        _host.CpuQueryOcclusionVisibleDemotionBudgetFraction = 0.25f;
+
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        OcclusionViewOwnership ownership = OcclusionViewOwnership.Independent(510);
+        BeginPassForPolicyTest(coordinator, camera, ownership, sceneCommandCount: 2u);
+
+        coordinator.ShouldRender(RenderPass, camera, 64u, out _, ownership);
+        coordinator.ShouldRender(RenderPass, camera, 65u, out _, ownership);
+        CpuOcclusionProbeRequest refreshRequest = new(
+            true,
+            ECpuOcclusionQueryReason.VisibleDemotion,
+            recoveryProbe: false,
+            priorityBias: 0.0f);
+        CpuOcclusionProbeRequest seedRequest = new(
+            true,
+            ECpuOcclusionQueryReason.InitialSeed,
+            recoveryProbe: false,
+            priorityBias: 2.0f);
+        List<CpuOcclusionProbeCandidate> candidates =
+        [
+            new(64u, UnitBounds(), refreshRequest, screenPriority: 1000.0f, distanceMeters: 1.0f),
+            new(65u, UnitBounds(), seedRequest, screenPriority: 1.0f, distanceMeters: 100.0f),
+        ];
+
+        coordinator.SelectVisibleDrawCandidates(RenderPass, camera, candidates, ownership);
+
+        coordinator.TryScheduleVisibleDrawQuery(RenderPass, camera, 64u, refreshRequest, ownership).ShouldBeFalse();
+        coordinator.TryScheduleVisibleDrawQuery(RenderPass, camera, 65u, seedRequest, ownership).ShouldBeTrue();
+    }
+
+    [Test]
+    public void TryScheduleVisibleDrawQuery_RespectsTotalPendingQueryCap()
+    {
+        _host.CpuQueryOcclusionMaxQueriesPerFrame = 2;
+        _host.CpuQueryOcclusionVisibleDemotionBudgetFraction = 1.0f;
+
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        OcclusionViewOwnership ownership = OcclusionViewOwnership.Independent(506);
+        BeginPassForPolicyTest(coordinator, camera, ownership, sceneCommandCount: 3u);
+
+        object firstPending = SeedOccludedQuery(
+            coordinator,
+            camera,
+            ownership,
+            queryKey: 64u,
+            lastQueryFrame: TestFrameId - 1UL);
+        object secondPending = SeedOccludedQuery(
+            coordinator,
+            camera,
+            ownership,
+            queryKey: 65u,
+            lastQueryFrame: TestFrameId - 1UL);
+        SetNonPublicField(firstPending, "QueryPending", true);
+        SetNonPublicField(secondPending, "QueryPending", true);
+
+        bool scheduled = coordinator.TryScheduleVisibleDrawQuery(
+            RenderPass,
+            camera,
+            sourceCommandIndex: 66u,
+            request: new CpuOcclusionProbeRequest(
+                requested: true,
+                ECpuOcclusionQueryReason.VisibleDemotion,
+                recoveryProbe: false),
+            ownership: ownership);
+
+        scheduled.ShouldBeFalse();
+    }
+
+    [Test]
+    public void TryScheduleVisibleDrawQuery_CountsSameFrameReservationsAgainstPendingCap()
+    {
+        _host.CpuQueryOcclusionMaxQueriesPerFrame = 2;
+        _host.CpuQueryOcclusionVisibleDemotionBudgetFraction = 1.0f;
+
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        OcclusionViewOwnership ownership = OcclusionViewOwnership.Independent(507);
+        BeginPassForPolicyTest(coordinator, camera, ownership, sceneCommandCount: 3u);
+
+        object pending = SeedOccludedQuery(
+            coordinator,
+            camera,
+            ownership,
+            queryKey: 64u,
+            lastQueryFrame: TestFrameId - 1UL);
+        SetNonPublicField(pending, "QueryPending", true);
+
+        CpuOcclusionProbeRequest request = new(
+            requested: true,
+            ECpuOcclusionQueryReason.VisibleDemotion,
+            recoveryProbe: false);
+
+        coordinator.TryScheduleVisibleDrawQuery(
+            RenderPass,
+            camera,
+            sourceCommandIndex: 65u,
+            request: request,
+            ownership: ownership).ShouldBeTrue();
+        coordinator.TryScheduleVisibleDrawQuery(
+            RenderPass,
+            camera,
+            sourceCommandIndex: 66u,
+            request: request,
+            ownership: ownership).ShouldBeFalse();
+    }
+
+    [Test]
     public void SelectProbeCandidates_DoesNotSchedulePendingQuery()
     {
         CpuRenderOcclusionCoordinator coordinator = new();
@@ -798,6 +1008,7 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         SetNonPublicField(queryState, "QueryPending", true);
         SetNonPublicField(queryState, "PendingSinceFrame", 1UL);
         SetNonPublicField(queryState, "PendingQueryWasVisibleDraw", false);
+        XRRenderQuery expiredQuery = (XRRenderQuery)GetNonPublicField(queryState, "Query");
 
         ECpuOcclusionDecision decision = coordinator.ShouldRender(
             RenderPass,
@@ -810,6 +1021,7 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         request.Requested.ShouldBeFalse();
         GetNonPublicField(queryState, "QueryPending").ShouldBe(false);
         GetNonPublicField(queryState, "StateKind").ShouldBe(ECpuOcclusionQueryStateKind.ForcedVisible);
+        GetNonPublicField(queryState, "Query").ShouldNotBeSameAs(expiredQuery);
 
         _host.CurrentRenderFrameId++;
         BeginPassForPolicyTest(coordinator, camera, ownership, preserveForcedRecovery: true);
@@ -817,6 +1029,35 @@ public sealed class CpuRenderOcclusionCoordinatorTests
             .ShouldBe(ECpuOcclusionDecision.Visible);
         recoveryRequest.Requested.ShouldBeTrue();
         recoveryRequest.Reason.ShouldBe(ECpuOcclusionQueryReason.StaleStateRefresh);
+    }
+
+    [Test]
+    public void BeginPass_OverdueHierarchyQueryRetiresEpochAndFailsVisible()
+    {
+        using IDisposable _ = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
+        _host.CpuQueryOcclusionMaxPendingFrames = 1;
+
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        OcclusionViewOwnership ownership = OcclusionViewOwnership.Independent(508);
+        BeginPassForPolicyTest(coordinator, camera, ownership);
+
+        object passState = GetPassState(coordinator, camera, ownership);
+        object group = InvokeNonPublic(coordinator, "GetOrCreateHierarchyGroup", passState, 2u)
+            .ShouldNotBeNull();
+        object queryState = GetNonPublicField(group, "Query");
+        XRRenderQuery expiredQuery = (XRRenderQuery)GetNonPublicField(queryState, "Query");
+        SetNonPublicField(queryState, "QueryPending", true);
+        SetNonPublicField(queryState, "PendingSinceFrame", 0UL);
+        SetNonPublicField(group, "LastAnySamplesPassed", false);
+
+        _host.CurrentRenderFrameId++;
+        BeginPassForPolicyTest(coordinator, camera, ownership);
+
+        GetNonPublicField(queryState, "QueryPending").ShouldBe(false);
+        GetNonPublicField(queryState, "Query").ShouldNotBeSameAs(expiredQuery);
+        GetNonPublicField(queryState, "StateKind").ShouldBe(ECpuOcclusionQueryStateKind.ForcedVisible);
+        GetNonPublicField(group, "LastAnySamplesPassed").ShouldBe(true);
     }
 
     [Test]
@@ -895,6 +1136,7 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         coordinator.ShouldRender(RenderPass, camera, queryKey, out CpuOcclusionProbeRequest cachedRequest, ownership)
             .ShouldBe(ECpuOcclusionDecision.Visible);
         cachedRequest.Requested.ShouldBeTrue();
+        coordinator.PeekShouldRender(RenderPass, camera, queryKey, ownership).ShouldBeTrue();
         GetNonPublicField(queryState, "RecoveryStartedFrame")
             .ShouldBe(GetPassFrameEpoch(GetPassState(coordinator, camera, ownership)));
     }
@@ -1177,6 +1419,7 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         public EVrViewRenderMode? VrViewRenderMode { get; set; }
         public ECpuQueryStereoMode? CpuQueryStereoMode { get; set; }
         public int? CpuQueryOcclusionMaxQueriesPerFrame { get; set; }
+        public int? CpuQueryOcclusionMaxPendingFrames { get; set; }
         public float? CpuQueryOcclusionVisibleDemotionBudgetFraction { get; set; }
         public int? CpuQueryOcclusionRecoveryMinCadenceFrames { get; set; }
 
@@ -1216,6 +1459,8 @@ public sealed class CpuRenderOcclusionCoordinatorTests
                 return CpuQueryStereoMode.Value;
             if (methodName == $"get_{nameof(IRuntimeRenderingHostServices.CpuQueryOcclusionMaxQueriesPerFrame)}" && CpuQueryOcclusionMaxQueriesPerFrame.HasValue)
                 return CpuQueryOcclusionMaxQueriesPerFrame.Value;
+            if (methodName == $"get_{nameof(IRuntimeRenderingHostServices.CpuQueryOcclusionMaxPendingFrames)}" && CpuQueryOcclusionMaxPendingFrames.HasValue)
+                return CpuQueryOcclusionMaxPendingFrames.Value;
             if (methodName == $"get_{nameof(IRuntimeRenderingHostServices.CpuQueryOcclusionVisibleDemotionBudgetFraction)}" && CpuQueryOcclusionVisibleDemotionBudgetFraction.HasValue)
                 return CpuQueryOcclusionVisibleDemotionBudgetFraction.Value;
             if (methodName == $"get_{nameof(IRuntimeRenderingHostServices.CpuQueryOcclusionRecoveryMinCadenceFrames)}" && CpuQueryOcclusionRecoveryMinCadenceFrames.HasValue)

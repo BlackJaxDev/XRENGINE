@@ -143,7 +143,9 @@ namespace XREngine.Components.Scene.Mesh
                 DetermineRootBoneFromRenderers(),
                 referenceSearchRoot);
 
-            _renderBoundsCommand = new RenderCommandMethod3D((int)EDefaultRenderPass.OpaqueForward, DoRenderBounds);
+            // Bounds colors consume the primary CPU-query decision, so run the debug
+            // callback after deferred, opaque-forward, and masked-forward mesh passes.
+            _renderBoundsCommand = new RenderCommandMethod3D((int)EDefaultRenderPass.OnTopForward, DoRenderBounds);
             RenderInfo = RenderInfo3D.New(component, _rc = new RenderCommandMesh3D(0));
             RenderInfo.OwnerRenderableMesh = this;
             if (RenderBounds)
@@ -279,7 +281,6 @@ namespace XREngine.Components.Scene.Mesh
             }
 
             _rc.Mesh = rend;
-            _rc.RenderDistance = distance;
 
             var mat = rend?.Material;
             if (mat is not null)

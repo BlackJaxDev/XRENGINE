@@ -618,6 +618,56 @@ public unsafe partial class VulkanRenderer
         return hash.ToHash();
     }
 
+    /// <summary>
+    /// Determines whether two frame-op contexts require the same Vulkan recording state.
+    /// <see cref="FrameOpContext.ContextId"/> is diagnostic identity for an individual
+    /// capture and must not split otherwise compatible render scopes.
+    /// </summary>
+    internal static bool AreFrameOpContextsRecordingCompatible(
+        in FrameOpContext first,
+        in FrameOpContext second)
+    {
+        if (first.Equals(second))
+            return true;
+        if (first.RecordingFingerprint != second.RecordingFingerprint)
+            return false;
+
+        // ContextId distinguishes diagnostic capture events, not recording state.
+        // Keep record equality for every other field so future context additions
+        // automatically participate in the compatibility decision.
+        return (first with { ContextId = 0UL }).Equals(second with { ContextId = 0UL });
+    }
+
+    /// <summary>
+    /// Determines whether an active inline query can remain inside the current Vulkan
+    /// rendering scope while mesh descriptor state advances during draw preparation.
+    /// </summary>
+    internal static bool AreFrameOpContextsQueryScopeCompatible(
+        in FrameOpContext first,
+        in FrameOpContext second)
+    {
+        if (AreFrameOpContextsRecordingCompatible(first, second))
+            return true;
+
+        // Descriptor-table updates do not change dynamic-rendering compatibility.
+        // Every other captured field remains part of exact record equality so changes
+        // to target, dimensions, stereo/multiview, queue ownership, or resources split
+        // the scope and invalidate the query instead of silently measuring nothing.
+        FrameOpContext normalizedFirst = first with
+        {
+            ContextId = 0UL,
+            RecordingFingerprint = 0UL,
+            DescriptorGeneration = 0UL,
+        };
+        FrameOpContext normalizedSecond = second with
+        {
+            ContextId = 0UL,
+            RecordingFingerprint = 0UL,
+            DescriptorGeneration = 0UL,
+        };
+        return normalizedFirst.Equals(normalizedSecond);
+    }
+
     private static XRFrameBuffer? ResolveFrameOpOutputFrameBuffer(
         XRRenderPipelineInstance? pipeline,
         XRViewport? viewport)

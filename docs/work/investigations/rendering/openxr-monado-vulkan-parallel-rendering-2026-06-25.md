@@ -545,9 +545,8 @@ The self-review risks above are preserved as the state of the investigation when
    - `CpuBvhRenderTree` now synchronizes remake/swap/traversal paths.
    - Invalid CPU BVH node ranges fail loudly with range context instead of surfacing as opaque flicker/collection failures.
 
-6. Vulkan GPU BVH culling is opt-in for Vulkan.
-   - `XRE_VULKAN_GPU_BVH_CULLING=1` explicitly enables the Vulkan GPU BVH path.
-   - Without the flag, Vulkan uses the stable CPU spatial tree path for this validation.
+6. At the time of this investigation, Vulkan GPU BVH culling was opt-in.
+   - This historical gate was removed on 2026-07-16. GPU submission strategies now request the GPU BVH automatically, with a flat GPU frustum fallback only while BVH resources are unavailable.
 
 7. Texture-view sampler lifetime no longer follows backing-image churn.
    - `VkTextureView.RefreshFromViewedTextureIfStale` now retires image views when the backing image changes, but keeps the sampler unless sampler state changes.

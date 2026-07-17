@@ -172,7 +172,22 @@ namespace XREngine.Rendering.Commands
             // Update render distance for proper sorting.
             // This is done in the collect visible thread - doesn't need to be thread safe.
             if (camera != null)
-                UpdateRenderDistance(_renderWorldMatrix.Translation, camera);
+            {
+                if (CullingVolume is AABB bounds && bounds.IsValid)
+                    UpdateRenderDistance(bounds, camera);
+                else
+                    UpdateRenderDistance(_renderWorldMatrix.Translation, camera);
+            }
+        }
+
+        internal override float CaptureSortDistance(IRuntimeRenderCamera? camera)
+        {
+            if (camera is null)
+                return base.CaptureSortDistance(camera);
+
+            return CullingVolume is AABB bounds && bounds.IsValid
+                ? CalculateRenderDistance(bounds, camera)
+                : Vector3.DistanceSquared(camera.Transform.RenderTranslation, _renderWorldMatrix.Translation);
         }
 
         public override void SwapBuffers()
@@ -319,7 +334,7 @@ namespace XREngine.Rendering.Commands
                 if (modelMatrix == Matrix4x4.Identity)
                     return meshAsset.Bounds;
 
-                return meshAsset.Bounds.Transformed(p => Vector3.Transform(p, modelMatrix));
+                return meshAsset.Bounds.Transformed(modelMatrix);
             }
         }
 

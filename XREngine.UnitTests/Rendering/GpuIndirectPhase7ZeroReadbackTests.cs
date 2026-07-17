@@ -208,6 +208,8 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
         source.ShouldContain("EMeshSubmissionStrategy overdrawStrategy = ResolveOverrideSubmissionStrategy(");
         source.ShouldContain("private static EMeshSubmissionStrategy ResolveOverrideSubmissionStrategy");
         source.ShouldContain("bool useGpuRenderPath = overdrawStrategy != EMeshSubmissionStrategy.CpuDirect;");
+        source.ShouldNotContain("(int)EDefaultRenderPass.Background,");
+        source.ShouldNotContain("(int)EDefaultRenderPass.OnTopForward,");
         source.ShouldContain("IsGpuPathCpuFallbackMesh(mesh)");
         source.ShouldContain("commands.RenderGPU(pass, overdrawStrategy);");
         source.ShouldContain("return meshCommand.ForceCpuRendering || material?.RenderOptions?.ExcludeFromGpuIndirect == true;");

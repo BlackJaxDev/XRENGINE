@@ -398,7 +398,7 @@ public interface IRuntimeRenderingHostServices
     int CpuQueryOcclusionRetestPeriodFrames { get; }
 
     /// <summary>
-    /// Gets the maximum CPU hardware-query proxy submissions per pass/view scope per frame.
+    /// Gets the per-pass/view cap on unresolved CPU hardware queries plus current-frame reservations.
     /// </summary>
     int CpuQueryOcclusionMaxQueriesPerFrame { get; }
 

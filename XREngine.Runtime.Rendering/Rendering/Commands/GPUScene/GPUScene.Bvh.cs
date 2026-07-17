@@ -35,7 +35,7 @@ namespace XREngine.Rendering.Commands
         // -------------------------------------------------------------------------
 
         /// <summary>Whether to use GPU BVH traversal for culling.</summary>
-        private bool _useGpuBvh = RuntimeEngine.EffectiveSettings.UseGpuBvh;
+        private bool _useGpuBvh;
 
         /// <summary>External BVH provider for GPU-accelerated culling (optional).</summary>
         private IGpuBvhProvider? _externalBvhProvider;

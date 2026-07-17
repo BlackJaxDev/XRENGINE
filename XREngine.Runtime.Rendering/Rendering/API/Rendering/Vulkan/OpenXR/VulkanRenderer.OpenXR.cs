@@ -1081,13 +1081,15 @@ public unsafe partial class VulkanRenderer
                     if (!TryRefreshReusableCommandBufferFrameData(recordImageIndex, ops))
                         return false;
                 }
-                if (HasQueryFrameOps(ops) && !PrepareQueryFrameOpsForCommandBufferReuse(ops))
+                if (HasQueryFrameOps(ops) &&
+                    !PrepareQueryFrameOpsForCommandBufferReuse(variant.PrimaryCommandBuffer, ops))
                     return false;
 
                 variant.GpuProfilerActive = gpuPipelineProfilingActive;
                 variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
 
-                if (HasQueryFrameOps(ops) && !PrepareQueryFrameOpsForCommandBufferReuse(ops))
+                if (HasQueryFrameOps(ops) &&
+                    !PrepareQueryFrameOpsForCommandBufferReuse(variant.PrimaryCommandBuffer, ops))
                 {
                     if (OpenXrVulkanTraceEnabled)
                         RecordOpenXrPrimaryReuseMiss("openxr-primary-miss:query-pool-prepare");
@@ -1223,6 +1225,7 @@ public unsafe partial class VulkanRenderer
         long recordStart = Stopwatch.GetTimestamp();
         _isRecordingCommandBuffer = true;
         int recordedSwapchainWriteCount = 0;
+        bool queryFrameOpsRequireRerecord = false;
         ImageLayout swapchainLayoutAfterCommandBuffer;
         try
         {
@@ -1247,6 +1250,7 @@ public unsafe partial class VulkanRenderer
                 recordedSwapchainWriteCount: out recordedSwapchainWriteCount,
                 recordedSwapchainFinalLayout: out swapchainLayoutAfterCommandBuffer,
                 recordingDeferredReason: out string recordingDeferredReason,
+                queryFrameOpsRequireRerecord: out queryFrameOpsRequireRerecord,
                 transitionSwapchainToPresent: false,
                 frameDataImageIndexOverride: recordImageIndex,
                 openXrTargetContext: targetContext))
@@ -1305,6 +1309,8 @@ public unsafe partial class VulkanRenderer
         variant.LastUsedFrameId = VulkanFrameCounter;
         CaptureVulkanGpuProfilerVariantScopes(commandBufferImageSlot, variant);
         StoreFrameOpSignatureDebugParts(variant, ops);
+        if (queryFrameOpsRequireRerecord)
+            MarkCommandBufferVariantTransient(variant, "query draw was not recorded");
         UpdateVulkanGpuProfilerCommandBufferState(
             recordImageIndex,
             gpuPipelineProfilingActive,
@@ -2395,13 +2401,15 @@ public unsafe partial class VulkanRenderer
                     if (!TryRefreshReusableCommandBufferFrameData(recordImageIndex, ops))
                         return false;
                 }
-                if (HasQueryFrameOps(ops) && !PrepareQueryFrameOpsForCommandBufferReuse(ops))
+                if (HasQueryFrameOps(ops) &&
+                    !PrepareQueryFrameOpsForCommandBufferReuse(variant.PrimaryCommandBuffer, ops))
                     return false;
 
                 variant.GpuProfilerActive = gpuPipelineProfilingActive;
                 variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
 
-                if (HasQueryFrameOps(ops) && !PrepareQueryFrameOpsForCommandBufferReuse(ops))
+                if (HasQueryFrameOps(ops) &&
+                    !PrepareQueryFrameOpsForCommandBufferReuse(variant.PrimaryCommandBuffer, ops))
                 {
                     if (OpenXrVulkanTraceEnabled)
                         RecordOpenXrPrimaryReuseMiss("openxr-mirror-primary-miss:query-pool-prepare");
@@ -2531,6 +2539,7 @@ public unsafe partial class VulkanRenderer
 
         long recordStart = Stopwatch.GetTimestamp();
         _isRecordingCommandBuffer = true;
+        bool queryFrameOpsRequireRerecord = false;
         try
         {
             BeginRecordedTextureUploadSubmitBatch();
@@ -2563,6 +2572,7 @@ public unsafe partial class VulkanRenderer
                 recordedSwapchainWriteCount: out int recordedSwapchainWriteCount,
                 recordedSwapchainFinalLayout: out ImageLayout swapchainLayoutAfterCommandBuffer,
                 recordingDeferredReason: out string recordingDeferredReason,
+                queryFrameOpsRequireRerecord: out queryFrameOpsRequireRerecord,
                 transitionSwapchainToPresent: false,
                 frameDataImageIndexOverride: recordImageIndex,
                 excludeDesktopSwapchainBarriers: true))
@@ -2611,6 +2621,8 @@ public unsafe partial class VulkanRenderer
             variant.LastUsedFrameId = VulkanFrameCounter;
             CaptureVulkanGpuProfilerVariantScopes(commandBufferImageSlot, variant);
             StoreFrameOpSignatureDebugParts(variant, ops);
+            if (queryFrameOpsRequireRerecord)
+                MarkCommandBufferVariantTransient(variant, "query draw was not recorded");
             UpdateVulkanGpuProfilerCommandBufferState(
                 recordImageIndex,
                 gpuPipelineProfilingActive,

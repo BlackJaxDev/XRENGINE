@@ -217,16 +217,6 @@ namespace XREngine
                 }
             }
 
-            /// <summary>
-            /// Gets the effective GPU BVH usage toggle.
-            /// Resolved from: User Override > Project Override > Engine Default
-            /// </summary>
-            public static bool UseGpuBvh
-                => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.UseGpuBvh,
-                    GameSettings?.UseGpuBvhOverride,
-                    null);
-
             private static EVulkanDiagnosticPreset ResolveVulkanDiagnosticPreset()
             {
                 string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDiagnosticPreset);

@@ -5,9 +5,12 @@ namespace XREngine;
 
 internal static class ModelImportMeshIslandSplitter
 {
-    public static IReadOnlyList<SubMesh> SplitSubMesh(SubMesh subMesh, bool separateMeshIslands)
+    public static IReadOnlyList<SubMesh> SplitSubMesh(
+        SubMesh subMesh,
+        bool separateMeshIslands,
+        int spatialPartitionMaxTriangles = 0)
     {
-        if (!separateMeshIslands)
+        if (!separateMeshIslands && spatialPartitionMaxTriangles <= 0)
             return [subMesh];
 
         if (subMesh.LODs.Count != 1)
@@ -18,18 +21,29 @@ internal static class ModelImportMeshIslandSplitter
         if (sourceMesh is null)
             return [subMesh];
 
-        IReadOnlyList<XRMesh> islandMeshes = sourceMesh.SeparateTriangleIslands();
-        if (islandMeshes.Count == 0 || (islandMeshes.Count == 1 && ReferenceEquals(islandMeshes[0], sourceMesh)))
+        IReadOnlyList<XRMesh> baseMeshes = separateMeshIslands
+            ? sourceMesh.SeparateTriangleIslands()
+            : [sourceMesh];
+        List<XRMesh> finalMeshes = [];
+        for (int meshIndex = 0; meshIndex < baseMeshes.Count; meshIndex++)
+        {
+            IReadOnlyList<XRMesh> partitions = baseMeshes[meshIndex]
+                .PartitionTrianglesSpatially(spatialPartitionMaxTriangles);
+            for (int partitionIndex = 0; partitionIndex < partitions.Count; partitionIndex++)
+                finalMeshes.Add(partitions[partitionIndex]);
+        }
+
+        if (finalMeshes.Count == 0 || (finalMeshes.Count == 1 && ReferenceEquals(finalMeshes[0], sourceMesh)))
             return [subMesh];
 
-        List<SubMesh> islandSubMeshes = new(islandMeshes.Count);
-        for (int islandIndex = 0; islandIndex < islandMeshes.Count; islandIndex++)
+        List<SubMesh> islandSubMeshes = new(finalMeshes.Count);
+        for (int islandIndex = 0; islandIndex < finalMeshes.Count; islandIndex++)
         {
             // Each island gets a freshly-defaulted MeshOptimizer (avoid sharing a single
             // settings instance across islands so later edits don't bleed between siblings)
             // and a null CullingBounds (the auto-computed SubMesh.Bounds derived from the
             // island's own geometry is a tighter fit than the source submesh's override).
-            SubMesh islandSubMesh = new(CopyLod(sourceLod, islandMeshes[islandIndex]))
+            SubMesh islandSubMesh = new(CopyLod(sourceLod, finalMeshes[islandIndex]))
             {
                 Name = FormatIslandName(subMesh.Name, islandIndex),
                 RootTransform = subMesh.RootTransform,

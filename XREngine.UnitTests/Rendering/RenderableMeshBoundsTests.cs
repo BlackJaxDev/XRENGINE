@@ -5,9 +5,11 @@ using System.Collections.Generic;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Models;
 using XREngine.Scene;
@@ -18,6 +20,36 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class RenderableMeshBoundsTests
 {
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ResolveBoundsDebugColor_UsesYellowOnlyForOcclusionCulledMeshes(bool occlusionCulled)
+    {
+        ColorF4 normalColor = ColorF4.Blue;
+
+        ColorF4 resolved = RenderableMesh.ResolveBoundsDebugColor(normalColor, occlusionCulled);
+
+        resolved.ShouldBe(occlusionCulled ? ColorF4.Yellow : normalColor);
+    }
+
+    [Test]
+    public void BoundsDebugCommand_RunsAfterEveryCpuQueryTestablePass()
+    {
+        SceneNode node = new("BoundsDebugRoot");
+        ModelComponent component = node.AddComponent<ModelComponent>()!;
+        component.Model = new Model(
+            new SubMesh(
+                XRMesh.Shapes.SolidBox(Vector3.Zero, new Vector3(2.0f)),
+                new XRMaterial()));
+
+        RenderableMesh renderable = component.Meshes.Single();
+        FieldInfo field = typeof(RenderableMesh).GetField(
+            "_renderBoundsCommand",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+        RenderCommand command = (RenderCommand)field.GetValue(renderable)!;
+        command.RenderPass.ShouldBe((int)EDefaultRenderPass.OnTopForward);
+    }
+
     [Test]
     public void TransformBounds_AffineMatrix_MatchesCornerWiseMatrixTransform()
     {
@@ -31,6 +63,25 @@ public sealed class RenderableMeshBoundsTests
 
         AABB transformed = (AABB)method!.Invoke(null, [bounds, matrix])!;
         AABB expected = bounds.Transformed(p => Vector3.Transform(p, matrix));
+
+        transformed.Min.X.ShouldBe(expected.Min.X, 0.0001f);
+        transformed.Min.Y.ShouldBe(expected.Min.Y, 0.0001f);
+        transformed.Min.Z.ShouldBe(expected.Min.Z, 0.0001f);
+        transformed.Max.X.ShouldBe(expected.Max.X, 0.0001f);
+        transformed.Max.Y.ShouldBe(expected.Max.Y, 0.0001f);
+        transformed.Max.Z.ShouldBe(expected.Max.Z, 0.0001f);
+    }
+
+    [Test]
+    public void AabbAffineTransform_MatchesCornerWiseTransform()
+    {
+        AABB bounds = new(new Vector3(-2f, -1f, -3f), new Vector3(2f, 4f, 5f));
+        Matrix4x4 matrix = Matrix4x4.CreateScale(-1.25f, 0.75f, 2.0f)
+            * Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(Quaternion.CreateFromYawPitchRoll(0.25f, -0.3f, 0.4f)))
+            * Matrix4x4.CreateTranslation(6f, -2f, 9f);
+
+        AABB transformed = bounds.Transformed(matrix);
+        AABB expected = bounds.Transformed(point => Vector3.Transform(point, matrix));
 
         transformed.Min.X.ShouldBe(expected.Min.X, 0.0001f);
         transformed.Min.Y.ShouldBe(expected.Min.Y, 0.0001f);

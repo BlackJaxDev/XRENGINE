@@ -560,7 +560,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
     [Test]
     public void DynamicPipelines_AreKeyedByAttachmentFormatSignatureWithoutRenderPassHandles()
     {
-        string pipelineKey = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.PipelineKey.cs");
+        string pipelineKey = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Structs/VkMeshRenderer.PipelineKey.cs");
         string meshPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
         string prewarm = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelinePrewarmDatabase.cs");
         string modeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanRenderTargetMode.cs");
@@ -593,7 +593,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
     [Test]
     public void GraphicsPipelineLibraryKeys_AreSubsetScopedAndPendingLinksAreNotLoggedAsFailures()
     {
-        string graphicsLibraryKey = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.GraphicsPipelineLibraryKey.cs");
+        string graphicsLibraryKey = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Structs/VkMeshRenderer.GraphicsPipelineLibraryKey.cs");
         string meshPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
 
         graphicsLibraryKey.ShouldContain("internal readonly record struct GraphicsPipelineLibraryKey(");
@@ -639,7 +639,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
         meshPipeline.ShouldContain("stages = stages.Where(static stage => stage.Stage != ShaderStageFlags.FragmentBit).ToArray();");
         meshPipeline.ShouldContain("Vulkan.PipelineLibrary.DepthOnlyMonolithic");
         meshPipeline.ShouldContain("graphics pipeline libraries are bypassed for zero-color pipelines");
-        meshPipeline.ShouldContain("return CreateMonolithicGraphicsPipeline(request, ref pipelineInfo, pipelineCache);");
+        meshPipeline.ShouldContain("return CreateMonolithicGraphicsPipeline(request, ref pipelineInfo, pipelineCache, backgroundCompile);");
         meshPipeline.ShouldNotContain("Vulkan.MeshRenderer.SkipDraw.NoColorAttachment");
         meshPipeline.ShouldNotContain("dynamic rendering has undefined color attachment format while color writes are enabled");
     }

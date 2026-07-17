@@ -400,6 +400,22 @@ public sealed class UnitTestingWorldModelImportSettingsTests
     }
 
     [Test]
+    public void CreateImportOptions_SpatialOcclusionPartitionUsesTunedTriangleLimit()
+    {
+        var model = new EditorUnitTests.Settings.ModelImportSettings
+        {
+            Kind = EditorUnitTests.UnitTestModelImportKind.Static,
+            PostImportFlags = EditorUnitTests.ModelPostImportFlags.SpatiallyPartitionMeshesForOcclusion,
+        };
+
+        ModelImportOptions? options = EditorUnitTests.Models.CreateImportOptions(model, []);
+
+        options.ShouldNotBeNull();
+        options!.SpatialPartitionMaxTriangles.ShouldBe(4096);
+        options.SeparateMeshIslands.ShouldBeFalse();
+    }
+
+    [Test]
     public void CreateImportOptions_GenerateIndividualSceneNodesPerSubmesh_ImpliesSplitSubmeshes()
     {
         var model = new EditorUnitTests.Settings.ModelImportSettings
@@ -428,7 +444,8 @@ public sealed class UnitTestingWorldModelImportSettingsTests
                     PostImportFlags =
                         EditorUnitTests.ModelPostImportFlags.GenerateCoacdCollidersPerSubmesh |
                         EditorUnitTests.ModelPostImportFlags.GenerateIndividualSceneNodesPerSubmesh |
-                        EditorUnitTests.ModelPostImportFlags.PutAllCoacdCollidersIntoOneStaticRigidBodyComponent,
+                        EditorUnitTests.ModelPostImportFlags.PutAllCoacdCollidersIntoOneStaticRigidBodyComponent |
+                        EditorUnitTests.ModelPostImportFlags.SpatiallyPartitionMeshesForOcclusion,
                 },
             ],
         };
@@ -439,7 +456,8 @@ public sealed class UnitTestingWorldModelImportSettingsTests
         runtimeSettings.ModelsToImport[0].PostImportFlags.ShouldBe(
             XREngine.Runtime.Bootstrap.ModelPostImportFlags.GenerateCoacdCollidersPerSubmesh |
             XREngine.Runtime.Bootstrap.ModelPostImportFlags.GenerateIndividualSceneNodesPerSubmesh |
-            XREngine.Runtime.Bootstrap.ModelPostImportFlags.PutAllCoacdCollidersIntoOneStaticRigidBodyComponent);
+            XREngine.Runtime.Bootstrap.ModelPostImportFlags.PutAllCoacdCollidersIntoOneStaticRigidBodyComponent |
+            XREngine.Runtime.Bootstrap.ModelPostImportFlags.SpatiallyPartitionMeshesForOcclusion);
 
         runtimeSettings.ModelsToImport[0].PostImportFlags = XREngine.Runtime.Bootstrap.ModelPostImportFlags.SeparateMeshIslands;
 

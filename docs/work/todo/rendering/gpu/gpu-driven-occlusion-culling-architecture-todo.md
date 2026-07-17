@@ -54,9 +54,9 @@ frustum OR BVH cull compute -> (optional) GpuHiZ occlusion refine -> indirect bu
   `_culledCountBuffer`.
 - GPU BVH (`GpuBvhTree`, `bvh_frustum_cull.comp`): internal command-bounds BVH
   with GPU build/refit/SAH refine. Traversal is **frustum-only** — interior
-  nodes are never tested against any occlusion source. On Vulkan it is
-  diagnostic opt-in (`XRE_VULKAN_GPU_BVH_CULLING`, default off) and unvalidated
-  against the regular frustum path.
+  nodes are never tested against any occlusion source. GPU submission strategies
+  select it automatically on Vulkan; the flat GPU frustum path remains the
+  readiness fallback when the BVH shader or provider is unavailable.
 - GpuHiZ (`GPURenderOcclusionHiZ.comp` + `ApplyGpuHiZOcclusion`): single-phase
   refine against a depth pyramid built from current or history depth.
   Weaknesses:
@@ -136,8 +136,8 @@ Key structures:
 - [ ] Create branch `rendering-gpu-driven-occlusion`.
 - [ ] Capture baseline profiles in the Unit Testing World (Vulkan +
   `GPURenderDispatch=true`, DevParity and ShippingFast profiles): FPS, cull
-  dispatch ms, HiZ stage stats (`HiZStageStats`), draw counts with
-  `GpuHiZ` on/off, `UseGpuBvh` on/off.
+  dispatch ms, HiZ stage stats (`HiZStageStats`), draw counts with `GpuHiZ`
+  on/off, plus BVH-ready and flat-fallback frame counts.
 - [ ] Capture one RenderDoc frame per configuration under
   `Build/_AgentValidation/<run>/renderdoc/` documenting current pass order.
 - [ ] Record the count of dirty-bypass frames during 30s of editor camera
@@ -233,9 +233,9 @@ Acceptance criteria:
 - [ ] Add per-node last-visible frame id (small SSBO parallel to the node
   buffer) with the same GPU-side remap rules as command visibility.
 - [ ] Validate BVH traversal parity vs. flat frustum cull (same visible set
-  ± phase-2 timing) with a deterministic test scene; then flip the Vulkan
-  default: `ResolveVulkanGpuBvhCullingPolicy` returns true for
-  DevParity/ShippingFast once parity holds.
+  ± phase-2 timing) with a deterministic test scene.
+- [x] Make GPU BVH selection strategy-driven for Vulkan instrumented,
+  zero-readback, and meshlet submission; remove the Vulkan environment gate.
 - [ ] Keep refit/rebuild policy as-is (dirty-marking via GPUScene hooks);
   document that a stale-refit BVH only costs conservatism, not correctness,
   because node tests use enlarged parent bounds.
@@ -244,7 +244,7 @@ Acceptance criteria:
 
 - [ ] In a high-occlusion scene, BVH+occlusion traversal visits measurably
   fewer nodes/commands than flat cull + per-command Hi-Z (GPU stats slots).
-- [ ] GPU BVH is on by default for Vulkan zero-readback and no longer
+- [x] GPU BVH is on by default for Vulkan zero-readback and no longer
   labeled diagnostic.
 
 ## Phase 5 - Meshlet Path Integration

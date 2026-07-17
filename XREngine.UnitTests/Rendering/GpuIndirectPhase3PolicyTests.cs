@@ -3,6 +3,7 @@ using System.IO;
 using NUnit.Framework;
 using Shouldly;
 using XREngine;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine.UnitTests.Rendering;
@@ -49,30 +50,32 @@ public sealed class GpuIndirectPhase3PolicyTests
     }
 
     [Test]
-    public void VulkanFeatureProfile_GpuBvhCulling_IsExplicitVulkanOptIn()
+    public void VulkanFeatureProfile_GpuBvhCulling_IsStrategyDriven()
     {
-        VulkanFeatureProfile.ResolveVulkanGpuBvhCullingPolicy(null).ShouldBeFalse();
-        VulkanFeatureProfile.ResolveVulkanGpuBvhCullingPolicy("").ShouldBeFalse();
-        VulkanFeatureProfile.ResolveVulkanGpuBvhCullingPolicy("0").ShouldBeFalse();
-        VulkanFeatureProfile.ResolveVulkanGpuBvhCullingPolicy("disabled").ShouldBeFalse();
-        VulkanFeatureProfile.ResolveVulkanGpuBvhCullingPolicy("1").ShouldBeTrue();
-        VulkanFeatureProfile.ResolveVulkanGpuBvhCullingPolicy("enabled").ShouldBeTrue();
+        EMeshSubmissionStrategy.CpuDirect.UsesGpuBvhCulling().ShouldBeFalse();
+        EMeshSubmissionStrategy.GpuIndirectInstrumented.UsesGpuBvhCulling().ShouldBeTrue();
+        EMeshSubmissionStrategy.GpuIndirectZeroReadback.UsesGpuBvhCulling().ShouldBeTrue();
+        EMeshSubmissionStrategy.GpuMeshletInstrumented.UsesGpuBvhCulling().ShouldBeTrue();
+        EMeshSubmissionStrategy.GpuMeshletZeroReadback.UsesGpuBvhCulling().ShouldBeTrue();
 
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/VulkanFeatureProfile.cs");
-        source.ShouldContain("GpuBvhCullingEnvVar = XREngineEnvironmentVariables.VulkanGpuBvhCulling");
-        source.ShouldContain("private static readonly bool VulkanGpuBvhCullingEnabled");
-        source.ShouldContain("ResolveVulkanGpuBvhCullingPolicy(Environment.GetEnvironmentVariable(GpuBvhCullingEnvVar))");
-        source.ShouldContain("return ProfileAllowsGpuBvh && VulkanGpuBvhCullingEnabled;");
+        source.ShouldContain("ResolveGpuBvhUsage(EMeshSubmissionStrategy strategy)");
+        source.ShouldContain("if (!strategy.UsesGpuBvhCulling())");
+        source.ShouldContain("return ProfileAllowsGpuBvh;");
+        source.ShouldNotContain("GpuBvhCullingEnvVar");
+        source.ShouldNotContain("ResolveVulkanGpuBvhCullingPolicy");
     }
 
     [Test]
-    public void BuildAccelerationStructure_RespectsVulkanGpuBvhProfile()
+    public void BuildAccelerationStructure_UsesGpuBvhForGpuSubmissionStrategies()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_BuildAccelerationStructure.cs");
 
-        source.ShouldContain("VulkanFeatureProfile.ResolveGpuBvhPreference(RuntimeEngine.EffectiveSettings.UseGpuBvh)");
+        source.ShouldContain("EMeshSubmissionStrategy strategy = ResolveEffectiveMeshSubmissionStrategy();");
+        source.ShouldContain("viewport?.MeshSubmissionStrategyOverride");
+        source.ShouldContain("VulkanFeatureProfile.ResolveGpuBvhUsage(strategy)");
         source.ShouldContain("gpuScene.UseGpuBvh = useGpuBvh;");
-        source.ShouldContain("gpuScene.UseInternalBvh = useGpuBvh && EnableInternalSceneBvh;");
+        source.ShouldContain("gpuScene.UseInternalBvh = useGpuBvh;");
         source.ShouldContain("if (!useGpuBvh)");
         source.ShouldContain("PublishEmpty();");
     }
@@ -116,6 +119,8 @@ public sealed class GpuIndirectPhase3PolicyTests
         source.ShouldContain("LogCpuFallbackSuppressed(\"GPU frustum cull\")");
         source.ShouldContain("LogCpuFallbackSuppressed(\"GPU BVH cull\")");
         source.ShouldContain("LogCpuFallbackSuppressed(\"GPU pass filter\")");
+        source.ShouldContain("LogGpuBvhFallback(\"GPU BVH resources are not ready\")");
+        source.ShouldContain("using flat GPU frustum culling until it is ready");
     }
 
     [Test]

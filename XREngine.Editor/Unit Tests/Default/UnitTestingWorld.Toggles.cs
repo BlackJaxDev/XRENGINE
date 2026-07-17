@@ -43,6 +43,7 @@ public static partial class EditorUnitTests
         SeparateMeshIslands = 1 << 2,
         GenerateIndividualSceneNodesPerSubmesh = 1 << 3,
         PutAllCoacdCollidersIntoOneStaticRigidBodyComponent = 1 << 4,
+        SpatiallyPartitionMeshesForOcclusion = 1 << 5,
     }
 
     public enum UnitTestFbxLogVerbosity

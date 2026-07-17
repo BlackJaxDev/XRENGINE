@@ -116,6 +116,7 @@ namespace XREngine.Data.Rendering
             => left.Position == right.Position
             && Nullable.Equals(left.Normal, right.Normal)
             && Nullable.Equals(left.Tangent, right.Tangent)
+            && left.BitangentSign == right.BitangentSign
             && SequenceEqual(left.TextureCoordinateSets, right.TextureCoordinateSets)
             && SequenceEqual(left.ColorSets, right.ColorSets);
 
@@ -198,6 +199,7 @@ namespace XREngine.Data.Rendering
             hash.Add(data.Position);
             hash.Add(data.Normal);
             hash.Add(data.Tangent);
+            hash.Add(data.BitangentSign);
             AddSequenceHash(ref hash, data.TextureCoordinateSets);
             AddSequenceHash(ref hash, data.ColorSets);
         }
@@ -261,6 +263,7 @@ namespace XREngine.Data.Rendering
                 Position = Position,
                 Normal = Normal,
                 Tangent = Tangent,
+                BitangentSign = BitangentSign,
                 TextureCoordinateSets = TextureCoordinateSets is null ? null : new(TextureCoordinateSets),
                 ColorSets = ColorSets is null ? null : new(ColorSets),
                 Blendshapes = Blendshapes is null ? null : new(Blendshapes),

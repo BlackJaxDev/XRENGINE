@@ -2,6 +2,7 @@ using NUnit.Framework;
 using Shouldly;
 using System.Collections.Generic;
 using System.IO;
+using System.Numerics;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -95,6 +96,50 @@ public sealed class RenderCommandCollectionOrderingTests
     }
 
     [Test]
+    public void MeshSortDistance_UsesNearestPointOnWorldBounds()
+    {
+        XRCamera camera = new(new XREngine.Scene.Transforms.Transform(Vector3.Zero));
+        RenderCommandMesh3D command = new((int)EDefaultRenderPass.OpaqueDeferred)
+        {
+            WorldMatrix = Matrix4x4.Identity,
+            WorldCullingVolumeOverride = new AABB(
+                new Vector3(3.0f, -1.0f, -1.0f),
+                new Vector3(5.0f, 1.0f, 1.0f)),
+        };
+
+        command.CollectedForRender(camera);
+
+        command.RenderDistance.ShouldBe(9.0f, tolerance: 0.0001f);
+    }
+
+    [Test]
+    public void MeshCollection_CapturesCameraLocalBoundsDistance_WithoutSharedViewportRace()
+    {
+        const int pass = (int)EDefaultRenderPass.OpaqueDeferred;
+        RenderCommandCollection commands = new(new Dictionary<int, IComparer<RenderCommand>?>
+        {
+            [pass] = new NearToFarRenderCommandSorter()
+        });
+        XRCamera primaryCamera = new(new XREngine.Scene.Transforms.Transform(Vector3.Zero));
+        XREngine.Scene.Transforms.Transform competingTransform = new(new Vector3(100.0f, 0.0f, 0.0f));
+        competingTransform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+        XRCamera competingCamera = new(competingTransform);
+        RenderCommandMesh3D near = CreateBoundedMeshCommand(pass, 2.0f, 3.0f);
+        RenderCommandMesh3D far = CreateBoundedMeshCommand(pass, 20.0f, 21.0f);
+
+        near.CollectedForRender(competingCamera);
+        commands.AddCPU(near, primaryCamera);
+        far.CollectedForRender(competingCamera);
+        near.RenderDistance.ShouldBeGreaterThan(far.RenderDistance);
+        commands.AddCPU(far, primaryCamera);
+        commands.SwapBuffers();
+
+        commands.TryGetRenderingPassCommands(pass, out IReadOnlyCollection<RenderCommand>? passCommands).ShouldBeTrue();
+        passCommands.ShouldNotBeNull();
+        passCommands.ToArray().ShouldBe(new RenderCommand[] { near, far });
+    }
+
+    [Test]
     public void SortedRenderPasses_UseSnapshotCollections_NotLiveMutableSortedSet()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs");
@@ -102,8 +147,9 @@ public sealed class RenderCommandCollectionOrderingTests
 
         source.ShouldContain("SnapshotSortedRenderCommandCollection");
         source.ShouldContain("SnapshotSortedRenderCommandCollection : ICollection<RenderCommand>, IReadOnlyCollection<RenderCommand>");
-        source.ShouldContain("Entry.Capture(item, sortOrderKey)");
-        source.ShouldContain("snapshotSet.Add(item, sortOrderKey)");
+        source.ShouldContain("Entry.Capture(item, renderDistance, sortOrderKey)");
+        source.ShouldContain("snapshotSet.Add(item, sortOrderKey, renderDistance)");
+        source.ShouldContain("item.CaptureSortDistance(camera)");
         source.ShouldNotContain("_entries.Add(Entry.Capture(item));");
         source.ShouldNotContain("new SortedSet<RenderCommand>");
         source.ShouldContain("hostServices.RenderWindowsWhileInVR && hostServices.VrMirrorComposeFromEyeTextures");
@@ -311,6 +357,15 @@ public sealed class RenderCommandCollectionOrderingTests
         public RenderInfo2D Info { get; }
         public RenderInfo[] RenderedObjects { get; }
     }
+
+    private static RenderCommandMesh3D CreateBoundedMeshCommand(int renderPass, float minX, float maxX)
+        => new(renderPass)
+        {
+            WorldMatrix = Matrix4x4.Identity,
+            WorldCullingVolumeOverride = new AABB(
+                new Vector3(minX, -1.0f, -1.0f),
+                new Vector3(maxX, 1.0f, 1.0f)),
+        };
 
     private static string ReadWorkspaceFile(string relativePath)
     {

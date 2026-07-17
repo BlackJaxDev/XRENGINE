@@ -39,12 +39,14 @@ public unsafe partial class VulkanRenderer
             FrameOp operation,
             int contextBlockOrder,
             int passOrder,
-            int originalIndex)
+            int originalIndex,
+            int queryOrderBlock)
         {
             public FrameOp Operation { get; } = operation;
             public int ContextBlockOrder { get; } = contextBlockOrder;
             public int PassOrder { get; } = passOrder;
             public int OriginalIndex { get; } = originalIndex;
+            public int QueryOrderBlock { get; } = queryOrderBlock;
         }
 
         private sealed class FrameOpSortKeyComparer : IComparer<FrameOpSortKey>
@@ -60,6 +62,14 @@ public unsafe partial class VulkanRenderer
                 int passCompare = x.PassOrder.CompareTo(y.PassOrder);
                 if (passCompare != 0)
                     return passCompare;
+
+                // Passes absent from graph metadata share the same fallback rank. Use
+                // one global query-boundary ordinal at that rank so draws from another
+                // equal-ranked pass cannot make this comparator non-transitive or enter
+                // an inline query bracket.
+                int queryBlockCompare = x.QueryOrderBlock.CompareTo(y.QueryOrderBlock);
+                if (queryBlockCompare != 0)
+                    return queryBlockCompare;
 
                 if (x.Operation is MeshDrawOp xDraw &&
                     y.Operation is MeshDrawOp yDraw &&
@@ -227,6 +237,7 @@ public unsafe partial class VulkanRenderer
             {
                 sortKeys = ArrayPool<FrameOpSortKey>.Shared.Rent(opCount);
                 bool preserveContextBlocks = HasSubmissionOrderBlock(ops);
+                int queryOrderBlock = 0;
 
                 for (int i = 0; i < opCount; i++)
                 {
@@ -235,7 +246,14 @@ public unsafe partial class VulkanRenderer
                         op,
                         preserveContextBlocks ? ResolveContextBlockOrder(ops, i) : 0,
                         ResolvePassOrder(op, graph),
-                        i);
+                        i,
+                        queryOrderBlock);
+
+                    // The current query op terminates its preceding order block. A
+                    // single forward ordinal makes this O(N) and fences equal-ranked
+                    // passes as well as operations with the same PassIndex.
+                    if (op is QueryOp)
+                        queryOrderBlock++;
                 }
 
                 bool alreadySorted = true;
@@ -305,7 +323,6 @@ public unsafe partial class VulkanRenderer
                     FrameOpSortKey previous = sortKeys[j];
                     if (previous.PassOrder != clearKey.PassOrder)
                         break;
-
                     if (IsSameSchedulingTarget(clear, previous.Operation) &&
                         IsTargetUseThatClearMustPrecede(previous.Operation))
                     {
@@ -486,7 +503,7 @@ public unsafe partial class VulkanRenderer
                     runPassIndex == passIndex &&
                     runTargetIdentity == targetIdentity &&
                     runSchedulingIdentity == schedulingIdentity &&
-                    Equals(runContext, op.Context);
+                    AreFrameOpContextsRecordingCompatible(runContext, op.Context);
 
                 if (!sameBucket)
                 {

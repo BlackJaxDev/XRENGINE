@@ -46,6 +46,7 @@ namespace XREngine.Rendering.Commands
         private bool _loggedPassthroughCullMode;
         private bool _loggedFrustumCullMode;
         private bool _loggedBvhCullMode;
+        private bool _loggedGpuBvhFallback;
         private bool _loggedExternalVrSharedVisibilityCullMode;
         private bool _skipGpuSubmissionThisPass;
         private string? _skipGpuSubmissionReason;
@@ -946,24 +947,46 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
-        /// Determines whether BVH-accelerated culling should be used based on availability and settings.
+        /// Determines whether BVH-accelerated culling should be used based on strategy and resource readiness.
         /// </summary>
         private bool ShouldUseBvhCulling(GPUScene scene)
         {
-            // Check if BVH culling is enabled in settings
             if (!scene.UseGpuBvh)
                 return false;
 
-            // Check if we have the BVH culling shader
             if (_bvhFrustumCullProgram is null)
+            {
+                LogGpuBvhFallback("BVH frustum-cull shader is unavailable");
                 return false;
+            }
 
-            // Check if the scene has a valid BVH provider
             var provider = scene.BvhProvider;
-            if (provider is null || !provider.IsBvhReady)
+            if (provider is null)
+            {
+                LogGpuBvhFallback("scene has no GPU BVH provider");
                 return false;
+            }
+
+            if (!provider.IsBvhReady)
+            {
+                LogGpuBvhFallback("GPU BVH resources are not ready");
+                return false;
+            }
 
             return true;
+        }
+
+        private void LogGpuBvhFallback(string reason)
+        {
+            if (_loggedGpuBvhFallback)
+                return;
+
+            _loggedGpuBvhFallback = true;
+            Warn(
+                LogCategory.Culling,
+                "GPU BVH was selected for pass {0}, but {1}; using flat GPU frustum culling until it is ready.",
+                RenderPass,
+                reason);
         }
 
         /// <summary>

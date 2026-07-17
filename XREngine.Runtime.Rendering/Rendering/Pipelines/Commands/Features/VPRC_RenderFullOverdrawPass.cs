@@ -12,7 +12,6 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
 
     private static readonly int[] DefaultRenderPasses =
     [
-        (int)EDefaultRenderPass.Background,
         (int)EDefaultRenderPass.OpaqueDeferred,
         (int)EDefaultRenderPass.DeferredDecals,
         (int)EDefaultRenderPass.OpaqueForward,
@@ -21,7 +20,6 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
         (int)EDefaultRenderPass.PerPixelLinkedListForward,
         (int)EDefaultRenderPass.DepthPeelingForward,
         (int)EDefaultRenderPass.TransparentForward,
-        (int)EDefaultRenderPass.OnTopForward,
     ];
 
     public int[] RenderPasses { get; set; } = DefaultRenderPasses;

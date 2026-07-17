@@ -233,6 +233,10 @@ namespace XREngine.Components.Scene.Mesh
             else if (showTransparencyClassificationOverlay && material is not null)
                 boundsColor = GetTransparencyClassificationColor(material.GetEffectiveTransparencyMode());
 
+            bool occlusionCulled = renderMeshBounds &&
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.ActiveMeshRenderCommands.IsCpuQueryOccluded(_rc) == true;
+            boundsColor = ResolveBoundsDebugColor(boundsColor, occlusionCulled);
+
             var box = (RenderInfo as IOctreeItem)?.WorldCullingVolume;
             if (renderMeshBounds && ShouldUseLiveGpuSkinnedBounds())
             {
@@ -296,6 +300,9 @@ namespace XREngine.Components.Scene.Mesh
                 ETransparencyMode.TriangleSorted => new ColorF4(1.0f, 0.9f, 0.25f, 1.0f),
                 _ => ColorF4.White,
             };
+
+        internal static ColorF4 ResolveBoundsDebugColor(ColorF4 normalColor, bool occlusionCulled)
+            => occlusionCulled ? ColorF4.Yellow : normalColor;
 
         // One-shot diagnostic: dumps the first-collect culling state for each skinned mesh so we can
         // confirm whether "missing until I move the root bone" meshes are being frustum-culled because

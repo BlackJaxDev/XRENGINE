@@ -69,6 +69,7 @@ namespace XREngine.Rendering.Occlusion
             public readonly Dictionary<uint, QueryState> Queries = new();
             public readonly Dictionary<uint, HierarchyGroupState> HierarchyGroups = new();
             public readonly Dictionary<uint, HierarchyScratch> HierarchyScratch = new();
+            public readonly HashSet<uint> SelectedVisibleDrawQueries = new();
             public OcclusionViewKey ViewKey;
             public OcclusionViewOwnership Ownership;
             public PovState Pov = null!;
@@ -84,12 +85,14 @@ namespace XREngine.Rendering.Occlusion
             public ulong LastResolvedFrameId;
             public ulong LastBudgetFrameId = ulong.MaxValue;
             public ulong FrameEpoch;
+            public int PendingQueriesAtBudgetRefresh;
             public int VisibleBudgetUsed;
             public int RecoveryBudgetUsed;
             public uint LastSceneCommandCount;
             public ulong CommandSetSignature;
             public bool HasCommandSetSignature;
             public ulong LastTouchedFrame;
+            public bool HasVisibleDrawSelection;
         }
 
         private readonly struct PovKey : IEquatable<PovKey>
@@ -413,7 +416,7 @@ namespace XREngine.Rendering.Occlusion
                     return SetDecision(state, queryState, ECpuOcclusionDecision.Visible, request, ECpuDecisionKind.VisibleHysteresis, out probeRequest);
                 }
 
-                if (ShouldForceVisibleForStaleOcclusion(queryState, frameId, state.MotionTier))
+                if (ShouldForceVisibleForStaleOcclusion(state, queryState, frameId))
                 {
                     BeginRecovery(state, queryState, frameId);
                     OcclusionTelemetry.RecordCpuForcedVisible(ECpuOcclusionForceVisibleReason.StaleResult);
@@ -465,6 +468,10 @@ namespace XREngine.Rendering.Occlusion
                     return true;
                 if (!state.Queries.TryGetValue(sourceCommandIndex, out QueryState? queryState))
                     return true;
+                // Auxiliary passes replay the primary decision; re-evaluating after
+                // hysteresis counters changed can disagree within the same frame.
+                if (queryState.LastDecidedFrameId == state.FrameEpoch)
+                    return queryState.LastDecision == ECpuOcclusionDecision.Visible;
                 if (GetConservativeAnySamplesPassed(
                         state,
                         sourceCommandIndex,
@@ -473,9 +480,9 @@ namespace XREngine.Rendering.Occlusion
                         out _))
                     return true;
                 if (ShouldForceVisibleForStaleOcclusion(
+                        state,
                         queryState,
-                        state.FrameEpoch,
-                        state.MotionTier))
+                        state.FrameEpoch))
                     return true;
                 if (queryState.QueryPending && queryState.PendingQueryWasVisibleDraw)
                     return true;
@@ -483,6 +490,35 @@ namespace XREngine.Rendering.Occlusion
                     return true;
 
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Retrieves the primary decision already recorded for this command in the
+        /// current pass epoch. Unlike <see cref="PeekShouldRender(int, XRCamera?, uint, OcclusionViewOwnership)"/>,
+        /// this diagnostic accessor never creates pass/query state and never predicts
+        /// from an older result.
+        /// </summary>
+        internal bool TryGetCurrentDecision(
+            int renderPass,
+            XRCamera? camera,
+            uint sourceCommandIndex,
+            OcclusionViewOwnership ownership,
+            out ECpuOcclusionDecision decision)
+        {
+            decision = ECpuOcclusionDecision.Visible;
+            lock (_lock)
+            {
+                OcclusionViewKey key = CreatePassKey(renderPass, camera, ownership);
+                if (!_passStates.TryGetValue(key, out PassState? state) ||
+                    !state.Queries.TryGetValue(sourceCommandIndex, out QueryState? queryState) ||
+                    queryState.LastDecidedFrameId != state.FrameEpoch)
+                {
+                    return false;
+                }
+
+                decision = queryState.LastDecision;
+                return true;
             }
         }
 
@@ -575,9 +611,11 @@ namespace XREngine.Rendering.Occlusion
                     return;
                 }
 
-                int pendingQueries = CountPendingQueries(state);
+                int pendingQueries = state.PendingQueriesAtBudgetRefresh;
                 OcclusionTelemetry.RecordCpuPendingQueries(pendingQueries);
-                int available = Math.Max(0, maxQueries - pendingQueries);
+                int available = Math.Max(
+                    0,
+                    maxQueries - pendingQueries - state.VisibleBudgetUsed - state.RecoveryBudgetUsed);
                 if (available == 0)
                 {
                     OcclusionTelemetry.RecordCpuBudgetSkipped(ECpuOcclusionQueryReason.StaleStateRefresh, candidates.Count);
@@ -605,12 +643,55 @@ namespace XREngine.Rendering.Occlusion
         }
 
         /// <summary>
-        /// Reserves one bounded visible-demotion query at the mesh's original draw
-        /// position. The caller emits the conservative LEQUAL proxy before the real
-        /// mesh, so a preceding depth-normal pass cannot turn equal-depth color draws
-        /// into false zero-sample results.
+        /// Selects the visible meshes whose exact draws may carry a query on the next
+        /// pass. Selection happens after the current visible loop has exposed every
+        /// request, so a bounded budget cannot be monopolized by render-order leaders.
         /// </summary>
-        public bool TryScheduleVisibleProxyProbe(
+        public void SelectVisibleDrawCandidates(
+            int renderPass,
+            XRCamera? camera,
+            List<CpuOcclusionProbeCandidate> candidates,
+            OcclusionViewOwnership ownership)
+        {
+            lock (_lock)
+            {
+                PassState state = GetPassStateForOwnership(renderPass, camera, ownership);
+                state.SelectedVisibleDrawQueries.Clear();
+                state.HasVisibleDrawSelection = true;
+
+                if (state.ForceVisibleThisFrame || candidates.Count == 0)
+                    return;
+
+                int maxQueries = RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMaxQueriesPerFrame;
+                if (maxQueries <= 0)
+                    return;
+
+                ComputeBudgets(state.MotionTier, maxQueries, out int visibleBudget, out _);
+                if (visibleBudget <= 0)
+                    return;
+
+                candidates.Sort(CompareProbeCandidates);
+                for (int index = 0; index < candidates.Count && state.SelectedVisibleDrawQueries.Count < visibleBudget; index++)
+                {
+                    CpuOcclusionProbeCandidate candidate = candidates[index];
+                    if (!candidate.Request.Requested || candidate.Request.RecoveryProbe)
+                        continue;
+                    if (!state.Queries.TryGetValue(candidate.QueryKey, out QueryState? queryState))
+                        continue;
+                    if (queryState.QueryPending || queryState.QueryIssuedFrameId == state.FrameEpoch)
+                        continue;
+
+                    state.SelectedVisibleDrawQueries.Add(candidate.QueryKey);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Reserves one bounded visible-demotion query at the mesh's original draw
+        /// position. The query brackets the exact contributing geometry so its result
+        /// follows the pass's actual depth, discard, and prepass-equality semantics.
+        /// </summary>
+        public bool TryScheduleVisibleDrawQuery(
             int renderPass,
             XRCamera? camera,
             uint sourceCommandIndex,
@@ -627,6 +708,31 @@ namespace XREngine.Rendering.Occlusion
 
                 int maxQueries = RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMaxQueriesPerFrame;
                 if (state.ForceVisibleThisFrame || maxQueries <= 0)
+                {
+                    OcclusionTelemetry.RecordCpuBudgetSkipped(request.Reason);
+                    state.Telemetry.RecordBudgetSkipped(1);
+                    return false;
+                }
+
+                // Once the end-of-pass selector has been primed, only its globally
+                // ranked keys may consume visible-query capacity. Without this gate,
+                // the first commands in render order repeatedly take every slot and
+                // large scenes never seed or refresh their later meshes.
+                if (state.HasVisibleDrawSelection &&
+                    !state.SelectedVisibleDrawQueries.Contains(sourceCommandIndex))
+                {
+                    OcclusionTelemetry.RecordCpuBudgetSkipped(request.Reason);
+                    state.Telemetry.RecordBudgetSkipped(1);
+                    return false;
+                }
+
+                // The setting is a total in-flight cap, not merely a per-frame
+                // visible-demotion allowance. Vulkan commonly resolves two or more
+                // frames later, so ignoring existing pending work can overfill the
+                // pool and starve the recovery budget.
+                if (state.PendingQueriesAtBudgetRefresh +
+                    state.VisibleBudgetUsed +
+                    state.RecoveryBudgetUsed >= maxQueries)
                 {
                     OcclusionTelemetry.RecordCpuBudgetSkipped(request.Reason);
                     state.Telemetry.RecordBudgetSkipped(1);
@@ -650,6 +756,7 @@ namespace XREngine.Rendering.Occlusion
                     return false;
                 }
 
+                state.SelectedVisibleDrawQueries.Remove(sourceCommandIndex);
                 state.VisibleBudgetUsed++;
                 return true;
             }
@@ -1156,6 +1263,9 @@ namespace XREngine.Rendering.Occlusion
             List<uint>? staleKeys = null;
             foreach (var (key, queryState) in state.Queries)
             {
+                if (ExpireOverduePendingQuery(state, key, queryState, frameId))
+                    continue;
+
                 bool discardResult = queryState.DiscardPendingResult;
                 ResolveQueryState(queryState, frameId, out bool resolved, out bool anySamplesPassed);
                 if (resolved && !discardResult)
@@ -1165,6 +1275,8 @@ namespace XREngine.Rendering.Occlusion
                     state.Telemetry.RecordResolution(queryState.PendingSinceFrame, frameId);
                     CompleteRecovery(state, queryState, frameId);
                 }
+                if (resolved)
+                    NotePendingQueryRemoved(state);
 
                 if (!queryState.QueryPending &&
                     frameId - queryState.LastTouchedFrame > StaleEvictionFrames)
@@ -1185,10 +1297,14 @@ namespace XREngine.Rendering.Occlusion
 
             foreach (var (groupKey, group) in state.HierarchyGroups)
             {
+                if (ExpireOverdueHierarchyQuery(state, group, frameId))
+                    continue;
+
                 ResolveQueryState(group.Query, frameId, out bool resolved, out bool anySamplesPassed);
                 if (!resolved)
                     continue;
 
+                NotePendingQueryRemoved(state);
                 state.Telemetry.RecordResolution(group.Query.PendingSinceFrame, frameId);
 
                 group.LastAnySamplesPassed = anySamplesPassed;
@@ -1287,21 +1403,58 @@ namespace XREngine.Rendering.Occlusion
             QueryState queryState,
             ulong frameId)
         {
-            if (!queryState.QueryPending)
+            if (!IsPendingQueryOverdue(queryState, frameId))
                 return false;
 
-            int maxPendingFrames = RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMaxPendingFrames;
-            if (frameId - queryState.PendingSinceFrame <= (ulong)Math.Max(1, maxPendingFrames))
-                return false;
-
-            queryState.QueryPending = false;
-            queryState.DiscardPendingResult = true;
+            ReplaceOverduePendingQuery(state, queryState);
             InvalidatePovQuery(state.Pov, sourceCommandIndex, state.ViewKey.CoverageMask);
             BeginRecovery(state, queryState, frameId);
             ForceQueryStateVisible(queryState, frameId);
             OcclusionTelemetry.RecordCpuForcedVisible(ECpuOcclusionForceVisibleReason.PendingTooOld);
             state.Telemetry.RecordForcedVisible();
             return true;
+        }
+
+        private bool ExpireOverdueHierarchyQuery(
+            PassState state,
+            HierarchyGroupState group,
+            ulong frameId)
+        {
+            QueryState queryState = group.Query;
+            if (!IsPendingQueryOverdue(queryState, frameId))
+                return false;
+
+            ReplaceOverduePendingQuery(state, queryState);
+            ForceQueryStateVisible(queryState, frameId);
+            group.LastAnySamplesPassed = true;
+            group.LastQueryFrame = frameId;
+            group.LastVisibleFrame = frameId;
+            group.ScheduledFrameId = ulong.MaxValue;
+            OcclusionTelemetry.RecordCpuForcedVisible(ECpuOcclusionForceVisibleReason.PendingTooOld);
+            state.Telemetry.RecordForcedVisible();
+            return true;
+        }
+
+        private static bool IsPendingQueryOverdue(QueryState queryState, ulong frameId)
+        {
+            if (!queryState.QueryPending)
+                return false;
+
+            int maxPendingFrames = RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMaxPendingFrames;
+            return frameId - queryState.PendingSinceFrame > (ulong)Math.Max(1, maxPendingFrames);
+        }
+
+        private void ReplaceOverduePendingQuery(PassState state, QueryState queryState)
+        {
+            XRRenderQuery expiredQuery = queryState.Query;
+            queryState.Query = _queryManager.Acquire(EQueryTarget.AnySamplesPassedConservative);
+            queryState.QueryPending = false;
+            queryState.DiscardPendingResult = false;
+            queryState.PendingQueryWasVisibleDraw = false;
+            queryState.PendingReason = ECpuOcclusionQueryReason.None;
+            queryState.QueryIssuedFrameId = ulong.MaxValue;
+            NotePendingQueryRemoved(state);
+            _queryManager.Release(expiredQuery, pendingResult: true);
         }
 
         private void ResolveAvailableResultsForPov(PovState pov)
@@ -1364,13 +1517,13 @@ namespace XREngine.Rendering.Occlusion
             return ((frameId + sourceCommandIndex) % (ulong)stagger) == 0UL || motionTier != ECpuOcclusionMotionTier.Stable;
         }
 
-        private static bool ShouldForceVisibleForStaleOcclusion(QueryState queryState, ulong frameId, ECpuOcclusionMotionTier motionTier)
+        private static bool ShouldForceVisibleForStaleOcclusion(PassState state, QueryState queryState, ulong frameId)
         {
             if (queryState.LastQueryFrame == 0UL || frameId < queryState.LastQueryFrame)
                 return true;
 
             int period = GetOccludedRetestPeriodFrames();
-            int maximumAge = motionTier switch
+            int maximumAge = state.MotionTier switch
             {
                 ECpuOcclusionMotionTier.Stable => Math.Max(2, period * 2),
                 ECpuOcclusionMotionTier.SmallMotion => Math.Max(2, period),
@@ -1379,7 +1532,36 @@ namespace XREngine.Rendering.Occlusion
                 ECpuOcclusionMotionTier.VrHeadPoseMotion => Math.Max(1, RuntimeEngine.EffectiveSettings.CpuQueryOcclusionRecoveryMinCadenceFrames),
                 _ => 1,
             };
+            maximumAge = ExpandStableResultAgeForWorkload(state, maximumAge);
             return frameId - queryState.LastQueryFrame > (ulong)maximumAge;
+        }
+
+        private static int ExpandStableResultAgeForWorkload(PassState state, int baseMaximumAge)
+        {
+            if (state.MotionTier != ECpuOcclusionMotionTier.Stable || state.LastSceneCommandCount == 0u)
+                return baseMaximumAge;
+
+            int maxQueries = RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMaxQueriesPerFrame;
+            ComputeBudgets(state.MotionTier, maxQueries, out int visibleBudget, out _);
+            if (visibleBudget <= 0)
+                return baseMaximumAge;
+
+            int commandCount = state.LastSceneCommandCount > int.MaxValue
+                ? int.MaxValue
+                : (int)state.LastSceneCommandCount;
+            int sweepFrames = Math.Max(
+                1,
+                (int)Math.Min(
+                    int.MaxValue,
+                    ((long)commandCount + visibleBudget - 1L) / visibleBudget));
+            long convergenceAgeLong =
+                (long)sweepFrames * VisibleDemotionZeroConfidenceFrames +
+                (long)VulkanQueryResolveMinLatencyFrames +
+                2L;
+            int convergenceAge = convergenceAgeLong >= int.MaxValue
+                ? int.MaxValue
+                : (int)convergenceAgeLong;
+            return Math.Max(baseMaximumAge, convergenceAge);
         }
 
         private static int GetRecoveryCadence(ECpuOcclusionMotionTier motionTier)
@@ -1421,8 +1603,18 @@ namespace XREngine.Rendering.Occlusion
                 return;
 
             state.LastBudgetFrameId = frameId;
+            state.PendingQueriesAtBudgetRefresh = CountPendingQueries(state);
             state.VisibleBudgetUsed = 0;
             state.RecoveryBudgetUsed = 0;
+        }
+
+        private static void NotePendingQueryRemoved(PassState state)
+        {
+            if (state.LastBudgetFrameId == state.FrameEpoch &&
+                state.PendingQueriesAtBudgetRefresh > 0)
+            {
+                state.PendingQueriesAtBudgetRefresh--;
+            }
         }
 
         private static void ComputeBudgets(ECpuOcclusionMotionTier tier, int maxQueries, out int visibleBudget, out int recoveryBudget)
@@ -1456,7 +1648,14 @@ namespace XREngine.Rendering.Occlusion
 
         private static int CompareProbeCandidates(CpuOcclusionProbeCandidate x, CpuOcclusionProbeCandidate y)
         {
-            int result = y.ScreenPriority.CompareTo(x.ScreenPriority);
+            // Request class is a strict scheduling tier. Treating its bias as a
+            // small additive area bonus lets a large, repeatedly-visible wall
+            // starve initial seeds and negative confirmations indefinitely.
+            int result = y.Request.PriorityBias.CompareTo(x.Request.PriorityBias);
+            if (result != 0)
+                return result;
+
+            result = y.ScreenPriority.CompareTo(x.ScreenPriority);
             if (result != 0)
                 return result;
 
@@ -1645,7 +1844,9 @@ namespace XREngine.Rendering.Occlusion
                 return true;
             }
 
-            int maximumAge = GetMaximumOccludedResultAge(state.MotionTier);
+            int maximumAge = ExpandStableResultAgeForWorkload(
+                state,
+                GetMaximumOccludedResultAge(state.MotionTier));
             int currentAge = 0;
             for (int bit = 0; bit < 4; bit++)
             {
@@ -1837,12 +2038,14 @@ namespace XREngine.Rendering.Occlusion
                 foreach (QueryState query in removed.Queries.Values)
                 {
                     if (query.Query is not null)
-                        _queryManager.Release(query.Query);
+                        _queryManager.Release(query.Query, pendingResult: query.QueryPending);
                 }
                 foreach (HierarchyGroupState group in removed.HierarchyGroups.Values)
                 {
                     if (group.Query.Query is not null)
-                        _queryManager.Release(group.Query.Query);
+                        _queryManager.Release(
+                            group.Query.Query,
+                            pendingResult: group.Query.QueryPending);
                 }
             }
 

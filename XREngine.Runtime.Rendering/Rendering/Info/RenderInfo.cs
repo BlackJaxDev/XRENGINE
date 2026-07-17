@@ -144,7 +144,7 @@ namespace XREngine.Rendering.Info
                     continue;
 
                 cmd.CollectedForRender(camera);
-                passes.AddCPU(cmd);
+                passes.AddCPU(cmd, camera);
             }
 
             if (RuntimeRenderingHostServices.Current.RenderCullingVolumesEnabled &&

@@ -227,6 +227,13 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public bool SeparateMeshIslands { get; set; } = false;
 
     /// <summary>
+    /// When greater than zero, imported triangle submeshes are recursively partitioned
+    /// into spatially coherent draw units containing no more than this many triangles.
+    /// Use this for CPU query occlusion when source meshes span large scene regions.
+    /// </summary>
+    public int SpatialPartitionMaxTriangles { get; set; } = 0;
+
+    /// <summary>
     /// When async mesh import is enabled, controls whether imported submeshes are published
     /// to the scene in one batch at the end or streamed in as they become ready.
     /// </summary>

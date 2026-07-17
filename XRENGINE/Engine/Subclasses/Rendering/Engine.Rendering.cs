@@ -568,19 +568,6 @@ namespace XREngine
                 return "production meshlet dispatch is unavailable";
             }
 
-            public static void ApplyGpuBvhPreference()
-            {
-                static void Apply()
-                {
-                    bool useGpuBvh = VulkanFeatureProfile.ResolveGpuBvhPreference(Engine.EffectiveSettings.UseGpuBvh);
-                    foreach (var worldInstance in Engine.WorldInstances)
-                        worldInstance?.ApplyGpuBvhPreference(useGpuBvh);
-                }
-
-                Engine.InvokeOnMainThread(Apply, "Engine.Rendering.ApplyGpuBvhPreference", true);
-                LogVulkanFeatureProfileFingerprint();
-            }
-
             public static void ApplyCpuSceneCullingStructurePreference()
             {
                 static void Apply()
@@ -605,8 +592,7 @@ namespace XREngine
                 EMeshSubmissionStrategy meshSubmissionStrategy = ResolveMeshSubmissionStrategy(requestedGpuDispatch);
                 bool effectiveGpuDispatch = meshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect;
 
-                bool requestedGpuBvh = Engine.EffectiveSettings.UseGpuBvh;
-                bool effectiveGpuBvh = VulkanFeatureProfile.ResolveGpuBvhPreference(requestedGpuBvh);
+                bool effectiveGpuBvh = VulkanFeatureProfile.ResolveGpuBvhUsage(meshSubmissionStrategy);
 
                 EOcclusionCullingMode requestedOcclusion = Engine.EffectiveSettings.GpuOcclusionCullingMode;
                 EOcclusionCullingMode effectiveOcclusion = VulkanFeatureProfile.ResolveOcclusionCullingMode(requestedOcclusion);
@@ -629,7 +615,7 @@ namespace XREngine
                 string dispatchPath = meshSubmissionStrategy.ToString();
 
                 string fingerprint = string.Format(
-                    "[VulkanProfile] Configured={0} Active={1} ComputePasses={2} GpuDispatch={3}(requested={4}) MeshStrategy={5} ForceMeshStrategy={6} ZeroReadbackDrawPath={7} GpuBvh={8}(requested={9}) Occlusion={10}->{11} SortPolicy={12} QueueOverlap={13}(requested={14}) ImGui={15} DrawIndirectCountExt={16} MeshletDialect={17} MeshletDirectTaskDispatch={18} MeshletIndirectCountDispatch={19} MeshletDispatch={20} MeshletFallbackReason={21} DispatchPath={22}",
+                    "[VulkanProfile] Configured={0} Active={1} ComputePasses={2} GpuDispatch={3}(requested={4}) MeshStrategy={5} ForceMeshStrategy={6} ZeroReadbackDrawPath={7} GpuBvh={8}(strategy-driven) Occlusion={9}->{10} SortPolicy={11} QueueOverlap={12}(requested={13}) ImGui={14} DrawIndirectCountExt={15} MeshletDialect={16} MeshletDirectTaskDispatch={17} MeshletIndirectCountDispatch={18} MeshletDispatch={19} MeshletFallbackReason={20} DispatchPath={21}",
                     configuredProfile,
                     activeProfile,
                     effectiveComputePasses,
@@ -639,7 +625,6 @@ namespace XREngine
                     Engine.EffectiveSettings.ForceMeshSubmissionStrategy?.ToString() ?? "<auto>",
                     zeroReadbackDrawPath,
                     effectiveGpuBvh,
-                    requestedGpuBvh,
                     requestedOcclusion,
                     effectiveOcclusion,
                     sortPolicy,

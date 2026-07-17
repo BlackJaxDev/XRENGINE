@@ -2021,7 +2021,7 @@ public unsafe partial class VulkanRenderer
                     if (key.Type == ObjectType.QueryPool &&
                         _vulkanRenderQueriesByPool.TryGetValue(key.Handle, out VkRenderQuery? query))
                     {
-                        query.MarkResultEpochSubmitted();
+                        query.MarkResultEpochSubmitted(commandBufferHandle);
                     }
                 }
             }
@@ -2630,6 +2630,29 @@ public unsafe partial class VulkanRenderer
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Returns whether every submitted use of a tracked Vulkan resource has completed.
+    /// Query pools use this as their epoch boundary: host-visible availability from a
+    /// previous use is not proof that the queued reset and current query have executed.
+    /// </summary>
+    private bool IsVulkanResourceUseCompleted(ObjectType type, ulong handle)
+    {
+        if (handle == 0)
+            return false;
+
+        lock (_vulkanResourceLifetimeLock)
+        {
+            if (!_vulkanResourceLifetimes.TryGetValue(
+                    ResourceKey(type, handle),
+                    out VulkanResourceLifetimeRecord? resource))
+            {
+                return false;
+            }
+
+            return UpdateVulkanResourceCompletionState_NoLock(resource);
+        }
     }
 
     private void EnsureVulkanResourceMutationAllowed(

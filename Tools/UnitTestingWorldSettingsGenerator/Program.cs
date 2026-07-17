@@ -558,11 +558,13 @@ static class SchemaGenerator
                 "Comma-separated model post-import flags. Supported values: " +
                 "`None`, `GenerateCoacdCollidersPerSubmesh`, `SplitSubmeshesIntoSeparateModelComponents`, " +
                 "`SeparateMeshIslands`, `GenerateIndividualSceneNodesPerSubmesh`, " +
-                "`PutAllCoacdCollidersIntoOneStaticRigidBodyComponent`.";
+                "`PutAllCoacdCollidersIntoOneStaticRigidBodyComponent`, " +
+                "`SpatiallyPartitionMeshesForOcclusion`.";
             generated["examples"] = new JArray
             {
                 "GenerateCoacdCollidersPerSubmesh, SplitSubmeshesIntoSeparateModelComponents",
-                "GenerateIndividualSceneNodesPerSubmesh, PutAllCoacdCollidersIntoOneStaticRigidBodyComponent"
+                "GenerateIndividualSceneNodesPerSubmesh, PutAllCoacdCollidersIntoOneStaticRigidBodyComponent",
+                "SpatiallyPartitionMeshesForOcclusion"
             };
         }
 

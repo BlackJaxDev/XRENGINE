@@ -1738,6 +1738,7 @@ namespace XREngine
                 bool splitSubmeshesIntoSeparateModelComponents = effectiveImportOptions.SplitSubmeshesIntoSeparateModelComponents
                     || generateSceneNodesPerSubmesh;
                 bool separateMeshIslands = effectiveImportOptions.SeparateMeshIslands;
+                int spatialPartitionMaxTriangles = effectiveImportOptions.SpatialPartitionMaxTriangles;
 
                 SceneNode rootNode;
                 using (Engine.Profiler.Start($"Assemble model hierarchy"))
@@ -1755,7 +1756,8 @@ namespace XREngine
                         importedRenderersGenerateAsync,
                         splitSubmeshesIntoSeparateModelComponents,
                         generateSceneNodesPerSubmesh,
-                        separateMeshIslands);
+                        separateMeshIslands,
+                        spatialPartitionMaxTriangles);
                     assimpProgress?.Invoke(0.20f);
                 }
 
@@ -2003,7 +2005,8 @@ namespace XREngine
             bool importedRenderersGenerateAsync,
             bool splitSubmeshesIntoSeparateModelComponents,
             bool generateSceneNodesPerSubmesh,
-            bool separateMeshIslands)
+            bool separateMeshIslands,
+            int spatialPartitionMaxTriangles)
         {
             using var t = Engine.Profiler.Start("Normalizing node scales");
 
@@ -2077,6 +2080,7 @@ namespace XREngine
                     splitSubmeshesIntoSeparateModelComponents,
                     generateSceneNodesPerSubmesh,
                     separateMeshIslands,
+                    spatialPartitionMaxTriangles,
                     publishSubMeshesOnSwapThread: processMeshesAsynchronously,
                     batchSubmeshAddsDuringAsyncImport: processMeshesAsynchronously && batchSubmeshAddsDuringAsyncImport);
             }
@@ -2251,6 +2255,7 @@ namespace XREngine
             bool splitSubmeshesIntoSeparateModelComponents,
             bool generateSceneNodesPerSubmesh,
             bool separateMeshIslands,
+            int spatialPartitionMaxTriangles,
             bool publishSubMeshesOnSwapThread,
             bool batchSubmeshAddsDuringAsyncImport)
         {
@@ -2273,7 +2278,9 @@ namespace XREngine
 
             Dictionary<int, Model>? targetModelsByMeshIndex = null;
             Model? sharedModel = null;
-            bool createComponentPerFinalSubMesh = splitSubmeshesIntoSeparateModelComponents && separateMeshIslands;
+            bool createComponentPerFinalSubMesh =
+                splitSubmeshesIntoSeparateModelComponents &&
+                (separateMeshIslands || spatialPartitionMaxTriangles > 0);
 
             if (splitSubmeshesIntoSeparateModelComponents && !createComponentPerFinalSubMesh)
             {
@@ -2380,7 +2387,10 @@ namespace XREngine
                     RootTransform = rootTransform
                 };
 
-                IReadOnlyList<SubMesh> finalSubMeshes = ModelImportMeshIslandSplitter.SplitSubMesh(subMesh, separateMeshIslands);
+                IReadOnlyList<SubMesh> finalSubMeshes = ModelImportMeshIslandSplitter.SplitSubMesh(
+                    subMesh,
+                    separateMeshIslands,
+                    spatialPartitionMaxTriangles);
                 ModelImportMeshIslandSplitter.AddMeshes(finalSubMeshes, _meshes.Add);
                 Model? targetModel = createComponentPerFinalSubMesh ? null : ResolveTargetModel(meshIndex);
 

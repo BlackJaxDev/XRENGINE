@@ -21,9 +21,6 @@ public sealed class VPRC_BuildAccelerationStructure : ViewportRenderCommand
     public string NodeBufferVariableName { get; set; } = "AccelerationStructureNodes";
     public string RangeBufferVariableName { get; set; } = "AccelerationStructureRanges";
     public string MortonBufferVariableName { get; set; } = "AccelerationStructureMorton";
-    public bool EnableGpuBvh { get; set; } = true;
-    public bool EnableInternalSceneBvh { get; set; } = true;
-
     /// <summary>
     /// Executes the command to build or refresh the acceleration structure (BVH) for the current scene. 
     /// It checks if the scene is available, 
@@ -43,12 +40,13 @@ public sealed class VPRC_BuildAccelerationStructure : ViewportRenderCommand
             return;
         }
 
-        // Determine whether to use GPU BVH based on the command's settings and the runtime engine's effective settings.
+        // GPU-driven submission owns scene culling on the GPU and therefore uses the command BVH
+        // whenever the active backend profile supports it. CpuDirect uses the CPU scene BVH instead.
         GPUScene gpuScene = scene.GPUCommands;
-        bool useGpuBvh = EnableGpuBvh &&
-            VulkanFeatureProfile.ResolveGpuBvhPreference(RuntimeEngine.EffectiveSettings.UseGpuBvh);
+        EMeshSubmissionStrategy strategy = ResolveEffectiveMeshSubmissionStrategy();
+        bool useGpuBvh = VulkanFeatureProfile.ResolveGpuBvhUsage(strategy);
         gpuScene.UseGpuBvh = useGpuBvh;
-        gpuScene.UseInternalBvh = useGpuBvh && EnableInternalSceneBvh;
+        gpuScene.UseInternalBvh = useGpuBvh;
 
         // If GPU BVH is not enabled, we can skip building the BVH and publish empty/default values.
         if (!useGpuBvh)
@@ -70,7 +68,7 @@ public sealed class VPRC_BuildAccelerationStructure : ViewportRenderCommand
         // the BVH. Bypasses the CPU 8-corner transform for these slots.
         if (RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader
             && (RuntimeEngine.Rendering.Settings.SkinnedBoundsGpuDirectAabbWrite ||
-                RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy()))
+                strategy.IsGpuZeroReadbackStrategy()))
             SkinnedMeshBoundsCalculator.Instance.RefreshAllSkinnedAabbs(gpuScene);
 
         // Prepare the BVH for culling, which may involve building or refreshing the BVH structure on the GPU.
@@ -100,6 +98,16 @@ public sealed class VPRC_BuildAccelerationStructure : ViewportRenderCommand
             variables.SetBuffer(MortonBufferVariableName, provider.BvhMortonBuffer);
         else
             variables.Remove(MortonBufferVariableName);
+    }
+
+    private static EMeshSubmissionStrategy ResolveEffectiveMeshSubmissionStrategy()
+    {
+        XRViewport? viewport = RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport
+            ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport
+            ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.LastWindowViewport;
+
+        return viewport?.MeshSubmissionStrategyOverride
+            ?? RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
     }
 
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)
