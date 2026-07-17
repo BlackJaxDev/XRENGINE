@@ -1023,10 +1023,11 @@
         "PostImportFlags": {
           "type": "string",
           "description": "Additional post-import actions to apply after the source model has been loaded.",
-          "markdownDescription": "Comma-separated model post-import flags. Supported values: `None`, `GenerateCoacdCollidersPerSubmesh`, `SplitSubmeshesIntoSeparateModelComponents`, `SeparateMeshIslands`, `GenerateIndividualSceneNodesPerSubmesh`, `PutAllCoacdCollidersIntoOneStaticRigidBodyComponent`.",
+          "markdownDescription": "Comma-separated model post-import flags. Supported values: `None`, `GenerateCoacdCollidersPerSubmesh`, `SplitSubmeshesIntoSeparateModelComponents`, `SeparateMeshIslands`, `GenerateIndividualSceneNodesPerSubmesh`, `PutAllCoacdCollidersIntoOneStaticRigidBodyComponent`, `SpatiallyPartitionMeshesForOcclusion`.",
           "examples": [
             "GenerateCoacdCollidersPerSubmesh, SplitSubmeshesIntoSeparateModelComponents",
-            "GenerateIndividualSceneNodesPerSubmesh, PutAllCoacdCollidersIntoOneStaticRigidBodyComponent"
+            "GenerateIndividualSceneNodesPerSubmesh, PutAllCoacdCollidersIntoOneStaticRigidBodyComponent",
+            "SpatiallyPartitionMeshesForOcclusion"
           ]
         },
         "YawPitchRoll": {

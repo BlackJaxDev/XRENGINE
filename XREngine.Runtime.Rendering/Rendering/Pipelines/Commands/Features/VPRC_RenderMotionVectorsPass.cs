@@ -126,12 +126,14 @@ namespace XREngine.Rendering.Pipelines.Commands
                 if (_gpuDispatch)
                     commands.RenderGPU(pass, motionStrategy);
                 else
-                    // This is an auxiliary replay of the primary visibility set. Running
-                    // CPU occlusion here would schedule a second set of proxy probes while
-                    // the motion-vector material override is active, allowing query-only
-                    // geometry to enter the velocity pass and making query cadence depend
-                    // on how many auxiliary passes replay the scene.
-                    commands.RenderCPU(pass, suppressCpuOcclusionForPass: true);
+                    // This auxiliary pass replays the primary visibility decision without
+                    // scheduling another set of queries. Non-testable passes remain
+                    // unconditional, while opaque passes peek the coordinator's current
+                    // result for the same command and camera ownership.
+                    commands.RenderCPUFiltered(
+                        pass,
+                        static _ => true,
+                        respectCpuQueryOcclusion: true);
             }
 
             //Debug.Out("[Velocity] Motion vectors end.");

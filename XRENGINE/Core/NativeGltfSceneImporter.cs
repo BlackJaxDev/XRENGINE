@@ -441,7 +441,8 @@ internal static class NativeGltfSceneImporter
 
                 IReadOnlyList<SubMesh> finalSubMeshes = ModelImportMeshIslandSplitter.SplitSubMesh(
                     subMesh,
-                    importOptions?.SeparateMeshIslands ?? false);
+                    importOptions?.SeparateMeshIslands ?? false,
+                    importOptions?.SpatialPartitionMaxTriangles ?? 0);
                 subMeshes.AddRange(finalSubMeshes);
                 ModelImportMeshIslandSplitter.AddMeshes(finalSubMeshes, createdMeshes.Add);
             }

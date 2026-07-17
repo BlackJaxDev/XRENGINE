@@ -133,8 +133,9 @@ public unsafe partial class VulkanRenderer
 
     // Tracks whether the calling thread is currently between an occlusion QueryOp
     // Begin and End enqueue. Mesh draws enqueued inside the bracket (proxy AABB
-    // draws) are marked PreserveSubmissionOrder so the frame-op sort cannot move
-    // them (or reorder other draws across the bracket).
+    // draws) are marked PreserveSubmissionOrder. The render-graph sorter partitions
+    // each pass at query boundaries so draws cannot cross a bracket while unrelated
+    // opaque regions retain canonical batching order.
     [ThreadStatic]
     private static int t_occlusionQueryBracketDepth;
 

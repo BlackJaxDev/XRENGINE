@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using XREngine.Data.Geometry;
 
 namespace XREngine.Rendering.Commands
 {
@@ -29,6 +30,24 @@ namespace XREngine.Rendering.Commands
 
         public void UpdateRenderDistance(Vector3 thisWorldPosition, IRuntimeRenderCamera camera)
             => RenderDistance = (camera.Transform.RenderTranslation - thisWorldPosition).LengthSquared();
+
+        /// <summary>
+        /// Updates the sort distance from the nearest point on a world-space bound.
+        /// Meshes sharing a parent transform must still sort independently so opaque
+        /// depth is established front-to-back before exact-draw occlusion queries run.
+        /// </summary>
+        public void UpdateRenderDistance(in AABB worldBounds, IRuntimeRenderCamera camera)
+            => RenderDistance = CalculateRenderDistance(worldBounds, camera);
+
+        protected static float CalculateRenderDistance(in AABB worldBounds, IRuntimeRenderCamera camera)
+        {
+            Vector3 cameraPosition = camera.Transform.RenderTranslation;
+            Vector3 nearestPoint = worldBounds.ClosestPoint(cameraPosition, clampToEdge: false);
+            return Vector3.DistanceSquared(cameraPosition, nearestPoint);
+        }
+
+        internal override float CaptureSortDistance(IRuntimeRenderCamera? camera)
+            => RenderDistance;
 
         protected override bool IsRenderStateDirtyProperty(string? propName)
             => propName != nameof(RenderDistance) && base.IsRenderStateDirtyProperty(propName);

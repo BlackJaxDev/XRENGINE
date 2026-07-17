@@ -276,7 +276,6 @@ public static class XREngineEnvironmentVariables
     public const string VulkanPhase524bValidation = "XRE_VULKAN_PHASE524B_VALIDATION";
     public const string VulkanPhase524bInjectDesktopRejection = "XRE_VULKAN_PHASE524B_INJECT_DESKTOP_REJECTION";
     public const string VulkanPhase524bTsrResolutionScale = "XRE_VULKAN_PHASE524B_TSR_RESOLUTION_SCALE";
-    public const string VulkanGpuBvhCulling = "XRE_VULKAN_GPU_BVH_CULLING";
     public const string VulkanDirectionalCascades = "XRE_VULKAN_DIRECTIONAL_CASCADES";
 
     public const string CaptureDefaultPipelineSkipFrames = "XRE_CAPTURE_DEFAULT_PIPELINE_SKIP_FRAMES";

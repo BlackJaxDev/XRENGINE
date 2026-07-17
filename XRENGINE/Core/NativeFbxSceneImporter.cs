@@ -322,6 +322,7 @@ internal static class NativeFbxSceneImporter
                 MeshBuildResult?[] buildResults = new MeshBuildResult?[workItems.Count];
                 bool generateMeshRenderersAsync = importOptions?.GenerateMeshRenderersAsync ?? true;
                 bool separateMeshIslands = importOptions?.SeparateMeshIslands ?? false;
+                int spatialPartitionMaxTriangles = importOptions?.SpatialPartitionMaxTriangles ?? 0;
 
                 if (workItems.Count > 0)
                 {
@@ -358,7 +359,8 @@ internal static class NativeFbxSceneImporter
                             cancellationToken,
                             rootNode.Transform,
                             generateMeshRenderersAsync,
-                            separateMeshIslands);
+                            separateMeshIslands,
+                            spatialPartitionMaxTriangles);
 
                         buildResults[workItemIndex] = new MeshBuildResult(
                             workItem.ModelObjectId,
@@ -568,7 +570,8 @@ internal static class NativeFbxSceneImporter
         CancellationToken cancellationToken,
         TransformBase rootTransform,
         bool generateMeshRenderersAsync,
-        bool separateMeshIslands)
+        bool separateMeshIslands,
+        int spatialPartitionMaxTriangles)
     {
         using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
         int materialSlotCount = Math.Max(1, nodeMaterials.Count);
@@ -674,8 +677,11 @@ internal static class NativeFbxSceneImporter
                     };
                     UpdateSkinnedSubMeshCullingBoundsForRuntimeBasis(subMesh, xrMesh, meshWorldMatrix, rootTransform);
 
-                    IReadOnlyList<SubMesh> finalSubMeshes = ModelImportMeshIslandSplitter.SplitSubMesh(subMesh, separateMeshIslands);
-                    if (separateMeshIslands && finalSubMeshes.Count > 1)
+                    IReadOnlyList<SubMesh> finalSubMeshes = ModelImportMeshIslandSplitter.SplitSubMesh(
+                        subMesh,
+                        separateMeshIslands,
+                        spatialPartitionMaxTriangles);
+                    if (finalSubMeshes.Count > 1)
                     {
                         for (int finalIndex = 0; finalIndex < finalSubMeshes.Count; finalIndex++)
                         {

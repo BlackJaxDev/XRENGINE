@@ -813,12 +813,6 @@ namespace XREngine.Rendering
             VisualScene?.ApplyRenderDispatchPreference(useGpu);
         }
 
-        internal void ApplyGpuBvhPreference(bool useGpuBvh)
-        {
-            if (VisualScene is VisualScene3D scene3D)
-                scene3D.ApplyGpuBvhPreference(useGpuBvh);
-        }
-
         internal void ApplyCpuSceneCullingStructurePreference(ECpuSceneCullingStructure structure)
         {
             if (VisualScene is VisualScene3D scene3D)

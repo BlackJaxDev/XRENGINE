@@ -212,6 +212,26 @@ namespace XREngine.Data.Geometry
             return new AABB(newMin, newMax);
         }
 
+        /// <summary>
+        /// Transforms this box by an affine matrix without allocating a corner array or delegate.
+        /// </summary>
+        public readonly AABB Transformed(in Matrix4x4 matrix)
+        {
+            Vector3 localHalfExtents = HalfExtents;
+            Vector3 worldCenter = Vector3.Transform(Center, matrix);
+            Vector3 worldHalfExtents = new(
+                MathF.Abs(matrix.M11) * localHalfExtents.X +
+                MathF.Abs(matrix.M21) * localHalfExtents.Y +
+                MathF.Abs(matrix.M31) * localHalfExtents.Z,
+                MathF.Abs(matrix.M12) * localHalfExtents.X +
+                MathF.Abs(matrix.M22) * localHalfExtents.Y +
+                MathF.Abs(matrix.M32) * localHalfExtents.Z,
+                MathF.Abs(matrix.M13) * localHalfExtents.X +
+                MathF.Abs(matrix.M23) * localHalfExtents.Y +
+                MathF.Abs(matrix.M33) * localHalfExtents.Z);
+            return new AABB(worldCenter - worldHalfExtents, worldCenter + worldHalfExtents);
+        }
+
         public readonly Box ToBox(Matrix4x4 matrix)
             => new(Center, Size, matrix);
 

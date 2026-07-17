@@ -605,7 +605,6 @@ namespace XREngine
                 private int _shaderConfigVersion = 0;
                 private global::XREngine.Rendering.ERenderClipSpaceYDirection _clipSpaceYDirection = global::XREngine.Rendering.ERenderClipSpaceYDirection.YUp;
                 private global::XREngine.Rendering.ERenderClipDepthRange _clipDepthRange = global::XREngine.Rendering.ERenderClipDepthRange.ZeroToOne;
-                private bool _useGpuBvh = true;
                 private ECpuSceneCullingStructure _cpuSceneCullingStructure = ECpuSceneCullingStructure.Bvh;
                 private EGpuCullingDataLayout _gpuCullingDataLayout = EGpuCullingDataLayout.AoSHot;
                 private EGpuSortDomainPolicy _gpuSortDomainPolicy = EGpuSortDomainPolicy.OpaqueFrontToBackTransparentBackToFront;
@@ -1555,18 +1554,6 @@ namespace XREngine
                 }
 
                 /// <summary>
-                /// If true, BVH construction and refits will prefer GPU compute paths when supported.
-                /// Disabled by default for CPU-friendly behavior.
-                /// </summary>
-                [Category("BVH")]
-                [Description("If true, BVH construction and refits will prefer GPU compute paths when supported. Disabled by default for CPU-friendly behavior.")]
-                public bool UseGpuBvh
-                {
-                    get => _useGpuBvh;
-                    set => SetField(ref _useGpuBvh, value, null, _ => Rendering.ApplyGpuBvhPreference());
-                }
-
-                /// <summary>
                 /// Selects the CPU spatial structure used for render visibility when GPU dispatch is disabled.
                 /// Can be overridden with XRE_CPU_SCENE_CULLING_STRUCTURE=Octree|Bvh.
                 /// </summary>
@@ -1805,11 +1792,12 @@ namespace XREngine
                 }
 
                 /// <summary>
-                /// Maximum CPU hardware occlusion proxy queries submitted for one pass/view scope per render frame.
-                /// Shared stereo scopes consume this budget once for the stereo frame.
+                /// Maximum unresolved CPU hardware occlusion queries plus current-frame
+                /// proxy reservations for one pass/view scope. Shared stereo scopes
+                /// consume this capacity once for the stereo frame.
                 /// </summary>
                 [Category("Occlusion")]
-                [Description("CPU-query occlusion: maximum proxy queries submitted per pass/view scope per render frame.")]
+                [Description("CPU-query occlusion: per-pass/view cap on unresolved queries plus current-frame proxy reservations.")]
                 public int CpuQueryOcclusionMaxQueriesPerFrame
                 {
                     get => _cpuQueryOcclusionMaxQueriesPerFrame;
@@ -2912,9 +2900,6 @@ namespace XREngine
             {
                 bool applyAll = string.IsNullOrEmpty(propertyName);
 
-                if (applyAll || propertyName == nameof(EngineSettings.UseGpuBvh))
-                    Engine.Rendering.ApplyGpuBvhPreference();
-
                 if (applyAll || propertyName == nameof(EngineSettings.CpuSceneCullingStructure))
                     Engine.Rendering.ApplyCpuSceneCullingStructurePreference();
 
@@ -2927,7 +2912,6 @@ namespace XREngine
                     || propertyName == nameof(EngineSettings.ForceMeshSubmissionStrategy))
                 {
                     Engine.Rendering.ApplyGpuRenderDispatchPreference();
-                    Engine.Rendering.ApplyGpuBvhPreference();
                     Engine.Rendering.LogVulkanFeatureProfileFingerprint();
                 }
 

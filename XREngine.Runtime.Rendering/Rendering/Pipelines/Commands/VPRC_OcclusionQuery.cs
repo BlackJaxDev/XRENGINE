@@ -91,7 +91,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             if (_pendingQuery is not null)
             {
-                _queryManager.Release(_pendingQuery);
+                _queryManager.Release(_pendingQuery, pendingResult: true);
                 _pendingQuery = null;
             }
         }

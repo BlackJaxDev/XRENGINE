@@ -213,6 +213,8 @@ For Vulkan or OpenGL rendering issues, use RenderDoc when MCP screenshots and lo
 
 ## Testing Policy
 
+Do not create or run unnecessary test methods while a feature is still being implemented or when only writing a new todo document. First make the feature work correctly through the narrowest relevant build or run-path validation; then add and run the appropriate tests after the implementation is functionally sound. This sequencing does not waive final validation or tests needed to reproduce and diagnose an active defect.
+
 1. Run the most targeted tests for the changed subsystem.
 2. If no test exists, run a narrow build or run-path validation.
 3. Fix easy unrelated failures only when low-risk; otherwise report them.
@@ -226,9 +228,19 @@ New tests belong in `XREngine.UnitTests/`, should follow nearby naming patterns,
 - Follow existing style in touched files.
 - Prefer explicit, readable code over cleverness.
 - Keep diffs coherent and avoid drive-by formatting.
-- Add comments only for non-obvious reasoning.
+- Write XML documentation summaries for types and members where practical, and comment code to explain intent, invariants, assumptions, and non-obvious reasoning. Avoid comments that merely restate the code.
 - Since v1 has not shipped, improve APIs when it produces a cleaner design.
 - Avoid speculative rewrites, unrelated cross-repo churn, and silent behavior changes without docs.
+
+### C# Style
+
+- Use expression-bodied members (`=>`) for methods and other members whose implementation is a single clear expression.
+- Prefer early returns and guard clauses over nested `if` blocks.
+- Omit braces around a single-line nested statement when doing so remains unambiguous; keep braces where they prevent ambiguity or improve readability.
+- Keep each enum, interface, class, record, and struct in its own file rather than grouping multiple type declarations into a monolithic file. Name the file after the declared type.
+- When working in a particularly large monolithic class file, suggest splitting the class into focused partial-class files organized by responsibility. Make the split when it is in scope and improves navigation without obscuring ownership or coupling.
+- When working with a particularly large method, suggest splitting it into focused helper methods whose names clearly describe each operation or phase. Make the split when it is in scope and improves readability, while keeping tightly coupled control flow together.
+- Keep broadly reusable helper methods that are not specific to the class or subsystem being changed in an appropriate generic/shared project and a cohesively named type. Preserve project dependency direction, and do not create miscellaneous utility dumping grounds or move helpers before their general-purpose responsibility is clear.
 
 ### XRBase Mutation
 
@@ -283,11 +295,6 @@ Work docs are organized by document purpose first, subsystem second:
 - `docs/work/testing/<subsystem>/` - validation plans, reproducible test notes, and hardware/software test matrices.
 
 Do not create top-level subsystem buckets such as `docs/work/rendering/` for investigation or progress notes. For rendering debug loops, use `docs/work/investigations/rendering/`; for rendering implementation status, use `docs/work/progress/rendering/`.
-
-When generating a todo from a design doc:
-
-- First task: create a dedicated branch for the todo list.
-- Final task: merge that branch back into `main` after completion and validation.
 
 ## PR Expectations
 

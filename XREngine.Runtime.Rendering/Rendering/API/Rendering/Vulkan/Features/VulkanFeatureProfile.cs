@@ -130,15 +130,11 @@ public readonly record struct VulkanBindlessMaterialCapability(
 public static class VulkanFeatureProfile
 {
     public const string BindlessMaterialModeEnvVar = XREngineEnvironmentVariables.VulkanBindlessMaterialMode;
-    public const string GpuBvhCullingEnvVar = XREngineEnvironmentVariables.VulkanGpuBvhCulling;
     public const string CapabilityTierEnvVar = XREngineEnvironmentVariables.VkCapabilityTier;
     public const string DescriptorBackendEnvVar = XREngineEnvironmentVariables.VkDescriptorBackend;
     public const string ProgramBindingBackendEnvVar = XREngineEnvironmentVariables.VkProgramBindingBackend;
     public const string FoveationBackendEnvVar = XREngineEnvironmentVariables.VkFoveationBackend;
     public const string RayTracingBackendEnvVar = XREngineEnvironmentVariables.VkRayTracingBackend;
-    private static readonly bool VulkanGpuBvhCullingEnabled =
-        ResolveVulkanGpuBvhCullingPolicy(Environment.GetEnvironmentVariable(GpuBvhCullingEnvVar));
-
     /// <summary>
     /// Returns <c>true</c> when the Vulkan renderer is the currently active backend
     /// and the safe feature profile should be used to restrict unsupported features.
@@ -267,25 +263,19 @@ public static class VulkanFeatureProfile
         return !IsActive || ProfileAllowsGpuRenderDispatch;
     }
 
-    public static bool ResolveGpuBvhPreference(bool requested)
+    /// <summary>
+    /// Returns whether the selected submission strategy should use GPU BVH culling.
+    /// Runtime shader and BVH-resource readiness is checked by the culling pass itself.
+    /// </summary>
+    public static bool ResolveGpuBvhUsage(EMeshSubmissionStrategy strategy)
     {
-        if (!requested)
+        if (!strategy.UsesGpuBvhCulling())
             return false;
 
         if (!IsActive)
             return true;
 
-        return ProfileAllowsGpuBvh && VulkanGpuBvhCullingEnabled;
-    }
-
-    public static bool ResolveVulkanGpuBvhCullingPolicy(string? envOverride)
-    {
-        if (TryParseEnabled(envOverride, out bool enabled))
-            return enabled;
-
-        // Vulkan BVH culling is diagnostic opt-in until the BVH traversal path is validated
-        // against the regular GPU frustum culling path. This still uses GPU-driven rendering.
-        return false;
+        return ProfileAllowsGpuBvh;
     }
 
     public static bool ResolveImGuiPreference(bool requested)
@@ -445,12 +435,6 @@ public static class VulkanFeatureProfile
     /// </summary>
     public static bool EnableGpuRenderDispatch
         => ResolveGpuRenderDispatchPreference(true);
-
-    /// <summary>
-    /// GPU BVH raycast dispatch.  Returns <c>false</c> when the Vulkan backend is active.
-    /// </summary>
-    public static bool EnableGpuBvh
-        => ResolveGpuBvhPreference(true);
 
     /// <summary>
     /// ImGui rendering through the Vulkan pipeline.

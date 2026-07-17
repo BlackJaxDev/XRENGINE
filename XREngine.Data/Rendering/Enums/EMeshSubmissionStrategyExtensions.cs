@@ -4,6 +4,13 @@ public static class EMeshSubmissionStrategyExtensions
 {
     public const string LegacyGpuMeshletName = "GpuMeshlet";
 
+    /// <summary>
+    /// Returns whether the strategy submits scene visibility through the GPU-driven path.
+    /// GPU-driven strategies use the scene command BVH when its resources are ready.
+    /// </summary>
+    public static bool UsesGpuBvhCulling(this EMeshSubmissionStrategy strategy)
+        => strategy != EMeshSubmissionStrategy.CpuDirect;
+
     public static bool IsGpuZeroReadbackStrategy(this EMeshSubmissionStrategy strategy)
         => strategy is EMeshSubmissionStrategy.GpuIndirectZeroReadback
             or EMeshSubmissionStrategy.GpuMeshletZeroReadback;

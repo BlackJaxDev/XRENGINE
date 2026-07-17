@@ -360,7 +360,6 @@ internal sealed class RuntimeEffectiveSettings
     }
     public uint MsaaSampleCount { get; set; } = 1u;
     public ESkinnedBoundsRecomputePolicy SkinnedBoundsRecomputePolicy { get; set; } = ESkinnedBoundsRecomputePolicy.Selective;
-    public bool UseGpuBvh { get; set; }
     private ECpuSceneCullingStructure _cpuSceneCullingStructure = RuntimeRenderingHostServiceDefaults.CpuSceneCullingStructure;
     public ECpuSceneCullingStructure CpuSceneCullingStructure
     {

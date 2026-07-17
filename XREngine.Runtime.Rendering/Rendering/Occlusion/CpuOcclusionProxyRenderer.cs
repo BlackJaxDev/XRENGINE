@@ -7,25 +7,25 @@ namespace XREngine.Rendering.Occlusion
 {
     /// <summary>
     /// Draws a tiny depth-only AABB proxy used by <see cref="CpuRenderOcclusionCoordinator"/>
-    /// to test a mesh's hardware occlusion-query result *without* contributing to the visible
-    /// image. Both visible demotion and occluded recovery run after the visible pass has built
-    /// complete depth. A zero-sample bounds result proves the mesh is occluded; a false-positive
-    /// result merely preserves an extra visible draw. Instead of redrawing the full mesh
-    /// (which can flicker), each query draws a cheap solid bounding box with:
+    /// to retest an already-occluded mesh *without* contributing to the visible image.
+    /// Recovery runs after visible meshes have built complete depth. Because the candidate did
+    /// not contribute to that depth, a zero-sample bounds result proves it remains occluded;
+    /// a false-positive merely preserves an extra visible draw. Each recovery query draws a
+    /// cheap solid bounding box with:
     ///
     ///   - Color writes disabled (WriteRed/Green/Blue/Alpha = false)
     ///   - Depth writes disabled (DepthTest.UpdateDepth = false)
     ///   - Depth test enabled (so occluders correctly suppress samples)
     ///   - Cull mode = None (count samples regardless of face winding)
     ///
-    /// The query (AnySamplesPassedConservative) is begun/ended around this proxy draw by
-    /// the coordinator; if any fragment of the AABB would pass the depth test, the query
-    /// reports the mesh as visible and the next-frame visibility flips back to "drawn".
+    /// Visible-demotion queries instead bracket the exact contributing mesh draw. The query
+    /// (AnySamplesPassedConservative) is begun/ended around this proxy only for recovery; if
+    /// any AABB fragment would pass, the next-frame visibility flips back to "drawn".
     /// </summary>
     internal static class CpuOcclusionProxyRenderer
     {
         private static readonly object s_initLock = new();
-        private static XRMeshRenderer? s_unitCubeRenderer;
+        private static volatile XRMeshRenderer? s_unitCubeRenderer;
         private static XRMaterial? s_probeMaterial;
         private static RenderingParameters? s_probeRenderParams;
 
@@ -60,6 +60,8 @@ namespace XREngine.Rendering.Occlusion
                 };
                 rp.DepthTest.Enabled = ERenderParamUsage.Enabled;
                 rp.DepthTest.UpdateDepth = false;
+                // Author the canonical normal-Z comparison once. Backends map this
+                // through the active camera depth mode (LEQUAL -> GEQUAL for reversed Z).
                 rp.DepthTest.Function = EComparison.Lequal;
                 rp.StencilTest.Enabled = ERenderParamUsage.Disabled;
 
@@ -124,6 +126,8 @@ namespace XREngine.Rendering.Occlusion
             }
             finally
             {
+                // RenderingCameraOverride is a thread-local stack: null pops the
+                // camera pushed above and reveals any outer override automatically.
                 RuntimeEngine.Rendering.State.RenderingCameraOverride = null;
             }
         }

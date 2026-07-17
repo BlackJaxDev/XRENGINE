@@ -82,7 +82,7 @@ Path A (skinned bounds direct-AABB write, `SkinnedBoundsGpuDirectAabbWrite`) is 
 
 See live values in [Engine.Rendering.Settings.cs](../../../../XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs).
 
-`EnableNvidiaDlss=false`, `EnableIntelXess*=false`, `GpuOcclusionCullingMode=GpuHiZ`, `SkinnedBoundsRecomputePolicy=Never`, `CalculateSkinnedBoundsInComputeShader=false`, `SkinnedBoundsGpuDirectAabbWrite=false`, `UseGpuBvh=true`, `ZeroReadbackMaterialDrawPath=FullBucketScan`, `MsaaSampleCount=4`.
+`EnableNvidiaDlss=false`, `EnableIntelXess*=false`, `GpuOcclusionCullingMode=GpuHiZ`, `SkinnedBoundsRecomputePolicy=Never`, `CalculateSkinnedBoundsInComputeShader=false`, `SkinnedBoundsGpuDirectAabbWrite=false`, `ZeroReadbackMaterialDrawPath=FullBucketScan`, `MsaaSampleCount=4`. GPU strategies select the GPU BVH automatically.
 
 When `CpuDirect` is forced with `GpuOcclusionCullingMode=GpuHiZ`, CPU mesh draws do not consume GPU Hi-Z output. Select `CpuQueryAsync` for hardware query occlusion on CPU draws, or `CpuSoftwareOcclusion` / `XRE_CPU_SOC_OCCLUSION=1` for the CPU software rasterizer path.
 
@@ -155,7 +155,7 @@ The data needed to confirm or reject the P3 bucket-fan-out hypothesis is not cur
 
 ### A/B toggles (one at a time)
 
-`SkinnedBoundsGpuDirectAabbWrite`, `CalculateSkinnedBoundsInComputeShader`, `SkinnedBoundsRecomputePolicy`, mesh submission strategy, `UseGpuBvh`, `GpuOcclusionCullingMode`, vendor upscale flags.
+`SkinnedBoundsGpuDirectAabbWrite`, `CalculateSkinnedBoundsInComputeShader`, `SkinnedBoundsRecomputePolicy`, mesh submission strategy, `GpuOcclusionCullingMode`, vendor upscale flags.
 
 ### GPU-side validation
 
@@ -584,7 +584,7 @@ Only meaningful after P0 activation contract is proven. Default-off until then.
 
 ## 8. Validation Checklist
 
-- [ ] Measurement preset output records build config, strategy, zero-readback path, debug flags, `UseGpuBvh`, Path A setting, upscale flags.
+- [ ] Measurement preset output records build config, strategy, zero-readback path, debug flags, effective BVH/fallback path, Path A setting, upscale flags.
 - [ ] Captures taken after warmup; first warmup frames excluded from medians.
 - [ ] `profiler-fps-drops.log` HotPath delta vs baseline captured per phase.
 - [ ] Report-NewAllocations diff shows zero new hot-path allocations.

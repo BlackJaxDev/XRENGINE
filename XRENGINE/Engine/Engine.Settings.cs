@@ -511,15 +511,13 @@ namespace XREngine
             h[nameof(UserSettings.EnableZeroReadbackMaterialScatterOverride)] = ApplyGpuDispatchSettings;
             h[nameof(UserSettings.ZeroReadbackMaterialDrawPathOverride)] = ApplyGpuDispatchSettings;
 
-            // ── GPU BVH ──
-            h[nameof(GameStartupSettings.UseGpuBvhOverride)] = Rendering.ApplyGpuBvhPreference;
+            // ── Scene culling hierarchy ──
             h[nameof(GameStartupSettings.CpuSceneCullingStructureOverride)] = Rendering.ApplyCpuSceneCullingStructurePreference;
 
             // ── Vulkan GPU-driven profile (compound) ──
             static void ApplyVulkanProfileSettings()
             {
                 Rendering.ApplyGpuRenderDispatchPreference();
-                Rendering.ApplyGpuBvhPreference();
                 Rendering.LogVulkanFeatureProfileFingerprint();
             }
             h[nameof(GameStartupSettings.VulkanGpuDrivenProfileOverride)] = ApplyVulkanProfileSettings;
@@ -686,7 +684,6 @@ namespace XREngine
             Rendering.ApplyGlobalIlluminationModePreference();
             Rendering.ApplyAntiAliasingPreference();
             Rendering.ApplyGpuRenderDispatchPreference();
-            Rendering.ApplyGpuBvhPreference();
             Rendering.ApplyCpuSceneCullingStructurePreference();
             Rendering.ApplyNvidiaDlssPreference();
             Rendering.ApplyIntelXessPreference();

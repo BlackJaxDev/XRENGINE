@@ -1,7 +1,7 @@
 # Vulkan CPU-Query And Monado Regression Investigation
 
 Date: 2026-07-14
-Status: Reopened 2026-07-16 for stable-packet inline-query primary mismatch
+Status: Implementation complete 2026-07-16; user confirmation pending
 Related TODO: [Vulkan core hardening and device-loss TODO](../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md)
 
 ## Problem
@@ -472,3 +472,361 @@ experiment is not part of the correction described above.
 
 Validation status: focused contracts and editor build pending; live Sponza
 image/performance confirmation pending.
+
+## 2026-07-16 Whole-Sponza Zoom-Out Follow-Up
+
+The current user-visible failure is severe flicker followed by disappearance of
+most or all of Sponza when the desktop Vulkan camera is moved far enough back to
+frame the complete model with `CpuQueryAsync` active. This follow-up revalidates
+the attempted query-generation primary-cache correction against the current
+binary and audits the full query lifecycle against the Vulkan specification.
+
+Planned evidence:
+
+- fixed-camera near and whole-Sponza MCP viewport captures from multiple views;
+- per-frame occlusion/query telemetry and Vulkan validation logs;
+- a `CpuQueryAsync` versus `Disabled` control pair;
+- focused coordinator, query-pool, and primary-reuse tests.
+
+Status: resolved by the implementation and validation below.
+
+### Resolution
+
+The failure was not a reversed-Z comparison problem and it was not an inherent
+limitation of Vulkan occlusion queries. It was a combination of query-epoch
+aliasing, render-graph ordering/cache bugs, and an incorrect probe schedule.
+
+The Vulkan specification establishes the key lifetime rule: a recorded
+`vkCmdResetQueryPool` changes availability only when that command executes on
+the queue. Until then, a host read can still observe the previous use's value
+and availability; this is explicitly possible even with `WAIT_BIT` plus
+availability. Results must therefore be associated with a completed submitted
+epoch, not merely with the fact that a reset was recorded. The implementation
+also follows the specification's same-scope begin/end rule, reads final value
+and availability together without partial results, and treats every multiview
+slot as part of one logical query. References:
+
+- [Vulkan query specification](https://docs.vulkan.org/spec/latest/chapters/queries.html)
+- [`vkCmdResetQueryPool`](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdResetQueryPool.html)
+- [`vkGetQueryPoolResults`](https://docs.vulkan.org/refpages/latest/refpages/source/vkGetQueryPoolResults.html)
+- [NVIDIA: Efficient Occlusion Culling](https://developer.nvidia.com/gpugems/gpugems/part-v-performance-and-practicalities/chapter-29-efficient-occlusion-culling)
+- [NVIDIA: Hardware Occlusion Queries Made Useful](https://developer.nvidia.com/gpugems/gpugems2/part-i-geometric-complexity/chapter-6-hardware-occlusion-queries-made-useful)
+
+The NVIDIA material reinforces the scheduling policy used here: consume older
+results asynchronously, exploit temporal coherence, and do not stall for the
+query issued by the draw currently being considered.
+
+#### Root Causes
+
+1. `VkRenderQuery` queued `vkCmdResetQueryPool`, then immediately exposed the
+   new recording as readable. Before that reset executed, the CPU could consume
+   the old epoch's available zero and attribute it to a different mesh. The
+   result value and availability were also fetched separately, so they were not
+   one coherent observation.
+2. Query result width was query-object-global. Cached mono and multiview command
+   variants could overwrite one another's expected slot count, so a later read
+   could accept an incomplete view set or read the wrong range.
+3. Query begin/end frame ops were not structural ordering barriers. Canonical
+   opaque sorting, command-chain scheduling, clear normalization, and cached
+   primary reuse could move, omit, or close the render scope around the intended
+   draw. Some legal Vulkan queries therefore enclosed no samples and returned a
+   perfectly valid zero with no validation-layer error.
+4. `FrameOpContext` identity treated otherwise compatible adjacent operations
+   as different render scopes. This allowed a begin op to close before its draw.
+5. Predicted-visible meshes were tested with a proxy independently of their
+   contributing draw. Depending on prepass state and ordering, the candidate
+   could effectively test against depth it had already contributed. This made
+   a zero result describe the probe arrangement rather than mesh visibility.
+6. Drawless/interrupted query scopes and cached-primary variants were allowed to
+   remain reusable instead of being rejected for re-recording and forced
+   visible.
+
+#### Implementation
+
+- `VkRenderQuery` now publishes a locked, immutable submitted-result epoch with
+  submission serial, exact command-buffer handle, per-command-buffer query
+  count, and force-visible state. A new recording/reuse is rejected while that
+  epoch is pending, and lifetime tracking retains the pool through completion.
+- A query whose owner is evicted or command container is released while its
+  result epoch is pending is destroyed instead of returned to the generic pool.
+  Backend lifetime tracking still retains and safely retires the native query
+  resources, while a new owner can never consume the prior owner's result.
+- Individual and hierarchy queries that exceed
+  `CpuQueryOcclusionMaxPendingFrames` are replaced with fresh query objects. The
+  abandoned epoch is pending-released through the same quarantine path, its
+  budget reservation is removed, and its decision fails visible. A lost or
+  never-completing epoch therefore cannot be pooled under a new owner or consume
+  capacity forever.
+- Vulkan reads every 64-bit `(result, availability)` pair in one
+  `vkGetQueryPoolResults` call without partial data. All slots must be available;
+  multiview values are ORed. Unknown, overlapping, malformed, interrupted, or
+  drawless epochs fail visible. Explicit blocking reads wait for device
+  completion before rechecking the epoch rather than trusting `WAIT_BIT` to
+  distinguish it from an older use.
+- The render-graph compiler assigns global query-order blocks in one O(N)
+  forward scan. Pass order remains authoritative, while the global ordinal also
+  fences operations from different equal-ranked passes; draws still
+  canonicalize and batch within a block but cannot cross a query boundary.
+  Query generations now encode bracket positions and the enclosed op structure.
+  A cached variant whose intended query draw was not recorded is marked
+  transient and re-recorded, including the OpenXR primary variant.
+- Predicted-visible queries now bracket the exact contributing mesh draw at its
+  original front-to-back location. Already-occluded recovery queries are
+  deferred until visible geometry has populated depth, then bracket a
+  color/depth-write-disabled AABB proxy. This preserves conservative recovery
+  without self-occluding the visible-demotion test.
+- Compatible query/draw/end frame ops share one primary render scope. Same-target
+  clears may still normalize ahead of the entire bracket, so a late clear cannot
+  erase only the draw while leaving a misleading query result.
+- The visible-demotion scheduler now applies
+  `CpuQueryOcclusionMaxQueriesPerFrame` to all pending individual and hierarchy
+  work. It snapshots the pending count once at the first budget refresh for each
+  pass/view scope and frame, then accounts for same-frame visible and recovery
+  reservations and for results or overdue epochs removed after the snapshot.
+  This keeps repeated inline scheduling O(1), enforces the total in-flight cap,
+  and prevents the visible path from starving recovery queries.
+- `CpuOcclusionProxyRenderer` already popped its stack-backed camera override by
+  assigning `null`; focused coverage now preserves that behavior as a regression
+  guard rather than treating it as a cause of this failure.
+
+This supersedes two provisional conclusions above. The 2026-07-15 statement
+that an exact contributing draw was invalid under the depth-normal prepass was
+based on the then-broken render scope/order path; with the real draw and its
+actual equality/depth state preserved, exact-draw bracketing is the correct
+visible-demotion query. The later statement that query generation contains only
+query identity/target/begin/end is also obsolete; it now includes bracket
+positions and enclosed operation structure while still excluding refreshable
+camera/frame data.
+
+#### Validation
+
+- The disabled control (`Screenshot_20260716_182715.png` through
+  `Screenshot_20260716_182717.png`) showed the complete Sponza. The broken query
+  cohort (`182822` through `182828`) repeatedly omitted the geometry while its
+  51 tested commands oscillated among 12, 13, and 25 culls and reported zero
+  visible-draw queries.
+- Fixed frontal, off-axis, and far zoom cohorts kept Sponza present. The settled
+  far captures `190755` through `190759` were decoded-pixel-identical. After the
+  final epoch/cache hardening, captures `193357` through `193404` continued to
+  show the whole structure.
+- Eight profiler samples observed live through MCP (not persisted as a separate
+  artifact) were stable at 51 tested, 5 culled, and 46 rendered. Resolved queries
+  had two-frame average/max latency; pending count returned to zero and no
+  forced-visible failure accumulated.
+- The preceding epoch/cache-hardening Vulkan frame-op trace contained 537
+  `QueryOp(Begin) -> MeshDrawOp -> QueryOp(End)` triples and zero malformed
+  brackets. Vulkan and rendering logs contained zero VUID, validation error,
+  device-loss, `VK_ERROR`, interrupted-query, empty-query, missing-query-draw,
+  or overlapping-epoch matches. The startup proxy-readiness sequence included
+  `ProgramsPending`, `BuffersPending`, and pipeline-compile-pending states; each
+  was diagnosed and fail-visible.
+- After reservation-aware budgeting and overdue-epoch replacement were added,
+  the six far-view captures `201527` through `201533` again kept the complete
+  Sponza visible at 51 tested, 5 culled, and 46 rendered, with no forced-visible
+  failures or Vulkan validation errors. The rebuilt trace contained 342 exact
+  begin/draw/end triples and zero malformed brackets. The copied
+  `latest-final-timeout-log_vulkan.log` and
+  `latest-final-timeout-log_rendering.log` contain zero VUID, validation-error,
+  device-loss, `VK_ERROR`, interrupted-query, empty-query, missing-query-draw,
+  or overlapping-epoch matches.
+- Focused coverage includes
+  `AsyncQueryPool_DoesNotReassignPendingEpochToAnotherOwner`,
+  `SortFrameOps_QueryBracketFencesOpaqueDrawFromEqualRankedPass`, and
+  `TryScheduleVisibleDrawQuery_RespectsTotalPendingQueryCap`. Reservation and
+  timeout coverage includes
+  `TryScheduleVisibleDrawQuery_CountsSameFrameReservationsAgainstPendingCap`,
+  `ShouldRender_OverduePendingQueryForcesVisibleAndReprobesNextFrame`, and
+  `BeginPass_OverdueHierarchyQueryRetiresEpochAndFailsVisible`, alongside the
+  broader `VulkanCpuDirectOcclusionTests`,
+  `SwapchainContextCoalescingTests`, and
+  `CpuRenderOcclusionCoordinatorTests` suites. The runtime-rendering, unit-test,
+  and full editor projects built with zero errors; their remaining warnings are
+  pre-existing NuGet audit and unrelated compiler warnings.
+- The final focused suite passed 88/88 tests.
+
+Raw screenshots, before/after telemetry, and copied final logs are under
+`Build/_AgentValidation/20260716-vulkan-cpu-query-sponza/`.
+
+Local validation status: passed. User confirmation on the original interactive
+zoom-out workflow is pending.
+
+## 2026-07-16 Overdraw / Cull-Granularity Follow-Up
+
+The overdraw view exposed a second, independent limitation after the Vulkan
+query-lifecycle fix: the enabled Sponza import used `OptimizeGraph` and
+`OptimizeMeshes`, leaving 25 material-wide submeshes under `$MergedNode_0`.
+CPU query culling operates on render commands, not individual triangles. A
+single visible fragment in a material batch spanning the atrium therefore kept
+that material's geometry alive throughout the building. The visualization was
+accurate for its depth-disabled replay semantics; query granularity was too
+coarse.
+
+Two naive alternatives were measured and rejected. Separating every connected
+mesh island produced 1,486 commands and excessive query/descriptor pressure.
+Removing graph/mesh optimization preserved 393 authored commands, but many of
+those commands competed for the same small visible-query budget and became
+descriptor-ready at different times. Neither configuration is an appropriate
+default for this content.
+
+### Implementation
+
+- `XRMesh.PartitionTrianglesSpatially` now uses a bounded, binned SAH search over
+  all three axes. It must split above the configured triangle limit and may make
+  a high-value split below that limit when the resulting bounds are materially
+  tighter, subject to a bounded leaf budget. Mandatory splitting finishes before
+  optional refinement, and large nodes require balanced children before using a
+  median-on-longest-axis fallback. This makes the optional cap exact and avoids
+  quadratic one-triangle-versus-rest preprocessing. Each result retains vertex
+  attributes, including mirrored tangent handedness, skinning/blendshape data,
+  material, LOD thresholds, and asynchronous renderer policy.
+- `ModelImportOptions.SpatialPartitionMaxTriangles` is propagated through
+  Assimp, native glTF, and native FBX import. The Unit Testing World flag
+  `SpatiallyPartitionMeshesForOcclusion` selects a 4,096-triangle target for the
+  active static Sponza workload while keeping `OptimizeGraph` and
+  `OptimizeMeshes`.
+- Visible-demotion candidates are ranked across the complete pass and selected
+  for the next pass, so early render order cannot permanently consume every
+  query slot. Recovery/staleness priority is compared before screen size.
+- Meshes whose Vulkan draw resources are not ready remain visible and are not
+  query-bracketed. This prevents valid-but-empty begin/end scopes from producing
+  misleading zero results.
+- Stable negative-result age expands to cover at least two complete visible
+  budget sweeps plus Vulkan's two-frame readback latency. A large command set no
+  longer becomes visible merely because its own revalidation turn has not yet
+  arrived.
+- The runtime and editor copies of `ModelPostImportFlags` now contain identical
+  values. Before this correction, the tolerant runtime JSON converter silently
+  normalized the new partition flag to `None` during settings handoff.
+- All merged Sponza partitions shared the same parent origin and initially fell
+  back to import-order sorting. Mesh collection now calculates distance from the
+  destination camera to the nearest point on each partition's world AABB and
+  captures that value with the sort-order key in a destination-owned snapshot.
+  Another viewport can no longer mutate a live comparison key and corrupt this
+  viewport's front-to-back order.
+- CPU motion-vector replay now reuses the primary decision recorded for the
+  command in the current frame rather than replaying every command independently
+  or re-evaluating a changed hysteresis counter. CPU-occlusion exclusions remain
+  unconditional in auxiliary replays, as do passes outside the query-testable
+  opaque/masked mesh set.
+- Full overdraw replays the surviving partitions with depth testing and depth
+  writes disabled. It consequently still displays triangles hidden inside an
+  accepted draw unit; only a whole rejected partition disappears. The default
+  replay set excludes `Background` and `OnTopForward`.
+- CPU-query tested/rendered/culled telemetry now counts only eligible mesh
+  commands. Bounds visualization commands previously confounded both the
+  counters and performance measurements even though they were not Sponza mesh
+  candidates.
+- Mesh-bounds visualization now resolves the active view's CPU-query decision
+  at draw time. Occlusion-culled meshes use yellow bounds while other meshes
+  retain the configured bounds color; the result is not cached on the shared
+  render command, so concurrent views cannot overwrite each other's debug state.
+
+### Validation And Tuning
+
+With the final 4,096-triangle target, the initial import exposed 92 deferred mesh
+commands instead of 23. In the later fixed-camera baseline, the primary pass had
+101 eligible mesh candidates: 45 were culled and 56 were drawn. Telemetry still
+reported 203 tested and 158 rendered at that point because 102 bounds-debug
+commands were incorrectly included; the cull count itself was already 45. The
+query lifecycle continued to submit and resolve while the camera remained
+stable.
+
+A 2,048-triangle comparison produced 170 initially visible deferred commands
+and 395 per-pass tests, but only increased the absolute cull count from 45 to
+48 while adding 117 budget deferrals and 38 forced-visible decisions in the
+sampled frame. The 4,096 target was retained because it delivered almost the
+same rejection benefit at roughly half the draw/query workload.
+
+Focused coordinator, Vulkan CPU-direct, mesh-partition, and Unit Testing World
+settings coverage passed 74/74 tests. The editor build completed with zero
+errors; existing NuGet vulnerability and unrelated SurfelGI warnings remain.
+Live captures, logs, and comparison output are under
+`Build/_AgentValidation/20260716-vulkan-cpu-query-sponza/granularity-followup/`.
+
+The exact final binary was re-run as session
+`xrengine_2026-07-16_21-25-47_pid5412`: it again exposed 92 deferred mesh
+commands, retained the whole model after a far camera cut, and reported the
+same pre-telemetry-fix 203 tested / 45 culled / 158 rendered pass totals. Captures
+`Screenshot_20260716_212629.png` and `Screenshot_20260716_212646.png` changed
+with the camera. Its copied Vulkan log had zero empty-query, descriptor-failure,
+VUID, validation-error, device-loss, or `VK_ERROR` matches.
+
+After destination-local sort snapshots, SAH partition refinement, auxiliary-pass
+visibility reuse, and telemetry eligibility filtering, a fixed front view
+reported 127 eligible mesh tests, 92 culls, and 35 draws. A diagonal view also
+reported 127 tests, with 91 culls and 36 draws. These totals now describe only
+the mesh commands that entered CPU-query decision logic.
+
+The corresponding bounds-off viewport captures,
+`Screenshot_20260716_220106.png` and `Screenshot_20260716_220125.png`, show only
+the exterior from front and diagonal camera positions and change with the
+camera. They are stored under
+`Build/_AgentValidation/20260716-overdraw-occlusion-followup/mcp-captures/`.
+
+The final bounds A/B used engine session
+`Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-16_21-59-06_pid21980`.
+With bounds enabled, collection contained 268 total commands, including 128
+non-mesh `OpaqueForward` commands, and ran at approximately 25.4 Hz. With bounds
+disabled, it contained 141 total commands and one `OpaqueForward` command and
+ran at approximately 28.4 Hz. The user's full-overdraw screenshot showed 13 Hz,
+but this A/B did not toggle full overdraw; that 13 Hz observation is therefore
+not presented as a measured delta from this session. Full overdraw is the
+intentional worst-case depth-disabled diagnostic replay, not the normal path.
+
+The live and final-shutdown Vulkan log scans found zero `VUID-`, validation-error,
+`[ERROR]`, or fatal entries.
+
+After the final partition/replay hardening, the combined coordinator, Vulkan
+CPU-direct, mesh-partition, command-ordering, transformed-bounds, and overdraw
+selection passed 89/89 tests. The report is
+`Build/_AgentValidation/20260716-overdraw-occlusion-followup/reports/occlusion-final-review-rerun.trx`;
+the same run rebuilt the editor and native bridge projects with zero errors.
+
+The exact post-review binary was then run again as engine session
+`Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-16_22-33-26_pid38720`.
+Its final spatial layout contained 124 query-eligible `OpaqueDeferred` mesh
+commands. At the instant of the fixed front capture, telemetry reported 124
+tested, 105 culled, and 19 rendered; the fixed diagonal capture reported 124
+tested, 88 culled, and 36 rendered. The normal depth-tested captures are
+`Screenshot_20260716_223441.png` and `Screenshot_20260716_223509.png` under
+`Build/_AgentValidation/20260716-overdraw-occlusion-followup/mcp-captures/`.
+Both show the correct exterior and change with the camera. They are deliberately
+identified as normal-output validation, not full-overdraw captures.
+
+The post-review live profiler reported zero Vulkan validation errors. The final
+session logs were copied to
+`Build/_AgentValidation/20260716-overdraw-occlusion-followup/logs/post-review-live/`;
+a shutdown-inclusive scan found no `VUID`, validation-error, `[ERROR]`, fatal,
+device-loss, or `VK_ERROR` matches.
+
+Local validation status: passed. User confirmation of the updated in-editor
+full-overdraw diagnostic is pending; the post-review visual captures above test
+the normal render path.
+
+### Occlusion-Culled Bounds Color Follow-up
+
+Mesh-bounds rendering now queries the active command collection's CPU-query
+coordinator after all query-testable primary mesh passes. A mesh suppressed for
+the active view is drawn with a yellow bounds box; visible and non-query-tested
+meshes retain the configured bounds color. The non-creating lookup accepts only
+the exact decision recorded for the current pass epoch. State remains view-local
+rather than being cached on the shared mesh command.
+
+The coordinator and bounds-focused suite passed 61/61 tests. The report is
+`Build/_AgentValidation/20260716-yellow-occluded-bounds/reports/yellow-occluded-bounds-final-verified.trx`;
+the same run rebuilt the editor with zero warnings and zero errors.
+
+The exact Vulkan editor binary was run as session
+`Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-16_23-06-03_pid4176`.
+The front capture `Screenshot_20260716_230639.png` visibly contains both yellow
+occlusion-culled boxes and cyan configured-color boxes. After a diagonal camera
+cut, `Screenshot_20260716_230703.png` showed a changed yellow/cyan pattern; its
+sampled telemetry reported 124 tested, 120 culled, and 4 rendered. Both captures
+are under
+`Build/_AgentValidation/20260716-yellow-occluded-bounds/mcp-captures/`.
+
+Both samples reported `CpuQueryAsync` with `CpuDirect` and zero Vulkan validation
+errors. The shutdown-inclusive Vulkan/rendering/general logs were copied to
+`Build/_AgentValidation/20260716-yellow-occluded-bounds/logs/final-live-vulkan/`; their
+scan found no `VUID`, validation-error, `[ERROR]`, fatal, device-loss, or
+`VK_ERROR` matches.

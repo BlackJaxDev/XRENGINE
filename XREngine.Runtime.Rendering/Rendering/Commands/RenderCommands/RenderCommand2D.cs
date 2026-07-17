@@ -11,6 +11,9 @@ namespace XREngine.Rendering.Commands
             set => ZIndex = (int)value;
         }
 
+        internal override float CaptureSortDistance(IRuntimeRenderCamera? camera)
+            => ZIndex;
+
         public override int CompareTo(RenderCommand? other)
         {
             int zCompare = ZIndex.CompareTo((other as RenderCommand2D)?.ZIndex ?? 0);

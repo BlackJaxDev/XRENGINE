@@ -1,5 +1,34 @@
 # Vulkan Dynamic Rendering Promotion — 2026-07-10
 
+## 2026-07-16 Tracker Audit And Reopening
+
+The audit confirmed that dynamic-rendering promotion itself is complete. The
+initial closeout interpretation treated the remaining modern backends as
+decision-gated optional work and removed them from the active checklist. That
+interpretation was superseded: the owner requires production implementations
+for every listed feature regardless of whether runtime use remains capability-
+gated. The active tracker now contains concrete implementation and validation
+tasks for local read, native descriptor heap, shader objects, XR foveation,
+transient attachments, GPU-driven rendering, DGC, and ray tracing.
+
+Current validation:
+
+- The focused dynamic-rendering and multiview cohort was rebuilt after updating
+  three stale source-shape assertions and passed 30/30.
+- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-build --no-restore --filter Vulkan`
+  ran 667 tests: 576 passed, 1 skipped, and 90 failed. The failures span 22
+  unrelated fixtures and predominantly assert old source locations or tokens
+  after broader renderer refactors. The TRX is retained at
+  `Build/_AgentValidation/20260716-dynamic-rendering-closeout/reports/vulkan-filter.trx`.
+- The warm pipeline-cache evidence from 2026-07-16 recorded 238 persisted hits,
+  zero compile-required misses, zero commands-lost draws, and zero validation or
+  device-loss failures.
+
+Repository-wide source-contract test maintenance and the active core-hardening
+performance/stress matrix remain shared dependencies. They do not change the
+promoted render-target contract, but their required integration and validation
+work is represented in the reopened tracker.
+
 ## Outcome
 
 Dynamic rendering is the validated default render-target path. Explicit legacy render

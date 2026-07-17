@@ -814,6 +814,10 @@ namespace XREngine.Rendering.Occlusion
                 Interlocked.Add(ref _cpuTested, candidateCount);
         }
 
+        /// <summary>Records one mesh command actually admitted to CPU-query decision logic.</summary>
+        public static void RecordCpuTestedOne()
+            => Interlocked.Increment(ref _cpuTested);
+
         /// <summary>Records that the CPU-query path skipped one command.</summary>
         public static void RecordCpuCulledOne()
         {

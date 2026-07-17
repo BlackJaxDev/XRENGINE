@@ -573,8 +573,8 @@ namespace XREngine.Rendering.Vulkan
                 else
                 {
                     if (hasQueryFrameOps &&
-                        (!PrepareQueryFrameOpsForCommandBufferReuse(ops) ||
-                         !PrepareQueryFrameOpsForCommandBufferReuse(dynamicUiBatchTextOps)))
+                        (!PrepareQueryFrameOpsForCommandBufferReuse(variant.PrimaryCommandBuffer, ops) ||
+                         !PrepareQueryFrameOpsForCommandBufferReuse(variant.PrimaryCommandBuffer, dynamicUiBatchTextOps)))
                     {
                         dirty = true;
                         primaryFrameStateDirty = true;
@@ -725,6 +725,7 @@ namespace XREngine.Rendering.Vulkan
             _isRecordingCommandBuffer = true;
             bool recordedDynamicUiSecondaryReady = delayDynamicUiBatchTextOverlayRecording;
             int recordedSwapchainWriteCount = 0;
+            bool queryFrameOpsRequireRerecord = false;
             try
             {
                 if (!delayDynamicUiBatchTextOverlayRecording)
@@ -755,7 +756,8 @@ namespace XREngine.Rendering.Vulkan
                             preserveSwapchainForOverlay,
                             out recordedSwapchainWriteCount,
                             out swapchainLayoutAfterCommandBuffer,
-                            out recordingDeferredReason))
+                            out recordingDeferredReason,
+                            out queryFrameOpsRequireRerecord))
                     {
                         _lastEnsureCommandBufferRecordedPrimary = false;
                         CancelRecordedTextureUploadSubmitBatch(
@@ -813,6 +815,8 @@ namespace XREngine.Rendering.Vulkan
                 commandBufferImageSlot);
             if (hasTextureUploadFrameOps)
                 MarkCommandBufferVariantTransient(variant, "transient texture upload");
+            if (queryFrameOpsRequireRerecord)
+                MarkCommandBufferVariantTransient(variant, "query draw was not recorded");
             if (recordedDynamicUiSecondaryReady)
             {
                 dynamicUiBatchTextSecondaryCommandBuffer = variant.DynamicUiSecondaryCommandBuffer;
@@ -1085,7 +1089,9 @@ namespace XREngine.Rendering.Vulkan
         {
             FrameOpSignatureHasher hash = new();
             int queryCount = 0;
+            hash.Add(staticOps.Length);
             AddQueryGenerationParts(ref hash, staticOps, ref queryCount);
+            hash.Add(volatileOps.Length);
             AddQueryGenerationParts(ref hash, volatileOps, ref queryCount);
             return queryCount == 0 ? 0UL : hash.ToHash();
         }
@@ -1095,15 +1101,38 @@ namespace XREngine.Rendering.Vulkan
             FrameOp[] ops,
             ref int queryCount)
         {
+            int queryBracketDepth = 0;
             for (int i = 0; i < ops.Length; i++)
             {
-                if (ops[i] is not QueryOp query)
-                    continue;
+                FrameOp op = ops[i];
+                if (op is QueryOp query)
+                {
+                    queryCount++;
+                    hash.Add(i);
+                    hash.Add(ComputeFrameOpStructuralSignature(
+                        query,
+                        i,
+                        RenderPacketVolatility.FrameDataOnly));
 
-                queryCount++;
-                hash.Add(query.Query.GetHashCode());
-                hash.Add((int)query.QueryTarget);
-                hash.Add((int)query.Operation);
+                    if (query.Operation == EVulkanQueryFrameOpKind.Begin)
+                        queryBracketDepth++;
+                    else if (queryBracketDepth > 0)
+                        queryBracketDepth--;
+                    continue;
+                }
+
+                // Query frame ops are intentionally omitted from command-chain groups and
+                // stay inline in the primary. Include the exact bracket position and every
+                // enclosed draw in the primary-cache identity so a previous layout cannot
+                // attribute a proxy draw to the wrong query object.
+                if (queryBracketDepth > 0)
+                {
+                    hash.Add(i);
+                    hash.Add(ComputeFrameOpStructuralSignature(
+                        op,
+                        i,
+                        RenderPacketVolatility.FrameDataOnly));
+                }
             }
         }
 
@@ -1406,8 +1435,8 @@ namespace XREngine.Rendering.Vulkan
                 if (!refreshedReusableFrameData)
                     return false;
 
-                if ((HasQueryFrameOps(ops) && !PrepareQueryFrameOpsForCommandBufferReuse(ops)) ||
-                    (HasQueryFrameOps(dynamicUiBatchTextOps) && !PrepareQueryFrameOpsForCommandBufferReuse(dynamicUiBatchTextOps)))
+                if ((HasQueryFrameOps(ops) && !PrepareQueryFrameOpsForCommandBufferReuse(variant.PrimaryCommandBuffer, ops)) ||
+                    (HasQueryFrameOps(dynamicUiBatchTextOps) && !PrepareQueryFrameOpsForCommandBufferReuse(variant.PrimaryCommandBuffer, dynamicUiBatchTextOps)))
                 {
                     return false;
                 }
@@ -2448,6 +2477,7 @@ namespace XREngine.Rendering.Vulkan
             out int recordedSwapchainWriteCount,
             out ImageLayout recordedSwapchainFinalLayout,
             out string recordingDeferredReason,
+            out bool queryFrameOpsRequireRerecord,
             bool transitionSwapchainToPresent = true,
             uint? frameDataImageIndexOverride = null,
             OpenXrEyeRenderTargetContext? openXrTargetContext = null,
@@ -2458,6 +2488,8 @@ namespace XREngine.Rendering.Vulkan
             recordedSwapchainWriteCount = 0;
             recordedSwapchainFinalLayout = ImageLayout.Undefined;
             recordingDeferredReason = string.Empty;
+            queryFrameOpsRequireRerecord = false;
+            bool queryFrameOpsRequireRerecordLocal = false;
             int droppedDrawOps = 0;
             int droppedComputeOps = 0;
             int droppedFrameOps = 0;
@@ -3133,6 +3165,7 @@ namespace XREngine.Rendering.Vulkan
             bool activeDynamicRendering = false;
             XRFrameBuffer? activeTarget = null;
             VkRenderQuery? activeInlineQuery = null;
+            bool activeInlineQueryRecordedDraw = false;
             RenderPass activeRenderPass = default;
             Framebuffer activeFramebuffer = default;
             DynamicRenderingFormatSignature activeDynamicRenderingFormats = default;
@@ -3542,8 +3575,17 @@ namespace XREngine.Rendering.Vulkan
                 bool transitionSwapchainToPresent = activeDynamicRendering && activeTarget is null;
                 if (activeInlineQuery is not null)
                 {
+                    if (!activeInlineQueryRecordedDraw)
+                        queryFrameOpsRequireRerecordLocal = true;
                     activeInlineQuery.EndQuery(commandBuffer);
+                    activeInlineQuery.InvalidateRecordedResultEpoch(commandBuffer);
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.InterruptedInlineQuery.{activeInlineQuery.GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Inline occlusion query was interrupted by a render-scope transition; this epoch will resolve visible. Query='{0}'.",
+                        activeInlineQuery.Data.Name ?? "<unnamed>");
                     activeInlineQuery = null;
+                    activeInlineQueryRecordedDraw = false;
                 }
 
                 if (activeDynamicRendering)
@@ -4321,7 +4363,7 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            void RecordMeshDrawIntoCommandBuffer(
+            bool RecordMeshDrawIntoCommandBuffer(
                 CommandBuffer targetCommandBuffer,
                 MeshDrawOp drawOp,
                 int passIndex,
@@ -4442,6 +4484,8 @@ namespace XREngine.Rendering.Vulkan
                             ? "<none>"
                             : drawOp.Draw.Renderer.DescribeReusableCommandBufferFrameDataBlocker(drawOp.Draw, drawUniformSlot));
                 }
+
+                return recordedDraw;
             }
 
             void RecordIndirectDrawIntoCommandBuffer(CommandBuffer targetCommandBuffer, IndirectDrawOp indirectOp, int passIndex)
@@ -4557,7 +4601,7 @@ namespace XREngine.Rendering.Vulkan
                         break;
                     if (candidate.Target != firstDraw.Target)
                         break;
-                    if (!Equals(candidate.Context, activeContext))
+                    if (!AreFrameOpContextsRecordingCompatible(candidate.Context, activeContext))
                         break;
                     if (candidate.Context.SchedulingIdentity != activeSchedulingIdentity)
                         break;
@@ -4577,7 +4621,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     if (ops[i] is not IndirectDrawOp candidate)
                         break;
-                    if (!Equals(candidate.Context, activeContext))
+                    if (!AreFrameOpContextsRecordingCompatible(candidate.Context, activeContext))
                         break;
                     if (candidate.Context.SchedulingIdentity != activeSchedulingIdentity)
                         break;
@@ -5106,9 +5150,25 @@ namespace XREngine.Rendering.Vulkan
                     scheduledCommandChainKeysByOpIndex is null ||
                     scheduledCommandChainCache is null ||
                     runCount <= 0 ||
+                    activeInlineQuery is not null ||
                     firstDraw.Context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
                 {
                     return false;
+                }
+
+                // Query-bracket contents are intentionally absent from the command-chain
+                // schedule. Preflight the complete run before closing the current render
+                // scope so an unscheduled draw cannot terminate rendering as a side effect.
+                for (int i = 0; i < runCount; i++)
+                {
+                    int opIndex = startIndex + i;
+                    if (ops[opIndex] is not MeshDrawOp drawOp ||
+                        drawOp.PassIndex != passIndex ||
+                        drawOp.Target != firstDraw.Target ||
+                        !TryGetScheduledCommandChainForOp(opIndex, out _, out _))
+                    {
+                        return false;
+                    }
                 }
 
                 EndActiveRenderPass();
@@ -5316,6 +5376,7 @@ namespace XREngine.Rendering.Vulkan
                 if (!CommandChainsEnabledForCurrentRecording ||
                     !_enableSecondaryCommandBuffers ||
                     runCount < minMeshDrawsPerSecondaryChain ||
+                    activeInlineQuery is not null ||
                     firstDraw.Context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
                 {
                     return false;
@@ -5920,7 +5981,7 @@ namespace XREngine.Rendering.Vulkan
                             continue;
                         }
 
-                        if (!hasActiveContext || !Equals(activeContext, op.Context))
+                        if (!hasActiveContext || !AreFrameOpContextsRecordingCompatible(activeContext, op.Context))
                         {
                             IDisposable? contextChangeProfileScope = null;
                             if (CommandRecordingDetailProfilingEnabled)
@@ -5941,12 +6002,24 @@ namespace XREngine.Rendering.Vulkan
                                 VulkanRenderGraphCompiler.OpTargetsSwapchain(op) &&
                                 incomingPassIndex == activePassIndex;
 
-                            if (!preservedSwapchainPass)
+                            // Query begin/draw/end capture their contexts independently.
+                            // Descriptor or resource generations may advance while the
+                            // enclosed mesh is prepared, but that must not split an otherwise
+                            // compatible Vulkan rendering scope and leave an empty query.
+                            bool preservedInlineQueryPass = activeInlineQuery is not null &&
+                                renderPassActive &&
+                                ReferenceEquals(activeTarget, op.Target) &&
+                                incomingPassIndex == activePassIndex &&
+                                op.Context.SchedulingIdentity == activeSchedulingIdentity &&
+                                AreFrameOpContextsQueryScopeCompatible(activeContext, op.Context);
+                            bool preservedRenderPass = preservedSwapchainPass || preservedInlineQueryPass;
+
+                            if (!preservedRenderPass)
                             {
                                 EndActiveRenderPass();
                             }
 
-                            if (!preservedSwapchainPass && passIndexLabelActive)
+                            if (!preservedRenderPass && passIndexLabelActive)
                             {
                                 CmdEndLabel(commandBuffer);
                                 passIndexLabelActive = false;
@@ -5979,7 +6052,7 @@ namespace XREngine.Rendering.Vulkan
                                     activeContext.ViewportIdentity);
                             }
 
-                            if (preservedSwapchainPass)
+                            if (preservedRenderPass)
                             {
                                 activeSchedulingIdentity = op.Context.SchedulingIdentity;
                             }
@@ -6212,6 +6285,7 @@ namespace XREngine.Rendering.Vulkan
                         if (firstBeginForQuery &&
                             !recordingScratch.PreparedInlineQueries.Contains(queryOp.Query))
                         {
+                            queryFrameOpsRequireRerecordLocal = true;
                             Debug.VulkanWarningEvery(
                                 $"Vulkan.UnpreparedInlineOcclusionQuery.{queryOp.Query.GetHashCode()}",
                                 TimeSpan.FromSeconds(1),
@@ -6234,8 +6308,12 @@ namespace XREngine.Rendering.Vulkan
                         {
                             if (activeInlineQuery is not null)
                             {
+                                if (!activeInlineQueryRecordedDraw)
+                                    queryFrameOpsRequireRerecordLocal = true;
                                 activeInlineQuery.EndQuery(commandBuffer);
+                                activeInlineQuery.InvalidateRecordedResultEpoch(commandBuffer);
                                 activeInlineQuery = null;
+                                activeInlineQueryRecordedDraw = false;
                             }
                             if (recordingScratch.PreparedInlineQueries.Contains(queryOp.Query) &&
                                 recordingScratch.BegunInlineQueries.Add(queryOp.Query))
@@ -6249,10 +6327,14 @@ namespace XREngine.Rendering.Vulkan
                                     viewMask: queryViewMask)
                                     ? queryOp.Query
                                     : null;
+                                if (activeInlineQuery is null)
+                                    queryFrameOpsRequireRerecordLocal = true;
+                                activeInlineQueryRecordedDraw = false;
                             }
                             else if (recordingScratch.PreparedInlineQueries.Contains(queryOp.Query))
                             {
                                 activeInlineQuery = null;
+                                queryFrameOpsRequireRerecordLocal = true;
                                 Debug.VulkanWarningEvery(
                                     $"Vulkan.DuplicateInlineOcclusionQuery.{queryOp.Query.GetHashCode()}",
                                     TimeSpan.FromSeconds(1),
@@ -6264,8 +6346,19 @@ namespace XREngine.Rendering.Vulkan
                         }
                         else if (ReferenceEquals(activeInlineQuery, queryOp.Query))
                         {
+                            if (!activeInlineQueryRecordedDraw)
+                            {
+                                queryFrameOpsRequireRerecordLocal = true;
+                                activeInlineQuery.InvalidateRecordedResultEpoch(commandBuffer);
+                                Debug.VulkanWarningEvery(
+                                    $"Vulkan.EmptyInlineQuery.{activeInlineQuery.GetHashCode()}",
+                                    TimeSpan.FromSeconds(1),
+                                    "[Vulkan] Inline occlusion query contained no recorded draw; this epoch will resolve visible. Query='{0}'.",
+                                    activeInlineQuery.Data.Name ?? "<unnamed>");
+                            }
                             queryOp.Query.EndQuery(commandBuffer);
                             activeInlineQuery = null;
+                            activeInlineQueryRecordedDraw = false;
                         }
                         if (queryLabelActive)
                             CmdEndLabel(commandBuffer);
@@ -6318,7 +6411,9 @@ namespace XREngine.Rendering.Vulkan
                             BeginRenderPassForTarget(drawOp.Target, opPassIndex, activeContext);
                         }
 
-                        RecordMeshDrawIntoCommandBuffer(commandBuffer, drawOp, opPassIndex);
+                        bool recordedInlineDraw = RecordMeshDrawIntoCommandBuffer(commandBuffer, drawOp, opPassIndex);
+                        if (activeInlineQuery is not null && recordedInlineDraw)
+                            activeInlineQueryRecordedDraw = true;
                         if (drawOp.Target is null)
                             actualSwapchainWriteCount++;
                     break;
@@ -6706,6 +6801,7 @@ namespace XREngine.Rendering.Vulkan
 
             recordedSwapchainWriteCount = actualSwapchainWriteCount;
             recordedSwapchainFinalLayout = swapchainFinalLayout;
+            queryFrameOpsRequireRerecord = queryFrameOpsRequireRerecordLocal;
             return true;
         }
 
@@ -9097,7 +9193,9 @@ namespace XREngine.Rendering.Vulkan
             return false;
         }
 
-        private static bool PrepareQueryFrameOpsForCommandBufferReuse(FrameOp[] ops)
+        private static bool PrepareQueryFrameOpsForCommandBufferReuse(
+            CommandBuffer commandBuffer,
+            FrameOp[] ops)
         {
             for (int index = 0; index < ops.Length; index++)
             {
@@ -9105,7 +9203,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         Operation: EVulkanQueryFrameOpKind.Begin
                     } queryOp &&
-                    !queryOp.Query.PrepareForCommandBufferReuse(queryOp.QueryTarget))
+                    !queryOp.Query.PrepareForCommandBufferReuse(commandBuffer, queryOp.QueryTarget))
                 {
                     return false;
                 }
