@@ -7,6 +7,7 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -26,6 +27,11 @@ public unsafe partial class VulkanRenderer
 {
 	public partial class VkMeshRenderer
 	{
+		private static readonly ConcurrentDictionary<string, string> MeshMaterialDescriptorReasons =
+			new(StringComparer.Ordinal);
+		private static readonly ConcurrentDictionary<string, string> DescriptorBufferTrimmedNames =
+			new(StringComparer.Ordinal);
+
 		private static readonly bool DescriptorResourceFingerprintDiagnosticsEnabled =
 			string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanFrameDataReuseDiag), "1", StringComparison.Ordinal) ||
 			string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDescriptorFingerprintDiag), "1", StringComparison.Ordinal);
@@ -34,6 +40,9 @@ public unsafe partial class VulkanRenderer
 			string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanMaterialBindingDiag), "1", StringComparison.Ordinal);
 
 		private ulong _descriptorAllocationUsageSerial;
+
+		[ThreadStatic]
+		private static DescriptorWriteScratch? s_descriptorWriteScratch;
 
 		/// <summary>
 		/// Ensures the descriptor sets for one frame/draw slot are allocated and current.
@@ -363,8 +372,9 @@ public unsafe partial class VulkanRenderer
 			if (_program is null)
 				return false;
 
-			foreach (DescriptorBindingInfo binding in bindings)
+			for (int bindingIndex = 0; bindingIndex < bindings.Count; bindingIndex++)
 			{
+				DescriptorBindingInfo binding = bindings[bindingIndex];
 				if (binding.DescriptorType is not (DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic))
 					continue;
 
@@ -488,6 +498,7 @@ public unsafe partial class VulkanRenderer
 
 			int descriptorFrameSlotCount = frameCount;
 			int setCount = layouts.Count;
+			int viewFamilyIdentity = Renderer.ResolveMeshDescriptorViewFamilyIdentity();
 			ulong layoutFingerprint = ComputeDescriptorLayoutFingerprint(layouts);
 			ulong schemaFingerprint = ComputeDescriptorSchemaFingerprint(bindings, setCount);
 			bool usesSharedMaterialTier = _activeDescriptorAllocation is { } activeAllocation &&
@@ -504,9 +515,9 @@ public unsafe partial class VulkanRenderer
 				bindings,
 				drawUniformSlot,
 				usesSharedMaterialTier);
-			int viewFamilyIdentity = Renderer.ResolveMeshDescriptorViewFamilyIdentity();
-			if ((resourcesCapturedByFrameSignature || refreshFrameIndex.HasValue) &&
-				TryActivateReusableDescriptorSetsForCapturedResources(
+			if (resourcesCapturedByFrameSignature || refreshFrameIndex.HasValue)
+			{
+				if (TryActivateReusableDescriptorSetsForCapturedResources(
 					material,
 					drawUniformSlot,
 					descriptorFrameSlotCount,
@@ -518,8 +529,7 @@ public unsafe partial class VulkanRenderer
 					resourceFingerprint,
 					refreshFrameIndex,
 					out reason))
-			{
-				return true;
+					return true;
 			}
 
 			if (TryActivateReusableDescriptorSetsFast(
@@ -817,34 +827,25 @@ public unsafe partial class VulkanRenderer
 				return true;
 			}
 
-			int programMatches = 0;
-			int materialMatches = 0;
-			int shapeMatches = 0;
-			int schemaMatches = 0;
-			int validMatches = 0;
 			foreach (DescriptorAllocation candidate in _descriptorAllocations.Values)
 			{
 				if (candidate.LayoutFingerprint != layoutFingerprint)
 					continue;
-				programMatches++;
 
 				if (!ReferenceEquals(candidate.Material, material) ||
 					candidate.MaterialBindingLayoutVersion != material.BindingLayoutVersion)
 				{
 					continue;
 				}
-				materialMatches++;
 
 				if (candidate.DescriptorFrameSlotCount != descriptorFrameSlotCount ||
 					candidate.SetCount != setCount)
 				{
 					continue;
 				}
-				shapeMatches++;
 
 				if (candidate.SchemaFingerprint != schemaFingerprint)
 					continue;
-				schemaMatches++;
 
 				if (candidate.ViewFamilyIdentity != viewFamilyIdentity)
 					continue;
@@ -861,17 +862,15 @@ public unsafe partial class VulkanRenderer
 
 				if (!IsDescriptorAllocationValid(candidate, descriptorFrameSlotCount, setCount))
 					continue;
-				validMatches++;
 
 				allocation = candidate;
 				return true;
 			}
 
-			reason =
-				$"no captured descriptor allocation for schema=0x{schemaFingerprint:X16} " +
-				$"allocs={_descriptorAllocations.Count} programMatches={programMatches} " +
-				$"materialMatches={materialMatches} shapeMatches={shapeMatches} " +
-				$"schemaMatches={schemaMatches} validMatches={validMatches}";
+			// This lookup is intentionally attempted before the shared-material tier.
+			// Keep the expected miss allocation-free; the caller constructs detailed
+			// diagnostics only if all reusable tiers fail.
+			reason = "no captured descriptor allocation";
 			return false;
 		}
 
@@ -1076,7 +1075,9 @@ public unsafe partial class VulkanRenderer
 
 			if (allocation.MaterialBindingLayoutVersion != material.BindingLayoutVersion)
 			{
-				reason = $"material binding layout {allocation.MaterialBindingLayoutVersion}->{material.BindingLayoutVersion}";
+				reason = DescriptorResourceFingerprintDiagnosticsEnabled
+					? $"material binding layout {allocation.MaterialBindingLayoutVersion}->{material.BindingLayoutVersion}"
+					: "material binding layout changed";
 				return false;
 			}
 
@@ -1088,7 +1089,9 @@ public unsafe partial class VulkanRenderer
 
 			if (drawUniformSlot >= _uniformDrawSlotCapacity)
 			{
-				reason = $"draw slot capacity {drawUniformSlot + 1}>{_uniformDrawSlotCapacity}";
+				reason = DescriptorResourceFingerprintDiagnosticsEnabled
+					? $"draw slot capacity {drawUniformSlot + 1}>{_uniformDrawSlotCapacity}"
+					: "draw slot capacity exceeded";
 				return false;
 			}
 
@@ -1100,36 +1103,48 @@ public unsafe partial class VulkanRenderer
 
 			if (allocation.SchemaFingerprint != schemaFingerprint)
 			{
-				reason = $"active schema fingerprint 0x{allocation.SchemaFingerprint:X16}->0x{schemaFingerprint:X16}";
+				reason = DescriptorResourceFingerprintDiagnosticsEnabled
+					? $"active schema fingerprint 0x{allocation.SchemaFingerprint:X16}->0x{schemaFingerprint:X16}"
+					: "active schema fingerprint changed";
 				return false;
 			}
 
 			if (allocation.LayoutFingerprint != layoutFingerprint)
 			{
-				reason = $"active layout fingerprint 0x{allocation.LayoutFingerprint:X16}->0x{layoutFingerprint:X16}";
+				reason = DescriptorResourceFingerprintDiagnosticsEnabled
+					? $"active layout fingerprint 0x{allocation.LayoutFingerprint:X16}->0x{layoutFingerprint:X16}"
+					: "active layout fingerprint changed";
 				return false;
 			}
 			if (allocation.DrawUniformSlot != drawUniformSlot)
 			{
-				reason = $"active descriptor draw slot {allocation.DrawUniformSlot}->{drawUniformSlot}";
+				reason = DescriptorResourceFingerprintDiagnosticsEnabled
+					? $"active descriptor draw slot {allocation.DrawUniformSlot}->{drawUniformSlot}"
+					: "active descriptor draw slot changed";
 				return false;
 			}
 
 			if (allocation.ViewFamilyIdentity != viewFamilyIdentity)
 			{
-				reason = $"active descriptor view family {allocation.ViewFamilyIdentity}->{viewFamilyIdentity}";
+				reason = DescriptorResourceFingerprintDiagnosticsEnabled
+					? $"active descriptor view family {allocation.ViewFamilyIdentity}->{viewFamilyIdentity}"
+					: "active descriptor view family changed";
 				return false;
 			}
 
 			if (allocation.BindingIdentityFingerprint != bindingIdentityFingerprint)
 			{
-				reason = $"active descriptor binding identity 0x{allocation.BindingIdentityFingerprint:X16}->0x{bindingIdentityFingerprint:X16}";
+				reason = DescriptorResourceFingerprintDiagnosticsEnabled
+					? $"active descriptor binding identity 0x{allocation.BindingIdentityFingerprint:X16}->0x{bindingIdentityFingerprint:X16}"
+					: "active descriptor binding identity changed";
 				return false;
 			}
 
 			if (allocation.ResourceFingerprint != resourceFingerprint)
 			{
-				reason = $"active resource fingerprint 0x{allocation.ResourceFingerprint:X16}->0x{resourceFingerprint:X16}";
+				reason = DescriptorResourceFingerprintDiagnosticsEnabled
+					? $"active resource fingerprint 0x{allocation.ResourceFingerprint:X16}->0x{resourceFingerprint:X16}"
+					: "active resource fingerprint changed";
 				return false;
 			}
 
@@ -1197,8 +1212,9 @@ public unsafe partial class VulkanRenderer
 			VulkanStableHash64 hash = new(schemaVersion: 2);
 			hash.Add(setCount);
 
-			foreach (DescriptorBindingInfo binding in bindings)
+			for (int bindingIndex = 0; bindingIndex < bindings.Count; bindingIndex++)
 			{
+				DescriptorBindingInfo binding = bindings[bindingIndex];
 				hash.Add(binding.Set);
 				hash.Add(binding.Binding);
 				hash.Add((int)binding.DescriptorType);
@@ -1593,8 +1609,8 @@ public unsafe partial class VulkanRenderer
 			if (snapshot is null)
 				return false;
 
-			foreach (string name in snapshot.SamplersByName.Keys)
-				if (IsMutableFrameSourceSamplerName(name, pipeline))
+			foreach (KeyValuePair<string, XRTexture> sampler in snapshot.SamplersByName)
+				if (IsMutableFrameSourceSamplerName(sampler.Key, pipeline))
 					return true;
 
 			return false;
@@ -2155,13 +2171,15 @@ public unsafe partial class VulkanRenderer
 			DescriptorAllocation? allocation,
 			int descriptorSlotIndex)
 		{
-			List<WriteDescriptorSet> writes = [];
-			List<DescriptorBufferInfo> bufferInfos = [];
-			List<DescriptorImageInfo> imageInfos = [];
-			List<BufferView> texelBufferViews = [];
-			List<(int writeIndex, int bufferIndex, DescriptorBindingInfo binding, uint descriptorCount)> bufferMap = [];
-			List<(int writeIndex, int imageIndex, DescriptorBindingInfo binding, uint descriptorCount)> imageMap = [];
-			List<(int writeIndex, int texelIndex, DescriptorBindingInfo binding, uint descriptorCount)> texelMap = [];
+			DescriptorWriteScratch scratch = s_descriptorWriteScratch ??= new DescriptorWriteScratch();
+			scratch.Clear();
+			List<WriteDescriptorSet> writes = scratch.Writes;
+			List<DescriptorBufferInfo> bufferInfos = scratch.BufferInfos;
+			List<DescriptorImageInfo> imageInfos = scratch.ImageInfos;
+			List<BufferView> texelBufferViews = scratch.TexelBufferViews;
+			List<(int writeIndex, int bufferIndex, DescriptorBindingInfo binding, uint descriptorCount)> bufferMap = scratch.BufferMap;
+			List<(int writeIndex, int imageIndex, DescriptorBindingInfo binding, uint descriptorCount)> imageMap = scratch.ImageMap;
+			List<(int writeIndex, int texelIndex, DescriptorBindingInfo binding, uint descriptorCount)> texelMap = scratch.TexelMap;
 
 			foreach (DescriptorBindingInfo binding in bindings)
 			{
@@ -2775,13 +2793,13 @@ public unsafe partial class VulkanRenderer
 		}
 
 		private static string TrimDescriptorBufferSuffix(string bindingName)
-		{
-			if (bindingName.EndsWith("Input", StringComparison.Ordinal))
-				return bindingName[..^5];
-			if (bindingName.EndsWith("Buffer", StringComparison.Ordinal))
-				return bindingName[..^6];
-			return bindingName;
-		}
+			=> DescriptorBufferTrimmedNames.GetOrAdd(
+				bindingName,
+				static name => name.EndsWith("Input", StringComparison.Ordinal)
+					? name[..^5]
+					: name.EndsWith("Buffer", StringComparison.Ordinal)
+						? name[..^6]
+						: name);
 
 		private static bool IsOptionalPipelineStorageBuffer(DescriptorBindingInfo binding)
 			=> binding.DescriptorType is DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic &&
@@ -2904,13 +2922,16 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
-			string descriptorReason = $"mesh material descriptor '{binding.Name}'";
-			if (!source.TryGetDescriptorSnapshot(
+			string descriptorReason = MeshMaterialDescriptorReasons.GetOrAdd(
+				binding.Name,
+				static bindingName => $"mesh material descriptor '{bindingName}'");
+			bool snapshotReady = source.TryGetDescriptorSnapshot(
 				binding.ExpectedImageViewType,
 				requestedAspectMask: null,
 				descriptorReason,
 				allowSynchronousTextureUpload,
-				out VkImageDescriptorSnapshot descriptorSnapshot))
+				out VkImageDescriptorSnapshot descriptorSnapshot);
+			if (!snapshotReady)
 			{
 				if (TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-texture-not-ready", out imageInfo, source))
 					return true;
@@ -2968,7 +2989,9 @@ public unsafe partial class VulkanRenderer
 						ImageView = descriptorSnapshot.View,
 						Sampler = sampler,
 					};
-					string detail = $"{descriptorSnapshot.Format}/{descriptorSnapshot.Aspect}/{aspectLabel}";
+					string detail = ShouldBuildDescriptorDiagnosticDetail(binding)
+						? $"{descriptorSnapshot.Format}/{descriptorSnapshot.Aspect}/{aspectLabel}"
+						: string.Empty;
 					LogPostProcessDescriptor(binding, arrayIndex, texture, imageInfo, detail);
 					LogDeferredLightingDescriptor(binding, arrayIndex, textureBinding, texture, source, imageInfo, detail, descriptorSnapshot);
 					LogMaterialDescriptor(binding, material, arrayIndex, textureBinding, texture, source, imageInfo, detail, descriptorSnapshot);
@@ -3017,7 +3040,9 @@ public unsafe partial class VulkanRenderer
 				ImageView = descriptorSnapshot.View,
 				Sampler = descriptorSampler,
 			};
-			string descriptorDetail = $"{descriptorSnapshot.Format}/{descriptorSnapshot.Aspect}";
+			string descriptorDetail = ShouldBuildDescriptorDiagnosticDetail(binding)
+				? $"{descriptorSnapshot.Format}/{descriptorSnapshot.Aspect}"
+				: string.Empty;
 			LogPostProcessDescriptor(binding, arrayIndex, texture, imageInfo, descriptorDetail);
 			LogDeferredLightingDescriptor(binding, arrayIndex, textureBinding, texture, source, imageInfo, descriptorDetail, descriptorSnapshot);
 			LogMaterialDescriptor(binding, material, arrayIndex, textureBinding, texture, source, imageInfo, descriptorDetail, descriptorSnapshot);
@@ -3129,6 +3154,11 @@ public unsafe partial class VulkanRenderer
 				imageInfo.Sampler.Handle,
 				detail);
 		}
+
+		private bool ShouldBuildDescriptorDiagnosticDetail(DescriptorBindingInfo binding)
+			=> (RenderDiagnosticsFlags.DiagPostProcess && IsPostProcessSampler(binding.Name)) ||
+				(DeferredLightingDiagnostics.Enabled && DeferredLightingDiagnostics.IsDeferredLightCombineSampler(binding.Name)) ||
+				(MaterialBindingDiagnosticsEnabled && IsMaterialSampler(binding.Name));
 
 		private void LogDeferredLightingDescriptor(
 			DescriptorBindingInfo binding,

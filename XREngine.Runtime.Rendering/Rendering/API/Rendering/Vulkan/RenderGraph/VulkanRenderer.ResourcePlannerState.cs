@@ -965,7 +965,7 @@ public unsafe partial class VulkanRenderer
         return false;
     }
 
-    private FrameOpContext PrepareResourcePlannerForFrameOps(FrameOp[] ops)
+    private FrameOpContext PrepareResourcePlannerForFrameOps(FrameOp[] ops, ulong frameOpsSignature = 0)
     {
         if (ops.Length == 0)
         {
@@ -978,7 +978,7 @@ public unsafe partial class VulkanRenderer
         }
 
         FrameOpContext primary = SelectPrimaryPlannerContext(ops);
-        RenderResourceRegistry? mergedRegistry = BuildMergedFrameOpRegistry(ops, primary);
+        RenderResourceRegistry? mergedRegistry = BuildMergedFrameOpRegistry(ops, primary, frameOpsSignature);
         FrameOpContext plannerContext = mergedRegistry is null
             ? primary
             : RefreshFrameOpContextRecordingFingerprint(primary with
@@ -999,7 +999,7 @@ public unsafe partial class VulkanRenderer
         return plannerContext;
     }
 
-    private ulong PrepareFrameOpResourcePlannerStatesForFrameOps(FrameOp[] ops)
+    private ulong PrepareFrameOpResourcePlannerStatesForFrameOps(FrameOp[] ops, ulong frameOpsSignature = 0)
     {
         if (!IsDeviceOperational)
             return ResourcePlannerRevision;
@@ -1072,7 +1072,7 @@ public unsafe partial class VulkanRenderer
 
                 ResetActiveFrameOpResourcePlannerState(switchingState);
                 RestoreResourcePlannerRuntimeState(state);
-                FrameOpContext keyContext = PrepareResourcePlannerForFrameOps(ops, key);
+                FrameOpContext keyContext = PrepareResourcePlannerForFrameOps(ops, key, frameOpsSignature);
                 ResourcePlannerRuntimeState preparedState = CaptureResourcePlannerRuntimeState();
                 preparedState.LastActiveFrameOpContext = keyContext;
                 switchingState.States[key] = preparedState;
@@ -1110,10 +1110,13 @@ public unsafe partial class VulkanRenderer
         return signature;
     }
 
-    private FrameOpContext PrepareResourcePlannerForFrameOps(FrameOp[] ops, in FrameOpPlannerStateKey key)
+    private FrameOpContext PrepareResourcePlannerForFrameOps(
+        FrameOp[] ops,
+        in FrameOpPlannerStateKey key,
+        ulong frameOpsSignature = 0)
     {
         FrameOpContext plannerContext = SelectPrimaryPlannerContext(ops, key);
-        RenderResourceRegistry? mergedRegistry = BuildMergedFrameOpRegistry(ops, plannerContext);
+        RenderResourceRegistry? mergedRegistry = BuildMergedFrameOpRegistry(ops, plannerContext, frameOpsSignature);
         if (mergedRegistry is not null)
         {
             plannerContext = RefreshFrameOpContextRecordingFingerprint(plannerContext with
@@ -1939,18 +1942,7 @@ public unsafe partial class VulkanRenderer
             if (VulkanRenderGraphCompiler.OpTargetsSwapchain(op))
                 score += 16;
 
-            foreach (XRFrameBuffer target in EnumerateFrameOpFrameBuffers(op))
-            {
-                if (!string.IsNullOrWhiteSpace(target.Name) &&
-                    context.ResourceRegistry.FrameBufferRecords.ContainsKey(target.Name))
-                {
-                    score += 256;
-                }
-                else
-                {
-                    score += 32;
-                }
-            }
+            score += ScoreFrameOpFrameBufferTargets(op, context.ResourceRegistry);
 
             if (score > bestScore ||
                 (score == bestScore && ComparePlannerContextTieBreak(context, best) < 0))
@@ -1991,18 +1983,7 @@ public unsafe partial class VulkanRenderer
             if (VulkanRenderGraphCompiler.OpTargetsSwapchain(op))
                 score += 16;
 
-            foreach (XRFrameBuffer target in EnumerateFrameOpFrameBuffers(op))
-            {
-                if (!string.IsNullOrWhiteSpace(target.Name) &&
-                    context.ResourceRegistry.FrameBufferRecords.ContainsKey(target.Name))
-                {
-                    score += 256;
-                }
-                else
-                {
-                    score += 32;
-                }
-            }
+            score += ScoreFrameOpFrameBufferTargets(op, context.ResourceRegistry);
 
             if (score > bestScore ||
                 (score == bestScore && ComparePlannerContextTieBreak(context, best) < 0))
@@ -2015,13 +1996,37 @@ public unsafe partial class VulkanRenderer
         return hasBest ? best : SelectPrimaryPlannerContext(ops);
     }
 
+    private static int ScoreFrameOpFrameBufferTargets(FrameOp op, RenderResourceRegistry registry)
+    {
+        int score = ScoreFrameOpFrameBufferTarget(op.Context.OutputFrameBuffer, registry);
+        score += ScoreFrameOpFrameBufferTarget(op.Target, registry);
+        if (op is BlitOp blit)
+        {
+            score += ScoreFrameOpFrameBufferTarget(blit.InFbo, registry);
+            score += ScoreFrameOpFrameBufferTarget(blit.OutFbo, registry);
+        }
+
+        return score;
+    }
+
+    private static int ScoreFrameOpFrameBufferTarget(XRFrameBuffer? target, RenderResourceRegistry registry)
+    {
+        if (target is null)
+            return 0;
+
+        return !string.IsNullOrWhiteSpace(target.Name) &&
+            registry.FrameBufferRecords.ContainsKey(target.Name)
+                ? 256
+                : 32;
+    }
+
     private static int ComparePlannerContextTieBreak(in FrameOpContext left, in FrameOpContext right)
     {
         int compare = left.PipelineIdentity.CompareTo(right.PipelineIdentity);
         if (compare != 0)
             return compare;
 
-        compare = left.ContextKind.CompareTo(right.ContextKind);
+        compare = ((int)left.ContextKind).CompareTo((int)right.ContextKind);
         if (compare != 0)
             return compare;
 
@@ -2158,10 +2163,24 @@ public unsafe partial class VulkanRenderer
 
     private RenderResourceRegistry? BuildMergedFrameOpRegistry(
         FrameOp[] ops,
-        in FrameOpContext primaryContext)
+        in FrameOpContext primaryContext,
+        ulong frameOpsSignature = 0)
     {
         RenderResourceRegistry? primaryRegistry = primaryContext.ResourceRegistry;
         FrameOpPlannerStateKey ownerKey = BuildFrameOpPlannerStateKey(primaryContext);
+        if (frameOpsSignature != 0)
+        {
+            for (int cacheIndex = 0; cacheIndex < _mergedFrameOpRegistryCache.Count; cacheIndex++)
+            {
+                MergedFrameOpRegistryCacheEntry entry = _mergedFrameOpRegistryCache[cacheIndex];
+                if (entry.FrameOpsSignature != frameOpsSignature || !entry.OwnerKey.Equals(ownerKey))
+                    continue;
+
+                entry.LastUsedFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+                return entry.MergedRegistry;
+            }
+        }
+
         List<RenderResourceRegistry> registries = CollectUniqueFrameOpRegistries(ops);
         int frameBufferDescriptorSignature = ComputeFrameOpFrameBufferDescriptorSignature(ops);
         bool hasFrameBufferDescriptors = frameBufferDescriptorSignature != 0;
@@ -2175,13 +2194,41 @@ public unsafe partial class VulkanRenderer
             return cachedRegistry;
 
         if (registries.Count == 0 && !hasFrameBufferDescriptors)
+        {
+            RememberResolvedFrameOpRegistry(
+                ownerKey,
+                primaryRegistry,
+                cacheSources,
+                frameBufferDescriptorSignature,
+                frameOpsSignature,
+                primaryRegistry);
             return primaryRegistry;
+        }
 
         if (registries.Count == 1 && !hasFrameBufferDescriptors)
-            return registries[0];
+        {
+            RenderResourceRegistry resolvedRegistry = registries[0];
+            RememberResolvedFrameOpRegistry(
+                ownerKey,
+                primaryRegistry,
+                cacheSources,
+                frameBufferDescriptorSignature,
+                frameOpsSignature,
+                resolvedRegistry);
+            return resolvedRegistry;
+        }
 
         if (!hasFrameBufferDescriptors && primaryRegistry is not null && RegistriesCoveredByPrimary(registries, primaryRegistry))
+        {
+            RememberResolvedFrameOpRegistry(
+                ownerKey,
+                primaryRegistry,
+                cacheSources,
+                frameBufferDescriptorSignature,
+                frameOpsSignature,
+                primaryRegistry);
             return primaryRegistry;
+        }
 
         RenderResourceRegistry merged = new();
         if (primaryRegistry is not null)
@@ -2198,8 +2245,34 @@ public unsafe partial class VulkanRenderer
 
         AddFrameOpFrameBufferDescriptors(merged, ops);
 
-        RememberMergedFrameOpRegistry(ownerKey, primaryRegistry, cacheSources, frameBufferDescriptorSignature, merged);
+        RememberMergedFrameOpRegistry(
+            ownerKey,
+            primaryRegistry,
+            cacheSources,
+            frameBufferDescriptorSignature,
+            frameOpsSignature,
+            merged);
         return merged;
+    }
+
+    private void RememberResolvedFrameOpRegistry(
+        in FrameOpPlannerStateKey ownerKey,
+        RenderResourceRegistry? primaryRegistry,
+        List<FrameOpRegistryCacheSource> cacheSources,
+        int frameBufferDescriptorSignature,
+        ulong frameOpsSignature,
+        RenderResourceRegistry? resolvedRegistry)
+    {
+        if (frameOpsSignature == 0 || resolvedRegistry is null)
+            return;
+
+        RememberMergedFrameOpRegistry(
+            ownerKey,
+            primaryRegistry,
+            cacheSources,
+            frameBufferDescriptorSignature,
+            frameOpsSignature,
+            resolvedRegistry);
     }
 
     private List<RenderResourceRegistry> CollectUniqueFrameOpRegistries(FrameOp[] ops)
@@ -2227,8 +2300,23 @@ public unsafe partial class VulkanRenderer
                 registries.Add(registry);
         }
 
-        registries.Sort(static (left, right) =>
-            RuntimeHelpers.GetHashCode(left).CompareTo(RuntimeHelpers.GetHashCode(right)));
+        // List<T>.Sort(Comparison<T>) materializes a comparer wrapper on every call.
+        // Registry lists are normally tiny, so insertion sort is both allocation-free
+        // and cheaper than constructing sorting infrastructure in this per-frame path.
+        for (int i = 1; i < registries.Count; i++)
+        {
+            RenderResourceRegistry value = registries[i];
+            int valueIdentity = RuntimeHelpers.GetHashCode(value);
+            int insertIndex = i;
+            while (insertIndex > 0 &&
+                   RuntimeHelpers.GetHashCode(registries[insertIndex - 1]) > valueIdentity)
+            {
+                registries[insertIndex] = registries[insertIndex - 1];
+                insertIndex--;
+            }
+
+            registries[insertIndex] = value;
+        }
         return registries;
     }
 
@@ -2269,7 +2357,7 @@ public unsafe partial class VulkanRenderer
             for (int sourceIndex = 0; sourceIndex < sources.Count; sourceIndex++)
             {
                 FrameOpRegistryCacheSource current = sources[sourceIndex];
-                int accumulatedIndex = IndexOfFrameOpRegistryCacheSource(accumulatedSources, current.Registry);
+                int accumulatedIndex = IndexOfFrameOpRegistryCacheSource(accumulatedSources, current);
                 if (accumulatedIndex >= 0 &&
                     accumulatedSources[accumulatedIndex].DescriptorSignature == current.DescriptorSignature)
                 {
@@ -2328,22 +2416,47 @@ public unsafe partial class VulkanRenderer
 
     private static int IndexOfFrameOpRegistryCacheSource(
         FrameOpRegistryCacheSource[] sources,
-        RenderResourceRegistry registry)
+        in FrameOpRegistryCacheSource current)
     {
         for (int i = 0; i < sources.Length; i++)
         {
-            if (ReferenceEquals(sources[i].Registry, registry))
+            if (ReferenceEquals(sources[i].Registry, current.Registry))
                 return i;
+        }
+
+        // Frame commands may produce short-lived registry wrappers for the same
+        // immutable descriptor set. Treat those as one structural cache source;
+        // retaining every wrapper would grow the source array and allocate on
+        // every otherwise-stable frame.
+        for (int i = 0; i < sources.Length; i++)
+        {
+            FrameOpRegistryCacheSource existing = sources[i];
+            if (existing.DescriptorSignature == current.DescriptorSignature &&
+                RegistryDescriptorsEquivalent(existing.Registry, current.Registry))
+            {
+                return i;
+            }
         }
 
         return -1;
     }
+
+    private static bool RegistryDescriptorsEquivalent(
+        RenderResourceRegistry left,
+        RenderResourceRegistry right)
+        => left.TextureRecords.Count == right.TextureRecords.Count &&
+            left.FrameBufferRecords.Count == right.FrameBufferRecords.Count &&
+            left.BufferRecords.Count == right.BufferRecords.Count &&
+            TextureDescriptorsCoveredByPrimary(left, right) &&
+            FrameBufferDescriptorsCoveredByPrimary(left, right) &&
+            BufferDescriptorsCoveredByPrimary(left, right);
 
     private void RememberMergedFrameOpRegistry(
         in FrameOpPlannerStateKey ownerKey,
         RenderResourceRegistry? primaryRegistry,
         List<FrameOpRegistryCacheSource> sources,
         int frameBufferDescriptorSignature,
+        ulong frameOpsSignature,
         RenderResourceRegistry mergedRegistry)
     {
         ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
@@ -2352,6 +2465,7 @@ public unsafe partial class VulkanRenderer
             primaryRegistry,
             sources.ToArray(),
             frameBufferDescriptorSignature,
+            frameOpsSignature,
             mergedRegistry,
             frameId));
 
@@ -2469,97 +2583,117 @@ public unsafe partial class VulkanRenderer
                 destination.RegisterBufferDescriptor(pair.Value.Descriptor);
     }
 
-    private static void AddFrameOpFrameBufferDescriptors(
+    private void AddFrameOpFrameBufferDescriptors(
         RenderResourceRegistry destination,
         FrameOp[] ops,
         bool overwrite = false)
     {
-        HashSet<XRFrameBuffer> visited = new(ReferenceEqualityComparer.Instance);
-        foreach (FrameOp op in ops)
+        List<XRFrameBuffer> frameBuffers = CollectUniqueFrameOpFrameBuffers(ops);
+        for (int frameBufferIndex = 0; frameBufferIndex < frameBuffers.Count; frameBufferIndex++)
         {
-            foreach (XRFrameBuffer frameBuffer in EnumerateFrameOpFrameBuffers(op))
+            XRFrameBuffer frameBuffer = frameBuffers[frameBufferIndex];
+            if (string.IsNullOrWhiteSpace(frameBuffer.Name))
+                continue;
+
+            if (frameBuffer.Targets is not null)
             {
-                if (!visited.Add(frameBuffer) || string.IsNullOrWhiteSpace(frameBuffer.Name))
-                    continue;
-
-                if (frameBuffer.Targets is not null)
+                foreach (var (target, attachment, mipLevel, layerIndex) in frameBuffer.Targets)
                 {
-                    foreach (var (target, attachment, mipLevel, layerIndex) in frameBuffer.Targets)
+                    if (target is not XRTexture texture || string.IsNullOrWhiteSpace(texture.Name))
+                        continue;
+
+                    if (overwrite || !destination.TextureRecords.ContainsKey(texture.Name))
                     {
-                        if (target is not XRTexture texture || string.IsNullOrWhiteSpace(texture.Name))
-                            continue;
+                        TextureResourceDescriptor textureDescriptor = RenderResourceDescriptorFactory.FromTexture(texture, RenderResourceLifetime.External);
+                        destination.RegisterTextureDescriptor(EnrichTextureDescriptorForFrameBufferAttachment(textureDescriptor, texture, attachment, mipLevel, layerIndex));
+                    }
 
-                        if (overwrite || !destination.TextureRecords.ContainsKey(texture.Name))
+                    if (texture is XRTextureViewBase view)
+                    {
+                        XRTexture viewedTexture = view.GetViewedTexture();
+                        if (!string.IsNullOrWhiteSpace(viewedTexture.Name) &&
+                            (overwrite || !destination.TextureRecords.ContainsKey(viewedTexture.Name)))
                         {
-                            TextureResourceDescriptor textureDescriptor = RenderResourceDescriptorFactory.FromTexture(texture, RenderResourceLifetime.External);
-                            destination.RegisterTextureDescriptor(EnrichTextureDescriptorForFrameBufferAttachment(textureDescriptor, texture, attachment, mipLevel, layerIndex));
-                        }
-
-                        if (texture is XRTextureViewBase view)
-                        {
-                            XRTexture viewedTexture = view.GetViewedTexture();
-                            if (!string.IsNullOrWhiteSpace(viewedTexture.Name) &&
-                                (overwrite || !destination.TextureRecords.ContainsKey(viewedTexture.Name)))
-                            {
-                                int sourceMipLevel = mipLevel >= 0 ? SaturatingAddToInt32(view.MinLevel, (uint)mipLevel) : mipLevel;
-                                int sourceLayerIndex = layerIndex >= 0 ? SaturatingAddToInt32(view.MinLayer, (uint)layerIndex) : layerIndex;
-                                TextureResourceDescriptor viewedDescriptor = RenderResourceDescriptorFactory.FromTexture(viewedTexture, RenderResourceLifetime.External);
-                                destination.RegisterTextureDescriptor(EnrichTextureDescriptorForFrameBufferAttachment(viewedDescriptor, viewedTexture, attachment, sourceMipLevel, sourceLayerIndex));
-                            }
+                            int sourceMipLevel = mipLevel >= 0 ? SaturatingAddToInt32(view.MinLevel, (uint)mipLevel) : mipLevel;
+                            int sourceLayerIndex = layerIndex >= 0 ? SaturatingAddToInt32(view.MinLayer, (uint)layerIndex) : layerIndex;
+                            TextureResourceDescriptor viewedDescriptor = RenderResourceDescriptorFactory.FromTexture(viewedTexture, RenderResourceLifetime.External);
+                            destination.RegisterTextureDescriptor(EnrichTextureDescriptorForFrameBufferAttachment(viewedDescriptor, viewedTexture, attachment, sourceMipLevel, sourceLayerIndex));
                         }
                     }
                 }
-
-                if (overwrite || !destination.FrameBufferRecords.ContainsKey(frameBuffer.Name))
-                    destination.RegisterFrameBufferDescriptor(RenderResourceDescriptorFactory.FromFrameBuffer(frameBuffer, RenderResourceLifetime.External));
             }
+
+            if (overwrite || !destination.FrameBufferRecords.ContainsKey(frameBuffer.Name))
+                destination.RegisterFrameBufferDescriptor(RenderResourceDescriptorFactory.FromFrameBuffer(frameBuffer, RenderResourceLifetime.External));
         }
     }
 
-    private static int ComputeFrameOpFrameBufferDescriptorSignature(FrameOp[] ops)
+    private int ComputeFrameOpFrameBufferDescriptorSignature(FrameOp[] ops)
     {
         HashCode hash = new();
-        HashSet<XRFrameBuffer> visited = new(ReferenceEqualityComparer.Instance);
-        int count = 0;
-        foreach (FrameOp op in ops)
+        List<XRFrameBuffer> frameBuffers = CollectUniqueFrameOpFrameBuffers(ops);
+        int namedFrameBufferCount = 0;
+        for (int frameBufferIndex = 0; frameBufferIndex < frameBuffers.Count; frameBufferIndex++)
         {
-            foreach (XRFrameBuffer frameBuffer in EnumerateFrameOpFrameBuffers(op))
-            {
-                if (!visited.Add(frameBuffer) || string.IsNullOrWhiteSpace(frameBuffer.Name))
-                    continue;
+            XRFrameBuffer frameBuffer = frameBuffers[frameBufferIndex];
+            if (string.IsNullOrWhiteSpace(frameBuffer.Name))
+                continue;
 
-                FrameBufferResourceDescriptor descriptor = RenderResourceDescriptorFactory.FromFrameBuffer(frameBuffer, RenderResourceLifetime.External);
-                hash.Add(descriptor.Name, StringComparer.OrdinalIgnoreCase);
-                hash.Add(descriptor.SizePolicy);
-                foreach (FrameBufferAttachmentDescriptor attachment in descriptor.Attachments)
+            hash.Add(frameBuffer.Name, StringComparer.OrdinalIgnoreCase);
+            hash.Add(RenderResourceSizePolicy.Absolute(
+                Math.Max(frameBuffer.Width, 1u),
+                Math.Max(frameBuffer.Height, 1u)));
+            if (frameBuffer.Targets is not null)
+            {
+                foreach (var (target, attachment, mipLevel, layerIndex) in frameBuffer.Targets)
                 {
-                    hash.Add(attachment.ResourceName, StringComparer.OrdinalIgnoreCase);
-                    hash.Add(attachment.Attachment);
-                    hash.Add(attachment.MipLevel);
-                    hash.Add(attachment.LayerIndex);
+                    string resourceName = target switch
+                    {
+                        XRTexture texture => texture.Name ?? texture.GetDescribingName(),
+                        _ => target?.GetType().Name ?? string.Empty
+                    };
+                    hash.Add(resourceName, StringComparer.OrdinalIgnoreCase);
+                    hash.Add(attachment);
+                    hash.Add(mipLevel);
+                    hash.Add(layerIndex);
                 }
-                count++;
             }
+            namedFrameBufferCount++;
         }
 
-        return count == 0 ? 0 : hash.ToHashCode();
+        return namedFrameBufferCount == 0 ? 0 : hash.ToHashCode();
     }
 
-    private static IEnumerable<XRFrameBuffer> EnumerateFrameOpFrameBuffers(FrameOp op)
+    private List<XRFrameBuffer> CollectUniqueFrameOpFrameBuffers(FrameOp[] ops)
     {
-        if (op.Context.OutputFrameBuffer is not null)
-            yield return op.Context.OutputFrameBuffer;
-
-        if (op.Target is not null)
-            yield return op.Target;
-
-        if (op is BlitOp blit)
+        List<XRFrameBuffer> frameBuffers = _frameOpFrameBufferScratch;
+        frameBuffers.Clear();
+        frameBuffers.EnsureCapacity(Math.Min(ops.Length * 4, 256));
+        for (int opIndex = 0; opIndex < ops.Length; opIndex++)
         {
-            if (blit.InFbo is not null)
-                yield return blit.InFbo;
-            if (blit.OutFbo is not null)
-                yield return blit.OutFbo;
+            FrameOp op = ops[opIndex];
+            AddUniqueFrameBuffer(frameBuffers, op.Context.OutputFrameBuffer);
+            AddUniqueFrameBuffer(frameBuffers, op.Target);
+            if (op is not BlitOp blit)
+                continue;
+
+            AddUniqueFrameBuffer(frameBuffers, blit.InFbo);
+            AddUniqueFrameBuffer(frameBuffers, blit.OutFbo);
         }
+
+        return frameBuffers;
+    }
+
+    private static void AddUniqueFrameBuffer(List<XRFrameBuffer> frameBuffers, XRFrameBuffer? candidate)
+    {
+        if (candidate is null)
+            return;
+
+        for (int i = 0; i < frameBuffers.Count; i++)
+            if (ReferenceEquals(frameBuffers[i], candidate))
+                return;
+
+        frameBuffers.Add(candidate);
     }
 
     internal static bool RequiresResourcePlannerRebuild(in FrameOpContext previous, in FrameOpContext next)
@@ -3354,6 +3488,31 @@ public unsafe partial class VulkanRenderer
             return _lastActiveFilterResult;
         }
 
+        for (int cacheIndex = 0; cacheIndex < _activePassMetadataFilterCache.Count; cacheIndex++)
+        {
+            ActivePassMetadataFilterCacheEntry entry = _activePassMetadataFilterCache[cacheIndex];
+            if (!entry.Matches(
+                passMetadata,
+                resourceRegistry,
+                resourceRegistryRevision,
+                activePassSetSignature,
+                activeResourceSetSignature,
+                constrainToActivePassSet))
+            {
+                continue;
+            }
+
+            RememberLastActivePassMetadataFilter(
+                passMetadata,
+                resourceRegistry,
+                resourceRegistryRevision,
+                activePassSetSignature,
+                activeResourceSetSignature,
+                constrainToActivePassSet,
+                entry.Result);
+            return entry.Result;
+        }
+
         int filteredCapacity = activePassIndices is null
             ? passMetadata.Count
             : Math.Min(passMetadata.Count, activePassIndices.Count);
@@ -3388,6 +3547,45 @@ public unsafe partial class VulkanRenderer
             result = filtered.ToArray();
         }
 
+        var cacheEntry = new ActivePassMetadataFilterCacheEntry(
+            passMetadata,
+            resourceRegistry,
+            resourceRegistryRevision,
+            activePassSetSignature,
+            activeResourceSetSignature,
+            constrainToActivePassSet,
+            result);
+        if (_activePassMetadataFilterCache.Count < MaxActivePassMetadataFilterCacheEntries)
+        {
+            _activePassMetadataFilterCache.Add(cacheEntry);
+        }
+        else
+        {
+            _activePassMetadataFilterCache[_activePassMetadataFilterCacheReplacementIndex] = cacheEntry;
+            _activePassMetadataFilterCacheReplacementIndex =
+                (_activePassMetadataFilterCacheReplacementIndex + 1) % MaxActivePassMetadataFilterCacheEntries;
+        }
+
+        RememberLastActivePassMetadataFilter(
+            passMetadata,
+            resourceRegistry,
+            resourceRegistryRevision,
+            activePassSetSignature,
+            activeResourceSetSignature,
+            constrainToActivePassSet,
+            result);
+        return result;
+    }
+
+    private void RememberLastActivePassMetadataFilter(
+        IReadOnlyCollection<RenderPassMetadata> passMetadata,
+        RenderResourceRegistry? resourceRegistry,
+        int resourceRegistryRevision,
+        int activePassSetSignature,
+        int activeResourceSetSignature,
+        bool constrainToActivePassSet,
+        IReadOnlyCollection<RenderPassMetadata> result)
+    {
         _lastActiveFilterSourcePassMetadata = passMetadata;
         _lastActiveFilterResourceRegistry = resourceRegistry;
         _lastActiveFilterResourceRegistryRevision = resourceRegistryRevision;
@@ -3395,7 +3593,6 @@ public unsafe partial class VulkanRenderer
         _lastActiveFilterResourceSetSignature = activeResourceSetSignature;
         _lastActiveFilterConstrainToActivePassSet = constrainToActivePassSet;
         _lastActiveFilterResult = result;
-        return result;
     }
 
     private static RenderPassMetadata FilterActivePassResourceUsages(
@@ -3985,32 +4182,44 @@ public unsafe partial class VulkanRenderer
         HashCode hash = new();
         hash.Add(passMetadata.Count);
 
-        foreach (RenderPassMetadata pass in passMetadata)
+        if (passMetadata is IReadOnlyList<RenderPassMetadata> passList)
         {
-            hash.Add(pass.PassIndex);
-            hash.Add(pass.DeclarationOrder);
-            hash.Add((int)pass.Stage);
-            hash.Add(pass.Name, StringComparer.Ordinal);
-            hash.Add(pass.Revision);
-
-            foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
-            {
-                hash.Add(usage.ResourceName, StringComparer.Ordinal);
-                hash.Add((int)usage.ResourceType);
-                hash.Add((int)usage.Access);
-                hash.Add((int)usage.LoadOp);
-                hash.Add((int)usage.StoreOp);
-                AddSubresourceRangeToHash(ref hash, usage.SubresourceRange);
-            }
-
-            foreach (int dependency in pass.ExplicitDependencies)
-                hash.Add(dependency);
-
-            foreach (string schema in pass.DescriptorSchemas)
-                hash.Add(schema, StringComparer.Ordinal);
+            for (int passIndex = 0; passIndex < passList.Count; passIndex++)
+                AddPassMetadataToHash(ref hash, passList[passIndex]);
+        }
+        else
+        {
+            foreach (RenderPassMetadata pass in passMetadata)
+                AddPassMetadataToHash(ref hash, pass);
         }
 
         return hash.ToHashCode();
+    }
+
+    private static void AddPassMetadataToHash(ref HashCode hash, RenderPassMetadata pass)
+    {
+        hash.Add(pass.PassIndex);
+        hash.Add(pass.DeclarationOrder);
+        hash.Add((int)pass.Stage);
+        hash.Add(pass.Name, StringComparer.Ordinal);
+        hash.Add(pass.Revision);
+
+        for (int usageIndex = 0; usageIndex < pass.ResourceUsages.Count; usageIndex++)
+        {
+            RenderPassResourceUsage usage = pass.ResourceUsages[usageIndex];
+            hash.Add(usage.ResourceName, StringComparer.Ordinal);
+            hash.Add((int)usage.ResourceType);
+            hash.Add((int)usage.Access);
+            hash.Add((int)usage.LoadOp);
+            hash.Add((int)usage.StoreOp);
+            AddSubresourceRangeToHash(ref hash, usage.SubresourceRange);
+        }
+
+        for (int dependencyIndex = 0; dependencyIndex < pass.ExplicitDependencies.Count; dependencyIndex++)
+            hash.Add(pass.ExplicitDependencies[dependencyIndex]);
+
+        for (int schemaIndex = 0; schemaIndex < pass.DescriptorSchemas.Count; schemaIndex++)
+            hash.Add(pass.DescriptorSchemas[schemaIndex], StringComparer.Ordinal);
     }
 
     private static int ComputePassMetadataRevisionStamp(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
@@ -4020,11 +4229,24 @@ public unsafe partial class VulkanRenderer
 
         HashCode hash = new();
         hash.Add(passMetadata.Count);
-        foreach (RenderPassMetadata pass in passMetadata)
+        if (passMetadata is IReadOnlyList<RenderPassMetadata> passList)
         {
-            hash.Add(pass.PassIndex);
-            hash.Add(pass.DeclarationOrder);
-            hash.Add(pass.Revision);
+            for (int passIndex = 0; passIndex < passList.Count; passIndex++)
+            {
+                RenderPassMetadata pass = passList[passIndex];
+                hash.Add(pass.PassIndex);
+                hash.Add(pass.DeclarationOrder);
+                hash.Add(pass.Revision);
+            }
+        }
+        else
+        {
+            foreach (RenderPassMetadata pass in passMetadata)
+            {
+                hash.Add(pass.PassIndex);
+                hash.Add(pass.DeclarationOrder);
+                hash.Add(pass.Revision);
+            }
         }
 
         return hash.ToHashCode();

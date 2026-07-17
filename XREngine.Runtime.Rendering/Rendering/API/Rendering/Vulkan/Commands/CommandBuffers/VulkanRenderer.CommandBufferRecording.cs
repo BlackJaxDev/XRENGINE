@@ -107,9 +107,8 @@ namespace XREngine.Rendering.Vulkan
 
             FrameOp[] ops;
             ulong rawFrameOpsSignature;
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.DrainFrameOps"))
+            using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.FrameOpPreparation))
             {
-                using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.FrameOpPreparation);
                 ops = DrainFrameOpsExcludingTextureUploads(
                     out rawFrameOpsSignature,
                     computeSignature: FrameOpSignatureDiffDiagnosticsEnabled);
@@ -123,23 +122,18 @@ namespace XREngine.Rendering.Vulkan
 
             if (hasFrameOps)
             {
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.NormalizeFrameOps"))
+                using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.FrameOpPreparation))
                 {
-                    using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.FrameOpPreparation);
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.NormalizeFrameOps.Sort"))
-                        ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.NormalizeFrameOps.SplitDynamicUiBatchText"))
-                    {
-                        SplitDynamicUiBatchTextFrameOps(ops, out FrameOp[] staticOps, out dynamicUiBatchTextOps);
-                        ops = staticOps;
-                    }
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.NormalizeFrameOps.Signature"))
-                    {
-                        frameOpsSignature = ComputeFrameOpsSignature(ops);
-                        dynamicUiBatchTextSignature = dynamicUiBatchTextOps.Length == 0
-                            ? 0
-                            : ComputeFrameOpsSignature(dynamicUiBatchTextOps);
-                    }
+                    // EVulkanCpuStage.FrameOpPreparation already measures this hot section.
+                    // Interface-returned profiler scopes box their value-type implementation,
+                    // so a second profiler scope here would manufacture managed allocations every frame.
+                    ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+                    SplitDynamicUiBatchTextFrameOps(ops, out FrameOp[] staticOps, out dynamicUiBatchTextOps);
+                    ops = staticOps;
+                    frameOpsSignature = ComputeFrameOpsSignature(ops);
+                    dynamicUiBatchTextSignature = dynamicUiBatchTextOps.Length == 0
+                        ? 0
+                        : ComputeFrameOpsSignature(dynamicUiBatchTextOps);
                 }
 
                 if (FrameOpSignatureDiffDiagnosticsEnabled && rawFrameOpsSignature != frameOpsSignature)
@@ -184,9 +178,8 @@ namespace XREngine.Rendering.Vulkan
                 HasLastWindowPresentSourceForSwapchainRefresh();
 
             ulong plannerRevision;
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.ResourcePlan"))
+            using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.ResourcePlanning))
             {
-                using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.ResourcePlanning);
                 if (hasStaticFrameOps)
                 {
                     if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
@@ -195,7 +188,7 @@ namespace XREngine.Rendering.Vulkan
                         return default;
                     }
 
-                    FrameOpContext plannerContext = PrepareResourcePlannerForFrameOps(ops);
+                    FrameOpContext plannerContext = PrepareResourcePlannerForFrameOps(ops, frameOpsSignature);
                     if (TryDescribeRecentResourceAllocationFailure(out string postPlanFailureReason))
                     {
                         recordingDeferredReason = postPlanFailureReason;
@@ -203,11 +196,11 @@ namespace XREngine.Rendering.Vulkan
                     }
 
                     if (!TryRefreshFrameOpResourceWrappers(
-                        ops,
-                        plannerContext,
-                        "Vulkan command-chain resource planner refresh",
-                        AllowSynchronousResourceUploads,
-                        out string refreshFailureReason))
+                            ops,
+                            plannerContext,
+                            "Vulkan command-chain resource planner refresh",
+                            AllowSynchronousResourceUploads,
+                            out string refreshFailureReason))
                     {
                         recordingDeferredReason = refreshFailureReason;
                         return default;
@@ -221,7 +214,7 @@ namespace XREngine.Rendering.Vulkan
                         return default;
                     }
 
-                    FrameOpContext plannerContext = PrepareResourcePlannerForFrameOps(dynamicUiBatchTextOps);
+                    FrameOpContext plannerContext = PrepareResourcePlannerForFrameOps(dynamicUiBatchTextOps, dynamicUiBatchTextSignature);
                     if (TryDescribeRecentResourceAllocationFailure(out string postDynamicPlanFailureReason))
                     {
                         recordingDeferredReason = postDynamicPlanFailureReason;
@@ -242,9 +235,9 @@ namespace XREngine.Rendering.Vulkan
 
                 frameOpResourcePlannerPreparationScope.PublishCurrentState();
                 plannerRevision = hasStaticFrameOps
-                    ? PrepareFrameOpResourcePlannerStatesForFrameOps(ops)
+                    ? PrepareFrameOpResourcePlannerStatesForFrameOps(ops, frameOpsSignature)
                     : dynamicUiBatchTextOps.Length > 0
-                        ? PrepareFrameOpResourcePlannerStatesForFrameOps(dynamicUiBatchTextOps)
+                        ? PrepareFrameOpResourcePlannerStatesForFrameOps(dynamicUiBatchTextOps, dynamicUiBatchTextSignature)
                         : ResourcePlannerRevision;
                 if (TryDescribeRecentResourceAllocationFailure(out string frameOpPlannerFailureReason))
                 {
@@ -556,9 +549,8 @@ namespace XREngine.Rendering.Vulkan
             {
                 bool refreshedReusableFrameData = true;
                 _lastReusableFrameDataRefreshFailureReason = null;
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RefreshFrameData"))
+                using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.FrameDataRefresh))
                 {
-                    using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.FrameDataRefresh);
                     refreshedReusableFrameData = !hasStaticFrameOps ||
                         TryRefreshReusableCommandBufferFrameData(imageIndex, ops, EVulkanMeshFrameDataStreamKind.Primary);
                     if (refreshedReusableFrameData && dynamicUiBatchTextOps.Length > 0)
@@ -1424,9 +1416,8 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 bool refreshedReusableFrameData;
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.FastReuse.RefreshFrameData"))
+                using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.FrameDataRefresh))
                 {
-                    using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.FrameDataRefresh);
                     refreshedReusableFrameData = ops.Length == 0 ||
                         TryRefreshReusableCommandBufferFrameData(imageIndex, ops, EVulkanMeshFrameDataStreamKind.Primary);
                     if (refreshedReusableFrameData && dynamicUiBatchTextOps.Length > 0)
@@ -1597,12 +1588,13 @@ namespace XREngine.Rendering.Vulkan
                                 streamKind,
                                 indirectDrawOp.Context,
                                 indirectDrawOp.Draw);
-                            if (!indirectDrawOp.MeshRenderer.TryRefreshReusableCommandBufferFrameData(
-                                    imageIndex,
-                                    indirectDrawOp.Draw,
-                                    drawUniformSlot,
-                                    out string reason,
-                                    refreshMaterialUniforms))
+							bool refreshed = indirectDrawOp.MeshRenderer.TryRefreshReusableCommandBufferFrameData(
+									imageIndex,
+									indirectDrawOp.Draw,
+									drawUniformSlot,
+									out string reason,
+									refreshMaterialUniforms);
+                            if (!refreshed)
                             {
                                 _lastReusableFrameDataRefreshFailureReason =
                                     $"indirect op={i}/{ops.Length} mesh='{indirectDrawOp.MeshRenderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' material='{(indirectDrawOp.Draw.MaterialOverride ?? indirectDrawOp.MeshRenderer.MeshRenderer.Material)?.Name ?? "<unnamed material>"}' slot={drawUniformSlot}: {reason}";
@@ -4822,9 +4814,12 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
-                bool useParallelSecondary =
-                    _enableParallelSecondaryCommandBufferRecording &&
-                    runCount >= Math.Max(_parallelSecondaryIndirectRunThreshold, 2);
+                // Command-chain mode already owns a persistent worker domain for
+                // mesh packets. Running the older Task-based secondary recorder in
+                // the same frame races shared program/resource state during startup.
+                // Keep indirect chain secondaries serial until they use that worker
+                // domain too.
+                bool useParallelSecondary = false;
 
                 CommandBuffer[] secondaryBuffers = ArrayPool<CommandBuffer>.Shared.Rent(runCount);
                 CommandChain[] secondaryChains = ArrayPool<CommandChain>.Shared.Rent(runCount);

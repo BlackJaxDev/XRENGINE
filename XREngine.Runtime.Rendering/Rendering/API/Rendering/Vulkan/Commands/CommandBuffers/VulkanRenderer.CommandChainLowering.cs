@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using Silk.NET.Vulkan;
@@ -31,9 +32,13 @@ public unsafe partial class VulkanRenderer
     private CommandChainSchedule?[]? _commandChainScheduleCache;
     private ulong[]? _commandChainScheduleFastSignatures;
     private readonly List<RenderPacket> _commandChainPacketScratch = [];
+    private readonly List<RenderPacket> _commandChainPacketPool = [];
+    private readonly DrawPacket[] _commandChainDrawPacketScratch = new DrawPacket[MaxMeshDrawsPerRenderPacket];
+    private int _commandChainPacketPoolCursor;
     private readonly List<RenderPassChainGroup> _commandChainGroupScratch = [];
     private readonly List<CommandChainKey> _commandChainGroupKeyScratch = [];
     private readonly Dictionary<ulong, int> _commandChainStructuralOccurrenceScratch = [];
+    private readonly HashSet<RenderViewKey> _commandChainViewKeyScratch = [];
     private readonly Dictionary<uint, CommandChainStabilityGuardState> _commandChainStabilityGuardStates = [];
     private int _commandChainTraceDumped;
     private long _commandChainTraceLastDumpTimestamp;
@@ -45,17 +50,19 @@ public unsafe partial class VulkanRenderer
     internal const int MinMeshDrawsPerRenderPacket = 10;
     internal const int MaxMeshDrawsPerRenderPacket = 64;
 
-    private static bool CommandChainsEnabled => IsCommandChainFlagEnabled(CommandChainsEnvVar);
-    private static bool CommandChainsSingleThread => IsCommandChainFlagEnabled(CommandChainsSingleThreadEnvVar);
-    private static bool CommandChainValidationEnabled => IsCommandChainFlagEnabled(CommandChainValidateEnvVar);
-    private static bool CommandChainTraceEnabled => IsCommandChainFlagEnabled(CommandChainTraceEnvVar);
-    private static bool ParallelCommandChainRecordingDisabled => IsCommandChainFlagEnabled(DisableParallelChainRecordingEnvVar);
-    private static bool ParallelPacketBuildEnabled => IsCommandChainFlagEnabled(ParallelPacketBuildEnvVar);
-    private static bool CommandChainMultiQueueEnabled => IsCommandChainFlagEnabled(CommandChainMultiQueueEnvVar);
-    private static bool CommandChainStabilityGuardEnabled =>
+    private static readonly bool CommandChainsEnabled = IsCommandChainFlagEnabled(CommandChainsEnvVar);
+    private static readonly bool CommandChainsSingleThread = IsCommandChainFlagEnabled(CommandChainsSingleThreadEnvVar);
+    private static readonly bool CommandChainValidationEnabled = IsCommandChainFlagEnabled(CommandChainValidateEnvVar);
+    private static readonly bool CommandChainTraceEnabled = IsCommandChainFlagEnabled(CommandChainTraceEnvVar);
+    private static readonly bool ParallelCommandChainRecordingDisabled = IsCommandChainFlagEnabled(DisableParallelChainRecordingEnvVar);
+    private static readonly bool ParallelPacketBuildEnabled = IsCommandChainFlagEnabled(ParallelPacketBuildEnvVar);
+    private static readonly bool CommandChainMultiQueueEnabled = IsCommandChainFlagEnabled(CommandChainMultiQueueEnvVar);
+    private static readonly bool CommandChainStabilityGuardEnabled =
         !CommandChainTraceEnabled &&
         !CommandChainValidationEnabled &&
         !IsCommandChainFlagDisabled(CommandChainStabilityGuardEnvVar);
+    private static readonly bool AllowIndependentDesktopCommandChains =
+        IsCommandChainFlagEnabled("XRE_VULKAN_COMMAND_CHAINS_ALLOW_INDEPENDENT_DESKTOP");
     private bool CommandChainsEnabledForCurrentRecording =>
         !IsRenderingExternalSwapchainTarget &&
         ((CommandChainsEnabled && !ShouldBypassCommandChainsForOpenXrIndependentDesktop) ||
@@ -63,14 +70,14 @@ public unsafe partial class VulkanRenderer
 
     private static bool ShouldBypassCommandChainsForOpenXrIndependentDesktop =>
         ShouldUseOpenXrIndependentDesktopCommandChainPolicy &&
-        !IsCommandChainFlagEnabled("XRE_VULKAN_COMMAND_CHAINS_ALLOW_INDEPENDENT_DESKTOP");
+        !AllowIndependentDesktopCommandChains;
 
     private static bool ShouldUseCommandChainsForOpenXrIndependentDesktop
     {
         get
         {
             return ShouldUseOpenXrIndependentDesktopCommandChainPolicy &&
-                   IsCommandChainFlagEnabled("XRE_VULKAN_COMMAND_CHAINS_ALLOW_INDEPENDENT_DESKTOP");
+                   AllowIndependentDesktopCommandChains;
         }
     }
 
@@ -250,6 +257,7 @@ public unsafe partial class VulkanRenderer
         List<RenderPacket> packets = _commandChainPacketScratch;
         packets.Clear();
         packets.EnsureCapacity(Math.Max(staticOps.Length + volatileOps.Length, 1));
+        _commandChainPacketPoolCursor = 0;
         BuildCommandChainRenderPackets(
             staticOps,
             volatileOps,
@@ -278,13 +286,15 @@ public unsafe partial class VulkanRenderer
                 return null;
 
             stats = new CommandChainLoweringStats(0, 0, 0, 0, 0, 0, 0, 0, Stopwatch.GetElapsedTime(start), TimeSpan.Zero, null, null, null);
-            CommandChainSchedule emptySchedule = new(0, resourcePlanRevision, ReadOnlyMemory<RenderPassChainGroup>.Empty);
+            CommandChainSchedule emptySchedule = RentCommandChainSchedule(imageIndex);
+            emptySchedule.Reset(0, resourcePlanRevision, ReadOnlySpan<RenderPassChainGroup>.Empty);
             CacheCommandChainSchedule(imageIndex, fastScheduleSignature, emptySchedule);
             ObserveCommandChainScheduleForStabilityGuard(imageIndex, resourcePlanRevision, in stats);
             return emptySchedule;
         }
 
         Dictionary<CommandChainKey, CommandChain> cache = GetCommandChainCache(imageIndex);
+        CommandChainSchedule schedule = RentCommandChainSchedule(imageIndex);
         ulong scheduleGeneration = unchecked(++_commandChainScheduleGeneration);
         if (scheduleGeneration == 0)
             scheduleGeneration = unchecked(++_commandChainScheduleGeneration);
@@ -440,9 +450,9 @@ public unsafe partial class VulkanRenderer
         AddCurrentGroup();
         TrimScheduledCommandChainCache(cache);
 
-        RenderPassChainGroup[] groupArray = groups.ToArray();
-        ulong scheduleSignature = ComputeScheduleStructuralSignature(groupArray);
-        CommandChainSchedule schedule = new(scheduleSignature, resourcePlanRevision, groupArray);
+        ReadOnlySpan<RenderPassChainGroup> groupSpan = CollectionsMarshal.AsSpan(groups);
+        ulong scheduleSignature = ComputeScheduleStructuralSignature(groupSpan);
+        schedule.Reset(scheduleSignature, resourcePlanRevision, groupSpan);
         int visibilityPacketCount = CountDistinctViewKeys(packets);
         TimeSpan workerRecordTime = Stopwatch.GetElapsedTime(start);
         RenderPacket lastPacket = packets[^1];
@@ -499,15 +509,32 @@ public unsafe partial class VulkanRenderer
             if (currentGroupKeys.Count == 0)
                 return;
 
-            groups.Add(new RenderPassChainGroup(
+            RenderPassChainGroup group = schedule.RentGroup(groups.Count);
+            group.Reset(
                 currentPass,
                 currentTarget,
                 currentTargetName,
-                currentGroupKeys.ToArray(),
+                CollectionsMarshal.AsSpan(currentGroupKeys),
                 currentGroupSignature,
                 supportsSecondaryCommandBuffers: true,
-                dynamicOverlay: currentDynamicOverlay));
+                dynamicOverlay: currentDynamicOverlay);
+            groups.Add(group);
         }
+    }
+
+    private CommandChainSchedule RentCommandChainSchedule(uint imageIndex)
+    {
+        if (!CommandChainValidationEnabled &&
+            !CommandChainTraceEnabled &&
+            TryGetIndexedCommandChainCacheSlot(imageIndex, out int slot))
+        {
+            EnsureCommandChainScheduleCache();
+            CommandChainSchedule? schedule = _commandChainScheduleCache![slot];
+            if (schedule is not null)
+                return schedule;
+        }
+
+        return new CommandChainSchedule();
     }
 
     private bool ShouldBypassCommandChainScheduleForStabilityGuard(
@@ -818,7 +845,7 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private static int TryLowerCompatibleMeshPacket(
+    private int TryLowerCompatibleMeshPacket(
         FrameOp[] ops,
         int startIndex,
         bool dynamicOverlay,
@@ -851,7 +878,7 @@ public unsafe partial class VulkanRenderer
         if (runCount < MinMeshDrawsPerRenderPacket)
             return 0;
 
-        DrawPacket[] draws = new DrawPacket[runCount];
+        Span<DrawPacket> draws = _commandChainDrawPacketScratch.AsSpan(0, runCount);
         FrameOpSignatureHasher structuralHash = new();
         FrameOpSignatureHasher frameDataHash = new();
         for (int i = 0; i < runCount; i++)
@@ -869,21 +896,23 @@ public unsafe partial class VulkanRenderer
             unchecked((ulong)targetIdentity),
             unchecked((ulong)targetName.GetHashCode(StringComparison.Ordinal)),
             ResolvePipelineGeneration(first));
-        packets.Add(new RenderPacket(
+        RenderPacket packet = RentRenderPacket();
+        packet.Reset(
             viewKey,
             first.PassIndex,
             targetIdentity,
             targetName,
             RenderPacketVolatility.FrameDataOnly,
             draws,
-            ReadOnlyMemory<DispatchPacket>.Empty,
+            ReadOnlySpan<DispatchPacket>.Empty,
             descriptorSnapshot,
             resourceSnapshot,
             structuralHash.ToHash(),
             frameDataHash.ToHash(),
             startIndex,
             runCount,
-            dynamicOverlay: false));
+            dynamicOverlay: false);
+        packets.Add(packet);
         return runCount;
     }
 
@@ -916,7 +945,7 @@ public unsafe partial class VulkanRenderer
                BuildFrameOpPlannerStateKey(candidate.Context) == BuildFrameOpPlannerStateKey(first.Context);
     }
 
-    private static RenderPacket CreateRenderPacket(FrameOp op, int opIndex, bool dynamicOverlay, ulong resourcePlanRevision)
+    private RenderPacket CreateRenderPacket(FrameOp op, int opIndex, bool dynamicOverlay, ulong resourcePlanRevision)
     {
         RenderViewKey viewKey = BuildRenderViewKey(op, dynamicOverlay);
         RenderPacketVolatility volatility = ClassifyRenderPacketVolatility(op, dynamicOverlay);
@@ -944,7 +973,8 @@ public unsafe partial class VulkanRenderer
             unchecked((ulong)targetName.GetHashCode(StringComparison.Ordinal)),
             ResolvePipelineGeneration(op));
 
-        return new RenderPacket(
+        RenderPacket packet = RentRenderPacket();
+        packet.Reset(
             viewKey,
             op.PassIndex,
             targetIdentity,
@@ -961,6 +991,18 @@ public unsafe partial class VulkanRenderer
             opIndex,
             1,
             dynamicOverlay);
+        return packet;
+    }
+
+    private RenderPacket RentRenderPacket()
+    {
+        int index = _commandChainPacketPoolCursor++;
+        if ((uint)index < (uint)_commandChainPacketPool.Count)
+            return _commandChainPacketPool[index];
+
+        RenderPacket packet = new();
+        _commandChainPacketPool.Add(packet);
+        return packet;
     }
 
     private static int BuildCommandChainOrdinal(
@@ -2060,14 +2102,25 @@ public unsafe partial class VulkanRenderer
 
     private static string? TryGetPassName(FrameOp op)
     {
-        if (op.Context.PassMetadata is null)
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata = op.Context.PassMetadata;
+        if (passMetadata is null)
             return null;
 
-        foreach (RenderPassMetadata pass in op.Context.PassMetadata)
+        if (passMetadata is IReadOnlyList<RenderPassMetadata> passList)
         {
+            for (int i = 0; i < passList.Count; i++)
+            {
+                RenderPassMetadata pass = passList[i];
+                if (pass.PassIndex == op.PassIndex)
+                    return pass.Name;
+            }
+
+            return null;
+        }
+
+        foreach (RenderPassMetadata pass in passMetadata)
             if (pass.PassIndex == op.PassIndex)
                 return pass.Name;
-        }
 
         return null;
     }
@@ -2077,11 +2130,21 @@ public unsafe partial class VulkanRenderer
         if (passMetadata is null)
             return "<unknown>";
 
-        foreach (RenderPassMetadata pass in passMetadata)
+        if (passMetadata is IReadOnlyList<RenderPassMetadata> passList)
         {
+            for (int i = 0; i < passList.Count; i++)
+            {
+                RenderPassMetadata pass = passList[i];
+                if (pass.PassIndex == passIndex)
+                    return pass.Name;
+            }
+
+            return "<unknown>";
+        }
+
+        foreach (RenderPassMetadata pass in passMetadata)
             if (pass.PassIndex == passIndex)
                 return pass.Name;
-        }
 
         return "<unknown>";
     }
@@ -2570,9 +2633,10 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private static int CountDistinctViewKeys(List<RenderPacket> packets)
+    private int CountDistinctViewKeys(List<RenderPacket> packets)
     {
-        HashSet<RenderViewKey> keys = new();
+        HashSet<RenderViewKey> keys = _commandChainViewKeyScratch;
+        keys.Clear();
         for (int i = 0; i < packets.Count; i++)
             keys.Add(packets[i].ViewKey);
         return keys.Count;

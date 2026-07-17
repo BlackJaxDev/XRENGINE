@@ -50,7 +50,6 @@ namespace XREngine.Rendering.Commands
 
             using (_lock.EnterScope())
             {
-                SyncLodTransitionBufferFromGpu();
                 uint startCommandCount = UpdatingCommandCount;
                 bool anyAdded = false;
                 SceneLog($"Adding commands for {renderInfo.Owner?.GetType().Name ?? "<null>"}");
@@ -997,7 +996,6 @@ namespace XREngine.Rendering.Commands
 
             using (_lock.EnterScope())
             {
-                SyncLodTransitionBufferFromGpu();
                 bool anyRemoved = false;
                 foreach (RenderCommand command in info.RenderCommands)
                 {
@@ -1023,7 +1021,7 @@ namespace XREngine.Rendering.Commands
                 if (anyRemoved)
                 {
                     UpdatingCommandsBuffer.PushSubData();
-                    LodTransitionBuffer.PushSubData();
+                    FlushCpuLodTransitionWrites();
                     MarkUpdatingCommandsDirty();
 
                     FlushMeshDataDirtyRange();
@@ -1062,7 +1060,6 @@ namespace XREngine.Rendering.Commands
             {
                 GPUIndirectRenderCommand lastCommand = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(lastIndex);
                 GPUTransparencyMetadata lastMetadata = UpdatingTransparencyMetadataBuffer.GetDataRawAtIndex<GPUTransparencyMetadata>(lastIndex);
-                GPULodTransitionState lastTransition = LodTransitionBuffer.GetDataRawAtIndex<GPULodTransitionState>(lastIndex);
                 lastCommand.Reserved1 = targetIndex;
                 lastCommand.BoundsID = targetIndex;
                 UpdatingCommandsBuffer.SetDataRawAtIndex(targetIndex, lastCommand);
@@ -1071,7 +1068,8 @@ namespace XREngine.Rendering.Commands
                 BoundsGpu lastBounds = UpdatingBoundsBuffer.GetDataRawAtIndex<BoundsGpu>(lastIndex);
                 WriteBounds(targetIndex, lastBounds);
                 UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(targetIndex, lastMetadata);
-                LodTransitionBuffer.SetDataRawAtIndex(targetIndex, lastTransition);
+                LodTransitionBuffer.SetDataRawAtIndex(targetIndex, default(GPULodTransitionState));
+                QueueCpuLodTransitionWrite(targetIndex);
 
                 if (_commandIndexLookup.TryGetValue(lastIndex, out var movedCommand))
                 {
@@ -1100,6 +1098,7 @@ namespace XREngine.Rendering.Commands
             }
 
             LodTransitionBuffer.SetDataRawAtIndex(lastIndex, default(GPULodTransitionState));
+            QueueCpuLodTransitionWrite(lastIndex);
             ClearDrawIndexedSoA(lastIndex);
             ReleaseTransformId(removedTransformId);
             ReleaseSkinId(removedSkinId);

@@ -48,6 +48,9 @@ internal static class VPRC_RenderMeshesPassTraditional
 
         if (commands.TryGetGpuPass(command.RenderPass, out var gpuPass))
         {
+            if (gpuPass.GpuProgramsPendingThisFrame)
+                return;
+
             if (ShouldUseOpenGLZeroReadbackProgramWarmupFallback(meshSubmissionStrategy, gpuPass))
             {
                 RuntimeEngine.Rendering.Stats.GpuFallback.RecordGpuCpuFallback(1, 0);
@@ -57,6 +60,20 @@ internal static class VPRC_RenderMeshesPassTraditional
             }
 
             if (gpuPass.VisibleCommandCount != 0)
+                return;
+
+            // The production zero-readback lane intentionally does not mirror the GPU-written
+            // count back to the CPU. A zero CPU shadow can therefore mean either a legitimately
+            // empty result or that the upper-bound publication is still crossing a frame boundary;
+            // neither is evidence of a fallback attempt. Explicit scatter/program/submission
+            // failures report their own forbidden-fallback event at the point of failure.
+            if (meshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+                return;
+
+            // An empty render pass is not a fallback event. Only apply the
+            // safety-net policy when this pass actually contains meshes the
+            // GPU submission path was expected to consume.
+            if (!commands.HasGpuEligibleMeshCommands(command.RenderPass))
                 return;
 
             bool shaderWarmupFallback = ShouldUseOpenGLShaderWarmupFallback(meshSubmissionStrategy);

@@ -440,7 +440,10 @@ namespace XREngine.Rendering.Vulkan
             return filtered;
         }
 
-        private static void SplitDynamicUiBatchTextFrameOps(
+        private FrameOp[] _staticFrameOpsSplitBuffer = Array.Empty<FrameOp>();
+        private FrameOp[] _dynamicUiBatchTextFrameOpsSplitBuffer = Array.Empty<FrameOp>();
+
+        private void SplitDynamicUiBatchTextFrameOps(
             FrameOp[] ops,
             out FrameOp[] staticOps,
             out FrameOp[] dynamicUiBatchTextOps)
@@ -466,8 +469,14 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            staticOps = new FrameOp[ops.Length - dynamicCount];
-            dynamicUiBatchTextOps = new FrameOp[dynamicCount];
+            int staticCount = ops.Length - dynamicCount;
+            if (_staticFrameOpsSplitBuffer.Length != staticCount)
+                _staticFrameOpsSplitBuffer = new FrameOp[staticCount];
+            if (_dynamicUiBatchTextFrameOpsSplitBuffer.Length != dynamicCount)
+                _dynamicUiBatchTextFrameOpsSplitBuffer = new FrameOp[dynamicCount];
+
+            staticOps = _staticFrameOpsSplitBuffer;
+            dynamicUiBatchTextOps = _dynamicUiBatchTextFrameOpsSplitBuffer;
             int staticIndex = 0;
             int dynamicIndex = 0;
             for (int i = 0; i < ops.Length; i++)

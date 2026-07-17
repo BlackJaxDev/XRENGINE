@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Threading;
 
 namespace XREngine
@@ -289,6 +290,7 @@ namespace XREngine
                     private static int _vulkanDescriptorSkippedDispatches;
                     private static string _vulkanDescriptorFallbackSummary = string.Empty;
                     private static string _vulkanDescriptorFailureSummary = string.Empty;
+                    private static readonly Dictionary<DescriptorFallbackSummaryKey, string> VulkanDescriptorFallbackSummaryCache = new();
                     private static int _lastFrameVulkanDescriptorFallbackSampledImages;
                     private static int _lastFrameVulkanDescriptorFallbackStorageImages;
                     private static int _lastFrameVulkanDescriptorFallbackUniformBuffers;
@@ -305,6 +307,14 @@ namespace XREngine
                     private static int _lastFrameVulkanDynamicUniformAllocations;
                     private static long _lastFrameVulkanDynamicUniformAllocatedBytes;
                     private static int _lastFrameVulkanDynamicUniformExhaustions;
+
+                    private readonly record struct DescriptorFallbackSummaryKey(
+                        string? ProgramName,
+                        string? BindingClass,
+                        string? BindingName,
+                        uint Set,
+                        uint Binding,
+                        int Count);
                     private static int _vulkanRetiredResourcePlanReplacements;
                     private static int _vulkanRetiredResourcePlanImages;
                     private static int _vulkanRetiredResourcePlanBuffers;
@@ -992,9 +1002,31 @@ namespace XREngine
                                 break;
                         }
 
-                        string summary = $"{programName ?? "<program>"}:{bindingClass ?? "descriptor"}:{bindingName ?? "<unnamed>"}@set{set}/binding{binding} x{count}";
                         lock (_vulkanDiagnosticLock)
-                            _vulkanDescriptorFallbackSummary = AppendDiagnosticToken(_vulkanDescriptorFallbackSummary, summary);
+                        {
+                            // The same unresolved optional bindings can be observed on every draw.
+                            // Cache their formatted token and publish only the first token per frame;
+                            // counters retain the complete frequency without allocating diagnostic
+                            // strings in descriptor/frame-data refresh hot paths.
+                            if (!string.IsNullOrEmpty(_vulkanDescriptorFallbackSummary))
+                                return;
+
+                            var key = new DescriptorFallbackSummaryKey(
+                                programName,
+                                bindingClass,
+                                bindingName,
+                                set,
+                                binding,
+                                count);
+                            if (!VulkanDescriptorFallbackSummaryCache.TryGetValue(key, out string? summary))
+                            {
+                                summary = $"{programName ?? "<program>"}:{bindingClass ?? "descriptor"}:{bindingName ?? "<unnamed>"}@set{set}/binding{binding} x{count}";
+                                if (VulkanDescriptorFallbackSummaryCache.Count < 1024)
+                                    VulkanDescriptorFallbackSummaryCache.Add(key, summary);
+                            }
+
+                            _vulkanDescriptorFallbackSummary = summary;
+                        }
                     }
 
                     public static void RecordVulkanDescriptorBindingFailure(

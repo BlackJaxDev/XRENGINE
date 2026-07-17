@@ -1,8 +1,8 @@
 # Vulkan Core Hardening And Device-Loss Completed Work
 
-Last Updated: 2026-07-16
+Last Updated: 2026-07-17
 Owner: Rendering
-Status: Historical completion and evidence record through the Phase 5.2.4b/5.2.4c closeout
+Status: Historical completion and evidence record through the completed portions of P0.1-P0.5 immediate-gate work
 Open Work: [Vulkan core hardening and device-loss TODO](vulkan-core-hardening-and-device-loss-todo.md)
 Execution: Current worktree only; do not create or switch branches for this effort.
 
@@ -960,6 +960,336 @@ Durable evidence:
 - `Build/_AgentValidation/20260710-openxr-strict-stereo/20260715-remaining-closeout/final-shadow-fix-strict-sps/reports/openxr-strict-sps-failure-matrix.json`
 
 With every 5.2.4b and 5.2.4c live criterion complete, Phase 5.2.5 is unblocked.
+
+## Immediate Priority Gate Completed Work - 2026-07-17
+
+This section preserves the completed implementation and acceptance criteria
+moved from the active tracker. P0.2 and P0.3 still have open criteria in the
+[current TODO](vulkan-core-hardening-and-device-loss-todo.md); the completed
+items below do not imply that the aggregate immediate gate has closed.
+
+Historical before-baseline evidence:
+
+- The desktop visibility late policy defaulted to `ReusePreviousVisibility`,
+  despite the documented `BlockUntilFresh` contract. A late collect could
+  therefore render an old visible set with the new camera.
+- The profiled Debug run reported render-dispatch p50 near 33 ms,
+  `CollectVisible` p50 near 2-3 ms, and GPU command-buffer p50 near 9 ms. Full
+  primary recording reached hundreds of milliseconds, so collection and
+  occlusion queries were not the primary steady-state bottleneck.
+- The scene command-recording timer omitted the actual scene-record call and
+  reported overlay time instead. The old
+  `vulkan_frame_record_command_buffer_ms` value was not used for before/after
+  decisions.
+- The startup fingerprint selected `CpuQueryAsync`, so it was not a valid
+  occlusion-disabled comparison. The work captured a controlled
+  disabled/enabled pair.
+- The desktop run logged 223 application-level pipeline cache misses, pending
+  programs/buffers, skipped draws, and texture-publication descriptor changes
+  that dirtied command buffers for every swapchain image.
+
+### P0.1 - Restore Generation-Correct Visibility Handoff
+
+- [x] Make `BlockUntilFresh` the default and invalid-value fallback for the
+  collect-visible late policy. Keep stale visibility reuse opt-in and diagnostic
+  only.
+- [x] Give every collect request, published command buffer, and render
+  consumption a monotonically increasing frame/generation ID. Render frame
+  `N+1` must wait for and consume the publication requested for `N+1`; a signal
+  from an older generation must not satisfy the gate.
+- [x] Preserve the existing overlap boundary: after frame `N` has consumed and
+  submitted its rendering buffer, release collection for `N+1` before a
+  potentially blocking present. Do not serialize collection behind present or
+  begin collection early enough to mutate data still consumed by frame `N`.
+- [x] Make buffer publication atomic: build the next visible-command buffer in
+  isolation, publish/swap it once, and never append to or clear the rendering
+  buffer while it is being consumed.
+- [x] If `ReusePreviousVisibility` remains available, require an explicit
+  setting, report requested/published/consumed generations and content age, and
+  bound reuse to one policy-authorized frame. It must never silently become the
+  normal desktop path.
+- [x] Audit cancellation, shutdown, exception, and device-loss paths so every
+  waiter is released with a terminal result. No render or collect thread may
+  remain indefinitely blocked after an exception.
+- [x] Add deterministic timing tests that delay collection across the render
+  boundary and prove `BlockUntilFresh` consumes the matching generation without
+  deadlock, while the explicit stale-reuse mode reports exactly one stale frame.
+- [x] Add a moving-camera regression that crosses frustum boundaries with all
+  occlusion culling disabled and proves newly visible meshes appear in the first
+  frame whose matching visibility collection contains them.
+
+Completed acceptance criteria:
+
+- [x] Desktop rendering uses generation-matched visibility by default and shows
+  no one-frame frustum pop when the camera moves.
+- [x] Collection for frame `N+1` overlaps frame `N` presentation/remaining work,
+  but render `N+1` cannot consume frame `N` visibility accidentally.
+- [x] Forced collect delays, collection exceptions, render exceptions, shutdown,
+  and device loss complete without a frozen render/collect wait.
+
+### P0.2 - Repair Timing And Establish A Controlled Baseline
+
+- [x] Fix the scene command-recording timer so it surrounds the actual primary
+  or secondary record call and is accumulated before the timestamp is reused
+  for ImGui/overlay work.
+- [x] Split CPU telemetry into frame-op drain/sort/signature, resource planning,
+  frame-data refresh, packet construction, primary recording, secondary
+  recording by worker, render-thread worker wait, submit, present, and visibility
+  wait. Keep GPU execution timestamps separate from CPU recording time.
+- [x] Report why each primary/secondary range was recorded, reused, invalidated,
+  or evicted. Include visibility generation, structural signature, descriptor
+  generation, pipeline readiness, swapchain slot, and explicit forced-record
+  reasons without allocating strings in the normal hot path.
+- [x] Record per-scope managed allocation and high-water capacity for
+  collection, collect swap/publication, frame-op construction, planning,
+  recording, descriptor publication, and submission.
+- [x] Capture matching Release desktop runs with validation and detailed
+  profiling disabled for performance, then separate validation-enabled runs for
+  correctness. Preserve the exact settings, camera path, scene hash, startup
+  strategy fingerprint, resolution, and warmup interval.
+- [x] Capture an explicit `Disabled` versus `CpuQueryAsync` occlusion pair using
+  the same camera path and workload. Compare collection, visible draws,
+  recording, CPU frame, and GPU frame rather than FPS alone.
+- [x] Capture an Nsight Systems Vulkan API trace with CPU sampling. Use
+  RenderDoc only for pass/resource correctness, not as the authoritative CPU
+  recording measurement.
+
+Completed acceptance criteria:
+
+- [x] Internal CPU scopes reconcile with the Nsight API timeline within an
+  explained tolerance, and no scope labels overlay time as scene recording.
+- [x] The baseline identifies CPU p50/p95/p99/worst, GPU p50/p95/p99, full and
+  partial record counts, allocation, pipeline readiness, descriptor
+  invalidations, and exact occlusion mode.
+
+### P0.3 - Replace Monolithic Primary Recording With Stable Packets
+
+- [x] Make the per-frame primary command buffer intentionally thin: record only
+  required transitions/barriers, dynamic-rendering begin/end, ordered secondary
+  execution, timestamps, and other truly frame-variant top-level work.
+- [x] Stop keying a large reusable primary variant on the complete visible draw
+  set. Camera-dependent membership changes must not create an unbounded stream
+  of primary variants or churn the current per-swapchain LRU cache.
+- [x] Lower visible work into coarse, deterministic packets grouped by render
+  pass, pipeline/material state, resource contract, and ordering constraints.
+  Separate structural packet identity from frame-varying transforms, constants,
+  and draw counts.
+- [x] Record independent dirty packets as secondary command buffers on workers.
+  Give each worker one persistent command pool and bounded scratch arena per
+  frame-in-flight slot; reset the whole pool only after that slot's fence or
+  timeline completion.
+- [x] Use `VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT` for freshly recorded
+  per-frame buffers. Use simultaneous-use or reusable command buffers only when
+  their measured lifetime and submission contract actually require it.
+- [x] Benchmark packet granularity instead of creating one secondary per draw.
+  Record draw count and CPU/GPU cost per secondary, start with a minimum near ten
+  compatible draws, and tune from measured p95 and GPU execution behavior.
+- [x] Cache only genuinely stable secondary ranges such as unchanged static
+  geometry or non-variable post-process work. Re-record cheap thin primaries
+  instead of maintaining a combinatorial cache of whole frames.
+- [x] Remove serial per-op resource/context switching from the render-thread
+  main loop. Pre-resolve packet state and dependencies so the render thread only
+  validates ordered packet readiness and emits/executes the final list.
+- [x] Preserve explicit dynamic-rendering and legacy render-target parity,
+  deterministic transparent ordering, query boundaries, debug labels, device-
+  loss containment, and resource lifetime publication.
+
+Completed acceptance criteria:
+
+- [x] A warmed static desktop scene records only a thin primary and reuses
+  stable packets; camera motion rebuilds visibility/packet membership without
+  rerecording unrelated static ranges.
+- [x] No primary/secondary cache grows with camera positions or swapchain image
+  rotations; all cache capacities and evictions are reported and bounded.
+
+### P0.4 - Decouple Descriptors And Streaming From Command Structure
+
+- [x] Classify descriptor changes as frame-data updates, compatible content
+  publication, binding-identity changes, or structural layout changes. Only the
+  last two may invalidate a command range, and each invalidation must name the
+  affected packet rather than dirty every swapchain primary.
+- [x] Move transforms, material parameters, and other frame-varying values into
+  bounded per-frame ring/storage buffers addressed by stable offsets or indices.
+- [x] Select and document the material-texture binding contract: per-frame
+  descriptor sets updated only after their frame slot completes, or descriptor
+  indexing/update-after-bind with explicit feature checks and safe resource
+  lifetime rules. Never update a descriptor while an incompatible in-flight use
+  can observe it.
+- [x] Keep descriptor set/layout identities stable across ordinary imported-
+  texture content publication. Publish the new resource generation at a safe
+  point without structurally invalidating unrelated scene packets.
+- [x] Add tests for texture streaming, material edits, resize, hot reload, and
+  swapchain rotation that verify exact packet invalidation, descriptor contents,
+  and deferred destruction behind completion.
+
+Completed acceptance criteria:
+
+- [x] Streaming a compatible texture no longer dirties all desktop command
+  buffers or causes unrelated draws to disappear while descriptors catch up.
+- [x] Descriptor updates and resource retirement remain validation-clean with
+  all frames-in-flight occupied and with forced publication delays.
+
+Implementation checkpoint (2026-07-16): coarse packet execution, bounded
+command-chain primary/secondary caches, persistent per-frame-slot recording
+workers, packet-scoped planner state, descriptor copy-on-write publication, and
+dynamic/legacy render-target parity are implemented. Dynamic and legacy live
+runs are validation-clean, and texture streaming, material editing, resize, hot
+reload, swapchain rotation, and delayed publication have focused regression
+coverage. The remaining P0.3 work is the explicit zero-managed-allocation and
+warmed Release p95/worst-frame measurement gate; it is not required to reopen
+the completed packet or descriptor correctness work. See
+[the implementation investigation](../../investigations/rendering/vulkan-stable-packets-and-descriptor-publication-2026-07-16.md).
+
+#### 2026-07-17 steady-state allocation cleanup
+
+- [x] Remove per-draw `RenderPacket` creation, exact-length packet/group arrays,
+  group-key `ToArray()` calls, replacement distinct-view sets, and per-bucket
+  indirect state reference scopes from the steady command-chain path. Packet,
+  group, and schedule storage now grows geometrically and is reused; lowering
+  retains its packet pool, draw scratch, structural-occurrence map, and
+  distinct-view set.
+- [x] Add a focused warmed regression that resets a maximum-sized packet, group,
+  and schedule 1,000 times and verifies zero managed bytes. The focused Vulkan
+  stable-packet suite passes 12/12.
+
+End-to-end Release allocation and p95/worst-frame acceptance remains open in
+the current TODO because it requires an uncontended live measurement cohort.
+
+#### 2026-07-17 live allocation and indirect-counter checkpoint
+
+- [x] Remove steady descriptor-name substring allocation by caching normalized
+  `Buffer`/`Input` binding aliases, and avoid per-call captured-program hash
+  string identities when program reference identity is sufficient.
+- [x] Retain compute descriptor refresh state for every `(image, binding)` pair
+  instead of rebuilding compute descriptor collections when snapshots alternate.
+- [x] Remove zero-readback LOD-transition synchronization from ordinary CPU
+  scene mutations; upload only reset indices and synchronize the full mapped
+  buffer only before a real resize. Stable zero-readback runs now report zero
+  GPU readback bytes and zero mapped buffers across startup, warmup, capture,
+  and shutdown sampling.
+- [x] Add machine-readable requested/consumed draw totals, indirect API-call
+  totals, and submitted-indirect-draw totals to the performance manifest.
+
+Evidence:
+
+- `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_06-47-55/summary.json`:
+  75 stable zero-readback samples, exact full-run requested/consumed parity,
+  2,250 indirect API calls, 144,000 submitted indirect draws, zero readback,
+  zero mapped buffers, and zero allocation in every measured stage except
+  frame-data refresh.
+- `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_06-56-41/summary.json`:
+  directly comparable warmed smoke for `CpuDirect`,
+  `GpuIndirectInstrumented`, and `GpuIndirectZeroReadback`; all three recorded
+  zero VUIDs. The zero-readback lane recorded 15.817 ms render p50 and
+  17.065 ms p95 with exact capture requested/consumed parity. This is a smoke
+  cohort, not the required three-by-60-second acceptance matrix.
+- Focused contracts: 80/80 passing across
+  `VulkanStablePacketAndDescriptorTests`, `VulkanCoreHardeningPhase4Tests`, and
+  `OpenXrTimingPipelineContractTests`.
+
+#### 2026-07-17 end-to-end zero-allocation closeout
+
+- [x] Replace compute engine-uniform `Enum.TryParse` with an allocation-free
+  span switch that preserves vertex-stage aliases without allocating a suffix
+  substring.
+- [x] Replace compute auto-uniform `Array.GetValue` with typed scalar, vector,
+  matrix, and boolean-vector array writers, retaining a direct reference-array
+  fallback without boxing value arrays.
+- [x] Remove pipeline-fingerprint iterator/LINQ allocation, use the already
+  sorted descriptor layout publication, index the common pass-metadata list,
+  and provide explicit allocation-free equality/hashing for pipeline stencil
+  state.
+- [x] Verify `GpuIndirectZeroReadback` and `CpuDirect` live Release captures
+  with zero managed bytes in frame-op preparation, resource planning,
+  frame-data refresh, packet construction, primary/secondary recording,
+  descriptor publication, submission, and the aggregate command-record path.
+
+Evidence:
+
+- `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_07-10-18/summary.json`:
+  76 stable zero-readback samples; every measured Vulkan allocation field is
+  zero, requested/consumed draw totals match exactly, 2,250 indirect API calls
+  submit 144,000 draws, and full-run readback/mapped bytes remain zero.
+- `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_07-16-03/summary.json`:
+  198 stable CPU-direct samples; every measured Vulkan allocation field is
+  zero, capture command-buffer records are zero, and render p50/p95/worst are
+  9.940/11.181/15.014 ms.
+- EventPipe traces under
+  `Build/_AgentValidation/20260717-vulkan-p0-allocation-trace/` identify the
+  repaired enum, array-boxing, fingerprint, metadata-enumerator, and pipeline-
+  key call stacks. These traces are disposable supporting evidence; the
+  machine-readable performance summaries above are the durable paths.
+- Focused contracts remain 80/80 passing after the closeout changes.
+
+### P0.5 - Make Pipeline Compilation Cache-Aware And Ready Before First Draw
+
+- [x] Route background graphics-pipeline compilation through a valid Vulkan
+  pipeline cache. Either use a measured internally synchronized shared cache or
+  seed one cache per worker from persisted data and merge worker caches at safe
+  points; do not pass a null cache on the normal worker path.
+- [x] Distinguish application pipeline-object lookup misses, persisted Vulkan
+  cache hits/misses, compile-required results, and actual compile duration in
+  telemetry.
+- [x] Capture stable pipeline descriptions for required render-pass/material/
+  vertex-layout/specialization variants and prewarm them before those variants
+  first become visible. Version the database against device, driver, shader,
+  layout, and relevant renderer identity.
+- [x] Bound asynchronous compilation queues and explicitly report policy when a
+  requested draw is not ready. Normal warmed desktop navigation must not skip a
+  mesh silently because a known pipeline or buffer is still pending.
+- [x] Add cold-cache and warm-cache tests covering startup, imported-scene
+  streaming, motion-vector variants, material edits, and cache save/reload.
+
+Completed acceptance criteria:
+
+- [x] A second identical warm run creates no known pipeline at first draw,
+  records no unexplained skipped draw, and demonstrates persisted-cache use by
+  background workers.
+- [x] Cold compilation stays off the render thread and has bounded queue,
+  memory, and frame-impact telemetry.
+
+Implementation checkpoint (2026-07-16): graphics pipeline creation uses the
+persistent internally synchronized Vulkan cache on bounded background workers.
+All primary, dynamic-UI, and scheduled-secondary mesh paths now establish
+pipeline readiness before `vkBeginCommandBuffer`; a pending or capacity-limited
+request defers recording instead of emitting a partial command stream. Stable
+v5 prewarm identities use deterministic hashes and include device/driver,
+shader artifact, descriptor/vertex layout, pass, feature, and fixed-function
+state. The final StandardValidation warm run recorded 238 persisted-cache hits,
+zero compile-required misses, no draw that emitted zero commands, no VUID or
+validation error, no `InvalidOperationException`, and no device loss. See
+[the pipeline prewarm investigation](../../investigations/rendering/vulkan-pipeline-cache-prewarm-2026-07-16.md).
+
+### P0.6 - Multi-Draw Indirect Implemented Core
+
+- [x] Add an explicitly selected, capability-gated multi-draw-indirect lane for
+  indexed material/state buckets. Unsupported indirect-count or meshlet
+  strategies resolve through the documented resolver and emit a visible
+  downgrade reason rather than silently changing lanes.
+- [x] Store draw metadata, transforms, materials, bounds, mesh data, compact
+  commands, and counts in stable GPU-scene buffers. The zero-readback lane
+  consumes GPU-written counts and does not construct one managed frame operation
+  per visible mesh.
+- [x] Preserve transparent and special-pass ordering through explicit
+  transparency/state buckets and the direct excluded-work path. CPU safety-net
+  fallback remains limited to the explicitly instrumented strategy and is
+  reported.
+- [x] Retain an explicit CPU-built indirect reference path under
+  `GpuIndirectInstrumented` and `ForceCpuIndirectBuild`; production
+  `GpuIndirectZeroReadback` uses GPU visibility/material scatter/compaction and
+  count-buffer submission without count readback.
+
+Visual/counter parity captures and the full `CpuDirect` versus CPU-built versus
+GPU-built live matrix remain open in the current TODO.
+
+### P0.7 - Reproducible Gate Harness Additions
+
+- [x] Extend `Measure-GameLoopRenderPipeline.ps1` and its Vulkan wrapper with
+  explicit occlusion-mode, Vulkan diagnostic-preset, and command-buffer-label
+  inputs. Every selection is seeded before process launch and retained in the
+  JSON/text result manifest, allowing identical three-repetition Disabled,
+  CpuQueryAsync, GpuHiZ, StandardValidation, and SyncValidation cohorts without
+  relying on Nsight Systems' failing `--env-var` option.
 
 ## Continuing Work
 

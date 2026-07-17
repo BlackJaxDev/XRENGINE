@@ -107,11 +107,12 @@ namespace XREngine.Rendering.Vulkan
             if (material is null || program is null)
                 return;
 
+            XRMaterial? shadowBindingSource = null;
+            MaterialShadowBindingPlan? shadowBindingPlan = null;
+
             if (material.RenderOptions is not null)
                 ApplyRenderParameters(material.RenderOptions);
 
-            XRMaterial? shadowBindingSource = null;
-            MaterialShadowBindingPlan? shadowBindingPlan = null;
             if (shadowState.IsShadowPass)
             {
                 shadowBindingSource = material.ShadowBindingSourceMaterial;
@@ -141,30 +142,30 @@ namespace XREngine.Rendering.Vulkan
                 (material.RenderOptions?.RequiredEngineUniforms ?? EUniformRequirements.None) |
                 program.GetActiveEngineUniformRequirements();
 
-            if (reqs.HasFlag(EUniformRequirements.Camera))
+            if ((reqs & EUniformRequirements.Camera) != 0)
             {
                 RuntimeEngine.Rendering.State.RenderingCamera?.SetUniforms(program, true);
                 RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera?.SetUniforms(program, false);
             }
 
             bool lightingUniformsBound = false;
-            if (reqs.HasFlag(EUniformRequirements.Lights))
+            if ((reqs & EUniformRequirements.Lights) != 0)
             {
                 RuntimeEngine.Rendering.State.RenderingWorld?.Lights?.SetForwardLightingUniforms(program);
                 lightingUniformsBound = RuntimeEngine.Rendering.State.RenderingWorld?.Lights is not null;
             }
 
-            if (reqs.HasFlag(EUniformRequirements.AmbientOcclusion) && !lightingUniformsBound)
+            if ((reqs & EUniformRequirements.AmbientOcclusion) != 0 && !lightingUniformsBound)
                 Lights3DCollection.SetForwardAmbientOcclusionUniforms(program);
 
-            if (reqs.HasFlag(EUniformRequirements.RenderTime))
+            if ((reqs & EUniformRequirements.RenderTime) != 0)
             {
                 program.Uniform(EEngineUniform.RenderTime.ToStringFast(), _materialUniformSecondsLive);
                 program.Uniform(EEngineUniform.EngineTime.ToStringFast(), RuntimeEngine.ElapsedTime);
                 program.Uniform(EEngineUniform.DeltaTime.ToStringFast(), RuntimeEngine.Time.Timer.Render.Delta);
             }
 
-            if (reqs.HasFlag(EUniformRequirements.ViewportDimensions))
+            if ((reqs & EUniformRequirements.ViewportDimensions) != 0)
             {
                 var area = RuntimeEngine.Rendering.State.RenderArea;
                 float screenWidth = area.Width;
@@ -194,7 +195,7 @@ namespace XREngine.Rendering.Vulkan
                 program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), new Vector2(area.X, area.Y));
             }
 
-            if (reqs.HasFlag(EUniformRequirements.ClipSpacePolicy))
+            if ((reqs & EUniformRequirements.ClipSpacePolicy) != 0)
             {
                 program.Uniform(EEngineUniform.ClipSpaceYDirection.ToStringFast(), (int)RuntimeEngine.Rendering.Settings.ClipSpaceYDirection);
                 program.Uniform(EEngineUniform.ClipDepthRange.ToStringFast(), (int)RuntimeEngine.Rendering.EffectiveClipDepthRange);

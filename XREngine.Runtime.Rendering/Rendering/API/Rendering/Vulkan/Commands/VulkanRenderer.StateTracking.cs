@@ -19,6 +19,7 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private const int MaxMergedFrameOpRegistryCacheEntries = 8;
+    private const int MaxActivePassMetadataFilterCacheEntries = 32;
 
     private readonly VulkanStateTracker _state = new();
     [ThreadStatic]
@@ -440,6 +441,9 @@ public unsafe partial class VulkanRenderer
     private readonly List<FrameOpPlannerStateKey> _frameOpPlannerStateEvictionScratch = [];
     private readonly List<RenderResourceRegistry> _frameOpRegistryScratch = [];
     private readonly List<FrameOpRegistryCacheSource> _frameOpRegistryCacheSourceScratch = [];
+    private readonly List<XRFrameBuffer> _frameOpFrameBufferScratch = [];
+    private readonly List<ActivePassMetadataFilterCacheEntry> _activePassMetadataFilterCache = new(MaxActivePassMetadataFilterCacheEntries);
+    private int _activePassMetadataFilterCacheReplacementIndex;
     private IReadOnlyCollection<RenderPassMetadata>? _lastActiveFilterSourcePassMetadata;
     private IReadOnlyCollection<RenderPassMetadata>? _lastActiveFilterResult;
     private RenderResourceRegistry? _lastActiveFilterResourceRegistry;
@@ -476,11 +480,36 @@ public unsafe partial class VulkanRenderer
         RenderResourceRegistry Registry,
         int DescriptorSignature);
 
+    private readonly record struct ActivePassMetadataFilterCacheEntry(
+        IReadOnlyCollection<RenderPassMetadata> SourcePassMetadata,
+        RenderResourceRegistry? ResourceRegistry,
+        int ResourceRegistryRevision,
+        int ActivePassSetSignature,
+        int ActiveResourceSetSignature,
+        bool ConstrainToActivePassSet,
+        IReadOnlyCollection<RenderPassMetadata> Result)
+    {
+        public bool Matches(
+            IReadOnlyCollection<RenderPassMetadata> sourcePassMetadata,
+            RenderResourceRegistry? resourceRegistry,
+            int resourceRegistryRevision,
+            int activePassSetSignature,
+            int activeResourceSetSignature,
+            bool constrainToActivePassSet)
+            => ReferenceEquals(SourcePassMetadata, sourcePassMetadata)
+                && ReferenceEquals(ResourceRegistry, resourceRegistry)
+                && ResourceRegistryRevision == resourceRegistryRevision
+                && ActivePassSetSignature == activePassSetSignature
+                && ActiveResourceSetSignature == activeResourceSetSignature
+                && ConstrainToActivePassSet == constrainToActivePassSet;
+    }
+
     private sealed class MergedFrameOpRegistryCacheEntry(
         FrameOpPlannerStateKey ownerKey,
         RenderResourceRegistry? primaryRegistry,
         FrameOpRegistryCacheSource[] sources,
         int frameBufferDescriptorSignature,
+        ulong frameOpsSignature,
         RenderResourceRegistry mergedRegistry,
         ulong lastUsedFrameId)
     {
@@ -489,15 +518,19 @@ public unsafe partial class VulkanRenderer
         public int PrimaryDescriptorSignature { get; set; } = primaryRegistry?.DescriptorSignature ?? 0;
         public FrameOpRegistryCacheSource[] Sources { get; set; } = sources;
         public int FrameBufferDescriptorSignature { get; set; } = frameBufferDescriptorSignature;
+        public ulong FrameOpsSignature { get; set; } = frameOpsSignature;
         public RenderResourceRegistry MergedRegistry { get; set; } = mergedRegistry;
         public ulong LastUsedFrameId { get; set; } = lastUsedFrameId;
     }
 
     private sealed class FrameOpResourcePlannerSwitchingState
     {
-        public Dictionary<FrameOpPlannerStateKey, ResourcePlannerRuntimeState> States { get; } = new();
-        public Dictionary<FrameOpPlannerStateKey, ulong> LastUsedSerials { get; } = new();
-        public HashSet<FrameOpPlannerStateKey> ActiveKeys { get; } = new();
+        public Dictionary<FrameOpPlannerStateKey, ResourcePlannerRuntimeState> States { get; } =
+            new(FrameOpPlannerStateKeyComparer.Instance);
+        public Dictionary<FrameOpPlannerStateKey, ulong> LastUsedSerials { get; } =
+            new(FrameOpPlannerStateKeyComparer.Instance);
+        public HashSet<FrameOpPlannerStateKey> ActiveKeys { get; } =
+            new(FrameOpPlannerStateKeyComparer.Instance);
         public ulong UsageSerial;
         public bool SwitchingActive;
         public bool RecordingScopeActive;

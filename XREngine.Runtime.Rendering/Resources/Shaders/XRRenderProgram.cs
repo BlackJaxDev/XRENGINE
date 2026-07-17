@@ -218,6 +218,9 @@ namespace XREngine.Rendering
         private IReadOnlyDictionary<string, ShaderTextureBinding> _cachedTextureBindings =
             new Dictionary<string, ShaderTextureBinding>(UniformComparer);
 
+        [YamlIgnore]
+        private EUniformRequirements _cachedActiveEngineUniformRequirements;
+
         private bool _shaderInterfaceDirty = true;
 
         private ShaderProgramMetadata _shaderMetadata = ShaderProgramMetadata.Empty;
@@ -603,6 +606,9 @@ namespace XREngine.Rendering
                 builder.ProcessShader(shader);
 
             (_cachedUniformBindings, _cachedTextureBindings) = builder.Build();
+            _cachedActiveEngineUniformRequirements = ComputeActiveEngineUniformRequirements(
+                _cachedUniformBindings,
+                _cachedTextureBindings);
 
             _shaderInterfaceDirty = false;
 
@@ -671,6 +677,14 @@ namespace XREngine.Rendering
             get => _priority;
             set => SetField(ref _priority, value);
         }
+
+        /// <summary>
+        /// Requests non-blocking CPU artifact compilation when the active backend supports it.
+        /// Callers must retry <see cref="Link"/> and defer dispatch until <see cref="IsLinked"/>
+        /// becomes true.
+        /// </summary>
+        [YamlIgnore]
+        public bool AllowAsyncBackendCompile { get; set; }
 
         public void Use()
             => UseRequested?.Invoke(this);
@@ -1247,16 +1261,30 @@ namespace XREngine.Rendering
         public bool HasUniform(EEngineUniform uniformName)
             => HasUniform(uniformName.ToString());
         public bool HasUniform(string uniformName)
-            => Shaders.Any(x => x.HasUniform(uniformName));
+        {
+            for (int shaderIndex = 0; shaderIndex < Shaders.Count; shaderIndex++)
+                if (Shaders[shaderIndex].HasUniform(uniformName))
+                    return true;
+
+            return false;
+        }
 
         public EUniformRequirements GetActiveEngineUniformRequirements()
         {
+            EnsureShaderInterfaceMetadata();
+            return _cachedActiveEngineUniformRequirements;
+        }
+
+        private static EUniformRequirements ComputeActiveEngineUniformRequirements(
+            IReadOnlyDictionary<string, ShaderUniformBinding> uniformBindings,
+            IReadOnlyDictionary<string, ShaderTextureBinding> textureBindings)
+        {
             EUniformRequirements requirements = EUniformRequirements.None;
 
-            foreach (string uniformName in UniformBindings.Keys)
+            foreach (string uniformName in uniformBindings.Keys)
                 requirements |= UniformRequirementsDetection.GetAutoDetectedRequirement(uniformName);
 
-            foreach (string samplerName in TextureBindings.Keys)
+            foreach (string samplerName in textureBindings.Keys)
                 requirements |= UniformRequirementsDetection.GetAutoDetectedRequirement(samplerName);
 
             return requirements;

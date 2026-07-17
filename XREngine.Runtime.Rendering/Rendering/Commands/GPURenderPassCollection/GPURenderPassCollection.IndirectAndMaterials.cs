@@ -70,12 +70,20 @@ namespace XREngine.Rendering.Commands
         {
             using var renderTiming = BeginTiming("GPURenderPassCollection.Render");
             CapturePassPolicySnapshot();
+            GpuProgramsPendingThisFrame = false;
             
             Log(LogCategory.Lifecycle, LogLevel.Info, "Render begin (pass={0})", RenderPass);
             Dbg("Render begin", "Lifecycle");
 
             if (!TryInitializeRender(scene, out XRCamera? camera) || camera is null)
             {
+                ClearPassPolicySnapshot();
+                return;
+            }
+
+            if (!TryPrepareGpuPrograms())
+            {
+                GpuProgramsPendingThisFrame = true;
                 ClearPassPolicySnapshot();
                 return;
             }
@@ -723,6 +731,7 @@ namespace XREngine.Rendering.Commands
             const EMemoryBarrierMask postLodBarrier = EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command;
             _lodSelectComputeShader.DispatchCompute(dispatchGroups, 1, 1, postLodBarrier);
             AbstractRenderer.Current?.MemoryBarrier(postLodBarrier);
+            scene.MarkLodTransitionBufferGpuWritten();
             _culledHotCommandsValid = false;
 
             // Turn GPU-raised LOD residency requests (from earlier frames) into atlas loads.

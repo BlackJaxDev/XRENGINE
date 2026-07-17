@@ -501,17 +501,15 @@ public unsafe partial class VulkanRenderer
 			VulkanStableHash64 hash = new(schemaVersion: 2);
 			hash.Add(passIndex);
 			hash.Add(passMetadata?.Count ?? 0);
-			if (passMetadata is not null)
+			if (passMetadata is IReadOnlyList<RenderPassMetadata> metadataList)
+			{
+				for (int metadataIndex = 0; metadataIndex < metadataList.Count; metadataIndex++)
+					AddMetadata(ref hash, metadataList[metadataIndex]);
+			}
+			else if (passMetadata is not null)
 			{
 				foreach (RenderPassMetadata metadata in passMetadata)
-				{
-					hash.Add(metadata.PassIndex);
-					hash.Add(metadata.Name);
-					hash.Add((int)metadata.Stage);
-					hash.Add(metadata.DescriptorSchemas.Count);
-					foreach (string schema in metadata.DescriptorSchemas)
-						hash.Add(schema);
-				}
+					AddMetadata(ref hash, metadata);
 			}
 
 			hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass ?? false);
@@ -519,6 +517,16 @@ public unsafe partial class VulkanRenderer
 			hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.DirectionalCascadeLayeredShadowPass ?? false);
 			hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.PointLightLayeredShadowPass ?? false);
 			return hash.Value;
+
+			static void AddMetadata(ref VulkanStableHash64 hash, RenderPassMetadata metadata)
+			{
+				hash.Add(metadata.PassIndex);
+				hash.Add(metadata.Name);
+				hash.Add((int)metadata.Stage);
+				hash.Add(metadata.DescriptorSchemas.Count);
+				for (int schemaIndex = 0; schemaIndex < metadata.DescriptorSchemas.Count; schemaIndex++)
+					hash.Add(metadata.DescriptorSchemas[schemaIndex]);
+			}
 		}
 
 		private ulong ComputeFeatureProfileHash()

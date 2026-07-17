@@ -34,5 +34,23 @@ public unsafe partial class VulkanRenderer
                 draw.StereoRightEyeCamera is null ? 0 : RuntimeHelpers.GetHashCode(draw.StereoRightEyeCamera),
                 context.StereoEnabled,
                 context.MultiviewEnabled);
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                int hash = FrameDataSlot;
+                hash = (hash * 397) ^ (int)StreamKind;
+                hash = (hash * 397) ^ (int)ContextKind;
+                hash = (hash * 397) ^ PipelineIdentity;
+                hash = (hash * 397) ^ ViewportIdentity;
+                hash = (hash * 397) ^ OutputFrameBufferIdentity;
+                hash = (hash * 397) ^ OutputTargetIdentity;
+                hash = (hash * 397) ^ CameraIdentity;
+                hash = (hash * 397) ^ StereoRightEyeCameraIdentity;
+                hash = (hash * 397) ^ (StereoEnabled ? 1 : 0);
+                return (hash * 397) ^ (MultiviewEnabled ? 1 : 0);
+            }
+        }
     }
 }

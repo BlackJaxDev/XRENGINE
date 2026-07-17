@@ -451,6 +451,9 @@ public static partial class EditorUnitTests
             if (cameraNode.Parent is { } parent)
                 ConfigureEditorViewCamera(parent, cameraNode);
 
+            if (ProfileCameraMotionComponent.IsRequested())
+                cameraNode.AddComponent<ProfileCameraMotionComponent>("Automated Profile Camera Motion");
+
             pawnComp.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
             Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One).OnPawnCameraChanged();
             return pawnComp;

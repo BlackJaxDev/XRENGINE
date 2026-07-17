@@ -274,10 +274,8 @@ public sealed class OpenXrTimingPipelineContractTests
         commandChainSecondaryTeardown.ShouldNotContain("DiscardDeferredSecondaryCommandBuffersForPool(pool);");
         commandChainSecondaryTeardown.ShouldNotContain("Api!.DestroyCommandPool(device, pool, null);");
         commandChainSecondaryTeardown.ShouldNotContain("ownsPool && pool.Handle != 0 && !_deviceLost");
-        string commandChainWorkerPoolTeardown = SliceMethod(
-            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandChainWorkers.cs"),
-            "private void DestroyWorkerCommandPool",
-            "}");
+        string commandChainWorkerPoolTeardown = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
         commandChainWorkerPoolTeardown.ShouldContain("Api!.DestroyCommandPool(device, pool, null);");
         commandChainWorkerPoolTeardown.ShouldNotContain("!_deviceLost");
         vkDataBuffer.ShouldContain("Renderer.MarkCommandBuffersDirty(\"VkDataBufferRecreated\");");
@@ -500,7 +498,7 @@ public sealed class OpenXrTimingPipelineContractTests
         string beginRenderingForTarget = SliceMethod(
             commandRecording,
             "void BeginRenderingForTarget(XRFrameBuffer? target",
-            "void RecordMeshDrawIntoCommandBuffer");
+            "bool RecordMeshDrawIntoCommandBuffer");
 
         beginRenderingForTarget.ShouldContain("QueryCurrentAttachmentLayouts(target, vkFrameBuffer)");
         beginRenderingForTarget.ShouldContain("ResolveAttachmentSignatureForPass(");
@@ -750,7 +748,7 @@ public sealed class OpenXrTimingPipelineContractTests
         canReuse.ShouldContain("usesSharedMaterialTier);");
         descriptors.ShouldContain("DescriptorSlotResourceFingerprintMatches(allocation, descriptorSlotIndex, resourceFingerprint)");
         descriptors.ShouldContain("EnsureDescriptorSlotReady(");
-        canReuse.ShouldContain("schemaFingerprint,\n\t\t\t\t\tviewFamilyIdentity,\n\t\t\t\t\tresourceFingerprint,");
+        canReuse.ShouldContain("schemaFingerprint,\n\t\t\t\t\tviewFamilyIdentity,\n\t\t\t\t\tbindingIdentityFingerprint,\n\t\t\t\t\tresourceFingerprint,");
 
         string capturedReuse = SliceMethod(
             descriptors,
@@ -818,7 +816,8 @@ public sealed class OpenXrTimingPipelineContractTests
 
         string drawing = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
         drawing.ShouldContain("TryRefreshFrameSourceDescriptorSetsForDraw(imageIndex, drawUniformSlot, material, draw.ProgramBindingSnapshot");
-        drawing.ShouldContain("TryRefreshFrameSourceDescriptorSetsForDraw(frameIndex, drawUniformSlot, material, draw.ProgramBindingSnapshot");
+        drawing.ShouldContain("bool frameSourceDescriptorsReady = TryRefreshFrameSourceDescriptorSetsForDraw(");
+        drawing.ShouldContain("draw.ProgramBindingSnapshot,\n\t\t\t\tout string frameSourceDescriptorReason);");
 
         string frameOpSignatures = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpSignatures.cs");
         frameOpSignatures.ShouldContain("AddProgramBindingSignatureParts(parts, opIndex, opType, \"program\", draw.ProgramBindingSnapshot, meshDraw.Context.PipelineInstance);");
@@ -964,9 +963,10 @@ public sealed class OpenXrTimingPipelineContractTests
 
         commandRecording.ShouldContain("if (!VulkanFrameDiagnosticsTraceEnabled)\n                    return;");
         commandRecording.ShouldContain("if (VulkanFrameDiagnosticsTraceEnabled)\n                {\n                    Debug.VulkanEvery(\n                        $\"Vulkan.FrameOps.");
-        commandRecording.ShouldContain("Vulkan.RecordCommandBuffer.NormalizeFrameOps.Sort");
-        commandRecording.ShouldContain("Vulkan.RecordCommandBuffer.NormalizeFrameOps.SplitDynamicUiBatchText");
-        commandRecording.ShouldContain("Vulkan.RecordCommandBuffer.NormalizeFrameOps.Signature");
+        commandRecording.ShouldContain("EVulkanCpuStage.FrameOpPreparation already measures this hot section.");
+        commandRecording.ShouldNotContain("Vulkan.RecordCommandBuffer.NormalizeFrameOps.Sort");
+        commandRecording.ShouldNotContain("Vulkan.RecordCommandBuffer.NormalizeFrameOps.SplitDynamicUiBatchText");
+        commandRecording.ShouldNotContain("Vulkan.RecordCommandBuffer.NormalizeFrameOps.Signature");
         commandRecording.ShouldContain("bool preservingOverlayOnlyFrame =");
         commandRecording.ShouldContain("bool preservingPresentedSwapchainImage =");
         commandRecording.ShouldContain("imageWasEverPresentedAtRecordStart");
@@ -1683,6 +1683,55 @@ public sealed class OpenXrTimingPipelineContractTests
         coarsePick.ShouldContain("GpuMeshBvhPickRayIntersectsRequestBounds");
         coarsePick.ShouldContain("candidate.CompleteHit(");
         coarsePick.ShouldContain("result = candidate;");
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void UnitTestingWorld_DesktopModeOverrideDoesNotPublishConfiguredOpenXrRuntime()
+    {
+        string? previousMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
+        string? previousRuntimeJson = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
+        string? previousRuntimeJsonOverride = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson);
+        string? previousUseOpenXr = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr);
+        string? previousPath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path);
+
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                XREngineEnvironmentVariables.UnitTestVrMode,
+                nameof(UnitTestingVrLaunchMode.Desktop));
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson, null);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson, null);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr, null);
+
+            UnitTestingWorldSettings settings = UnitTestingWorldSettingsStore.ParseJsonc(
+                """
+                {
+                  "VR": {
+                    "Mode": "MonadoOpenXR",
+                    "OpenXrRuntimeJson": "configured-openxr-runtime.json"
+                  }
+                }
+                """);
+
+            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson).ShouldBeNull();
+            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path).ShouldBe(previousPath);
+
+            UnitTestingWorldSettingsStore.ApplyVrLaunchOverrides(settings);
+
+            settings.VR.Mode.ShouldBe(UnitTestingVrLaunchMode.Desktop);
+            settings.UseOpenXR.ShouldBeFalse();
+            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson).ShouldBeNull();
+            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path).ShouldBe(previousPath);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode, previousMode);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson, previousRuntimeJson);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson, previousRuntimeJsonOverride);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr, previousUseOpenXr);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.Path, previousPath);
+        }
     }
 
     [Test]

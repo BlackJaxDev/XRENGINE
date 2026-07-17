@@ -197,7 +197,7 @@ public unsafe partial class VulkanRenderer
 
 		private void ActivateCapturedProgram(XRMaterial material, VkRenderProgram preparedProgram, string? preparedProgramIdentity)
 		{
-			string identity = preparedProgramIdentity ?? preparedProgram.Data?.Name ?? preparedProgram.GetHashCode().ToString();
+			string? identity = preparedProgramIdentity ?? preparedProgram.Data?.Name;
 			if (!ReferenceEquals(_program, preparedProgram) ||
 				!string.Equals(_activeProgramIdentity, identity, StringComparison.Ordinal))
 			{
@@ -238,7 +238,7 @@ public unsafe partial class VulkanRenderer
 
 		private bool CanReuseCapturedPreparedRenderState(XRMaterial material, VkRenderProgram preparedProgram, string? preparedProgramIdentity)
 		{
-			string identity = preparedProgramIdentity ?? preparedProgram.Data?.Name ?? preparedProgram.GetHashCode().ToString();
+			string? identity = preparedProgramIdentity ?? preparedProgram.Data?.Name;
 			return ReferenceEquals(_lastPreparedMaterial, material) &&
 				ReferenceEquals(_program, preparedProgram) &&
 				string.Equals(_activeProgramIdentity, identity, StringComparison.Ordinal) &&

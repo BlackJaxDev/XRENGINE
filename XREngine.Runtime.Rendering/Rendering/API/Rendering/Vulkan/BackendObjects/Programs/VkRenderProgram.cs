@@ -78,6 +78,8 @@ public unsafe partial class VulkanRenderer
         private readonly Dictionary<string, AutoUniformBlockInfo> _autoUniformBlocks = new(StringComparer.Ordinal);
         private readonly object _bindingLock = new();
         private readonly Dictionary<string, ProgramUniformValue> _uniformValues = new(StringComparer.Ordinal);
+        private static readonly ConcurrentDictionary<string, string> VertexSuffixedUniformNames = new(StringComparer.Ordinal);
+        private static readonly ConcurrentDictionary<string, string> VertexBaseUniformNames = new(StringComparer.Ordinal);
         private readonly Dictionary<uint, XRTexture> _samplersByUnit = new();
         private readonly Dictionary<uint, string> _samplerNamesByUnit = new();
         private readonly Dictionary<string, XRTexture> _samplersByName = new(StringComparer.Ordinal);
@@ -85,6 +87,7 @@ public unsafe partial class VulkanRenderer
         private readonly Dictionary<uint, XRDataBuffer> _buffersByBinding = new();
         private readonly ConcurrentDictionary<string, byte> _computeWarnings = new(StringComparer.Ordinal);
         private readonly Dictionary<ComputeUniformBufferKey, ComputeUniformBuffer> _computeUniformBuffers = new();
+        private readonly HashSet<(uint ImageIndex, ulong BindingKey)> _reusableComputeDescriptorRefreshKeys = [];
         private Pipeline _computePipeline;
         private DescriptorHeapProgramLayout? _descriptorHeapLayout;
         private bool[] _descriptorSetUsesUpdateAfterBind = Array.Empty<bool>();
@@ -114,6 +117,12 @@ public unsafe partial class VulkanRenderer
         public IReadOnlyList<DescriptorSetLayout> DescriptorSetLayouts => _descriptorSetLayouts;
         public IReadOnlyList<DescriptorBindingInfo> DescriptorBindings => _programDescriptorBindings;
         public IReadOnlyDictionary<string, AutoUniformBlockInfo> AutoUniformBlocks => _autoUniformBlocks;
+
+        /// <summary>
+        /// Exposes the concrete auto-uniform map to Vulkan hot paths so dictionary
+        /// enumeration remains allocation-free.
+        /// </summary>
+        internal Dictionary<string, AutoUniformBlockInfo> AutoUniformBlockMap => _autoUniformBlocks;
         public bool DescriptorSetsRequireUpdateAfterBind => _descriptorSetsRequireUpdateAfterBind;
         public bool DescriptorSetsRequireVariableDescriptorCount => _descriptorSetsRequireVariableDescriptorCount;
         public bool DescriptorSetUsesUpdateAfterBind(uint setIndex)
@@ -342,6 +351,9 @@ public unsafe partial class VulkanRenderer
 
         private bool ShouldUseAsyncShaderCompileForLinkRequest()
         {
+            if (Data.AllowAsyncBackendCompile)
+                return true;
+
             foreach (VkShader shader in _shaderCache.Values)
                 if (shader.Data.Type == EShaderType.Compute)
                     return false;
@@ -378,12 +390,15 @@ public unsafe partial class VulkanRenderer
         }
 
         private void SetUniformValue(string name, EShaderVarType type, object value, bool isArray = false)
+            => SetUniformValue(name, new ProgramUniformValue(type, value, isArray));
+
+        private void SetUniformValue(string name, in ProgramUniformValue value)
         {
             if (string.IsNullOrWhiteSpace(name))
                 return;
 
             lock (_bindingLock)
-                _uniformValues[name] = new ProgramUniformValue(type, value, isArray);
+                _uniformValues[name] = value;
         }
 
         internal bool TryGetUniformValue(string name, out ProgramUniformValue value)
@@ -396,11 +411,17 @@ public unsafe partial class VulkanRenderer
                 // Keep parity with vertex suffix-based engine uniforms.
                 if (name.EndsWith("_VTX", StringComparison.Ordinal))
                 {
-                    string stripped = name[..^4];
+                    string stripped = VertexBaseUniformNames.GetOrAdd(
+                        name,
+                        static uniformName => uniformName[..^4]);
                     if (_uniformValues.TryGetValue(stripped, out value))
                         return true;
                 }
-                else if (_uniformValues.TryGetValue(name + "_VTX", out value))
+                else if (_uniformValues.TryGetValue(
+                    VertexSuffixedUniformNames.GetOrAdd(
+                        name,
+                        static uniformName => string.Concat(uniformName, "_VTX")),
+                    out value))
                 {
                     return true;
                 }
@@ -445,13 +466,21 @@ public unsafe partial class VulkanRenderer
         {
             lock (_bindingLock)
             {
+                Dictionary<string, XRDataBuffer> buffersByName = new(StringComparer.Ordinal);
+                foreach (XRDataBuffer buffer in _buffersByBinding.Values)
+                {
+                    if (!string.IsNullOrWhiteSpace(buffer.AttributeName))
+                        buffersByName.TryAdd(buffer.AttributeName, buffer);
+                }
+
                 return new ComputeDispatchSnapshot(
                     new Dictionary<string, ProgramUniformValue>(_uniformValues, StringComparer.Ordinal),
                     new Dictionary<uint, XRTexture>(_samplersByUnit),
                     new Dictionary<uint, string>(_samplerNamesByUnit),
                     new Dictionary<string, XRTexture>(_samplersByName, StringComparer.Ordinal),
                     new Dictionary<uint, ProgramImageBinding>(_imagesByUnit),
-                    new Dictionary<uint, XRDataBuffer>(_buffersByBinding));
+                    new Dictionary<uint, XRDataBuffer>(_buffersByBinding),
+                    buffersByName);
             }
         }
 
@@ -461,8 +490,8 @@ public unsafe partial class VulkanRenderer
                 return _samplersByName.Count != 0 || _buffersByBinding.Count != 0;
         }
 
-        private void Uniform(string name, Matrix4x4 value) => SetUniformValue(name, EShaderVarType._mat4, value);
-        private void Uniform(string name, Quaternion value) => SetUniformValue(name, EShaderVarType._vec4, new Vector4(value.X, value.Y, value.Z, value.W));
+        private void Uniform(string name, Matrix4x4 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._mat4, value));
+        private void Uniform(string name, Quaternion value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._vec4, new Vector4(value.X, value.Y, value.Z, value.W)));
         private void Uniform(string name, Matrix4x4[] value) => SetUniformValue(name, EShaderVarType._mat4, value.ToArray(), true);
         private void Uniform(string name, Quaternion[] value)
         {
@@ -470,7 +499,7 @@ public unsafe partial class VulkanRenderer
             SetUniformValue(name, EShaderVarType._vec4, converted, true);
         }
 
-        private void Uniform(string name, bool value) => SetUniformValue(name, EShaderVarType._bool, value);
+        private void Uniform(string name, bool value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._bool, value));
         private void Uniform(string name, BoolVector2 value) => SetUniformValue(name, EShaderVarType._bvec2, value);
         private void Uniform(string name, BoolVector3 value) => SetUniformValue(name, EShaderVarType._bvec3, value);
         private void Uniform(string name, BoolVector4 value) => SetUniformValue(name, EShaderVarType._bvec4, value);
@@ -479,38 +508,38 @@ public unsafe partial class VulkanRenderer
         private void Uniform(string name, BoolVector3[] value) => SetUniformValue(name, EShaderVarType._bvec3, value.ToArray(), true);
         private void Uniform(string name, BoolVector4[] value) => SetUniformValue(name, EShaderVarType._bvec4, value.ToArray(), true);
 
-        private void Uniform(string name, float value) => SetUniformValue(name, EShaderVarType._float, value);
-        private void Uniform(string name, Vector2 value) => SetUniformValue(name, EShaderVarType._vec2, value);
-        private void Uniform(string name, Vector3 value) => SetUniformValue(name, EShaderVarType._vec3, value);
-        private void Uniform(string name, Vector4 value) => SetUniformValue(name, EShaderVarType._vec4, value);
+        private void Uniform(string name, float value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._float, value));
+        private void Uniform(string name, Vector2 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._vec2, value));
+        private void Uniform(string name, Vector3 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._vec3, value));
+        private void Uniform(string name, Vector4 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._vec4, value));
         private void Uniform(string name, float[] value) => SetUniformValue(name, EShaderVarType._float, value.ToArray(), true);
         private void Uniform(string name, Span<float> value) => SetUniformValue(name, EShaderVarType._float, value.ToArray(), true);
         private void Uniform(string name, Vector2[] value) => SetUniformValue(name, EShaderVarType._vec2, value.ToArray(), true);
         private void Uniform(string name, Vector3[] value) => SetUniformValue(name, EShaderVarType._vec3, value.ToArray(), true);
         private void Uniform(string name, Vector4[] value) => SetUniformValue(name, EShaderVarType._vec4, value.ToArray(), true);
 
-        private void Uniform(string name, double value) => SetUniformValue(name, EShaderVarType._double, value);
-        private void Uniform(string name, DVector2 value) => SetUniformValue(name, EShaderVarType._dvec2, value);
-        private void Uniform(string name, DVector3 value) => SetUniformValue(name, EShaderVarType._dvec3, value);
-        private void Uniform(string name, DVector4 value) => SetUniformValue(name, EShaderVarType._dvec4, value);
+        private void Uniform(string name, double value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._double, value));
+        private void Uniform(string name, DVector2 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._dvec2, value));
+        private void Uniform(string name, DVector3 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._dvec3, value));
+        private void Uniform(string name, DVector4 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._dvec4, value));
         private void Uniform(string name, double[] value) => SetUniformValue(name, EShaderVarType._double, value.ToArray(), true);
         private void Uniform(string name, DVector2[] value) => SetUniformValue(name, EShaderVarType._dvec2, value.ToArray(), true);
         private void Uniform(string name, DVector3[] value) => SetUniformValue(name, EShaderVarType._dvec3, value.ToArray(), true);
         private void Uniform(string name, DVector4[] value) => SetUniformValue(name, EShaderVarType._dvec4, value.ToArray(), true);
 
-        private void Uniform(string name, int value) => SetUniformValue(name, EShaderVarType._int, value);
-        private void Uniform(string name, IVector2 value) => SetUniformValue(name, EShaderVarType._ivec2, value);
-        private void Uniform(string name, IVector3 value) => SetUniformValue(name, EShaderVarType._ivec3, value);
-        private void Uniform(string name, IVector4 value) => SetUniformValue(name, EShaderVarType._ivec4, value);
+        private void Uniform(string name, int value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._int, value));
+        private void Uniform(string name, IVector2 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._ivec2, value));
+        private void Uniform(string name, IVector3 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._ivec3, value));
+        private void Uniform(string name, IVector4 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._ivec4, value));
         private void Uniform(string name, int[] value) => SetUniformValue(name, EShaderVarType._int, value.ToArray(), true);
         private void Uniform(string name, IVector2[] value) => SetUniformValue(name, EShaderVarType._ivec2, value.ToArray(), true);
         private void Uniform(string name, IVector3[] value) => SetUniformValue(name, EShaderVarType._ivec3, value.ToArray(), true);
         private void Uniform(string name, IVector4[] value) => SetUniformValue(name, EShaderVarType._ivec4, value.ToArray(), true);
 
-        private void Uniform(string name, uint value) => SetUniformValue(name, EShaderVarType._uint, value);
-        private void Uniform(string name, UVector2 value) => SetUniformValue(name, EShaderVarType._uvec2, value);
-        private void Uniform(string name, UVector3 value) => SetUniformValue(name, EShaderVarType._uvec3, value);
-        private void Uniform(string name, UVector4 value) => SetUniformValue(name, EShaderVarType._uvec4, value);
+        private void Uniform(string name, uint value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._uint, value));
+        private void Uniform(string name, UVector2 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._uvec2, value));
+        private void Uniform(string name, UVector3 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._uvec3, value));
+        private void Uniform(string name, UVector4 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._uvec4, value));
         private void Uniform(string name, uint[] value) => SetUniformValue(name, EShaderVarType._uint, value.ToArray(), true);
         private void Uniform(string name, UVector2[] value) => SetUniformValue(name, EShaderVarType._uvec2, value.ToArray(), true);
         private void Uniform(string name, UVector3[] value) => SetUniformValue(name, EShaderVarType._uvec3, value.ToArray(), true);
@@ -1236,6 +1265,7 @@ public unsafe partial class VulkanRenderer
         private void DestroyLayouts()
         {
             DestroyComputeUniformBuffers();
+            _reusableComputeDescriptorRefreshKeys.Clear();
 
             if (_computePipeline.Handle != 0)
             {
@@ -1277,12 +1307,18 @@ public unsafe partial class VulkanRenderer
         private void DestroyComputeUniformBuffers()
         {
             foreach (ComputeUniformBuffer resource in _computeUniformBuffers.Values)
-            {
-                if (resource.Buffer.Handle != 0 || resource.Memory.Handle != 0)
-                    Renderer.RetireBuffer(resource.Buffer, resource.Memory);
-            }
+                ReleaseComputeUniformBuffer(resource);
 
             _computeUniformBuffers.Clear();
+        }
+
+        private void ReleaseComputeUniformBuffer(in ComputeUniformBuffer resource)
+        {
+            if (resource.Mapped != null)
+                Renderer.UnmapBufferMemory(resource.Buffer, resource.Memory);
+
+            if (resource.Buffer.Handle != 0 || resource.Memory.Handle != 0)
+                Renderer.RetireBuffer(resource.Buffer, resource.Memory);
         }
 
         public IEnumerable<PipelineShaderStageCreateInfo> GetShaderStages()
@@ -1578,8 +1614,12 @@ public unsafe partial class VulkanRenderer
             VulkanStableHash64 hash = new(schemaVersion: 2);
             hash.Add(CommonPushConstantSize);
 
-            foreach (EProgramStageMask flag in EnumerateStages(GraphicsStageMask))
+            for (int stageIndex = 0; stageIndex < StageOrder.Length; stageIndex++)
             {
+                EProgramStageMask flag = StageOrder[stageIndex];
+                if ((GraphicsStageMask & flag) == 0)
+                    continue;
+
                 if (flag == EProgramStageMask.GeometryShaderBit && !Renderer.SupportsGeometryShader)
                     continue;
 
@@ -1593,14 +1633,10 @@ public unsafe partial class VulkanRenderer
             hash.Add(_descriptorSetLayouts.Length);
             hash.Add((int)Renderer.ActiveDescriptorBackend);
             hash.Add(_descriptorHeapLayout?.PushByteCount ?? 0u);
-            DescriptorBindingInfo[] bindings = _programDescriptorBindings
-                .OrderBy(static binding => binding.Set)
-                .ThenBy(static binding => binding.Binding)
-                .ToArray();
-
-            for (int i = 0; i < bindings.Length; i++)
+            // Descriptor layout construction publishes this list in set/binding order.
+            for (int i = 0; i < _programDescriptorBindings.Count; i++)
             {
-                DescriptorBindingInfo binding = bindings[i];
+                DescriptorBindingInfo binding = _programDescriptorBindings[i];
                 hash.Add(binding.Set);
                 hash.Add(binding.Binding);
                 hash.Add((int)binding.DescriptorType);
@@ -1625,10 +1661,10 @@ public unsafe partial class VulkanRenderer
             hash.Add(_descriptorSetLayouts.Length);
             hash.Add((int)Renderer.ActiveDescriptorBackend);
             hash.Add(_descriptorHeapLayout?.PushByteCount ?? 0u);
-            foreach (DescriptorBindingInfo binding in _programDescriptorBindings
-                .OrderBy(static binding => binding.Set)
-                .ThenBy(static binding => binding.Binding))
+            // Descriptor layout construction publishes this list in set/binding order.
+            for (int i = 0; i < _programDescriptorBindings.Count; i++)
             {
+                DescriptorBindingInfo binding = _programDescriptorBindings[i];
                 hash.Add(binding.Set);
                 hash.Add(binding.Binding);
                 hash.Add((int)binding.DescriptorType);
@@ -2187,10 +2223,11 @@ public unsafe partial class VulkanRenderer
 
             if (!string.IsNullOrWhiteSpace(binding.Name))
             {
-                XRDataBuffer? namedBuffer = snapshot.Buffers.Values.FirstOrDefault(
-                    b => string.Equals(b.AttributeName, binding.Name, StringComparison.Ordinal));
-                if (namedBuffer is not null && TryCreateDescriptorBufferInfo(binding, namedBuffer, out bufferInfo))
+                if (snapshot.BuffersByName.TryGetValue(binding.Name, out XRDataBuffer? namedBuffer) &&
+                    TryCreateDescriptorBufferInfo(binding, namedBuffer, out bufferInfo))
+                {
                     return true;
+                }
             }
 
             if (binding.DescriptorType == DescriptorType.UniformBuffer &&
@@ -2224,7 +2261,7 @@ public unsafe partial class VulkanRenderer
             if (created && !ClearComputeUniformBuffer(resource, fallbackSize))
             {
                 _computeUniformBuffers.Remove(key);
-                Renderer.RetireBuffer(resource.Buffer, resource.Memory);
+                ReleaseComputeUniformBuffer(resource);
                 return false;
             }
 
@@ -2285,7 +2322,10 @@ public unsafe partial class VulkanRenderer
                     continue;
                 }
 
-                if (snapshot.Buffers.ContainsKey(binding.Binding) || SnapshotContainsNamedBuffer(snapshot, binding.Name))
+                bool hasSnapshotBuffer = snapshot.Buffers.ContainsKey(binding.Binding);
+                if (!hasSnapshotBuffer)
+                    hasSnapshotBuffer = SnapshotContainsNamedBuffer(snapshot, binding.Name);
+                if (hasSnapshotBuffer)
                     continue;
 
                 if (TryGetAutoUniformBlockFuzzy(binding.Name, binding.Set, binding.Binding, out AutoUniformBlockInfo block))
@@ -2305,6 +2345,10 @@ public unsafe partial class VulkanRenderer
         private bool TryRefreshReusableComputeDescriptorSets(uint imageIndex, ComputeDispatchSnapshot snapshot, ulong reusableDescriptorBindingKey)
         {
             if (reusableDescriptorBindingKey == 0UL)
+                return true;
+
+            (uint ImageIndex, ulong BindingKey) refreshKey = (imageIndex, reusableDescriptorBindingKey);
+            if (_reusableComputeDescriptorRefreshKeys.Contains(refreshKey))
                 return true;
 
             Dictionary<DescriptorType, uint> poolSizeCounts = new();
@@ -2414,22 +2458,12 @@ public unsafe partial class VulkanRenderer
                 bufferInfos.ToArray(),
                 imageInfos.ToArray(),
                 texelBufferViews.ToArray());
+            _reusableComputeDescriptorRefreshKeys.Add(refreshKey);
             return true;
         }
 
         private static bool SnapshotContainsNamedBuffer(ComputeDispatchSnapshot snapshot, string? bindingName)
-        {
-            if (string.IsNullOrWhiteSpace(bindingName))
-                return false;
-
-            foreach (XRDataBuffer buffer in snapshot.Buffers.Values)
-            {
-                if (string.Equals(buffer.AttributeName, bindingName, StringComparison.Ordinal))
-                    return true;
-            }
-
-            return false;
-        }
+            => !string.IsNullOrWhiteSpace(bindingName) && snapshot.BuffersByName.ContainsKey(bindingName);
 
         private bool TryUpdateExistingComputeAutoUniformBuffer(
             uint imageIndex,
@@ -2476,23 +2510,17 @@ public unsafe partial class VulkanRenderer
             ComputeDispatchSnapshot snapshot,
             AutoUniformBlockInfo block)
         {
-            if (!Renderer.TryMapBufferMemory(resource.Buffer, resource.Memory, 0, size, out void* mapped))
+            if (resource.Mapped == null || resource.Size < size)
                 return false;
 
-            try
-            {
-                Span<byte> data = new(mapped, (int)size);
-                data.Clear();
+            Span<byte> data = new(resource.Mapped, (int)size);
+            data.Clear();
 
-                foreach (AutoUniformMember member in block.Members)
-                    TryWriteAutoUniformMember(data, member, snapshot);
+            IReadOnlyList<AutoUniformMember> members = block.Members;
+            for (int memberIndex = 0; memberIndex < members.Count; memberIndex++)
+                TryWriteAutoUniformMember(data, members[memberIndex], snapshot);
 
-                return true;
-            }
-            finally
-            {
-                Renderer.UnmapBufferMemory(resource.Buffer, resource.Memory);
-            }
+            return true;
         }
 
         private bool TryGetOrCreateComputeUniformBuffer(
@@ -2512,7 +2540,7 @@ public unsafe partial class VulkanRenderer
             }
 
             if (resource.Buffer.Handle != 0 || resource.Memory.Handle != 0)
-                Renderer.RetireBuffer(resource.Buffer, resource.Memory);
+                ReleaseComputeUniformBuffer(resource);
 
             (Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) = Renderer.CreateBuffer(
                 size,
@@ -2529,7 +2557,14 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
-            resource = new ComputeUniformBuffer(buffer, memory, size);
+            if (!Renderer.TryMapBufferMemory(buffer, memory, 0, size, out void* mapped))
+            {
+                Renderer.RetireBuffer(buffer, memory);
+                resource = default;
+                return false;
+            }
+
+            resource = new ComputeUniformBuffer(buffer, memory, size, mapped);
             _computeUniformBuffers[key] = resource;
             created = true;
             return true;
@@ -2537,19 +2572,12 @@ public unsafe partial class VulkanRenderer
 
         private bool ClearComputeUniformBuffer(ComputeUniformBuffer resource, uint size)
         {
-            if (!Renderer.TryMapBufferMemory(resource.Buffer, resource.Memory, 0, size, out void* mapped))
+            if (resource.Mapped == null || resource.Size < size)
                 return false;
 
-            try
-            {
-                Span<byte> data = new(mapped, (int)size);
-                data.Clear();
-                return true;
-            }
-            finally
-            {
-                Renderer.UnmapBufferMemory(resource.Buffer, resource.Memory);
-            }
+            Span<byte> data = new(resource.Mapped, (int)size);
+            data.Clear();
+            return true;
         }
 
         private bool TryCreateDescriptorBufferInfo(
@@ -2803,8 +2831,18 @@ public unsafe partial class VulkanRenderer
 
             if (member.DefaultArrayValues is { Count: > 0 } defaults)
             {
-                ProgramUniformValue val = new(member.EngineType ?? EShaderVarType._float, defaults.Select(d => d.Value).ToArray(), true);
-                return TryWriteUniformValue(destination, member, val);
+                if (!member.IsArray || member.ArrayLength == 0 || member.ArrayStride == 0)
+                    return false;
+
+                int count = Math.Min(defaults.Count, (int)member.ArrayLength);
+                for (int i = 0; i < count; i++)
+                {
+                    AutoUniformDefaultValue defaultElement = defaults[i];
+                    uint offset = member.Offset + (uint)i * member.ArrayStride;
+                    TryWriteSingleUniform(destination, offset, defaultElement.Type, defaultElement.Value);
+                }
+
+                return true;
             }
 
             return false;
@@ -2814,8 +2852,10 @@ public unsafe partial class VulkanRenderer
         {
             value = default;
 
-            if (!Enum.TryParse(name, ignoreCase: false, out EEngineUniform uniform))
-                return false;
+            ReadOnlySpan<char> uniform = name.AsSpan();
+            const string vertexStageSuffix = "_VTX";
+            if (uniform.EndsWith(vertexStageSuffix, StringComparison.Ordinal))
+                uniform = uniform[..^vertexStageSuffix.Length];
 
             XRCamera? camera = RuntimeEngine.Rendering.State.RenderingCamera;
             XRCamera? rightCamera = RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera;
@@ -2824,15 +2864,15 @@ public unsafe partial class VulkanRenderer
 
             switch (uniform)
             {
-                case EEngineUniform.UpdateDelta:
+                case nameof(EEngineUniform.UpdateDelta):
                     value = new ProgramUniformValue(EShaderVarType._float, RuntimeEngine.Time.Timer.Update.Delta, false);
                     return true;
-                case EEngineUniform.ViewMatrix:
-                case EEngineUniform.LeftEyeViewMatrix:
+                case nameof(EEngineUniform.ViewMatrix):
+                case nameof(EEngineUniform.LeftEyeViewMatrix):
                     value = new ProgramUniformValue(EShaderVarType._mat4, camera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity, false);
                     return true;
-                case EEngineUniform.PrevViewMatrix:
-                case EEngineUniform.PrevLeftEyeViewMatrix:
+                case nameof(EEngineUniform.PrevViewMatrix):
+                case nameof(EEngineUniform.PrevLeftEyeViewMatrix):
                     value = new ProgramUniformValue(
                         EShaderVarType._mat4,
                         VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalViewData) && temporalViewData.HistoryReady
@@ -2840,10 +2880,10 @@ public unsafe partial class VulkanRenderer
                             : camera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity,
                         false);
                     return true;
-                case EEngineUniform.RightEyeViewMatrix:
+                case nameof(EEngineUniform.RightEyeViewMatrix):
                     value = new ProgramUniformValue(EShaderVarType._mat4, rightCamera?.Transform.InverseRenderMatrix ?? camera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity, false);
                     return true;
-                case EEngineUniform.PrevRightEyeViewMatrix:
+                case nameof(EEngineUniform.PrevRightEyeViewMatrix):
                     value = new ProgramUniformValue(
                         EShaderVarType._mat4,
                         VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalRightViewData) && temporalRightViewData.HistoryReady
@@ -2851,39 +2891,39 @@ public unsafe partial class VulkanRenderer
                             : rightCamera?.Transform.InverseRenderMatrix ?? camera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity,
                         false);
                     return true;
-                case EEngineUniform.InverseViewMatrix:
-                case EEngineUniform.LeftEyeInverseViewMatrix:
+                case nameof(EEngineUniform.InverseViewMatrix):
+                case nameof(EEngineUniform.LeftEyeInverseViewMatrix):
                     value = new ProgramUniformValue(EShaderVarType._mat4, camera?.Transform.RenderMatrix ?? Matrix4x4.Identity, false);
                     return true;
-                case EEngineUniform.RightEyeInverseViewMatrix:
+                case nameof(EEngineUniform.RightEyeInverseViewMatrix):
                     value = new ProgramUniformValue(EShaderVarType._mat4, rightCamera?.Transform.RenderMatrix ?? camera?.Transform.RenderMatrix ?? Matrix4x4.Identity, false);
                     return true;
-                case EEngineUniform.InverseProjMatrix:
-                case EEngineUniform.LeftEyeInverseProjMatrix:
+                case nameof(EEngineUniform.InverseProjMatrix):
+                case nameof(EEngineUniform.LeftEyeInverseProjMatrix):
                     value = new ProgramUniformValue(
                         EShaderVarType._mat4,
                         camera?.InverseProjectionMatrix ?? Matrix4x4.Identity,
                         false);
                     return true;
-                case EEngineUniform.RightEyeInverseProjMatrix:
+                case nameof(EEngineUniform.RightEyeInverseProjMatrix):
                     value = new ProgramUniformValue(
                         EShaderVarType._mat4,
                         rightCamera?.InverseProjectionMatrix ?? camera?.InverseProjectionMatrix ?? Matrix4x4.Identity,
                         false);
                     return true;
-                case EEngineUniform.ViewProjectionMatrix:
-                case EEngineUniform.LeftEyeViewProjectionMatrix:
+                case nameof(EEngineUniform.ViewProjectionMatrix):
+                case nameof(EEngineUniform.LeftEyeViewProjectionMatrix):
                     value = new ProgramUniformValue(EShaderVarType._mat4, camera?.ViewProjectionMatrix ?? Matrix4x4.Identity, false);
                     return true;
-                case EEngineUniform.RightEyeViewProjectionMatrix:
+                case nameof(EEngineUniform.RightEyeViewProjectionMatrix):
                     value = new ProgramUniformValue(EShaderVarType._mat4, rightCamera?.ViewProjectionMatrix ?? camera?.ViewProjectionMatrix ?? Matrix4x4.Identity, false);
                     return true;
-                case EEngineUniform.ProjMatrix:
-                case EEngineUniform.LeftEyeProjMatrix:
+                case nameof(EEngineUniform.ProjMatrix):
+                case nameof(EEngineUniform.LeftEyeProjMatrix):
                     value = new ProgramUniformValue(EShaderVarType._mat4, camera?.ProjectionMatrix ?? Matrix4x4.Identity, false);
                     return true;
-                case EEngineUniform.PrevProjMatrix:
-                case EEngineUniform.PrevLeftEyeProjMatrix:
+                case nameof(EEngineUniform.PrevProjMatrix):
+                case nameof(EEngineUniform.PrevLeftEyeProjMatrix):
                     value = new ProgramUniformValue(
                         EShaderVarType._mat4,
                         VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalProjectionData) && temporalProjectionData.HistoryReady
@@ -2891,10 +2931,10 @@ public unsafe partial class VulkanRenderer
                             : camera?.ProjectionMatrix ?? Matrix4x4.Identity,
                         false);
                     return true;
-                case EEngineUniform.RightEyeProjMatrix:
+                case nameof(EEngineUniform.RightEyeProjMatrix):
                     value = new ProgramUniformValue(EShaderVarType._mat4, rightCamera?.ProjectionMatrix ?? camera?.ProjectionMatrix ?? Matrix4x4.Identity, false);
                     return true;
-                case EEngineUniform.PrevRightEyeProjMatrix:
+                case nameof(EEngineUniform.PrevRightEyeProjMatrix):
                     value = new ProgramUniformValue(
                         EShaderVarType._mat4,
                         VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalRightProjectionData) && temporalRightProjectionData.HistoryReady
@@ -2902,46 +2942,46 @@ public unsafe partial class VulkanRenderer
                             : rightCamera?.ProjectionMatrix ?? camera?.ProjectionMatrix ?? Matrix4x4.Identity,
                         false);
                     return true;
-                case EEngineUniform.CameraPosition:
+                case nameof(EEngineUniform.CameraPosition):
                     value = new ProgramUniformValue(EShaderVarType._vec3, camera?.Transform.RenderTranslation ?? Vector3.Zero, false);
                     return true;
-                case EEngineUniform.CameraForward:
+                case nameof(EEngineUniform.CameraForward):
                     value = new ProgramUniformValue(EShaderVarType._vec3, camera?.Transform.RenderForward ?? Vector3.UnitZ, false);
                     return true;
-                case EEngineUniform.CameraUp:
+                case nameof(EEngineUniform.CameraUp):
                     value = new ProgramUniformValue(EShaderVarType._vec3, camera?.Transform.RenderUp ?? Vector3.UnitY, false);
                     return true;
-                case EEngineUniform.CameraRight:
+                case nameof(EEngineUniform.CameraRight):
                     value = new ProgramUniformValue(EShaderVarType._vec3, camera?.Transform.RenderRight ?? Vector3.UnitX, false);
                     return true;
-                case EEngineUniform.CameraNearZ:
+                case nameof(EEngineUniform.CameraNearZ):
                     value = new ProgramUniformValue(EShaderVarType._float, camera?.NearZ ?? 0f, false);
                     return true;
-                case EEngineUniform.CameraFarZ:
+                case nameof(EEngineUniform.CameraFarZ):
                     value = new ProgramUniformValue(EShaderVarType._float, camera?.FarZ ?? 0f, false);
                     return true;
-                case EEngineUniform.ScreenWidth:
+                case nameof(EEngineUniform.ScreenWidth):
                     value = new ProgramUniformValue(EShaderVarType._float, (float)area.Width, false);
                     return true;
-                case EEngineUniform.ScreenHeight:
+                case nameof(EEngineUniform.ScreenHeight):
                     value = new ProgramUniformValue(EShaderVarType._float, (float)area.Height, false);
                     return true;
-                case EEngineUniform.ScreenOrigin:
+                case nameof(EEngineUniform.ScreenOrigin):
                     value = new ProgramUniformValue(EShaderVarType._vec2, Vector2.Zero, false);
                     return true;
-                case EEngineUniform.DepthMode:
+                case nameof(EEngineUniform.DepthMode):
                     value = new ProgramUniformValue(EShaderVarType._int, (int)(camera?.DepthMode ?? XRCamera.EDepthMode.Normal), false);
                     return true;
-                case EEngineUniform.ClipSpaceYDirection:
+                case nameof(EEngineUniform.ClipSpaceYDirection):
                     value = new ProgramUniformValue(EShaderVarType._int, (int)RuntimeEngine.Rendering.Settings.ClipSpaceYDirection, false);
                     return true;
-                case EEngineUniform.ClipDepthRange:
+                case nameof(EEngineUniform.ClipDepthRange):
                     value = new ProgramUniformValue(EShaderVarType._int, (int)RuntimeEngine.Rendering.EffectiveClipDepthRange, false);
                     return true;
-                case EEngineUniform.FramebufferTextureYDirection:
+                case nameof(EEngineUniform.FramebufferTextureYDirection):
                     value = new ProgramUniformValue(EShaderVarType._int, (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeGraphicsApiKind.Vulkan), false);
                     return true;
-                case EEngineUniform.VRMode:
+                case nameof(EEngineUniform.VRMode):
                     value = new ProgramUniformValue(EShaderVarType._int, stereo ? 1 : 0, false);
                     return true;
             }
@@ -2952,27 +2992,280 @@ public unsafe partial class VulkanRenderer
         private static bool TryWriteUniformValue(Span<byte> destination, AutoUniformMember member, ProgramUniformValue value)
             => member.IsArray
                 ? TryWriteUniformArray(destination, member, value)
-                : TryWriteSingleUniform(destination, member.Offset, value.Type, value.Value);
+                : TryWriteSingleUniform(destination, member.Offset, value);
+
+        private static bool TryWriteSingleUniform(Span<byte> destination, uint offset, in ProgramUniformValue value)
+        {
+            if (!value.HasInlineValue)
+                return value.ReferenceValue is { } reference &&
+                    TryWriteSingleUniform(destination, offset, value.Type, reference);
+
+            if (offset >= (uint)destination.Length)
+                return false;
+
+            ref byte start = ref destination[(int)offset];
+            switch (value.Type)
+            {
+                case EShaderVarType._float:
+                    Unsafe.WriteUnaligned(ref start, value.Float);
+                    return true;
+                case EShaderVarType._int:
+                    Unsafe.WriteUnaligned(ref start, value.Int);
+                    return true;
+                case EShaderVarType._uint:
+                    Unsafe.WriteUnaligned(ref start, value.UInt);
+                    return true;
+                case EShaderVarType._bool:
+                    Unsafe.WriteUnaligned(ref start, value.Int != 0 ? 1 : 0);
+                    return true;
+                case EShaderVarType._double:
+                    Unsafe.WriteUnaligned(ref start, value.Double);
+                    return true;
+                case EShaderVarType._vec2:
+                    Unsafe.WriteUnaligned(ref start, value.Vector2);
+                    return true;
+                case EShaderVarType._vec3:
+                    Unsafe.WriteUnaligned(ref start, new Vector4(value.Vector3, 0f));
+                    return true;
+                case EShaderVarType._vec4:
+                    Unsafe.WriteUnaligned(ref start, value.Vector4);
+                    return true;
+                case EShaderVarType._dvec2:
+                    Unsafe.WriteUnaligned(ref start, new DVector2(value.DVector4.X, value.DVector4.Y));
+                    return true;
+                case EShaderVarType._dvec3:
+                case EShaderVarType._dvec4:
+                    Unsafe.WriteUnaligned(ref start, value.DVector4);
+                    return true;
+                case EShaderVarType._ivec2:
+                    Unsafe.WriteUnaligned(ref start, new IVector2(value.IVector4.X, value.IVector4.Y));
+                    return true;
+                case EShaderVarType._ivec3:
+                case EShaderVarType._ivec4:
+                    Unsafe.WriteUnaligned(ref start, value.IVector4);
+                    return true;
+                case EShaderVarType._uvec2:
+                    Unsafe.WriteUnaligned(ref start, new UVector2(value.UVector4.X, value.UVector4.Y));
+                    return true;
+                case EShaderVarType._uvec3:
+                case EShaderVarType._uvec4:
+                    Unsafe.WriteUnaligned(ref start, value.UVector4);
+                    return true;
+                case EShaderVarType._mat4:
+                    Unsafe.WriteUnaligned(ref start, value.Matrix4x4);
+                    return true;
+                default:
+                    return false;
+            }
+        }
 
         private static bool TryWriteUniformArray(Span<byte> destination, AutoUniformMember member, ProgramUniformValue value)
         {
             if (!value.IsArray || member.ArrayLength == 0 || member.ArrayStride == 0)
                 return false;
 
-            if (value.Value is not Array array)
-                return false;
+            object? arrayValue = value.ReferenceValue;
+            return arrayValue switch
+            {
+                float[] values when value.Type == EShaderVarType._float
+                    => TryWriteUnmanagedUniformArray(destination, member, values),
+                int[] values when value.Type is EShaderVarType._int or EShaderVarType._bool
+                    => TryWriteUnmanagedUniformArray(destination, member, values),
+                uint[] values when value.Type == EShaderVarType._uint
+                    => TryWriteUnmanagedUniformArray(destination, member, values),
+                bool[] values when value.Type == EShaderVarType._bool
+                    => TryWriteBooleanUniformArray(destination, member, values),
+                double[] values when value.Type == EShaderVarType._double
+                    => TryWriteUnmanagedUniformArray(destination, member, values),
+                Vector2[] values when value.Type == EShaderVarType._vec2
+                    => TryWriteUnmanagedUniformArray(destination, member, values),
+                Vector3[] values when value.Type == EShaderVarType._vec3
+                    => TryWriteVector3UniformArray(destination, member, values),
+                Vector4[] values when value.Type == EShaderVarType._vec4
+                    => TryWriteUnmanagedUniformArray(destination, member, values),
+                Matrix4x4[] values when value.Type == EShaderVarType._mat4
+                    => TryWriteUnmanagedUniformArray(destination, member, values),
+                DVector2[] values when value.Type == EShaderVarType._dvec2
+                    => TryWriteUnmanagedUniformArray(destination, member, values),
+                DVector3[] values when value.Type == EShaderVarType._dvec3
+                    => TryWriteDVector3UniformArray(destination, member, values),
+                DVector4[] values when value.Type == EShaderVarType._dvec4
+                    => TryWriteUnmanagedUniformArray(destination, member, values),
+                IVector2[] values when value.Type == EShaderVarType._ivec2
+                    => TryWriteUnmanagedUniformArray(destination, member, values),
+                IVector3[] values when value.Type == EShaderVarType._ivec3
+                    => TryWriteIVector3UniformArray(destination, member, values),
+                IVector4[] values when value.Type == EShaderVarType._ivec4
+                    => TryWriteUnmanagedUniformArray(destination, member, values),
+                UVector2[] values when value.Type == EShaderVarType._uvec2
+                    => TryWriteUnmanagedUniformArray(destination, member, values),
+                UVector3[] values when value.Type == EShaderVarType._uvec3
+                    => TryWriteUVector3UniformArray(destination, member, values),
+                UVector4[] values when value.Type == EShaderVarType._uvec4
+                    => TryWriteUnmanagedUniformArray(destination, member, values),
+                BoolVector2[] values when value.Type == EShaderVarType._bvec2
+                    => TryWriteBoolVector2UniformArray(destination, member, values),
+                BoolVector3[] values when value.Type == EShaderVarType._bvec3
+                    => TryWriteBoolVector3UniformArray(destination, member, values),
+                BoolVector4[] values when value.Type == EShaderVarType._bvec4
+                    => TryWriteBoolVector4UniformArray(destination, member, values),
+                object?[] values => TryWriteReferenceUniformArray(destination, member, value.Type, values),
+                _ => false,
+            };
+        }
 
-            int count = Math.Min(array.Length, (int)member.ArrayLength);
+        private static bool TryWriteUnmanagedUniformArray<T>(Span<byte> destination, AutoUniformMember member, T[] values)
+            where T : unmanaged
+        {
+            int count = Math.Min(values.Length, (int)member.ArrayLength);
             for (int i = 0; i < count; i++)
             {
-                object? element = array.GetValue(i);
+                uint offset = member.Offset + (uint)i * member.ArrayStride;
+                if (!TryWriteUniformArrayElement(destination, offset, values[i]))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryWriteBooleanUniformArray(Span<byte> destination, AutoUniformMember member, bool[] values)
+        {
+            int count = Math.Min(values.Length, (int)member.ArrayLength);
+            for (int i = 0; i < count; i++)
+            {
+                uint offset = member.Offset + (uint)i * member.ArrayStride;
+                if (!TryWriteUniformArrayElement(destination, offset, values[i] ? 1 : 0))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryWriteVector3UniformArray(Span<byte> destination, AutoUniformMember member, Vector3[] values)
+        {
+            int count = Math.Min(values.Length, (int)member.ArrayLength);
+            for (int i = 0; i < count; i++)
+            {
+                uint offset = member.Offset + (uint)i * member.ArrayStride;
+                if (!TryWriteUniformArrayElement(destination, offset, new Vector4(values[i], 0f)))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryWriteDVector3UniformArray(Span<byte> destination, AutoUniformMember member, DVector3[] values)
+        {
+            int count = Math.Min(values.Length, (int)member.ArrayLength);
+            for (int i = 0; i < count; i++)
+            {
+                uint offset = member.Offset + (uint)i * member.ArrayStride;
+                DVector3 vector = values[i];
+                if (!TryWriteUniformArrayElement(destination, offset, new DVector4(vector.X, vector.Y, vector.Z, 0.0)))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryWriteIVector3UniformArray(Span<byte> destination, AutoUniformMember member, IVector3[] values)
+        {
+            int count = Math.Min(values.Length, (int)member.ArrayLength);
+            for (int i = 0; i < count; i++)
+            {
+                uint offset = member.Offset + (uint)i * member.ArrayStride;
+                IVector3 vector = values[i];
+                if (!TryWriteUniformArrayElement(destination, offset, new IVector4(vector.X, vector.Y, vector.Z, 0)))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryWriteUVector3UniformArray(Span<byte> destination, AutoUniformMember member, UVector3[] values)
+        {
+            int count = Math.Min(values.Length, (int)member.ArrayLength);
+            for (int i = 0; i < count; i++)
+            {
+                uint offset = member.Offset + (uint)i * member.ArrayStride;
+                UVector3 vector = values[i];
+                if (!TryWriteUniformArrayElement(destination, offset, new UVector4(vector.X, vector.Y, vector.Z, 0)))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryWriteBoolVector2UniformArray(Span<byte> destination, AutoUniformMember member, BoolVector2[] values)
+        {
+            int count = Math.Min(values.Length, (int)member.ArrayLength);
+            for (int i = 0; i < count; i++)
+            {
+                uint offset = member.Offset + (uint)i * member.ArrayStride;
+                BoolVector2 vector = values[i];
+                if (!TryWriteUniformArrayElement(destination, offset, new IVector2(vector.X ? 1 : 0, vector.Y ? 1 : 0)))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryWriteBoolVector3UniformArray(Span<byte> destination, AutoUniformMember member, BoolVector3[] values)
+        {
+            int count = Math.Min(values.Length, (int)member.ArrayLength);
+            for (int i = 0; i < count; i++)
+            {
+                uint offset = member.Offset + (uint)i * member.ArrayStride;
+                BoolVector3 vector = values[i];
+                if (!TryWriteUniformArrayElement(destination, offset, new IVector4(vector.X ? 1 : 0, vector.Y ? 1 : 0, vector.Z ? 1 : 0, 0)))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryWriteBoolVector4UniformArray(Span<byte> destination, AutoUniformMember member, BoolVector4[] values)
+        {
+            int count = Math.Min(values.Length, (int)member.ArrayLength);
+            for (int i = 0; i < count; i++)
+            {
+                uint offset = member.Offset + (uint)i * member.ArrayStride;
+                BoolVector4 vector = values[i];
+                if (!TryWriteUniformArrayElement(destination, offset, new IVector4(vector.X ? 1 : 0, vector.Y ? 1 : 0, vector.Z ? 1 : 0, vector.W ? 1 : 0)))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryWriteReferenceUniformArray(
+            Span<byte> destination,
+            AutoUniformMember member,
+            EShaderVarType type,
+            object?[] values)
+        {
+            int count = Math.Min(values.Length, (int)member.ArrayLength);
+            for (int i = 0; i < count; i++)
+            {
+                object? element = values[i];
                 if (element is null)
                     continue;
 
                 uint offset = member.Offset + (uint)i * member.ArrayStride;
-                TryWriteSingleUniform(destination, offset, value.Type, element);
+                if (!TryWriteSingleUniform(destination, offset, type, element))
+                    return false;
             }
 
+            return true;
+        }
+
+        private static bool TryWriteUniformArrayElement<T>(Span<byte> destination, uint offset, T value)
+            where T : unmanaged
+        {
+            if (offset > (uint)destination.Length || Unsafe.SizeOf<T>() > destination.Length - (int)offset)
+                return false;
+
+            Unsafe.WriteUnaligned(ref destination[(int)offset], value);
             return true;
         }
 

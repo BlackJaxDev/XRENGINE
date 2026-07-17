@@ -120,29 +120,29 @@ namespace XREngine.Rendering.Vulkan
         private uint _boundIndexCount;
         private VulkanIndirectDrawState? _pendingIndirectDrawState;
 
-        private readonly record struct VulkanIndirectDrawState(
+        internal readonly record struct VulkanIndirectDrawState(
             XRRenderProgram Program,
             XRMaterial Material,
             Matrix4x4 ModelMatrix);
 
-        internal IDisposable PushIndirectDrawState(XRRenderProgram program, XRMaterial material, Matrix4x4 modelMatrix)
+        internal IndirectDrawStateScope PushIndirectDrawState(XRRenderProgram program, XRMaterial material, Matrix4x4 modelMatrix)
         {
             VulkanIndirectDrawState? previous = _pendingIndirectDrawState;
             _pendingIndirectDrawState = new VulkanIndirectDrawState(program, material, modelMatrix);
             return new IndirectDrawStateScope(this, previous);
         }
 
-        private sealed class IndirectDrawStateScope(VulkanRenderer renderer, VulkanIndirectDrawState? previous) : IDisposable
+        /// <summary>
+        /// Restores the previously captured indirect draw state without allocating
+        /// one reference object per material bucket.
+        /// </summary>
+        internal readonly struct IndirectDrawStateScope(
+            VulkanRenderer? renderer,
+            VulkanIndirectDrawState? previous) : IDisposable
         {
-            private bool _disposed;
-
             public void Dispose()
             {
-                if (_disposed)
-                    return;
-
-                renderer._pendingIndirectDrawState = previous;
-                _disposed = true;
+                renderer?._pendingIndirectDrawState = previous;
             }
         }
 
@@ -170,8 +170,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            var preparedProgram = GetOrCreateAPIRenderObject(state.Program) as VkRenderProgram;
-            if (preparedProgram is null)
+            if (GetOrCreateAPIRenderObject(state.Program) is not VkRenderProgram preparedProgram)
             {
                 Debug.VulkanWarning("{0}: Vulkan program wrapper is unavailable for indirect draw program '{1}'.", contextName, state.Program.Name ?? "<unnamed>");
                 return false;

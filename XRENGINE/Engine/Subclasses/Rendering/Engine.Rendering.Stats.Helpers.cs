@@ -20,7 +20,19 @@ namespace XREngine
                     if (string.IsNullOrWhiteSpace(bindingClass))
                         return "sampled-image";
 
-                    return bindingClass.Trim().ToLowerInvariant();
+                    ReadOnlySpan<char> value = bindingClass.AsSpan().Trim();
+                    if (value.Equals("storage-image", StringComparison.OrdinalIgnoreCase))
+                        return "storage-image";
+                    if (value.Equals("uniform-buffer", StringComparison.OrdinalIgnoreCase))
+                        return "uniform-buffer";
+                    if (value.Equals("storage-buffer", StringComparison.OrdinalIgnoreCase))
+                        return "storage-buffer";
+                    if (value.Equals("texel-buffer", StringComparison.OrdinalIgnoreCase))
+                        return "texel-buffer";
+                    if (value.Equals("sampled-image", StringComparison.OrdinalIgnoreCase))
+                        return "sampled-image";
+
+                    return bindingClass;
                 }
 
                 private static string AppendDiagnosticToken(string existing, string token, int maxLength = 2048)

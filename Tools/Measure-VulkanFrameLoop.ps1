@@ -31,7 +31,14 @@ param(
     [int]$ShutdownGraceSec = 20,
     [int]$NoSampleHangSec = 15,
     [int]$RetainedRunCount = 5,
-    [string]$RunLabel = 'vulkan-frame-loop'
+    [string]$RunLabel = 'vulkan-frame-loop',
+    [ValidateSet('Configured', 'Desktop', 'Emulated', 'MonadoOpenXR', 'OpenVR', 'OpenXR')]
+    [string]$UnitTestVrMode = 'Desktop',
+    [ValidateSet('Configured', 'Disabled', 'CpuQueryAsync', 'CpuSoftwareOcclusion', 'GpuHiZ')]
+    [string]$OcclusionCullingMode = 'Configured',
+    [ValidateSet('Configured', 'Off', 'StandardValidation', 'SyncValidation', 'GpuAssisted', 'BestPractices', 'CrashDiagnostics', 'RenderDocFriendly')]
+    [string]$VulkanDiagnosticPreset = 'Configured',
+    [switch]$VulkanCommandBufferLabels
 )
 
 $ErrorActionPreference = 'Stop'
@@ -64,6 +71,9 @@ $arguments = @{
     NoSampleHangSec = $NoSampleHangSec
     RetainedRunCount = $RetainedRunCount
     RunLabel = $RunLabel
+    OcclusionCullingMode = $OcclusionCullingMode
+    VulkanDiagnosticPreset = $VulkanDiagnosticPreset
+    UnitTestVrMode = $UnitTestVrMode
 }
 
 if ($GpuTimestampDense) {
@@ -92,6 +102,10 @@ if ($FailOnSteadyStateCommandBufferAllocations) {
 
 if ($NoStabilityGate) {
     $arguments['NoStabilityGate'] = $true
+}
+
+if ($VulkanCommandBufferLabels) {
+    $arguments['VulkanCommandBufferLabels'] = $true
 }
 
 & $measureScript @arguments

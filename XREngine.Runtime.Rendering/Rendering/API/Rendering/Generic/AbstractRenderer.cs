@@ -539,7 +539,10 @@ namespace XREngine.Rendering
             AbstractRenderAPIObject? obj;
             using (_roCacheLock.EnterScope())
             {
-                obj = _renderObjectCache.GetOrAdd(renderObject, _ => CreateAPIRenderObject(renderObject));
+                obj = _renderObjectCache.GetOrAdd(
+                    renderObject,
+                    static (key, renderer) => renderer.CreateAPIRenderObject(key),
+                    this);
                 if (generateNow && !obj.IsGenerated)
                     obj.Generate();
             }

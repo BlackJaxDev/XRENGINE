@@ -2,6 +2,7 @@ using Silk.NET.Vulkan;
 using Buffer = Silk.NET.Vulkan.Buffer;
 using System;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -775,9 +776,13 @@ namespace XREngine.Rendering.Vulkan
             }
 
             vkProgram.Generate();
-            if (!vkProgram.Link())
+            if (!vkProgram.Link(program.AllowAsyncBackendCompile))
             {
-                Debug.VulkanWarning($"DispatchCompute skipped: failed to link program '{program.Name ?? "UnnamedProgram"}'.");
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.DispatchCompute.ProgramPending.{RuntimeHelpers.GetHashCode(program)}",
+                    TimeSpan.FromSeconds(1),
+                    "DispatchCompute deferred: program '{0}' is not ready.",
+                    program.Name ?? "UnnamedProgram");
                 return;
             }
 

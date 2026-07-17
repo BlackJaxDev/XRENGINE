@@ -17,6 +17,8 @@ namespace XREngine.Rendering.Resources;
 /// </remarks>
 public sealed class RenderResourceRegistry
 {
+    private static readonly int EmptyDescriptorSignature = new HashCode().ToHashCode();
+
     // Reads happen on the render thread (e.g. pipeline FBO creation) while
     // writes can come from worker threads (asset/pipeline registration).
     // Using ConcurrentDictionary so concurrent reader+writer access doesn't
@@ -31,8 +33,13 @@ public sealed class RenderResourceRegistry
     // descriptor set changes.
     private readonly object _descriptorSignatureLock = new();
     private int _descriptorRevision;
-    private int _cachedDescriptorSignature;
-    private int _cachedDescriptorSignatureRevision = -1;
+    private int _cachedDescriptorSignature = EmptyDescriptorSignature;
+    private int _cachedDescriptorSignatureRevision;
+    private readonly object _instanceSnapshotLock = new();
+    private int _instanceRevision;
+    private int _cachedInstanceSnapshotRevision;
+    private XRTexture[] _cachedTextureInstances = [];
+    private XRRenderBuffer[] _cachedRenderBufferInstances = [];
 
     /// <summary>
     /// Snapshot-compatible view of all texture records keyed by logical resource name.
@@ -58,6 +65,11 @@ public sealed class RenderResourceRegistry
     /// Monotonic counter that changes whenever the registered descriptor set changes materially.
     /// </summary>
     public int DescriptorRevision => Volatile.Read(ref _descriptorRevision);
+
+    /// <summary>
+    /// Monotonic counter for changes to the live texture/renderbuffer bindings.
+    /// </summary>
+    internal int InstanceRevision => Volatile.Read(ref _instanceRevision);
 
     /// <summary>
     /// Stable, order-independent signature for the descriptor set at the current revision.
@@ -192,7 +204,11 @@ public sealed class RenderResourceRegistry
             record = RegisterTextureDescriptor(descriptor);
         }
 
-        record.Bind(texture, ownsInstance);
+        if (!ReferenceEquals(record.Instance, texture) || record.OwnsInstance != ownsInstance)
+        {
+            record.Bind(texture, ownsInstance);
+            MarkInstancesChanged();
+        }
     }
 
     /// <summary>
@@ -295,7 +311,11 @@ public sealed class RenderResourceRegistry
             record = RegisterRenderBufferDescriptor(descriptor);
         }
 
-        record.Bind(renderBuffer);
+        if (!ReferenceEquals(record.Instance, renderBuffer))
+        {
+            record.Bind(renderBuffer);
+            MarkInstancesChanged();
+        }
     }
 
     /// <summary>
@@ -369,6 +389,15 @@ public sealed class RenderResourceRegistry
     }
 
     /// <summary>
+    /// Returns a stable snapshot of bound textures, rebuilt only after an instance mutation.
+    /// </summary>
+    internal XRTexture[] GetTextureInstanceSnapshot()
+    {
+        RefreshInstanceSnapshotsIfNeeded();
+        return _cachedTextureInstances;
+    }
+
+    /// <summary>
     /// Enumerates currently bound framebuffer instances, skipping descriptor-only records.
     /// </summary>
     public IEnumerable<XRFrameBuffer> EnumerateFrameBufferInstances()
@@ -399,6 +428,15 @@ public sealed class RenderResourceRegistry
     }
 
     /// <summary>
+    /// Returns a stable snapshot of bound renderbuffers, rebuilt only after an instance mutation.
+    /// </summary>
+    internal XRRenderBuffer[] GetRenderBufferInstanceSnapshot()
+    {
+        RefreshInstanceSnapshotsIfNeeded();
+        return _cachedRenderBufferInstances;
+    }
+
+    /// <summary>
     /// Removes a texture descriptor and destroys its live texture instance.
     /// </summary>
     /// <remarks>
@@ -414,6 +452,7 @@ public sealed class RenderResourceRegistry
             DestroyFrameBuffersReferencing(texture);
 
         record.DestroyInstance();
+        MarkInstancesChanged();
         MarkDescriptorsChanged();
     }
 
@@ -449,6 +488,7 @@ public sealed class RenderResourceRegistry
         if (_renderBuffers.TryRemove(name, out RenderRenderBufferResource? record))
         {
             record.DestroyInstance();
+            MarkInstancesChanged();
             MarkDescriptorsChanged();
         }
     }
@@ -473,6 +513,8 @@ public sealed class RenderResourceRegistry
         foreach (RenderRenderBufferResource record in _renderBuffers.Values)
             record.DestroyInstance();
 
+        MarkInstancesChanged();
+
         if (!retainDescriptors)
         {
             bool hadDescriptors =
@@ -490,6 +532,33 @@ public sealed class RenderResourceRegistry
                 MarkDescriptorsChanged();
         }
     }
+
+    private void RefreshInstanceSnapshotsIfNeeded()
+    {
+        int revision = Volatile.Read(ref _instanceRevision);
+        if (Volatile.Read(ref _cachedInstanceSnapshotRevision) == revision)
+            return;
+
+        lock (_instanceSnapshotLock)
+        {
+            revision = Volatile.Read(ref _instanceRevision);
+            if (_cachedInstanceSnapshotRevision == revision)
+                return;
+
+            _cachedTextureInstances = _textures.Values
+                .Select(static record => record.Instance)
+                .OfType<XRTexture>()
+                .ToArray();
+            _cachedRenderBufferInstances = _renderBuffers.Values
+                .Select(static record => record.Instance)
+                .OfType<XRRenderBuffer>()
+                .ToArray();
+            Volatile.Write(ref _cachedInstanceSnapshotRevision, revision);
+        }
+    }
+
+    private void MarkInstancesChanged()
+        => Interlocked.Increment(ref _instanceRevision);
 
     /// <summary>
     /// Destroys live framebuffers that still reference a texture being removed.

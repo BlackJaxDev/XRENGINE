@@ -85,14 +85,31 @@ public unsafe partial class VulkanRenderer
 
     private QueueOverlapMetrics CaptureQueueOverlapMetrics(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
-        bool hasMetadata = passMetadata is { Count: > 0 };
-        int computePassCount = hasMetadata ? passMetadata!.Count(static p => p.Stage == ERenderGraphPassStage.Compute) : 0;
-        int transferUsageCount = hasMetadata
-            ? passMetadata!.Sum(static p => p.ResourceUsages.Count(static u => u.ResourceType is ERenderPassResourceType.TransferSource or ERenderPassResourceType.TransferDestination))
-            : 0;
-        int overlapCandidatePassCount = hasMetadata
-            ? passMetadata!.Count(IsQueueOverlapCandidatePass)
-            : 0;
+        int computePassCount = 0;
+        int transferUsageCount = 0;
+        int overlapCandidatePassCount = 0;
+        if (passMetadata is IReadOnlyList<RenderPassMetadata> passList)
+        {
+            for (int passIndex = 0; passIndex < passList.Count; passIndex++)
+            {
+                AccumulateQueueOverlapMetrics(
+                    passList[passIndex],
+                    ref computePassCount,
+                    ref transferUsageCount,
+                    ref overlapCandidatePassCount);
+            }
+        }
+        else if (passMetadata is not null)
+        {
+            foreach (RenderPassMetadata pass in passMetadata)
+            {
+                AccumulateQueueOverlapMetrics(
+                    pass,
+                    ref computePassCount,
+                    ref transferUsageCount,
+                    ref overlapCandidatePassCount);
+            }
+        }
 
         int queueOwnershipTransfers = RuntimeEngine.Rendering.Stats.Vulkan.VulkanQueueOwnershipTransfers;
         int stageFlushes = RuntimeEngine.Rendering.Stats.Vulkan.VulkanBarrierStageFlushes;
@@ -122,6 +139,25 @@ public unsafe partial class VulkanRenderer
             queueOwnershipTransfers,
             stageFlushes,
             frameDelta);
+    }
+
+    private static void AccumulateQueueOverlapMetrics(
+        RenderPassMetadata pass,
+        ref int computePassCount,
+        ref int transferUsageCount,
+        ref int overlapCandidatePassCount)
+    {
+        if (pass.Stage == ERenderGraphPassStage.Compute)
+            computePassCount++;
+        if (IsQueueOverlapCandidatePass(pass))
+            overlapCandidatePassCount++;
+
+        for (int usageIndex = 0; usageIndex < pass.ResourceUsages.Count; usageIndex++)
+        {
+            ERenderPassResourceType resourceType = pass.ResourceUsages[usageIndex].ResourceType;
+            if (resourceType is ERenderPassResourceType.TransferSource or ERenderPassResourceType.TransferDestination)
+                transferUsageCount++;
+        }
     }
 
     private static bool IsQueueOverlapCandidatePass(RenderPassMetadata pass)

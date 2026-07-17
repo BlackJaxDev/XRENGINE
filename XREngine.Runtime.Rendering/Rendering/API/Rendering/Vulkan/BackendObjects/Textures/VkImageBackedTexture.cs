@@ -405,13 +405,16 @@ public unsafe partial class VulkanRenderer
             lock (_imageStateLock)
             {
                 if (allowSynchronousUpload &&
+                    !IsDescriptorReadyNoLock() &&
                     !TryEnsureDescriptorReadyForVulkanUseNoThrow(reason))
                 {
                     snapshot = default;
                     return false;
                 }
 
-                if (!RefreshPhysicalGroupImageIfStaleNoLock())
+                if (_physicalGroup is not null &&
+                    (!_physicalGroup.IsAllocated || _physicalGroup.Image.Handle != _image.Handle) &&
+                    !RefreshPhysicalGroupImageIfStaleNoLock())
                 {
                     snapshot = default;
                     return false;

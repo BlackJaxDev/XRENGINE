@@ -6,6 +6,7 @@
 using XREngine.Extensions;
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
@@ -382,13 +383,14 @@ namespace XREngine.Rendering.Commands
             if (requiredSize <= buffer.ElementCount)
                 return;
 
+            SyncLodTransitionBufferFromGpu();
             buffer.Resize(requiredSize);
             buffer.CommitDirtyBytes(0u, buffer.Length);
         }
 
         private void SyncLodTransitionBufferFromGpu()
         {
-            if (_lodTransitionBuffer is null)
+            if (_lodTransitionBuffer is null || Volatile.Read(ref _lodTransitionGpuWritePending) == 0)
                 return;
 
             if (_lodTransitionBuffer.ActivelyMapping.Count == 0)
@@ -404,6 +406,36 @@ namespace XREngine.Rendering.Commands
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.ShaderStorage);
 
             Memory.Move(cpuAddress, mapped, _lodTransitionBuffer.Length);
+            Interlocked.Exchange(ref _lodTransitionGpuWritePending, 0);
+        }
+
+        /// <summary>
+        /// Marks the LOD transition storage as GPU-authored so a later structural CPU edit
+        /// preserves those transition states. Initial scene population remains upload-only
+        /// and therefore does not map a readback buffer before the first GPU dispatch.
+        /// </summary>
+        internal void MarkLodTransitionBufferGpuWritten()
+            => Volatile.Write(ref _lodTransitionGpuWritePending, 1);
+
+        private void QueueCpuLodTransitionWrite(uint index)
+            => _lodTransitionCpuDirtyIndices.Add(index);
+
+        private void FlushCpuLodTransitionWrites()
+        {
+            if (_lodTransitionCpuDirtyIndices.Count == 0 || _lodTransitionBuffer is null)
+                return;
+
+            uint elementSize = _lodTransitionBuffer.ElementSize;
+            if (elementSize == 0u)
+                elementSize = LodTransitionUIntCount * sizeof(uint);
+
+            for (int i = 0; i < _lodTransitionCpuDirtyIndices.Count; ++i)
+            {
+                uint index = _lodTransitionCpuDirtyIndices[i];
+                _lodTransitionBuffer.PushSubData((int)(index * elementSize), elementSize);
+            }
+
+            _lodTransitionCpuDirtyIndices.Clear();
         }
 
         /// <summary>
@@ -671,6 +703,8 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _allLoadedTransparencyMetadataBuffer;
     /// <summary>Per-command LOD transition state shared across frames.</summary>
     private XRDataBuffer? _lodTransitionBuffer;
+    private int _lodTransitionGpuWritePending;
+    private readonly List<uint> _lodTransitionCpuDirtyIndices = [];
 
         /// <summary>Updating buffer - written by Add/Remove operations. Swapped to render buffer.</summary>
         private XRDataBuffer? _updatingCommandsBuffer;
@@ -840,7 +874,6 @@ namespace XREngine.Rendering.Commands
             uint safeRequired = Math.Max(requiredCapacity, MinCommandCount);
             using (_lock.EnterScope())
             {
-                SyncLodTransitionBufferFromGpu();
                 VerifyUpdatingBufferSize(safeRequired);
                 VerifyCommandBufferSize(safeRequired);
                 EnsureDrawIndexedSoACapacity(safeRequired);
