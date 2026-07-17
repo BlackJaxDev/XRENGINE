@@ -43,6 +43,20 @@ namespace XREngine
                     private static int _vulkanIndexBufferBindSkips;
                     private static int _vulkanPipelineCacheLookupHits;
                     private static int _vulkanPipelineCacheLookupMisses;
+                    private static int _vulkanDriverPipelineCachePersistedHits;
+                    private static int _vulkanDriverPipelineCacheRuntimeHits;
+                    private static int _vulkanDriverPipelineCacheMisses;
+                    private static int _vulkanDriverPipelineCacheUnknown;
+                    private static int _vulkanPipelineCompileRequiredCount;
+                    private static int _vulkanPipelineCompileCompletedCount;
+                    private static int _vulkanPipelineBackgroundCompileCompletedCount;
+                    private static long _vulkanPipelineCompileTicks;
+                    private static long _vulkanPipelineCompileMaxTicks;
+                    private static int _vulkanPipelineAsyncQueuedCount;
+                    private static int _vulkanPipelineQueueRejectedCount;
+                    private static int _vulkanPipelineDrawNotReadyCount;
+                    private static int _vulkanPipelineQueueDepthHighWater;
+                    private static int _vulkanPipelineQueueCapacity;
                     private static string _vulkanPipelineCacheMissSummary = string.Empty;
                     private static long _vulkanRequestedDraws;
                     private static long _vulkanCulledDraws;
@@ -67,7 +81,22 @@ namespace XREngine
                     private static long _vulkanFrameAcquireBridgeSubmitTicks;
                     private static long _vulkanFrameWaitSwapchainImageTicks;
                     private static long _vulkanFrameResetDynamicUniformRingTicks;
+                    private static long _vulkanFrameSnapshotImGuiOverlayTicks;
+                    private static long _vulkanFrameRecordSceneCommandBufferTicks;
+                    private static long _vulkanFrameRecordImGuiOverlayTicks;
+                    private static long _vulkanFrameRecordDynamicUiTextOverlayTicks;
                     private static long _vulkanRecordCommandBufferAllocatedBytes;
+                    private static int _vulkanCommandBufferDecisionReasonMask;
+                    private static long _vulkanCommandBufferDecisionVisibilityGeneration;
+                    private static long _vulkanCommandBufferDecisionStructuralSignature;
+                    private static long _vulkanCommandBufferDecisionDescriptorGeneration;
+                    private static int _vulkanCommandBufferDecisionSwapchainSlot = -1;
+                    private static readonly long[] _vulkanCpuStageTicks = new long[(int)EVulkanCpuStage.Count];
+                    private static readonly long[] _lastFrameVulkanCpuStageTicks = new long[(int)EVulkanCpuStage.Count];
+                    private static readonly long[] _vulkanCpuStageAllocatedBytes = new long[(int)EVulkanCpuStage.Count];
+                    private static readonly long[] _lastFrameVulkanCpuStageAllocatedBytes = new long[(int)EVulkanCpuStage.Count];
+                    private static readonly long[] _vulkanCpuStageAllocationHighWaterBytes = new long[(int)EVulkanCpuStage.Count];
+                    private static readonly long[] _lastFrameVulkanCpuStageAllocationHighWaterBytes = new long[(int)EVulkanCpuStage.Count];
                     private static int _lastFrameVulkanIndirectCountPathCalls;
                     private static int _lastFrameVulkanIndirectNonCountPathCalls;
                     private static int _lastFrameVulkanIndirectLoopFallbackCalls;
@@ -100,6 +129,20 @@ namespace XREngine
                     private static int _lastFrameVulkanIndexBufferBindSkips;
                     private static int _lastFrameVulkanPipelineCacheLookupHits;
                     private static int _lastFrameVulkanPipelineCacheLookupMisses;
+                    private static int _lastFrameVulkanDriverPipelineCachePersistedHits;
+                    private static int _lastFrameVulkanDriverPipelineCacheRuntimeHits;
+                    private static int _lastFrameVulkanDriverPipelineCacheMisses;
+                    private static int _lastFrameVulkanDriverPipelineCacheUnknown;
+                    private static int _lastFrameVulkanPipelineCompileRequiredCount;
+                    private static int _lastFrameVulkanPipelineCompileCompletedCount;
+                    private static int _lastFrameVulkanPipelineBackgroundCompileCompletedCount;
+                    private static long _lastFrameVulkanPipelineCompileTicks;
+                    private static long _lastFrameVulkanPipelineCompileMaxTicks;
+                    private static int _lastFrameVulkanPipelineAsyncQueuedCount;
+                    private static int _lastFrameVulkanPipelineQueueRejectedCount;
+                    private static int _lastFrameVulkanPipelineDrawNotReadyCount;
+                    private static int _lastFrameVulkanPipelineQueueDepthHighWater;
+                    private static int _lastFrameVulkanPipelineQueueCapacity;
                     private static string _lastFrameVulkanPipelineCacheMissSummary = string.Empty;
                     private static long _lastFrameVulkanRequestedDraws;
                     private static long _lastFrameVulkanCulledDraws;
@@ -124,7 +167,16 @@ namespace XREngine
                     private static long _lastFrameVulkanFrameAcquireBridgeSubmitTicks;
                     private static long _lastFrameVulkanFrameWaitSwapchainImageTicks;
                     private static long _lastFrameVulkanFrameResetDynamicUniformRingTicks;
+                    private static long _lastFrameVulkanFrameSnapshotImGuiOverlayTicks;
+                    private static long _lastFrameVulkanFrameRecordSceneCommandBufferTicks;
+                    private static long _lastFrameVulkanFrameRecordImGuiOverlayTicks;
+                    private static long _lastFrameVulkanFrameRecordDynamicUiTextOverlayTicks;
                     private static long _lastFrameVulkanRecordCommandBufferAllocatedBytes;
+                    private static int _lastFrameVulkanCommandBufferDecisionReasonMask;
+                    private static long _lastFrameVulkanCommandBufferDecisionVisibilityGeneration;
+                    private static long _lastFrameVulkanCommandBufferDecisionStructuralSignature;
+                    private static long _lastFrameVulkanCommandBufferDecisionDescriptorGeneration;
+                    private static int _lastFrameVulkanCommandBufferDecisionSwapchainSlot = -1;
                     private static int _vulkanDeviceLocalAllocationCount;
                     private static long _vulkanDeviceLocalAllocatedBytes;
                     private static int _vulkanUploadAllocationCount;
@@ -413,6 +465,20 @@ namespace XREngine
                     public static int VulkanIndexBufferBindSkips => _lastFrameVulkanIndexBufferBindSkips;
                     public static int VulkanPipelineCacheLookupHits => _lastFrameVulkanPipelineCacheLookupHits;
                     public static int VulkanPipelineCacheLookupMisses => _lastFrameVulkanPipelineCacheLookupMisses;
+                    public static int VulkanDriverPipelineCachePersistedHits => _lastFrameVulkanDriverPipelineCachePersistedHits;
+                    public static int VulkanDriverPipelineCacheRuntimeHits => _lastFrameVulkanDriverPipelineCacheRuntimeHits;
+                    public static int VulkanDriverPipelineCacheMisses => _lastFrameVulkanDriverPipelineCacheMisses;
+                    public static int VulkanDriverPipelineCacheUnknown => _lastFrameVulkanDriverPipelineCacheUnknown;
+                    public static int VulkanPipelineCompileRequiredCount => _lastFrameVulkanPipelineCompileRequiredCount;
+                    public static int VulkanPipelineCompileCompletedCount => _lastFrameVulkanPipelineCompileCompletedCount;
+                    public static int VulkanPipelineBackgroundCompileCompletedCount => _lastFrameVulkanPipelineBackgroundCompileCompletedCount;
+                    public static double VulkanPipelineCompileTotalMs => TimeSpan.FromTicks(_lastFrameVulkanPipelineCompileTicks).TotalMilliseconds;
+                    public static double VulkanPipelineCompileMaxMs => TimeSpan.FromTicks(_lastFrameVulkanPipelineCompileMaxTicks).TotalMilliseconds;
+                    public static int VulkanPipelineAsyncQueuedCount => _lastFrameVulkanPipelineAsyncQueuedCount;
+                    public static int VulkanPipelineQueueRejectedCount => _lastFrameVulkanPipelineQueueRejectedCount;
+                    public static int VulkanPipelineDrawNotReadyCount => _lastFrameVulkanPipelineDrawNotReadyCount;
+                    public static int VulkanPipelineQueueDepthHighWater => _lastFrameVulkanPipelineQueueDepthHighWater;
+                    public static int VulkanPipelineQueueCapacity => _lastFrameVulkanPipelineQueueCapacity;
                     public static string VulkanPipelineCacheMissSummary => _lastFrameVulkanPipelineCacheMissSummary;
                     public static long VulkanRequestedDraws => _lastFrameVulkanRequestedDraws;
                     public static long VulkanCulledDraws => _lastFrameVulkanCulledDraws;
@@ -431,6 +497,10 @@ namespace XREngine
                     public static double VulkanFrameWaitFenceMs => TimeSpan.FromTicks(_lastFrameVulkanFrameWaitFenceTicks).TotalMilliseconds;
                     public static double VulkanFrameAcquireImageMs => TimeSpan.FromTicks(_lastFrameVulkanFrameAcquireImageTicks).TotalMilliseconds;
                     public static double VulkanFrameRecordCommandBufferMs => TimeSpan.FromTicks(_lastFrameVulkanFrameRecordCommandBufferTicks).TotalMilliseconds;
+                    public static double VulkanFrameSnapshotImGuiOverlayMs => TimeSpan.FromTicks(_lastFrameVulkanFrameSnapshotImGuiOverlayTicks).TotalMilliseconds;
+                    public static double VulkanFrameRecordSceneCommandBufferMs => TimeSpan.FromTicks(_lastFrameVulkanFrameRecordSceneCommandBufferTicks).TotalMilliseconds;
+                    public static double VulkanFrameRecordImGuiOverlayMs => TimeSpan.FromTicks(_lastFrameVulkanFrameRecordImGuiOverlayTicks).TotalMilliseconds;
+                    public static double VulkanFrameRecordDynamicUiTextOverlayMs => TimeSpan.FromTicks(_lastFrameVulkanFrameRecordDynamicUiTextOverlayTicks).TotalMilliseconds;
                     public static double VulkanFrameSubmitMs => TimeSpan.FromTicks(_lastFrameVulkanFrameSubmitTicks).TotalMilliseconds;
                     public static double VulkanFrameTrimMs => TimeSpan.FromTicks(_lastFrameVulkanFrameTrimTicks).TotalMilliseconds;
                     public static double VulkanFramePresentMs => TimeSpan.FromTicks(_lastFrameVulkanFramePresentTicks).TotalMilliseconds;
@@ -442,6 +512,18 @@ namespace XREngine
                     public static double VulkanFrameWaitSwapchainImageMs => TimeSpan.FromTicks(_lastFrameVulkanFrameWaitSwapchainImageTicks).TotalMilliseconds;
                     public static double VulkanFrameResetDynamicUniformRingMs => TimeSpan.FromTicks(_lastFrameVulkanFrameResetDynamicUniformRingTicks).TotalMilliseconds;
                     public static long VulkanRecordCommandBufferAllocatedBytes => _lastFrameVulkanRecordCommandBufferAllocatedBytes;
+                    public static EVulkanCommandBufferDecisionReason VulkanCommandBufferDecisionReasonMask
+                        => (EVulkanCommandBufferDecisionReason)_lastFrameVulkanCommandBufferDecisionReasonMask;
+                    public static long VulkanCommandBufferDecisionVisibilityGeneration => _lastFrameVulkanCommandBufferDecisionVisibilityGeneration;
+                    public static ulong VulkanCommandBufferDecisionStructuralSignature => unchecked((ulong)_lastFrameVulkanCommandBufferDecisionStructuralSignature);
+                    public static ulong VulkanCommandBufferDecisionDescriptorGeneration => unchecked((ulong)_lastFrameVulkanCommandBufferDecisionDescriptorGeneration);
+                    public static int VulkanCommandBufferDecisionSwapchainSlot => _lastFrameVulkanCommandBufferDecisionSwapchainSlot;
+                    public static double VulkanCpuStageMs(EVulkanCpuStage stage)
+                        => TimeSpan.FromTicks(Volatile.Read(ref _lastFrameVulkanCpuStageTicks[(int)stage])).TotalMilliseconds;
+                    public static long VulkanCpuStageAllocatedBytes(EVulkanCpuStage stage)
+                        => Volatile.Read(ref _lastFrameVulkanCpuStageAllocatedBytes[(int)stage]);
+                    public static long VulkanCpuStageAllocationHighWaterBytes(EVulkanCpuStage stage)
+                        => Volatile.Read(ref _lastFrameVulkanCpuStageAllocationHighWaterBytes[(int)stage]);
                     public static int VulkanDeviceLocalAllocationCount => _lastFrameVulkanDeviceLocalAllocationCount;
                     public static long VulkanDeviceLocalAllocatedBytes => _lastFrameVulkanDeviceLocalAllocatedBytes;
                     public static int VulkanUploadAllocationCount => _lastFrameVulkanUploadAllocationCount;
@@ -1004,7 +1086,11 @@ namespace XREngine
                         bool frameOpSignatureDirty,
                         bool plannerDirty,
                         bool profilerDirty,
-                        string? dirtyReason)
+                        string? dirtyReason,
+                        EVulkanCommandBufferDecisionReason detailReasons = EVulkanCommandBufferDecisionReason.None,
+                        ulong structuralSignature = 0,
+                        ulong descriptorGeneration = 0,
+                        int swapchainSlot = -1)
                     {
                         if (!EnableTracking)
                             return;
@@ -1021,6 +1107,25 @@ namespace XREngine
                             Interlocked.Increment(ref _vulkanCommandBufferPlannerDirtyCount);
                         if (profilerDirty)
                             Interlocked.Increment(ref _vulkanCommandBufferProfilerDirtyCount);
+
+                        EVulkanCommandBufferDecisionReason reasons = detailReasons;
+                        if (reusedClean)
+                            reasons |= EVulkanCommandBufferDecisionReason.ReusedClean;
+                        if (recorded)
+                            reasons |= EVulkanCommandBufferDecisionReason.Recorded;
+                        if (forcedDirty)
+                            reasons |= EVulkanCommandBufferDecisionReason.ForcedDirty;
+                        if (frameOpSignatureDirty)
+                            reasons |= EVulkanCommandBufferDecisionReason.FrameOpSignature;
+                        if (plannerDirty)
+                            reasons |= EVulkanCommandBufferDecisionReason.ResourcePlan;
+                        if (profilerDirty)
+                            reasons |= EVulkanCommandBufferDecisionReason.ProfilerMode;
+                        Interlocked.Or(ref _vulkanCommandBufferDecisionReasonMask, (int)reasons);
+                        Interlocked.Exchange(ref _vulkanCommandBufferDecisionVisibilityGeneration, FrameLifecycle.ConsumedCollectGeneration);
+                        Interlocked.Exchange(ref _vulkanCommandBufferDecisionStructuralSignature, unchecked((long)structuralSignature));
+                        Interlocked.Exchange(ref _vulkanCommandBufferDecisionDescriptorGeneration, unchecked((long)descriptorGeneration));
+                        Interlocked.Exchange(ref _vulkanCommandBufferDecisionSwapchainSlot, swapchainSlot);
 
                         if (!string.IsNullOrWhiteSpace(dirtyReason))
                         {
@@ -1213,7 +1318,11 @@ namespace XREngine
                         TimeSpan drainRetiredResources,
                         TimeSpan acquireBridgeSubmit,
                         TimeSpan waitSwapchainImage,
-                        TimeSpan resetDynamicUniformRing)
+                        TimeSpan resetDynamicUniformRing,
+                        TimeSpan snapshotImGuiOverlay,
+                        TimeSpan recordSceneCommandBuffer,
+                        TimeSpan recordImGuiOverlay,
+                        TimeSpan recordDynamicUiTextOverlay)
                     {
                         if (!EnableTracking)
                             return;
@@ -1223,6 +1332,10 @@ namespace XREngine
                         Interlocked.Exchange(ref _vulkanFrameAcquireBridgeSubmitTicks, acquireBridgeSubmit.Ticks);
                         Interlocked.Exchange(ref _vulkanFrameWaitSwapchainImageTicks, waitSwapchainImage.Ticks);
                         Interlocked.Exchange(ref _vulkanFrameResetDynamicUniformRingTicks, resetDynamicUniformRing.Ticks);
+                        Interlocked.Exchange(ref _vulkanFrameSnapshotImGuiOverlayTicks, snapshotImGuiOverlay.Ticks);
+                        Interlocked.Exchange(ref _vulkanFrameRecordSceneCommandBufferTicks, recordSceneCommandBuffer.Ticks);
+                        Interlocked.Exchange(ref _vulkanFrameRecordImGuiOverlayTicks, recordImGuiOverlay.Ticks);
+                        Interlocked.Exchange(ref _vulkanFrameRecordDynamicUiTextOverlayTicks, recordDynamicUiTextOverlay.Ticks);
                     }
 
                     public static void RecordVulkanRecordCommandBufferAllocation(long bytes)
@@ -1231,6 +1344,21 @@ namespace XREngine
                             return;
 
                         Interlocked.Add(ref _vulkanRecordCommandBufferAllocatedBytes, bytes);
+                    }
+
+                    public static void RecordVulkanCpuStage(EVulkanCpuStage stage, TimeSpan elapsed, long allocatedBytes)
+                    {
+                        int index = (int)stage;
+                        if (!EnableTracking || index < 0 || index >= (int)EVulkanCpuStage.Count)
+                            return;
+
+                        if (elapsed.Ticks > 0)
+                            Interlocked.Add(ref _vulkanCpuStageTicks[index], elapsed.Ticks);
+                        if (allocatedBytes > 0)
+                        {
+                            Interlocked.Add(ref _vulkanCpuStageAllocatedBytes[index], allocatedBytes);
+                            UpdateHighWater(ref _vulkanCpuStageAllocationHighWaterBytes[index], allocatedBytes);
+                        }
                     }
 
                     public static void RecordVulkanFrameGpuCommandBufferTime(TimeSpan commandBufferTime)
@@ -1404,6 +1532,62 @@ namespace XREngine
                             _vulkanPipelineCacheMissSummary = AppendDiagnosticToken(_vulkanPipelineCacheMissSummary, summary);
                     }
 
+                    public static void RecordVulkanPipelineTelemetry(
+                        EVulkanPipelineTelemetryEvent eventKind,
+                        EVulkanDriverPipelineCacheOutcome cacheOutcome,
+                        bool backgroundCompile,
+                        double compileMilliseconds,
+                        int queueDepth,
+                        int queueCapacity)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        switch (eventKind)
+                        {
+                            case EVulkanPipelineTelemetryEvent.AsyncQueued:
+                                Interlocked.Increment(ref _vulkanPipelineAsyncQueuedCount);
+                                break;
+                            case EVulkanPipelineTelemetryEvent.QueueRejected:
+                                Interlocked.Increment(ref _vulkanPipelineQueueRejectedCount);
+                                break;
+                            case EVulkanPipelineTelemetryEvent.DrawNotReady:
+                                Interlocked.Increment(ref _vulkanPipelineDrawNotReadyCount);
+                                break;
+                            case EVulkanPipelineTelemetryEvent.CompileRequired:
+                                Interlocked.Increment(ref _vulkanPipelineCompileRequiredCount);
+                                break;
+                            case EVulkanPipelineTelemetryEvent.CreationCompleted:
+                                Interlocked.Increment(ref _vulkanPipelineCompileCompletedCount);
+                                if (backgroundCompile)
+                                    Interlocked.Increment(ref _vulkanPipelineBackgroundCompileCompletedCount);
+                                long compileTicks = Math.Max(0L, TimeSpan.FromMilliseconds(Math.Max(0.0, compileMilliseconds)).Ticks);
+                                Interlocked.Add(ref _vulkanPipelineCompileTicks, compileTicks);
+                                UpdateHighWater(ref _vulkanPipelineCompileMaxTicks, compileTicks);
+                                break;
+                        }
+
+                        switch (cacheOutcome)
+                        {
+                            case EVulkanDriverPipelineCacheOutcome.PersistedHit:
+                                Interlocked.Increment(ref _vulkanDriverPipelineCachePersistedHits);
+                                break;
+                            case EVulkanDriverPipelineCacheOutcome.RuntimeHit:
+                                Interlocked.Increment(ref _vulkanDriverPipelineCacheRuntimeHits);
+                                break;
+                            case EVulkanDriverPipelineCacheOutcome.Miss:
+                                Interlocked.Increment(ref _vulkanDriverPipelineCacheMisses);
+                                break;
+                            case EVulkanDriverPipelineCacheOutcome.Unknown:
+                                if (eventKind == EVulkanPipelineTelemetryEvent.CreationCompleted)
+                                    Interlocked.Increment(ref _vulkanDriverPipelineCacheUnknown);
+                                break;
+                        }
+
+                        UpdateHighWater(ref _vulkanPipelineQueueDepthHighWater, Math.Max(queueDepth, 0));
+                        UpdateHighWater(ref _vulkanPipelineQueueCapacity, Math.Max(queueCapacity, 0));
+                    }
+
                     public static void RecordVulkanIndirectEffectiveness(
                         uint requestedDraws,
                         uint culledDraws,
@@ -1498,6 +1682,20 @@ namespace XREngine
                         _lastFrameVulkanIndexBufferBindSkips = _vulkanIndexBufferBindSkips;
                         _lastFrameVulkanPipelineCacheLookupHits = _vulkanPipelineCacheLookupHits;
                         _lastFrameVulkanPipelineCacheLookupMisses = _vulkanPipelineCacheLookupMisses;
+                        _lastFrameVulkanDriverPipelineCachePersistedHits = _vulkanDriverPipelineCachePersistedHits;
+                        _lastFrameVulkanDriverPipelineCacheRuntimeHits = _vulkanDriverPipelineCacheRuntimeHits;
+                        _lastFrameVulkanDriverPipelineCacheMisses = _vulkanDriverPipelineCacheMisses;
+                        _lastFrameVulkanDriverPipelineCacheUnknown = _vulkanDriverPipelineCacheUnknown;
+                        _lastFrameVulkanPipelineCompileRequiredCount = _vulkanPipelineCompileRequiredCount;
+                        _lastFrameVulkanPipelineCompileCompletedCount = _vulkanPipelineCompileCompletedCount;
+                        _lastFrameVulkanPipelineBackgroundCompileCompletedCount = _vulkanPipelineBackgroundCompileCompletedCount;
+                        _lastFrameVulkanPipelineCompileTicks = _vulkanPipelineCompileTicks;
+                        _lastFrameVulkanPipelineCompileMaxTicks = _vulkanPipelineCompileMaxTicks;
+                        _lastFrameVulkanPipelineAsyncQueuedCount = _vulkanPipelineAsyncQueuedCount;
+                        _lastFrameVulkanPipelineQueueRejectedCount = _vulkanPipelineQueueRejectedCount;
+                        _lastFrameVulkanPipelineDrawNotReadyCount = _vulkanPipelineDrawNotReadyCount;
+                        _lastFrameVulkanPipelineQueueDepthHighWater = _vulkanPipelineQueueDepthHighWater;
+                        _lastFrameVulkanPipelineQueueCapacity = _vulkanPipelineQueueCapacity;
                         _lastFrameVulkanRequestedDraws = _vulkanRequestedDraws;
                         _lastFrameVulkanCulledDraws = _vulkanCulledDraws;
                         _lastFrameVulkanEmittedIndirectDraws = _vulkanEmittedIndirectDraws;
@@ -1521,7 +1719,22 @@ namespace XREngine
                         _lastFrameVulkanFrameAcquireBridgeSubmitTicks = _vulkanFrameAcquireBridgeSubmitTicks;
                         _lastFrameVulkanFrameWaitSwapchainImageTicks = _vulkanFrameWaitSwapchainImageTicks;
                         _lastFrameVulkanFrameResetDynamicUniformRingTicks = _vulkanFrameResetDynamicUniformRingTicks;
+                        _lastFrameVulkanFrameSnapshotImGuiOverlayTicks = _vulkanFrameSnapshotImGuiOverlayTicks;
+                        _lastFrameVulkanFrameRecordSceneCommandBufferTicks = _vulkanFrameRecordSceneCommandBufferTicks;
+                        _lastFrameVulkanFrameRecordImGuiOverlayTicks = _vulkanFrameRecordImGuiOverlayTicks;
+                        _lastFrameVulkanFrameRecordDynamicUiTextOverlayTicks = _vulkanFrameRecordDynamicUiTextOverlayTicks;
                         _lastFrameVulkanRecordCommandBufferAllocatedBytes = _vulkanRecordCommandBufferAllocatedBytes;
+                        _lastFrameVulkanCommandBufferDecisionReasonMask = Interlocked.Exchange(ref _vulkanCommandBufferDecisionReasonMask, 0);
+                        _lastFrameVulkanCommandBufferDecisionVisibilityGeneration = Interlocked.Exchange(ref _vulkanCommandBufferDecisionVisibilityGeneration, 0);
+                        _lastFrameVulkanCommandBufferDecisionStructuralSignature = Interlocked.Exchange(ref _vulkanCommandBufferDecisionStructuralSignature, 0);
+                        _lastFrameVulkanCommandBufferDecisionDescriptorGeneration = Interlocked.Exchange(ref _vulkanCommandBufferDecisionDescriptorGeneration, 0);
+                        _lastFrameVulkanCommandBufferDecisionSwapchainSlot = Interlocked.Exchange(ref _vulkanCommandBufferDecisionSwapchainSlot, -1);
+                        for (int stageIndex = 0; stageIndex < (int)EVulkanCpuStage.Count; stageIndex++)
+                        {
+                            _lastFrameVulkanCpuStageTicks[stageIndex] = Interlocked.Exchange(ref _vulkanCpuStageTicks[stageIndex], 0);
+                            _lastFrameVulkanCpuStageAllocatedBytes[stageIndex] = Interlocked.Exchange(ref _vulkanCpuStageAllocatedBytes[stageIndex], 0);
+                            _lastFrameVulkanCpuStageAllocationHighWaterBytes[stageIndex] = Interlocked.Exchange(ref _vulkanCpuStageAllocationHighWaterBytes[stageIndex], 0);
+                        }
                         _lastFrameVulkanDeviceLocalAllocationCount = _vulkanDeviceLocalAllocationCount;
                         _lastFrameVulkanDeviceLocalAllocatedBytes = _vulkanDeviceLocalAllocatedBytes;
                         _lastFrameVulkanUploadAllocationCount = _vulkanUploadAllocationCount;
@@ -1671,6 +1884,20 @@ namespace XREngine
                         _vulkanIndexBufferBindSkips = 0;
                         _vulkanPipelineCacheLookupHits = 0;
                         _vulkanPipelineCacheLookupMisses = 0;
+                        _vulkanDriverPipelineCachePersistedHits = 0;
+                        _vulkanDriverPipelineCacheRuntimeHits = 0;
+                        _vulkanDriverPipelineCacheMisses = 0;
+                        _vulkanDriverPipelineCacheUnknown = 0;
+                        _vulkanPipelineCompileRequiredCount = 0;
+                        _vulkanPipelineCompileCompletedCount = 0;
+                        _vulkanPipelineBackgroundCompileCompletedCount = 0;
+                        _vulkanPipelineCompileTicks = 0;
+                        _vulkanPipelineCompileMaxTicks = 0;
+                        _vulkanPipelineAsyncQueuedCount = 0;
+                        _vulkanPipelineQueueRejectedCount = 0;
+                        _vulkanPipelineDrawNotReadyCount = 0;
+                        _vulkanPipelineQueueDepthHighWater = 0;
+                        _vulkanPipelineQueueCapacity = 0;
                         _vulkanRequestedDraws = 0;
                         _vulkanCulledDraws = 0;
                         _vulkanEmittedIndirectDraws = 0;
@@ -1694,6 +1921,10 @@ namespace XREngine
                         _vulkanFrameAcquireBridgeSubmitTicks = 0;
                         _vulkanFrameWaitSwapchainImageTicks = 0;
                         _vulkanFrameResetDynamicUniformRingTicks = 0;
+                        _vulkanFrameSnapshotImGuiOverlayTicks = 0;
+                        _vulkanFrameRecordSceneCommandBufferTicks = 0;
+                        _vulkanFrameRecordImGuiOverlayTicks = 0;
+                        _vulkanFrameRecordDynamicUiTextOverlayTicks = 0;
                         _vulkanRecordCommandBufferAllocatedBytes = 0;
                         _vulkanDeviceLocalAllocationCount = 0;
                         _vulkanDeviceLocalAllocatedBytes = 0;

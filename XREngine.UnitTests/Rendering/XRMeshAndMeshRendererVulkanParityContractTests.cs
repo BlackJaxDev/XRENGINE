@@ -113,14 +113,15 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     public void MeshGeometryLayoutSignature_FeedsBothBackendsAndVulkanPipelineKeys()
     {
         string signatureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/MeshGeometryLayoutSignature.cs");
+        string signatureBuilderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/MeshGeometryLayoutSignatureBuilder.cs");
         string vkPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
         string vkDrawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
         string glBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Buffers.cs");
         string glShaderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Shaders.cs");
 
         signatureSource.ShouldContain("MeshGeometryLayoutSignature");
-        signatureSource.ShouldContain("InterleavedAttribute");
-        signatureSource.ShouldContain("InstanceDivisor");
+        signatureBuilderSource.ShouldContain("InterleavedAttribute");
+        signatureBuilderSource.ShouldContain("InstanceDivisor");
         signatureSource.ShouldContain("HasRuntimeDeformationBuffers");
         signatureSource.ShouldContain("HasMeshletPayload");
         signatureSource.ShouldContain("DrawCountSource");

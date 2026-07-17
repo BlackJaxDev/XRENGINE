@@ -1,7 +1,7 @@
 # Vulkan CPU-Query And Monado Regression Investigation
 
 Date: 2026-07-14
-Status: Closed 2026-07-16; Phase 5.2.4b/5.2.4c live, parity, and boundedness gates passed
+Status: Reopened 2026-07-16 for stable-packet inline-query primary mismatch
 Related TODO: [Vulkan core hardening and device-loss TODO](../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md)
 
 ## Problem
@@ -390,3 +390,85 @@ and the refreshed strict matrix remains under
 Phase 5.2.4b and 5.2.4c are closed. Phase 5.2.5 may now begin; the remaining CPU
 recording cost and absent primary reuse are owned by the versioned-plan and
 multi-output throughput phases rather than this correctness closeout.
+
+## 2026-07-16 Desktop Device-Loss Regression
+
+The next desktop-only Unit Testing World run, engine session
+`xrengine_2026-07-16_10-39-52_pid2876`, lost the Vulkan device at frame 111.
+The first failing API was a one-shot `vkQueueSubmit` used by a texture layout
+transition. The later `Cannot update Vulkan descriptors while device state is
+Quiesced` invalid-operation exceptions were fallout: the viewport command
+container continued executing commands after the backend had already diagnosed
+and quiesced the lost device.
+
+The CPU-query path contained a GPU-corruption risk before that first observed
+failure. Both new command-buffer recording and reusable-primary replay called
+host `vkResetQueryPool`, while previously submitted command buffers could still
+refer to the same persistent pool. Query result availability is not the Vulkan
+host-reset lifetime boundary: all submitted commands referring to the reset
+range must have completed. Each recorded primary already begins its query epoch
+with `vkCmdResetQueryPool`, so the host reset was also redundant.
+
+The correction keeps the reset exclusively in the graphics command buffer,
+where queue order serializes it after older uses, and only clears the CPU-side
+submitted-epoch marker before cached-primary replay. The viewport command
+container now stops as soon as the active renderer reports device loss, avoiding
+the repeated descriptor exception cascade while `XRWindow` enters recovery.
+
+Validation completed:
+
+- Focused CPU-query, command-buffer reuse, and coordinator contracts passed
+  41/41, including guards against host query-pool reset and post-loss command
+  execution.
+- The editor build completed with zero errors. Existing NuGet audit warnings for
+  `Magick.NET-Q16-HDRI-AnyCPU` remain; this investigation did not change
+  dependencies.
+- Desktop Vulkan session `xrengine_2026-07-16_10-54-21_pid44024` remained
+  responsive through eight immediate camera cuts and more than 2,200 rendered
+  frames. Inspected screenshots changed with camera position rather than
+  returning stale output.
+- The final profiler sample reported `CpuQueryAsync` with `CpuDirect`: 21 query
+  submissions, 19 resolutions, two-frame average/max latency, 125 tested draws,
+  108 culled draws, and no pending queries.
+- The final Vulkan/rendering logs contained zero errors and no
+  `InvalidOperationException`, generic rendering exception, `ErrorDeviceLost`,
+  descriptor-after-quiesce failure, VUID, or validation-error match.
+
+Raw before/after logs and screenshots are under
+`Build/_AgentValidation/20260710-openxr-strict-stereo/20260716-desktop-cpu-query-device-loss/`.
+
+## 2026-07-16 Stable-Packet Inline-Query Regression
+
+After the stable-packet/primary-reuse work, the main Sponza cloths, plants, and
+pillars could be query-culled while visibly in front of the rear wall. The
+reported frame rate also dropped sharply during camera motion after an initial
+attempt required the complete frame-op signature to match before primary
+reuse. That attempt was reverted: camera and per-draw frame data belong in the
+existing refresh path, so treating them as primary structure caused continuous
+command recording and resource churn.
+
+The regression is instead a narrower primary-cache identity error. Occlusion
+query brackets and their proxy draw intentionally remain inline and are omitted
+from the command-chain packet schedule. The fast lookup used the complete op
+shape to find a cached schedule, but primary-variant selection then compared
+only the schedule's packet/group signatures. Because those signatures exclude
+the query brackets, it could select a primary recorded for query object A while
+the current frame refreshed proxy uniforms and coordinator state for query
+object B. The resulting query answer was attributed to the wrong mesh.
+
+The correction compares the already-computed query generation when selecting a
+reusable command-chain primary. That generation contains only query identity,
+target, and begin/end operation; it deliberately excludes camera matrices and
+other refreshable frame data. A query-set change therefore re-records the small
+primary execution list, while ordinary camera motion continues through the
+frame-data refresh path.
+
+Evidence before the correction is engine session
+`xrengine_2026-07-16_16-25-23_pid5824`. Its proxy pipeline used normal-Z
+`LessOrEqual` depth testing with depth writes disabled, ruling out a reversed-Z
+comparison error. The same run showed the broad-signature experiment growing
+to thousands of command recordings and multi-gigabyte allocator pressure; that
+experiment is not part of the correction described above.
+
+Validation status: focused contracts and editor build pending; live Sponza
+image/performance confirmation pending.

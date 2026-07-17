@@ -94,6 +94,29 @@ Mesh scene draws should remain `FrameDataOnly` when their target, pass, pipeline
 
 Dynamic overlay work is deliberately split from static mesh chains. A text/profiler overlay changing every frame should record only its volatile chain and must not invalidate the static Sponza-style scene mesh chains underneath it.
 
+### Vulkan packet and descriptor lifetime
+
+CPU-direct mesh work is lowered into contiguous, state-compatible packets. The
+initial packet target is 10-64 draws with the same pass, target, view,
+pipeline/material program, descriptor-set schema, transparency class, and
+scheduling context. Packet boundaries never reorder draws, so transparent order
+and query boundaries remain primary-command-buffer concerns. Each frame slot
+owns one cheap primary execution list; a visibility change re-records that list
+instead of adding another whole-frame primary cache variant. Scheduled packet
+caches are bounded per frame slot and evict least-recently-used packet ranges.
+
+Material and imported-texture descriptors use stable per-frame descriptor-set
+identities. A frame slot's descriptor contents are refreshed only after that
+slot has completed, before its cached secondary is submitted again. Changes are
+classified as frame data, compatible content publication, binding identity, or
+structural layout. Compatible publication may change the sampled image/view and
+content generation while retaining the descriptor set and layout; it refreshes
+only packets that reference the changed descriptor generation. Binding-identity
+and structural-layout changes rebuild the affected packet. Resource retirement
+continues through the existing frame-completion deferred-destruction path, so an
+old image/view remains alive until every prior slot that could reference it has
+completed.
+
 ## Pass Contract
 
 `PreRender` and `PostRender` remain CPU-only in the default pipelines. Scene geometry passes request the resolved mesh submission strategy. Capture commands (`VPRC_RenderCubemap`, `VPRC_RenderToCubemapFace`, `VPRC_RenderToTextureArray`) carry the same strategy so capture passes do not silently choose a different submission path.

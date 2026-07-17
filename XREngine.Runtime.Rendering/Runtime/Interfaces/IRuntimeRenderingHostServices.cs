@@ -1271,7 +1271,11 @@ public interface IRuntimeRenderingHostServices
         TimeSpan drainRetiredResources,
         TimeSpan acquireBridgeSubmit,
         TimeSpan waitSwapchainImage,
-        TimeSpan resetDynamicUniformRing);
+        TimeSpan resetDynamicUniformRing,
+        TimeSpan snapshotImGuiOverlay,
+        TimeSpan recordSceneCommandBuffer,
+        TimeSpan recordImGuiOverlay,
+        TimeSpan recordDynamicUiTextOverlay);
     void RecordRenderVulkanFrameOpCensus(
         int totalCount,
         int clearCount,
@@ -1292,7 +1296,12 @@ public interface IRuntimeRenderingHostServices
         bool frameOpSignatureDirty,
         bool plannerDirty,
         bool profilerDirty,
-        string? dirtyReason);
+        string? dirtyReason,
+        EVulkanCommandBufferDecisionReason detailReasons,
+        ulong structuralSignature,
+        ulong descriptorGeneration,
+        int swapchainSlot);
+    void RecordRenderVulkanCpuStage(EVulkanCpuStage stage, TimeSpan elapsed, long allocatedBytes);
     void RecordRenderVulkanCommandBuffersDirty(string? reason);
     void RecordRenderVulkanExactResourceInvalidation(
         int exactVariantsDirtied,
@@ -1338,6 +1347,13 @@ public interface IRuntimeRenderingHostServices
     void RecordRenderVulkanOomFallback();
     void RecordRenderVulkanPipelineCacheLookup(bool cacheHit);
     void RecordRenderVulkanPipelineCacheMiss(string? summary);
+    void RecordRenderVulkanPipelineTelemetry(
+        EVulkanPipelineTelemetryEvent eventKind,
+        EVulkanDriverPipelineCacheOutcome cacheOutcome,
+        bool backgroundCompile,
+        double compileMilliseconds,
+        int queueDepth,
+        int queueCapacity);
     void RecordRenderVulkanQueueOverlapWindow(int overlapCandidatePasses, int transferCost, TimeSpan frameDelta, bool promotedMode, bool demotedMode);
     void RecordRenderVulkanQueueSubmit();
     void RecordRenderVulkanPresentResult(int result, bool accepted);

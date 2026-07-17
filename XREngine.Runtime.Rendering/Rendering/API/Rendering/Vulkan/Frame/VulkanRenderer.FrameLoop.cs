@@ -618,6 +618,10 @@ namespace XREngine.Rendering.Vulkan
                 TimeSpan waitFenceTime = TimeSpan.Zero;
                 TimeSpan acquireImageTime = TimeSpan.Zero;
                 TimeSpan recordCommandBufferTime = TimeSpan.Zero;
+                TimeSpan snapshotImGuiOverlayTime = TimeSpan.Zero;
+                TimeSpan recordSceneCommandBufferTime = TimeSpan.Zero;
+                TimeSpan recordImGuiOverlayTime = TimeSpan.Zero;
+                TimeSpan recordDynamicUiTextOverlayTime = TimeSpan.Zero;
                 TimeSpan submitQueueTime = TimeSpan.Zero;
                 TimeSpan trimStagingTime = TimeSpan.Zero;
                 TimeSpan presentQueueTime = TimeSpan.Zero;
@@ -1441,7 +1445,7 @@ namespace XREngine.Rendering.Vulkan
                         if (canRecordImGuiOverlay)
                             hasPendingImGuiOverlay = TryConsumeRenderableImGuiOverlaySnapshot(out imguiOverlaySnapshot);
                     }
-                    recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+                    snapshotImGuiOverlayTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
                     bool preserveSwapchainForImGuiOverlay = hasPendingImGuiOverlay && UseDynamicRenderingRenderTargets;
 
@@ -1480,8 +1484,6 @@ namespace XREngine.Rendering.Vulkan
 
                             if (!string.IsNullOrEmpty(recordingDeferredReason))
                             {
-                                recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
-
                                 if (TryPresentAbortedDirtyFrame(
                                         commandBufferDirtyFlagSet: false,
                                         commandBuffersDirtiedAfterSceneRecord: true,
@@ -1506,8 +1508,6 @@ namespace XREngine.Rendering.Vulkan
                         }
                         catch (Exception recordEx)
                         {
-                            recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
-
                         // Recording failed (e.g. OOM during resource allocation). The acquire bridge
                         // already consumed the binary semaphore and advanced the timeline, but we have
                         // no valid command buffer to submit. Advance currentFrame so the next attempt
@@ -1530,6 +1530,9 @@ namespace XREngine.Rendering.Vulkan
                         }
                         finally
                         {
+                            TimeSpan sceneRecordElapsed = Stopwatch.GetElapsedTime(stageStartTimestamp);
+                            recordSceneCommandBufferTime += sceneRecordElapsed;
+                            recordCommandBufferTime += sceneRecordElapsed;
                             long allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - recordAllocationStart;
                             if (_lastEnsureCommandBufferRecordedPrimary)
                                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRecordCommandBufferAllocation(allocatedBytes);
@@ -1557,7 +1560,9 @@ namespace XREngine.Rendering.Vulkan
                         }
                         catch (Exception overlayEx)
                         {
-                            recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+                            TimeSpan failedOverlayElapsed = Stopwatch.GetElapsedTime(stageStartTimestamp);
+                            recordImGuiOverlayTime += failedOverlayElapsed;
+                            recordCommandBufferTime += failedOverlayElapsed;
                             currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 
                             ReleaseUnsubmittedTextureUploadCommandBuffer("ImGui overlay command buffer recording failed");
@@ -1574,7 +1579,9 @@ namespace XREngine.Rendering.Vulkan
                         }
                     }
                     long imguiOverlayElapsedTicks = Stopwatch.GetTimestamp() - stageStartTimestamp;
-                    recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+                    recordImGuiOverlayTime += TimeSpan.FromTicks(
+                        imguiOverlayElapsedTicks * TimeSpan.TicksPerSecond / Stopwatch.Frequency);
+                    recordCommandBufferTime += recordImGuiOverlayTime;
                     RecordOverlayFrameOutput(
                         EFrameOutputKind.ImGuiOverlay,
                         "Vulkan ImGui overlay command buffer",
@@ -1619,7 +1626,9 @@ namespace XREngine.Rendering.Vulkan
                             }
                             catch (Exception overlayEx)
                             {
-                                recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+                                TimeSpan failedOverlayElapsed = Stopwatch.GetElapsedTime(stageStartTimestamp);
+                                recordDynamicUiTextOverlayTime += failedOverlayElapsed;
+                                recordCommandBufferTime += failedOverlayElapsed;
                                 currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 
                                 ReleaseUnsubmittedTextureUploadCommandBuffer("dynamic UI text overlay command buffer recording failed");
@@ -1636,7 +1645,9 @@ namespace XREngine.Rendering.Vulkan
                             }
                         }
                         long dynamicTextOverlayElapsedTicks = Stopwatch.GetTimestamp() - stageStartTimestamp;
-                        recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+                        recordDynamicUiTextOverlayTime += TimeSpan.FromTicks(
+                            dynamicTextOverlayElapsedTicks * TimeSpan.TicksPerSecond / Stopwatch.Frequency);
+                        recordCommandBufferTime += recordDynamicUiTextOverlayTime;
                         RecordOverlayFrameOutput(
                             EFrameOutputKind.DynamicTextOverlay,
                             "Vulkan dynamic text overlay command buffer",
@@ -1760,6 +1771,7 @@ namespace XREngine.Rendering.Vulkan
                     Result submitResult;
                     using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.Submit"))
                     {
+                        using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.Submission);
                         MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker.RenderSubmitStart);
                         lock (_oneTimeSubmitLock)
                         {
@@ -1977,7 +1989,11 @@ namespace XREngine.Rendering.Vulkan
                         drainRetiredResourcesTime,
                         acquireBridgeSubmitTime,
                         waitSwapchainImageTime,
-                        resetDynamicUniformRingTime);
+                        resetDynamicUniformRingTime,
+                        snapshotImGuiOverlayTime,
+                        recordSceneCommandBufferTime,
+                        recordImGuiOverlayTime,
+                        recordDynamicUiTextOverlayTime);
                 }
             }
             finally

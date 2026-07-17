@@ -8,11 +8,19 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private const int PipelineCacheAutoSaveCreateThreshold = 256;
+    private const int VulkanPipelineCacheSchemaVersion = 3;
+    private const int VulkanPipelineCompileRequiredResult = 1000297000;
+    private const uint VulkanPipelineFailOnCompileRequiredFlag = 0x00000100;
+    // Persist during normal editor startup rather than relying on orderly process
+    // teardown. A typical unit-testing world creates more than this many GPL
+    // pieces/links, while the interval guard keeps repeated disk writes bounded.
+    private const int PipelineCacheAutoSaveCreateThreshold = 64;
     private const long PipelineCacheAutoSaveMinIntervalMs = 30_000;
     private PipelineCache _pipelineCache;
     private string? _pipelineCacheFilePath;
     private int _pipelineCacheCreatesSinceSave;
+    private int _pipelineCacheInitialDataBytes;
+    private bool _supportsPipelineCreationCacheControl;
     private long _pipelineCacheLastAutoSaveAttemptTick;
     private int _pipelineCacheAutoSaveInFlight;
     private long _pipelineCacheSaveGeneration;
@@ -20,6 +28,9 @@ public unsafe partial class VulkanRenderer
 
     internal PipelineCache ActivePipelineCache
         => _pipelineCache;
+
+    internal bool HasPersistedVulkanPipelineCacheData
+        => _pipelineCache.Handle != 0 && _pipelineCacheInitialDataBytes > 0;
 
     private void CreateVulkanPipelineCache()
     {
@@ -37,7 +48,7 @@ public unsafe partial class VulkanRenderer
 
         _pipelineCacheFilePath = Path.Combine(
             cacheDir,
-            $"pcache_v{properties.VendorID:X8}_{properties.DeviceID:X8}_{properties.DriverVersion:X8}_{properties.ApiVersion:X8}.bin");
+            $"pcache_xr{VulkanPipelineCacheSchemaVersion}_v{properties.VendorID:X8}_{properties.DeviceID:X8}_{properties.DriverVersion:X8}_{properties.ApiVersion:X8}.bin");
 
         byte[]? initialData = null;
         if (!string.IsNullOrWhiteSpace(_pipelineCacheFilePath) && File.Exists(_pipelineCacheFilePath))
@@ -72,6 +83,8 @@ public unsafe partial class VulkanRenderer
             }
         }
 
+        _pipelineCacheInitialDataBytes = initialData?.Length ?? 0;
+
         Debug.Vulkan(
             "[Vulkan] Pipeline cache initialised (path={0}, warmBytes={1}, vendor=0x{2:X8}, device=0x{3:X8}, driver=0x{4:X8}, api=0x{5:X8}).",
             _pipelineCacheFilePath ?? "<unset>",
@@ -80,6 +93,68 @@ public unsafe partial class VulkanRenderer
             properties.DeviceID,
             properties.DriverVersion,
             properties.ApiVersion);
+    }
+
+    internal Result CreateGraphicsPipelineWithCachePolicy(
+        ref GraphicsPipelineCreateInfo pipelineInfo,
+        PipelineCache pipelineCache,
+        bool backgroundCompile,
+        out Pipeline pipeline)
+    {
+        long start = global::System.Diagnostics.Stopwatch.GetTimestamp();
+        PipelineCreateFlags originalFlags = pipelineInfo.Flags;
+        bool probedCache =
+            backgroundCompile &&
+            _supportsPipelineCreationCacheControl &&
+            pipelineCache.Handle != 0;
+        bool compileRequired = false;
+        Result result;
+
+        if (probedCache)
+        {
+            pipelineInfo.Flags |= (PipelineCreateFlags)VulkanPipelineFailOnCompileRequiredFlag;
+            result = Api!.CreateGraphicsPipelines(device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
+            pipelineInfo.Flags = originalFlags;
+            if ((int)result == VulkanPipelineCompileRequiredResult)
+            {
+                compileRequired = true;
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
+                    EVulkanPipelineTelemetryEvent.CompileRequired,
+                    EVulkanDriverPipelineCacheOutcome.Miss,
+                    backgroundCompile: true);
+                result = Api.CreateGraphicsPipelines(device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
+            }
+        }
+        else
+        {
+            result = Api!.CreateGraphicsPipelines(device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
+        }
+
+        double elapsedMs = global::System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        EVulkanDriverPipelineCacheOutcome cacheOutcome = compileRequired
+            ? EVulkanDriverPipelineCacheOutcome.Miss
+            : probedCache
+                ? _pipelineCacheInitialDataBytes > 0
+                    ? EVulkanDriverPipelineCacheOutcome.PersistedHit
+                    : EVulkanDriverPipelineCacheOutcome.RuntimeHit
+                : EVulkanDriverPipelineCacheOutcome.Unknown;
+        if (result == Result.Success)
+        {
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
+                EVulkanPipelineTelemetryEvent.CreationCompleted,
+                cacheOutcome,
+                backgroundCompile,
+                elapsedMs);
+            if (backgroundCompile)
+            {
+                Debug.Vulkan(
+                    "[Vulkan] Background graphics pipeline cache probe completed (outcome={0}, elapsedMs={1:F2}, persistedBytes={2}).",
+                    cacheOutcome,
+                    elapsedMs,
+                    _pipelineCacheInitialDataBytes);
+            }
+        }
+        return result;
     }
 
     private bool TryCaptureVulkanPipelineCacheData(out string path, out byte[] cacheBytes)
@@ -164,7 +239,7 @@ public unsafe partial class VulkanRenderer
 
         long generation = Interlocked.Increment(ref _pipelineCacheSaveGeneration);
         if (WriteVulkanPipelineCacheFile(path, cacheBytes, generation, skipIfStale: false))
-            _pipelineCacheCreatesSinceSave = 0;
+            Interlocked.Exchange(ref _pipelineCacheCreatesSinceSave, 0);
     }
 
     private void QueueVulkanPipelineCacheAutoSave()
@@ -178,7 +253,7 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        _pipelineCacheCreatesSinceSave = 0;
+        Interlocked.Exchange(ref _pipelineCacheCreatesSinceSave, 0);
         long generation = Interlocked.Increment(ref _pipelineCacheSaveGeneration);
         _ = Task.Run(() =>
         {
@@ -198,8 +273,8 @@ public unsafe partial class VulkanRenderer
         if (_pipelineCache.Handle == 0)
             return;
 
-        _pipelineCacheCreatesSinceSave++;
-        if (_pipelineCacheCreatesSinceSave < PipelineCacheAutoSaveCreateThreshold)
+        int createsSinceSave = Interlocked.Increment(ref _pipelineCacheCreatesSinceSave);
+        if (createsSinceSave < PipelineCacheAutoSaveCreateThreshold)
             return;
 
         long now = Environment.TickCount64;
@@ -208,7 +283,7 @@ public unsafe partial class VulkanRenderer
             return;
 
         _pipelineCacheLastAutoSaveAttemptTick = now;
-        Debug.Vulkan("[Vulkan] Pipeline cache auto-save threshold reached after {0} new {1} pipeline(s).", _pipelineCacheCreatesSinceSave, kind);
+        Debug.Vulkan("[Vulkan] Pipeline cache auto-save threshold reached after {0} new {1} pipeline(s).", createsSinceSave, kind);
         QueueVulkanPipelineCacheAutoSave();
     }
 
@@ -222,5 +297,6 @@ public unsafe partial class VulkanRenderer
         SaveVulkanPipelineCache();
         Api!.DestroyPipelineCache(device, _pipelineCache, null);
         _pipelineCache = default;
+        _pipelineCacheInitialDataBytes = 0;
     }
 }

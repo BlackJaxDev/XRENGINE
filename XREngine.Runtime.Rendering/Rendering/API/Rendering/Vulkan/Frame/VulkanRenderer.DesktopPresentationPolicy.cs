@@ -215,7 +215,7 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        using IDisposable plannerScope = EnterFrameOpResourcePlannerReadbackScope(in context);
+        using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(in context);
         if (!TryReadTextureMipRgbaFloat(
                 record.Instance,
                 mipLevel: 0,

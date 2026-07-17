@@ -57,6 +57,11 @@ namespace XREngine
                     public static ulong SwapFrameId => Engine.Time.Timer.SwapFrameId;
                     public static ulong RenderFrameId => Engine.Rendering.State.RenderFrameId;
                     public static ulong PresentFrameId => Engine.Time.Timer.PresentFrameId;
+                    public static long RequestedCollectGeneration => Engine.Time.Timer.RequestedCollectGeneration;
+                    public static long CompletedCollectGeneration => Engine.Time.Timer.CompletedCollectGeneration;
+                    public static long PublishedCollectGeneration => Engine.Time.Timer.PublishedCollectGeneration;
+                    public static long ConsumedCollectGeneration => Engine.Time.Timer.ConsumedCollectGeneration;
+                    public static long RequiredCollectGeneration => Engine.Time.Timer.RequiredCollectGeneration;
 
                     internal static void RecordCollectWaitForRender(long stopwatchTicks)
                     {

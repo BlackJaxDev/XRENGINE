@@ -265,14 +265,26 @@ internal static partial class RuntimeEngine
             });
         }
 
-        public static IDisposable? PushRenderingPipelineOverride(XRRenderPipelineInstance? pipeline)
+        public readonly struct RenderingPipelineOverrideScope : IDisposable
         {
-            PipelineOverrideStack.Push(pipeline);
-            return new DisposableAction(() =>
+            private readonly bool _active;
+
+            internal RenderingPipelineOverrideScope(XRRenderPipelineInstance? pipeline)
             {
-                if (PipelineOverrideStack.Count != 0)
+                PipelineOverrideStack.Push(pipeline);
+                _active = true;
+            }
+
+            public void Dispose()
+            {
+                if (_active && PipelineOverrideStack.Count != 0)
                     PipelineOverrideStack.Pop();
-            });
+            }
+        }
+
+        public static RenderingPipelineOverrideScope PushRenderingPipelineOverride(XRRenderPipelineInstance? pipeline)
+        {
+            return new RenderingPipelineOverrideScope(pipeline);
         }
 
         public static XRCamera.EDepthMode ResolveSceneCameraDepthModePreference()
@@ -1446,7 +1458,11 @@ internal static partial class RuntimeEngine
                 TimeSpan drainRetiredResources,
                 TimeSpan acquireBridgeSubmit,
                 TimeSpan waitSwapchainImage,
-                TimeSpan resetDynamicUniformRing)
+                TimeSpan resetDynamicUniformRing,
+                TimeSpan snapshotImGuiOverlay,
+                TimeSpan recordSceneCommandBuffer,
+                TimeSpan recordImGuiOverlay,
+                TimeSpan recordDynamicUiTextOverlay)
             {
                 if (HasHostStats)
                 {
@@ -1455,7 +1471,11 @@ internal static partial class RuntimeEngine
                         drainRetiredResources,
                         acquireBridgeSubmit,
                         waitSwapchainImage,
-                        resetDynamicUniformRing);
+                        resetDynamicUniformRing,
+                        snapshotImGuiOverlay,
+                        recordSceneCommandBuffer,
+                        recordImGuiOverlay,
+                        recordDynamicUiTextOverlay);
                 }
             }
 
@@ -1498,7 +1518,11 @@ internal static partial class RuntimeEngine
                 bool frameOpSignatureDirty,
                 bool plannerDirty,
                 bool profilerDirty,
-                string? dirtyReason)
+                string? dirtyReason,
+                EVulkanCommandBufferDecisionReason detailReasons = EVulkanCommandBufferDecisionReason.None,
+                ulong structuralSignature = 0,
+                ulong descriptorGeneration = 0,
+                int swapchainSlot = -1)
             {
                 if (HasHostStats)
                 {
@@ -1509,8 +1533,18 @@ internal static partial class RuntimeEngine
                         frameOpSignatureDirty,
                         plannerDirty,
                         profilerDirty,
-                        dirtyReason);
+                        dirtyReason,
+                        detailReasons,
+                        structuralSignature,
+                        descriptorGeneration,
+                        swapchainSlot);
                 }
+            }
+
+            public static void RecordVulkanCpuStage(EVulkanCpuStage stage, TimeSpan elapsed, long allocatedBytes)
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVulkanCpuStage(stage, elapsed, allocatedBytes);
             }
 
             public static void RecordVulkanCommandBuffersDirty(string? reason)
@@ -1657,6 +1691,26 @@ internal static partial class RuntimeEngine
             {
                 if (HasHostStats)
                     RuntimeRenderingHostServices.Current.RecordRenderVulkanPipelineCacheMiss(summary);
+            }
+
+            public static void RecordVulkanPipelineTelemetry(
+                EVulkanPipelineTelemetryEvent eventKind,
+                EVulkanDriverPipelineCacheOutcome cacheOutcome = EVulkanDriverPipelineCacheOutcome.Unknown,
+                bool backgroundCompile = false,
+                double compileMilliseconds = 0.0,
+                int queueDepth = 0,
+                int queueCapacity = 0)
+            {
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderVulkanPipelineTelemetry(
+                        eventKind,
+                        cacheOutcome,
+                        backgroundCompile,
+                        compileMilliseconds,
+                        queueDepth,
+                        queueCapacity);
+                }
             }
 
             public static void RecordVulkanQueueOverlapWindow(int overlapCandidatePasses, int transferCost, TimeSpan frameDelta, bool promotedMode, bool demotedMode)
@@ -2025,13 +2079,21 @@ internal static partial class RuntimeEngine
                     TimeSpan drainRetiredResources,
                     TimeSpan acquireBridgeSubmit,
                     TimeSpan waitSwapchainImage,
-                    TimeSpan resetDynamicUniformRing)
+                    TimeSpan resetDynamicUniformRing,
+                    TimeSpan snapshotImGuiOverlay,
+                    TimeSpan recordSceneCommandBuffer,
+                    TimeSpan recordImGuiOverlay,
+                    TimeSpan recordDynamicUiTextOverlay)
                     => Stats.RecordVulkanFrameLifecycleDetailTiming(
                         sampleTimingQueries,
                         drainRetiredResources,
                         acquireBridgeSubmit,
                         waitSwapchainImage,
-                        resetDynamicUniformRing);
+                        resetDynamicUniformRing,
+                        snapshotImGuiOverlay,
+                        recordSceneCommandBuffer,
+                        recordImGuiOverlay,
+                        recordDynamicUiTextOverlay);
                 public static void RecordVulkanFrameOpCensus(
                     int totalCount,
                     int clearCount,
@@ -2065,7 +2127,11 @@ internal static partial class RuntimeEngine
                     bool frameOpSignatureDirty,
                     bool plannerDirty,
                     bool profilerDirty,
-                    string? dirtyReason)
+                    string? dirtyReason,
+                    EVulkanCommandBufferDecisionReason detailReasons = EVulkanCommandBufferDecisionReason.None,
+                    ulong structuralSignature = 0,
+                    ulong descriptorGeneration = 0,
+                    int swapchainSlot = -1)
                     => Stats.RecordVulkanCommandBufferCacheOutcome(
                         reusedClean,
                         recorded,
@@ -2073,7 +2139,13 @@ internal static partial class RuntimeEngine
                         frameOpSignatureDirty,
                         plannerDirty,
                         profilerDirty,
-                        dirtyReason);
+                        dirtyReason,
+                        detailReasons,
+                        structuralSignature,
+                        descriptorGeneration,
+                        swapchainSlot);
+                public static void RecordVulkanCpuStage(EVulkanCpuStage stage, TimeSpan elapsed, long allocatedBytes)
+                    => Stats.RecordVulkanCpuStage(stage, elapsed, allocatedBytes);
                 public static void RecordVulkanCommandBuffersDirty(string? reason)
                     => Stats.RecordVulkanCommandBuffersDirty(reason);
                 public static void RecordVulkanExactResourceInvalidation(
@@ -2145,6 +2217,14 @@ internal static partial class RuntimeEngine
                 public static void RecordVulkanOomFallback() => Stats.RecordVulkanOomFallback();
                 public static void RecordVulkanPipelineCacheLookup(bool cacheHit) => Stats.RecordVulkanPipelineCacheLookup(cacheHit);
                 public static void RecordVulkanPipelineCacheMiss(string? summary) => Stats.RecordVulkanPipelineCacheMiss(summary);
+                public static void RecordVulkanPipelineTelemetry(
+                    EVulkanPipelineTelemetryEvent eventKind,
+                    EVulkanDriverPipelineCacheOutcome cacheOutcome = EVulkanDriverPipelineCacheOutcome.Unknown,
+                    bool backgroundCompile = false,
+                    double compileMilliseconds = 0.0,
+                    int queueDepth = 0,
+                    int queueCapacity = 0)
+                    => Stats.RecordVulkanPipelineTelemetry(eventKind, cacheOutcome, backgroundCompile, compileMilliseconds, queueDepth, queueCapacity);
                 public static void RecordVulkanQueueOverlapWindow(int overlapCandidatePasses, int transferCost, TimeSpan frameDelta, bool promotedMode, bool demotedMode)
                     => Stats.RecordVulkanQueueOverlapWindow(overlapCandidatePasses, transferCost, frameDelta, promotedMode, demotedMode);
                 public static void RecordVulkanQueueSubmit() => Stats.RecordVulkanQueueSubmit();
@@ -2290,7 +2370,7 @@ internal static partial class RuntimeEngine
             public static IDisposable PushRenderGraphPassIndex(int passIndex) => StateData.PushRenderGraphPassIndex(passIndex);
             public static IDisposable PushTransformId(uint transformId) => StateData.PushTransformId(transformId);
             public static IDisposable? PushRenderingPipeline(XRRenderPipelineInstance pipeline) => Rendering.PushRenderingPipeline(pipeline);
-            public static IDisposable? PushRenderingPipelineOverride(XRRenderPipelineInstance? pipeline)
+            public static RenderingPipelineOverrideScope PushRenderingPipelineOverride(XRRenderPipelineInstance? pipeline)
                 => Rendering.PushRenderingPipelineOverride(pipeline);
             public static void PushMirrorPass() => StateData.PushMirrorPass();
             public static void PopMirrorPass() => StateData.PopMirrorPass();

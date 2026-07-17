@@ -644,6 +644,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.Text("Frame Lifecycle:");
         ImGui.Text($"  Ids: update {lifecycle.UpdateFrameId:N0} | collect {lifecycle.CollectFrameId:N0} | swap {lifecycle.SwapFrameId:N0} | render {lifecycle.RenderFrameId:N0} | present {lifecycle.PresentFrameId:N0}");
         ImGui.Text($"  Collect late policy: {lifecycle.CollectVisibleLatePolicy}");
+        ImGui.Text($"  Collect generations: requested {lifecycle.RequestedCollectGeneration:N0} | completed {lifecycle.CompletedCollectGeneration:N0} | published {lifecycle.PublishedCollectGeneration:N0} | consumed {lifecycle.ConsumedCollectGeneration:N0} | required {lifecycle.RequiredCollectGeneration:N0}");
         ImGui.Text($"  Collect wait for render: {lifecycle.CollectWaitForRenderMs:F3} ms ({lifecycle.CollectWaitReason})");
         ImGui.Text($"  Render wait for collect: {lifecycle.RenderWaitForCollectMs:F3} ms ({lifecycle.RenderWaitReason})");
         ImGui.Text($"  Skipped collect frames: {lifecycle.SkippedCollectFrames:N0} | stale visibility reuse: {lifecycle.StaleCollectReuseFrames:N0}");
@@ -798,6 +799,9 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.Text($"  Vertex Buffer Binds: {stats.VulkanVertexBufferBinds:N0} (skipped {stats.VulkanVertexBufferBindSkips:N0})");
         ImGui.Text($"  Index Buffer Binds: {stats.VulkanIndexBufferBinds:N0} (skipped {stats.VulkanIndexBufferBindSkips:N0})");
         ImGui.Text($"  Pipeline Cache Lookups: {stats.VulkanPipelineCacheLookupHits:N0} hits / {stats.VulkanPipelineCacheLookupMisses:N0} misses ({stats.VulkanPipelineCacheLookupHitRate * 100.0:F1}% hit)");
+        ImGui.Text($"  Driver Cache: {stats.VulkanDriverPipelineCachePersistedHits:N0} persisted / {stats.VulkanDriverPipelineCacheRuntimeHits:N0} runtime hits / {stats.VulkanDriverPipelineCacheMisses:N0} misses / {stats.VulkanDriverPipelineCacheUnknown:N0} unknown");
+        ImGui.Text($"  Pipeline Compile: {stats.VulkanPipelineCompileCompletedCount:N0} completed ({stats.VulkanPipelineBackgroundCompileCompletedCount:N0} background), {stats.VulkanPipelineCompileRequiredCount:N0} compile-required, {stats.VulkanPipelineCompileTotalMs:F2} ms total / {stats.VulkanPipelineCompileMaxMs:F2} ms max");
+        ImGui.Text($"  Async Pipeline Queue: {stats.VulkanPipelineQueueDepthHighWater:N0}/{stats.VulkanPipelineQueueCapacity:N0} high-water, {stats.VulkanPipelineAsyncQueuedCount:N0} queued, {stats.VulkanPipelineQueueRejectedCount:N0} rejected, {stats.VulkanPipelineDrawNotReadyCount:N0} draw-not-ready");
         if (!string.IsNullOrWhiteSpace(stats.VulkanPipelineCacheMissSummary) &&
             ImGui.CollapsingHeader("Vulkan Pipeline Misses"))
         {

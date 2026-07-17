@@ -13,7 +13,7 @@ internal enum VulkanPipelinePrewarmEntryKind
 
 internal sealed class VulkanPipelinePrewarmDatabase
 {
-    internal const int CurrentVersion = 2;
+    internal const int CurrentVersion = 5;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -21,21 +21,35 @@ internal sealed class VulkanPipelinePrewarmDatabase
     };
 
     private readonly Dictionary<string, VulkanPipelinePrewarmEntry> _entriesByKey;
+    private readonly HashSet<string> _keysLoadedAtStartup;
+    private readonly object _sync = new();
 
     private VulkanPipelinePrewarmDatabase(string deviceProfile, IEnumerable<VulkanPipelinePrewarmEntry> entries)
     {
         DeviceProfile = deviceProfile;
         _entriesByKey = new Dictionary<string, VulkanPipelinePrewarmEntry>(StringComparer.Ordinal);
+        _keysLoadedAtStartup = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (VulkanPipelinePrewarmEntry entry in entries)
         {
             if (!string.IsNullOrWhiteSpace(entry.Key))
+            {
                 _entriesByKey[entry.Key] = entry;
+                _keysLoadedAtStartup.Add(entry.Key);
+            }
         }
     }
 
     public string DeviceProfile { get; }
-    public int EntryCount => _entriesByKey.Count;
+    public int EntryCount
+    {
+        get
+        {
+            lock (_sync)
+                return _entriesByKey.Count;
+        }
+    }
+
     public bool Dirty { get; private set; }
 
     public static VulkanPipelinePrewarmDatabase LoadOrCreate(string path, string deviceProfile)
@@ -60,53 +74,74 @@ internal sealed class VulkanPipelinePrewarmDatabase
     }
 
     public bool Contains(string key)
-        => !string.IsNullOrWhiteSpace(key) && _entriesByKey.ContainsKey(key);
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            return false;
+
+        lock (_sync)
+            return _entriesByKey.ContainsKey(key);
+    }
+
+    public bool WasKnownAtStartup(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            return false;
+
+        lock (_sync)
+            return _keysLoadedAtStartup.Contains(key);
+    }
 
     public bool Record(VulkanPipelinePrewarmEntry entry)
     {
         if (string.IsNullOrWhiteSpace(entry.Key))
             return false;
 
-        DateTime now = DateTime.UtcNow;
-        if (_entriesByKey.TryGetValue(entry.Key, out VulkanPipelinePrewarmEntry? existing))
+        lock (_sync)
         {
-            existing.LastSeenUtc = now;
-            existing.SeenCount++;
-            Dirty = true;
-            return false;
-        }
+            DateTime now = DateTime.UtcNow;
+            if (_entriesByKey.TryGetValue(entry.Key, out VulkanPipelinePrewarmEntry? existing))
+            {
+                existing.LastSeenUtc = now;
+                existing.SeenCount++;
+                Dirty = true;
+                return false;
+            }
 
-        entry.CreatedUtc = now;
-        entry.LastSeenUtc = now;
-        entry.SeenCount = Math.Max(entry.SeenCount, 1);
-        _entriesByKey[entry.Key] = entry;
-        Dirty = true;
-        return true;
+            entry.CreatedUtc = now;
+            entry.LastSeenUtc = now;
+            entry.SeenCount = Math.Max(entry.SeenCount, 1);
+            _entriesByKey[entry.Key] = entry;
+            Dirty = true;
+            return true;
+        }
     }
 
     public void Save(string path)
     {
-        string? directory = Path.GetDirectoryName(path);
-        if (!string.IsNullOrWhiteSpace(directory))
-            Directory.CreateDirectory(directory);
-
-        VulkanPipelinePrewarmFile file = new()
+        lock (_sync)
         {
-            Version = CurrentVersion,
-            DeviceProfile = DeviceProfile,
-            GeneratedUtc = DateTime.UtcNow,
-            Entries = [.. _entriesByKey.Values
-                .OrderBy(static entry => entry.Kind)
-                .ThenBy(static entry => entry.PassIndex)
-                .ThenBy(static entry => entry.PipelineName, StringComparer.Ordinal)
-                .ThenBy(static entry => entry.ProgramName, StringComparer.Ordinal)
-                .ThenBy(static entry => entry.MaterialName, StringComparer.Ordinal)
-                .ThenBy(static entry => entry.MeshName, StringComparer.Ordinal)]
-        };
+            string? directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
 
-        string json = JsonSerializer.Serialize(file, JsonOptions);
-        File.WriteAllText(path, json);
-        Dirty = false;
+            VulkanPipelinePrewarmFile file = new()
+            {
+                Version = CurrentVersion,
+                DeviceProfile = DeviceProfile,
+                GeneratedUtc = DateTime.UtcNow,
+                Entries = [.. _entriesByKey.Values
+                    .OrderBy(static entry => entry.Kind)
+                    .ThenBy(static entry => entry.PassIndex)
+                    .ThenBy(static entry => entry.PipelineName, StringComparer.Ordinal)
+                    .ThenBy(static entry => entry.ProgramName, StringComparer.Ordinal)
+                    .ThenBy(static entry => entry.MaterialName, StringComparer.Ordinal)
+                    .ThenBy(static entry => entry.MeshName, StringComparer.Ordinal)]
+            };
+
+            string json = JsonSerializer.Serialize(file, JsonOptions);
+            File.WriteAllText(path, json);
+            Dirty = false;
+        }
     }
 
     public static VulkanPipelinePrewarmEntry CreateGraphicsEntry(
@@ -124,6 +159,10 @@ internal sealed class VulkanPipelinePrewarmDatabase
         string depthAttachmentFormat,
         ulong programPipelineHash,
         ulong vertexLayoutHash,
+        ulong descriptorLayoutHash,
+        ulong passMetadataHash,
+        ulong featureProfileHash,
+        ulong fixedFunctionStateHash,
         SampleCountFlags rasterizationSamples,
         bool depthTestEnabled,
         bool blendEnabled,
@@ -145,6 +184,10 @@ internal sealed class VulkanPipelinePrewarmDatabase
             depthAttachmentFormat,
             programPipelineHash.ToString("X16"),
             vertexLayoutHash.ToString("X16"),
+            descriptorLayoutHash.ToString("X16"),
+            passMetadataHash.ToString("X16"),
+            featureProfileHash.ToString("X16"),
+            fixedFunctionStateHash.ToString("X16"),
             rasterizationSamples.ToString(),
             depthTestEnabled.ToString(),
             blendEnabled.ToString(),
@@ -170,6 +213,10 @@ internal sealed class VulkanPipelinePrewarmDatabase
             DepthAttachmentFormat = depthAttachmentFormat,
             ProgramPipelineHash = programPipelineHash,
             VertexLayoutHash = vertexLayoutHash,
+            DescriptorLayoutHash = descriptorLayoutHash,
+            PassMetadataHash = passMetadataHash,
+            FeatureProfileHash = featureProfileHash,
+            FixedFunctionStateHash = fixedFunctionStateHash,
             RasterizationSamples = rasterizationSamples.ToString(),
             DepthTestEnabled = depthTestEnabled,
             BlendEnabled = blendEnabled,
@@ -236,6 +283,10 @@ internal sealed class VulkanPipelinePrewarmEntry
     public string DepthAttachmentFormat { get; set; } = string.Empty;
     public ulong ProgramPipelineHash { get; set; }
     public ulong VertexLayoutHash { get; set; }
+    public ulong DescriptorLayoutHash { get; set; }
+    public ulong PassMetadataHash { get; set; }
+    public ulong FeatureProfileHash { get; set; }
+    public ulong FixedFunctionStateHash { get; set; }
     public string RasterizationSamples { get; set; } = string.Empty;
     public bool DepthTestEnabled { get; set; }
     public bool BlendEnabled { get; set; }
@@ -266,10 +317,13 @@ internal sealed class VulkanPipelinePrewarmFile
 public unsafe partial class VulkanRenderer
 {
     private const string VulkanPipelinePrewarmCaptureEnvVar = XREngineEnvironmentVariables.VulkanPipelinePrewarmCapture;
+    private const int VulkanPipelinePrewarmAutoSaveEntryThreshold = 16;
 
     private VulkanPipelinePrewarmDatabase? _pipelinePrewarmDatabase;
     private string? _pipelinePrewarmDatabaseFilePath;
     private bool _pipelinePrewarmCaptureEnabled;
+    private int _pipelinePrewarmNewEntriesSinceSave;
+    private int _pipelinePrewarmAutoSaveInFlight;
 
     private void InitializeVulkanPipelinePrewarmDatabase(PhysicalDeviceProperties properties)
     {
@@ -285,8 +339,8 @@ public unsafe partial class VulkanRenderer
         _pipelinePrewarmDatabaseFilePath = Path.Combine(cacheDir, $"prewarm_{deviceProfile}.json");
         _pipelinePrewarmCaptureEnabled = string.Equals(
             Environment.GetEnvironmentVariable(VulkanPipelinePrewarmCaptureEnvVar),
-            "1",
-            StringComparison.OrdinalIgnoreCase);
+            "0",
+            StringComparison.OrdinalIgnoreCase) == false;
 
         _pipelinePrewarmDatabase = VulkanPipelinePrewarmDatabase.LoadOrCreate(_pipelinePrewarmDatabaseFilePath, deviceProfile);
 
@@ -320,7 +374,40 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    internal void RecordVulkanGraphicsPipelineCacheMiss(
+    private void QueueVulkanPipelinePrewarmDatabaseAutoSave()
+    {
+        if (!_pipelinePrewarmCaptureEnabled ||
+            _pipelinePrewarmDatabase is not { } database ||
+            string.IsNullOrWhiteSpace(_pipelinePrewarmDatabaseFilePath) ||
+            Volatile.Read(ref _pipelinePrewarmNewEntriesSinceSave) < VulkanPipelinePrewarmAutoSaveEntryThreshold ||
+            Interlocked.CompareExchange(ref _pipelinePrewarmAutoSaveInFlight, 1, 0) != 0)
+        {
+            return;
+        }
+
+        string path = _pipelinePrewarmDatabaseFilePath;
+        Interlocked.Exchange(ref _pipelinePrewarmNewEntriesSinceSave, 0);
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                database.Save(path);
+                Debug.Vulkan("[Vulkan] Pipeline prewarm database auto-saved ({0} entries).", database.EntryCount);
+            }
+            catch (Exception ex)
+            {
+                Debug.VulkanWarning($"[Vulkan] Failed to auto-save pipeline prewarm database '{path}': {ex.Message}");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _pipelinePrewarmAutoSaveInFlight, 0);
+                if (Volatile.Read(ref _pipelinePrewarmNewEntriesSinceSave) >= VulkanPipelinePrewarmAutoSaveEntryThreshold)
+                    QueueVulkanPipelinePrewarmDatabaseAutoSave();
+            }
+        });
+    }
+
+    internal bool RecordVulkanGraphicsPipelineCacheMiss(
         int passIndex,
         IReadOnlyCollection<RenderPassMetadata>? passMetadata,
         string pipelineName,
@@ -333,6 +420,10 @@ public unsafe partial class VulkanRenderer
         DynamicRenderingFormatSignature dynamicRenderingFormats,
         ulong programPipelineHash,
         ulong vertexLayoutHash,
+        ulong descriptorLayoutHash,
+        ulong passMetadataHash,
+        ulong featureProfileHash,
+        ulong fixedFunctionStateHash,
         SampleCountFlags rasterizationSamples,
         bool depthTestEnabled,
         bool blendEnabled,
@@ -370,6 +461,10 @@ public unsafe partial class VulkanRenderer
             depthAttachmentFormat,
             programPipelineHash,
             vertexLayoutHash,
+            descriptorLayoutHash,
+            passMetadataHash,
+            featureProfileHash,
+            fixedFunctionStateHash,
             rasterizationSamples,
             depthTestEnabled,
             blendEnabled,
@@ -377,9 +472,14 @@ public unsafe partial class VulkanRenderer
             colorWriteMask,
             profileName);
 
-        bool knownAtStartup = _pipelinePrewarmDatabase?.Contains(entry.Key) == true;
-        _pipelinePrewarmDatabase?.Record(entry);
+        bool knownAtStartup = _pipelinePrewarmDatabase?.WasKnownAtStartup(entry.Key) == true;
+        if (_pipelinePrewarmDatabase?.Record(entry) == true)
+        {
+            Interlocked.Increment(ref _pipelinePrewarmNewEntriesSinceSave);
+            QueueVulkanPipelinePrewarmDatabaseAutoSave();
+        }
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheMiss(entry.ToProfilerSummary(knownAtStartup));
+        return knownAtStartup;
     }
 
     internal void RecordVulkanComputePipelineCacheMiss(
@@ -401,7 +501,7 @@ public unsafe partial class VulkanRenderer
             programPipelineHash,
             profileName);
 
-        bool knownAtStartup = _pipelinePrewarmDatabase?.Contains(entry.Key) == true;
+        bool knownAtStartup = _pipelinePrewarmDatabase?.WasKnownAtStartup(entry.Key) == true;
         _pipelinePrewarmDatabase?.Record(entry);
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheMiss(entry.ToProfilerSummary(knownAtStartup));
     }

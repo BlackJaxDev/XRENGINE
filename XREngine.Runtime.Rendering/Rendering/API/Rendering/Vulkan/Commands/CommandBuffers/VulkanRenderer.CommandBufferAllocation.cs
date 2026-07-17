@@ -183,15 +183,21 @@ namespace XREngine.Rendering.Vulkan
             bool hasDynamicUiBatchTextOverlay = dynamicUiBatchTextOpCount > 0;
 
             CommandBufferCacheVariant? reusableDirtyMatch = null;
+            CommandBufferCacheVariant? reusableCommandChainPrimary = null;
             for (int i = 0; i < variants.Count; i++)
             {
                 CommandBufferCacheVariant variant = variants[i];
                 if (useCommandChainKey)
                 {
+                    if (reusableCommandChainPrimary is null &&
+                        (variant.CommandChainScheduleSignature != 0 || variant.CommandChainPrimaryGroupCount != 0))
+                    {
+                        reusableCommandChainPrimary = variant;
+                    }
+
                     if (variant.CommandChainScheduleSignature == commandChainSchedule!.StructuralSignature &&
                         variant.CommandChainPrimaryGroupSignature == commandChainPrimaryGroupSignature &&
                         variant.CommandChainPrimaryGroupCount == commandChainPrimaryGroupCount &&
-                        variant.FrameOpsSignature == frameOpsSignature &&
                         variant.DynamicUiSignature == dynamicUiBatchTextSignature &&
                         variant.PreserveSwapchainForOverlay == preserveSwapchainForOverlay &&
                         (variant.DynamicUiOpCount > 0) == hasDynamicUiBatchTextOverlay)
@@ -210,6 +216,12 @@ namespace XREngine.Rendering.Vulkan
 
             if (reusableDirtyMatch is not null)
                 return reusableDirtyMatch;
+
+            // Command-chain primaries are cheap execution lists, not whole-frame
+            // cache variants. Re-record the one primary owned by this frame slot
+            // when packet membership changes instead of caching every camera view.
+            if (useCommandChainKey && reusableCommandChainPrimary is not null)
+                return reusableCommandChainPrimary;
 
             if (variants.Count < PrimaryCommandBufferVariantCapacity)
             {
@@ -235,6 +247,18 @@ namespace XREngine.Rendering.Vulkan
                     evicted = variants[i];
             
             LogFrameOpSignatureVariantEvictionDiff(imageIndex, evicted, frameOpsSignature, frameOpsForDiagnostics);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
+                reusedClean: false,
+                recorded: false,
+                forcedDirty: false,
+                frameOpSignatureDirty: false,
+                plannerDirty: false,
+                profilerDirty: false,
+                dirtyReason: null,
+                detailReasons: EVulkanCommandBufferDecisionReason.Evicted,
+                structuralSignature: evicted.RecordedGenerations.Structural,
+                descriptorGeneration: evicted.RecordedGenerations.Descriptor,
+                swapchainSlot: unchecked((int)imageIndex));
             evicted.Dirty = true;
             evicted.DirtyReason = "variant eviction";
             evicted.FrameOpsSignature = ulong.MaxValue;

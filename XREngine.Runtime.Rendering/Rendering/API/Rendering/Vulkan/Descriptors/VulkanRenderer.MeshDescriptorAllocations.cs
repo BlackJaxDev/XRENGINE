@@ -45,6 +45,7 @@ public unsafe partial class VulkanRenderer
         VkMeshRenderer.DescriptorAllocation allocation,
         out bool published)
     {
+        using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.DescriptorPublication);
         lock (_sharedMeshDescriptorAllocationLock)
         {
             if (!_sharedMeshDescriptorAllocations.TryGetValue(key, out List<VkMeshRenderer.DescriptorAllocation>? candidates))

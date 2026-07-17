@@ -81,9 +81,9 @@ namespace XREngine.Rendering.Vulkan
                 // it invalidates them (InvalidCommandBuffer-VkQueryPool validation errors
                 // followed by an access violation inside vkQueueSubmit2).
                 //
-                // PrepareForRecording resets the resolved query before recording begins.
-                // The occlusion coordinator never schedules a new epoch until the prior
-                // result is available, so the host reset is externally synchronized.
+                // PrepareForRecording records an execution-ordered reset before the next
+                // query epoch. Keeping the reset on the GPU avoids racing a host reset
+                // against an older submitted command buffer that still references the pool.
                 if (!EnsureQueryPool(queryType))
                     return false;
 
@@ -112,10 +112,8 @@ namespace XREngine.Rendering.Vulkan
             }
 
             /// <summary>
-            /// Resets the query before its next begin is recorded. CpuQueryAsync only
-            /// reaches this point after the prior result has resolved, which makes a
-            /// host reset safe and avoids carrying reset state between independently
-            /// submitted desktop and OpenXR command buffers.
+            /// Records a reset before the query's next begin. The reset executes on the
+            /// graphics queue, after older submissions that may still reference the pool.
             /// </summary>
             internal bool PrepareForRecording(CommandBuffer commandBuffer, EQueryTarget target, uint queryCount = 1)
             {
@@ -133,18 +131,9 @@ namespace XREngine.Rendering.Vulkan
                     "Query.Reset");
                 _activeQueryCount = Math.Clamp(queryCount, 1u, _queryPoolCapacity);
                 _resultQueryCount = _activeQueryCount;
-                if (Renderer.SupportsHostQueryReset)
-                {
-                    Renderer.EnsureVulkanResourceMutationAllowed(
-                        ObjectType.QueryPool,
-                        _queryPool.Handle,
-                        "ResetQueryPoolBeforeRecording");
-                    Api!.ResetQueryPool(Device, _queryPool, 0, _queryPoolCapacity);
-                }
-                // Keep an execution-ordered reset in the command buffer as well. A
-                // reusable OpenXR primary can be submitted after desktop work that was
-                // recorded after the host reset; the queued reset establishes the query
-                // epoch at the exact execution boundary in both cases.
+                // The queued reset is the sole epoch boundary. A host reset here is not
+                // safe merely because a result was available: Vulkan requires all
+                // submitted commands that refer to the range to have completed.
                 Api!.CmdResetQueryPool(commandBuffer, _queryPool, 0, _queryPoolCapacity);
                 Volatile.Write(ref _hasSubmittedResultEpoch, 0);
                 return true;
@@ -191,20 +180,13 @@ namespace XREngine.Rendering.Vulkan
                 if (!TryMapQueryType(target, out QueryType queryType, out bool isOcclusion) || !isOcclusion)
                     return false;
 
-                // Ensure that the query pool is available and supports host query reset before proceeding.
-                if (!Renderer.SupportsHostQueryReset || !EnsureQueryPool(queryType))
+                // The recorded command buffer already contains CmdResetQueryPool before
+                // its first query begin, so replay establishes a new epoch in queue order.
+                if (!EnsureQueryPool(queryType))
                     return false;
 
-                // The occlusion coordinator only schedules a new query after the prior
-                // result resolves. Reset the persistent pool on the host before replaying
-                // the already-recorded begin/end commands; the command buffer itself does
-                // not need to be re-recorded merely to establish a new query epoch.
-                Renderer.EnsureVulkanResourceMutationAllowed(
-                    ObjectType.QueryPool,
-                    _queryPool.Handle,
-                    "ResetQueryPoolForCommandBufferReuse");
-                // Reset the query pool on the host to prepare for command buffer reuse.
-                Api!.ResetQueryPool(Device, _queryPool, 0, _queryPoolCapacity);
+                // Hide the resolved epoch until the reused command buffer is submitted;
+                // resource tracking marks the new result epoch at submission time.
                 Volatile.Write(ref _hasSubmittedResultEpoch, 0);
                 return true;
             }

@@ -498,7 +498,7 @@ public unsafe partial class VulkanRenderer
 
 		private static ulong ComputePassMetadataHash(IReadOnlyCollection<RenderPassMetadata>? passMetadata, int passIndex)
 		{
-			HashCode hash = new();
+			VulkanStableHash64 hash = new(schemaVersion: 2);
 			hash.Add(passIndex);
 			hash.Add(passMetadata?.Count ?? 0);
 			if (passMetadata is not null)
@@ -506,11 +506,11 @@ public unsafe partial class VulkanRenderer
 				foreach (RenderPassMetadata metadata in passMetadata)
 				{
 					hash.Add(metadata.PassIndex);
-					hash.Add(metadata.Name, StringComparer.Ordinal);
+					hash.Add(metadata.Name);
 					hash.Add((int)metadata.Stage);
 					hash.Add(metadata.DescriptorSchemas.Count);
 					foreach (string schema in metadata.DescriptorSchemas)
-						hash.Add(schema, StringComparer.Ordinal);
+						hash.Add(schema);
 				}
 			}
 
@@ -518,20 +518,20 @@ public unsafe partial class VulkanRenderer
 			hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.UseDepthNormalMaterialVariants ?? false);
 			hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.DirectionalCascadeLayeredShadowPass ?? false);
 			hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.PointLightLayeredShadowPass ?? false);
-			return unchecked((ulong)hash.ToHashCode());
+			return hash.Value;
 		}
 
 		private ulong ComputeFeatureProfileHash()
 		{
-			HashCode hash = new();
+			VulkanStableHash64 hash = new(schemaVersion: 2);
 			hash.Add(_pipelineShaderConfigVersion);
 			hash.Add(_pipelineUsesShaderClipDepthRemap);
 			hash.Add(_pipelineUsesNativeDepthClipControl);
-			hash.Add(RuntimeEngine.Rendering.EffectiveClipDepthRange);
-			hash.Add(RuntimeEngine.Rendering.Settings.ClipSpaceYDirection);
+			hash.Add((int)RuntimeEngine.Rendering.EffectiveClipDepthRange);
+			hash.Add((int)RuntimeEngine.Rendering.Settings.ClipSpaceYDirection);
 			hash.Add(RuntimeEngine.Rendering.ShouldUseNativeVulkanDepthClipControl);
 			hash.Add(Renderer.SupportsIndexTypeUint8);
-			return unchecked((ulong)hash.ToHashCode());
+			return hash.Value;
 		}
 
 
@@ -823,21 +823,22 @@ public unsafe partial class VulkanRenderer
 
 				if (Renderer.IsVulkanGraphicsPipelineCompileInFlight(request.CompileKey))
 				{
+					RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
+						EVulkanPipelineTelemetryEvent.DrawNotReady,
+						backgroundCompile: true);
 					_pipelineDirty = true;
 					return false;
 				}
 
-				if (!Renderer.TryEnqueueVulkanGraphicsPipelineCompile(request, out string rejectReason))
+				// A completion continuation publishes successful worker results directly
+				// into the shared object cache. Recheck after observing no in-flight job
+				// so a just-completed compile is not redundantly enqueued.
+				if (Renderer.TryGetSharedGraphicsPipeline(key, out pipeline))
 				{
-					Debug.VulkanEvery(
-						$"Vulkan.Pipeline.AsyncEnqueueRejected.{program.Data.Name ?? "UnknownProgram"}",
-						TimeSpan.FromSeconds(2),
-						"[Vulkan] Async graphics pipeline enqueue skipped for program='{0}' pipeline='{1}': {2}",
-						program.Data.Name ?? "<unnamed program>",
-						pipelineName,
-						rejectReason);
-					_pipelineDirty = true;
-					return false;
+					RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheLookup(cacheHit: true);
+					_pipelines[key] = pipeline;
+					_pipelineDirty = false;
+					return true;
 				}
 
 				RecordGraphicsPipelineCacheMiss(
@@ -858,7 +859,26 @@ public unsafe partial class VulkanRenderer
 					key,
 					effectiveDraw);
 
+				if (!Renderer.TryEnqueueVulkanGraphicsPipelineCompile(request, out string rejectReason))
+				{
+					RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
+						EVulkanPipelineTelemetryEvent.DrawNotReady,
+						backgroundCompile: true);
+					Debug.VulkanEvery(
+						$"Vulkan.Pipeline.AsyncEnqueueRejected.{program.Data?.Name ?? "UnknownProgram"}",
+						TimeSpan.FromSeconds(2),
+						"[Vulkan] Async graphics pipeline enqueue skipped for program='{0}' pipeline='{1}': {2}",
+						program.Data?.Name ?? "<unnamed program>",
+						pipelineName,
+						rejectReason);
+					_pipelineDirty = true;
+					return false;
+				}
+
 				_pipelineDirty = true;
+				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
+					EVulkanPipelineTelemetryEvent.DrawNotReady,
+					backgroundCompile: true);
 				return false;
 			}
 
@@ -897,7 +917,7 @@ public unsafe partial class VulkanRenderer
 			return pipeline.Handle != 0;
 		}
 
-		private void RecordGraphicsPipelineCacheMiss(
+		private bool RecordGraphicsPipelineCacheMiss(
 			int passIndex,
 			IReadOnlyCollection<RenderPassMetadata>? passMetadata,
 			string pipelineName,
@@ -915,7 +935,7 @@ public unsafe partial class VulkanRenderer
 			in PipelineKey key,
 			in PendingMeshDraw effectiveDraw)
 		{
-			Renderer.RecordVulkanGraphicsPipelineCacheMiss(
+			bool knownAtStartup = Renderer.RecordVulkanGraphicsPipelineCacheMiss(
 				passIndex,
 				passMetadata,
 				pipelineName,
@@ -928,6 +948,10 @@ public unsafe partial class VulkanRenderer
 				dynamicRenderingFormats,
 				programPipelineHash,
 				vertexLayoutHash,
+				descriptorLayoutHash,
+				key.PassMetadataHash,
+				key.FeatureProfileHash,
+				ComputeStableFixedFunctionStateHash(key),
 				effectiveDraw.RasterizationSamples,
 				effectiveDraw.DepthTestEnabled,
 				effectiveDraw.BlendEnabled,
@@ -953,6 +977,49 @@ public unsafe partial class VulkanRenderer
 				effectiveDraw.BlendEnabled,
 				effectiveDraw.AlphaToCoverageEnabled,
 				effectiveDraw.CullMode);
+			return knownAtStartup;
+		}
+
+		private static ulong ComputeStableFixedFunctionStateHash(in PipelineKey key)
+		{
+			VulkanStableHash64 hash = new(schemaVersion: 2);
+
+			Add((ulong)key.RasterizationSamples);
+			Add(key.DepthTestEnabled ? 1UL : 0UL);
+			Add(key.DepthWriteEnabled ? 1UL : 0UL);
+			Add((ulong)key.DepthCompareOp);
+			Add(key.StencilTestEnabled ? 1UL : 0UL);
+			AddStencil(key.FrontStencilState);
+			AddStencil(key.BackStencilState);
+			Add(key.StencilWriteMask);
+			Add((ulong)key.CullMode);
+			Add((ulong)key.FrontFace);
+			Add(key.BlendEnabled ? 1UL : 0UL);
+			Add(key.AlphaToCoverageEnabled ? 1UL : 0UL);
+			Add((ulong)key.ColorBlendOp);
+			Add((ulong)key.AlphaBlendOp);
+			Add((ulong)key.SrcColorBlendFactor);
+			Add((ulong)key.DstColorBlendFactor);
+			Add((ulong)key.SrcAlphaBlendFactor);
+			Add((ulong)key.DstAlphaBlendFactor);
+			Add((ulong)key.ColorWriteMask);
+			Add(key.ViewportScissorCount);
+			Add(key.NativeNegativeOneToOneDepth ? 1UL : 0UL);
+			return hash.Value;
+
+			void Add(ulong value)
+				=> hash.Add(value);
+
+			void AddStencil(StencilOpState state)
+			{
+				Add((ulong)state.FailOp);
+				Add((ulong)state.PassOp);
+				Add((ulong)state.DepthFailOp);
+				Add((ulong)state.CompareOp);
+				Add(state.CompareMask);
+				Add(state.WriteMask);
+				Add(state.Reference);
+			}
 		}
 
 		private bool ShouldUseGraphicsPipelineLibraries()
@@ -1162,15 +1229,15 @@ public unsafe partial class VulkanRenderer
 					"[Vulkan] Using monolithic dynamic-rendering pipeline for depth-only pass '{0}' program='{1}'; graphics pipeline libraries are bypassed for zero-color pipelines to keep depth/stencil validation correct.",
 					request.PipelineName,
 					request.Program.Data.Name ?? "<unnamed program>");
-				return CreateMonolithicGraphicsPipeline(request, ref pipelineInfo, pipelineCache);
+				return CreateMonolithicGraphicsPipeline(request, ref pipelineInfo, pipelineCache, backgroundCompile);
 			}
 
 			if (!ShouldUseGraphicsPipelineLibraries())
-				return CreateMonolithicGraphicsPipeline(request, ref pipelineInfo, pipelineCache);
+				return CreateMonolithicGraphicsPipeline(request, ref pipelineInfo, pipelineCache, backgroundCompile);
 
 			try
 			{
-				return CreateGraphicsPipelineFromLibraries(request, ref pipelineInfo, pipelineCache);
+				return CreateGraphicsPipelineFromLibraries(request, ref pipelineInfo, pipelineCache, backgroundCompile);
 			}
 			catch (InvalidOperationException ex)
 			{
@@ -1181,14 +1248,15 @@ public unsafe partial class VulkanRenderer
 					request.PipelineName,
 					request.Program.Data.Name ?? "<unnamed program>",
 					ex.Message);
-				return CreateMonolithicGraphicsPipeline(request, ref pipelineInfo, pipelineCache);
+				return CreateMonolithicGraphicsPipeline(request, ref pipelineInfo, pipelineCache, backgroundCompile);
 			}
 		}
 
 		private Pipeline CreateMonolithicGraphicsPipeline(
 			GraphicsPipelineBuildRequest request,
 			ref GraphicsPipelineCreateInfo pipelineInfo,
-			PipelineCache pipelineCache)
+			PipelineCache pipelineCache,
+			bool backgroundCompile)
 		{
 			if (request.GraphicsStages.Length == 0)
 				throw new InvalidOperationException("graphics pipeline creation requires at least one graphics shader stage.");
@@ -1199,7 +1267,11 @@ public unsafe partial class VulkanRenderer
 				pipelineInfo.PStages = stagesPtr;
 				pipelineInfo.Layout = request.PipelineLayout;
 
-				Result result = Api!.CreateGraphicsPipelines(Device, pipelineCache, 1, ref pipelineInfo, null, out Pipeline pipeline);
+				Result result = Renderer.CreateGraphicsPipelineWithCachePolicy(
+					ref pipelineInfo,
+					pipelineCache,
+					backgroundCompile,
+					out Pipeline pipeline);
 				if (result != Result.Success)
 					throw new InvalidOperationException($"failed to create graphics pipeline ({result}).");
 
@@ -1212,7 +1284,8 @@ public unsafe partial class VulkanRenderer
 		private Pipeline CreateGraphicsPipelineFromLibraries(
 			GraphicsPipelineBuildRequest request,
 			ref GraphicsPipelineCreateInfo pipelineInfo,
-			PipelineCache pipelineCache)
+			PipelineCache pipelineCache,
+			bool backgroundCompile)
 		{
 			if (request.PreRasterStages.Length == 0)
 				throw new InvalidOperationException("graphics pipeline libraries require a pre-rasterization shader stage.");
@@ -1226,7 +1299,8 @@ public unsafe partial class VulkanRenderer
 				ref pipelineInfo,
 				Array.Empty<PipelineShaderStageCreateInfo>(),
 				GraphicsPipelineLibraryFlagsEXT.VertexInputInterfaceBitExt,
-				pipelineCache);
+				pipelineCache,
+				backgroundCompile);
 
 			Pipeline preRasterization = EnsureGraphicsPipelineLibrary(
 				request,
@@ -1234,7 +1308,8 @@ public unsafe partial class VulkanRenderer
 				ref pipelineInfo,
 				request.PreRasterStages,
 				GraphicsPipelineLibraryFlagsEXT.PreRasterizationShadersBitExt,
-				pipelineCache);
+				pipelineCache,
+				backgroundCompile);
 
 			List<Pipeline> libraries =
 			[
@@ -1250,7 +1325,8 @@ public unsafe partial class VulkanRenderer
 					ref pipelineInfo,
 					request.FragmentStages,
 					GraphicsPipelineLibraryFlagsEXT.FragmentShaderBitExt,
-					pipelineCache);
+					pipelineCache,
+					backgroundCompile);
 				libraries.Add(fragmentShader);
 			}
 
@@ -1260,7 +1336,8 @@ public unsafe partial class VulkanRenderer
 				ref pipelineInfo,
 				Array.Empty<PipelineShaderStageCreateInfo>(),
 				GraphicsPipelineLibraryFlagsEXT.FragmentOutputInterfaceBitExt,
-				pipelineCache);
+				pipelineCache,
+				backgroundCompile);
 			libraries.Add(fragmentOutput);
 
 			Pipeline[] libraryArray = [.. libraries];
@@ -1298,7 +1375,11 @@ public unsafe partial class VulkanRenderer
 				linkedInfo.Layout = request.PipelineLayout;
 
 				long linkStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
-				Result result = Api!.CreateGraphicsPipelines(Device, pipelineCache, 1, ref linkedInfo, null, out Pipeline pipeline);
+				Result result = Renderer.CreateGraphicsPipelineWithCachePolicy(
+					ref linkedInfo,
+					pipelineCache,
+					backgroundCompile,
+					out Pipeline pipeline);
 				TimeSpan linkElapsed = global::System.Diagnostics.Stopwatch.GetElapsedTime(linkStart);
 				if (result != Result.Success)
 					throw new InvalidOperationException($"failed to link graphics pipeline libraries ({result}) after {linkElapsed.TotalMilliseconds:F2} ms.");
@@ -1400,7 +1481,8 @@ public unsafe partial class VulkanRenderer
 			ref GraphicsPipelineCreateInfo baseInfo,
 			PipelineShaderStageCreateInfo[] stages,
 			GraphicsPipelineLibraryFlagsEXT libraryFlags,
-			PipelineCache pipelineCache)
+			PipelineCache pipelineCache,
+			bool backgroundCompile)
 		{
 			if (Renderer.TryGetSharedGraphicsPipelineLibrary(key, out Pipeline cachedLibrary))
 				return cachedLibrary;
@@ -1446,7 +1528,11 @@ public unsafe partial class VulkanRenderer
 				ApplyGraphicsPipelineLibrarySubset(ref libraryPipelineInfo, key.Subset);
 
 				long createStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
-				Result result = Api!.CreateGraphicsPipelines(Device, pipelineCache, 1, ref libraryPipelineInfo, null, out Pipeline library);
+				Result result = Renderer.CreateGraphicsPipelineWithCachePolicy(
+					ref libraryPipelineInfo,
+					pipelineCache,
+					backgroundCompile,
+					out Pipeline library);
 				TimeSpan createElapsed = global::System.Diagnostics.Stopwatch.GetElapsedTime(createStart);
 				if (result != Result.Success)
 					throw new InvalidOperationException($"failed to create {key.Subset} graphics pipeline library ({result}) after {createElapsed.TotalMilliseconds:F2} ms.");

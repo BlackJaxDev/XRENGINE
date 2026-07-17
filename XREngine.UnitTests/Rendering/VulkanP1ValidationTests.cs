@@ -544,7 +544,8 @@ public sealed class VulkanP1ValidationTests
         commandBufferSource.ShouldContain("using FrameOpResourcePlannerRecordingScope frameOpResourcePlannerRecordingScope = EnterFrameOpResourcePlannerRecordingScope();");
         commandBufferSource.ShouldContain("_ = TryActivateFrameOpResourcePlannerState(initialContext);");
         commandBufferSource.ShouldContain("if (TryActivateFrameOpResourcePlannerState(activeContext))");
-        commandBufferSource.ShouldContain("if (ActiveFrameOpResourcePlannerSwitchingState.SwitchingActive)");
+        commandBufferSource.ShouldContain("FrameOpPlannerStateKey packetPlannerKey = BuildFrameOpPlannerStateKey(packetContext);");
+        commandBufferSource.ShouldContain("BuildFrameOpPlannerStateKey(ops[packetEnd].Context) == packetPlannerKey");
 
         loweringSource.ShouldContain("FrameOpResourcePlannerSwitchingState frameOpSwitchingState = ActiveFrameOpResourcePlannerSwitchingState;");
         initializationSource.ShouldContain("DestroyFrameOpResourcePlannerStates();");

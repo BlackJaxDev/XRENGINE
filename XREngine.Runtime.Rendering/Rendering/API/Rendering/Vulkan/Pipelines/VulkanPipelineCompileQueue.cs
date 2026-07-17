@@ -75,6 +75,10 @@ public unsafe partial class VulkanRenderer
             if (activeJobCount >= capacity)
             {
                 rejectReason = $"async Vulkan pipeline compile queue is at capacity ({capacity}; active={activeJobCount}, completed={Math.Max(0, totalJobCount - activeJobCount)})";
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
+                    EVulkanPipelineTelemetryEvent.QueueRejected,
+                    queueDepth: activeJobCount,
+                    queueCapacity: capacity);
                 return false;
             }
 
@@ -114,18 +118,35 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
+                EVulkanPipelineTelemetryEvent.AsyncQueued,
+                backgroundCompile: true,
+                queueDepth: activeJobCount + 1,
+                queueCapacity: capacity);
+
             _ = task.ContinueWith(
-                _ =>
+                static (_, state) =>
                 {
+                    var (renderer, compileKey, pipelineKey) =
+                        ((VulkanRenderer Renderer, VkMeshRenderer.GraphicsPipelineCompileKey CompileKey, VkMeshRenderer.PipelineKey PipelineKey))state!;
                     try
                     {
-                        if (!VulkanPrimaryCommandBufferReuseEnabled)
-                            MarkCommandBuffersDirty();
+                        if (renderer._vulkanGraphicsPipelineCompileJobs.TryRemove(compileKey, out VulkanGraphicsPipelineCompileJob? completedJob) &&
+                            completedJob.Task.IsCompletedSuccessfully)
+                        {
+                            VulkanGraphicsPipelineCompileResult result = completedJob.Task.GetAwaiter().GetResult();
+                            if (result.Success && result.Pipeline.Handle != 0)
+                                renderer.StoreOrRetireSharedGraphicsPipeline(pipelineKey, result.Pipeline);
+                        }
+
+                        if (!renderer.VulkanPrimaryCommandBufferReuseEnabled)
+                            renderer.MarkCommandBuffersDirty();
                     }
                     catch
                     {
                     }
                 },
+                (this, request.CompileKey, request.Key),
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
@@ -154,7 +175,7 @@ public unsafe partial class VulkanRenderer
         {
             Pipeline pipeline = request.Owner.CreateGraphicsPipelineFromRequest(
                 request,
-                pipelineCache: default,
+                pipelineCache: ActivePipelineCache,
                 backgroundCompile: true);
             double elapsedMs = global::System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
             uint keyHash = unchecked((uint)request.Key.GetHashCode());
@@ -222,7 +243,7 @@ public unsafe partial class VulkanRenderer
             return;
 
         Debug.Vulkan(
-            "[Vulkan] Async graphics pipeline compilation enabled (workers={0}, capacity={1}, {2}=<unset|1..16>). Background workers create pipelines without the shared VkPipelineCache so parallel vkCreateGraphicsPipelines calls do not require cache synchronization.",
+            "[Vulkan] Async graphics pipeline compilation enabled (workers={0}, capacity={1}, {2}=<unset|1..16>). Workers use the persistent internally-synchronized VkPipelineCache and probe compile-required before performing cold compilation.",
             workerCount,
             capacity,
             VulkanPipelineCompileWorkersEnvVar);
