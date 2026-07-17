@@ -450,7 +450,13 @@ public unsafe partial class VulkanRenderer
     }
 
     internal ExternalResourcePlannerReadbackScope EnterFrameOpResourcePlannerReadbackScope(in FrameOpContext context)
-        => new ExternalResourcePlannerReadbackScope(this, context);
+        => new(this, context);
+
+    // ExternalResourcePlannerReadbackScope temporarily swaps renderer-wide planner
+    // state and updates the shared planner-state cache. Worker command recording may
+    // run concurrently, but those swaps must remain an atomic scope until planner
+    // snapshots become immutable and can be passed directly to RecordDraw.
+    private readonly object _frameOpResourcePlannerReadbackLock = new();
 
     private FrameOpContext CreateFrameOpContext(
         XRRenderPipelineInstance pipeline,
@@ -1480,9 +1486,7 @@ public unsafe partial class VulkanRenderer
         if (!switchingState.RecordingScopeActive ||
             !switchingState.HasActiveKey ||
             !switchingState.HasActiveContext)
-        {
             return;
-        }
 
         ResourcePlannerRuntimeState state = CaptureResourcePlannerRuntimeState();
         state.LastActiveFrameOpContext = switchingState.ActiveContext;
@@ -1586,10 +1590,9 @@ public unsafe partial class VulkanRenderer
         if (state.BarrierPlanner is null)
             throw new InvalidOperationException("A cached frame-op planner state has no barrier planner.");
         if (state.ResourceAllocator.OwnershipId != state.AllocatorOwnershipId)
-        {
             throw new InvalidOperationException(
                 $"Cached frame-op planner allocator ownership changed from {state.AllocatorOwnershipId} to {state.ResourceAllocator.OwnershipId}.");
-        }
+
         if (state.ResourceAllocator.IsRetired)
             throw new InvalidOperationException($"Cached frame-op planner allocator owner {state.AllocatorOwnershipId} is retired.");
     }
@@ -1606,19 +1609,15 @@ public unsafe partial class VulkanRenderer
                     continue;
 
                 if (ReferenceEquals(first.Value.ResourceAllocator, second.Value.ResourceAllocator))
-                {
                     throw new InvalidOperationException(
                         $"Frame-op planner states {first.Key} and {second.Key} share allocator owner {first.Value.AllocatorOwnershipId} without an explicit sharing policy.");
-                }
             }
 
             if (switchingState.HasPreparationState)
             {
                 if (ReferenceEquals(first.Value.ResourceAllocator, switchingState.PreparationState.ResourceAllocator))
-                {
                     throw new InvalidOperationException(
                         $"Frame-op planner state {first.Key} shares allocator owner {first.Value.AllocatorOwnershipId} with the merged preparation state.");
-                }
             }
         }
 
@@ -1634,10 +1633,9 @@ public unsafe partial class VulkanRenderer
     {
         AssertResourcePlannerRuntimeStateCanBeRestored(state);
         if (context.ResourceGeneration != key.ResourceGeneration)
-        {
             throw new InvalidOperationException(
                 $"Frame-op planner context generation {context.ResourceGeneration} does not match key generation {key.ResourceGeneration} for {key}.");
-        }
+
         if (state.LastActiveFrameOpContext is not FrameOpContext lastContext)
             return;
 
@@ -1818,7 +1816,7 @@ public unsafe partial class VulkanRenderer
     {
         if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
         {
-            var dimensions = ResolveExternalFrameOpResourceDimensions(
+            var (DisplayWidth, DisplayHeight, InternalWidth, InternalHeight) = ResolveExternalFrameOpResourceDimensions(
                 externalExtent,
                 context.PipelineInstance?.ResourceInternalWidth,
                 context.PipelineInstance?.ResourceInternalHeight,
@@ -1826,13 +1824,11 @@ public unsafe partial class VulkanRenderer
                 viewportInternalHeight: null,
                 contextInternalWidth: context.InternalWidth,
                 contextInternalHeight: context.InternalHeight);
-            if (context.DisplayWidth == dimensions.DisplayWidth &&
-                context.DisplayHeight == dimensions.DisplayHeight &&
-                context.InternalWidth == dimensions.InternalWidth &&
-                context.InternalHeight == dimensions.InternalHeight)
-            {
+            if (context.DisplayWidth == DisplayWidth &&
+                context.DisplayHeight == DisplayHeight &&
+                context.InternalWidth == InternalWidth &&
+                context.InternalHeight == InternalHeight)
                 return context;
-            }
 
             Debug.VulkanEvery(
                 $"Vulkan.ResourcePlanner.ExternalFrameOpExtents.{context.PipelineIdentity}.{context.ViewportIdentity}",
@@ -1842,17 +1838,17 @@ public unsafe partial class VulkanRenderer
                 context.DisplayHeight,
                 context.InternalWidth,
                 context.InternalHeight,
-                dimensions.DisplayWidth,
-                dimensions.DisplayHeight,
-                dimensions.InternalWidth,
-                dimensions.InternalHeight);
+                DisplayWidth,
+                DisplayHeight,
+                InternalWidth,
+                InternalHeight);
 
             return RefreshFrameOpContextRecordingFingerprint(context with
             {
-                DisplayWidth = dimensions.DisplayWidth,
-                DisplayHeight = dimensions.DisplayHeight,
-                InternalWidth = dimensions.InternalWidth,
-                InternalHeight = dimensions.InternalHeight
+                DisplayWidth = DisplayWidth,
+                DisplayHeight = DisplayHeight,
+                InternalWidth = InternalWidth,
+                InternalHeight = InternalHeight
             });
         }
 
@@ -2095,18 +2091,13 @@ public unsafe partial class VulkanRenderer
     }
 
     private Extent2D ResolveFrameOpContextFallbackExtent()
-    {
-        if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
-            return externalExtent;
-
-        return swapChainExtent;
-    }
+        => TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent) ? externalExtent : swapChainExtent;
 
     private VulkanResourceExtentContext BuildResourceExtentContext(in FrameOpContext context)
     {
         if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
         {
-            var dimensions = ResolveExternalFrameOpResourceDimensions(
+            var (DisplayWidth, DisplayHeight, InternalWidth, InternalHeight) = ResolveExternalFrameOpResourceDimensions(
                 externalExtent,
                 context.PipelineInstance?.ResourceInternalWidth,
                 context.PipelineInstance?.ResourceInternalHeight,
@@ -2115,10 +2106,10 @@ public unsafe partial class VulkanRenderer
                 contextInternalWidth: context.InternalWidth,
                 contextInternalHeight: context.InternalHeight);
             return new VulkanResourceExtentContext(
-                dimensions.DisplayWidth,
-                dimensions.DisplayHeight,
-                dimensions.InternalWidth,
-                dimensions.InternalHeight);
+                DisplayWidth,
+                DisplayHeight,
+                InternalWidth,
+                InternalHeight);
         }
 
         Extent2D fallbackExtent = ResolveFrameOpContextFallbackExtent();
@@ -3539,12 +3530,12 @@ public unsafe partial class VulkanRenderer
         }
         else if (filtered.Count == 0)
         {
-            result = Array.Empty<RenderPassMetadata>();
+            result = [];
         }
         else
         {
             filtered.Sort(static (left, right) => left.PassIndex.CompareTo(right.PassIndex));
-            result = filtered.ToArray();
+            result = [.. filtered];
         }
 
         var cacheEntry = new ActivePassMetadataFilterCacheEntry(

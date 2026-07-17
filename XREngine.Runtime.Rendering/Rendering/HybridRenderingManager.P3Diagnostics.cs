@@ -99,6 +99,7 @@ namespace XREngine.Rendering
         public static void IncBucketDryRunSkipped() => Interlocked.Increment(ref _bucketsDryRunSkipped);
         public static void IncCommandSwapCleanSkipped() => Interlocked.Increment(ref _commandSwapsCleanSkipped);
         public static void IncCommandSwapExecuted() => Interlocked.Increment(ref _commandSwapsExecuted);
+
         public static void RecordMaterialScatterSizing(uint lookupCapacity, uint denseSlots, uint bucketCount, uint maxDrawsPerBucket)
         {
             if (!LoggingEnabled)

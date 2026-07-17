@@ -620,14 +620,16 @@ namespace XREngine.Rendering.Vulkan
             return hash.ToHashCode();
         }
 
-        private static int HashBufferBindingsStable(Dictionary<uint, XRDataBuffer> buffers)
+        private static int HashBufferBindingsStable(Dictionary<uint, VulkanComputeBufferBinding> buffers)
         {
             HashCode hash = new();
             hash.Add(buffers.Count);
             foreach (var pair in buffers.OrderBy(p => p.Key))
             {
                 hash.Add(pair.Key);
-                hash.Add(pair.Value.GetHashCode());
+                hash.Add(pair.Value.Data.GetHashCode());
+                hash.Add(pair.Value.Buffer.Handle);
+                hash.Add(pair.Value.Range);
             }
 
             return hash.ToHashCode();

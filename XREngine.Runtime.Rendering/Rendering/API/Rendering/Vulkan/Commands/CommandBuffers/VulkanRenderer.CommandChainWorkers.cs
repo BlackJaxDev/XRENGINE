@@ -7,6 +7,11 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+    // Worker recording remains quarantined after renderer-family affinity and
+    // planner-state serialization still reproduced validation-clean submit-time
+    // device loss. Command chains continue through the serial secondary recorder
+    // until workers consume immutable recording snapshots only.
+    private const bool ParallelCommandChainWorkerRecordingSafe = false;
     private readonly object _commandChainRecordingWorkersLock = new();
     private readonly ManualResetEventSlim _commandChainRecordingWorkersIdle = new(initialState: true);
     private readonly CountdownEvent _commandChainRecordingWorkerCountdown = new(initialCount: 1);
@@ -29,6 +34,7 @@ public unsafe partial class VulkanRenderer
         public int JobCount;
         public int PassIndex;
         public int FrameSlot;
+        public uint ActiveWorkerMask;
         public bool DynamicRendering;
         public RenderPass RenderPass;
         public Framebuffer Framebuffer;
@@ -47,6 +53,7 @@ public unsafe partial class VulkanRenderer
             RecordJobWorkerIndices = [];
             UniformSlots = [];
             JobCount = 0;
+            ActiveWorkerMask = 0;
             TargetName = "<swapchain>";
             Error = null;
         }
@@ -107,16 +114,30 @@ public unsafe partial class VulkanRenderer
         out int frameSlot)
     {
         workers = [];
+        workerCount = 0;
         frameSlot = -1;
-        workerCount = ResolveCommandChainRecordingWorkerCount(
+        int requestedWorkerCount = ResolveCommandChainRecordingWorkerCount(
             recordJobCount,
             Environment.ProcessorCount,
             CommandChainsSingleThread,
             ParallelCommandChainRecordingDisabled);
-        if (workerCount <= 1 || !TryGetIndexedCommandChainCacheSlot(frameDataImageIndex, out frameSlot))
+        bool workerRecordingAvailable =
+            ParallelCommandChainWorkerRecordingSafe &&
+            !CommandChainsSingleThread &&
+            !ParallelCommandChainRecordingDisabled &&
+            Math.Max(Environment.ProcessorCount - 1, 1) > 1;
+        if (!workerRecordingAvailable ||
+            recordJobCount <= 0 ||
+            !TryGetIndexedCommandChainCacheSlot(frameDataImageIndex, out frameSlot))
+        {
             return false;
+        }
 
-        workers = EnsureCommandChainRecordingWorkers(workerCount);
+        workers = EnsureCommandChainRecordingWorkers(Math.Max(requestedWorkerCount, 2));
+        // EnsureCommandChainRecordingWorkers creates the fixed bounded worker
+        // capacity on first use. Hash against that capacity for the lifetime of
+        // the pools so a changing dirty subset cannot migrate a chain.
+        workerCount = workers.Length;
         int frameSlotCount = ResolveIndexedCommandChainCacheCount();
         EnsureCommandChainWorkerFrameSlotPools(workers, frameSlotCount);
         return frameSlot < frameSlotCount;
@@ -127,20 +148,33 @@ public unsafe partial class VulkanRenderer
         CommandChainRecordingWorkerState[] workers,
         int workerCount)
     {
-        if (batch.JobCount <= 0 || workerCount <= 1)
+        if (batch.JobCount <= 0 || workerCount <= 1 || batch.ActiveWorkerMask == 0)
             return default;
 
         long dispatchStart = Stopwatch.GetTimestamp();
+        int activeWorkerCount = 0;
+        for (int workerIndex = 0; workerIndex < workerCount; workerIndex++)
+        {
+            if ((batch.ActiveWorkerMask & (1u << workerIndex)) != 0)
+                activeWorkerCount++;
+        }
+
+        if (activeWorkerCount == 0)
+            return default;
+
         _commandChainRecordingWorkersIdle.Reset();
-        _commandChainRecordingWorkerCountdown.Reset(workerCount);
-        Volatile.Write(ref _activeCommandChainRecordingWorkerCount, workerCount);
+        _commandChainRecordingWorkerCountdown.Reset(activeWorkerCount);
+        Volatile.Write(ref _activeCommandChainRecordingWorkerCount, activeWorkerCount);
         unchecked
         {
             _commandChainRecordingWorkerGeneration++;
         }
 
-        for (int i = 0; i < workerCount; i++)
-            workers[i].WorkAvailable.Set();
+        for (int workerIndex = 0; workerIndex < workerCount; workerIndex++)
+        {
+            if ((batch.ActiveWorkerMask & (1u << workerIndex)) != 0)
+                workers[workerIndex].WorkAvailable.Set();
+        }
 
         long waitStart = Stopwatch.GetTimestamp();
         _commandChainRecordingWorkerCountdown.Wait();

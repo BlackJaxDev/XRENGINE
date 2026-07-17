@@ -8,8 +8,8 @@ public unsafe partial class VulkanRenderer
         Dictionary<uint, string> SamplerNamesByUnit,
         Dictionary<string, XRTexture> SamplersByName,
         Dictionary<uint, ProgramImageBinding> Images,
-        Dictionary<uint, XRDataBuffer> Buffers,
-        Dictionary<string, XRDataBuffer> BuffersByName)
+        Dictionary<uint, VulkanComputeBufferBinding> Buffers,
+        Dictionary<string, VulkanComputeBufferBinding> BuffersByName)
     {
         public ComputeDispatchSnapshot(
             Dictionary<string, ProgramUniformValue> uniforms,
@@ -24,18 +24,26 @@ public unsafe partial class VulkanRenderer
                 samplerNamesByUnit,
                 samplersByName,
                 images,
-                buffers,
+                BuildBindings(buffers),
                 BuildBuffersByName(buffers))
         {
         }
 
-        private static Dictionary<string, XRDataBuffer> BuildBuffersByName(Dictionary<uint, XRDataBuffer> buffers)
+        private static Dictionary<uint, VulkanComputeBufferBinding> BuildBindings(Dictionary<uint, XRDataBuffer> buffers)
         {
-            Dictionary<string, XRDataBuffer> buffersByName = new(StringComparer.Ordinal);
+            Dictionary<uint, VulkanComputeBufferBinding> bindings = new(buffers.Count);
+            foreach (KeyValuePair<uint, XRDataBuffer> pair in buffers)
+                bindings[pair.Key] = new VulkanComputeBufferBinding(pair.Value, default, 0UL, 0);
+            return bindings;
+        }
+
+        private static Dictionary<string, VulkanComputeBufferBinding> BuildBuffersByName(Dictionary<uint, XRDataBuffer> buffers)
+        {
+            Dictionary<string, VulkanComputeBufferBinding> buffersByName = new(StringComparer.Ordinal);
             foreach (XRDataBuffer buffer in buffers.Values)
             {
                 if (!string.IsNullOrWhiteSpace(buffer.AttributeName))
-                    buffersByName.TryAdd(buffer.AttributeName, buffer);
+                    buffersByName.TryAdd(buffer.AttributeName, new VulkanComputeBufferBinding(buffer, default, 0UL, 0));
             }
 
             return buffersByName;

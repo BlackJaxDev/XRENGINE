@@ -292,6 +292,7 @@ namespace XREngine.Rendering.Vulkan
                 imageForcedDirty = true;
 
             ulong imageLayoutStartSignature = ComputeImageLayoutStateSignature();
+            bool hasMutableGpuDrivenFrameOps = hasStaticFrameOps && HasMutableGpuDrivenFrameOps(ops);
             if (!requiresTrackedPresentSourceRefresh &&
                 !hasStaticFrameOps &&
                 dynamicUiBatchTextOps.Length == 0 &&
@@ -314,6 +315,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             if (VulkanPrimaryCommandBufferReuseEnabled &&
+                !hasMutableGpuDrivenFrameOps &&
                 !imageForcedDirty &&
                 !gpuPipelineProfilingActive &&
                 TryReuseCleanCommandChainPrimaryVariant(
@@ -418,7 +420,8 @@ namespace XREngine.Rendering.Vulkan
             bool forcedDirty = dirty;
             bool usingCommandChains = commandChainSchedule is not null;
             bool hasTextureUploadFrameOps = hasStaticFrameOps && HasTextureUploadFrameOps(ops);
-            bool frameOpsRequireFreshPrimary = hasStaticFrameOps && !VulkanPrimaryCommandBufferReuseEnabled;
+            bool frameOpsRequireFreshPrimary = hasStaticFrameOps &&
+                (!VulkanPrimaryCommandBufferReuseEnabled || hasMutableGpuDrivenFrameOps);
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.DirtyEvaluation"))
             {
@@ -426,7 +429,9 @@ namespace XREngine.Rendering.Vulkan
                 {
                     dirty = true;
                     primaryFrameStateDirty = true;
-                    primaryFrameStateDirtyReason = "reuse-disabled";
+                    primaryFrameStateDirtyReason = hasMutableGpuDrivenFrameOps
+                        ? "mutable-gpu-driven-frame-ops"
+                        : "reuse-disabled";
                 }
 
                 if (gpuProfilerCommandBufferStateDirty)
@@ -2680,7 +2685,7 @@ namespace XREngine.Rendering.Vulkan
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.ResetAndBegin"))
             {
                 ReleaseDeferredSecondaryCommandBuffers(frameDataImageIndex);
-                Api!.ResetCommandBuffer(commandBuffer, 0);
+                ResetVulkanCommandBufferTracked(commandBuffer);
                 CleanupComputeTransientResources(frameDataImageIndex);
 
                 CommandBufferBeginInfo beginInfo = new()
@@ -4792,7 +4797,8 @@ namespace XREngine.Rendering.Vulkan
 
             bool TryExecuteIndirectCommandChainSecondaryRun(int startIndex, int runCount, int passIndex, IndirectDrawOp firstDraw)
             {
-                if (!CommandChainsEnabledForCurrentRecording ||
+                if (!IndirectCommandChainSecondaryRecordingSafe ||
+                    !CommandChainsEnabledForCurrentRecording ||
                     !_enableSecondaryCommandBuffers ||
                     runCount <= 0)
                 {
@@ -4925,7 +4931,7 @@ namespace XREngine.Rendering.Vulkan
                         try
                         {
                             MarkCommandChainSecondaryCommandBufferInvalid(chain);
-                            Api!.ResetCommandBuffer(secondary, 0);
+                            ResetVulkanCommandBufferTracked(secondary);
 
                             CommandBufferInheritanceInfo inheritanceInfo = new()
                             {
@@ -5278,6 +5284,7 @@ namespace XREngine.Rendering.Vulkan
                     batch.JobCount = recordJobCount;
                     batch.PassIndex = passIndex;
                     batch.FrameSlot = commandBufferImageSlot;
+                    batch.ActiveWorkerMask = 0;
                     batch.DynamicRendering = inheritedDynamicRendering;
                     batch.RenderPass = inheritedRenderPass;
                     batch.Framebuffer = inheritedFramebuffer;
@@ -5287,8 +5294,23 @@ namespace XREngine.Rendering.Vulkan
                     batch.TargetName = firstDraw.Target?.Name ?? "<swapchain>";
                     batch.Error = null;
 
+                    int workerEligibleJobCount = 0;
+                    for (int jobIndex = 0; jobIndex < recordJobCount; jobIndex++)
+                    {
+                        CommandChain chain = secondaryChains[recordJobChainIndices[jobIndex]];
+                        if (TryResolveCommandChainRecordingRendererFamily(
+                                ops,
+                                chain,
+                                commandBufferImageSlot,
+                                EVulkanMeshFrameDataStreamKind.Primary,
+                                out _))
+                        {
+                            workerEligibleJobCount++;
+                        }
+                    }
+
                     bool useWorkers = TryPrepareCommandChainRecordingWorkers(
-                        recordJobCount,
+                        workerEligibleJobCount,
                         frameDataImageIndex,
                         out CommandChainRecordingWorkerState[] workers,
                         out int workerCount,
@@ -5297,11 +5319,25 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int chainIndex = recordJobChainIndices[jobIndex];
                         CommandChain chain = secondaryChains[chainIndex];
-                        int recordingWorkerIndex = useWorkers
-                            ? ResolveCommandChainRecordingWorkerIndex(chain.Key, workerCount)
-                            : 0;
+                        // Invalidate the whole dirty batch before any worker is
+                        // released. If one worker fails, chains that had not yet
+                        // begun recording cannot retain an executable old state.
+                        MarkCommandChainSecondaryCommandBufferInvalid(chain);
+                        bool hasHomogeneousRendererFamily =
+                            TryResolveCommandChainRecordingRendererFamily(
+                                ops,
+                                chain,
+                                commandBufferImageSlot,
+                                EVulkanMeshFrameDataStreamKind.Primary,
+                                out VulkanMeshFrameDataRendererFamilyKey rendererFamily);
+                        int recordingWorkerIndex = useWorkers && hasHomogeneousRendererFamily
+                            ? ResolveCommandChainRecordingWorkerIndex(rendererFamily, workerCount)
+                            : -1;
                         recordJobWorkerIndices[jobIndex] = recordingWorkerIndex;
-                        bool allocated = useWorkers
+                        if (recordingWorkerIndex >= 0)
+                            batch.ActiveWorkerMask |= 1u << recordingWorkerIndex;
+
+                        bool allocated = recordingWorkerIndex >= 0
                             ? TryEnsureMutableCommandChainSecondaryCommandBufferFromWorkerPool(
                                 chain,
                                 frameDataImageIndex,
@@ -5326,11 +5362,14 @@ namespace XREngine.Rendering.Vulkan
                             chainWorkerRecordTime: timing.WorkerRecordTime,
                             renderThreadWaitForWorkersTime: timing.WaitForWorkersTime);
                     }
-                    else
+
+                    using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.SecondaryRecording))
                     {
-                        using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.SecondaryRecording);
                         for (int jobIndex = 0; jobIndex < recordJobCount; jobIndex++)
-                            RecordScheduledMeshCommandChainWorker(batch, recordJobChainIndices[jobIndex]);
+                        {
+                            if (recordJobWorkerIndices[jobIndex] < 0)
+                                RecordScheduledMeshCommandChainWorker(batch, recordJobChainIndices[jobIndex]);
+                        }
                     }
 
                     BeginRenderPassForTarget(firstDraw.Target, passIndex, firstDraw.Context, secondaryContents: true);
@@ -5445,7 +5484,7 @@ namespace XREngine.Rendering.Vulkan
                     }
 
                     MarkCommandChainSecondaryCommandBufferInvalid(chain);
-                    Api!.ResetCommandBuffer(secondary, 0);
+                    ResetVulkanCommandBufferTracked(secondary);
 
                     CommandBufferInheritanceInfo inheritanceInfo = new()
                     {
@@ -6800,6 +6839,7 @@ namespace XREngine.Rendering.Vulkan
             return true;
         }
 
+
         internal static bool ShouldRefreshUnwrittenSwapchainForPresent(
             bool touchedSwapchain,
             bool transitionSwapchainToPresent)
@@ -7626,9 +7666,8 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            if (op.UseCount && _supportsDrawIndirectCount && _khrDrawIndirectCount is not null)
+            if (op.UseCount && _supportsDrawIndirectCount)
             {
-                // Use VK_KHR_draw_indirect_count path
                 var parameterBuffer = op.ParameterBuffer?.BufferHandle;
                 if (parameterBuffer is null || !parameterBuffer.HasValue)
                 {
@@ -7642,14 +7681,33 @@ namespace XREngine.Rendering.Vulkan
                     ObjectType.Buffer,
                     parameterBuffer.Value.Handle,
                     "IndirectDraw.Count");
-                _khrDrawIndirectCount.CmdDrawIndexedIndirectCount(
-                    commandBuffer,
-                    indirectBuffer.Value,
-                    bufferOffset,
-                    parameterBuffer.Value,
-                    (ulong)op.CountByteOffset,
-                    op.DrawCount,
-                    op.Stride);
+                if (_usesCoreDrawIndirectCountCommands)
+                {
+                    Api!.CmdDrawIndexedIndirectCount(
+                        commandBuffer,
+                        indirectBuffer.Value,
+                        bufferOffset,
+                        parameterBuffer.Value,
+                        (ulong)op.CountByteOffset,
+                        op.DrawCount,
+                        op.Stride);
+                }
+                else if (_khrDrawIndirectCount is not null)
+                {
+                    _khrDrawIndirectCount.CmdDrawIndexedIndirectCount(
+                        commandBuffer,
+                        indirectBuffer.Value,
+                        bufferOffset,
+                        parameterBuffer.Value,
+                        (ulong)op.CountByteOffset,
+                        op.DrawCount,
+                        op.Stride);
+                }
+                else
+                {
+                    Debug.VulkanWarning("RecordIndirectDrawOp: Indirect-count support was published without a core or KHR command entry point.");
+                    return;
+                }
 
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanIndirectSubmission(
                     usedCountPath: true,

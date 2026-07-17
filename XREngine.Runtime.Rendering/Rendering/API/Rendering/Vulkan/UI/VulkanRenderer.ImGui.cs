@@ -1571,7 +1571,7 @@ public unsafe partial class VulkanRenderer
 
         CommandBuffer commandBuffer = _imguiOverlayCommandBuffers![imageIndex];
 
-        Api!.ResetCommandBuffer(commandBuffer, 0);
+        ResetVulkanCommandBufferTracked(commandBuffer);
 
         CommandBufferBeginInfo beginInfo = new()
         {

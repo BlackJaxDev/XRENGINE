@@ -2,7 +2,7 @@
 
 Last Updated: 2026-07-17
 Owner: Rendering
-Status: Immediate Priority Gate Active; P0.2/P0.3/P0.6/P0.7 Open; Existing Phases Blocked
+Status: Immediate Priority Gate Active; Known BVH TDRs Fixed; Indirect Sponza Visibility Open; P0.2/P0.3/P0.6/P0.7 Open; Existing Phases Blocked
 Execution: Current worktree only; do not create or switch branches for this effort.
 
 This file intentionally contains only open work and the active constraints needed
@@ -135,10 +135,92 @@ Continue the remaining sections below in order.
 
 ### Current Work Handoff - 2026-07-17
 
-The current implementation pass has closed the known managed-allocation causes
-and made startup substantially more deterministic, but the immediate gate is
-still blocked by one reproducible parallel-recording/device-loss risk. Preserve
-the following findings when continuing the work:
+#### Latest containment, stability, and visual-parity checkpoint
+
+- Two GPU BVH consumers could turn malformed parent connectivity into a Windows
+  TDR. `bvh_refit.comp` now validates its SSBO indices and bounds bottom-up
+  propagation. `bvh_frustum_cull.comp` no longer performs its unsafe rootward
+  parent walk: it already dispatches one invocation per leaf, so ancestor AABB
+  tests were redundant after that leaf passed. The leaf-only path retains the
+  safe node-range, leaf AABB, and per-primitive bounds checks while removing the
+  local stack and ancestor work. Neither fix adds CPU readback, a fence wait,
+  device drain, fallback, reduced frames in flight, or another frame resource.
+- A trustworthy matched camera was established from a `CpuDirect` control at
+  position `(0.92583525, 20.693876, 38.539276)` and forward
+  `(-0.03693097, -0.34202012, -0.93896663)`. Sponza is visibly present in that
+  control, which reports 361 opaque and 32 masked commands.
+- At that exact camera, the unmodified zero-readback path reset the driver at
+  16:18:39. Suppressing every indirect bucket draw still reset it at 16:20:30,
+  proving the remaining TDR was in compute rather than indirect draw
+  consumption. The final leaf-only frustum-cull path then remained healthy for
+  120 seconds at the same camera with no new NVIDIA event.
+- The user directly observed that Sponza was still absent from that final stable
+  window. Stability and visual parity are therefore separate outcomes: the two
+  known content-dependent BVH loops are fixed, but P0.6's indirect-submission
+  defect remains open. The next evidence must locate whether Sponza commands
+  disappear during BVH culling, key generation, material scatter, bucket
+  publication, or indirect consumption.
+- The follow-up focused suite passes 4/4 and the Release editor builds with zero
+  errors (216 existing warnings). Earlier clean StandardValidation performance
+  evidence retained a representative 29.525 ms Vulkan GPU command-buffer p50
+  against the 28.712-29.001 ms baseline. The leaf-only culler removes shader
+  work, but it has not yet received a clean post-change performance cohort, so
+  no newer measured frame-rate claim is made. End-to-end CPU recording remains
+  unacceptable at 242.927-267.402 ms render p50 and keeps P0.3/P0.7 open.
+- RenderDoc did not produce a bad frame; it produced no `.rdc`. `rdc-cli` was
+  unavailable and the corrected native injected launch reset before capture
+  serialization. A stable capture may now be retried alongside the missing-draw
+  investigation, but the artifact must exist before any frame analysis claim.
+- Full root-cause, isolation, performance, and visual evidence is in the
+  [zero-readback Sponza device-loss investigation](../../investigations/rendering/vulkan-zero-readback-sponza-device-loss-2026-07-17.md).
+
+#### Earlier strategy-containment checkpoint
+
+- The zero-readback startup reset is now isolated to mixing persistent Vulkan
+  command-chain secondaries with frame-wide mutable compute/indirect
+  publications. Keeping only the indirect draw inline was insufficient because
+  other static command-buffer segments could still execute cached secondaries.
+  `GpuIndirectZeroReadback` and `GpuMeshletZeroReadback` therefore bypass
+  command-chain scheduling as a strategy-wide safety quarantine. GPU culling,
+  material scatter, and indirect-count drawing remain active; this is not a CPU
+  rendering fallback.
+- Cached swapchain primaries and indirect command-chain secondaries are also
+  quarantined until their keys include every descriptor and GPU-publication
+  generation. Mutable compute/indirect frames force a fresh primary.
+- Before the strategy-wide quarantine, entering play mode reproduced an
+  `nvlddmkm` reset followed by a `vulkan-1.dll` `0xc0000409` fail-fast. After the
+  quarantine, the same StandardValidation, command-chains-requested,
+  `GpuIndirectZeroReadback` play-mode launch remained responsive for 20 seconds
+  with no reset. Evidence image:
+  `Build/_AgentValidation/20260717-vulkan-device-loss-renderdoc/mcp-captures/zero-readback-fixed/os-window-playing-strategy-quarantine.png`.
+- The user's missing-Sponza observation is valid and is not closed by the
+  stability result. Sponza is loaded and active in the hierarchy. A later
+  matched `CpuDirect` control visibly rendered it, while the final stable
+  leaf-only zero-readback window did not. P0.6 remains open pending indirect
+  stage/bucket evidence and a CPU-built indirect comparison.
+- Synchronous MCP Vulkan framebuffer readback independently triggered a GPU
+  watchdog reset. The screenshot action now rejects Vulkan explicitly before
+  submitting the unsafe transfer; use OS capture or a GPU debugger until its
+  synchronization is hardened.
+- One profiled Release run completed 163 frames with 3,675 Vulkan indirect API
+  calls, 118,105 requested/consumed draws, zero readback, zero fallback, and zero
+  VUIDs at
+  `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_12-25-52/summary.json`.
+  It is useful stability evidence but does not close P0.3 or P0.7 because
+  profiling forced primary re-recording and only one repetition completed.
+- The focused tests for the changed P0 contracts pass 53/53 and the Release
+  editor builds with zero errors. The broader selected suite passes 67 tests
+  and fails 17 stale P1 source-contract tests whose paths/tokens predate the
+  command-buffer folder split; those failures are recorded separately and are
+  not presented as a clean full-suite result.
+- The benchmark close-path duplicate request was removed. A post-`ProcessExit`
+  `ucrtbase.dll` native failure remains reproducible in an equivalent
+  `CpuDirect` control, so it is tracked as a general shutdown/finalizer issue,
+  not evidence of zero-readback device loss.
+
+The earlier implementation pass closed the known managed-allocation causes and
+made startup substantially more deterministic. The following findings are the
+historical evidence that led to the strategy-wide containment above:
 
 - The warmed `CpuDirect` and `GpuIndirectZeroReadback` paths reached zero
   managed bytes in every measured Vulkan stage. The last confirmed sources were
@@ -177,11 +259,50 @@ the following findings when continuing the work:
   1.955-second `GpuIndirect.ConfigureIndirectRendererForTier` stall followed by
   the primary command-buffer operation loop. This is a GPU/command correctness
   failure, not the harness watchdog or the normal profile-close policy.
-- The leading unproven root-cause hypothesis is unsafe mutable-renderer affinity
-  during parallel secondary recording. Dirty chains are currently assigned to
-  workers by `CommandChainKey`; separate chains that share a `VkMeshRenderer`
-  or renderer family can consequently mutate descriptor/draw state on different
-  workers at the same time. No renderer-affinity fix has been applied yet.
+- Renderer-family affinity, mixed-family serial fallback, fixed worker-pool
+  assignment, incomplete-batch rejection, and pre-reset command-buffer lifetime
+  guards are now implemented and covered by the focused suite. They did not
+  eliminate the submit-time device loss.
+- StandardValidation identified pending reuse of `SwapchainPrimary[1]`,
+  `ImGuiOverlay.Primary[1]`, and a texture-upload command buffer in the same
+  frame submission. Those VUIDs are intermittent fallout rather than a stable
+  first error: other launches reach `VK_ERROR_DEVICE_LOST` with zero validation
+  errors before the failing submit.
+- Parallel command-chain workers are quarantined in code. Serial command-chain
+  secondary recording remains active; worker recording must not be restored
+  until it consumes immutable planner/renderer recording snapshots and the
+  repeated validation cohorts are clean.
+- A RenderDoc CLI capture was attempted under
+  `Build/_AgentValidation/20260717-vulkan-device-loss-renderdoc/renderdoc/`.
+  `rdc-cli` is unavailable, and the installed `renderdoccmd.exe` fallback left
+  no visible editor frame/capture boundary in this desktop session, so no valid
+  `.rdc` evidence was produced.
+- The later indirect-count isolation found two real Vulkan/recording contract
+  defects. Logical-device creation did not enable core `multiDrawIndirect` or
+  `drawIndirectFirstInstance`, and Vulkan 1.2 still routed the promoted command
+  through the KHR thunk. The engine now enables and gates both prerequisites,
+  uses core `vkCmdDrawIndexedIndirectCount` on Vulkan 1.2+, and retains the KHR
+  path only for older devices. A zero-count count-draw run then remained stable
+  through play mode instead of resetting immediately.
+- Zero-readback also reused one mutable atlas renderer for static, dynamic, and
+  streaming tiers even though Vulkan frame ops record later. By record time,
+  earlier static Sponza buckets could see the final tier's vertex/index state.
+  Zero-readback now owns one stable renderer per atlas tier. Material scatter
+  additionally bounds count reservation, validates command/index/base-vertex
+  ranges, and writes every compacted sort-key slot. Atlas upload rejects source
+  triangle indices outside the mesh vertex range, and Vulkan enables core
+  `robustBufferAccess` when available.
+- These fixes materially delay and sometimes prevent the reset, but they do not
+  close P0. A sky-only/default-camera run remained responsive for 114 seconds,
+  and one Sponza-facing robust-access run remained responsive for 70 seconds;
+  other Sponza-facing launches still produced `nvlddmkm` event 153 after about
+  26-33 seconds. Therefore visual parity and deterministic device-loss closure
+  remain open.
+- RenderDoc is still not valid evidence. One corrected retry failed before
+  launch because `renderdoccmd` split the spaced dotnet path; the next retry
+  injected successfully with `RenderDocFriendly`, but device loss occurred
+  before capture serialization. No `.rdc` file exists. Do not describe either
+  attempt as a bad frame capture: there was no capture artifact to inspect.
 - Full-run forbidden-fallback counts are not consistently zero even after the
   readiness-classification correction. Any remaining count must be attributed
   to a terminal program failure before P0.7 can close; stable readiness is no
@@ -189,25 +310,32 @@ the following findings when continuing the work:
 
 Continue in this order:
 
-1. Assign parallel command-chain recording by stable mutable renderer-family
-   identity, not chain ordinal/pass identity. Prove each scheduled chain is
-   homogeneous for that identity; use the serial recorder for a mixed chain
-   rather than permitting cross-worker mutation.
-2. Add focused contracts for renderer-family affinity, mixed-chain serial
-   fallback, incomplete-record rejection, and worker-owned command-pool
-   stability. Re-run the focused Vulkan/OpenXR suite and Release build.
-3. Run a repeated parallel startup/readiness cohort long enough to disprove the
-   captured submit-time loss. Retain `profiler-render-exceptions.log`, command
-   recording/stall telemetry, and the exact last-submit context for every
-   failed launch.
-4. Run separate StandardValidation and SyncValidation cohorts with parallel
-   recording enabled. Treat every new VUID, terminal program failure, or
-   nonzero forbidden-fallback event as blocking evidence.
-5. Only after the startup/device-loss cohort is clean, resume the required
-   three-by-60-second static and moving camera matrix with occlusion disabled
-   and enabled, then complete indirect parity captures/counters, resize,
-   streaming, hot-reload, and shutdown coverage.
-6. Keep P0.2's Nsight marker-stream item open until a tool version/export path
+1. Keep command-chain scheduling disabled for every resolved zero-readback
+   strategy until publication generations are represented in all secondary and
+   primary reuse keys. Do not re-enable only the static segments.
+2. Preserve both GPU-local BVH safety fixes. Do not replace them with CPU
+   readback, a frame-wide barrier, reduced frames in flight, or a device wait.
+3. Make the missing Sponza command path the primary investigation. Add opt-in,
+   delayed post-fence diagnostics without changing command publication timing
+   or adding steady-state readback. Record the 396 source inputs (including 361
+   opaque and 32 masked), post-BVH visible count,
+   post-key count, per-material-scatter bucket counts, and final published draw
+   count. For the first and last command in a suspect bucket, record the
+   indirect fields, atlas tier, immutable buffer generation, index/vertex
+   capacities, material ID/name, and draw-metadata ID.
+4. Capture a CPU-built indirect comparison and matched zero-readback evidence
+   at the existing exact camera and a second pose. Use the surviving workload
+   for RenderDoc/Nsight inspection of indirect arguments, descriptors, atlas
+   buffers, and the final target; verify the `.rdc` exists before analysis.
+5. Continue P0.3's CPU recording investigation. The shader fix preserved GPU
+   time, but the warmed desktop path still has a multi-hundred-millisecond CPU
+   record/frame cost and cannot satisfy the performance gate.
+6. Complete the required three-by-60-second static and moving camera matrix with
+   occlusion disabled and enabled, then run separate StandardValidation and
+   SyncValidation resize, streaming, hot-reload, and shutdown cohorts. Treat
+   every new VUID, terminal program failure, forbidden fallback, or native early
+   exit as blocking evidence.
+7. Keep P0.2's Nsight marker-stream item open until a tool version/export path
    exposes Vulkan Debug Utils labels; internal engine label presence is not a
    substitute for the requested external-trace proof.
 
@@ -234,6 +362,13 @@ identified fingerprint LINQ/iterators, interface metadata enumeration, and
 `StencilOpState` boxing in pipeline keys; those paths are now allocation-free.
 The directly comparable repeated 60-second parallel-performance cohort remains
 open rather than being inferred from short smoke runs.
+
+2026-07-17 BVH-refit checkpoint: the clean zero-readback runs preserved the
+retained Vulkan GPU command-buffer baseline (29.525 ms p50 versus
+28.712-29.001 ms), but end-to-end render p50 remained 242.927-267.402 ms and
+command recording reached 222.402 ms p50 in one run. The shader safety fix is
+not the source of this CPU cost, but the result still fails this section's live
+acceptance criterion.
 
 Acceptance criteria:
 
@@ -262,6 +397,17 @@ full run, zero mapped/readback bytes, and zero VUIDs. The CPU-built reference
 lane still performs its declared diagnostic readbacks and the required visual,
 motion, occlusion, resize, and streaming parity matrix remains open.
 
+2026-07-17 matched-Sponza checkpoint: `CpuDirect` visibly renders Sponza at the
+recorded camera and reports 361 opaque plus 32 masked commands. At that exact
+pose, zero-readback initially reset even when every indirect bucket draw was
+suppressed, which isolated the remaining TDR to compute. Removing the redundant
+and unsafe leaf-to-root traversal from BVH frustum culling then kept the full
+workload stable for 120 seconds, but the user confirmed Sponza was still absent
+from the window. Device-loss containment and visual parity are therefore
+separate. This section stays open while opt-in delayed post-fence stage/bucket
+counts locate the missing commands; no synchronous readback or CPU rendering
+fallback is permitted.
+
 Acceptance criteria:
 
 - [ ] Compatible dynamic geometry submits through bounded indirect calls, with
@@ -272,6 +418,13 @@ Acceptance criteria:
   sets, with no readback in the GPU-built lane.
 
 ### P0.7 - Close The Immediate Gate
+
+2026-07-17 checkpoint: both known malformed-parent BVH TDR loops are fixed, and
+the final matched-camera zero-readback launch survived 120 seconds. That is not
+the required identical static/moving, occlusion-disabled/enabled
+three-by-60-second matrix, and the user-confirmed missing Sponza means visual
+parity is still unsatisfied. The CPU recording threshold and a measured
+post-frustum-change performance cohort also remain open.
 
 - [ ] Run at least three identical 60-second warmed Release desktop repetitions
   for static and moving camera paths with occlusion disabled and enabled.

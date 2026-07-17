@@ -83,7 +83,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            Api!.ResetCommandBuffer(secondaryCommandBuffer, 0);
+            ResetVulkanCommandBufferTracked(secondaryCommandBuffer);
 
             CommandBufferInheritanceInfo inheritanceInfo = new()
             {
@@ -430,7 +430,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
 
             CommandBuffer commandBuffer = _dynamicUiBatchTextOverlayCommandBuffers[imageIndex];
-            Api!.ResetCommandBuffer(commandBuffer, 0);
+            ResetVulkanCommandBufferTracked(commandBuffer);
 
             CommandBufferBeginInfo beginInfo = new()
             {
@@ -512,7 +512,7 @@ namespace XREngine.Rendering.Vulkan
             CommandChain chain = batch.Chains[chainIndex];
             CommandBuffer secondary = batch.SecondaryBuffers[chainIndex];
             MarkCommandChainSecondaryCommandBufferInvalid(chain);
-            Api!.ResetCommandBuffer(secondary, 0);
+            ResetVulkanCommandBufferTracked(secondary);
 
             CommandBufferInheritanceInfo inheritanceInfo = new()
             {
@@ -580,66 +580,69 @@ namespace XREngine.Rendering.Vulkan
             if (batch.Ops[chain.SourceStartIndex] is not MeshDrawOp firstDraw)
                 throw new InvalidOperationException("Scheduled mesh packet does not begin with a mesh draw.");
             using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(firstDraw.Context.PipelineInstance);
-            using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(firstDraw.Context);
-
-            // Graphics pipeline materialization is deliberately owned by the render thread before
-            // vkBeginCommandBuffer. Repeating it here can race pipeline creation across workers and,
-            // previously, allowed the caller to execute a secondary that was never begun.
-
-            if (Api.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
-                throw new InvalidOperationException("Failed to begin Vulkan worker mesh command-chain secondary command buffer.");
-
-            ResetCommandBufferBindState(secondary);
-            for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
+            lock (_frameOpResourcePlannerReadbackLock)
             {
-                int opIndex = chain.SourceStartIndex + drawIndex;
-                if (batch.Ops[opIndex] is not MeshDrawOp drawOp)
-                    throw new InvalidOperationException($"Scheduled mesh packet contains non-mesh op at source index {opIndex}.");
+                using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(firstDraw.Context);
 
-                Viewport viewport = drawOp.Draw.Viewport;
-                Rect2D scissor = drawOp.Draw.Scissor;
-                uint viewportScissorCount = drawOp.Draw.ViewportScissorCount;
-                if (viewportScissorCount > 1 &&
-                    drawOp.Draw.IndexedViewports is { } indexedViewports &&
-                    drawOp.Draw.IndexedScissors is { } indexedScissors &&
-                    indexedViewports.Length >= (int)viewportScissorCount &&
-                    indexedScissors.Length >= (int)viewportScissorCount)
+                // Graphics pipeline materialization is deliberately owned by the render thread before
+                // vkBeginCommandBuffer. Repeating it here can race pipeline creation across workers and,
+                // previously, allowed the caller to execute a secondary that was never begun.
+
+                if (Api.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
+                    throw new InvalidOperationException("Failed to begin Vulkan worker mesh command-chain secondary command buffer.");
+
+                ResetCommandBufferBindState(secondary);
+                for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
                 {
-                    SetViewportScissorTracked(secondary, indexedViewports, indexedScissors, viewportScissorCount);
-                }
-                else
-                {
-                    SetViewportScissorTracked(secondary, viewport, scissor);
+                    int opIndex = chain.SourceStartIndex + drawIndex;
+                    if (batch.Ops[opIndex] is not MeshDrawOp drawOp)
+                        throw new InvalidOperationException($"Scheduled mesh packet contains non-mesh op at source index {opIndex}.");
+
+                    Viewport viewport = drawOp.Draw.Viewport;
+                    Rect2D scissor = drawOp.Draw.Scissor;
+                    uint viewportScissorCount = drawOp.Draw.ViewportScissorCount;
+                    if (viewportScissorCount > 1 &&
+                        drawOp.Draw.IndexedViewports is { } indexedViewports &&
+                        drawOp.Draw.IndexedScissors is { } indexedScissors &&
+                        indexedViewports.Length >= (int)viewportScissorCount &&
+                        indexedScissors.Length >= (int)viewportScissorCount)
+                    {
+                        SetViewportScissorTracked(secondary, indexedViewports, indexedScissors, viewportScissorCount);
+                    }
+                    else
+                    {
+                        SetViewportScissorTracked(secondary, viewport, scissor);
+                    }
+
+                    int uniformSlot = batch.UniformSlots[opIndex - batch.StartIndex];
+                    bool recorded = drawOp.Draw.Renderer.RecordDraw(
+                        secondary,
+                        drawOp.Draw,
+                        batch.RenderPass,
+                        batch.DynamicRendering,
+                        batch.DynamicRenderingFormats,
+                        batch.PassIndex,
+                        drawOp.Context.PassMetadata,
+                        batch.DepthStencilReadOnly,
+                        drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
+                        batch.TargetName,
+                        uniformSlot,
+                        batch.FrameSlot);
+                    if (!recorded)
+                    {
+                        chain.State = CommandChainState.NotReady;
+                        chain.DirtyReason |= CommandChainDirtyReason.PipelineGeneration;
+                        throw new InvalidOperationException(
+                            $"A prewarmed Vulkan command-chain draw became unavailable during secondary recording. " +
+                            $"sourceIndex={opIndex} mesh='{drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' " +
+                            $"material='{(drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>"}' " +
+                            $"reason={drawOp.Draw.Renderer.DescribeReusableCommandBufferFrameDataBlocker(drawOp.Draw, uniformSlot)}");
+                    }
                 }
 
-                int uniformSlot = batch.UniformSlots[opIndex - batch.StartIndex];
-                bool recorded = drawOp.Draw.Renderer.RecordDraw(
-                    secondary,
-                    drawOp.Draw,
-                    batch.RenderPass,
-                    batch.DynamicRendering,
-                    batch.DynamicRenderingFormats,
-                    batch.PassIndex,
-                    drawOp.Context.PassMetadata,
-                    batch.DepthStencilReadOnly,
-                    drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
-                    batch.TargetName,
-                    uniformSlot,
-                    batch.FrameSlot);
-                if (!recorded)
-                {
-                    chain.State = CommandChainState.NotReady;
-                    chain.DirtyReason |= CommandChainDirtyReason.PipelineGeneration;
-                    throw new InvalidOperationException(
-                        $"A prewarmed Vulkan command-chain draw became unavailable during secondary recording. " +
-                        $"sourceIndex={opIndex} mesh='{drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' " +
-                        $"material='{(drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>"}' " +
-                        $"reason={drawOp.Draw.Renderer.DescribeReusableCommandBufferFrameDataBlocker(drawOp.Draw, uniformSlot)}");
-                }
+                if (EndCommandBufferTracked(secondary) != Result.Success)
+                    throw new InvalidOperationException("Failed to end Vulkan worker mesh command-chain secondary command buffer.");
             }
-
-            if (EndCommandBufferTracked(secondary) != Result.Success)
-                throw new InvalidOperationException("Failed to end Vulkan worker mesh command-chain secondary command buffer.");
 
             chain.State = CommandChainState.Recorded;
             chain.FrameDataRefreshTouchedDescriptors = false;
@@ -774,7 +777,7 @@ namespace XREngine.Rendering.Vulkan
                     try
                     {
                         MarkCommandChainSecondaryCommandBufferInvalid(chain);
-                        Api!.ResetCommandBuffer(secondary, 0);
+                        ResetVulkanCommandBufferTracked(secondary);
 
                         CommandBufferBeginInfo beginInfo = new()
                         {

@@ -1322,18 +1322,44 @@ namespace XREngine.Rendering.Vulkan
             public VoidPtr? GetMappedAddress() => GPUSideSource?.Address;
 
             internal bool SupportsDescriptorType(DescriptorType descriptorType)
+                => SupportsDescriptorType(descriptorType, _lastUsageFlags);
+
+            internal static bool SupportsDescriptorType(DescriptorType descriptorType, BufferUsageFlags usageFlags)
                 => descriptorType switch
                 {
                     DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic
-                        => _lastUsageFlags.HasFlag(BufferUsageFlags.StorageBufferBit),
+                        => usageFlags.HasFlag(BufferUsageFlags.StorageBufferBit),
                     DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic
-                        => _lastUsageFlags.HasFlag(BufferUsageFlags.UniformBufferBit),
+                        => usageFlags.HasFlag(BufferUsageFlags.UniformBufferBit),
                     DescriptorType.UniformTexelBuffer
-                        => _lastUsageFlags.HasFlag(BufferUsageFlags.UniformTexelBufferBit),
+                        => usageFlags.HasFlag(BufferUsageFlags.UniformTexelBufferBit),
                     DescriptorType.StorageTexelBuffer
-                        => _lastUsageFlags.HasFlag(BufferUsageFlags.StorageTexelBufferBit),
+                        => usageFlags.HasFlag(BufferUsageFlags.StorageTexelBufferBit),
                     _ => true,
                 };
+
+            internal bool TryCaptureComputeBufferSnapshot(
+                bool allowSynchronousUpload,
+                out VulkanComputeBufferBinding snapshot)
+            {
+                snapshot = default;
+                if (!TryEnsureReadyForRendering(allowSynchronousUpload))
+                    return false;
+
+                ulong requestedRange = Math.Max((ulong)Data.Length, 1UL);
+                if (_bufferSize < requestedRange && allowSynchronousUpload)
+                    PushData();
+
+                if (_vkBuffer is not { } buffer ||
+                    buffer.Handle == 0 ||
+                    _bufferSize < requestedRange)
+                {
+                    return false;
+                }
+
+                snapshot = new VulkanComputeBufferBinding(Data, buffer, requestedRange, _lastUsageFlags);
+                return true;
+            }
 
             // --- Helper: Should use device-local + staging for static/immutable buffers ---
             private bool AllowsUpdatesWhileMapped()

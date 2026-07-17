@@ -87,6 +87,55 @@ public sealed class VulkanStablePacketAndDescriptorTests
         => typeof(VulkanRenderer.IndirectDrawStateScope).IsValueType.ShouldBeTrue();
 
     [Test]
+    public void GpuIndirectCommandChains_KeepMutableArgumentStreamsOnPrimary()
+    {
+        VulkanRenderer.IndirectCommandChainSecondaryRecordingSafe.ShouldBeFalse();
+
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        recording.ShouldContain("if (!IndirectCommandChainSecondaryRecordingSafe ||");
+        recording.ShouldContain("RecordIndirectDrawIntoCommandBuffer(commandBuffer, indirectOp, opPassIndex);");
+        recording.ShouldContain("usedSecondary: false");
+    }
+
+    [Test]
+    public void MutableGpuDrivenPrimaries_AreNeverCleanReuseCandidates()
+    {
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string diagnostics = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpDiagnostics.cs");
+
+        recording.ShouldContain("bool hasMutableGpuDrivenFrameOps = hasStaticFrameOps && HasMutableGpuDrivenFrameOps(ops);");
+        recording.ShouldContain("!hasMutableGpuDrivenFrameOps &&");
+        recording.ShouldContain("\"mutable-gpu-driven-frame-ops\"");
+        diagnostics.ShouldContain("ComputeDispatchOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp");
+    }
+
+    [Test]
+    public void VulkanPrimaryReuse_RemainsQuarantinedUntilPublicationGenerationsAreKeyed()
+    {
+        VulkanRenderer.VulkanPrimaryCommandBufferReuseSafe.ShouldBeFalse();
+
+        string state = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
+        state.ShouldContain("VulkanPrimaryCommandBufferReuseSafe &&");
+        state.ShouldContain("RuntimeRenderingHostServices.Current.EnableVulkanPrimaryCommandBufferReuse");
+    }
+
+    [Test]
+    public void MutableGpuDrivenFrames_BypassCommandChainSecondaries()
+    {
+        string lowering = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+
+        lowering.ShouldContain("ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy()");
+        lowering.ShouldContain("HasMutableGpuDrivenFrameOps(staticOps) || HasMutableGpuDrivenFrameOps(volatileOps)");
+        lowering.ShouldContain("Vulkan.CommandChains.MutableGpuFrameInline");
+        lowering.ShouldContain("command-chain publication generations are tracked");
+    }
+
+    [Test]
     public void AsyncBackendCompile_IsExplicitAndOptIn()
     {
         XRRenderProgram program = new();
@@ -136,6 +185,9 @@ public sealed class VulkanStablePacketAndDescriptorTests
         worker.ShouldContain("Flags = CommandBufferUsageFlags.RenderPassContinueBit,");
         worker.ShouldNotContain("SimultaneousUseBit");
         worker.ShouldContain("using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(firstDraw.Context);");
+        worker.ShouldContain("lock (_frameOpResourcePlannerReadbackLock)");
+        worker.IndexOf("lock (_frameOpResourcePlannerReadbackLock)", StringComparison.Ordinal)
+            .ShouldBeLessThan(worker.IndexOf("EnterFrameOpResourcePlannerReadbackScope(firstDraw.Context)", StringComparison.Ordinal));
         worker.IndexOf("EnterFrameOpResourcePlannerReadbackScope(firstDraw.Context)", StringComparison.Ordinal)
             .ShouldBeLessThan(worker.IndexOf("for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)", StringComparison.Ordinal));
         worker.ShouldContain("chain.State = CommandChainState.Recorded;");
@@ -156,22 +208,128 @@ public sealed class VulkanStablePacketAndDescriptorTests
     }
 
     [Test]
-    public void WorkerPoolAssignment_IsStableWhenTheDirtySubsetChanges()
+    public void WorkerPoolAssignment_UsesStableMutableRendererAffinity()
     {
-        CommandChainKey key = new(
-            FrameSlot: 2,
-            new RenderViewKey(11, 12, 0, RenderViewKind.Main, 0, -1),
-            PassIndex: 4,
-            TargetIdentity: 13,
-            DynamicOverlay: false,
-            ChainOrdinal: 14);
+        var renderer = (VulkanRenderer.VkMeshRenderer)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+            typeof(VulkanRenderer.VkMeshRenderer));
+        VulkanRenderer.VulkanMeshFrameDataFamilyKey firstFamily = new(
+            2, VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary, default,
+            3, 4, 5, 6, 7, 8, false, false);
+        VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey firstKey = new(renderer, firstFamily);
+        VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey anotherFamilyOfSameRenderer = new(
+            renderer,
+            firstFamily with { ViewportIdentity = 99 });
 
-        int first = VulkanRenderer.ResolveCommandChainRecordingWorkerIndex(key, workerCount: 6);
-        int afterOtherJobsDisappear = VulkanRenderer.ResolveCommandChainRecordingWorkerIndex(key, workerCount: 6);
+        int first = VulkanRenderer.ResolveCommandChainRecordingWorkerIndex(firstKey, workerCount: 6);
+        int afterOtherJobsDisappear = VulkanRenderer.ResolveCommandChainRecordingWorkerIndex(firstKey, workerCount: 6);
 
         first.ShouldBe(afterOtherJobsDisappear);
+        VulkanRenderer.ResolveCommandChainRecordingWorkerIndex(anotherFamilyOfSameRenderer, workerCount: 6)
+            .ShouldBe(first);
         first.ShouldBeInRange(0, 5);
-        VulkanRenderer.ResolveCommandChainRecordingWorkerIndex(key, workerCount: 1).ShouldBe(0);
+        VulkanRenderer.ResolveCommandChainRecordingWorkerIndex(firstKey, workerCount: 1).ShouldBe(0);
+    }
+
+    [Test]
+    public void CommandChainRendererFamily_MixedChainsRequireSerialRecording()
+    {
+        var firstRenderer = (VulkanRenderer.VkMeshRenderer)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+            typeof(VulkanRenderer.VkMeshRenderer));
+        var secondRenderer = (VulkanRenderer.VkMeshRenderer)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+            typeof(VulkanRenderer.VkMeshRenderer));
+        VulkanRenderer.FrameOpContext firstContext = new(1, 2, null, null, null);
+        VulkanRenderer.FrameOpContext differentFamilyContext = firstContext with { ViewportIdentity = 3 };
+        VulkanRenderer.PendingMeshDraw firstDraw = default(VulkanRenderer.PendingMeshDraw) with { Renderer = firstRenderer };
+        VulkanRenderer.PendingMeshDraw secondDraw = default(VulkanRenderer.PendingMeshDraw) with { Renderer = secondRenderer };
+        CommandChain chain = new(new CommandChainKey(
+            0,
+            new RenderViewKey(1, 2, 0, RenderViewKind.Main, 0, -1),
+            0,
+            0,
+            false,
+            1))
+        {
+            SourceStartIndex = 0,
+            SourceCount = 2,
+        };
+
+        VulkanRenderer.FrameOp[] homogeneousOps =
+        [
+            new VulkanRenderer.MeshDrawOp(0, null, firstDraw, firstContext),
+            new VulkanRenderer.MeshDrawOp(0, null, firstDraw, firstContext),
+        ];
+        VulkanRenderer.FrameOp[] mixedRendererOps =
+        [
+            homogeneousOps[0],
+            new VulkanRenderer.MeshDrawOp(0, null, secondDraw, firstContext),
+        ];
+        VulkanRenderer.FrameOp[] mixedFamilyOps =
+        [
+            homogeneousOps[0],
+            new VulkanRenderer.MeshDrawOp(0, null, firstDraw, differentFamilyContext),
+        ];
+
+        VulkanRenderer.TryResolveCommandChainRecordingRendererFamily(
+                homogeneousOps,
+                chain,
+                frameDataSlot: 0,
+                VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
+                out VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey rendererFamily)
+            .ShouldBeTrue();
+        rendererFamily.Renderer.ShouldBeSameAs(firstRenderer);
+        VulkanRenderer.TryResolveCommandChainRecordingRendererFamily(
+                mixedRendererOps,
+                chain,
+                frameDataSlot: 0,
+                VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
+                out _)
+            .ShouldBeFalse();
+        VulkanRenderer.TryResolveCommandChainRecordingRendererFamily(
+                mixedFamilyOps,
+                chain,
+                frameDataSlot: 0,
+                VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
+                out _)
+            .ShouldBeFalse();
+    }
+
+    [Test]
+    public void WorkerDispatch_UsesStablePoolCapacityAndRejectsIncompleteBatches()
+    {
+        string workers = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+
+        workers.ShouldContain("workerCount = workers.Length;");
+        workers.ShouldContain("private const bool ParallelCommandChainWorkerRecordingSafe = false;");
+        workers.ShouldContain("ParallelCommandChainWorkerRecordingSafe &&");
+        workers.ShouldContain("batch.ActiveWorkerMask");
+        workers.ShouldContain("_commandChainRecordingWorkerCountdown.Reset(activeWorkerCount);");
+        recording.ShouldContain("TryResolveCommandChainRecordingRendererFamily(");
+        recording.ShouldContain("recordJobWorkerIndices[jobIndex] < 0");
+        recording.IndexOf("MarkCommandChainSecondaryCommandBufferInvalid(chain);", StringComparison.Ordinal)
+            .ShouldBeLessThan(recording.IndexOf("DispatchCommandChainRecordingWorkers(batch, workers, workerCount)", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void CommandBufferReuse_GuardsNativeResetAndReplacesPendingSecondaries()
+    {
+        string lifetime = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+        string lowering = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string secondaries = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
+
+        lifetime.ShouldContain("private bool CanResetVulkanCommandBuffer(");
+        lifetime.IndexOf("CanResetVulkanCommandBuffer(commandBuffer, out string reason)", StringComparison.Ordinal)
+            .ShouldBeLessThan(lifetime.IndexOf("return Api!.ResetCommandBuffer(commandBuffer, 0);", StringComparison.Ordinal));
+        lowering.ShouldContain("CanResetVulkanCommandBuffer(secondary, out _)");
+        recording.ShouldNotContain("Api!.ResetCommandBuffer(");
+        secondaries.ShouldNotContain("Api!.ResetCommandBuffer(");
     }
 
     [Test]

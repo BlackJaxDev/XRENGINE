@@ -771,7 +771,8 @@ public sealed class VulkanP1ValidationTests
         envSource.ShouldContain("VulkanPrimaryCommandBufferReuse = \"XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE\"");
         stateSource.ShouldContain("VulkanPrimaryCommandBufferReuseEnabled");
         recordingSource.ShouldContain("VulkanPrimaryCommandBufferReuseEnabled &&");
-        recordingSource.ShouldContain("bool frameOpsRequireFreshPrimary = hasStaticFrameOps && !VulkanPrimaryCommandBufferReuseEnabled;");
+        recordingSource.ShouldContain("bool frameOpsRequireFreshPrimary = hasStaticFrameOps &&");
+        recordingSource.ShouldContain("(!VulkanPrimaryCommandBufferReuseEnabled || hasMutableGpuDrivenFrameOps);");
         recordingSource.ShouldContain("usingCommandChains && variant.FrameOpsSignature != frameOpsSignature");
         allocationSource.ShouldContain("variant.FrameOpsSignature == frameOpsSignature");
         allocationSource.ShouldContain("variant.DynamicUiSignature == dynamicUiBatchTextSignature");

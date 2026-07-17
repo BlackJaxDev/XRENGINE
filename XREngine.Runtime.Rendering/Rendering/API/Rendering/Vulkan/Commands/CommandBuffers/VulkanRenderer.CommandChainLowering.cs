@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -49,6 +50,14 @@ public unsafe partial class VulkanRenderer
     private const int MaxCachedScheduledCommandChainsPerFrameSlot = 128;
     internal const int MinMeshDrawsPerRenderPacket = 10;
     internal const int MaxMeshDrawsPerRenderPacket = 64;
+
+    // vkCmdDrawIndexedIndirectCount is valid in a graphics secondary command buffer,
+    // but the GPU-zero-readback Sponza path reproducibly watchdog-resets the device
+    // when mutable indirect/count streams are executed through the command-chain
+    // secondary path. Keep these draws on the primary until the secondary path has
+    // its own cross-vendor acceptance coverage. This does not change GPU culling or
+    // introduce a CPU readback; only the command buffer that owns the draw changes.
+    internal const bool IndirectCommandChainSecondaryRecordingSafe = false;
 
     private static readonly bool CommandChainsEnabled = IsCommandChainFlagEnabled(CommandChainsEnvVar);
     private static readonly bool CommandChainsSingleThread = IsCommandChainFlagEnabled(CommandChainsSingleThreadEnvVar);
@@ -143,16 +152,62 @@ public unsafe partial class VulkanRenderer
                string.Equals(value, "off", StringComparison.OrdinalIgnoreCase);
     }
 
-    internal static int ResolveCommandChainRecordingWorkerIndex(in CommandChainKey key, int workerCount)
+    internal static int ResolveCommandChainRecordingWorkerIndex(
+        in VulkanMeshFrameDataRendererFamilyKey rendererFamily,
+        int workerCount)
     {
         if (workerCount <= 1)
             return 0;
 
-        // A secondary command buffer belongs to the command pool of the worker
-        // that records it. Assign by stable chain identity rather than by the
-        // compacted dirty-job index: otherwise any change in the dirty subset
-        // migrates unchanged chains between pools and forces a rebuild.
-        return unchecked((int)((uint)key.GetHashCode() % (uint)workerCount));
+        // VkMeshRenderer owns mutable program, descriptor, and draw-preparation
+        // state. Keep every family of the same renderer on one worker even when
+        // the dirty chain subset or family context changes. The complete family
+        // key is still used to prove that an individual chain is homogeneous.
+        int rendererIdentity = RuntimeHelpers.GetHashCode(rendererFamily.Renderer);
+        return unchecked((int)((uint)rendererIdentity % (uint)workerCount));
+    }
+
+    internal static bool TryResolveCommandChainRecordingRendererFamily(
+        FrameOp[] ops,
+        CommandChain chain,
+        int frameDataSlot,
+        EVulkanMeshFrameDataStreamKind streamKind,
+        out VulkanMeshFrameDataRendererFamilyKey rendererFamily)
+    {
+        rendererFamily = default;
+        if (chain.SourceStartIndex < 0 ||
+            chain.SourceCount <= 0 ||
+            chain.SourceStartIndex > ops.Length - chain.SourceCount ||
+            ops[chain.SourceStartIndex] is not MeshDrawOp firstDraw)
+        {
+            return false;
+        }
+
+        VulkanMeshFrameDataFamilyKey firstFamily = VulkanMeshFrameDataFamilyKey.From(
+            frameDataSlot,
+            streamKind,
+            firstDraw.Context,
+            firstDraw.Draw);
+        rendererFamily = new VulkanMeshFrameDataRendererFamilyKey(firstDraw.Draw.Renderer, firstFamily);
+
+        VulkanMeshFrameDataRendererFamilyKeyComparer comparer =
+            VulkanMeshFrameDataRendererFamilyKeyComparer.Instance;
+        for (int drawIndex = 1; drawIndex < chain.SourceCount; drawIndex++)
+        {
+            if (ops[chain.SourceStartIndex + drawIndex] is not MeshDrawOp draw)
+                return false;
+
+            VulkanMeshFrameDataFamilyKey family = VulkanMeshFrameDataFamilyKey.From(
+                frameDataSlot,
+                streamKind,
+                draw.Context,
+                draw.Draw);
+            VulkanMeshFrameDataRendererFamilyKey candidate = new(draw.Draw.Renderer, family);
+            if (!comparer.Equals(rendererFamily, candidate))
+                return false;
+        }
+
+        return true;
     }
 
     private static bool ContainsQueryFrameOp(FrameOp[] ops)
@@ -191,6 +246,32 @@ public unsafe partial class VulkanRenderer
             : CommandChainsEnabledForCurrentRecording;
         if (!commandChainsEnabledForTarget)
             return null;
+
+        // A zero-readback publication spans multiple command-buffer segments, so
+        // inspecting only this segment's ops is insufficient: a static segment can
+        // otherwise execute cached secondaries while another segment publishes the
+        // indirect/count streams. Quarantine command chains for the resolved
+        // zero-readback strategy as a whole until publication generations are part
+        // of every chain key and submission dependency.
+        if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy())
+            return null;
+
+        // The GPU-zero-readback frame contains compute producers and indirect
+        // consumers whose publication lifetime is scoped to the freshly recorded
+        // primary. Mixing those operations with persistent command-chain
+        // secondaries reproducibly triggers a Windows GPU watchdog reset on the
+        // Sponza workload, even when the indirect draw itself remains inline.
+        // Keep the complete frame inline until command-chain keys encode the
+        // mutable publication generations. GPU culling and indirect-count draws
+        // remain enabled; only secondary command-buffer reuse is quarantined.
+        if (HasMutableGpuDrivenFrameOps(staticOps) || HasMutableGpuDrivenFrameOps(volatileOps))
+        {
+            Debug.VulkanEvery(
+                $"Vulkan.CommandChains.MutableGpuFrameInline.{GetHashCode()}",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan.CommandChains] Recording mutable GPU-driven frame ops inline until command-chain publication generations are tracked.");
+            return null;
+        }
 
         // Dynamic overlays are not expected to contain query brackets. Keep the
         // conservative all-inline fallback if one appears there because overlay
@@ -1310,10 +1391,18 @@ public unsafe partial class VulkanRenderer
         HashSet<nint> executedSecondaryHandles,
         out CommandBuffer secondary)
     {
+        // The serial recorder must not reset or allocate from a worker-owned
+        // pool. Mixed renderer-family chains can move here after an older build
+        // recorded them on a worker, so migrate them to an owned serial pool.
+        if (chain.SecondaryCommandBuffer.Handle != 0 && !chain.OwnsSecondaryCommandPool)
+            DestroyCommandChainSecondaryCommandBuffer(chain);
+
         if (!TryEnsureCommandChainSecondaryCommandBuffer(chain, imageIndex, out secondary))
             return false;
 
-        if (secondary.Handle == 0 || !executedSecondaryHandles.Contains(secondary.Handle))
+        if (secondary.Handle != 0 &&
+            !executedSecondaryHandles.Contains(secondary.Handle) &&
+            CanResetVulkanCommandBuffer(secondary, out _))
             return true;
 
         CommandPool pool = chain.SecondaryCommandPool;
@@ -1392,7 +1481,8 @@ public unsafe partial class VulkanRenderer
             MarkCommandChainSecondaryCommandBufferChanged(chain);
         }
 
-        if (!executedSecondaryHandles.Contains(secondary.Handle))
+        if (!executedSecondaryHandles.Contains(secondary.Handle) &&
+            CanResetVulkanCommandBuffer(secondary, out _))
             return true;
 
         CommandBufferAllocateInfo replacementAllocInfo = new()
@@ -2607,11 +2697,11 @@ public unsafe partial class VulkanRenderer
         return FinishUnorderedHash(images.Count, xor, sum);
     }
 
-    private static ulong HashBufferBindingLayout(Dictionary<uint, XRDataBuffer> buffers)
+    private static ulong HashBufferBindingLayout(Dictionary<uint, VulkanComputeBufferBinding> buffers)
     {
         ulong xor = 0;
         ulong sum = 0;
-        foreach (KeyValuePair<uint, XRDataBuffer> pair in buffers)
+        foreach (KeyValuePair<uint, VulkanComputeBufferBinding> pair in buffers)
         {
             FrameOpSignatureHasher item = new();
             item.Add(pair.Key);

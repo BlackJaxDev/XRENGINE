@@ -72,9 +72,15 @@ namespace XREngine.Rendering.Vulkan
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanPrimaryReuse), "1", StringComparison.Ordinal);
         private static readonly bool? VulkanPrimaryCommandBufferReuseOverride =
             ReadOptionalBooleanEnvironmentOverride(XREngineEnvironmentVariables.VulkanPrimaryCommandBufferReuse);
+        // Cached primaries can outlive mutable descriptor and GPU-publication
+        // generations that are not yet represented in the variant key. Keep the
+        // public setting and override intact for diagnostics, but do not execute a
+        // cached primary until those generations participate in reuse validation.
+        internal const bool VulkanPrimaryCommandBufferReuseSafe = false;
         private bool VulkanPrimaryCommandBufferReuseEnabled =>
-            VulkanPrimaryCommandBufferReuseOverride ??
-            RuntimeRenderingHostServices.Current.EnableVulkanPrimaryCommandBufferReuse;
+            VulkanPrimaryCommandBufferReuseSafe &&
+            (VulkanPrimaryCommandBufferReuseOverride ??
+             RuntimeRenderingHostServices.Current.EnableVulkanPrimaryCommandBufferReuse);
         private static bool VulkanFrameDiagnosticsTraceEnabled =>
             CommandRecordingDiagnosticsEnabled ||
             XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||

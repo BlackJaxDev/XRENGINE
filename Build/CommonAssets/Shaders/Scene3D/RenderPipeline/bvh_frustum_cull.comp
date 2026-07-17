@@ -335,30 +335,24 @@ void main()
         StatsBvhCullCount = uint(InputCommandCount);
     }
 
-    if (nodeCount == 0u)
+    uint safeNodeCount = min(nodeCount, uint(nodes.length()));
+    if (safeNodeCount == 0u)
         return;
 
-    uint leafCount = (nodeCount + 1u) >> 1u;
-    if (gid >= leafCount || gid >= nodeCount)
+    uint leafCount = (safeNodeCount + 1u) >> 1u;
+    if (gid >= leafCount || gid >= uint(ranges.length()))
         return;
 
-    uint stack[32];
-    uint sp = 0u;
-    stack[sp++] = gid;
-
-    while (sp > 0u)
-    {
-        uint idx = stack[--sp];
-        if (idx >= nodeCount)
-            continue;
-
-        BvhNode node = nodes[idx];
-        if (!AabbVisible(node.minBounds, node.maxBounds))
-            return;
-
-        if (node.parentIndex != INVALID_INDEX && sp < stack.length())
-            stack[sp++] = node.parentIndex;
-    }
+    // This shader launches one invocation per leaf, so walking from an already
+    // visible leaf toward the root cannot reject additional geometry: every
+    // ancestor encloses that leaf. Besides wasting AABB tests, the old walk made
+    // malformed parent connectivity a correctness and TDR hazard. Cull against
+    // the refitted leaf and the primitive bounds below; hierarchical rejection
+    // requires a root-down traversal with a different dispatch model.
+    BvhNode leaf = nodes[gid];
+    if ((leaf.flags & BVH_FLAG_LEAF) == 0u ||
+        !AabbVisible(leaf.minBounds, leaf.maxBounds))
+        return;
 
     uvec2 range = ranges[gid];
     if (range.y == 0u)

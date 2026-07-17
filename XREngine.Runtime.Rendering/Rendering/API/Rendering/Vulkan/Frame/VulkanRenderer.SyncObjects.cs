@@ -123,7 +123,7 @@ public unsafe partial class VulkanRenderer
             MarkDeviceLost($"GetSemaphoreCounterValue for timeline value {value} returned {result}");
 
             throw new InvalidOperationException(
-                $"Vulkan device lost while checking timeline value {value}. Timeline state has been reset.");
+                $"Vulkan device lost while checking timeline value {value}. Reason={DeviceLostReason ?? "<unknown>"}. Timeline state has been reset.");
         }
 
         if (result != Result.Success)
@@ -171,7 +171,7 @@ public unsafe partial class VulkanRenderer
             MarkDeviceLost($"WaitSemaphores for timeline value {value} returned {waitResult}");
 
             throw new InvalidOperationException(
-                $"Vulkan device lost while waiting for timeline value {value}. Timeline state has been reset.");
+                $"Vulkan device lost while waiting for timeline value {value}. Reason={DeviceLostReason ?? "<unknown>"}. Timeline state has been reset.");
         }
 
         if (waitResult != Result.Success)

@@ -55,6 +55,11 @@
     - name: Profiler
       href: diagnostics/profiler.md
 
+- name: Development Workflow
+  items:
+    - name: Continuous Integration And Releases
+      href: ci-cd.md
+
 - name: Global Illumination
   href: gi/global-illumination.md
   items:

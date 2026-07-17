@@ -51,6 +51,8 @@ uniform int CurrentRenderPass;
 uniform int MaxMaterialSlotLookup;
 uniform int MaxBucketCount;
 uniform int MaxIndirectDrawsPerBucket;
+uniform uvec3 AtlasIndexCounts;
+uniform uvec3 AtlasVertexCounts;
 
 uvec4 LoadKey(uint index)
 {
@@ -80,6 +82,34 @@ bool StoreDrawCommand(uint bucketIndex, uint drawIndexInBucket, uint count, uint
     return true;
 }
 
+bool TryReserveBucketDraw(uint bucketIndex, out uint drawIndexInBucket)
+{
+    drawIndexInBucket = 0u;
+    uint capacity = uint(max(MaxIndirectDrawsPerBucket, 0));
+    if (capacity == 0u)
+    {
+        overflowFlag = 1u;
+        return false;
+    }
+
+    while (true)
+    {
+        uint current = drawCounts[bucketIndex];
+        if (current >= capacity)
+        {
+            overflowFlag = 1u;
+            return false;
+        }
+
+        uint observed = atomicCompSwap(drawCounts[bucketIndex], current, current + 1u);
+        if (observed == current)
+        {
+            drawIndexInBucket = current;
+            return true;
+        }
+    }
+}
+
 void TryEmitDraw(uint meshID, uint materialID, uint instanceCount, uint commandIndex, bool previousLod)
 {
     if (instanceCount == 0u)
@@ -105,19 +135,28 @@ void TryEmitDraw(uint meshID, uint materialID, uint instanceCount, uint commandI
     if (tier >= MATERIAL_TIER_COUNT)
         tier = 0u;
 
-    uint bucketIndex = slotIndex * MATERIAL_TIER_COUNT + tier;
-    if (bucketIndex >= uint(MaxBucketCount) || bucketIndex >= uint(drawCounts.length()))
-        return;
-
-    uint drawIndexInBucket = atomicAdd(drawCounts[bucketIndex], 1u);
-    if (drawIndexInBucket >= uint(MaxIndirectDrawsPerBucket))
+    uint firstIndex = meshData[meshBase + 1u];
+    uint baseVertex = meshData[meshBase + 2u];
+    uint atlasIndexCount = AtlasIndexCounts[tier];
+    uint atlasVertexCount = AtlasVertexCounts[tier];
+    if (atlasIndexCount == 0u ||
+        atlasVertexCount == 0u ||
+        firstIndex >= atlasIndexCount ||
+        indexCount > atlasIndexCount - firstIndex ||
+        baseVertex >= atlasVertexCount)
     {
         overflowFlag = 1u;
         return;
     }
 
-    uint firstIndex = meshData[meshBase + 1u];
-    uint baseVertex = meshData[meshBase + 2u];
+    uint bucketIndex = slotIndex * MATERIAL_TIER_COUNT + tier;
+    if (bucketIndex >= uint(MaxBucketCount) || bucketIndex >= uint(drawCounts.length()))
+        return;
+
+    uint drawIndexInBucket;
+    if (!TryReserveBucketDraw(bucketIndex, drawIndexInBucket))
+        return;
+
     uint baseInstance = commandIndex & COMMAND_INDEX_MASK;
     if (previousLod)
         baseInstance |= PREVIOUS_LOD_DRAW_FLAG;
@@ -128,7 +167,8 @@ void TryEmitDraw(uint meshID, uint materialID, uint instanceCount, uint commandI
 void main()
 {
     uint sortedIndex = gl_GlobalInvocationID.x;
-    if (sortedIndex >= CulledCount)
+    uint availableKeyCount = uint(sortKeys.length()) / KEY_UINTS;
+    if (sortedIndex >= CulledCount || sortedIndex >= availableKeyCount)
         return;
 
     uvec4 key = LoadKey(sortedIndex);

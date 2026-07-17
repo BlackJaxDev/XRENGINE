@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using XREngine.Data;
+using XREngine.Data.Vectors;
 using XREngine.Data.Rendering;
 using XREngine.Data.Lists.Unsafe;
 using XREngine.Rendering;
@@ -1001,6 +1002,14 @@ namespace XREngine.Rendering.Commands
             _materialScatterComputeShader.Uniform("MaxMaterialSlotLookup", (int)_materialSlotLookupBuffer.ElementCount);
             _materialScatterComputeShader.Uniform("MaxBucketCount", (int)_materialTierBucketCount);
             _materialScatterComputeShader.Uniform("MaxIndirectDrawsPerBucket", (int)_maxDrawsPerMaterialTier);
+            _materialScatterComputeShader.Uniform("AtlasIndexCounts", new UVector3(
+                (uint)Math.Max(scene.GetAtlasIndexCount(EAtlasTier.Static), 0),
+                (uint)Math.Max(scene.GetAtlasIndexCount(EAtlasTier.Dynamic), 0),
+                (uint)Math.Max(scene.GetAtlasIndexCount(EAtlasTier.Streaming), 0)));
+            _materialScatterComputeShader.Uniform("AtlasVertexCounts", new UVector3(
+                (uint)Math.Max(scene.GetAtlasVertexCount(EAtlasTier.Static), 0),
+                (uint)Math.Max(scene.GetAtlasVertexCount(EAtlasTier.Dynamic), 0),
+                (uint)Math.Max(scene.GetAtlasVertexCount(EAtlasTier.Streaming), 0)));
 
             scene.DrawMetadataBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterInputCommands);
             scene.MeshDataBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterMeshData);
@@ -1309,7 +1318,6 @@ namespace XREngine.Rendering.Commands
                 ? Math.Min(Math.Max(VisibleCommandCount, 1u), _keyIndexBufferA.ElementCount)
                 : Math.Max(VisibleCommandCount, 1u);
 
-            _buildKeysComputeShader.Uniform("CurrentRenderPass", RenderPass);
             _buildKeysComputeShader.Uniform("MaxSortKeys", (int)_keyIndexBufferA.ElementCount);
             _buildKeysComputeShader.Uniform("StateBitMask", 0x0FFFu);
 

@@ -576,6 +576,15 @@ namespace XREngine.Rendering.Commands
             {
                 foreach (IndexTriangle tri in mesh.Triangles)
                 {
+                    if (!TriangleIndicesFitVertexRange(tri, vertexCount))
+                    {
+                        failureReason = $"contains a triangle index outside vertex range [0, {vertexCount})";
+                        return false;
+                    }
+                }
+
+                foreach (IndexTriangle tri in mesh.Triangles)
+                {
                     // Store indices relative to the mesh; DrawElementsIndirect will offset by baseVertex.
                     state.IndirectFaceIndices.Add(new IndexTriangle(
                         tri.Point0,
@@ -595,6 +604,15 @@ namespace XREngine.Rendering.Commands
 
                 if (indices.Length % 3 != 0)
                     Debug.MeshesWarning($"Mesh '{meshLabel}' triangle index count {indices.Length} is not divisible by 3; trailing vertices will be ignored.");
+
+                for (int i = 0; i + 2 < indices.Length; i += 3)
+                {
+                    if (!TriangleIndicesFitVertexRange(indices[i], indices[i + 1], indices[i + 2], vertexCount))
+                    {
+                        failureReason = $"contains a triangle index outside vertex range [0, {vertexCount})";
+                        return false;
+                    }
+                }
 
                 for (int i = 0; i + 2 < indices.Length; i += 3)
                 {
@@ -705,6 +723,15 @@ namespace XREngine.Rendering.Commands
             }
 
             int actualIndexCount = triangles.Count * 3;
+            foreach (IndexTriangle triangle in triangles)
+            {
+                if (!TriangleIndicesFitVertexRange(triangle, positions.Length))
+                {
+                    failureReason = $"contains a triangle index outside vertex range [0, {positions.Length})";
+                    return false;
+                }
+            }
+
             if (maxVertexCount < positions.Length)
             {
                 failureReason = $"streaming vertex capacity {maxVertexCount} is smaller than mesh vertex count {positions.Length}";
@@ -782,6 +809,15 @@ namespace XREngine.Rendering.Commands
             SetEmptyMeshletRange(meshID, 0UL);
             return true;
         }
+
+        private static bool TriangleIndicesFitVertexRange(IndexTriangle triangle, int vertexCount)
+            => TriangleIndicesFitVertexRange(triangle.Point0, triangle.Point1, triangle.Point2, vertexCount);
+
+        private static bool TriangleIndicesFitVertexRange(int point0, int point1, int point2, int vertexCount)
+            => vertexCount > 0 &&
+               (uint)point0 < (uint)vertexCount &&
+               (uint)point1 < (uint)vertexCount &&
+               (uint)point2 < (uint)vertexCount;
 
         public void LoadStaticMeshBatch(IEnumerable<XRMesh> meshes)
         {

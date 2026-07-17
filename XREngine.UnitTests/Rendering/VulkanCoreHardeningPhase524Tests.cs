@@ -9,6 +9,78 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class VulkanCoreHardeningPhase524Tests
 {
     [Test]
+    public void IndirectCountSubmissionEnablesAndRequiresCoreIndirectFeatures()
+    {
+        string logicalDevice = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
+        string extensions = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs");
+
+        logicalDevice.ShouldContain("supportedFeatures.MultiDrawIndirect");
+        logicalDevice.ShouldContain("deviceFeatures.MultiDrawIndirect = Vk.True");
+        logicalDevice.ShouldContain("supportedFeatures.DrawIndirectFirstInstance");
+        logicalDevice.ShouldContain("deviceFeatures.DrawIndirectFirstInstance = Vk.True");
+        logicalDevice.ShouldContain("bool indirectCountCoreFeaturesReady =");
+        logicalDevice.ShouldContain("_supportsMultiDrawIndirect &&");
+        logicalDevice.ShouldContain("_supportsDrawIndirectFirstInstance;");
+        logicalDevice.ShouldContain("_usesCoreDrawIndirectCountCommands = true");
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        recording.ShouldContain("Api!.CmdDrawIndexedIndirectCount(");
+        recording.ShouldContain("else if (_khrDrawIndirectCount is not null)");
+        extensions.ShouldContain("private bool _supportsMultiDrawIndirect;");
+        extensions.ShouldContain("private bool _supportsDrawIndirectFirstInstance;");
+    }
+
+    [Test]
+    public void ZeroReadbackAtlasTiersUseStableRendererInstances()
+    {
+        string source = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
+
+        source.ShouldContain("private readonly XRMeshRenderer?[] _zeroReadbackTierRenderers");
+        source.ShouldContain("XRMeshRenderer? tierRenderer = ConfigureIndirectRendererForTier(scene, (EAtlasTier)tier);");
+        source.ShouldContain("_zeroReadbackTierRenderers[tierIndex] = vaoRenderer;");
+        source.ShouldContain("Name = $\"ZeroReadbackAtlasTier_{tier}\"");
+        source.ShouldNotContain("ConfigureIndirectRendererForTier(scene, vaoRenderer");
+    }
+
+    [Test]
+    public void DeferredComputeDispatchCapturesImmutableBufferGenerationsWithoutExtraSnapshotMaps()
+    {
+        string snapshot = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.ComputeDispatchSnapshot.cs");
+        string binding = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.VulkanComputeBufferBinding.cs");
+        string program = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+
+        snapshot.ShouldContain("Dictionary<uint, VulkanComputeBufferBinding> Buffers");
+        snapshot.ShouldContain("Dictionary<string, VulkanComputeBufferBinding> BuffersByName");
+        snapshot.ShouldNotContain("VulkanBuffers");
+        binding.ShouldContain("XRDataBuffer Data");
+        binding.ShouldContain("Buffer Buffer");
+        binding.ShouldContain("ulong Range");
+        program.ShouldContain("TryCaptureComputeBufferSnapshot");
+        program.ShouldContain("Buffer = snapshot.Buffer");
+        program.ShouldNotContain("snapshot.VulkanBuffers");
+    }
+
+    [Test]
+    public void VulkanIndirectGeometryUsesRobustAccessAndRejectsInvalidAtlasIndices()
+    {
+        string logicalDevice = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
+        string atlas = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.AtlasManagement.cs");
+
+        logicalDevice.ShouldContain("supportedFeatures.RobustBufferAccess");
+        logicalDevice.ShouldContain("deviceFeatures.RobustBufferAccess = Vk.True");
+        atlas.ShouldContain("TriangleIndicesFitVertexRange");
+        atlas.ShouldContain("contains a triangle index outside vertex range");
+    }
+
+    [Test]
     public void RecordingUsesCapacityBackedCommandLocalDependencyAndLayoutStorage()
     {
         string source = ReadWorkspaceFile(
@@ -265,6 +337,33 @@ public sealed class VulkanCoreHardeningPhase524Tests
         string harness = ReadWorkspaceFile("Tools/Measure-GameLoopRenderPipeline.ps1");
         harness.ShouldContain("[string]$UnitTestVrMode = 'Configured'");
         harness.ShouldContain("Set-BenchmarkEnvValue 'XRE_UNIT_TEST_VR_MODE' $UnitTestVrMode");
+    }
+
+    [Test]
+    public void BenchmarkRequestsEditorShutdownOnlyOnce()
+    {
+        string harness = ReadWorkspaceFile("Tools/Measure-GameLoopRenderPipeline.ps1");
+        int shutdownStart = harness.IndexOf("function Stop-EditorGracefully", StringComparison.Ordinal);
+        int shutdownEnd = harness.IndexOf("function Measure-Variant", shutdownStart, StringComparison.Ordinal);
+        string shutdown = harness[shutdownStart..shutdownEnd];
+
+        shutdown.ShouldContain("if (-not $requested) {");
+        shutdown.ShouldContain("$requested = [XREngineMeasurementNativeWindow]::PostCloseToProcess($Process.Id)");
+        shutdown.ShouldNotContain("PostCloseToProcess($Process.Id) -or $requested");
+    }
+
+    [Test]
+    public void McpVulkanScreenshotReadback_FailsBeforeUnsafeTransferSubmission()
+    {
+        string viewportActions = ReadWorkspaceFile("XREngine.Editor/Mcp/Actions/EditorMcpActions.Viewport.cs");
+        int captureStart = viewportActions.IndexOf("static void BeginCapture", StringComparison.Ordinal);
+        int captureEnd = viewportActions.IndexOf("var tcs =", captureStart, StringComparison.Ordinal);
+        string capture = viewportActions[captureStart..captureEnd];
+
+        capture.ShouldContain("if (renderer is VulkanRenderer)");
+        capture.ShouldContain("temporarily disabled because its synchronous transfer path can trigger a GPU watchdog reset");
+        capture.IndexOf("if (renderer is VulkanRenderer)", StringComparison.Ordinal)
+            .ShouldBeLessThan(capture.IndexOf("renderer.GetScreenshotAsync", StringComparison.Ordinal));
     }
 
     [Test]

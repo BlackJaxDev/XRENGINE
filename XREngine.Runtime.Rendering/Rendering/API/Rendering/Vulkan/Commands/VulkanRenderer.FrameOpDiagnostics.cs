@@ -409,6 +409,21 @@ namespace XREngine.Rendering.Vulkan
             return false;
         }
 
+        private static bool HasMutableGpuDrivenFrameOps(FrameOp[] ops)
+        {
+            for (int i = 0; i < ops.Length; i++)
+            {
+                // The count and argument buffers are produced by compute work every
+                // frame. Re-recording the primary preserves the producer/consumer
+                // dependency chain and avoids resubmitting a cached primary across
+                // mutable GPU publications.
+                if (ops[i] is ComputeDispatchOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp)
+                    return true;
+            }
+
+            return false;
+        }
+
         private static FrameOp[] FilterDiagnosticSkippedFrameOps(FrameOp[] ops)
         {
             if (ops.Length == 0 || !XREngine.Rendering.RenderDiagnosticsFlags.VkSkipUiBatchText)

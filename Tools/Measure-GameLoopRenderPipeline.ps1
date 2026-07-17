@@ -605,10 +605,12 @@ function Stop-EditorGracefully {
         $requested = $false
     }
 
-    try {
-        $requested = [XREngineMeasurementNativeWindow]::PostCloseToProcess($Process.Id) -or $requested
-    } catch {
-        # Keep the normal Process API result when native window enumeration is unavailable.
+    if (-not $requested) {
+        try {
+            $requested = [XREngineMeasurementNativeWindow]::PostCloseToProcess($Process.Id)
+        } catch {
+            # Keep the normal Process API result when native window enumeration is unavailable.
+        }
     }
 
     if ($requested -and $Process.WaitForExit($GraceSeconds * 1000)) {
