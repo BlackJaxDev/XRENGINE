@@ -122,23 +122,10 @@ public unsafe partial class VulkanRenderer
         int ThreadId,
         string? Caller);
 
-    private sealed class VulkanImageLayoutStateSnapshot(
-        VulkanTrackedImageLayoutEntry[] trackedLayouts,
-        VulkanPhysicalImageGroupLayoutEntry[] physicalGroups,
-        ulong signature)
+    private sealed class VulkanImageLayoutStateSnapshot(ulong signature)
     {
-        public VulkanTrackedImageLayoutEntry[] TrackedLayouts { get; } = trackedLayouts;
-        public VulkanPhysicalImageGroupLayoutEntry[] PhysicalGroups { get; } = physicalGroups;
-        public ulong Signature { get; } = signature;
+        public ulong Signature { get; set; } = signature;
     }
-
-    private readonly record struct VulkanTrackedImageLayoutEntry(
-        VulkanTrackedImageSubresource Key,
-        VulkanImageAccessState State);
-
-    private readonly record struct VulkanPhysicalImageGroupLayoutEntry(
-        VulkanPhysicalImageGroup Group,
-        VulkanPhysicalImageGroup.LayoutSnapshot Layout);
 
     /// <summary>
     /// Debug-only assertion that fires when <c>AllCommandsBit</c> is used in a barrier.
@@ -1589,66 +1576,14 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private VulkanImageLayoutStateSnapshot CaptureImageLayoutStateSnapshot(
-        ulong signature,
-        CommandBuffer commandBuffer = default)
-    {
-        VulkanTrackedImageLayoutEntry[] trackedLayouts;
-        lock (_vulkanImageLayoutLock)
-        {
-            VulkanRecordedImageLayoutState? recorded = null;
-            if (commandBuffer.Handle != 0)
-            {
-                _recordedImageLayoutsByCommandBuffer.TryGetValue(
-                    unchecked((ulong)commandBuffer.Handle),
-                    out recorded);
-            }
-
-            if (recorded is not null)
-            {
-                trackedLayouts = new VulkanTrackedImageLayoutEntry[recorded.Subresources.Count];
-                int index = 0;
-                foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> pair in recorded.Subresources)
-                    trackedLayouts[index++] = new VulkanTrackedImageLayoutEntry(pair.Key, pair.Value);
-            }
-            else
-            {
-                trackedLayouts = new VulkanTrackedImageLayoutEntry[_trackedImageSubresourceStates.Count];
-                int index = 0;
-                foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageSubresourceState> pair in _trackedImageSubresourceStates)
-                    trackedLayouts[index++] = new VulkanTrackedImageLayoutEntry(pair.Key, pair.Value.Submitted);
-            }
-        }
-
-        int physicalGroupCount = 0;
-        foreach (VulkanPhysicalImageGroup group in ResourceAllocator.EnumeratePhysicalGroups())
-        {
-            if (group.IsAllocated)
-                physicalGroupCount++;
-        }
-
-        VulkanPhysicalImageGroupLayoutEntry[] physicalGroups = physicalGroupCount == 0
-            ? Array.Empty<VulkanPhysicalImageGroupLayoutEntry>()
-            : new VulkanPhysicalImageGroupLayoutEntry[physicalGroupCount];
-        int physicalGroupIndex = 0;
-        foreach (VulkanPhysicalImageGroup group in ResourceAllocator.EnumeratePhysicalGroups())
-        {
-            if (!group.IsAllocated)
-                continue;
-
-            physicalGroups[physicalGroupIndex++] = new VulkanPhysicalImageGroupLayoutEntry(
-                group,
-                group.CaptureLayoutSnapshot());
-        }
-
-        return new VulkanImageLayoutStateSnapshot(trackedLayouts, physicalGroups, signature);
-    }
-
     private void CaptureCommandBufferVariantImageLayoutEndState(CommandBufferCacheVariant variant)
     {
         ulong signature = ComputeImageLayoutStateSignature(variant.PrimaryCommandBuffer);
         variant.RecordedImageLayoutEndSignature = signature;
-        variant.RecordedImageLayoutEndState = CaptureImageLayoutStateSnapshot(signature, variant.PrimaryCommandBuffer);
+        if (variant.RecordedImageLayoutEndState is { } snapshot)
+            snapshot.Signature = signature;
+        else
+            variant.RecordedImageLayoutEndState = new VulkanImageLayoutStateSnapshot(signature);
     }
 
     private void RestoreRecordedImageLayoutEndState(CommandBufferCacheVariant variant)
@@ -1688,17 +1623,7 @@ public unsafe partial class VulkanRenderer
             hash.Add((ulong)group.Usage);
             hash.Add(group.MipLevels);
             hash.Add(group.Template.Layers);
-            VulkanPhysicalImageGroup.LayoutSnapshot layoutSnapshot = group.CaptureLayoutSnapshot();
-            hash.Add((int)layoutSnapshot.LastKnownLayout);
-            VulkanPhysicalImageGroup.SubresourceLayoutSnapshot[] subresources = layoutSnapshot.Subresources;
-            hash.Add(subresources.Length);
-            for (int i = 0; i < subresources.Length; i++)
-            {
-                VulkanPhysicalImageGroup.SubresourceLayoutSnapshot subresource = subresources[i];
-                hash.Add(subresource.MipLevel);
-                hash.Add(subresource.ArrayLayer);
-                hash.Add((int)subresource.Layout);
-            }
+            group.AppendLayoutSignature(ref hash);
         }
 
         hash.Add(physicalGroupCount);

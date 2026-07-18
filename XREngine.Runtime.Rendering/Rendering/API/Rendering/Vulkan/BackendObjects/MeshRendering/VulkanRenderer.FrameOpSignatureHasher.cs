@@ -2,7 +2,7 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private struct FrameOpSignatureHasher
+    internal struct FrameOpSignatureHasher
     {
         private const ulong OffsetBasis = 14695981039346656037UL;
         private const ulong Prime = 1099511628211UL;

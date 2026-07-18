@@ -99,6 +99,7 @@ namespace XREngine.Rendering.Vulkan
             CancelRecordedTextureUploadPublications("Vulkan renderer shutdown");
             DrainVulkanPipelineCompileQueueForShutdown();
             WaitForPendingReadbackTasks(TimeSpan.FromSeconds(6));
+            DisposeGpuRenderStatsReadbacks();
             DestroyComputeTransientResources();
             DestroyComputeDescriptorCaches();
             DestroyDanglingMaterialWrappers();

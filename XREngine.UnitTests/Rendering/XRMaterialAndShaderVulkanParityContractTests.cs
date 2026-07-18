@@ -111,15 +111,18 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
     public void VulkanMaterialsUsePreparedDescriptorPlansAndVisibleFallbackDiagnostics()
     {
         string vkMaterialSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Materials/VkMaterial.cs");
+        string vkMaterialStateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Materials/VkMaterial.ProgramDescriptorState.cs");
+        string vkUniformBindingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Materials/VkMaterial.UniformBindingResource.cs");
         string vkProgramSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+        string vkDescriptorBindingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VulkanRenderer.DescriptorSetLayoutBindingBuilder.cs");
         string glMaterialSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Materials/GLMaterial.cs");
         string glProgramSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.UniformBinding.cs");
 
-        vkMaterialSource.ShouldContain("private sealed class ProgramDescriptorState");
-        vkMaterialSource.ShouldContain("public required IReadOnlyList<DescriptorBindingInfo> Bindings { get; init; }");
-        vkMaterialSource.ShouldContain("public required Dictionary<(uint set, uint binding), UniformBindingResource> UniformBindings { get; init; }");
-        vkMaterialSource.ShouldContain("public required bool HasMaterialParameterOrSamplerBindings { get; init; }");
-        vkMaterialSource.ShouldContain("public AutoUniformBlockInfo? ReflectedBlock { get; init; }");
+        vkMaterialStateSource.ShouldContain("private sealed class ProgramDescriptorState");
+        vkMaterialStateSource.ShouldContain("public required IReadOnlyList<DescriptorBindingInfo> Bindings { get; init; }");
+        vkMaterialStateSource.ShouldContain("public required Dictionary<(uint set, uint binding), UniformBindingResource> UniformBindings { get; init; }");
+        vkMaterialStateSource.ShouldContain("public required bool HasMaterialParameterOrSamplerBindings { get; init; }");
+        vkUniformBindingSource.ShouldContain("public AutoUniformBlockInfo? ReflectedBlock { get; init; }");
         vkMaterialSource.ShouldContain("program.TryGetAutoUniformBlockFuzzy(binding.Name, binding.Set, binding.Binding, out AutoUniformBlockInfo block)");
         vkMaterialSource.ShouldContain("bufferSize = block.Size;");
         vkMaterialSource.ShouldContain("TryWriteReflectedUniformBlock(data, reflectedBlock)");
@@ -142,7 +145,7 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
         vkProgramSource.ShouldContain("TryGetAutoUniformBlockFuzzy");
         vkProgramSource.ShouldContain("TryGetVertexInputLocation");
         vkProgramSource.ShouldContain("CreateCommonPushConstantRange");
-        vkProgramSource.ShouldContain("VulkanBindlessMaterialDescriptors.ResolveDescriptorCount");
+        vkDescriptorBindingSource.ShouldContain("VulkanBindlessMaterialDescriptors.ResolveDescriptorCount");
 
         glMaterialSource.ShouldContain("TextureRuntimeDiagnostics.LogMaterialBinding");
         glMaterialSource.ShouldContain("TextureRuntimeDiagnostics.LogBindingRisk");
@@ -188,6 +191,7 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
 
         vkProgramSource.ShouldContain("vkShader.ShaderInvalidated += OnShaderInvalidated;");
         vkProgramSource.ShouldContain("vkShader.ShaderInvalidated -= OnShaderInvalidated;");
+        vkProgramSource.ShouldContain("InvokeOnMainThread(() => OnShaderInvalidated(shader)");
         vkProgramSource.ShouldContain("shader.CompileStatus.FailureReason");
         vkProgramSource.ShouldContain("!shader.IsGenerated || !shader.IsCompiled");
 
@@ -206,6 +210,7 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
         string resolverSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Resources/Shaders/ShaderSourceResolver.cs");
         string vkShaderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkShader.cs");
         string compilerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderCompiler.cs");
+        string reflectionSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderReflection.cs");
         string artifactCacheSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderArtifactCache.cs");
         string prewarmSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelinePrewarmDatabase.cs");
         string glDiagnosticsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.Diagnostics.cs");
@@ -228,9 +233,9 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
         compilerSource.ShouldContain("BuildArtifactIdentity");
         compilerSource.ShouldContain("ResolvedSourceIdentity");
         compilerSource.ShouldContain("RewrittenSourceHash");
-        compilerSource.ShouldContain("VulkanShaderReflection");
-        compilerSource.ShouldContain("CollectDescriptorBindings");
-        compilerSource.ShouldContain("PushConstant");
+        vkShaderSource.ShouldContain("VulkanShaderReflection.ExtractBindings");
+        reflectionSource.ShouldContain("CollectDescriptorBindings");
+        reflectionSource.ShouldContain("PushConstant");
 
         artifactCacheSource.ShouldContain("VulkanShaderArtifactRuntimeFingerprint");
         artifactCacheSource.ShouldContain("TargetEnvironment: \"Vulkan\"");

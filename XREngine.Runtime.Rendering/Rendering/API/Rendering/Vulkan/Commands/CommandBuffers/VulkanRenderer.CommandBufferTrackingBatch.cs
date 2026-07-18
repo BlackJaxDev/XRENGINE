@@ -16,6 +16,9 @@ public unsafe partial class VulkanRenderer
 
         public int Count => _states.Count;
 
+        public void Clear()
+            => _states.Clear();
+
         public void Record(
             ulong imageHandle,
             in ImageSubresourceRange range,
@@ -134,12 +137,29 @@ public unsafe partial class VulkanRenderer
         public ulong LayoutVersion;
         public int DependencyBindCount;
         public int ImageAccessWriteCount;
-        public int PublishedDependencyCount;
         public int PublishedImageDeltaCount;
         public int ReportedDependencyBindCount;
         public int ReportedImageAccessWriteCount;
         public int QueuedSubmissionCount;
         public bool IsRecording;
+
+        public void Reset(ulong recordingGeneration)
+        {
+            Dependencies.Clear();
+            ExpandedDescriptorGenerations.Clear();
+            ValidatedDescriptorGenerations.Clear();
+            ImageAccessDeltas.Clear();
+            LatestImageAccessStates.Clear();
+            RecordingGeneration = recordingGeneration;
+            LayoutVersion = 0;
+            DependencyBindCount = 0;
+            ImageAccessWriteCount = 0;
+            PublishedImageDeltaCount = 0;
+            ReportedDependencyBindCount = 0;
+            ReportedImageAccessWriteCount = 0;
+            QueuedSubmissionCount = 0;
+            IsRecording = true;
+        }
 
         public void RecordDependency(VulkanResourceLifetimeKey key)
         {
@@ -263,14 +283,15 @@ public unsafe partial class VulkanRenderer
                         throw new InvalidOperationException(
                             $"Command buffer 0x{handle:X} cannot replace tracking while queued for submission.");
                     }
+
+                    existing.Reset(recordingGeneration);
+                    return;
                 }
             }
 
-            _commandBufferTrackingBatches[handle] = new VulkanCommandBufferTrackingBatch
-            {
-                RecordingGeneration = recordingGeneration,
-                IsRecording = true,
-            };
+            VulkanCommandBufferTrackingBatch batch = new();
+            batch.Reset(recordingGeneration);
+            _commandBufferTrackingBatches[handle] = batch;
         }
     }
 
@@ -470,13 +491,13 @@ public unsafe partial class VulkanRenderer
         if (handle == 0 || !_commandBufferTrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
             return true;
 
-        if (batch.PublishedDependencyCount == batch.Dependencies.Count &&
+        if (batch.Dependencies.Count == 0 &&
             batch.PublishedImageDeltaCount == batch.ImageAccessDeltas.Count)
         {
             return true;
         }
 
-        int newUniqueDependencies = batch.Dependencies.Count - batch.PublishedDependencyCount;
+        int newUniqueDependencies = batch.Dependencies.Count;
         int newCompactImageRanges = batch.ImageAccessDeltas.Count - batch.PublishedImageDeltaCount;
 
         bool lifetimeLockContended = !Monitor.TryEnter(_vulkanResourceLifetimeLock);
@@ -504,6 +525,7 @@ public unsafe partial class VulkanRenderer
             }
 
             lifetime.RefreshTouchedDependencies();
+            batch.Dependencies.Clear();
         }
         finally
         {
@@ -519,7 +541,6 @@ public unsafe partial class VulkanRenderer
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackingContention(
             lifetimeLockContended ? 1 : 0,
             layoutLockContended ? 1 : 0);
-        batch.PublishedDependencyCount = batch.Dependencies.Count;
         batch.ReportedDependencyBindCount = batch.DependencyBindCount;
         batch.ReportedImageAccessWriteCount = batch.ImageAccessWriteCount;
         return true;
@@ -542,8 +563,7 @@ public unsafe partial class VulkanRenderer
             VulkanCommandBufferTrackingBatch batch = pair.Value;
             lock (batch)
             {
-                if (batch.PublishedDependencyCount == batch.Dependencies.Count ||
-                    !batch.Dependencies.Contains(resourceKey))
+                if (!batch.Dependencies.Contains(resourceKey))
                 {
                     continue;
                 }

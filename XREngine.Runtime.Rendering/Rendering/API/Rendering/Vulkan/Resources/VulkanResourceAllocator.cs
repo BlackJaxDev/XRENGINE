@@ -839,7 +839,7 @@ internal sealed class VulkanResourceAllocator
             EBufferTarget.DispatchIndirectBuffer => BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit,
             EBufferTarget.QueryBuffer => BufferUsageFlags.TransferDstBit,
             EBufferTarget.AtomicCounterBuffer => BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit,
-            EBufferTarget.ParameterBuffer => BufferUsageFlags.UniformBufferBit,
+            EBufferTarget.ParameterBuffer => BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit,
             _ => BufferUsageFlags.StorageBufferBit
         };
 
@@ -1224,6 +1224,34 @@ internal sealed class VulkanPhysicalImageGroup
             });
 
         return new LayoutSnapshot(_lastKnownLayout, subresources);
+    }
+
+    /// <summary>
+    /// Appends the tracked layout state in deterministic mip/layer order without
+    /// allocating the restoration snapshot used by explicit save/restore paths.
+    /// </summary>
+    internal void AppendLayoutSignature(ref VulkanRenderer.FrameOpSignatureHasher hash)
+    {
+        hash.Add((int)_lastKnownLayout);
+        hash.Add(_subresourceLayouts.Count);
+
+        uint layers = Math.Max(Template.Layers, 1u);
+        for (uint mipLevel = 0; mipLevel < MipLevels; mipLevel++)
+        {
+            for (uint arrayLayer = 0; arrayLayer < layers; arrayLayer++)
+            {
+                if (!_subresourceLayouts.TryGetValue(
+                        new SubresourceLayoutKey(mipLevel, arrayLayer),
+                        out ImageLayout layout))
+                {
+                    continue;
+                }
+
+                hash.Add(mipLevel);
+                hash.Add(arrayLayer);
+                hash.Add((int)layout);
+            }
+        }
     }
 
     internal void RestoreLayoutSnapshot(in LayoutSnapshot snapshot)

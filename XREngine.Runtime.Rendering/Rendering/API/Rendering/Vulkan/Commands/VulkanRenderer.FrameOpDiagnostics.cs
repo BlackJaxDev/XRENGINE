@@ -138,13 +138,40 @@ namespace XREngine.Rendering.Vulkan
             {
                 MeshDrawOp drawOp => BuildMeshDrawFrameOpTraceDetail(drawOp),
                 BlitOp blitOp => $"in='{blitOp.InFbo?.Name ?? "<swapchain>"}' out='{blitOp.OutFbo?.Name ?? "<swapchain>"}'",
-                ComputeDispatchOp computeOp => $"compute='{computeOp.Program.Data.Name ?? "<unnamed program>"}' groups={computeOp.GroupsX},{computeOp.GroupsY},{computeOp.GroupsZ}",
+                ComputeDispatchOp computeOp => BuildComputeFrameOpTraceDetail(computeOp),
                 IndirectDrawOp indirectOp => $"renderer='{indirectOp.MeshRenderer.MeshRenderer?.Name ?? "<unnamed renderer>"}' draws={indirectOp.DrawCount}",
                 QueryOp queryOp => $"query={queryOp.Operation} target={queryOp.QueryTarget}",
                 ClearOp clearOp => $"clearColor={clearOp.ClearColor} clearDepth={clearOp.ClearDepth} clearStencil={clearOp.ClearStencil}",
                 _ => string.Empty
             };
 
+        private static string BuildComputeFrameOpTraceDetail(ComputeDispatchOp computeOp)
+        {
+            StringBuilder builder = new();
+            builder.Append("compute='")
+                .Append(computeOp.Program.Data.Name ?? "<unnamed program>")
+                .Append("' groups=")
+                .Append(computeOp.GroupsX).Append(',')
+                .Append(computeOp.GroupsY).Append(',')
+                .Append(computeOp.GroupsZ)
+                .Append(" buffers=[");
+
+            bool first = true;
+            foreach (KeyValuePair<uint, VulkanComputeBufferBinding> pair in computeOp.Snapshot.Buffers.OrderBy(static pair => pair.Key))
+            {
+                if (!first)
+                    builder.Append(';');
+                first = false;
+
+                VulkanComputeBufferBinding binding = pair.Value;
+                builder.Append(pair.Key).Append(':')
+                    .Append(binding.Data.AttributeName ?? binding.Data.Target.ToString())
+                    .Append("=0x").Append(binding.Buffer.Handle.ToString("X"))
+                    .Append('/').Append(binding.Range);
+            }
+
+            return builder.Append(']').ToString();
+        }
         private static string BuildMeshDrawFrameOpTraceDetail(MeshDrawOp drawOp)
         {
             XRMeshRenderer meshRenderer = drawOp.Draw.Renderer.MeshRenderer;

@@ -311,6 +311,13 @@ namespace XREngine.Rendering.Commands
             if (_culledCountBuffer is null)
                 return;
 
+            // The zero-readback path records GPURenderResetCounters into the frame command stream.
+            // A one-shot upload here is outside that stream and can race the prior in-flight frame,
+            // clearing CulledCount before its downstream material-scatter dispatch consumes it.
+            // ResetBaseCountersOnCpu still performs the upload when the GPU reset contract is absent.
+            if (IsCpuReadbackCountDisabledForPass() && _resetCountersComputeShader is not null)
+                return;
+
             WriteUints(_culledCountBuffer, 0u, 0u, 0u);
         }
 
@@ -699,8 +706,21 @@ namespace XREngine.Rendering.Commands
             return VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics;
         }
 
+        private bool IsCpuFallbackRequestedForPass()
+            => _passPolicySnapshotValid
+                ? IsInstrumentedGpuStrategy(MeshSubmissionStrategy) && _passCpuFallbackRequested
+                : IsInstrumentedGpuStrategy(MeshSubmissionStrategy) &&
+                    ((RuntimeEngine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
+                     || (RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging &&
+                         RuntimeEngine.EffectiveSettings.EnableGpuIndirectCpuFallback));
+
         private void LogCpuFallbackSuppressed(string stageName)
         {
+            // A zero-visible result is valid culling output. It is not a blocked
+            // fallback unless an operator explicitly requested CPU recovery.
+            if (!IsCpuFallbackRequestedForPass())
+                return;
+
             RecordForbiddenFallback($"{stageName} attempted CPU recovery with strict no-fallback profile.");
             if (_passthroughFallbackLogBudget <= 0)
                 return;
@@ -953,6 +973,17 @@ namespace XREngine.Rendering.Commands
         {
             if (!scene.UseGpuBvh)
                 return false;
+
+            // The internal GPU BVH is not publication-safe on Vulkan zero-readback yet: the
+            // GPU-built node header can be replaced by stale host backing before traversal.
+            // Keep P0 fully GPU-driven with the flat frustum shader until BVH publication has
+            // an explicit completion/version contract. Instrumented paths retain BVH coverage.
+            if (MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback &&
+                AbstractRenderer.Current is VulkanRenderer)
+            {
+                LogGpuBvhFallback("Vulkan internal BVH publication is not validated for zero-readback");
+                return false;
+            }
 
             if (_bvhFrustumCullProgram is null)
             {

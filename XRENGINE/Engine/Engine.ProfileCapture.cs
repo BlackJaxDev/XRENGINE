@@ -1285,6 +1285,7 @@ public static partial class Engine
             ValidateEnvFlag(errors, XREngineEnvironmentVariables.ForceSingleBucket);
             ValidateEnvFlag(errors, XREngineEnvironmentVariables.HizCullTrace);
             ValidateEnvFlag(errors, XREngineEnvironmentVariables.GpuTimestampDense);
+            ValidateEnvFlag(errors, XREngineEnvironmentVariables.ForceCpuIndirectBuild);
             ValidateEnvEnum(errors, XREngineEnvironmentVariables.CollectVisibleLatePolicy, "BlockUntilFresh", "ReusePreviousVisibility", "block", "fresh", "reuse", "stale");
 
             ValidateEnvEnum(

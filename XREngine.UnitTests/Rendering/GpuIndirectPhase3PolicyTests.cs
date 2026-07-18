@@ -4,6 +4,8 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine.UnitTests.Rendering;
@@ -66,6 +68,93 @@ public sealed class GpuIndirectPhase3PolicyTests
         source.ShouldNotContain("ResolveVulkanGpuBvhCullingPolicy");
     }
 
+    [TestCase(EMeshSubmissionStrategy.GpuIndirectInstrumented, null, false, false)]
+    [TestCase(EMeshSubmissionStrategy.GpuIndirectInstrumented, "", false, false)]
+    [TestCase(EMeshSubmissionStrategy.GpuIndirectInstrumented, "0", false, false)]
+    [TestCase(EMeshSubmissionStrategy.GpuIndirectInstrumented, "false", false, false)]
+    [TestCase(EMeshSubmissionStrategy.GpuIndirectInstrumented, "yes", false, false)]
+    [TestCase(EMeshSubmissionStrategy.GpuIndirectInstrumented, "1", false, true)]
+    [TestCase(EMeshSubmissionStrategy.GpuIndirectInstrumented, " true ", false, true)]
+    [TestCase(EMeshSubmissionStrategy.GpuIndirectInstrumented, null, true, true)]
+    [TestCase(EMeshSubmissionStrategy.CpuDirect, "1", true, false)]
+    [TestCase(EMeshSubmissionStrategy.GpuIndirectZeroReadback, "1", true, false)]
+    [TestCase(EMeshSubmissionStrategy.GpuMeshletInstrumented, "1", true, false)]
+    public void CpuIndirectReferenceOverride_RequiresInstrumentedIndirectAndExplicitOptIn(
+        EMeshSubmissionStrategy strategy,
+        string? environmentValue,
+        bool configuredDebugValue,
+        bool expected)
+    {
+        GPURenderPassCollection.ResolveForceCpuIndirectBuild(strategy, environmentValue, configuredDebugValue)
+            .ShouldBe(expected);
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void CpuIndirectReferenceOverride_ReadsCachedEnvironmentValue()
+    {
+        string variable = XREngineEnvironmentVariables.ForceCpuIndirectBuild;
+        string? previous = Environment.GetEnvironmentVariable(variable);
+        bool previousDebugValue = GPURenderPassCollection.IndirectDebug.ForceCpuIndirectBuild;
+
+        try
+        {
+            variable.ShouldBe("XRE_FORCE_CPU_INDIRECT_BUILD");
+            GPURenderPassCollection.ConfigureIndirectDebug(settings => settings.ForceCpuIndirectBuild = false);
+            Environment.SetEnvironmentVariable(variable, " true ");
+            EffectiveSettingsEnvOverrides.ReloadForTests();
+
+            GPURenderPassCollection.ShouldForceCpuIndirectBuild(EMeshSubmissionStrategy.GpuIndirectInstrumented)
+                .ShouldBeTrue();
+            GPURenderPassCollection.ShouldForceCpuIndirectBuild(EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+                .ShouldBeFalse();
+
+            Environment.SetEnvironmentVariable(variable, "invalid");
+            EffectiveSettingsEnvOverrides.ReloadForTests();
+            GPURenderPassCollection.ShouldForceCpuIndirectBuild(EMeshSubmissionStrategy.GpuIndirectInstrumented)
+                .ShouldBeFalse();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(variable, previous);
+            EffectiveSettingsEnvOverrides.ReloadForTests();
+            GPURenderPassCollection.ConfigureIndirectDebug(settings => settings.ForceCpuIndirectBuild = previousDebugValue);
+        }
+    }
+
+    [Test]
+    public void CpuIndirectReferenceBatches_FollowCpuBuiltMaterialOrderAndCount()
+    {
+        uint[] materialOrder = [11u, 11u, 22u, 22u, 22u, 0u, 33u];
+
+        var batches = HybridRenderingManager.BuildCpuMaterialBatches(materialOrder, 6u);
+
+        batches.Count.ShouldBe(3);
+        batches[0].Offset.ShouldBe(0u);
+        batches[0].Count.ShouldBe(2u);
+        batches[0].MaterialID.ShouldBe(11u);
+        batches[1].Offset.ShouldBe(2u);
+        batches[1].Count.ShouldBe(3u);
+        batches[1].MaterialID.ShouldBe(22u);
+        batches[2].Offset.ShouldBe(5u);
+        batches[2].Count.ShouldBe(1u);
+        batches[2].MaterialID.ShouldBe(uint.MaxValue);
+    }
+
+    [Test]
+    public void CpuIndirectReferenceOverride_RebuildsMaterialBatchedIndirectCommands()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
+        string method = SliceMethod(
+            source,
+            "private void RenderTraditionalBatched",
+            "internal static List<DrawBatch> BuildCpuMaterialBatches");
+
+        method.ShouldContain("GPURenderPassCollection.ShouldForceCpuIndirectBuild(renderPasses.MeshSubmissionStrategy)");
+        method.ShouldContain("cpuBuiltCount = BuildIndirectCommandsCpu(");
+        method.ShouldContain("overrideBatches = BuildCpuMaterialBatches(cpuMaterialOrder, cpuBuiltCount);");
+        method.ShouldContain("var activeBatches = CoalesceContiguousBatches(overrideBatches ?? batches);");
+    }
     [Test]
     public void BuildAccelerationStructure_UsesGpuBvhForGpuSubmissionStrategies()
     {
@@ -116,6 +205,8 @@ public sealed class GpuIndirectPhase3PolicyTests
         source.ShouldContain("VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics");
         source.ShouldContain("private bool ShouldAllowCpuFallback()");
         source.ShouldContain("return VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics;");
+        source.ShouldContain("private bool IsCpuFallbackRequestedForPass()");
+        source.ShouldContain("if (!IsCpuFallbackRequestedForPass())");
         source.ShouldContain("LogCpuFallbackSuppressed(\"GPU frustum cull\")");
         source.ShouldContain("LogCpuFallbackSuppressed(\"GPU BVH cull\")");
         source.ShouldContain("LogCpuFallbackSuppressed(\"GPU pass filter\")");

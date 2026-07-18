@@ -530,11 +530,19 @@ public sealed class OpenXrTimingPipelineContractTests
         string synchronization = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
         string allocator = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/VulkanResourceAllocator.cs");
 
-        synchronization.ShouldContain("VulkanPhysicalImageGroup.LayoutSnapshot layoutSnapshot = group.CaptureLayoutSnapshot();");
-        synchronization.ShouldContain("VulkanPhysicalImageGroup.SubresourceLayoutSnapshot[] subresources = layoutSnapshot.Subresources;");
-        synchronization.ShouldContain("hash.Add(subresource.MipLevel);");
-        synchronization.ShouldContain("hash.Add(subresource.ArrayLayer);");
-        synchronization.ShouldContain("hash.Add((int)subresource.Layout);");
+        synchronization.ShouldContain("group.AppendLayoutSignature(ref hash);");
+        synchronization.ShouldNotContain("group.CaptureLayoutSnapshot();");
+
+        string appendSignature = SliceMethod(
+            allocator,
+            "internal void AppendLayoutSignature(ref VulkanRenderer.FrameOpSignatureHasher hash)",
+            "internal void RestoreLayoutSnapshot");
+
+        appendSignature.ShouldContain("for (uint mipLevel = 0; mipLevel < MipLevels; mipLevel++)");
+        appendSignature.ShouldContain("for (uint arrayLayer = 0; arrayLayer < layers; arrayLayer++)");
+        appendSignature.ShouldContain("hash.Add(mipLevel);");
+        appendSignature.ShouldContain("hash.Add(arrayLayer);");
+        appendSignature.ShouldContain("hash.Add((int)layout);");
 
         string captureSnapshot = SliceMethod(
             allocator,

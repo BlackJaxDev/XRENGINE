@@ -143,6 +143,7 @@ public static class XREngineEnvironmentVariables
     public const string CpuSceneCullingStructure = "XRE_CPU_SCENE_CULLING_STRUCTURE";
     public const string ZeroReadbackMaterialDrawPath = "XRE_ZERO_READBACK_MATERIAL_DRAW_PATH";
     public const string ForceMeshSubmissionStrategy = "XRE_FORCE_MESH_SUBMISSION_STRATEGY";
+    public const string ForceCpuIndirectBuild = "XRE_FORCE_CPU_INDIRECT_BUILD";
     public const string OcclusionCullingMode = "XRE_OCCLUSION_CULLING_MODE";
     public const string CpuQueryOcclusionRetestPeriodFrames = "XRE_CPU_QUERY_OCCLUSION_RETEST_PERIOD_FRAMES";
     public const string CpuSoftwareOcclusion = "XRE_CPU_SOC_OCCLUSION";

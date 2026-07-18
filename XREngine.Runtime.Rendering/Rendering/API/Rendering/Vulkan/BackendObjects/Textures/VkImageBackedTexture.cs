@@ -55,6 +55,14 @@ public unsafe partial class VulkanRenderer
         /// <summary>Whether <see cref="_layout"/> has been computed at least once.</summary>
         private bool _layoutInitialized;
 
+        /// <summary>
+        /// Layout and format used to create the current <see cref="_image"/>. These remain
+        /// separate from <see cref="_layout"/>, which streaming metadata may refresh before
+        /// the replacement image is published.
+        /// </summary>
+        private TextureLayout? _imageStorageLayout;
+        private Format? _imageStorageFormat;
+
         /// <summary>The Vulkan image handle (owned or borrowed from a physical group).</summary>
         private Image _image;
 
@@ -987,6 +995,8 @@ public unsafe partial class VulkanRenderer
             _sampler = default;
             _image = default;
             _memory = default;
+            _imageStorageLayout = null;
+            _imageStorageFormat = null;
             _physicalGroup = null;
             _extentOverride = null;
             _formatOverride = null;
@@ -1074,6 +1084,7 @@ public unsafe partial class VulkanRenderer
                 _mipLevelsOverride = Math.Max(1u, group.MipLevels);
                 _samplesOverride = group.Samples;
                 _ownsImageMemory = false;
+                RecordCurrentImageStorageDescription();
                 AspectFlags = NormalizeAspectMaskForFormat(ResolvedFormat, AspectFlags);
                 _currentImageLayout = group.LastKnownLayout;
                 ResetAttachmentLayoutTracking();
@@ -1104,6 +1115,7 @@ public unsafe partial class VulkanRenderer
             _mipLevelsOverride = null;
             _samplesOverride = null;
             _ownsImageMemory = true;
+            RecordCurrentImageStorageDescription();
             AspectFlags = NormalizeAspectMaskForFormat(ResolvedFormat, AspectFlags);
             _currentImageLayout = ImageLayout.Undefined;
             ResetAttachmentLayoutTracking();
@@ -1149,6 +1161,8 @@ public unsafe partial class VulkanRenderer
             _image = default;
             _memory = default;
             _ownsImageMemory = false;
+            _imageStorageLayout = null;
+            _imageStorageFormat = null;
         }
 
         /// <summary>
@@ -2058,6 +2072,8 @@ public unsafe partial class VulkanRenderer
                 pendingUpload.Extent,
                 Math.Max(pendingUpload.ArrayLayers, 1u),
                 Math.Max(pendingUpload.MipLevels, 1u));
+            _imageStorageLayout = _layout;
+            _imageStorageFormat = pendingUpload.Format;
             _layoutInitialized = true;
             Format = pendingUpload.Format;
             AspectFlags = pendingUpload.AspectMask;
@@ -3624,13 +3640,22 @@ public unsafe partial class VulkanRenderer
             bool canReuseDedicatedStorage =
                 _physicalGroup is null &&
                 _ownsImageMemory &&
-                requestedLayout == _layout &&
-                requestedFormat == ResolvedFormat;
+                requestedLayout == _imageStorageLayout &&
+                requestedFormat == _imageStorageFormat;
             if (canReuseDedicatedStorage)
                 return;
 
             WaitForInFlightWorkBeforeImportedTextureReplacement(reason);
             Destroy();
+        }
+
+        private void RecordCurrentImageStorageDescription()
+        {
+            _imageStorageLayout = new TextureLayout(
+                ResolvedExtent,
+                Math.Max(ResolvedArrayLayers, 1u),
+                Math.Max(ResolvedMipLevels, 1u));
+            _imageStorageFormat = ResolvedFormat;
         }
 
         /// <summary>

@@ -42,6 +42,20 @@ layout(std430, binding = 8) buffer StatsBuffer {
     uint MeshletTaskRecordsFrustumCulled;  // 19
     uint MeshletTaskRecordsConeCulled;     // 20
     uint MeshletTaskRecordsHiZCulled;      // 21
+    uint MaterialScatterInputCount;        // 22
+    uint MaterialScatterRejectedDrawId;    // 23
+    uint MaterialScatterRejectedMaterial;  // 24
+    uint MaterialScatterRejectedMesh;      // 25
+    uint MaterialScatterRejectedAtlas;     // 26
+    uint MaterialScatterRejectedBucket;    // 27
+    uint MaterialScatterEmitted;           // 28
+    uint MaterialScatterRejectedBounds;    // 29
+    uint MaterialScatterMaxDrawId;         // 30
+    uint MaterialScatterMetadataLength;    // 31
+    uint MaterialScatterCulledCount;        // 32
+    uint MaterialScatterKeyCount;           // 33
+    uint BvhRawNodeCount;                    // 34
+    uint BvhSafeNodeCount;                   // 35
 };
 
 void main() {
@@ -87,4 +101,18 @@ void main() {
     MeshletTaskRecordsFrustumCulled = 0u;
     MeshletTaskRecordsConeCulled = 0u;
     MeshletTaskRecordsHiZCulled = 0u;
+    MaterialScatterInputCount = 0u;
+    MaterialScatterRejectedDrawId = 0u;
+    MaterialScatterRejectedMaterial = 0u;
+    MaterialScatterRejectedMesh = 0u;
+    MaterialScatterRejectedAtlas = 0u;
+    MaterialScatterRejectedBucket = 0u;
+    MaterialScatterEmitted = 0u;
+    MaterialScatterRejectedBounds = 0u;
+    MaterialScatterMaxDrawId = 0u;
+    MaterialScatterMetadataLength = 0u;
+    MaterialScatterCulledCount = 0u;
+    MaterialScatterKeyCount = 0u;
+    BvhRawNodeCount = 0u;
+    BvhSafeNodeCount = 0u;
 }

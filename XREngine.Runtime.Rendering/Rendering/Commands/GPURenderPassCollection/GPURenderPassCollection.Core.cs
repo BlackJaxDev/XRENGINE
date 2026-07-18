@@ -161,6 +161,7 @@ namespace XREngine.Rendering.Commands
         private bool _passValidationLoggingEnabled;
         private bool _passDisableCpuReadbackCount;
         private bool _passEnableCpuBatching;
+        private bool _passCpuFallbackRequested;
         private bool _passProbeSourceCommands;
         private bool _passLogCountBufferWrites;
         private bool _passValidateCopyCommandAtomicBounds;
@@ -178,6 +179,27 @@ namespace XREngine.Rendering.Commands
 
             lock (_indirectDebug)
                 configure(_indirectDebug);
+        }
+
+        internal static bool ShouldForceCpuIndirectBuild(EMeshSubmissionStrategy strategy)
+            => ResolveForceCpuIndirectBuild(
+                strategy,
+                EffectiveSettingsEnvOverrides.ForceCpuIndirectBuild,
+                IndirectDebug.ForceCpuIndirectBuild);
+
+        internal static bool ResolveForceCpuIndirectBuild(
+            EMeshSubmissionStrategy strategy,
+            string? environmentValue,
+            bool configuredDebugValue)
+        {
+            if (strategy != EMeshSubmissionStrategy.GpuIndirectInstrumented)
+                return false;
+
+            if (configuredDebugValue)
+                return true;
+
+            ReadOnlySpan<char> value = environmentValue.AsSpan().Trim();
+            return value.SequenceEqual("1") || value.Equals("true", StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsShippingHotOnlyProfile()
@@ -278,6 +300,7 @@ namespace XREngine.Rendering.Commands
 
             bool fallbackRequested = (RuntimeEngine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
                 || (_passDebugLoggingEnabled && RuntimeEngine.EffectiveSettings.EnableGpuIndirectCpuFallback);
+            _passCpuFallbackRequested = fallbackRequested;
             _passAllowCpuFallback = instrumented
                 && !VulkanFeatureProfile.EnforceStrictNoFallbacks
                 && fallbackRequested
