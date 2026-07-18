@@ -31,6 +31,8 @@ namespace XREngine.Rendering.Commands
         internal static Action? ResetCountersHook { get; set; }
         private static bool VulkanCounterDiagnosticsEnabled =>
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanCounterDiagnostics), "1", StringComparison.OrdinalIgnoreCase);
+        private static bool VulkanDelayedCounterDiagnosticsEnabled =>
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanIndirectTrace), "1", StringComparison.OrdinalIgnoreCase);
         private int _resolveMaterialLogBudget = 16;
         private readonly HashSet<uint> _lastMaterialTableIds = [];
         private int _materialResidencyLogBudget = 12;
@@ -1010,6 +1012,7 @@ namespace XREngine.Rendering.Commands
                 (uint)Math.Max(scene.GetAtlasVertexCount(EAtlasTier.Static), 0),
                 (uint)Math.Max(scene.GetAtlasVertexCount(EAtlasTier.Dynamic), 0),
                 (uint)Math.Max(scene.GetAtlasVertexCount(EAtlasTier.Streaming), 0)));
+            _materialScatterComputeShader.Uniform("StatsEnabled", _statsBuffer is null ? 0u : 1u);
 
             scene.DrawMetadataBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterInputCommands);
             scene.MeshDataBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterMeshData);
@@ -1020,6 +1023,7 @@ namespace XREngine.Rendering.Commands
             _materialTierDrawCountBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterDrawCounts);
             _indirectOverflowFlagBuffer?.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterOverflow);
             scene.LodTransitionBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterLodTransitions);
+            _statsBuffer?.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterStats);
 
             uint dispatchCommands = IsCpuReadbackCountDisabledForPass()
                 ? Math.Min(Math.Max(VisibleCommandCount, 1u), _keyIndexBufferA.ElementCount)
@@ -2211,13 +2215,47 @@ namespace XREngine.Rendering.Commands
 
         private void QueueAsyncGpuTriangleStatsReadback()
         {
-            if (_statsBuffer is null || !ShouldCaptureDiagnosticReadbacksForPass())
+            bool captureDiagnostics = ShouldCaptureDiagnosticReadbacksForPass() ||
+                (AbstractRenderer.Current is VulkanRenderer && VulkanDelayedCounterDiagnosticsEnabled);
+            if (!captureDiagnostics)
                 return;
 
-            AbstractRenderer.Current?.QueueGpuRenderStatsBufferReadback(
-                _statsBuffer,
-                publishDraws: false,
-                publishTriangles: true);
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (_statsBuffer is not null)
+            {
+                renderer?.QueueGpuRenderStatsBufferReadback(
+                    _statsBuffer,
+                    publishDraws: false,
+                    publishTriangles: true);
+            }
+
+            if (renderer is not VulkanRenderer || !VulkanDelayedCounterDiagnosticsEnabled)
+                return;
+
+            if (_culledCountBuffer is not null)
+            {
+                renderer.QueueGpuRenderDrawCountReadback(
+                    _culledCountBuffer,
+                    countElementCount: Math.Min(3u, _culledCountBuffer.ElementCount));
+            }
+
+            if (_materialTierDrawCountBuffer is not null)
+            {
+                uint bucketCount = Math.Min(_materialTierBucketCount, _materialTierDrawCountBuffer.ElementCount);
+                if (bucketCount > 0u)
+                    renderer.QueueGpuRenderDrawCountReadback(_materialTierDrawCountBuffer, countElementCount: bucketCount);
+            }
+
+            if (_materialTierActiveBucketCountBuffer is not null)
+                renderer.QueueGpuRenderDrawCountReadback(_materialTierActiveBucketCountBuffer);
+
+            if (_keyIndexBufferA is not null)
+            {
+                ulong keyUIntCount = (ulong)_keyIndexBufferA.ElementCount * _keyIndexBufferA.ComponentCount;
+                renderer.QueueGpuRenderDrawCountReadback(
+                    _keyIndexBufferA,
+                    countElementCount: (uint)Math.Min(keyUIntCount, 64ul));
+            }
         }
 
         private void PostRenderDiagnostics(GPUScene scene)

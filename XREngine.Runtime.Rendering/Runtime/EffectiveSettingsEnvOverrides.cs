@@ -27,6 +27,7 @@ public static class EffectiveSettingsEnvOverrides
             CpuSceneCullingStructure = Read(XREngineEnvironmentVariables.CpuSceneCullingStructure);
             ZeroReadbackMaterialDrawPath = Read(XREngineEnvironmentVariables.ZeroReadbackMaterialDrawPath);
             ForceMeshSubmissionStrategy = Read(XREngineEnvironmentVariables.ForceMeshSubmissionStrategy);
+            ForceCpuIndirectBuild = Read(XREngineEnvironmentVariables.ForceCpuIndirectBuild);
             OcclusionCullingMode = Read(XREngineEnvironmentVariables.OcclusionCullingMode);
             CpuQueryOcclusionRetestPeriodFrames = Read(XREngineEnvironmentVariables.CpuQueryOcclusionRetestPeriodFrames);
             CpuSocOcclusion = Read(XREngineEnvironmentVariables.CpuSoftwareOcclusion);
@@ -47,6 +48,9 @@ public static class EffectiveSettingsEnvOverrides
 
     /// <summary>Raw value of <c>XRE_FORCE_MESH_SUBMISSION_STRATEGY</c> (untrimmed; parser tolerates whitespace).</summary>
     public static string? ForceMeshSubmissionStrategy { get; private set; }
+
+    /// <summary>Raw value of <c>XRE_FORCE_CPU_INDIRECT_BUILD</c> (trimmed) or null if unset.</summary>
+    public static string? ForceCpuIndirectBuild { get; private set; }
 
     /// <summary>Raw value of <c>XRE_OCCLUSION_CULLING_MODE</c> (trimmed) or null if unset.</summary>
     public static string? OcclusionCullingMode { get; private set; }

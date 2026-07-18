@@ -303,6 +303,9 @@ public unsafe partial class VulkanRenderer
 
         private void OnShaderInvalidated(VkShader shader)
         {
+            if (RuntimeEngine.InvokeOnMainThread(() => OnShaderInvalidated(shader), "VkRenderProgram.ShaderInvalidated"))
+                return;
+
             DestroyLayouts();
             _stageLookup.Clear();
             _autoUniformBlocks.Clear();

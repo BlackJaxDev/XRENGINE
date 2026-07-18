@@ -1700,7 +1700,7 @@ namespace XREngine.Rendering.Vulkan
                 EBufferTarget.DispatchIndirectBuffer => BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit,
                 EBufferTarget.QueryBuffer => BufferUsageFlags.TransferDstBit,
                 EBufferTarget.AtomicCounterBuffer => BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit,
-                EBufferTarget.ParameterBuffer => BufferUsageFlags.UniformBufferBit,
+                EBufferTarget.ParameterBuffer => BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit,
                 _ => BufferUsageFlags.StorageBufferBit,
             };
 

@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 using Silk.NET.Vulkan;
 
@@ -38,6 +39,7 @@ namespace XREngine.Rendering.Vulkan
                 new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
             public VulkanMeshFrameDataReservationManifest MeshFrameDataManifest { get; } = new();
             public Dictionary<XRFrameBuffer, ImageLayout[]> FboLayoutTracking { get; } = new(ReferenceEqualityComparer.Instance);
+            public ConditionalWeakTable<XRFrameBuffer, FboAttachmentLayoutScratch> FboAttachmentLayouts { get; } = new();
             public CommandChainKey[] ScheduledCommandChainKeysByOpIndex { get; set; } = [];
             public List<KeyValuePair<int, int>> SwapchainWriterCountSort { get; } = new();
             public StringBuilder SwapchainWriterSummaryBuilder { get; } = new(256);
@@ -46,6 +48,11 @@ namespace XREngine.Rendering.Vulkan
             public int RecordPipelineNameCapacityHint { get; set; } = 1;
             public int RecordMeshDrawSlotCapacityHint { get; set; } = 1;
             public int RecordFboLayoutCapacityHint { get; set; } = 1;
+
+            public sealed class FboAttachmentLayoutScratch
+            {
+                public ImageLayout[] Layouts { get; set; } = [];
+            }
         }
 
     }

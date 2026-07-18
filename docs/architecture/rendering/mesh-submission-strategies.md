@@ -16,6 +16,15 @@ Mesh drawing is selected by an explicit `EMeshSubmissionStrategy` instead of by 
 
 `GPURenderDispatch` remains a compatibility shim during migration. Setting it to `true` maps through the resolver; older boolean-only call sites still map `true` to `GpuIndirectInstrumented` to preserve legacy behavior.
 
+The CPU-built indirect reference is an explicit diagnostic sub-mode of
+`GpuIndirectInstrumented`. Launch with both
+`XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectInstrumented` and
+`XRE_FORCE_CPU_INDIRECT_BUILD=1` to rebuild indirect commands on the CPU while
+retaining indirect submission. The CPU-reference flag accepts only `1` or
+`true` (case-insensitive) and is ignored by `CpuDirect`, zero-readback, and
+meshlet strategies. It permits the diagnostic readbacks declared by the
+instrumented strategy and must not be used as production evidence.
+
 The strategy also owns scene visibility acceleration. `CpuDirect` uses the CPU scene hierarchy (CPU BVH by default). Every GPU indirect and meshlet strategy requests the internal `GPUScene` command BVH. There is no independent GPU-BVH setting or Vulkan environment gate; if the BVH shader or provider buffers are not ready, the pass reports the condition and temporarily uses flat GPU frustum culling.
 
 ## Resolver

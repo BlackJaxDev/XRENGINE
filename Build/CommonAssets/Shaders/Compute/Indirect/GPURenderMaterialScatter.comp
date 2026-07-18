@@ -11,6 +11,20 @@ const uint LOD_TRANSITION_UINTS = 4u;
 const uint LOD_TRANSITION_ACTIVE = 1u;
 const uint PREVIOUS_LOD_DRAW_FLAG = 0x40000000u;
 const uint COMMAND_INDEX_MASK = 0x3FFFFFFFu;
+const uint STATS_DRAW_COUNT = 2u;
+const uint STATS_TRIANGLE_COUNT = 17u;
+const uint STATS_MATERIAL_SCATTER_INPUT = 22u;
+const uint STATS_MATERIAL_SCATTER_REJECTED_DRAW_ID = 23u;
+const uint STATS_MATERIAL_SCATTER_REJECTED_MATERIAL = 24u;
+const uint STATS_MATERIAL_SCATTER_REJECTED_MESH = 25u;
+const uint STATS_MATERIAL_SCATTER_REJECTED_ATLAS = 26u;
+const uint STATS_MATERIAL_SCATTER_REJECTED_BUCKET = 27u;
+const uint STATS_MATERIAL_SCATTER_EMITTED = 28u;
+const uint STATS_MATERIAL_SCATTER_REJECTED_BOUNDS = 29u;
+const uint STATS_MATERIAL_SCATTER_MAX_DRAW_ID = 30u;
+const uint STATS_MATERIAL_SCATTER_METADATA_LENGTH = 31u;
+const uint STATS_MATERIAL_SCATTER_CULLED_COUNT = 32u;
+const uint STATS_MATERIAL_SCATTER_KEY_COUNT = 33u;
 
 struct DrawMetadata
 {
@@ -46,6 +60,7 @@ layout(std430, binding = 5) buffer IndirectDrawBuffer { uint indirectDraws[]; };
 layout(std430, binding = 6) buffer DrawCountBuffer { uint drawCounts[]; };
 layout(std430, binding = 7) buffer OverflowFlagBuffer { uint overflowFlag; };
 layout(std430, binding = 8) readonly buffer LODTransitionBuffer { uint lodTransitions[]; };
+layout(std430, binding = 9) buffer StatsBuffer { uint stats[]; };
 
 uniform int CurrentRenderPass;
 uniform int MaxMaterialSlotLookup;
@@ -53,6 +68,7 @@ uniform int MaxBucketCount;
 uniform int MaxIndirectDrawsPerBucket;
 uniform uvec3 AtlasIndexCounts;
 uniform uvec3 AtlasVertexCounts;
+uniform uint StatsEnabled;
 
 uvec4 LoadKey(uint index)
 {
@@ -113,22 +129,37 @@ bool TryReserveBucketDraw(uint bucketIndex, out uint drawIndexInBucket)
 void TryEmitDraw(uint meshID, uint materialID, uint instanceCount, uint commandIndex, bool previousLod)
 {
     if (instanceCount == 0u)
+    {
+        atomicAdd(stats[STATS_MATERIAL_SCATTER_REJECTED_MESH], 1u);
         return;
+    }
 
     if (materialID >= uint(MaxMaterialSlotLookup) || materialID >= uint(materialSlots.length()))
+    {
+        atomicAdd(stats[STATS_MATERIAL_SCATTER_REJECTED_MATERIAL], 1u);
         return;
+    }
 
     uint slotIndex = materialSlots[materialID];
     if (slotIndex == INVALID_MATERIAL_SLOT)
+    {
+        atomicAdd(stats[STATS_MATERIAL_SCATTER_REJECTED_MATERIAL], 1u);
         return;
+    }
 
     uint meshBase = meshID * 4u;
     if (meshBase + 3u >= uint(meshData.length()))
+    {
+        atomicAdd(stats[STATS_MATERIAL_SCATTER_REJECTED_MESH], 1u);
         return;
+    }
 
     uint indexCount = meshData[meshBase + 0u];
     if (indexCount == 0u)
+    {
+        atomicAdd(stats[STATS_MATERIAL_SCATTER_REJECTED_MESH], 1u);
         return;
+    }
 
     uint tierFlags = meshData[meshBase + 3u];
     uint tier = tierFlags & MESH_DATA_ATLAS_TIER_MASK;
@@ -146,35 +177,63 @@ void TryEmitDraw(uint meshID, uint materialID, uint instanceCount, uint commandI
         baseVertex >= atlasVertexCount)
     {
         overflowFlag = 1u;
+        atomicAdd(stats[STATS_MATERIAL_SCATTER_REJECTED_ATLAS], 1u);
         return;
     }
 
     uint bucketIndex = slotIndex * MATERIAL_TIER_COUNT + tier;
     if (bucketIndex >= uint(MaxBucketCount) || bucketIndex >= uint(drawCounts.length()))
+    {
+        atomicAdd(stats[STATS_MATERIAL_SCATTER_REJECTED_BUCKET], 1u);
         return;
+    }
 
     uint drawIndexInBucket;
     if (!TryReserveBucketDraw(bucketIndex, drawIndexInBucket))
+    {
+        atomicAdd(stats[STATS_MATERIAL_SCATTER_REJECTED_BUCKET], 1u);
         return;
+    }
 
     uint baseInstance = commandIndex & COMMAND_INDEX_MASK;
     if (previousLod)
         baseInstance |= PREVIOUS_LOD_DRAW_FLAG;
 
-    StoreDrawCommand(bucketIndex, drawIndexInBucket, indexCount, instanceCount, firstIndex, baseVertex, baseInstance);
+    if (StoreDrawCommand(bucketIndex, drawIndexInBucket, indexCount, instanceCount, firstIndex, baseVertex, baseInstance))
+    {
+        atomicAdd(stats[STATS_DRAW_COUNT], 1u);
+        atomicAdd(stats[STATS_TRIANGLE_COUNT], (indexCount / 3u) * instanceCount);
+        atomicAdd(stats[STATS_MATERIAL_SCATTER_EMITTED], 1u);
+    }
+    else
+        atomicAdd(stats[STATS_MATERIAL_SCATTER_REJECTED_BUCKET], 1u);
 }
 
 void main()
 {
     uint sortedIndex = gl_GlobalInvocationID.x;
     uint availableKeyCount = uint(sortKeys.length()) / KEY_UINTS;
+    atomicAdd(stats[STATS_MATERIAL_SCATTER_INPUT], 1u);
+    if (sortedIndex == 0u)
+    {
+        stats[STATS_MATERIAL_SCATTER_METADATA_LENGTH] = uint(Draws.length());
+        stats[STATS_MATERIAL_SCATTER_CULLED_COUNT] = CulledCount;
+        stats[STATS_MATERIAL_SCATTER_KEY_COUNT] = availableKeyCount;
+    }
     if (sortedIndex >= CulledCount || sortedIndex >= availableKeyCount)
+    {
+        atomicAdd(stats[STATS_MATERIAL_SCATTER_REJECTED_BOUNDS], 1u);
         return;
+    }
 
     uvec4 key = LoadKey(sortedIndex);
     uint drawID = key.w;
+    atomicMax(stats[STATS_MATERIAL_SCATTER_MAX_DRAW_ID], drawID);
     if (drawID >= Draws.length())
+    {
+        atomicAdd(stats[STATS_MATERIAL_SCATTER_REJECTED_DRAW_ID], 1u);
         return;
+    }
 
     DrawMetadata meta = Draws[drawID];
     uint meshID = meta.MeshID;

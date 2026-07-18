@@ -197,6 +197,34 @@ public sealed class VulkanCoreHardeningPhase524Tests
     }
 
     [Test]
+    public void FramebufferRecordingReusesAttachmentAndLayoutScratchStorage()
+    {
+        string frameBuffer = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string scratch = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecordingScratch.cs");
+
+        frameBuffer.ShouldContain("AttachmentBuildInfo[] _attachmentBuildScratch = []");
+        frameBuffer.ShouldContain("_attachmentBuildScratch.AsSpan(0, colorAttachmentCount)");
+        frameBuffer.ShouldNotContain("List<AttachmentBuildInfo> colorAttachments");
+        frameBuffer.ShouldNotContain("HashSet<uint> usedColorSlots");
+        frameBuffer.ShouldContain("Span<bool> touchedAttachments = stackalloc bool[planned.Length]");
+        frameBuffer.ShouldContain("Span<int> matchingIndices = stackalloc int[planned.Length]");
+        frameBuffer.ShouldContain("TryGetFrameBufferSlot(usage.ResourceName, frameBufferName");
+        frameBuffer.ShouldNotContain("HashSet<int> touchedAttachments");
+        frameBuffer.ShouldNotContain("List<int> colorMatches");
+        frameBuffer.ShouldNotContain("string slot = usage.ResourceName[prefix.Length..]");
+
+        scratch.ShouldContain("ConditionalWeakTable<XRFrameBuffer, FboAttachmentLayoutScratch>");
+        recording.ShouldContain("GetFboAttachmentLayoutScratch(fbo, count)");
+        recording.ShouldContain("recordingScratch.FboAttachmentLayouts.TryGetValue");
+        recording.ShouldContain("fboLayoutTracking.Clear()");
+        recording.ShouldContain("VkFrameBuffer.WriteFinalLayouts(activeFboAttachmentSignature, finalLayouts)");
+        recording.ShouldNotContain("ImageLayout[] layouts = new ImageLayout[count]");
+    }
+    [Test]
     public void HotDependencyAndBarrierPathsAvoidGlobalLocks()
     {
         string lifetime = ReadWorkspaceFile(
@@ -247,6 +275,8 @@ public sealed class VulkanCoreHardeningPhase524Tests
         batch.ShouldContain("PublishCommandBufferTrackingDependenciesBeforeResourceRetirement");
         batch.ShouldContain("batch.Dependencies.Contains(resourceKey)");
         batch.ShouldContain("TryFlushCommandBufferTrackingBatch(commandBuffer, out string failureReason)");
+        batch.ShouldContain("batch.Dependencies.Clear();");
+        batch.ShouldNotContain("PublishedDependencyCount");
 
         int retirementStart = lifetime.IndexOf("private VulkanRetirementTicket CaptureVulkanRetirementTicket(", StringComparison.Ordinal);
         int retirementLock = lifetime.IndexOf("lock (_vulkanResourceLifetimeLock)", retirementStart, StringComparison.Ordinal);

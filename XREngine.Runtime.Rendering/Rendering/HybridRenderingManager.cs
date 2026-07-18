@@ -1719,7 +1719,7 @@ namespace XREngine.Rendering
             if (IsInstrumentedStrategy(renderPasses))
                 DumpCulledCommandData(renderPasses, scene, visibleCount);
 
-            if (IsInstrumentedStrategy(renderPasses) && DebugSettings.ForceCpuIndirectBuild)
+            if (GPURenderPassCollection.ShouldForceCpuIndirectBuild(renderPasses.MeshSubmissionStrategy))
             {
                 if (logGpu)
                     GpuDebug("Using CPU indirect build path");
@@ -4532,63 +4532,42 @@ namespace XREngine.Rendering
             // Batched range draws already provide explicit offset/count, so avoid
             // global count-buffer semantics here.
             XRDataBuffer? dispatchParameterBuffer = null;
-            //uint cpuBuiltCount = 0;
-            //bool usingCpuIndirect = DebugSettings.ForceCpuIndirectBuild;
+            uint cpuBuiltCount = 0;
+            bool usingCpuIndirect = GPURenderPassCollection.ShouldForceCpuIndirectBuild(renderPasses.MeshSubmissionStrategy);
             List<DrawBatch>? overrideBatches = null;
             List<uint>? cpuMaterialOrder = null;
 
-            //if (usingCpuIndirect)
-            //{
-            //    uint requestedDraws = 0;
-            //    foreach (var batch in batches)
-            //    {
-            //        uint batchEnd = batch.Offset + batch.Count;
-            //        if (batchEnd > requestedDraws)
-            //            requestedDraws = batchEnd;
-            //    }
+            if (usingCpuIndirect)
+            {
+                uint requestedDraws = 0;
+                foreach (var batch in batches)
+                {
+                    uint batchEnd = batch.Offset + batch.Count;
+                    if (batchEnd > requestedDraws)
+                        requestedDraws = batchEnd;
+                }
 
-            //    if (requestedDraws == 0)
-            //        requestedDraws = renderPasses.VisibleCommandCount;
+                if (requestedDraws == 0)
+                    requestedDraws = renderPasses.VisibleCommandCount;
 
-            //    cpuMaterialOrder = new List<uint>((int)Math.Max(requestedDraws, 1u));
-            //    cpuBuiltCount = BuildIndirectCommandsCpu(renderPasses, scene, indirectDrawBuffer, requestedDraws, currentRenderPass, cpuMaterialOrder);
-            //    if (cpuBuiltCount == 0)
-            //    {
-            //        Debug.MeshesWarning("CPU indirect build produced zero draw commands for batched path. Skipping indirect draw dispatch.");
-            //        return;
-            //    }
+                cpuMaterialOrder = new List<uint>((int)Math.Max(requestedDraws, 1u));
+                cpuBuiltCount = BuildIndirectCommandsCpu(
+                    renderPasses,
+                    scene,
+                    indirectDrawBuffer,
+                    requestedDraws,
+                    currentRenderPass,
+                    cpuMaterialOrder);
 
-            //    Debug.Meshes($"CPU indirect build generated {cpuBuiltCount} draw command(s) for batched path (requested {requestedDraws}).");
+                if (cpuBuiltCount == 0)
+                {
+                    Debug.MeshesWarning("CPU indirect build produced zero draw commands for batched path. Skipping indirect draw dispatch.");
+                    return;
+                }
 
-            //    // Disable the GPU-driven count path so we rely solely on the explicit batch counts.
-            //    dispatchParameterBuffer = null;
-
-            //    if (cpuMaterialOrder.Count > 0)
-            //    {
-            //        overrideBatches = [];
-            //        uint offset = 0;
-            //        while (offset < cpuBuiltCount && offset < (uint)cpuMaterialOrder.Count)
-            //        {
-            //            uint materialId = cpuMaterialOrder[(int)offset];
-            //            uint runLength = 1;
-
-            //            while (offset + runLength < cpuBuiltCount
-            //                && (offset + runLength) < (uint)cpuMaterialOrder.Count
-            //                && cpuMaterialOrder[(int)(offset + runLength)] == materialId)
-            //            {
-            //                runLength++;
-            //            }
-
-            //            overrideBatches.Add(new DrawBatch(offset, runLength, materialId == 0 ? uint.MaxValue : materialId));
-            //            offset += runLength;
-            //        }
-            //    }
-            //}
-            //else
-            //{
-            //    ClearIndirectTail(indirectDrawBuffer, parameterBuffer, indirectDrawBuffer.ElementCount);
-            //}
-
+                Debug.Meshes($"CPU indirect build generated {cpuBuiltCount} draw command(s) for batched path (requested {requestedDraws}).");
+                overrideBatches = BuildCpuMaterialBatches(cpuMaterialOrder, cpuBuiltCount);
+            }
             var activeBatches = CoalesceContiguousBatches(overrideBatches ?? batches);
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanIndirectBatchMerge(batches.Count, activeBatches.Count);
 
@@ -4662,22 +4641,21 @@ namespace XREngine.Rendering
                     continue;
 
                 uint effectiveCount = batch.Count;
-                //if (usingCpuIndirect)
-                //{
-                //    if (batch.Offset >= cpuBuiltCount)
-                //    {
-                //        Debug.Meshes($"Skipping batch at offset {batch.Offset} - beyond CPU-built draw count {cpuBuiltCount}.");
-                //        continue;
-                //    }
+                if (usingCpuIndirect)
+                {
+                    if (batch.Offset >= cpuBuiltCount)
+                    {
+                        Debug.Meshes($"Skipping batch at offset {batch.Offset} - beyond CPU-built draw count {cpuBuiltCount}.");
+                        continue;
+                    }
 
-                //    uint maxAvailable = cpuBuiltCount - batch.Offset;
-                //    if (effectiveCount > maxAvailable)
-                //    {
-                //        Debug.MeshesWarning($"Clamping CPU indirect batch at offset {batch.Offset} from {effectiveCount} to {maxAvailable} draw(s).");
-                //        effectiveCount = maxAvailable;
-                //    }
-                //}
-
+                    uint maxAvailable = cpuBuiltCount - batch.Offset;
+                    if (effectiveCount > maxAvailable)
+                    {
+                        Debug.MeshesWarning($"Clamping CPU indirect batch at offset {batch.Offset} from {effectiveCount} to {maxAvailable} draw(s).");
+                        effectiveCount = maxAvailable;
+                    }
+                }
                 // Resolve material from MaterialID (with CPU override fallback)
                 uint lookupMaterialId = batch.MaterialID;
                 if (lookupMaterialId == uint.MaxValue && cpuMaterialOrder is not null && batch.Offset < cpuMaterialOrder.Count)
@@ -4786,6 +4764,30 @@ namespace XREngine.Rendering
 
             if (textBatchBuffersAttached)
                 DetachIndirectTextBatchBuffers(vaoRenderer);
+        }
+
+        internal static List<DrawBatch> BuildCpuMaterialBatches(IReadOnlyList<uint> materialOrder, uint drawCount)
+        {
+            uint boundedDrawCount = Math.Min(drawCount, (uint)materialOrder.Count);
+            List<DrawBatch> batches = [];
+            uint offset = 0;
+
+            while (offset < boundedDrawCount)
+            {
+                uint materialId = materialOrder[(int)offset];
+                uint runLength = 1;
+
+                while (offset + runLength < boundedDrawCount &&
+                       materialOrder[(int)(offset + runLength)] == materialId)
+                {
+                    runLength++;
+                }
+
+                batches.Add(new DrawBatch(offset, runLength, materialId == 0 ? uint.MaxValue : materialId));
+                offset += runLength;
+            }
+
+            return batches;
         }
 
         private void RenderZeroReadbackMaterialTiers(

@@ -32,6 +32,22 @@ namespace XREngine.Rendering
         public const uint MeshletTaskRecordsConeCulled = 20;
         public const uint MeshletTaskRecordsHiZCulled = 21;
 
-        public const uint FieldCount = 22;
+        public const uint MaterialScatterInputCount = 22;
+        public const uint MaterialScatterRejectedDrawId = 23;
+        public const uint MaterialScatterRejectedMaterial = 24;
+        public const uint MaterialScatterRejectedMesh = 25;
+        public const uint MaterialScatterRejectedAtlas = 26;
+        public const uint MaterialScatterRejectedBucket = 27;
+        public const uint MaterialScatterEmitted = 28;
+        public const uint MaterialScatterRejectedBounds = 29;
+        public const uint MaterialScatterMaxDrawId = 30;
+        public const uint MaterialScatterMetadataLength = 31;
+        public const uint MaterialScatterCulledCount = 32;
+        public const uint MaterialScatterKeyCount = 33;
+
+        public const uint BvhRawNodeCount = 34;
+        public const uint BvhSafeNodeCount = 35;
+
+        public const uint FieldCount = 36;
     }
 }

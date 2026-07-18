@@ -1,7 +1,7 @@
 # Vulkan Zero-Readback Sponza Device-Loss Investigation
 
 Date: 2026-07-17  
-Status: Both known BVH device-loss loops fixed; final Sponza visual parity and CPU recording cost remain open
+Status: P0 immediate gate closed 2026-07-18; production zero-readback stable and visible, with diagnostic allocation/parity and external tooling retained as post-P0 work
 
 ## Problem
 
@@ -166,19 +166,120 @@ stable missing-Sponza frame alongside the delayed bucket diagnostics. Verify
 the `.rdc` exists before inspecting draws, arguments, descriptors, atlas
 buffers, or render targets.
 
-## Remaining Work
+## Final P0 Stability And Performance Checkpoint
 
-1. Add opt-in delayed post-fence diagnostics for the Sponza command path:
-   source input count, post-BVH visible count, post-key count,
-   post-material-scatter per-bucket count, final published count, first/last
-   indirect command, atlas tier and buffer generation, capacities, material,
-   and draw-metadata ID. Do not add synchronous or steady-state readback.
-2. Add the CPU-built indirect comparison and capture the zero-readback result at
-   the recorded matched camera plus a second camera position.
-3. Use the surviving workload to obtain a real RenderDoc/Nsight artifact and
-   inspect whether Sponza commands are generated, consumed, clipped, or rejected
-   before the final target.
-4. Continue the CPU command-recording investigation; do not trade the fixed TDR
-   for a global wait, serialization, or lower frames-in-flight policy.
-5. Complete P0.7's identical three-by-60-second static/moving and occlusion
-   matrix with StandardValidation and SyncValidation.
+Four matching warmed Release desktop StandardValidation cohorts completed on
+2026-07-17: static and moving camera paths, each with occlusion disabled and
+`CpuQueryAsync`, with three 60-second repetitions per cohort. All 12 runs were
+stable with no early exit, device loss, VUID, submission rejection, GPU
+readback, mapped-buffer use, or stale collection reuse. Visibility generation
+age remained at most one frame and requested/consumed draw totals matched in
+every run.
+
+Machine-readable manifests:
+
+- `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_20-04-21/summary.json`
+- `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_20-09-09/summary.json`
+- `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_20-13-58/summary.json`
+- `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_20-18-51/summary.json`
+
+Across those runs, render p50 was 31.507-34.035 ms, render p95 was
+34.747-37.182 ms, and command-record p50/p95/max was
+24.014-25.428/25.705-27.847/32.881-40.617 ms. The prior
+242.927-267.402 ms render p50 and 222.402 ms record p50 are no longer present.
+Vulkan GPU command p50 remained 1.192-1.215 ms.
+
+The forced-primary path is not allocation-free: it retains approximately
+0.92 MiB of managed allocation per sampled frame. Removing the unused copied
+layout-state arrays reduced that cost, while EventPipe now attributes the
+remainder to framebuffer attachment planning, image-access delta growth,
+descriptor sampling transitions, and resource-lifetime collections.
+
+Fallback telemetry was also corrected so a legitimate zero-visible cull is not
+reported as an attempted CPU recovery. The post-fix moving-camera
+`CpuQueryAsync` run at
+`Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_20-25-01/summary.json`
+reports zero full-run/capture fallback events, zero readback, zero VUIDs, and
+exact requested/consumed parity.
+
+A final validation-clean `CpuDirect` control at
+`Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_20-25-53/summary.json`
+reports 49 direct draw calls and 301,924 triangles. The zero-readback matrix
+reports 25 multi-draw calls and 262,617 triangles. Because direct and bucketed
+draw-call counters have different meanings, and the triangle counts differ,
+these numbers do not supersede the user's matched-camera visual observation.
+
+`rdc doctor` now passes. The only serialized capture produced during the retry
+was nevertheless OpenGL because its child launch inherited stale copied
+settings; the corrected Vulkan launch did not serialize an `.rdc`. No visual or
+Vulkan-state claim is based on that artifact.
+
+The final focused Vulkan timing, packet, and indirect-policy selection passes
+73/73 in Release. The build retains existing NuGet vulnerability warnings but
+introduces no test failure.
+
+## P0 Closeout - 2026-07-18
+
+The production zero-readback failure is closed. The final result did not come
+from hiding the path behind CPU rendering:
+
+- Imported-texture streaming now records and compares the actual physical image
+  storage layout and format. Incompatible progressive-mip storage is not reused,
+  removing the observed copy-layout/format VUIDs and streaming device loss.
+- Delayed post-fence statistics exposed a corrupt raw GPU BVH node-count header.
+  The production Vulkan zero-readback lane now uses flat GPU frustum culling
+  while the versioned BVH publication repair remains later work. This retains
+  GPU culling and adds no CPU readback or fallback.
+- The matched Sponza camera now visibly renders geometry. A second pose and the
+  motion contact sheet change with camera motion, ruling out stale or
+  uninitialized output. Delayed counts reached 46-50 culled commands and
+  247,765-262,267 triangles.
+- Incremental command-local dependency publication now clears already-published
+  dependencies, and shader invalidation is marshalled to the main thread. The
+  original SyncValidation shader hot-reload retirement crash no longer
+  reproduces.
+- The clean SyncValidation interaction session
+  Build/Logs/Release_net10.0-windows7.0/windows_x64/xrengine_2026-07-18_05-59-49_pid1852
+  survived streaming, camera motion, resize, shader hot reload, and normal
+  shutdown. The later 406-sample manifest at
+  Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-18_13-54-06/summary.json
+  reports zero VUIDs, readbacks, mappings, fallbacks, submission rejections, and
+  stale collection reuse. It crossed two workload hashes during streaming and
+  is not used as a stable performance result.
+- Reusing command tracking capacity and eliminating transient framebuffer
+  attachment/layout/signature collections reduced forced-primary allocation
+  from approximately 888.5 KiB/frame to 322.7 KiB/frame. The final comparable
+  manifest is
+  Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-18_13-01-09/summary.json.
+  Cached stable production recording already reaches zero; the remaining forced
+  diagnostic allocation is assigned to Phase 5.2.5.
+- XRE_FORCE_CPU_INDIRECT_BUILD=1 now selects the CPU-built reference only for
+  GpuIndirectInstrumented. The material-batched path rebuilds commands and
+  material runs rather than submitting stale/empty buffers. This diagnostic
+  path intentionally maps/reads its reference data and is not a fallback for
+  the accepted zero-readback lane.
+- RenderDoc 1.44/rdc-cli 0.5.6 passes preflight but did not serialize a bounded
+  Vulkan capture. The earlier Nsight Systems 2026.3.1 report contained 31
+  Vulkan frames and 564,644 sampled callchains but no exported Debug Utils
+  marker table. The engine regions remain implemented; external visualization
+  is not claimed.
+- The integrated Release editor build completes with zero errors. The focused
+  P0 policy, lifetime, shader, allocation, and CPU-reference suite passes 56/56.
+
+Accepted visual evidence:
+
+- Build/_AgentValidation/20260718-vulkan-p0-closeout/mcp-captures/flat-gpu-zero-readback-matched-camera-printwindow.png
+- Build/_AgentValidation/20260718-vulkan-p0-closeout/mcp-captures/motion-valid-contact-sheet.jpg
+
+## Post-P0 Follow-Ups
+
+1. Eliminate the remaining approximately 322.7 KiB/frame forced-primary
+   diagnostic allocation under Phase 5.2.5.
+2. Keep parallel command-chain workers quarantined until immutable recording
+   snapshots exist and a repeated validation/performance matrix approves them.
+3. Complete the full matched CpuDirect / CPU-built / GPU-built diagnostic visual
+   matrix across motion, CPU-query occlusion, resize, and streaming.
+4. Obtain an external Vulkan marker/action tree when a compatible Nsight or
+   RenderDoc export path can serialize and expose the engine labels.
+5. Repair and version GPU BVH publication so zero-readback can leave the flat
+   GPU-culling quarantine without accepting corrupt header state.

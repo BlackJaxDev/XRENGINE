@@ -17,6 +17,7 @@ public unsafe partial class VulkanRenderer
         private ImageView[]? _attachmentViews;
         private AttachmentTargetInfo[]? _attachmentTargets;
         private Extent2D[]? _attachmentExtents;
+        private AttachmentBuildInfo[] _attachmentBuildScratch = [];
         private readonly List<CachedFrameBufferState> _cachedFrameBufferStates = [];
 
         public override VkObjectType Type { get; } = VkObjectType.Framebuffer;
@@ -145,7 +146,7 @@ public unsafe partial class VulkanRenderer
 
             // Apply per-frame initial-layout overrides on top of metadata-driven planning.
             if (hasLayoutOverrides)
-                planned = ApplyInitialLayoutOverrides(planned, initialLayoutOverrides!, preserveTrackedClearLoads);
+                ApplyInitialLayoutOverridesInPlace(planned, initialLayoutOverrides!, preserveTrackedClearLoads);
 
             return planned;
         }
@@ -225,7 +226,7 @@ public unsafe partial class VulkanRenderer
 
             FrameBufferAttachmentSignature[] planned = BuildPlannedAttachmentSignature(pass, frameBufferName, synchronization: null);
             if (hasLayoutOverrides)
-                planned = ApplyInitialLayoutOverrides(planned, initialLayoutOverrides!, preserveTrackedClearLoads);
+                ApplyInitialLayoutOverridesInPlace(planned, initialLayoutOverrides!, preserveTrackedClearLoads);
 
             return UsesReadOnlyDepthStencil(planned);
         }
@@ -243,9 +244,24 @@ public unsafe partial class VulkanRenderer
                 return [];
 
             ImageLayout[] layouts = new ImageLayout[signatures.Length];
-            for (int i = 0; i < signatures.Length; i++)
-                layouts[i] = signatures[i].FinalLayout;
+            WriteFinalLayouts(signatures, layouts);
             return layouts;
+        }
+
+        internal void WriteFinalLayouts(Span<ImageLayout> destination)
+            => WriteFinalLayouts(_attachmentSignature, destination);
+
+        internal static void WriteFinalLayouts(
+            FrameBufferAttachmentSignature[]? signatures,
+            Span<ImageLayout> destination)
+        {
+            if (signatures is null || signatures.Length == 0)
+                return;
+            if (destination.Length < signatures.Length)
+                throw new ArgumentException("Destination is too small for the framebuffer attachment layouts.", nameof(destination));
+
+            for (int i = 0; i < signatures.Length; i++)
+                destination[i] = signatures[i].FinalLayout;
         }
 
         internal bool TryGetAttachmentView(int attachmentIndex, out ImageView view)
@@ -388,28 +404,32 @@ public unsafe partial class VulkanRenderer
             bool preserveClearLoads = false)
         {
             FrameBufferAttachmentSignature[] result = (FrameBufferAttachmentSignature[])signatures.Clone();
-            int count = Math.Min(result.Length, overrides.Length);
+            ApplyInitialLayoutOverridesInPlace(result, overrides, preserveClearLoads);
+            return result;
+        }
+
+        private static void ApplyInitialLayoutOverridesInPlace(
+            Span<FrameBufferAttachmentSignature> signatures,
+            ReadOnlySpan<ImageLayout> overrides,
+            bool preserveClearLoads)
+        {
+            int count = Math.Min(signatures.Length, overrides.Length);
             for (int i = 0; i < count; i++)
             {
                 ImageLayout overrideLayout = overrides[i];
                 if (overrideLayout == ImageLayout.Undefined)
-                    continue; // No override for this attachment — keep existing initialLayout.
+                    continue;
 
-                FrameBufferAttachmentSignature existing = result[i];
+                FrameBufferAttachmentSignature existing = signatures[i];
 
                 // A concrete tracked layout means this attachment already holds valid
-                // content from an earlier pass this frame — possibly a DIFFERENT
-                // framebuffer sharing the same image (e.g. the GBuffer depth reused by
-                // the forward pass).  Promote a DontCare load to Load so the render
-                // pass preserves that content instead of discarding it.  Passes that
-                // intend to clear still issue an explicit CmdClearAttachments, which
-                // overrides the loaded content, so this is safe for clearing passes.
-                // preserveClearLoads is only used for FBO re-entry after an explicit clear
-                // command has had the chance to define the intended contents.
+                // content from an earlier pass this frame, possibly through another
+                // framebuffer that shares the image. Promote DontCare to Load so that
+                // content is preserved. Clear is preserved unless this is FBO re-entry.
                 AttachmentLoadOp preservedLoadOp = PreserveTrackedLoadOp(existing.LoadOp, preserveClearLoads);
                 AttachmentLoadOp preservedStencilLoadOp = PreserveTrackedLoadOp(existing.StencilLoadOp, preserveClearLoads);
 
-                result[i] = new FrameBufferAttachmentSignature(
+                signatures[i] = new FrameBufferAttachmentSignature(
                     existing.Format,
                     existing.Samples,
                     existing.AspectMask,
@@ -423,9 +443,7 @@ public unsafe partial class VulkanRenderer
                     existing.FinalLayout,
                     existing.ReferenceLayout);
             }
-            return result;
         }
-
         private static AttachmentLoadOp PreserveTrackedLoadOp(AttachmentLoadOp loadOp, bool preserveClearLoads)
             => loadOp switch
             {
@@ -851,43 +869,46 @@ public unsafe partial class VulkanRenderer
             RenderGraphSynchronizationInfo? synchronization)
         {
             FrameBufferAttachmentSignature[] planned = (FrameBufferAttachmentSignature[])_attachmentSignature!.Clone();
-            HashSet<int> touchedAttachments = [];
-            HashSet<int> writeCapableDepthStencilAttachments = CollectWriteCapableDepthStencilAttachments(planned, pass, frameBufferName);
-            string prefix = $"fbo::{frameBufferName}::";
+            Span<bool> touchedAttachments = stackalloc bool[planned.Length];
+            Span<bool> writeCapableDepthStencilAttachments = stackalloc bool[planned.Length];
+            Span<int> matchingIndices = stackalloc int[planned.Length];
+            int touchedAttachmentCount = 0;
+            CollectWriteCapableDepthStencilAttachments(
+                planned,
+                pass,
+                frameBufferName,
+                writeCapableDepthStencilAttachments);
 
             foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
             {
-                if (!usage.IsAttachment)
+                if (!usage.IsAttachment ||
+                    !TryGetFrameBufferSlot(usage.ResourceName, frameBufferName, out ReadOnlySpan<char> slot))
+                {
                     continue;
+                }
 
-                if (!usage.ResourceName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                string slot = usage.ResourceName[prefix.Length..];
-                if (string.IsNullOrWhiteSpace(slot))
-                    continue;
-
-                int[] matchingIndices = ResolveMatchingAttachmentIndices(planned, slot, usage, pass);
-                if (matchingIndices.Length == 0)
+                int matchingCount = ResolveMatchingAttachmentIndices(planned, slot, usage, pass, matchingIndices);
+                if (matchingCount == 0)
                     continue;
 
                 AttachmentLoadOp loadOp = ToVkLoadOp(usage.LoadOp);
                 AttachmentStoreOp storeOp = ToVkStoreOp(usage.StoreOp);
-                foreach (int index in matchingIndices)
+                for (int matchIndex = 0; matchIndex < matchingCount; matchIndex++)
                 {
+                    int index = matchingIndices[matchIndex];
                     FrameBufferAttachmentSignature existing = planned[index];
 
                     // First-use safety: when an attachment starts in UNDEFINED layout
                     // (i.e. no prior render pass has written to it this frame), Vulkan
-                    // cannot preserve prior contents.  Only demote LOAD → DONT_CARE when
-                    // the attachment is truly in its first-use Undefined state; subsequent
-                    // passes that received an initial-layout override will have a concrete
-                    // layout and should keep their LOAD op to preserve content.
+                    // cannot preserve prior contents. Only demote LOAD to DONT_CARE when
+                    // the attachment is truly in its first-use Undefined state.
                     AttachmentLoadOp effectiveLoadOp = loadOp;
                     if (loadOp == AttachmentLoadOp.Load &&
                         existing.InitialLayout == ImageLayout.Undefined &&
                         usage.Access != ERenderGraphAccess.Read)
+                    {
                         effectiveLoadOp = AttachmentLoadOp.DontCare;
+                    }
 
                     FrameBufferAttachmentSignature updated = usage.ResourceType switch
                     {
@@ -915,14 +936,12 @@ public unsafe partial class VulkanRenderer
                     };
                     updated = WithReferenceLayout(
                         updated,
-                        ResolveAttachmentReferenceLayout(updated, usage, writeCapableDepthStencilAttachments.Contains(index)));
+                        ResolveAttachmentReferenceLayout(updated, usage, writeCapableDepthStencilAttachments[index]));
                     ImageLayout finalLayout = ResolveAttachmentFinalLayoutFromNextConsumer(synchronization, pass, usage, updated);
                     // Quad-material inputs are represented as texture resources while
-                    // their producers are FBO attachment resources.  Until those aliases
+                    // their producers are FBO attachment resources. Until those aliases
                     // are unified in the render graph, retain stored color outputs in a
-                    // sampled layout when no explicit consumer edge was found.  A later
-                    // attachment use transitions back at scope begin; this is preferable
-                    // to relying on undefined color-write visibility in dynamic rendering.
+                    // sampled layout when no explicit consumer edge was found.
                     if (finalLayout == ImageLayout.Undefined &&
                         updated.Role == AttachmentRole.Color &&
                         updated.StoreOp == AttachmentStoreOp.Store)
@@ -933,75 +952,99 @@ public unsafe partial class VulkanRenderer
                         updated = WithFinalLayout(updated, finalLayout);
 
                     planned[index] = updated;
-                    touchedAttachments.Add(index);
+                    if (!touchedAttachments[index])
+                    {
+                        touchedAttachments[index] = true;
+                        touchedAttachmentCount++;
+                    }
                 }
             }
 
             for (int i = 0; i < planned.Length; i++)
             {
-                if (!touchedAttachments.Contains(i))
+                if (!touchedAttachments[i])
                     planned[i] = WithRoleAndColorIndex(planned[i], AttachmentRole.Unused, planned[i].ColorIndex);
             }
 
-            ValidateAttachmentSampleCounts(planned, touchedAttachments, pass, frameBufferName);
+            ValidateAttachmentSampleCounts(planned, touchedAttachments, touchedAttachmentCount, pass, frameBufferName);
             ValidateResolveAttachmentPairings(planned, pass, frameBufferName);
             return planned;
         }
 
-        private static HashSet<int> CollectWriteCapableDepthStencilAttachments(
+        private static void CollectWriteCapableDepthStencilAttachments(
             FrameBufferAttachmentSignature[] signatures,
             RenderPassMetadata pass,
-            string frameBufferName)
+            string frameBufferName,
+            Span<bool> result)
         {
-            HashSet<int> result = [];
-            string prefix = $"fbo::{frameBufferName}::";
-
+            Span<int> matchingIndices = stackalloc int[signatures.Length];
             foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
             {
                 if (!usage.IsAttachment ||
                     usage.ResourceType is not (ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.StencilAttachment) ||
                     usage.Access == ERenderGraphAccess.Read ||
-                    !usage.ResourceName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    !TryGetFrameBufferSlot(usage.ResourceName, frameBufferName, out ReadOnlySpan<char> slot))
                 {
                     continue;
                 }
 
-                string slot = usage.ResourceName[prefix.Length..];
-                if (string.IsNullOrWhiteSpace(slot))
-                    continue;
-
-                foreach (int index in ResolveMatchingAttachmentIndices(signatures, slot, usage, pass))
-                    result.Add(index);
+                int matchingCount = ResolveMatchingAttachmentIndices(signatures, slot, usage, pass, matchingIndices);
+                for (int matchIndex = 0; matchIndex < matchingCount; matchIndex++)
+                    result[matchingIndices[matchIndex]] = true;
             }
-
-            return result;
         }
 
-        private static int[] ResolveMatchingAttachmentIndices(
+        private static bool TryGetFrameBufferSlot(
+            string resourceName,
+            string frameBufferName,
+            out ReadOnlySpan<char> slot)
+        {
+            ReadOnlySpan<char> resource = resourceName.AsSpan();
+            ReadOnlySpan<char> name = frameBufferName.AsSpan();
+            const int PrefixLength = 5;
+            int slotOffset = PrefixLength + name.Length + 2;
+            if (resource.Length <= slotOffset ||
+                !resource.StartsWith("fbo::", StringComparison.OrdinalIgnoreCase) ||
+                !resource.Slice(PrefixLength, name.Length).Equals(name, StringComparison.OrdinalIgnoreCase) ||
+                !resource.Slice(PrefixLength + name.Length, 2).SequenceEqual("::"))
+            {
+                slot = default;
+                return false;
+            }
+
+            slot = resource[slotOffset..];
+            return !slot.IsWhiteSpace();
+        }
+
+        private static int ResolveMatchingAttachmentIndices(
             FrameBufferAttachmentSignature[] signatures,
-            string slot,
+            ReadOnlySpan<char> slot,
             RenderPassResourceUsage usage,
-            RenderPassMetadata pass)
+            RenderPassMetadata pass,
+            Span<int> matchingIndices)
         {
             if (slot.StartsWith("resolve", StringComparison.OrdinalIgnoreCase))
             {
                 if (usage.ResourceType != ERenderPassResourceType.ResolveAttachment)
                 {
                     throw new InvalidOperationException(
-                        $"Render pass '{pass.Name}' declares '{usage.ResourceType}' for slot '{slot}', but resolve slots require resolve usage.");
+                        $"Render pass '{pass.Name}' declares '{usage.ResourceType}' for slot '{slot.ToString()}', but resolve slots require resolve usage.");
                 }
 
-                if (slot.Length <= 7 || !uint.TryParse(slot.AsSpan(7), out uint resolveTargetColorIndex))
+                if (slot.Length <= 7 || !uint.TryParse(slot[7..], out uint resolveTargetColorIndex))
                 {
                     throw new InvalidOperationException(
-                        $"Render pass '{pass.Name}' references invalid resolve slot '{slot}'. Use 'resolveN' where N is the target color attachment index.");
+                        $"Render pass '{pass.Name}' references invalid resolve slot '{slot.ToString()}'. Use 'resolveN' where N is the target color attachment index.");
                 }
 
                 for (int i = 0; i < signatures.Length; i++)
                 {
                     FrameBufferAttachmentSignature signature = signatures[i];
                     if (signature.Role == AttachmentRole.Color && signature.ColorIndex == resolveTargetColorIndex)
-                        return [i];
+                    {
+                        matchingIndices[0] = i;
+                        return 1;
+                    }
                 }
 
                 throw new InvalidOperationException(
@@ -1013,42 +1056,43 @@ public unsafe partial class VulkanRenderer
                 if (usage.ResourceType is not ERenderPassResourceType.ColorAttachment and not ERenderPassResourceType.ResolveAttachment)
                 {
                     throw new InvalidOperationException(
-                        $"Render pass '{pass.Name}' declares '{usage.ResourceType}' for slot '{slot}', but color slots require color/resolve usage.");
+                        $"Render pass '{pass.Name}' declares '{usage.ResourceType}' for slot '{slot.ToString()}', but color slots require color/resolve usage.");
                 }
 
                 bool hasExplicitIndex = false;
                 uint colorIndex = 0;
                 if (slot.Length > 5)
                 {
-                    if (!uint.TryParse(slot.AsSpan(5), out colorIndex))
+                    if (!uint.TryParse(slot[5..], out colorIndex))
                     {
                         throw new InvalidOperationException(
-                            $"Render pass '{pass.Name}' references invalid color slot '{slot}'. Use 'color' or 'colorN'.");
+                            $"Render pass '{pass.Name}' references invalid color slot '{slot.ToString()}'. Use 'color' or 'colorN'.");
                     }
 
                     hasExplicitIndex = true;
                 }
-                List<int> colorMatches = [];
+
+                int matchingCount = 0;
                 for (int i = 0; i < signatures.Length; i++)
                 {
                     FrameBufferAttachmentSignature signature = signatures[i];
-                    if (signature.Role != AttachmentRole.Color)
+                    if (signature.Role != AttachmentRole.Color ||
+                        (hasExplicitIndex && signature.ColorIndex != colorIndex))
+                    {
                         continue;
+                    }
 
-                    if (hasExplicitIndex && signature.ColorIndex != colorIndex)
-                        continue;
-
-                    colorMatches.Add(i);
+                    matchingIndices[matchingCount++] = i;
                 }
 
-                if (colorMatches.Count == 0)
+                if (matchingCount == 0)
                 {
                     string suffix = hasExplicitIndex ? colorIndex.ToString() : "any";
                     throw new InvalidOperationException(
                         $"Render pass '{pass.Name}' references color slot '{suffix}' but framebuffer has no matching color attachment.");
                 }
 
-                return [.. colorMatches];
+                return matchingCount;
             }
 
             if (slot.Equals("depth", StringComparison.OrdinalIgnoreCase))
@@ -1056,7 +1100,7 @@ public unsafe partial class VulkanRenderer
                 if (usage.ResourceType is not ERenderPassResourceType.DepthAttachment and not ERenderPassResourceType.StencilAttachment)
                 {
                     throw new InvalidOperationException(
-                        $"Render pass '{pass.Name}' declares '{usage.ResourceType}' for depth slot '{slot}'.");
+                        $"Render pass '{pass.Name}' declares '{usage.ResourceType}' for depth slot '{slot.ToString()}'.");
                 }
 
                 for (int i = 0; i < signatures.Length; i++)
@@ -1072,14 +1116,15 @@ public unsafe partial class VulkanRenderer
                             $"Render pass '{pass.Name}' expects stencil access on depth slot, but attachment has no stencil aspect.");
                     }
 
-                    return [i];
+                    matchingIndices[0] = i;
+                    return 1;
                 }
 
                 if (usage.ResourceType == ERenderPassResourceType.StencilAttachment)
-                    return [];
+                    return 0;
 
                 throw new InvalidOperationException(
-                    $"Render pass '{pass.Name}' references depth slot '{slot}' but framebuffer has no depth attachment.");
+                    $"Render pass '{pass.Name}' references depth slot '{slot.ToString()}' but framebuffer has no depth attachment.");
             }
 
             if (slot.Equals("stencil", StringComparison.OrdinalIgnoreCase))
@@ -1087,7 +1132,7 @@ public unsafe partial class VulkanRenderer
                 if (usage.ResourceType is not ERenderPassResourceType.StencilAttachment and not ERenderPassResourceType.DepthAttachment)
                 {
                     throw new InvalidOperationException(
-                        $"Render pass '{pass.Name}' declares '{usage.ResourceType}' for stencil slot '{slot}'.");
+                        $"Render pass '{pass.Name}' declares '{usage.ResourceType}' for stencil slot '{slot.ToString()}'.");
                 }
 
                 for (int i = 0; i < signatures.Length; i++)
@@ -1102,39 +1147,41 @@ public unsafe partial class VulkanRenderer
                             $"Render pass '{pass.Name}' references stencil slot but the attachment has no stencil aspect.");
                     }
 
-                    return [i];
+                    matchingIndices[0] = i;
+                    return 1;
                 }
 
                 if (usage.ResourceType == ERenderPassResourceType.StencilAttachment)
-                    return [];
+                    return 0;
 
                 throw new InvalidOperationException(
-                    $"Render pass '{pass.Name}' references stencil slot '{slot}' but framebuffer has no stencil attachment.");
+                    $"Render pass '{pass.Name}' references stencil slot '{slot.ToString()}' but framebuffer has no stencil attachment.");
             }
 
             throw new InvalidOperationException(
-                $"Render pass '{pass.Name}' references unsupported framebuffer slot '{slot}'. Expected color/resolve/depth/stencil.");
+                $"Render pass '{pass.Name}' references unsupported framebuffer slot '{slot.ToString()}'. Expected color/resolve/depth/stencil.");
         }
 
         private static uint ResolveResolveSourceColorIndex(
             FrameBufferAttachmentSignature[] signatures,
             int resolveTargetAttachmentIndex,
-            string slot,
+            ReadOnlySpan<char> slot,
             RenderPassResourceUsage usage,
             RenderPassMetadata pass)
         {
             if (usage.ResolveSourceColorIndex is { } explicitSource)
                 return explicitSource;
 
-            if (slot.StartsWith("resolve", StringComparison.OrdinalIgnoreCase))
+            if (slot.StartsWith("resolve", StringComparison.OrdinalIgnoreCase) &&
+                slot.Length > 7 &&
+                uint.TryParse(slot[7..], out uint parsedSource))
             {
-                if (slot.Length > 7 && uint.TryParse(slot.AsSpan(7), out uint parsedSource))
-                    return parsedSource;
+                return parsedSource;
             }
 
             if (slot.StartsWith("color", StringComparison.OrdinalIgnoreCase) &&
                 slot.Length > 5 &&
-                uint.TryParse(slot.AsSpan(5), out uint colorSlot))
+                uint.TryParse(slot[5..], out uint colorSlot))
             {
                 return colorSlot;
             }
@@ -1176,18 +1223,21 @@ public unsafe partial class VulkanRenderer
 
         private static void ValidateAttachmentSampleCounts(
             FrameBufferAttachmentSignature[] signatures,
-            HashSet<int> touchedAttachments,
+            ReadOnlySpan<bool> touchedAttachments,
+            int touchedAttachmentCount,
             RenderPassMetadata pass,
             string frameBufferName)
         {
-            if (touchedAttachments.Count <= 1)
+            if (touchedAttachmentCount <= 1)
                 return;
 
             bool hasBaseline = false;
             SampleCountFlags baseline = SampleCountFlags.Count1Bit;
-
-            foreach (int index in touchedAttachments)
+            for (int index = 0; index < touchedAttachments.Length; index++)
             {
+                if (!touchedAttachments[index])
+                    continue;
+
                 FrameBufferAttachmentSignature signature = signatures[index];
                 if (signature.Role == AttachmentRole.Resolve)
                     continue;
@@ -1206,7 +1256,6 @@ public unsafe partial class VulkanRenderer
                 }
             }
         }
-
         private static void ValidateResolveAttachmentPairings(
             FrameBufferAttachmentSignature[] signatures,
             RenderPassMetadata pass,
@@ -1432,7 +1481,7 @@ public unsafe partial class VulkanRenderer
             return true;
         }
 
-        private static bool UsesReadOnlyDepthStencil(FrameBufferAttachmentSignature[] signatures)
+        internal static bool UsesReadOnlyDepthStencil(FrameBufferAttachmentSignature[] signatures)
         {
             foreach (FrameBufferAttachmentSignature signature in signatures)
             {
@@ -1452,9 +1501,11 @@ public unsafe partial class VulkanRenderer
             if (targets is null || targets.Length == 0)
                 throw new InvalidOperationException("Framebuffer must have at least one attachment.");
 
-            List<AttachmentBuildInfo> colorAttachments = [];
+            if (_attachmentBuildScratch.Length != targets.Length)
+                _attachmentBuildScratch = new AttachmentBuildInfo[targets.Length];
+
+            int colorAttachmentCount = 0;
             AttachmentBuildInfo? depthAttachment = null;
-            HashSet<uint> usedColorSlots = [];
             uint nextImplicitColorSlot = 0;
 
             foreach (var (target, attachment, mip, layer) in targets)
@@ -1469,16 +1520,29 @@ public unsafe partial class VulkanRenderer
 
                 if (role == AttachmentRole.Color)
                 {
-                    uint slot = ResolveColorSlot(attachment, ref nextImplicitColorSlot, usedColorSlots);
+                    uint slot = ResolveColorSlot(
+                        attachment,
+                        ref nextImplicitColorSlot,
+                        _attachmentBuildScratch.AsSpan(0, colorAttachmentCount));
                     FrameBufferAttachmentSignature signature = BuildAttachmentSignature(source, role, slot);
-                    colorAttachments.Add(new AttachmentBuildInfo(
+                    AttachmentBuildInfo buildInfo = new(
                         new AttachmentTargetInfo(target, attachment, mip, layer),
                         source.View,
                         signature,
                         slot,
                         source.Extent,
                         source.LayerCount,
-                        source.MultiviewViewMask));
+                        source.MultiviewViewMask);
+
+                    int insertionIndex = colorAttachmentCount;
+                    while (insertionIndex > 0 &&
+                           _attachmentBuildScratch[insertionIndex - 1].ColorIndex > slot)
+                    {
+                        _attachmentBuildScratch[insertionIndex] = _attachmentBuildScratch[insertionIndex - 1];
+                        insertionIndex--;
+                    }
+                    _attachmentBuildScratch[insertionIndex] = buildInfo;
+                    colorAttachmentCount++;
                     continue;
                 }
 
@@ -1496,19 +1560,14 @@ public unsafe partial class VulkanRenderer
                     source.MultiviewViewMask);
             }
 
-            colorAttachments.Sort((a, b) => a.ColorIndex.CompareTo(b.ColorIndex));
-
-            List<AttachmentBuildInfo> ordered = new(colorAttachments.Count + (depthAttachment.HasValue ? 1 : 0));
-            ordered.AddRange(colorAttachments);
             if (depthAttachment.HasValue)
-                ordered.Add(depthAttachment.Value);
+                _attachmentBuildScratch[colorAttachmentCount++] = depthAttachment.Value;
 
-            if (ordered.Count == 0)
+            if (colorAttachmentCount == 0)
                 throw new InvalidOperationException($"Framebuffer '{Data.Name ?? "<unnamed>"}' does not define any attachments.");
 
-            return [.. ordered];
+            return _attachmentBuildScratch;
         }
-
         private void ValidateAttachmentDimensions(IFrameBufferAttachement attachment)
         {
             uint expectedWidth = Math.Max(Data.Width, 1u);
@@ -1730,11 +1789,14 @@ public unsafe partial class VulkanRenderer
             };
         }
 
-        private static uint ResolveColorSlot(EFrameBufferAttachment attachment, ref uint nextImplicitSlot, HashSet<uint> usedSlots)
+        private static uint ResolveColorSlot(
+            EFrameBufferAttachment attachment,
+            ref uint nextImplicitSlot,
+            ReadOnlySpan<AttachmentBuildInfo> colorAttachments)
         {
             if (TryGetExplicitColorIndex(attachment, out uint explicitSlot))
             {
-                if (!usedSlots.Add(explicitSlot))
+                if (ContainsColorSlot(colorAttachments, explicitSlot))
                     throw new InvalidOperationException($"Color attachment slot {explicitSlot} is already bound for this framebuffer.");
 
                 nextImplicitSlot = Math.Max(nextImplicitSlot, explicitSlot + 1);
@@ -1742,12 +1804,20 @@ public unsafe partial class VulkanRenderer
             }
 
             uint assignedSlot = nextImplicitSlot++;
-            while (!usedSlots.Add(assignedSlot))
+            while (ContainsColorSlot(colorAttachments, assignedSlot))
                 assignedSlot = nextImplicitSlot++;
 
             return assignedSlot;
         }
 
+        private static bool ContainsColorSlot(ReadOnlySpan<AttachmentBuildInfo> colorAttachments, uint slot)
+        {
+            foreach (ref readonly AttachmentBuildInfo attachment in colorAttachments)
+                if (attachment.ColorIndex == slot)
+                    return true;
+
+            return false;
+        }
         private static bool TryGetExplicitColorIndex(EFrameBufferAttachment attachment, out uint index)
         {
             if (attachment >= EFrameBufferAttachment.ColorAttachment0 && attachment <= EFrameBufferAttachment.ColorAttachment31)

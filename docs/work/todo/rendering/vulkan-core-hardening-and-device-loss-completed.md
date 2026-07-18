@@ -1,8 +1,8 @@
 # Vulkan Core Hardening And Device-Loss Completed Work
 
-Last Updated: 2026-07-17
+Last Updated: 2026-07-18
 Owner: Rendering
-Status: Historical completion and evidence record through the completed portions of P0.1-P0.5 immediate-gate work
+Status: Historical completion and evidence record through the 2026-07-18 P0 immediate-gate closeout
 Open Work: [Vulkan core hardening and device-loss TODO](vulkan-core-hardening-and-device-loss-todo.md)
 Execution: Current worktree only; do not create or switch branches for this effort.
 
@@ -121,6 +121,86 @@ identity.
 
 Detailed evidence:
 [zero-readback Sponza device-loss investigation](../../investigations/rendering/vulkan-zero-readback-sponza-device-loss-2026-07-17.md).
+
+### P0 Immediate Gate Closeout - 2026-07-18
+
+The immediate desktop visibility, device-loss, and recording gate is complete.
+The production acceptance path is the validated serial/cached
+GpuIndirectZeroReadback lane; diagnostic optimization and external-tool
+limitations remain explicit post-P0 work in the active tracker.
+
+Completed correctness work:
+
+- Imported-texture reuse now compares requested storage against the actual
+  physical image layout and format. Progressive mip publication no longer
+  reuses incompatible storage, eliminating the observed image-copy VUIDs and
+  streaming-time device loss.
+- Zero-readback Vulkan temporarily uses flat GPU frustum culling instead of the
+  corrupt GPU BVH publication header. This remains GPU culling with no CPU
+  fallback or readback. The retained BVH diagnostic fields expose the raw and
+  safely clamped node counts for the later publication-version repair.
+- Delayed post-fence GPU statistics and material-scatter diagnostics establish
+  real visible draws. The accepted lane reached 46-50 culled commands and
+  247,765-262,267 triangles while submitting bounded indirect tiers.
+- The matched Sponza camera, second pose, and motion sequence all render scene
+  geometry and change with camera motion. Zero-readback requested/consumed
+  counts remain equal with zero readback, mapping, fallback, and stale
+  collection reuse.
+- Command-local lifetime dependencies are cleared after incremental
+  publication. Shader invalidation is marshalled to the main thread. This fixes
+  the SyncValidation hot-reload crash that previously attempted to record a
+  retired pipeline generation.
+- Command-buffer tracking batches retain their grown collection capacity across
+  recordings. Framebuffer attachment planning, exact layout arrays, final-layout
+  writes, and planned-signature matching now reuse arrays or stack spans instead
+  of allocating transient List/HashSet/string/int-array state.
+- XRE_FORCE_CPU_INDIRECT_BUILD exposes the CPU-built diagnostic reference only
+  for GpuIndirectInstrumented. The material-batched path now rebuilds indirect
+  commands and contiguous material ranges instead of submitting stale/empty
+  data. The override is cached and performs no per-frame environment lookup.
+
+Measured closeout:
+
+- Four StandardValidation cohorts supplied 12 identical warmed Release
+  repetitions across static/moving camera and occlusion-disabled/CpuQueryAsync
+  paths. All runs completed without device loss, early exit, VUID, submission
+  rejection, readback, mapping, fallback, or stale visibility reuse.
+- Those cohorts recorded 31.507-34.035 ms render p50,
+  34.747-37.182 ms render p95, and 24.014-25.428 /
+  25.705-27.847 / 32.881-40.617 ms command-record p50/p95/max. The former
+  multi-hundred-millisecond spike is absent.
+- The final SyncValidation interaction session
+  xrengine_2026-07-18_05-59-49_pid1852 survived streaming, camera motion,
+  resize, shader hot reload, and normal shutdown. A later 406-sample
+  forced-record SyncValidation cohort also recorded zero VUIDs, readbacks,
+  mappings, fallbacks, submission rejections, and stale collection reuse; it
+  crossed two workload identities and is retained as correctness evidence, not
+  a stable performance baseline.
+- Forced-primary allocation fell from approximately 888.5 KiB/frame to
+  697.4 KiB after tracking-batch reuse and then to 322.7 KiB after framebuffer
+  planning cleanup. The final comparable manifest is
+  Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-18_13-01-09/summary.json.
+  Cached stable production frames already reach zero recording allocation; the
+  remaining forced diagnostic cost is assigned to Phase 5.2.5.
+- The integrated Release editor build completes with zero errors. Focused P0
+  policy, lifetime, shader, parity, allocation, and batched-reference tests pass
+  56/56. Existing NuGet vulnerability advisories and two unrelated Surfel GI
+  unassigned-field warnings remain.
+- Nsight Systems 2026.3.1 captured 31 Vulkan frames and 564,644 sampled
+  callchains but exported no Debug Utils marker table; its environment retry
+  failed inside Nsight. RenderDoc 1.44 with rdc-cli 0.5.6 passes preflight but
+  the bounded Vulkan retries serialized no capture. Engine label emission is
+  implemented, but no external marker visualization is claimed.
+
+Representative durable/local evidence:
+
+- Build/_AgentValidation/20260718-vulkan-p0-closeout/mcp-captures/flat-gpu-zero-readback-matched-camera-printwindow.png
+- Build/_AgentValidation/20260718-vulkan-p0-closeout/mcp-captures/motion-valid-contact-sheet.jpg
+- Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_20-04-21/summary.json
+- Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_20-09-09/summary.json
+- Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_20-13-58/summary.json
+- Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_20-18-51/summary.json
+- Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-18_13-54-06/summary.json
 
 ### Evidence Index
 
@@ -995,9 +1075,10 @@ With every 5.2.4b and 5.2.4c live criterion complete, Phase 5.2.5 is unblocked.
 ## Immediate Priority Gate Completed Work - 2026-07-17
 
 This section preserves the completed implementation and acceptance criteria
-moved from the active tracker. P0.2 and P0.3 still have open criteria in the
-[current TODO](vulkan-core-hardening-and-device-loss-todo.md); the completed
-items below do not imply that the aggregate immediate gate has closed.
+moved from the active tracker. P0.2, P0.3, P0.6, and P0.7 still have open
+criteria in the [current TODO](vulkan-core-hardening-and-device-loss-todo.md);
+the completed items below do not imply that the aggregate immediate gate has
+closed.
 
 Historical before-baseline evidence:
 
@@ -1321,6 +1402,52 @@ GPU-built live matrix remain open in the current TODO.
   JSON/text result manifest, allowing identical three-repetition Disabled,
   CpuQueryAsync, GpuHiZ, StandardValidation, and SyncValidation cohorts without
   relying on Nsight Systems' failing `--env-var` option.
+
+### P0 StandardValidation Stability-Matrix Closeout
+
+- [x] Complete three identical 60-second warmed Release desktop repetitions for
+  each static/moving camera and occlusion-disabled/`CpuQueryAsync` combination.
+  All 12 runs reached stable sampling and completed without early exit, device
+  loss, VUID, submission rejection, GPU readback, mapped-buffer use, or stale
+  visibility reuse. Generation age never exceeded one frame and every run
+  reported exact full-run requested/consumed draw parity.
+- [x] Preserve the four machine-readable cohort manifests:
+  - static, occlusion disabled:
+    `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_20-04-21/summary.json`;
+  - moving, occlusion disabled:
+    `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_20-09-09/summary.json`;
+  - static, `CpuQueryAsync`:
+    `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_20-13-58/summary.json`;
+  - moving, `CpuQueryAsync`:
+    `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_20-18-51/summary.json`.
+- [x] Establish the post-fix performance envelope. Across the 12 runs, render
+  p50/p95/worst was 31.507-34.035/34.747-37.182/47.417-54.701 ms; Vulkan GPU
+  command p50 was 1.192-1.215 ms; command-record p50/p95/max was
+  24.014-25.428/25.705-27.847/32.881-40.617 ms. This removes the prior
+  multi-hundred-millisecond recording spike without relaxing validation or the
+  zero-readback policy.
+- [x] Stop copying unused image-subresource layout snapshots for command-buffer
+  variants. The reusable snapshot now stores only its deterministic signature,
+  and physical image groups append that signature without allocating arrays.
+- [x] Correct forbidden-fallback telemetry. A valid zero-visible cull is no
+  longer classified as attempted CPU recovery; the counter is emitted only
+  when an operator actually requested fallback on an instrumented strategy.
+  The post-fix moving/`CpuQueryAsync` proof at
+  `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_20-25-01/summary.json`
+  reports zero full-run and capture fallback events, zero readback, zero VUIDs,
+  and exact requested/consumed parity.
+- [x] Capture a final validation-clean `CpuDirect` numeric control at
+  `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-07-17_20-25-53/summary.json`.
+  Its 49 direct draw calls and 301,924 triangles are retained as a control, not
+  misrepresented as visual parity with the bucketed lane.
+- [x] Validate the final contracts: Release runtime/editor builds complete with
+  zero errors and the focused Vulkan timing/indirect selection passes 73/73.
+
+The forced-primary path still allocates approximately 0.92 MiB per frame, and
+the matched-camera zero-readback result has not superseded the user's missing-
+Sponza observation. Visual captures, SyncValidation interaction cohorts, and a
+valid external Vulkan marker/capture artifact therefore remain in the active
+TODO; this completed matrix does not close those acceptance criteria.
 
 ## Continuing Work
 

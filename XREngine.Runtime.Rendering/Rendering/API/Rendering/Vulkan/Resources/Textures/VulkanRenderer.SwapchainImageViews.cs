@@ -26,6 +26,8 @@ public unsafe partial class VulkanRenderer
 
         for (int i = 0; i < swapChainImages.Length; i++)
         {
+            SetDebugObjectName(ObjectType.Image, swapChainImages[i].Handle, $"Swapchain.ColorImage[{i}]");
+
             ImageViewCreateInfo createInfo = new()
             {
                 SType = StructureType.ImageViewCreateInfo,

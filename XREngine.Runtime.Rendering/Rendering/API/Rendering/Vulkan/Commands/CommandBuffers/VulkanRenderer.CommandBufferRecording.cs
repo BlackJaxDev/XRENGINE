@@ -2433,11 +2433,7 @@ namespace XREngine.Rendering.Vulkan
                 trackedLayouts,
                 CompiledRenderGraph.Synchronization,
                 preserveTrackedClearLoads: false);
-            depthStencilReadOnly = vkFrameBuffer.UsesReadOnlyDepthStencilForPass(
-                passIndex,
-                context.PassMetadata,
-                trackedLayouts,
-                preserveTrackedClearLoads: false);
+            depthStencilReadOnly = VkFrameBuffer.UsesReadOnlyDepthStencil(attachmentSignature);
 
             if (UseDynamicRenderingRenderTargets)
             {
@@ -3626,8 +3622,8 @@ namespace XREngine.Rendering.Vulkan
                                 useReferenceLayouts: false);
                         }
 
-                        ImageLayout[] finalLayouts = VkFrameBuffer.GetFinalLayouts(activeFboAttachmentSignature);
-                        fboLayoutTracking[activeTarget] = finalLayouts;
+                        ImageLayout[] finalLayouts = GetFboAttachmentLayoutScratch(activeTarget, activeFboAttachmentSignature.Length);
+                        VkFrameBuffer.WriteFinalLayouts(activeFboAttachmentSignature, finalLayouts);
                     }
                 }
                 else
@@ -3645,10 +3641,12 @@ namespace XREngine.Rendering.Vulkan
                         var vkFbo = GenericToAPI<VkFrameBuffer>(activeTarget);
                         if (vkFbo is not null)
                         {
-                            ImageLayout[] finalLayouts = activeFboAttachmentSignature is not null
-                                ? VkFrameBuffer.GetFinalLayouts(activeFboAttachmentSignature)
-                                : vkFbo.GetFinalLayouts();
-                            fboLayoutTracking[activeTarget] = finalLayouts;
+                            int attachmentCount = activeFboAttachmentSignature?.Length ?? (int)vkFbo.AttachmentCount;
+                            ImageLayout[] finalLayouts = GetFboAttachmentLayoutScratch(activeTarget, attachmentCount);
+                            if (activeFboAttachmentSignature is not null)
+                                VkFrameBuffer.WriteFinalLayouts(activeFboAttachmentSignature, finalLayouts);
+                            else
+                                vkFbo.WriteFinalLayouts(finalLayouts);
                         }
                     }
 
@@ -4042,11 +4040,7 @@ namespace XREngine.Rendering.Vulkan
                     trackedLayouts,
                     CompiledRenderGraph.Synchronization,
                     preserveTrackedClearLoads: targetReenteredThisCommandBuffer);
-                bool passDepthStencilReadOnly = vkFrameBuffer.UsesReadOnlyDepthStencilForPass(
-                    passIndex,
-                    context.PassMetadata,
-                    trackedLayouts,
-                    preserveTrackedClearLoads: targetReenteredThisCommandBuffer);
+                bool passDepthStencilReadOnly = VkFrameBuffer.UsesReadOnlyDepthStencil(fboSignature);
                 if (DeferredLightingDiagnostics.Enabled && DeferredLightingDiagnostics.IsWatchedFrameBufferName(fboName))
                 {
                     Debug.VulkanEvery(
@@ -4740,11 +4734,7 @@ namespace XREngine.Rendering.Vulkan
                     CompiledRenderGraph.Synchronization,
                     preserveTrackedClearLoads: targetReenteredThisCommandBuffer);
 
-                inheritedDepthStencilReadOnly = vkFrameBuffer.UsesReadOnlyDepthStencilForPass(
-                    passIndex,
-                    context.PassMetadata,
-                    trackedLayouts,
-                    preserveTrackedClearLoads: targetReenteredThisCommandBuffer);
+                inheritedDepthStencilReadOnly = VkFrameBuffer.UsesReadOnlyDepthStencil(fboSignature);
 
                 if (UseDynamicRenderingRenderTargets)
                 {
@@ -8700,7 +8690,7 @@ namespace XREngine.Rendering.Vulkan
                 return null;
 
             int count = (int)vkFbo.AttachmentCount;
-            ImageLayout[] layouts = new ImageLayout[count];
+            ImageLayout[] layouts = GetFboAttachmentLayoutScratch(fbo, count);
 
             for (int i = 0; i < count; i++)
             {
@@ -8730,6 +8720,23 @@ namespace XREngine.Rendering.Vulkan
             return layouts;
         }
 
+        private ImageLayout[] GetFboAttachmentLayoutScratch(XRFrameBuffer fbo, int attachmentCount)
+        {
+            CommandBufferRecordingScratch recordingScratch = _commandBufferRecordingScratch.Value!;
+            if (!recordingScratch.FboAttachmentLayouts.TryGetValue(
+                    fbo,
+                    out CommandBufferRecordingScratch.FboAttachmentLayoutScratch? scratch))
+            {
+                scratch = new CommandBufferRecordingScratch.FboAttachmentLayoutScratch();
+                recordingScratch.FboAttachmentLayouts.Add(fbo, scratch);
+            }
+
+            if (scratch.Layouts.Length != attachmentCount)
+                scratch.Layouts = new ImageLayout[attachmentCount];
+
+            recordingScratch.FboLayoutTracking[fbo] = scratch.Layouts;
+            return scratch.Layouts;
+        }
         private bool TryGetExactTrackedFboAttachmentLayout(
             VkFrameBuffer vkFbo,
             int attachmentIndex,

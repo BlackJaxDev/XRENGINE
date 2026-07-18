@@ -69,6 +69,7 @@ namespace XREngine.Rendering.Commands
         public const int MaterialScatterDrawCounts = 6;
         public const int MaterialScatterOverflow = 7;
         public const int MaterialScatterLodTransitions = 8;
+        public const int MaterialScatterStats = 9;
 
         // Compute GPURenderBuildActiveMaterialBuckets.comp bindings
         public const int ActiveMaterialBucketDrawCounts = 0;
