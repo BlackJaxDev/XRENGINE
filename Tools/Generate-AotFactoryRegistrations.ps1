@@ -474,4 +474,4 @@ if ((Test-Path $OutputFile) -and ((Get-Content -LiteralPath $OutputFile -Raw) -e
     return
 }
 
-Set-Content -LiteralPath $OutputFile -Value $content -Encoding UTF8
+Set-Content -LiteralPath $OutputFile -Value $content -Encoding UTF8 -NoNewline

@@ -38,6 +38,15 @@ namespace SimpleScene.Util.ssBVH
         void CheckMap(GO obj);
         BVHNode<GO>? GetLeaf(GO obj);
     }
+
+    /// <summary>
+    /// Supplies an object's exact axis-aligned bounds when a radius around
+    /// <see cref="ISSBVHNodeAdaptor{GO}.ObjectPos(GO)"/> would be unnecessarily loose.
+    /// </summary>
+    public interface IExactBvhBoundsAdaptor<GO>
+    {
+        AABB ObjectBounds(GO obj);
+    }
     
     public class BVH<GO>
     {
@@ -48,6 +57,7 @@ namespace SimpleScene.Util.ssBVH
         public int _nodeCount = 0;
         public int _maxDepth = 0;
         public HashSet<BVHNode<GO>> _refitNodes = [];
+        private readonly List<BVHNode<GO>> _refitSweep = [];
 
         public delegate bool NodeTest(AABB box);
 
@@ -99,16 +109,25 @@ namespace SimpleScene.Util.ssBVH
             
             while (_refitNodes.Count > 0)
             {
-                int maxdepth = _refitNodes.Max(n => n.depth);
-                var sweepNodes = _refitNodes.Where(n => n.depth == maxdepth).ToList();
-                sweepNodes.ForEach(n => _refitNodes.Remove(n));
-                sweepNodes.ForEach(n => n.TryRotate(this));
+                int maxDepth = int.MinValue;
+                foreach (BVHNode<GO> node in _refitNodes)
+                    maxDepth = Math.Max(maxDepth, node.depth);
+
+                _refitSweep.Clear();
+                foreach (BVHNode<GO> node in _refitNodes)
+                    if (node.depth == maxDepth)
+                        _refitSweep.Add(node);
+
+                for (int i = 0; i < _refitSweep.Count; i++)
+                    _refitNodes.Remove(_refitSweep[i]);
+                for (int i = 0; i < _refitSweep.Count; i++)
+                    _refitSweep[i].TryRotate(this);
             }
         }
 
         public void AddObject(GO newOb)
         {
-            AABB box = AABB.FromSphere(_nAda.ObjectPos(newOb), _nAda.Radius(newOb));
+            AABB box = BVHNode<GO>.AABBofOBJ(_nAda, newOb);
             float boxSAH = BVHNode<GO>.SA(ref box);
             _rootBVH.AddObject(_nAda, newOb, ref box, boxSAH);
         }

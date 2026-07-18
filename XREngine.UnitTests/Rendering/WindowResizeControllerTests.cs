@@ -142,6 +142,57 @@ public sealed class WindowResizeControllerTests
     }
 
     [Test]
+    public void RequestFullInternalExtent_ForcedDuplicateKeepsExistingPendingGeneration()
+    {
+        WindowResizeController controller = new();
+        controller.SetAllRenderExtents(new Vector2D<int>(800, 600));
+
+        WindowResizeExtents first = controller.RequestFullInternalExtent(
+            new Vector2D<int>(1000, 700),
+            force: true,
+            timestampTicks: 1,
+            out bool firstAccepted);
+        WindowResizeExtents duplicate = controller.RequestFullInternalExtent(
+            new Vector2D<int>(1000, 700),
+            force: true,
+            timestampTicks: 2,
+            out bool duplicateAccepted);
+
+        firstAccepted.ShouldBeTrue();
+        duplicateAccepted.ShouldBeFalse();
+        duplicate.PendingFullInternalGeneration.ShouldBe(first.PendingFullInternalGeneration);
+        duplicate.PendingFullInternalExtent.ShouldBe(first.PendingFullInternalExtent);
+        controller.IsStaleFullInternalGeneration(first.PendingFullInternalGeneration).ShouldBeFalse();
+    }
+
+    [Test]
+    public void RequestFullInternalExtent_RejectedLiveExtentDoesNotReplaceAdmittedTarget()
+    {
+        WindowResizeController controller = new();
+        controller.SetAllRenderExtents(new Vector2D<int>(800, 600));
+        controller.SetPolicy(new WindowFullInternalResizePolicy(
+            TimeSpan.FromSeconds(1),
+            TimeSpan.FromSeconds(10),
+            0.50f));
+
+        WindowResizeExtents admitted = controller.RequestFullInternalExtent(
+            new Vector2D<int>(900, 600),
+            force: false,
+            timestampTicks: 100,
+            out bool admittedAccepted);
+        WindowResizeExtents rejected = controller.RequestFullInternalExtent(
+            new Vector2D<int>(950, 600),
+            force: false,
+            timestampTicks: 100 + System.Diagnostics.Stopwatch.Frequency / 10,
+            out bool rejectedAccepted);
+
+        admittedAccepted.ShouldBeTrue();
+        rejectedAccepted.ShouldBeFalse();
+        rejected.PendingFullInternalGeneration.ShouldBe(admitted.PendingFullInternalGeneration);
+        rejected.PendingFullInternalExtent.ShouldBe(admitted.PendingFullInternalExtent);
+    }
+
+    [Test]
     public void RequestFullInternalExtent_RejectsStalePendingGeneration()
     {
         WindowResizeController controller = new();
