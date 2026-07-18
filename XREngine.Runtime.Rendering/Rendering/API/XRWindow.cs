@@ -812,12 +812,10 @@ namespace XREngine.Rendering
             if (!requestAccepted)
                 return;
 
-            int currentPending = Volatile.Read(ref _pendingFramebufferResize);
-            int currentWidth = Volatile.Read(ref _pendingFramebufferResizeWidth);
-            int currentHeight = Volatile.Read(ref _pendingFramebufferResizeHeight);
-            if (currentPending != 0 && currentWidth == size.X && currentHeight == size.Y)
-                return;
-
+            // An admitted request owns a new controller generation. Always refresh the
+            // complete queued tuple even when its dimensions match an older callback;
+            // retaining the old stamp makes ProcessPendingFramebufferResize discard the
+            // only queued resize as stale.
             Volatile.Write(ref _pendingFramebufferResizeWidth, size.X);
             Volatile.Write(ref _pendingFramebufferResizeHeight, size.Y);
             Volatile.Write(ref _pendingFullInternalResizeGeneration, unchecked((long)extents.PendingFullInternalGeneration));

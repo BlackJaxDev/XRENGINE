@@ -18,6 +18,24 @@
 			"problemMatcher": "$msCompile"
 		},
 		{
+			"label": "Build-Editor-Fast",
+			"command": "dotnet",
+			"type": "shell",
+			"args": [
+				"build",
+				"${workspaceFolder}/XREngine.Editor/XREngine.Editor.csproj",
+				"-p:RunAnalyzers=false",
+				"/property:GenerateFullPaths=true",
+				"/consoleloggerparameters:NoSummary"
+			],
+			"detail": "Builds the editor without Roslyn analyzer execution. Use the standard Build-Editor task before submitting changes.",
+			"group": "build",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": "$msCompile"
+		},
+		{
 			"label": "Build-Editor-Release",
 			"command": "dotnet",
 			"type": "shell",

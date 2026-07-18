@@ -4,7 +4,7 @@ using Triangle = XREngine.Data.Geometry.Triangle;
 
 namespace XREngine.Rendering
 {
-    public class TriangleAdapter : ISSBVHNodeAdaptor<Triangle>
+    public class TriangleAdapter : ISSBVHNodeAdaptor<Triangle>, IExactBvhBoundsAdaptor<Triangle>
     {
         public BVH<Triangle>? BVH { get; private set; }
 
@@ -42,5 +42,8 @@ namespace XREngine.Rendering
             //Return the max distance
             return Math.Max(distA, Math.Max(distB, distC));
         }
+
+        public AABB ObjectBounds(Triangle obj)
+            => new(Vector3.Min(obj.A, Vector3.Min(obj.B, obj.C)), Vector3.Max(obj.A, Vector3.Max(obj.B, obj.C)));
     }
 }

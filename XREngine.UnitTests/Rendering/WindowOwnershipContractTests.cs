@@ -122,6 +122,24 @@ public sealed class WindowOwnershipContractTests
     }
 
     [Test]
+    public void XRWindow_AdmittedFullInternalResizeAlwaysRefreshesQueuedGeneration()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");
+        int queueStart = source.IndexOf("private void QueueFullInternalResize", StringComparison.Ordinal);
+        queueStart.ShouldBeGreaterThanOrEqualTo(0);
+        int beginResizeStart = source.IndexOf("internal void BeginInteractiveResize", queueStart, StringComparison.Ordinal);
+        beginResizeStart.ShouldBeGreaterThan(queueStart);
+
+        string queueBody = source[queueStart..beginResizeStart];
+
+        queueBody.ShouldContain("if (!requestAccepted)");
+        queueBody.ShouldContain("Volatile.Write(ref _pendingFullInternalResizeGeneration");
+        queueBody.ShouldNotContain("currentPending");
+        queueBody.ShouldNotContain("currentWidth");
+        queueBody.ShouldNotContain("currentHeight");
+    }
+
+    [Test]
     public void VulkanFrameSlotRetirementDrainsSwapchainDependentResourcesAfterSlotWait()
     {
         string retirement = ReadWorkspaceFile(

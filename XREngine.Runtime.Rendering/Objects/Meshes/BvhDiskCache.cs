@@ -15,15 +15,15 @@ namespace XREngine.Rendering;
 /// <summary>
 /// Disk-level cache for mesh BVH trees, keyed by an XxHash64 of the triangle
 /// vertex positions.  Layout mirrors <c>ConvexHullDiskCache</c>.
-/// <para>Cache path: <c>{CacheRoot}/BVH/v1/{hex[0:2]}/{hex16}.bin</c></para>
+/// <para>Cache path: <c>{CacheRoot}/BVH/v2/{hex[0:2]}/{hex16}.bin</c></para>
 /// </summary>
 internal static class BvhDiskCache
 {
     private const uint FileMagic = 0x42564854; // "BVHT"
-    private const int FileVersion = 1;
-    private const int HashSchemaVersion = 1;
+    private const int FileVersion = 2;
+    private const int HashSchemaVersion = 2;
     private const string CacheFolderName = "BVH";
-    private const string CacheVersionFolderName = "v1";
+    private const string CacheVersionFolderName = "v2";
 
     /// <summary>
     /// Absolute path to the cache root directory.  Falls back to
