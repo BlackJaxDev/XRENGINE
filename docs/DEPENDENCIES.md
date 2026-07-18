@@ -1,6 +1,6 @@
-﻿# Dependency Inventory
+# Dependency Inventory
 
-Generated: 2026-06-08T13:37:47-07:00
+Generated: 2026-07-17T21:16:41-07:00
 Commit: (not a git repo)
 
 Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, vendored source snapshots, and native/managed binaries that are referenced or shipped.
@@ -46,9 +46,9 @@ Notes:
 | JoltPhysicsSharp | 2.20.1 | amerkoleci | [MIT](licenses/nuget/JoltPhysicsSharp-2.20.1-MIT.txt) | XREngine.csproj |
 | K4os.Compression.LZ4 | 1.3.8 | MiloszKrajewski | [MIT](licenses/nuget/K4os.Compression.LZ4-1.3.8-MIT.txt) | XREngine.Data.csproj |
 | LZMA-SDK | 22.1.1 | monemihir | [MIT](licenses/nuget/LZMA-SDK-22.1.1-MIT.txt) | XREngine.csproj, XREngine.Data.csproj |
-| Magick.NET.Core | 14.13.1 | dlemstra | [Apache-2.0](licenses/unknown/nuget-Magick.NET.Core-14.13.1.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Modeling.csproj, XREngine.Runtime.Rendering.csproj |
-| Magick.NET.SystemDrawing | 8.0.22 | dlemstra | [Apache-2.0](licenses/unknown/nuget-Magick.NET.SystemDrawing-8.0.22.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Modeling.csproj, XREngine.Runtime.Rendering.csproj |
-| Magick.NET-Q16-HDRI-AnyCPU | 14.13.1 | dlemstra | [Apache-2.0](licenses/unknown/nuget-Magick.NET-Q16-HDRI-AnyCPU-14.13.1.txt) | XREngine.Animation.csproj, XREngine.Extensions.csproj, XREngine.Server.csproj, XREngine.UnitTests.csproj, XREngine.VRClient.csproj |
+| Magick.NET.Core | 14.14.0 | dlemstra | [Apache-2.0](licenses/unknown/nuget-Magick.NET.Core-14.14.0.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Modeling.csproj, XREngine.Runtime.Rendering.csproj |
+| Magick.NET.SystemDrawing | 8.0.23 | dlemstra | [Apache-2.0](licenses/unknown/nuget-Magick.NET.SystemDrawing-8.0.23.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Modeling.csproj, XREngine.Runtime.Rendering.csproj |
+| Magick.NET-Q16-HDRI-AnyCPU | 14.14.0 | dlemstra | [Apache-2.0](licenses/unknown/nuget-Magick.NET-Q16-HDRI-AnyCPU-14.14.0.txt) | XREngine.Animation.csproj, XREngine.Extensions.csproj, XREngine.Server.csproj, XREngine.UnitTests.csproj, XREngine.VRClient.csproj |
 | MagicPhysX | 1.0.0 | Cysharp | [MIT](licenses/nuget/MagicPhysX-1.0.0-MIT.txt) | XREngine.csproj |
 | MathNet.Numerics | 5.0.0 | mathnet | [MIT](licenses/nuget/MathNet.Numerics-5.0.0-MIT.txt) | XREngine.Audio.csproj, XREngine.csproj, XREngine.Editor.csproj, XREngine.Runtime.Rendering.csproj |
 | MathNet.Numerics.Providers.CUDA | 5.0.0 | mathnet | [MIT](licenses/nuget/MathNet.Numerics.Providers.CUDA-5.0.0-MIT.txt) | XREngine.Audio.csproj, XREngine.csproj, XREngine.Editor.csproj, XREngine.Runtime.Rendering.csproj |

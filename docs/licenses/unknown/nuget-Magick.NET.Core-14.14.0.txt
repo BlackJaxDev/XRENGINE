@@ -1,4 +1,4 @@
-﻿License text could not be resolved locally for NuGet package 'Magick.NET.SystemDrawing' (8.0.22).
+﻿License text could not be resolved locally for NuGet package 'Magick.NET.Core' (14.14.0).
 
 Resolved license: Apache-2.0
 RepositoryUrl: https://github.com/dlemstra/Magick.NET

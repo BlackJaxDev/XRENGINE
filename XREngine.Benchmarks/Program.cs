@@ -17,6 +17,10 @@ else if (args.Contains("--fbx-phase0-report", StringComparer.OrdinalIgnoreCase))
 {
 	Environment.ExitCode = FbxPhase0BaselineHarness.Run(args);
 }
+else if (args.Contains("--cpu-bvh-report", StringComparer.OrdinalIgnoreCase))
+{
+	Environment.ExitCode = CpuSceneBvhReportHarness.Run(args);
+}
 else
 {
 	BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);

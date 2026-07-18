@@ -136,6 +136,13 @@ Good default validation order:
 2. narrow build of the touched project
 3. run the exact editor/server/client flow that exercises the change
 
+For a tight local editor loop, use the `Build-Editor-Fast` VS Code task. It skips
+Roslyn analyzers while retaining normal compilation and incremental native/AOT
+generation. Use `Build-Editor` before submitting changes so the analyzer-enabled
+build remains the final validation. Switching between the two tasks changes the
+compiler command line and can cause a one-time recompilation, so consecutive fast
+builds provide the best iteration time.
+
 ### 4. Keep the working directory in mind
 
 Some startup paths depend on the process working directory being the repo root, especially flows that load the generated local `Assets/UnitTestingWorldSettings.jsonc`.

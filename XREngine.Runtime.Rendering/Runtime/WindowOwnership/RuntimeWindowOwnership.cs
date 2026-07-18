@@ -665,19 +665,19 @@ public sealed class WindowResizeController
                 return _extents;
             }
 
-            if (!force &&
-                !ShouldRequestFullInternalResizeNoLock(valid, timestampTicks) &&
-                ExtentMatches(_extents.PendingFullInternalExtent, valid))
-            {
+            // Native resize paths may publish the same final extent through WM_SIZE,
+            // WM_EXITSIZEMOVE, and the normal framebuffer callback. A duplicate is
+            // already represented by the pending generation; advancing its generation
+            // would invalidate the render-thread request that is queued for that target.
+            if (ExtentMatches(_extents.PendingFullInternalExtent, valid))
                 return _extents;
-            }
 
             requestAccepted = force || ShouldRequestFullInternalResizeNoLock(valid, timestampTicks);
-            if (requestAccepted)
-            {
-                _pendingFullInternalGeneration++;
-                _lastFullInternalRequestTicks = timestampTicks;
-            }
+            if (!requestAccepted)
+                return _extents;
+
+            _pendingFullInternalGeneration++;
+            _lastFullInternalRequestTicks = timestampTicks;
 
             _extents = _extents with
             {

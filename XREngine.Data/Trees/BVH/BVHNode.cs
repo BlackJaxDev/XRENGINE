@@ -172,9 +172,9 @@ namespace SimpleScene.Util.ssBVH
 
         internal void ComputeVolume(ISSBVHNodeAdaptor<GO> nAda)
         {
-            AssignVolume(nAda.ObjectPos(gobjects![0]), nAda.Radius(gobjects[0]));
+            box = AABBofOBJ(nAda, gobjects![0]);
             for (int i = 1; i < gobjects.Count; i++)
-                ExpandVolume(nAda, nAda.ObjectPos(gobjects[i]), nAda.Radius(gobjects[i]));
+                box.ExpandToInclude(AABBofOBJ(nAda, gobjects[i]));
         }
 
         internal bool RefitVolume(ISSBVHNodeAdaptor<GO> nAda)
@@ -249,18 +249,18 @@ namespace SimpleScene.Util.ssBVH
         }
         internal static AABB AABBofOBJ(ISSBVHNodeAdaptor<GO> nAda, GO obj)
         {
-            float radius = nAda.Radius(obj);
-            return new AABB(new Vector3(-radius), new Vector3(radius));
+            if (nAda is IExactBvhBoundsAdaptor<GO> exactBounds)
+                return exactBounds.ObjectBounds(obj);
+
+            return AABB.FromSphere(nAda.ObjectPos(obj), nAda.Radius(obj));
         }
 
         internal static float SAofList(ISSBVHNodeAdaptor<GO> nAda, List<GO> list)
         {
             var box = AABBofOBJ(nAda, list[0]);
 
-            list.ToList().GetRange(1, list.Count - 1).ForEach(obj => {
-                var newbox = AABBofOBJ(nAda, obj);
-                box.ExpandToInclude(newbox);
-            });
+            for (int i = 1; i < list.Count; i++)
+                box.ExpandToInclude(AABBofOBJ(nAda, list[i]));
 
             return SA(box);
         }
@@ -270,24 +270,6 @@ namespace SimpleScene.Util.ssBVH
         {
             NONE, L_RL, L_RR, R_LL, R_LR, LL_RR, LL_RL,
         }
-
-        internal class RotOpt : IComparable<RotOpt>
-        {  // rotation option
-            public float SAH;
-            public Rot rot;
-            internal RotOpt(float SAH, Rot rot)
-            {
-                this.SAH = SAH;
-                this.rot = rot;
-            }
-            public int CompareTo(RotOpt? other)
-            {
-                return SAH.CompareTo(other?.SAH);
-            }
-        }
-
-        [DebuggerBrowsable(DebuggerBrowsableState.Never)]
-        private static List<Rot> EachRot => new(Enum.GetValues<Rot>());
 
         private static BVH<GO> RequireBVH(ISSBVHNodeAdaptor<GO> adaptor)
             => adaptor.BVH ?? throw new InvalidOperationException("Adaptor must be bound to a BVH instance.");
@@ -325,50 +307,46 @@ namespace SimpleScene.Util.ssBVH
 
             float mySA = SA(leftChild) + SA(rightChild);
 
-            RotOpt bestRot = EachRot.Min((rot) =>
+            float bestSah = mySA;
+            Rot bestRot = Rot.NONE;
+            for (Rot rot = Rot.L_RL; rot <= Rot.LL_RL; rot++)
             {
-                return rot switch
+                float candidateSah = rot switch
                 {
-                    Rot.NONE => new RotOpt(mySA, Rot.NONE),
                     Rot.L_RL => (rightChild.IsLeaf || rightChild.left is null || rightChild.right is null)
-                        ? new RotOpt(float.MaxValue, Rot.NONE)
-                        : new RotOpt(SA(rightChild.left) + SA(AABBofPair(leftChild, rightChild.right)), rot),
+                        ? float.MaxValue
+                        : SA(rightChild.left) + SA(AABBofPair(leftChild, rightChild.right)),
                     Rot.L_RR => (rightChild.IsLeaf || rightChild.left is null || rightChild.right is null)
-                        ? new RotOpt(float.MaxValue, Rot.NONE)
-                        : new RotOpt(SA(rightChild.right) + SA(AABBofPair(leftChild, rightChild.left)), rot),
+                        ? float.MaxValue
+                        : SA(rightChild.right) + SA(AABBofPair(leftChild, rightChild.left)),
                     Rot.R_LL => (leftChild.IsLeaf || leftChild.left is null || leftChild.right is null)
-                        ? new RotOpt(float.MaxValue, Rot.NONE)
-                        : new RotOpt(SA(AABBofPair(rightChild, leftChild.right)) + SA(leftChild.left), rot),
+                        ? float.MaxValue
+                        : SA(AABBofPair(rightChild, leftChild.right)) + SA(leftChild.left),
                     Rot.R_LR => (leftChild.IsLeaf || leftChild.left is null || leftChild.right is null)
-                        ? new RotOpt(float.MaxValue, Rot.NONE)
-                        : new RotOpt(SA(AABBofPair(rightChild, leftChild.left)) + SA(leftChild.right), rot),
+                        ? float.MaxValue
+                        : SA(AABBofPair(rightChild, leftChild.left)) + SA(leftChild.right),
                     Rot.LL_RR => (leftChild.IsLeaf || rightChild.IsLeaf || leftChild.left is null || leftChild.right is null || rightChild.left is null || rightChild.right is null)
-                        ? new RotOpt(float.MaxValue, Rot.NONE)
-                        : new RotOpt(SA(AABBofPair(rightChild.right, leftChild.right)) + SA(AABBofPair(rightChild.left, leftChild.left)), rot),
+                        ? float.MaxValue
+                        : SA(AABBofPair(rightChild.right, leftChild.right)) + SA(AABBofPair(rightChild.left, leftChild.left)),
                     Rot.LL_RL => (leftChild.IsLeaf || rightChild.IsLeaf || leftChild.left is null || leftChild.right is null || rightChild.left is null || rightChild.right is null)
-                        ? new RotOpt(float.MaxValue, Rot.NONE)
-                        : new RotOpt(SA(AABBofPair(rightChild.left, leftChild.right)) + SA(AABBofPair(leftChild.left, rightChild.right)), rot),
+                        ? float.MaxValue
+                        : SA(AABBofPair(rightChild.left, leftChild.right)) + SA(AABBofPair(leftChild.left, rightChild.right)),
                     _ => throw new NotImplementedException($"missing implementation for BVH Rotation SAH Computation .. {rot}"),
                 };
-            }) ?? new RotOpt(mySA, Rot.NONE);
 
-            // perform the best rotation...
-            if (bestRot.rot != Rot.NONE)
-            {
-                if (parent != null && (DateTime.Now.Ticks % 100) < 2)
+                if (candidateSah < bestSah)
                 {
-                    bvh._refitNodes.Add(parent);
+                    bestSah = candidateSah;
+                    bestRot = rot;
                 }
             }
-            else
-            {
-                if (parent != null)
-                    bvh._refitNodes.Add(parent);
 
-                if (((mySA - bestRot.SAH) / mySA) < 0.3f)
-                    return; // the benefit is not worth the cost
+            // perform the best rotation...
+            if (parent != null)
+                bvh._refitNodes.Add(parent);
 
-                Console.WriteLine("BVH swap {0} from {1} to {2}", bestRot.rot.ToString(), mySA, bestRot.SAH);
+            if (bestRot == Rot.NONE || mySA <= 0.0f || ((mySA - bestSah) / mySA) < 0.3f)
+                return;
 
                 // in order to swap we need to:
                 //  1. swap the node locations
@@ -376,7 +354,7 @@ namespace SimpleScene.Util.ssBVH
                 //  3. update the parent pointers
                 //  4. refit the boundary box
                 BVHNode<GO>? swap = null;
-                switch (bestRot.rot)
+                switch (bestRot)
                 {
                     case Rot.NONE:
                         break;
@@ -448,11 +426,11 @@ namespace SimpleScene.Util.ssBVH
                         break;
 
                     default:
-                        throw new NotImplementedException($"missing implementation for BVH Rotation .. {bestRot.rot}");
+                        throw new NotImplementedException($"missing implementation for BVH Rotation .. {bestRot}");
                 }
 
                 // fix the depths if necessary....
-                switch (bestRot.rot)
+                switch (bestRot)
                 {
                     case Rot.L_RL:
                     case Rot.L_RR:
@@ -461,30 +439,6 @@ namespace SimpleScene.Util.ssBVH
                         SetDepth(nAda, depth);
                         break;
                 }
-            }
-
-        }
-
-        [DebuggerBrowsable(DebuggerBrowsableState.Never)]
-        private static List<Axis> EachAxis => new(Enum.GetValues<Axis>());
-
-        internal class SplitAxisOpt : IComparable<SplitAxisOpt>
-        {
-            // split Axis option
-            public float SAH;
-            public Axis axis;
-            public List<GO> left, right;
-
-            internal SplitAxisOpt(float SAH, Axis axis, List<GO> left, List<GO> right)
-            {
-                this.SAH = SAH;
-                this.axis = axis;
-                this.left = left;
-                this.right = right;
-            }
-
-            public int CompareTo(SplitAxisOpt? other)
-                => SAH.CompareTo(other?.SAH);
         }
 
         internal void SplitNode(ISSBVHNodeAdaptor<GO> nAda)
@@ -495,41 +449,19 @@ namespace SimpleScene.Util.ssBVH
                 throw new InvalidOperationException("Cannot split a BVH node without objects.");
 
             List<GO> splitlist = splitlistNullable;
-            splitlist.ForEach(o => nAda.UnmapObject(o));
-            int center = splitlist.Count / 2; // find the center object
+            for (int i = 0; i < splitlist.Count; i++)
+                nAda.UnmapObject(splitlist[i]);
 
-            SplitAxisOpt? bestSplitOpt = EachAxis.Min((axis) =>
-            {
-                var orderedlist = new List<GO>(splitlist);
-                switch (axis)
-                {
-                    case Axis.X:
-                        orderedlist.Sort(delegate (GO go1, GO go2) { return nAda.ObjectPos(go1).X.CompareTo(nAda.ObjectPos(go2).X); });
-                        break;
-                    case Axis.Y:
-                        orderedlist.Sort(delegate (GO go1, GO go2) { return nAda.ObjectPos(go1).Y.CompareTo(nAda.ObjectPos(go2).Y); });
-                        break;
-                    case Axis.Z:
-                        orderedlist.Sort(delegate (GO go1, GO go2) { return nAda.ObjectPos(go1).Z.CompareTo(nAda.ObjectPos(go2).Z); });
-                        break;
-                    default:
-                        throw new NotImplementedException("unknown split axis: " + axis.ToString());
-                }
-
-                var left_s = orderedlist.GetRange(0, center);
-                var right_s = orderedlist.GetRange(center, splitlist.Count - center);
-
-                float SAH = BVHNode<GO>.SAofList(nAda, left_s) * left_s.Count + BVHNode<GO>.SAofList(nAda, right_s) * right_s.Count;
-                return new SplitAxisOpt(SAH, axis, left_s, right_s);
-            });
-
-            SplitAxisOpt bestSplit = bestSplitOpt ?? throw new InvalidOperationException("Unable to determine BVH split axis.");
+            GO[] objects = splitlist.ToArray();
+            int center = objects.Length / 2;
+            Axis axis = PickSplitAxis();
+            NthElement(objects, 0, objects.Length, center, axis, nAda);
 
             // perform the split
             gobjects = null;
             BVH<GO> bvh = RequireBVH(nAda);
-            left = new BVHNode<GO>(bvh, this, bestSplit.left, bestSplit.axis, this.depth + 1); // Split the Hierarchy to the left
-            right = new BVHNode<GO>(bvh, this, bestSplit.right, bestSplit.axis, this.depth + 1); // Split the Hierarchy to the right                                
+            left = new BVHNode<GO>(bvh, this, objects, 0, center, depth + 1);
+            right = new BVHNode<GO>(bvh, this, objects, center, objects.Length - center, depth + 1);
         }
 
         internal void SplitIfNecessary(ISSBVHNodeAdaptor<GO> nAda)
@@ -859,13 +791,14 @@ namespace SimpleScene.Util.ssBVH
         }
 
         internal BVHNode(BVH<GO> bvh, List<GO> gobjectlist)
-            : this(bvh, null, gobjectlist, Axis.X, 0) { }
+            : this(bvh, null, gobjectlist.ToArray(), 0, gobjectlist.Count, 0) { }
 
         private BVHNode(
             BVH<GO> bvh,
             BVHNode<GO>? lparent,
-            List<GO> gobjectlist,
-            Axis lastSplitAxis,
+            GO[] objects,
+            int start,
+            int count,
             int curdepth)
         {
             ISSBVHNodeAdaptor<GO> nAda = bvh._nAda;
@@ -879,30 +812,84 @@ namespace SimpleScene.Util.ssBVH
             
             // Early out check due to bad data
             // If the list is empty then we have no BVHGObj, or invalid parameters are passed in
-            if (gobjectlist == null || gobjectlist.Count < 1)
+            if (count < 1)
                 throw new Exception("ssBVHNode constructed with invalid paramaters");
             
             // Check if we’re at our LEAF node, and if so, save the objects and stop recursing.  Also store the min/max for the leaf node and update the parent appropriately
-            if (gobjectlist.Count <= bvh.LEAF_OBJ_MAX)
+            if (count <= bvh.LEAF_OBJ_MAX)
             {
                 // once we reach the leaf node, we must set prev/next to null to signify the end
                 left = null;
                 right = null;
                 // at the leaf node we store the remaining objects, so initialize a list
-                gobjects = gobjectlist;
-                gobjects.ForEach(o => nAda.MapObjectToBVHLeaf(o, this));
+                gobjects = new List<GO>(count);
+                for (int i = 0; i < count; i++)
+                {
+                    GO obj = objects[start + i];
+                    gobjects.Add(obj);
+                    nAda.MapObjectToBVHLeaf(obj, this);
+                }
                 ComputeVolume(nAda);
-                SplitIfNecessary(nAda);
             }
             else
             {
-                // --------------------------------------------------------------------------------------------
-                // if we have more than (bvh.LEAF_OBJECT_COUNT) objects, then compute the volume and split
-                gobjects = gobjectlist;
-                ComputeVolume(nAda);
-                SplitNode(nAda);
+                ComputeRangeVolume(nAda, objects, start, count);
+                Axis axis = PickSplitAxis();
+                int leftCount = count / 2;
+                int middle = start + leftCount;
+                NthElement(objects, start, start + count, middle, axis, nAda);
+                gobjects = null;
+                left = new BVHNode<GO>(bvh, this, objects, start, leftCount, curdepth + 1);
+                right = new BVHNode<GO>(bvh, this, objects, middle, count - leftCount, curdepth + 1);
                 ChildRefit(nAda, propagate: false);
             }
         }
+
+        private void ComputeRangeVolume(ISSBVHNodeAdaptor<GO> nAda, GO[] objects, int start, int count)
+        {
+            box = AABBofOBJ(nAda, objects[start]);
+            for (int i = 1; i < count; i++)
+                box.ExpandToInclude(AABBofOBJ(nAda, objects[start + i]));
+        }
+
+        private static void NthElement(GO[] objects, int start, int end, int nth, Axis axis, ISSBVHNodeAdaptor<GO> nAda)
+        {
+            int leftIndex = start;
+            int rightIndex = end - 1;
+            while (leftIndex < rightIndex)
+            {
+                float pivot = AxisValue(nAda.ObjectPos(objects[leftIndex + ((rightIndex - leftIndex) >> 1)]), axis);
+                int i = leftIndex;
+                int j = rightIndex;
+                while (i <= j)
+                {
+                    while (AxisValue(nAda.ObjectPos(objects[i]), axis) < pivot)
+                        i++;
+                    while (AxisValue(nAda.ObjectPos(objects[j]), axis) > pivot)
+                        j--;
+                    if (i > j)
+                        break;
+
+                    (objects[i], objects[j]) = (objects[j], objects[i]);
+                    i++;
+                    j--;
+                }
+
+                if (nth <= j)
+                    rightIndex = j;
+                else if (nth >= i)
+                    leftIndex = i;
+                else
+                    return;
+            }
+        }
+
+        private static float AxisValue(Vector3 value, Axis axis) => axis switch
+        {
+            Axis.X => value.X,
+            Axis.Y => value.Y,
+            Axis.Z => value.Z,
+            _ => throw new ArgumentOutOfRangeException(nameof(axis)),
+        };
     }
 }

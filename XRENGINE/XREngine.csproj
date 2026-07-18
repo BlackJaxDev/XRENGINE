@@ -10,21 +10,37 @@
     <BaseOutputPath>$(SolutionDir)Build\Engine\$(Configuration)\$(Platform)</BaseOutputPath>
     <AotFactoryRegistrationGenerator>$(MSBuildProjectDirectory)\..\Tools\Generate-AotFactoryRegistrations.ps1</AotFactoryRegistrationGenerator>
     <GeneratedAotFactoryRegistrations>$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.g.cs</GeneratedAotFactoryRegistrations>
+    <AotFactoryRegistrationStamp>$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.stamp</AotFactoryRegistrationStamp>
+    <AotFactoryRegistrationInputIntegrationRoot>$(MSBuildProjectDirectory)\..\XREngine.Runtime.InputIntegration</AotFactoryRegistrationInputIntegrationRoot>
+    <AotFactoryRegistrationRenderingRoot>$(MSBuildProjectDirectory)\..\XREngine.Runtime.Rendering</AotFactoryRegistrationRenderingRoot>
     <RiveSharpManagedDll>$(MSBuildProjectDirectory)\..\Build\Submodules\rive-sharp\RiveSharp\bin\$(Configuration)\netstandard2.0\RiveSharp.dll</RiveSharpManagedDll>
     <DefineConstants Condition="Exists('$(RiveSharpManagedDll)')">$(DefineConstants);XRENGINE_HAS_RIVESHARP</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(DesignTimeBuild)' != 'true'">
     <Compile Include="$(GeneratedAotFactoryRegistrations)" />
+    <AotFactoryRegistrationInput Include="$(MSBuildProjectDirectory)\**\*.cs;$(AotFactoryRegistrationInputIntegrationRoot)\**\*.cs;$(AotFactoryRegistrationRenderingRoot)\**\*.cs"
+                                 Exclude="$(MSBuildProjectDirectory)\bin\**;$(MSBuildProjectDirectory)\obj\**;$(AotFactoryRegistrationInputIntegrationRoot)\bin\**;$(AotFactoryRegistrationInputIntegrationRoot)\obj\**;$(AotFactoryRegistrationRenderingRoot)\bin\**;$(AotFactoryRegistrationRenderingRoot)\obj\**;**\*.g.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="XREngine.UnitTests" />
   </ItemGroup>
 
-  <Target Name="GenerateAotFactoryRegistrations" BeforeTargets="CoreCompile" Condition="'$(DesignTimeBuild)' != 'true' and Exists('$(AotFactoryRegistrationGenerator)')">
+  <Target Name="InvalidateMissingAotFactoryRegistrationOutput"
+          BeforeTargets="GenerateAotFactoryRegistrations"
+          Condition="'$(DesignTimeBuild)' != 'true' and !Exists('$(GeneratedAotFactoryRegistrations)') and Exists('$(AotFactoryRegistrationStamp)')">
+    <Delete Files="$(AotFactoryRegistrationStamp)" />
+  </Target>
+
+  <Target Name="GenerateAotFactoryRegistrations"
+          BeforeTargets="CoreCompile"
+          Inputs="$(AotFactoryRegistrationGenerator);$(MSBuildProjectFullPath);@(AotFactoryRegistrationInput)"
+          Outputs="$(AotFactoryRegistrationStamp)"
+          Condition="'$(DesignTimeBuild)' != 'true' and Exists('$(AotFactoryRegistrationGenerator)')">
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(GeneratedAotFactoryRegistrations)'))" />
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(AotFactoryRegistrationGenerator)&quot; -ProjectDir &quot;$(MSBuildProjectDirectory)&quot; -OutputFile &quot;$(GeneratedAotFactoryRegistrations)&quot;" />
+    <Touch Files="$(AotFactoryRegistrationStamp)" AlwaysCreate="true" ForceTouch="true" />
   </Target>
 
   <PropertyGroup>
@@ -116,8 +132,8 @@
     <PackageReference Include="Jitter2" Version="2.7.9" />
     <PackageReference Include="JoltPhysicsSharp" Version="2.20.1" />
     <PackageReference Include="LZMA-SDK" Version="22.1.1" />
-    <PackageReference Include="Magick.NET.Core" Version="14.13.1" />
-    <PackageReference Include="Magick.NET.SystemDrawing" Version="8.0.22" />
+    <PackageReference Include="Magick.NET.Core" Version="14.14.0" />
+    <PackageReference Include="Magick.NET.SystemDrawing" Version="8.0.23" />
     <PackageReference Include="MagicPhysX" Version="1.0.0" />
     <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
     <PackageReference Include="MathNet.Numerics.Providers.CUDA" Version="5.0.0" />
