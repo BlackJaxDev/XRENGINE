@@ -6,7 +6,15 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Platforms>AnyCPU;x64</Platforms>
+    <FastGltfBridgeProject>$(MSBuildProjectDirectory)\..\Build\Native\FastGltfBridge\FastGltfBridge.vcxproj</FastGltfBridgeProject>
+    <FastGltfBridgeNativeDll>$(MSBuildProjectDirectory)\runtimes\win-x64\native\FastGltfBridge.Native.dll</FastGltfBridgeNativeDll>
+    <FastGltfBridgeBuildStateFile>$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)fastgltf-active-native-configuration.txt</FastGltfBridgeBuildStateFile>
+    <FastGltfBridgeBuildStampFile>$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)fastgltf-native-build.stamp</FastGltfBridgeBuildStampFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <FastGltfBridgeBuildInput Include="$(FastGltfBridgeProject);$(MSBuildProjectDirectory)\..\Build\Native\FastGltfBridge\**\*.cpp;$(MSBuildProjectDirectory)\..\Build\Native\FastGltfBridge\**\*.h;$(MSBuildProjectDirectory)\..\Build\Native\FastGltfBridge\**\*.hpp" />
+  </ItemGroup>
 
   <ItemGroup>
     <None Include="runtimes\win-x64\native\FastGltfBridge.Native.dll" Condition="Exists('runtimes\win-x64\native\FastGltfBridge.Native.dll')">
@@ -17,10 +25,22 @@
     </None>
   </ItemGroup>
 
-  <Target Name="BuildFastGltfBridge" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT' and Exists('..\Build\Native\FastGltfBridge\FastGltfBridge.vcxproj')">
+  <Target Name="PrepareFastGltfBridgeBuildState"
+          BeforeTargets="BuildFastGltfBridge"
+          Condition="'$(OS)' == 'Windows_NT' and Exists('$(FastGltfBridgeProject)')">
+    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(FastGltfBridgeBuildStateFile)'))" />
     <PropertyGroup>
-      <FastGltfBridgeProject>..\Build\Native\FastGltfBridge\FastGltfBridge.vcxproj</FastGltfBridgeProject>
-      <FastGltfBridgeNativeDll>runtimes\win-x64\native\FastGltfBridge.Native.dll</FastGltfBridgeNativeDll>
+      <FastGltfBridgeCurrentBuildState>$(Configuration)|x64</FastGltfBridgeCurrentBuildState>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(FastGltfBridgeBuildStateFile)" Lines="$(FastGltfBridgeCurrentBuildState)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <Target Name="BuildFastGltfBridge"
+          BeforeTargets="PrepareForBuild"
+          Inputs="@(FastGltfBridgeBuildInput);$(FastGltfBridgeBuildStateFile)"
+          Outputs="$(FastGltfBridgeNativeDll);$(FastGltfBridgeBuildStampFile)"
+          Condition="'$(OS)' == 'Windows_NT' and Exists('$(FastGltfBridgeProject)')">
+    <PropertyGroup>
       <VsWhereExe>$(MSBuildProgramFiles32)\Microsoft Visual Studio\Installer\vswhere.exe</VsWhereExe>
       <FastGltfBridgeMsBuildPathFile>$(BaseIntermediateOutputPath)fastgltf-msbuild-path.txt</FastGltfBridgeMsBuildPathFile>
     </PropertyGroup>
@@ -44,6 +64,7 @@
     <Error Condition="'$(FastGltfBridgeMsBuildPath)' == '' and !Exists('$(FastGltfBridgeNativeDll)')" Text="Could not locate Visual Studio MSBuild.exe required to build FastGltfBridge.vcxproj, and $(FastGltfBridgeNativeDll) is missing." />
 
     <Exec Condition="'$(FastGltfBridgeMsBuildPath)' != ''" Command="&quot;$(FastGltfBridgeMsBuildPath)&quot; &quot;$(FastGltfBridgeProject)&quot; /m /nologo /p:Configuration=$(Configuration);Platform=x64" />
+    <WriteLinesToFile File="$(FastGltfBridgeBuildStampFile)" Lines="$(FastGltfBridgeCurrentBuildState)" Overwrite="true" />
   </Target>
 
 </Project>

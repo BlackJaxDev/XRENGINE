@@ -36,6 +36,14 @@ namespace XREngine.Scene
         private ECpuSceneCullingStructure _cpuSceneCullingStructureActive = RuntimeEngine.EffectiveSettings.CpuSceneCullingStructure;
         private I3DRenderTree<RenderInfo3D> ActiveCpuRenderTree
             => _cpuSceneCullingStructureActive == ECpuSceneCullingStructure.Bvh ? _bvhRenderTree : RenderTree;
+
+        /// <summary>
+        /// Returns the latest published CPU scene-BVH quality, mutation, traversal,
+        /// snapshot, and synchronization counters for profiler and editor diagnostics.
+        /// </summary>
+        [YamlIgnore]
+        public CpuBvhDiagnostics CpuBvhDiagnostics => _bvhRenderTree.GetDiagnostics();
+
         public BvhRaycastDispatcher BvhRaycasts { get; } = new();
 
         public VisualScene3D()

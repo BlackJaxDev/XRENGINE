@@ -212,20 +212,32 @@ public partial class XRMesh
     {
         triangle = null;
         BVH<Triangle>? bvh = CachedBVHTree;
-        if (bvh is null) return null;
+        if (bvh is null)
+            return null;
+
+        Vector3 direction = localSegment.End - localSegment.Start;
+        float segmentLength = direction.Length();
+        if (segmentLength <= float.Epsilon)
+            return null;
+        direction /= segmentLength;
 
         var matches = bvh.Traverse(x => GeoUtil.Intersect.SegmentWithAABB(localSegment.Start, localSegment.End, x.Min, x.Max, out _, out _));
-        if (matches is null) return null;
 
         float? minDist = null;
         foreach (var node in matches)
         {
             if (node.gobjects is null || node.gobjects.Count == 0)
                 continue;
-            var tri = node.gobjects[0];
-            GeoUtil.Intersect.RayWithTriangle(localSegment.Start, localSegment.End, tri.A, tri.B, tri.C, out float dist);
-            if (minDist is null || dist < minDist)
+
+            for (int i = 0; i < node.gobjects.Count; i++)
             {
+                Triangle tri = node.gobjects[i];
+                if (!GeoUtil.Intersect.RayWithTriangle(localSegment.Start, direction, tri.A, tri.B, tri.C, out float dist)
+                    || dist < 0.0f
+                    || dist > segmentLength
+                    || (minDist.HasValue && dist >= minDist.Value))
+                    continue;
+
                 minDist = dist;
                 triangle = tri;
             }

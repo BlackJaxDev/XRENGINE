@@ -75,6 +75,45 @@ public class XRMeshBvhTests
         updatedRoot.box.ShouldNotBe(originalBounds);
     }
 
+    [Test]
+    public void TriangleBvh_UsesExactBoundsAwayFromOrigin()
+    {
+        Triangle triangle = new(
+            new Vector3(100.0f, 2.0f, -4.0f),
+            new Vector3(104.0f, 3.0f, -2.0f),
+            new Vector3(101.0f, 7.0f, -3.0f));
+
+        var tree = new BVH<Triangle>(new TriangleAdapter(), [triangle]);
+
+        tree._rootBVH.box.Min.ShouldBe(new Vector3(100.0f, 2.0f, -4.0f));
+        tree._rootBVH.box.Max.ShouldBe(new Vector3(104.0f, 7.0f, -2.0f));
+    }
+
+    [Test]
+    public void Intersect_UsesSegmentDirectionAndRejectsHitsBeyondEndpoint()
+    {
+        var mesh = XRMesh.CreateTriangles(
+        [
+            new Vector3(-1.0f, -1.0f, 0.0f),
+            new Vector3(1.0f, -1.0f, 0.0f),
+            new Vector3(0.0f, 1.0f, 0.0f),
+        ]);
+        mesh.AllowBVHGeneration = true;
+        mesh.GenerateBVH();
+
+        float? distance = mesh.Intersect(
+            new Segment(new Vector3(0.0f, 0.0f, 1.0f), new Vector3(0.0f, 0.0f, -1.0f)),
+            out Triangle? hit);
+
+        distance.ShouldNotBeNull();
+        distance!.Value.ShouldBe(1.0f, 1e-5f);
+        hit.ShouldNotBeNull();
+
+        mesh.Intersect(
+            new Segment(new Vector3(0.0f, 0.0f, 1.0f), new Vector3(0.0f, 0.0f, 0.25f)),
+            out _).ShouldBeNull();
+    }
+
     private static XRMesh CreateUnitSquareMesh()
     {
         Vector3[] positions =

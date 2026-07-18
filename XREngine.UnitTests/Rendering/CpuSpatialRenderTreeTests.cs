@@ -289,7 +289,7 @@ public sealed class CpuSpatialRenderTreeTests
 
     [Test]
     [NonParallelizable]
-    public void CpuBvhTraversalBlocksConcurrentRemakeAndSwap()
+    public void CpuBvhTraversalUsesStableSnapshotWhileWriterPublishes()
     {
         var tree = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(Vector3.Zero, new Vector3(100.0f)));
         tree.AddRange(CreateOriginCrossingItems(32));
@@ -324,12 +324,222 @@ public sealed class CpuSpatialRenderTreeTests
         });
 
         swapStarted.Wait(TimeSpan.FromSeconds(2.0)).ShouldBeTrue();
-        Thread.Sleep(50);
-        Volatile.Read(ref swapCompleted).ShouldBe(0);
+        SpinWait.SpinUntil(() => Volatile.Read(ref swapCompleted) == 1, TimeSpan.FromSeconds(2.0)).ShouldBeTrue();
 
         releaseTraversal.Set();
         Task.WaitAll([traversalTask, swapTask], TimeSpan.FromSeconds(2.0)).ShouldBeTrue();
         Volatile.Read(ref swapCompleted).ShouldBe(1);
+    }
+
+    [Test]
+    public void CpuBvhSparseMoveRefitsWithoutTopologyRebuild()
+    {
+        var tree = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(Vector3.Zero, new Vector3(1000.0f)));
+        List<TestRenderItem> items = CreateGridItems(256);
+        tree.AddRange(items);
+        tree.Swap();
+        CpuBvhDiagnostics before = tree.GetDiagnostics();
+
+        TestRenderItem moved = items[137];
+        Vector3 movedCenter = new(2.5f, 6.5f, -5.5f);
+        moved.LocalCullingVolume = AABB.FromCenterSize(movedCenter, new Vector3(2.0f));
+        moved.OctreeNode!.QueueItemMoved(moved);
+        tree.Swap();
+
+        CpuBvhDiagnostics after = tree.GetDiagnostics();
+        after.LastUpdate.ShouldBeOneOf(CpuBvhUpdateKind.BoundsRefit, CpuBvhUpdateKind.LocalRestructure);
+        after.TopologyBuildCount.ShouldBe(before.TopologyBuildCount);
+        after.BoundsRefitCount.ShouldBe(before.BoundsRefitCount + 1);
+        after.RefittedLeafCount.ShouldBeGreaterThan(before.RefittedLeafCount);
+        after.RefittedAncestorCount.ShouldBeGreaterThan(before.RefittedAncestorCount);
+        (after.RefittedAncestorCount - before.RefittedAncestorCount).ShouldBeLessThan(after.NodeCount);
+        List<TestRenderItem> visible = [];
+        tree.CollectVisible(AABB.FromCenterSize(movedCenter, new Vector3(0.25f)), false, visible.Add, Intersects);
+        visible.ShouldContain(moved);
+    }
+
+    [Test]
+    public void CpuBvhCleanSwapIsConstantGenerationAndAllocationFreeAfterWarmup()
+    {
+        var tree = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(Vector3.Zero, new Vector3(1000.0f)));
+        tree.AddRange(CreateGridItems(256));
+        tree.Swap();
+        for (int i = 0; i < 64; i++)
+            tree.Swap();
+
+        long generation = tree.PublishedGeneration;
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < 256; i++)
+            tree.Swap();
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        tree.PublishedGeneration.ShouldBe(generation);
+        allocated.ShouldBe(0);
+        tree.GetDiagnostics().LastUpdate.ShouldBe(CpuBvhUpdateKind.Clean);
+    }
+
+    [Test]
+    public void CpuBvhTraversalIsAllocationFreeAfterWarmup()
+    {
+        var tree = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(Vector3.Zero, new Vector3(1000.0f)));
+        tree.AddRange(CreateGridItems(512));
+        tree.Swap();
+        IVolume volume = AABB.FromCenterSize(Vector3.Zero, new Vector3(200.0f));
+        Action<TestRenderItem> action = IgnoreItem;
+        OctreeNode<TestRenderItem>.DelIntersectionTest intersection = Intersects;
+        for (int i = 0; i < 128; i++)
+            tree.CollectVisible(volume, false, action, intersection);
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < 512; i++)
+            tree.CollectVisible(volume, false, action, intersection);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        allocated.ShouldBe(0);
+    }
+
+    [Test]
+    public void CpuBvhRandomizedMixedMutationsMatchBruteForce()
+    {
+        const int seed = 0x5EED;
+        var random = new Random(seed);
+        var tree = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(Vector3.Zero, new Vector3(2000.0f)));
+        List<TestRenderItem> live = CreateRandomItems(random, 192, 0);
+        int nextId = live.Count;
+        tree.AddRange(live);
+        tree.Swap();
+
+        for (int step = 0; step < 160; step++)
+        {
+            int operation = random.Next(100);
+            if (operation < 70 && live.Count > 0)
+            {
+                TestRenderItem item = live[random.Next(live.Count)];
+                item.LocalCullingVolume = RandomBounds(random, allowDegenerate: true);
+                item.OctreeNode!.QueueItemMoved(item);
+            }
+            else if (operation < 85)
+            {
+                TestRenderItem item = CreateItem(nextId++, RandomVector(random, 400.0f), new Vector3(2.0f));
+                live.Add(item);
+                tree.Add(item);
+            }
+            else if (live.Count > 0)
+            {
+                int index = random.Next(live.Count);
+                TestRenderItem item = live[index];
+                live.RemoveAt(index);
+                tree.Remove(item);
+            }
+
+            tree.Swap();
+            for (int queryIndex = 0; queryIndex < 8; queryIndex++)
+            {
+                AABB query = AABB.FromCenterSize(RandomVector(random, 400.0f), new Vector3(random.Next(5, 120)));
+                int expected = 0;
+                for (int i = 0; i < live.Count; i++)
+                    if (Intersects(live[i], query, false))
+                        expected++;
+                CountVisible(tree, query).ShouldBe(expected, $"seed={seed}, step={step}, query={queryIndex}");
+            }
+        }
+    }
+
+    [Test]
+    public void CpuBvhHandlesEmptyDegenerateInvalidAndGiantBoundsConservatively()
+    {
+        var tree = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(Vector3.Zero, new Vector3(100.0f)));
+        tree.Swap();
+        tree.GetOccupancyStats().ItemCount.ShouldBe(0);
+        CountVisible(tree, AABB.FromCenterSize(Vector3.Zero, Vector3.One)).ShouldBe(0);
+
+        var point = CreateItem(1, Vector3.Zero, Vector3.Zero);
+        var giant = CreateItem(2, Vector3.Zero, new Vector3(10000.0f));
+        var invalid = new TestRenderItem
+        {
+            Id = 3,
+            LocalCullingVolume = new AABB(new Vector3(float.NaN), Vector3.One),
+        };
+        var unbounded = new TestRenderItem { Id = 4, LocalCullingVolume = null };
+        tree.AddRange([point, giant, invalid, unbounded]);
+        tree.Swap();
+
+        CpuBvhDiagnostics diagnostics = tree.GetDiagnostics();
+        diagnostics.ItemCount.ShouldBe(4);
+        diagnostics.UnboundedItemCount.ShouldBe(2);
+        CountVisible(tree, AABB.FromCenterSize(new Vector3(4000.0f), Vector3.One)).ShouldBe(3);
+        float.IsFinite(diagnostics.NormalizedSahCost).ShouldBeTrue();
+    }
+
+    [Test]
+    public void CpuBvhIdenticalCentroidsAreDeterministicAndDepthBounded()
+    {
+        List<TestRenderItem> firstItems = CreateIdenticalCentroidItems(1024);
+        List<TestRenderItem> secondItems = CreateIdenticalCentroidItems(1024);
+        var first = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(Vector3.Zero, new Vector3(100.0f)));
+        var second = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(Vector3.Zero, new Vector3(100.0f)));
+        first.AddRange(firstItems);
+        second.AddRange(secondItems);
+        first.Swap();
+        second.Swap();
+
+        CpuBvhDiagnostics firstDiagnostics = first.GetDiagnostics();
+        CpuBvhDiagnostics secondDiagnostics = second.GetDiagnostics();
+        firstDiagnostics.NodeCount.ShouldBe(secondDiagnostics.NodeCount);
+        firstDiagnostics.MaxDepth.ShouldBe(secondDiagnostics.MaxDepth);
+        firstDiagnostics.NormalizedSahCost.ShouldBe(secondDiagnostics.NormalizedSahCost, 1e-5f);
+        firstDiagnostics.MaxDepth.ShouldBeLessThan(32);
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void CpuBvhConcurrentReadersDoNotSerializeAndObserveOneGeneration()
+    {
+        var tree = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(Vector3.Zero, new Vector3(1000.0f)));
+        tree.AddRange(CreateGridItems(512));
+        tree.Swap();
+        using var allEntered = new CountdownEvent(4);
+        using var release = new ManualResetEventSlim();
+        int callbackEntrances = 0;
+
+        Task[] readers = Enumerable.Range(0, 4).Select(_ => Task.Run(() =>
+        {
+            tree.CollectAll(item =>
+            {
+                if (Interlocked.Increment(ref callbackEntrances) <= 4)
+                {
+                    allEntered.Signal();
+                    release.Wait();
+                }
+            });
+        })).ToArray();
+
+        allEntered.Wait(TimeSpan.FromSeconds(2.0)).ShouldBeTrue();
+        long before = tree.PublishedGeneration;
+        tree.Remake();
+        tree.Swap();
+        tree.PublishedGeneration.ShouldBeGreaterThan(before);
+        release.Set();
+        Task.WaitAll(readers, TimeSpan.FromSeconds(2.0)).ShouldBeTrue();
+    }
+
+    [Test]
+    public void CpuBvhPlaneMaskTraversalMatchesDelegatePath()
+    {
+        var tree = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(new Vector3(0.0f, 0.0f, -40.0f), new Vector3(300.0f)));
+        tree.AddRange(CreateFrustumParityItems());
+        tree.Swap();
+        var frustum = new Frustum(60.0f, 16.0f / 9.0f, 0.1f, 120.0f, -Vector3.UnitZ, Vector3.UnitY, Vector3.Zero);
+        int[] expected = CollectVisibleIds(tree, frustum);
+        var visitor = new IdCollectingVisitor(new List<int>());
+
+        tree.CollectVisible(frustum, ref visitor);
+        visitor.Ids.Sort();
+
+        visitor.Ids.ShouldBe(expected);
+        CpuBvhDiagnostics diagnostics = tree.GetDiagnostics();
+        diagnostics.FrustumPlaneTestCount.ShouldBeGreaterThan(0);
+        diagnostics.FrustumPlaneMaskEliminationCount.ShouldBeGreaterThan(0);
     }
 
     [Test]
@@ -394,6 +604,58 @@ public sealed class CpuSpatialRenderTreeTests
 
         return items;
     }
+
+    private static List<TestRenderItem> CreateGridItems(int count)
+    {
+        var items = new List<TestRenderItem>(count);
+        int side = (int)MathF.Ceiling(MathF.Pow(count, 1.0f / 3.0f));
+        for (int i = 0; i < count; i++)
+        {
+            int x = i % side;
+            int y = i / side % side;
+            int z = i / (side * side);
+            items.Add(CreateItem(i, new Vector3(x * 4.0f, y * 4.0f, z * 4.0f) - new Vector3(side * 2.0f), new Vector3(2.0f)));
+        }
+        return items;
+    }
+
+    private static List<TestRenderItem> CreateRandomItems(Random random, int count, int firstId)
+    {
+        var items = new List<TestRenderItem>(count);
+        for (int i = 0; i < count; i++)
+        {
+            Vector3 size = new(random.Next(1, 12), random.Next(1, 12), random.Next(1, 12));
+            items.Add(CreateItem(firstId + i, RandomVector(random, 400.0f), size));
+        }
+        return items;
+    }
+
+    private static List<TestRenderItem> CreateIdenticalCentroidItems(int count)
+    {
+        var items = new List<TestRenderItem>(count);
+        for (int i = 0; i < count; i++)
+        {
+            float size = 0.25f + i % 32;
+            items.Add(CreateItem(i, Vector3.Zero, new Vector3(size)));
+        }
+        return items;
+    }
+
+    private static AABB RandomBounds(Random random, bool allowDegenerate)
+    {
+        Vector3 size = allowDegenerate && random.Next(20) == 0
+            ? Vector3.Zero
+            : new Vector3(random.Next(1, 16), random.Next(1, 16), random.Next(1, 16));
+        return AABB.FromCenterSize(RandomVector(random, 400.0f), size);
+    }
+
+    private static Vector3 RandomVector(Random random, float extent)
+        => new(
+            (random.NextSingle() * 2.0f - 1.0f) * extent,
+            (random.NextSingle() * 2.0f - 1.0f) * extent,
+            (random.NextSingle() * 2.0f - 1.0f) * extent);
+
+    private static void IgnoreItem(TestRenderItem item) { }
 
     private static List<TestRenderItem> CreateFrustumParityItems()
     {
@@ -558,5 +820,11 @@ public sealed class CpuSpatialRenderTreeTests
     {
         public RenderInfo[] RenderedObjects => [];
         public float TransformDepth => 0.0f;
+    }
+
+    private struct IdCollectingVisitor(List<int> ids) : ICpuBvhVisitor<TestRenderItem>
+    {
+        public List<int> Ids { get; } = ids;
+        public readonly void Visit(TestRenderItem item) => Ids.Add(item.Id);
     }
 }
