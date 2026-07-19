@@ -5,7 +5,6 @@
 
 // Note: Using uniforms instead of Vulkan-specific specialization constants for OpenGL compatibility.
 uniform uint MAX_LEAF_PRIMITIVES; // default 1
-uniform uint BVH_MODE;            // 0 = Morton-only, 1 = Morton + SAH refinement
 
 #include "bvh_nodes.glslinc"
 
@@ -40,11 +39,6 @@ layout(std430, binding = 2) buffer BvhNodes
     BvhNode nodes[];
 };
 
-layout(std430, binding = 3) buffer PrimitiveRanges
-{
-    uvec2 ranges[];
-};
-
 // Scratch counters for bottom-up propagation. Must be zeroed before refit.
 layout(std430, binding = 11) buffer RefitCounters
 {
@@ -52,6 +46,8 @@ layout(std430, binding = 11) buffer RefitCounters
 };
 
 uniform uint debugValidation;
+uniform uint leafCount;
+uniform uint internalCount;
 
 uniform uint refitStage; // 0 = clear counters, 1 = update leaves + propagate to root
 
@@ -63,11 +59,11 @@ layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 void refitLeaf(uint nodeIndex)
 {
     uint safeNodeCount = min(nodeCount, uint(nodes.length()));
-    if (nodeIndex >= safeNodeCount || nodeIndex >= uint(ranges.length()))
+    if (nodeIndex >= safeNodeCount)
         return;
 
     BvhNode node = nodes[nodeIndex];
-    uvec2 range = ranges[nodeIndex];
+    uvec2 range = node.primitiveRange;
 
     if ((node.flags & BVH_FLAG_LEAF) != 0u)
     {
@@ -100,11 +96,15 @@ void refitLeaf(uint nodeIndex)
         {
             // Malformed LBVH connectivity can contain a parent-pointer cycle.
             // Never let that cycle become an unbounded GPU loop and trigger a TDR.
-            if (propagationGuard == 0u || parent >= safeNodeCount || parent >= uint(counters.length()))
+            if (propagationGuard == 0u || parent >= safeNodeCount || parent < leafCount)
                 return;
             propagationGuard--;
 
-            uint prior = atomicAdd(counters[parent], 1u);
+            uint counterIndex = parent - leafCount;
+            if (counterIndex >= internalCount || counterIndex >= uint(counters.length()))
+                return;
+
+            uint prior = atomicAdd(counters[counterIndex], 1u);
             if (prior == 1u)
             {
                 // Ensure we see the other child's bounds writes.
@@ -149,13 +149,13 @@ void main()
     if (refitStage == 0u)
     {
         uint gid = gl_GlobalInvocationID.x;
-        if (gid < nodeCount && gid < uint(counters.length()))
+        if (gid < internalCount && gid < uint(counters.length()))
             counters[gid] = 0u;
         return;
     }
 
     // Stage 1: Refit leaves and propagate to root.
-    uint nodeIndex = gl_GlobalInvocationID.x;
-    if (nodeIndex < nodeCount)
-        refitLeaf(nodeIndex);
+    uint leafIndex = gl_GlobalInvocationID.x;
+    if (leafIndex < leafCount)
+        refitLeaf(leafIndex);
 }

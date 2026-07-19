@@ -1030,15 +1030,20 @@ public sealed class VulkanP0ValidationTests
     }
 
     [Test]
-    public void VulkanComputeFallbackUniforms_AreCachedPerImage()
+    public void VulkanComputeUniforms_AreCachedPerImageAndDispatch()
     {
         string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+        string keySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VulkanRenderer.VkRenderProgram.ComputeUniformBufferKey.cs");
 
         programSource.ShouldContain("_computeUniformBuffers");
         programSource.ShouldContain("TryGetOrUpdateComputeFallbackUniformBuffer");
         programSource.ShouldContain("TryGetOrUpdateComputeAutoUniformBuffer");
         programSource.ShouldContain("EComputeUniformBufferKind.Fallback");
         programSource.ShouldContain("EComputeUniformBufferKind.Auto");
+        programSource.ShouldContain("reusableDescriptorBindingKey, out DescriptorBufferInfo bufferInfo");
+        programSource.ShouldContain("block.InstanceName,");
+        programSource.ShouldContain("dispatchKey);");
+        keySource.ShouldContain("ulong DispatchKey");
         programSource.ShouldNotContain("tempUniformBuffers.Add((buffer, memory));");
     }
 

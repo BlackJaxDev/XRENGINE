@@ -32,6 +32,17 @@ namespace XREngine.Rendering
         public const uint MeshletTaskRecordsConeCulled = 20;
         public const uint MeshletTaskRecordsHiZCulled = 21;
 
-        public const uint FieldCount = 22;
+        public const uint BvhVisitedInternalNodes = 22;
+        public const uint BvhVisitedLeaves = 23;
+        public const uint BvhVisitedCommands = 24;
+        public const uint BvhFrustumPlaneTests = 25;
+        public const uint BvhPlaneMaskReductions = 26;
+        public const uint BvhInternalRejections = 27;
+        public const uint BvhLeafRejections = 28;
+        public const uint BvhEmittedCommands = 29;
+        public const uint BvhMaxQueueOccupancy = 30;
+        public const uint BvhQueueOverflows = 31;
+
+        public const uint FieldCount = 32;
     }
 }

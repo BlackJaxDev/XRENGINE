@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Compute;
@@ -14,6 +16,9 @@ namespace XREngine.Rendering.Pipelines.Commands;
 [RenderPipelineScriptCommand]
 public sealed class VPRC_BuildAccelerationStructure : ViewportRenderCommand
 {
+    internal const string RenderGraphPassName = nameof(VPRC_BuildAccelerationStructure);
+    private int _resolvedRenderGraphPassIndex = int.MinValue;
+
     public string ReadyVariableName { get; set; } = "AccelerationStructureReady";
     public string NodeCountVariableName { get; set; } = "AccelerationStructureNodeCount";
     public string PrimitiveCountVariableName { get; set; } = "AccelerationStructurePrimitiveCount";
@@ -63,6 +68,25 @@ public sealed class VPRC_BuildAccelerationStructure : ViewportRenderCommand
             return;
         }
 
+        int passIndex = ResolveRenderGraphPassIndex();
+        if (passIndex == int.MinValue && AbstractRenderer.Current is VulkanRenderer)
+        {
+            Debug.RenderingWarningEvery(
+                "BuildAccelerationStructure.MissingRenderGraphPass",
+                TimeSpan.FromSeconds(1),
+                "[GPU BVH] Skipping acceleration-structure compute because no render-graph pass metadata was generated for '{0}'.",
+                RenderGraphPassName);
+            PublishEmpty();
+            return;
+        }
+
+        // Vulkan compute submissions must carry the same pass identity that
+        // DescribeRenderPass registered. OpenGL ignores the scope, but using it
+        // there too keeps backend execution order identical when metadata exists.
+        using IDisposable? passScope = passIndex == int.MinValue
+            ? null
+            : RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex);
+
         // Path A: when enabled, push skinned-mesh world-space AABBs straight into the
         // command-AABB buffer (BVH leaf bounds) via the reduce shader before we build
         // the BVH. Bypasses the CPU 8-corner transform for these slots.
@@ -110,12 +134,48 @@ public sealed class VPRC_BuildAccelerationStructure : ViewportRenderCommand
             ?? RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
     }
 
+    private int ResolveRenderGraphPassIndex()
+    {
+        if (_resolvedRenderGraphPassIndex != int.MinValue)
+            return _resolvedRenderGraphPassIndex;
+
+        if (TryResolveRenderGraphPassIndex(ParentPipeline?.PassMetadata, out int passIndex))
+            return _resolvedRenderGraphPassIndex = passIndex;
+
+        if (TryResolveRenderGraphPassIndex(
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.PassMetadata,
+            out passIndex))
+            return _resolvedRenderGraphPassIndex = passIndex;
+
+        return int.MinValue;
+    }
+
+    internal static bool TryResolveRenderGraphPassIndex(
+        IReadOnlyCollection<RenderPassMetadata>? metadata,
+        out int passIndex)
+    {
+        passIndex = int.MinValue;
+        if (metadata is null)
+            return false;
+
+        foreach (RenderPassMetadata pass in metadata)
+        {
+            if (!string.Equals(pass.Name, RenderGraphPassName, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            passIndex = pass.PassIndex;
+            return true;
+        }
+
+        return false;
+    }
+
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)
     {
         base.DescribeRenderPass(context);
 
         // Describe the buffers that will be read/written by this pass in the render graph.
-        var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_BuildAccelerationStructure), ERenderGraphPassStage.Compute);
+        var builder = context.GetOrCreateSyntheticPass(RenderGraphPassName, ERenderGraphPassStage.Compute);
         builder.ReadWriteBuffer(NodeBufferVariableName);
         builder.ReadWriteBuffer(RangeBufferVariableName);
         builder.ReadWriteBuffer(MortonBufferVariableName);

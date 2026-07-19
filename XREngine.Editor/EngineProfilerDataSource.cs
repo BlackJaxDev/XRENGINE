@@ -849,6 +849,9 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
             CullMilliseconds = m.CullMilliseconds,
             RaycastCount = m.RaycastCount,
             RaycastMilliseconds = m.RaycastMilliseconds,
+            TraversalMilliseconds = m.TraversalMilliseconds,
+            CommandEmissionMilliseconds = m.CommandEmissionMilliseconds,
+            CommandEmissionSubmissionMilliseconds = m.CommandEmissionSubmissionMilliseconds,
         };
     }
 

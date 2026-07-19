@@ -1398,6 +1398,9 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.Text($"Refit: {bvh.RefitCount:N0} nodes, {bvh.RefitMilliseconds:F3} ms");
         ImGui.Text($"Cull: {bvh.CullCount:N0} entries, {bvh.CullMilliseconds:F3} ms");
         ImGui.Text($"Raycasts: {bvh.RaycastCount:N0} rays, {bvh.RaycastMilliseconds:F3} ms");
+        ImGui.Text($"Traversal: {bvh.TraversalMilliseconds:F3} ms");
+        ImGui.Text($"Command emission: {bvh.CommandEmissionMilliseconds:F3} ms");
+        ImGui.Text($"Command emission submit: {bvh.CommandEmissionSubmissionMilliseconds:F3} ms");
 
         ImGui.End();
     }

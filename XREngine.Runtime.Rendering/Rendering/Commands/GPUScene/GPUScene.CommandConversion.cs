@@ -286,15 +286,6 @@ namespace XREngine.Rendering.Commands
 
                     FlushMeshDataDirtyRange();
 
-                    if (_useInternalBvh)
-                    {
-                        bool canRefit = _bvhReady && !_bvhDirty && _gpuBvhTree is not null && _bvhPrimitiveCount == _updatingCommandCount;
-                        if (canRefit)
-                            _bvhRefitPending = true;
-                        else
-                            MarkBvhDirtyUnlessSuppressed(_updatingCommandCount);
-                    }
-
                     _meshletsDirty = true;
                     RebuildAtlasIfDirty();
                 }
