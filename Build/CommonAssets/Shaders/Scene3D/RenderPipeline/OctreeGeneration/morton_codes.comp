@@ -39,6 +39,7 @@ uniform vec3 sceneMin;
 uniform vec3 sceneMax;
 uniform uint numObjects;
 uniform uint mortonCapacity;
+uniform uint resetOverflow;
 
 // Helper function to expand bits for Morton code calculation.
 // This interleaves the bits of a 10-bit integer into a 30-bit integer.
@@ -68,6 +69,13 @@ layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 void main()
 {
     uint gid = gl_GlobalInvocationID.x;
+    if (resetOverflow != 0u)
+    {
+        if (gid == 0u)
+            overflowFlags = 0u;
+        return;
+    }
+
     uint capacity = mortonCapacity;
 
     if (gid == 0u && (capacity == 0u || numObjects > capacity))

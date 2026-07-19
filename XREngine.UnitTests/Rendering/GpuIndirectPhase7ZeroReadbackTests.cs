@@ -288,6 +288,21 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
         directPath.ShouldNotContain("TryComputeSkinnedBoundsOnGpu");
     }
 
+    [Test]
+    public void SkinnedBounds_DirectWriteFailure_RevokesGpuOwnershipAndRepublishesCpuBounds()
+    {
+        string calculatorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/SkinnedMeshBoundsCalculator.cs");
+        string boundsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.BoundsHelpers.cs");
+
+        calculatorSource.ShouldContain("RestoreCpuCommandAabbsForRenderer(");
+        calculatorSource.ShouldContain("Skinned AABB direct write was unavailable");
+        calculatorSource.ShouldContain("_registeredSkinnedMeshSnapshot");
+        calculatorSource.ShouldNotContain("snapshot = new RenderableMesh[");
+
+        boundsSource.ShouldContain("SetRendererOwnsGpuAabb(renderer, false);");
+        boundsSource.ShouldContain("WriteTightCommandAabb(commandIndex, renderInfo, mesh.Bounds, modelMatrix);");
+    }
+
     private static string Slice(string source, string startToken, string endToken, StringComparison comparison)
     {
         string normalized = source.Replace("\r\n", "\n");

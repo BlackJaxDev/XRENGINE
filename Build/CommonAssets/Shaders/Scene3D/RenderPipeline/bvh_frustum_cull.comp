@@ -67,7 +67,6 @@ layout(std430, binding = 5) readonly buffer BvhNodes
     uint maxLeafPrimitives;
     BvhNode nodes[];
 };
-layout(std430, binding = 6) readonly buffer PrimitiveRanges { uvec2 ranges[]; };
 layout(std430, binding = 7) readonly buffer MortonCodes { MortonObject mortonObjects[]; };
 
 layout(std430, binding = 8) buffer StatsBuffer
@@ -108,6 +107,16 @@ layout(std430, binding = 8) buffer StatsBuffer
     uint MaterialScatterKeyCount;
     uint BvhRawNodeCount;
     uint BvhSafeNodeCount;
+    uint BvhVisitedInternalNodes;
+    uint BvhVisitedLeaves;
+    uint BvhVisitedCommands;
+    uint BvhFrustumPlaneTests;
+    uint BvhPlaneMaskReductions;
+    uint BvhInternalRejections;
+    uint BvhLeafRejections;
+    uint BvhEmittedCommands;
+    uint BvhMaxQueueOccupancy;
+    uint BvhQueueOverflows;
 };
 
 layout(std430, binding = 9) buffer OverflowDebugBuffer { uint OverflowDebug[]; };
@@ -186,6 +195,36 @@ bool AabbVisible(vec3 minB, vec3 maxB)
 
         if (dot(plane.xyz, positive) + plane.w < 0.0)
             return false;
+    }
+    return true;
+}
+
+// Returns false for a rejected node and clears plane bits that fully contain
+// the node. Descendants inherit the reduced mask and skip those plane tests.
+bool AabbVisibleMasked(vec3 minB, vec3 maxB, uint inputMask, out uint outputMask)
+{
+    outputMask = inputMask;
+    for (uint i = 0u; i < PLANES_PER_FRUSTUM; ++i)
+    {
+        uint bit = 1u << i;
+        if ((inputMask & bit) == 0u)
+            continue;
+
+        if (StatsEnabled != 0u)
+            atomicAdd(BvhFrustumPlaneTests, 1u);
+
+        vec4 plane = GetPlane(i);
+        vec3 positive = mix(minB, maxB, greaterThanEqual(plane.xyz, vec3(0.0)));
+        if (dot(plane.xyz, positive) + plane.w < 0.0)
+            return false;
+
+        vec3 negative = mix(maxB, minB, greaterThanEqual(plane.xyz, vec3(0.0)));
+        if (dot(plane.xyz, negative) + plane.w >= 0.0)
+        {
+            outputMask &= ~bit;
+            if (StatsEnabled != 0u)
+                atomicAdd(BvhPlaneMaskReductions, 1u);
+        }
     }
     return true;
 }
@@ -337,24 +376,158 @@ void AppendVisible(uint cmdIndex, DrawMetadata meta, vec4 sphere, float renderDi
         StoreHotCommand(outIndex, meta, sphere, renderDistance);
 
     if (StatsEnabled != 0u)
+    {
         atomicAdd(StatsCulledCount, 1u);
+        atomicAdd(BvhEmittedCommands, 1u);
+    }
 
     atomicAdd(CulledInstanceCount, meta.InstanceCount);
     AppendPerView(cmdIndex, outIndex, sphere.xyz, meta.Flags);
 }
 
+void ProcessCommand(uint cmdIndex, uint activePlaneMask, bool leafMatchesCommand)
+{
+    if (StatsEnabled != 0u)
+        atomicAdd(BvhVisitedCommands, 1u);
+    if (cmdIndex >= uint(InputCommandCount) || cmdIndex >= Draws.length())
+        return;
+
+    DrawMetadata meta = Draws[cmdIndex];
+    if (meta.InstanceCount == 0u || (meta.LayerMask & CameraLayerMask) == 0u)
+        return;
+    if (DisabledFlagsMask != 0u && (meta.Flags & DisabledFlagsMask) != 0u)
+        return;
+    if (CurrentRenderPass >= 0 && meta.RenderPass != uint(CurrentRenderPass) && meta.RenderPass != INVALID_INDEX)
+        return;
+    if (meta.BoundsID >= Bounds.length())
+        return;
+
+    BoundsGpu bounds = Bounds[meta.BoundsID];
+    vec4 sphere = bounds.BoundingSphere;
+    vec3 toCenter = sphere.xyz - CameraPosition;
+    float renderDistance = dot(toCenter, toCenter);
+    if (renderDistance > MaxRenderDistance)
+    {
+        if (StatsEnabled != 0u)
+            atomicAdd(StatsRejectedDistance, 1u);
+        return;
+    }
+
+    // A one-command leaf is exactly the command AABB after refit. If the leaf
+    // passed every active plane, testing the same box again cannot reject it.
+    bool frustumVisible = leafMatchesCommand || activePlaneMask == 0u;
+    if (!leafMatchesCommand && activePlaneMask != 0u)
+    {
+        bool aabbValid = all(lessThanEqual(bounds.AabbMin.xyz, bounds.AabbMax.xyz));
+        frustumVisible = aabbValid
+            ? AabbVisibleMasked(bounds.AabbMin.xyz, bounds.AabbMax.xyz, activePlaneMask, activePlaneMask)
+            : SphereVisible(sphere.xyz, sphere.w);
+    }
+
+    if (!frustumVisible)
+    {
+        if (StatsEnabled != 0u)
+            atomicAdd(StatsRejectedFrustum, 1u);
+        return;
+    }
+
+    AppendVisible(cmdIndex, meta, sphere, renderDistance);
+}
+
+void ProcessRange(uvec2 range, uint activePlaneMask, bool leafMatchesSingleCommand)
+{
+    for (uint i = 0u; i < range.y; ++i)
+    {
+        uint mortonIndex = range.x + i;
+        if (mortonIndex >= mortonObjects.length())
+            return;
+        ProcessCommand(
+            mortonObjects[mortonIndex].objectId,
+            activePlaneMask,
+            leafMatchesSingleCommand && range.y == 1u);
+    }
+}
+
+// Workgroups own disjoint top-level subtrees selected by interpreting the
+// workgroup identifier as a binary root-descent path. Each workgroup then
+// traverses its partition in breadth-first batches. If an unbalanced tree
+// reaches a leaf before the requested partition depth, only the zero-suffix
+// workgroup owns it, preventing duplicate emission.
+//
+// The bounded shared queue avoids private per-command stacks. If a partition
+// exceeds the queue, that subtree's primitive range is tested immediately,
+// conservatively preserving visibility while reporting the pressure event.
+const uint TRAVERSAL_QUEUE_CAPACITY = 2048u;
+shared uvec2 TraversalQueue[TRAVERSAL_QUEUE_CAPACITY]; // node index, active plane mask
+shared uint QueueHead;
+shared uint QueueTail;
+shared uint BatchBegin;
+shared uint BatchEnd;
+
+bool TryEnqueue(uint nodeIndex, uint planeMask)
+{
+    uint slot = atomicAdd(QueueTail, 1u);
+    if (slot < TRAVERSAL_QUEUE_CAPACITY)
+    {
+        TraversalQueue[slot] = uvec2(nodeIndex, planeMask);
+        return true;
+    }
+
+    atomicMin(QueueTail, TRAVERSAL_QUEUE_CAPACITY);
+    atomicOr(CullingOverflowFlag, 2u);
+    if (StatsEnabled != 0u)
+        atomicAdd(BvhQueueOverflows, 1u);
+    LogOverflow(0x80000000u | nodeIndex);
+    return false;
+}
+
+bool SelectPartitionRoot(uint safeNodeCount, out uint partitionRoot)
+{
+    uint workgroup = gl_WorkGroupID.x;
+    uint partitionCount = gl_NumWorkGroups.x;
+    uint partitionDepth = 0u;
+    for (uint count = partitionCount; count > 1u; count >>= 1u)
+        ++partitionDepth;
+
+    partitionRoot = rootIndex;
+    for (uint level = 0u; level < partitionDepth; ++level)
+    {
+        if (partitionRoot >= safeNodeCount)
+            return false;
+
+        BvhNode node = nodes[partitionRoot];
+        bool isLeaf = (node.flags & BVH_FLAG_LEAF) != 0u;
+        bool hasTwoChildren = node.leftChild != INVALID_INDEX &&
+                              node.rightChild != INVALID_INDEX &&
+                              node.leftChild < safeNodeCount &&
+                              node.rightChild < safeNodeCount;
+        if (isLeaf || !hasTwoChildren)
+        {
+            uint remainingBits = partitionDepth - level;
+            uint suffixMask = remainingBits >= 32u
+                ? INVALID_INDEX
+                : (1u << remainingBits) - 1u;
+            return (workgroup & suffixMask) == 0u;
+        }
+
+        uint pathBit = (workgroup >> (partitionDepth - level - 1u)) & 1u;
+        partitionRoot = pathBit == 0u ? node.leftChild : node.rightChild;
+    }
+    return partitionRoot < safeNodeCount;
+}
+
 void main()
 {
-    uint gid = gl_GlobalInvocationID.x;
+    uint lane = gl_LocalInvocationID.x;
 
-    if (StatsEnabled != 0u && gid == 0u)
+    if (StatsEnabled != 0u && lane == 0u)
     {
         StatsInputCount = uint(InputCommandCount);
         StatsBvhCullCount = uint(InputCommandCount);
     }
 
     uint safeNodeCount = min(nodeCount, uint(nodes.length()));
-    if (StatsEnabled != 0u && gid == 0u)
+    if (StatsEnabled != 0u && lane == 0u)
     {
         BvhRawNodeCount = nodeCount;
         BvhSafeNodeCount = safeNodeCount;
@@ -362,69 +535,77 @@ void main()
     if (safeNodeCount == 0u)
         return;
 
-    uint leafCount = (safeNodeCount + 1u) >> 1u;
-    if (gid >= leafCount || gid >= uint(ranges.length()))
+    uint partitionRoot;
+    if (!SelectPartitionRoot(safeNodeCount, partitionRoot))
         return;
 
-    // This shader launches one invocation per leaf, so walking from an already
-    // visible leaf toward the root cannot reject additional geometry: every
-    // ancestor encloses that leaf. Besides wasting AABB tests, the old walk made
-    // malformed parent connectivity a correctness and TDR hazard. Cull against
-    // the refitted leaf and the primitive bounds below; hierarchical rejection
-    // requires a root-down traversal with a different dispatch model.
-    BvhNode leaf = nodes[gid];
-    if ((leaf.flags & BVH_FLAG_LEAF) == 0u ||
-        !AabbVisible(leaf.minBounds, leaf.maxBounds))
-        return;
-
-    uvec2 range = ranges[gid];
-    if (range.y == 0u)
-        return;
-
-    for (uint i = 0u; i < range.y; ++i)
+    if (lane == 0u)
     {
-        uint mortonIndex = range.x + i;
-        if (mortonIndex >= mortonObjects.length())
+        QueueHead = 0u;
+        QueueTail = 1u;
+        TraversalQueue[0] = uvec2(partitionRoot, (1u << PLANES_PER_FRUSTUM) - 1u);
+    }
+    barrier();
+
+    for (;;)
+    {
+        if (lane == 0u)
+        {
+            BatchBegin = QueueHead;
+            BatchEnd = min(QueueTail, TRAVERSAL_QUEUE_CAPACITY);
+            QueueHead = BatchEnd;
+        }
+        barrier();
+
+        if (BatchBegin >= BatchEnd)
             break;
 
-        uint cmdIndex = mortonObjects[mortonIndex].objectId;
-        if (cmdIndex >= uint(InputCommandCount) || cmdIndex >= Draws.length())
-            continue;
-
-        DrawMetadata meta = Draws[cmdIndex];
-        if (meta.InstanceCount == 0u)
-            continue;
-        if ((meta.LayerMask & CameraLayerMask) == 0u)
-            continue;
-        if (DisabledFlagsMask != 0u && (meta.Flags & DisabledFlagsMask) != 0u)
-            continue;
-        if (CurrentRenderPass >= 0 && meta.RenderPass != uint(CurrentRenderPass) && meta.RenderPass != 0xFFFFFFFFu)
-            continue;
-        if (meta.BoundsID >= Bounds.length())
-            continue;
-
-        BoundsGpu bounds = Bounds[meta.BoundsID];
-        vec4 sphere = bounds.BoundingSphere;
-        vec3 toCenter = sphere.xyz - CameraPosition;
-        float renderDistance = dot(toCenter, toCenter);
-        if (renderDistance > MaxRenderDistance)
+        for (uint queueIndex = BatchBegin + lane; queueIndex < BatchEnd; queueIndex += gl_WorkGroupSize.x)
         {
-            if (StatsEnabled != 0u)
-                atomicAdd(StatsRejectedDistance, 1u);
-            continue;
-        }
+            uvec2 work = TraversalQueue[queueIndex];
+            if (work.x >= safeNodeCount)
+                continue;
 
-        bool aabbValid = all(lessThanEqual(bounds.AabbMin.xyz, bounds.AabbMax.xyz));
-        bool frustumVisible = aabbValid
-            ? AabbVisible(bounds.AabbMin.xyz, bounds.AabbMax.xyz)
-            : SphereVisible(sphere.xyz, sphere.w);
-        if (!frustumVisible)
-        {
+            BvhNode node = nodes[work.x];
+            bool isLeaf = (node.flags & BVH_FLAG_LEAF) != 0u;
             if (StatsEnabled != 0u)
-                atomicAdd(StatsRejectedFrustum, 1u);
-            continue;
-        }
+            {
+                if (isLeaf)
+                    atomicAdd(BvhVisitedLeaves, 1u);
+                else
+                    atomicAdd(BvhVisitedInternalNodes, 1u);
+            }
+            uint childPlaneMask;
+            if (!AabbVisibleMasked(node.minBounds, node.maxBounds, work.y, childPlaneMask))
+            {
+                if (StatsEnabled != 0u)
+                {
+                    if (isLeaf)
+                        atomicAdd(BvhLeafRejections, 1u);
+                    else
+                        atomicAdd(BvhInternalRejections, 1u);
+                }
+                continue;
+            }
 
-        AppendVisible(cmdIndex, meta, sphere, renderDistance);
+            if (isLeaf)
+            {
+                ProcessRange(node.primitiveRange, childPlaneMask, true);
+                continue;
+            }
+
+            uint children[2] = uint[2](node.leftChild, node.rightChild);
+            for (uint childIndex = 0u; childIndex < 2u; ++childIndex)
+            {
+                uint child = children[childIndex];
+                if (child == INVALID_INDEX || child >= safeNodeCount)
+                    continue;
+                if (!TryEnqueue(child, childPlaneMask))
+                    ProcessRange(nodes[child].primitiveRange, childPlaneMask, false);
+            }
+            if (StatsEnabled != 0u)
+                atomicMax(BvhMaxQueueOccupancy, min(QueueTail, TRAVERSAL_QUEUE_CAPACITY));
+        }
+        barrier();
     }
 }

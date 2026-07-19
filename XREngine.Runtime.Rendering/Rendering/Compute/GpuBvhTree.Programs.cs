@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 
@@ -6,7 +7,7 @@ namespace XREngine.Rendering.Compute;
 
 // Shader / program lifecycle for GpuBvhTree.
 //
-// Each BVH stage (Morton coding, sort, build, refit, optional SAH refine)
+// Each BVH stage (Morton coding, sort, build, and refit)
 // has its own compute shader and matching XRRenderProgram. This partial owns
 // the shader / program fields plus the create / ensure-linked / destroy
 // helpers. Programs are constructed lazily on the first build and reused for
@@ -16,24 +17,22 @@ public sealed partial class GpuBvhTree
     // Shaders. Owned; freed in DisposeProgramsCore.
     private XRShader? _buildShader;
     private XRShader? _refitShader;
-    private XRShader? _refineShader;
     private XRShader? _mortonShader;
     private XRShader? _smallSortShader;
-    private XRShader? _padShader;
-    private XRShader? _tileSortShader;
-    private XRShader? _mergeShader;
-    private XRShader? _mergeLocalShader;
+    private XRShader? _radixHistogramShader;
+    private XRShader? _radixPrefixShader;
+    private XRShader? _radixScatterShader;
+    private XRShader? _qualityShader;
 
     // Programs. One per shader; same lifetime.
     private XRRenderProgram? _buildProgram;
     private XRRenderProgram? _refitProgram;
-    private XRRenderProgram? _refineProgram;
     private XRRenderProgram? _mortonProgram;
     private XRRenderProgram? _smallSortProgram;
-    private XRRenderProgram? _padProgram;
-    private XRRenderProgram? _tileSortProgram;
-    private XRRenderProgram? _mergeProgram;
-    private XRRenderProgram? _mergeLocalProgram;
+    private XRRenderProgram? _radixHistogramProgram;
+    private XRRenderProgram? _radixPrefixProgram;
+    private XRRenderProgram? _radixScatterProgram;
+    private XRRenderProgram? _qualityProgram;
 
     /// <summary>
     /// Ensures the compute programs required by the requested build path have
@@ -48,22 +47,18 @@ public sealed partial class GpuBvhTree
         bool ready = EnsureProgramReady(_mortonProgram) &&
             EnsureProgramReady(_buildProgram) &&
             EnsureProgramReady(_refitProgram);
+        ready &= EnsureProgramReady(_qualityProgram);
 
         if (primitiveCount > 1u)
         {
-            // The tiled sort path (pad + tile + merge + merge_local) is only
-            // used when primitiveCount > 1024; the small path uses the single
-            // workgroup bitonic kernel.
+            // Tiny trees use one shared-memory bitonic workgroup; larger trees
+            // use the stable four-pass radix pipeline.
             ready &= primitiveCount <= 1024u
                 ? EnsureProgramReady(_smallSortProgram)
-                : EnsureProgramReady(_padProgram) &&
-                    EnsureProgramReady(_tileSortProgram) &&
-                    EnsureProgramReady(_mergeProgram) &&
-                    EnsureProgramReady(_mergeLocalProgram);
+                : EnsureProgramReady(_radixHistogramProgram) &&
+                    EnsureProgramReady(_radixPrefixProgram) &&
+                    EnsureProgramReady(_radixScatterProgram);
         }
-
-        if (_buildMode == BvhBuildMode.MortonPlusSah)
-            ready &= EnsureProgramReady(_refineProgram);
 
         return ready;
     }
@@ -76,13 +71,12 @@ public sealed partial class GpuBvhTree
     {
         _buildProgram ??= CreateProgram(ref _buildShader, "Scene3D/RenderPipeline/bvh_build.comp");
         _refitProgram ??= CreateProgram(ref _refitShader, "Scene3D/RenderPipeline/bvh_refit.comp");
-        _refineProgram ??= CreateProgram(ref _refineShader, "Scene3D/RenderPipeline/bvh_sah_refine.comp");
         _mortonProgram ??= CreateProgram(ref _mortonShader, "Scene3D/RenderPipeline/OctreeGeneration/morton_codes.comp");
         _smallSortProgram ??= CreateProgram(ref _smallSortShader, "Scene3D/RenderPipeline/OctreeGeneration/sort_morton.comp");
-        _padProgram ??= CreateProgram(ref _padShader, "Scene3D/RenderPipeline/OctreeGeneration/pad_morton.comp");
-        _tileSortProgram ??= CreateProgram(ref _tileSortShader, "Scene3D/RenderPipeline/OctreeGeneration/sort_morton_tiles.comp");
-        _mergeProgram ??= CreateProgram(ref _mergeShader, "Scene3D/RenderPipeline/OctreeGeneration/merge_morton.comp");
-        _mergeLocalProgram ??= CreateProgram(ref _mergeLocalShader, "Scene3D/RenderPipeline/OctreeGeneration/merge_morton_local.comp");
+        _radixHistogramProgram ??= CreateProgram(ref _radixHistogramShader, "Scene3D/RenderPipeline/OctreeGeneration/radix_morton_histogram.comp");
+        _radixPrefixProgram ??= CreateProgram(ref _radixPrefixShader, "Scene3D/RenderPipeline/OctreeGeneration/radix_morton_prefix.comp");
+        _radixScatterProgram ??= CreateProgram(ref _radixScatterShader, "Scene3D/RenderPipeline/OctreeGeneration/radix_morton_scatter.comp");
+        _qualityProgram ??= CreateProgram(ref _qualityShader, "Scene3D/RenderPipeline/bvh_quality_diagnostics.comp");
     }
 
     /// <summary>
@@ -96,49 +90,48 @@ public sealed partial class GpuBvhTree
     {
         _buildProgram?.Destroy();
         _refitProgram?.Destroy();
-        _refineProgram?.Destroy();
         _mortonProgram?.Destroy();
         _smallSortProgram?.Destroy();
-        _padProgram?.Destroy();
-        _tileSortProgram?.Destroy();
-        _mergeProgram?.Destroy();
-        _mergeLocalProgram?.Destroy();
+        _radixHistogramProgram?.Destroy();
+        _radixPrefixProgram?.Destroy();
+        _radixScatterProgram?.Destroy();
+        _qualityProgram?.Destroy();
 
         _buildShader?.Destroy();
         _refitShader?.Destroy();
-        _refineShader?.Destroy();
         _mortonShader?.Destroy();
         _smallSortShader?.Destroy();
-        _padShader?.Destroy();
-        _tileSortShader?.Destroy();
-        _mergeShader?.Destroy();
-        _mergeLocalShader?.Destroy();
+        _radixHistogramShader?.Destroy();
+        _radixPrefixShader?.Destroy();
+        _radixScatterShader?.Destroy();
+        _qualityShader?.Destroy();
 
         _buildProgram = null;
         _refitProgram = null;
-        _refineProgram = null;
         _mortonProgram = null;
         _smallSortProgram = null;
-        _padProgram = null;
-        _tileSortProgram = null;
-        _mergeProgram = null;
-        _mergeLocalProgram = null;
+        _radixHistogramProgram = null;
+        _radixPrefixProgram = null;
+        _radixScatterProgram = null;
+        _qualityProgram = null;
 
         _buildShader = null;
         _refitShader = null;
-        _refineShader = null;
         _mortonShader = null;
         _smallSortShader = null;
-        _padShader = null;
-        _tileSortShader = null;
-        _mergeShader = null;
-        _mergeLocalShader = null;
+        _radixHistogramShader = null;
+        _radixPrefixShader = null;
+        _radixScatterShader = null;
+        _qualityShader = null;
     }
 
     private static XRRenderProgram CreateProgram(ref XRShader? shader, string path)
     {
         shader ??= ShaderHelper.LoadEngineShader(path, EShaderType.Compute);
-        return new XRRenderProgram(true, false, shader);
+        return new XRRenderProgram(true, false, shader)
+        {
+            Name = $"GpuBvh.{Path.GetFileNameWithoutExtension(path)}"
+        };
     }
 
     /// <summary>
@@ -164,22 +157,20 @@ public sealed partial class GpuBvhTree
     {
         _buildShader?.Destroy();
         _refitShader?.Destroy();
-        _refineShader?.Destroy();
         _mortonShader?.Destroy();
         _smallSortShader?.Destroy();
-        _padShader?.Destroy();
-        _tileSortShader?.Destroy();
-        _mergeShader?.Destroy();
-        _mergeLocalShader?.Destroy();
+        _radixHistogramShader?.Destroy();
+        _radixPrefixShader?.Destroy();
+        _radixScatterShader?.Destroy();
+        _qualityShader?.Destroy();
 
         _buildProgram?.Destroy();
         _refitProgram?.Destroy();
-        _refineProgram?.Destroy();
         _mortonProgram?.Destroy();
         _smallSortProgram?.Destroy();
-        _padProgram?.Destroy();
-        _tileSortProgram?.Destroy();
-        _mergeProgram?.Destroy();
-        _mergeLocalProgram?.Destroy();
+        _radixHistogramProgram?.Destroy();
+        _radixPrefixProgram?.Destroy();
+        _radixScatterProgram?.Destroy();
+        _qualityProgram?.Destroy();
     }
 }

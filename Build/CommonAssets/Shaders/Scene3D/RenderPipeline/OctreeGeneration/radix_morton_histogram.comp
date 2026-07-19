@@ -1,0 +1,42 @@
+#version 460
+
+struct MortonObject
+{
+    uint mortonCode;
+    uint objectId;
+};
+
+layout(std430, binding = 1) readonly buffer MortonInput
+{
+    MortonObject inputObjects[];
+};
+
+// block-major [block][256 bins]; the prefix pass transforms counts to offsets.
+layout(std430, binding = 13) buffer RadixOffsets
+{
+    uint offsets[];
+};
+
+uniform uint numObjects;
+uniform uint radixShift;
+
+shared uint histogram[256];
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint lane = gl_LocalInvocationID.x;
+    histogram[lane] = 0u;
+    barrier();
+
+    uint index = gl_GlobalInvocationID.x;
+    if (index < numObjects)
+    {
+        uint digit = (inputObjects[index].mortonCode >> radixShift) & 0xFFu;
+        atomicAdd(histogram[digit], 1u);
+    }
+    barrier();
+
+    offsets[gl_WorkGroupID.x * 256u + lane] = histogram[lane];
+}

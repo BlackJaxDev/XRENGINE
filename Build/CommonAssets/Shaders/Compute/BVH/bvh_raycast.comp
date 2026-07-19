@@ -11,6 +11,7 @@ uniform uint uPacketWidth;
 uniform uint uUsePacketMode;
 uniform uint uAnyHitMode;
 uniform uint uMaxStackDepth;
+uniform uint uDiagnosticsEnabled;
 
 #pragma snippet "BvhRaycastCore"
 
@@ -21,6 +22,8 @@ uint ResolveRayIndex()
 
     if (uPacketWidth == 0u)
         return uRayCount; // Treat as out-of-range
+    if (gl_LocalInvocationID.x >= uPacketWidth)
+        return uRayCount;
 
     uint packetBase = gl_WorkGroupID.x * uPacketWidth;
     return packetBase + gl_LocalInvocationID.x;

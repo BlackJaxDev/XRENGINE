@@ -221,7 +221,7 @@ namespace XREngine.Rendering.Commands
                     SceneLog($"GPUScene.Add: Added commands, total now {UpdatingCommandCount} in UpdatingCommandsBuffer");
 
                     // Mark BVH dirty so it gets rebuilt before next cull pass
-                    if (_useInternalBvh)
+                    if (_gpuBvhTree is not null)
                         MarkBvhDirty();
 
                     _meshletsDirty = true;
@@ -1027,7 +1027,7 @@ namespace XREngine.Rendering.Commands
                     FlushMeshDataDirtyRange();
 
                     // Mark BVH dirty so it gets rebuilt before next cull pass
-                    if (_useInternalBvh)
+                    if (_gpuBvhTree is not null)
                         MarkBvhDirty();
 
                     _meshletsDirty = true;
@@ -1067,6 +1067,7 @@ namespace XREngine.Rendering.Commands
 
                 BoundsGpu lastBounds = UpdatingBoundsBuffer.GetDataRawAtIndex<BoundsGpu>(lastIndex);
                 WriteBounds(targetIndex, lastBounds);
+                MoveCommandAabb(lastIndex, targetIndex);
                 UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(targetIndex, lastMetadata);
                 LodTransitionBuffer.SetDataRawAtIndex(targetIndex, default(GPULodTransitionState));
                 QueueCpuLodTransitionWrite(targetIndex);

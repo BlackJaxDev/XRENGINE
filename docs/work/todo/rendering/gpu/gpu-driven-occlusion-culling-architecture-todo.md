@@ -53,10 +53,16 @@ frustum OR BVH cull compute -> (optional) GpuHiZ occlusion refine -> indirect bu
   compact commands to `_culledSceneToRenderBuffer` + counts to
   `_culledCountBuffer`.
 - GPU BVH (`GpuBvhTree`, `bvh_frustum_cull.comp`): internal command-bounds BVH
-  with GPU build/refit/SAH refine. Traversal is **frustum-only** — interior
+  with GPU build/refit and stable LBVH construction. Traversal is **frustum-only** — interior
   nodes are never tested against any occlusion source. GPU submission strategies
-  select it automatically on Vulkan; the flat GPU frustum path remains the
+  select it automatically when supported; the flat GPU frustum path remains the
   readiness fallback when the BVH shader or provider is unavailable.
+
+Current substrate (2026-07-18): the scene BVH now uses compact 48-byte nodes,
+stable radix construction for large inputs, revision-aware build/refit, and a
+bounded plane-masked root-down traversal. Node-level Hi-Z should extend that
+queue and node format rather than introducing a parallel traversal contract;
+see [GPU Scene BVH](../../../../architecture/rendering/gpu-scene-bvh.md).
 - GpuHiZ (`GPURenderOcclusionHiZ.comp` + `ApplyGpuHiZOcclusion`): single-phase
   refine against a depth pyramid built from current or history depth.
   Weaknesses:

@@ -20,6 +20,27 @@ namespace XREngine.Rendering.Commands
     public sealed partial class GPURenderPassCollection
     {
         private const uint ComputeWorkGroupSize = 256;
+        private static readonly bool ForceGpuBvhCulling =
+            string.Equals(
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ForceGpuBvhCulling),
+                "1",
+                StringComparison.OrdinalIgnoreCase);
+        private GpuBvhSelectorCalibration _gpuBvhSelectorCalibration = new();
+        private float _gpuBvhEstimatedVisibleRatio = 0.5f;
+
+        /// <summary>
+        /// Measured backend/view/visibility crossover table used by GPU BVH
+        /// selection. Missing buckets remain on flat GPU culling.
+        /// </summary>
+        public GpuBvhSelectorCalibration GpuBvhCullingCalibration
+        {
+            get => _gpuBvhSelectorCalibration;
+            set => _gpuBvhSelectorCalibration = value ?? throw new ArgumentNullException(nameof(value));
+        }
+
+        /// <summary>The command threshold selected for the most recent cull.</summary>
+        public uint LastGpuBvhCommandThreshold { get; private set; } =
+            GpuBvhSelectorCalibration.UncalibratedCommandThreshold;
 
         // Set true to bypass GPU frustum/flag culling and treat all commands as visible (debug only).
         // Default is OFF; passthrough must be explicitly enabled in debug preferences.
@@ -554,7 +575,7 @@ namespace XREngine.Rendering.Commands
                 LogCullModeActivation(CullFrameMode.Passthrough);
                 PassthroughCull(gpuCommands, numCommands);
             }
-            else if (ShouldUseBvhCulling(gpuCommands))
+            else if (ShouldUseBvhCulling(gpuCommands, numCommands))
             {
                 LogCullModeActivation(CullFrameMode.Bvh);
                 BvhCull(gpuCommands, camera, numCommands);
@@ -852,7 +873,6 @@ namespace XREngine.Rendering.Commands
                 _cullingComputeShader.DispatchCompute(x, y, z, postCullBarrier);
             }
 
-            AbstractRenderer.Current?.MemoryBarrier(postCullBarrier);
             _culledHotCommandsValid = useHotCommands;
 
             // Check for overflow
@@ -969,21 +989,23 @@ namespace XREngine.Rendering.Commands
         /// <summary>
         /// Determines whether BVH-accelerated culling should be used based on strategy and resource readiness.
         /// </summary>
-        private bool ShouldUseBvhCulling(GPUScene scene)
+        private bool ShouldUseBvhCulling(GPUScene scene, uint commandCount)
         {
             if (!scene.UseGpuBvh)
                 return false;
 
-            // The internal GPU BVH is not publication-safe on Vulkan zero-readback yet: the
-            // GPU-built node header can be replaced by stale host backing before traversal.
-            // Keep P0 fully GPU-driven with the flat frustum shader until BVH publication has
-            // an explicit completion/version contract. Instrumented paths retain BVH coverage.
-            if (MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback &&
-                AbstractRenderer.Current is VulkanRenderer)
-            {
-                LogGpuBvhFallback("Vulkan internal BVH publication is not validated for zero-readback");
+            GpuBvhCullingBackend backend = AbstractRenderer.Current is VulkanRenderer
+                ? GpuBvhCullingBackend.Vulkan
+                : GpuBvhCullingBackend.OpenGl;
+            GpuBvhSelectorBucket bucket = GpuBvhSelectorBucket.From(
+                backend,
+                _activeViewCount == 0u ? 1u : _activeViewCount,
+                _gpuBvhEstimatedVisibleRatio);
+            LastGpuBvhCommandThreshold = ForceGpuBvhCulling
+                ? 1u
+                : _gpuBvhSelectorCalibration.GetCommandThreshold(bucket);
+            if (!ForceGpuBvhCulling && !_gpuBvhSelectorCalibration.ShouldUseBvh(bucket, commandCount))
                 return false;
-            }
 
             if (_bvhFrustumCullProgram is null)
             {
@@ -1025,8 +1047,8 @@ namespace XREngine.Rendering.Commands
         /// large portions of the scene before testing individual commands.
         /// </summary>
         /// <remarks>
-        /// This path uses the bvh_frustum_cull.comp shader which traverses the BVH bottom-up from leaves,
-        /// rejecting entire subtrees that fall outside the frustum before testing individual command spheres.
+        /// This path uses a bounded cooperative root-down traversal. Internal-node rejection
+        /// skips complete primitive ranges and queue pressure falls back conservatively.
         /// </remarks>
         private void BvhCull(GPUScene scene, XRCamera? camera, uint numCommands)
         {
@@ -1052,10 +1074,9 @@ namespace XREngine.Rendering.Commands
             }
 
             XRDataBuffer? bvhNodes = bvhProvider.BvhNodeBuffer;
-            XRDataBuffer? bvhRanges = bvhProvider.BvhRangeBuffer;
             XRDataBuffer? bvhMorton = bvhProvider.BvhMortonBuffer;
 
-            if (bvhNodes is null || bvhRanges is null || bvhMorton is null)
+            if (bvhNodes is null || bvhMorton is null)
             {
                 Dbg("BvhCull: BVH buffers not ready, falling back to FrustumCull", "Culling");
                 FrustumCull(scene, camera, numCommands);
@@ -1146,7 +1167,6 @@ namespace XREngine.Rendering.Commands
 
             // Bind BVH buffers
             _bvhFrustumCullProgram.BindBuffer(bvhNodes, 5);
-            _bvhFrustumCullProgram.BindBuffer(bvhRanges, 6);
             _bvhFrustumCullProgram.BindBuffer(bvhMorton, 7);
 
             // Bind optional buffers
@@ -1160,20 +1180,18 @@ namespace XREngine.Rendering.Commands
                 _bvhFrustumCullProgram.BindBuffer(dst, 10);
             BindViewSetBuffers(_bvhFrustumCullProgram);
 
-            // Dispatch based on leaf count (each thread processes one leaf)
-            // BVH has (N+1)/2 leaves for N nodes
             uint nodeCount = bvhProvider.BvhNodeCount;
             uint leafCount = (nodeCount + 1u) / 2u;
-            (uint x, uint y, uint z) = XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(leafCount, 1u));
+            uint traversalWorkgroups = GpuBvhCullingDispatch.CalculateWorkgroupCount(inputCount);
 
             const EMemoryBarrierMask bvhPostCullBarrier =
                 EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command | EMemoryBarrierMask.ClientMappedBuffer;
             {
                 using var cullTiming = BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Cull, inputCount);
-                _bvhFrustumCullProgram.DispatchCompute(x, y, z, bvhPostCullBarrier);
+                using var traversalTiming = BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Traversal, nodeCount);
+                _bvhFrustumCullProgram.DispatchCompute(traversalWorkgroups, 1u, 1u, bvhPostCullBarrier);
             }
 
-            AbstractRenderer.Current?.MemoryBarrier(bvhPostCullBarrier);
             _culledHotCommandsValid = useHotCommands;
 
             // Check for overflow

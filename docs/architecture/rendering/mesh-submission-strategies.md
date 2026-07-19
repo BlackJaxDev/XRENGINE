@@ -25,7 +25,7 @@ retaining indirect submission. The CPU-reference flag accepts only `1` or
 meshlet strategies. It permits the diagnostic readbacks declared by the
 instrumented strategy and must not be used as production evidence.
 
-The strategy also owns scene visibility acceleration. `CpuDirect` uses the CPU scene hierarchy (CPU BVH by default). Every GPU indirect and meshlet strategy requests the internal `GPUScene` command BVH. There is no independent GPU-BVH setting or Vulkan environment gate; if the BVH shader or provider buffers are not ready, the pass reports the condition and temporarily uses flat GPU frustum culling.
+The strategy also owns scene visibility acceleration. `CpuDirect` uses the CPU scene hierarchy (CPU BVH by default). Every GPU indirect and meshlet strategy requests the internal `GPUScene` command BVH. There is no independent GPU-BVH setting or Vulkan environment gate; if the BVH shader or provider buffers are not ready, the pass reports the condition and temporarily uses flat GPU frustum culling. The GPU hierarchy's bounds, revision, compact-layout, construction, traversal, and fallback contracts are documented in [GPU Scene BVH](gpu-scene-bvh.md).
 
 The CPU hierarchy's snapshot publication, mutation, traversal, and diagnostics contracts are documented in [CPU Scene BVH](cpu-scene-bvh.md).
 

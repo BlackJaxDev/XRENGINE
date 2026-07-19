@@ -42,7 +42,7 @@ struct Ray
 };
 
 // Matches XREngine.Rendering.Compute.GpuBvhNode / bvh_nodes.glslinc:
-// 80-byte stride (20 uint scalars), vec3 bounds with packed child indices,
+// 48-byte stride (12 uint scalars), vec3 bounds with packed child indices,
 // in-node primitive range, and a leaf flag in bit 0 of `flags`.
 struct BvhNode
 {
@@ -53,8 +53,6 @@ struct BvhNode
     uvec2 primitiveRange; // x = first primitive, y = primitive count
     uint parentIndex;
     uint flags;           // bit 0 = leaf
-    uvec4 _pad0;
-    uvec4 _pad1;
 };
 
 struct PackedTriangle
@@ -100,6 +98,14 @@ layout(std430, binding = 2) readonly buffer Triangles
 layout(std430, binding = 3) writeonly buffer Hits
 {
     HitRecord gHits[];
+};
+
+layout(std430, binding = 4) buffer RayTraversalDiagnostics
+{
+    uint gRayTraceCount;
+    uint gRayMaxStackOccupancy;
+    uint gRayStackOverflows;
+    uint gRayConservativeRecoveries;
 };
 
 Ray DecodeRay(RayInput rayInput)
@@ -169,6 +175,37 @@ HitRecord MakeMiss(in Ray ray)
     return miss;
 }
 
+bool TracePrimitiveRange(
+    in Ray ray,
+    uint first,
+    uint count,
+    uint triCount,
+    bool anyHit,
+    inout HitRecord hit)
+{
+    if (first >= triCount)
+        return false;
+
+    count = min(count, triCount - first);
+    for (uint i = 0u; i < count; ++i)
+    {
+        float triT;
+        vec3 bary;
+        PackedTriangle tri = gTriangles[first + i];
+        if (!IntersectTriangle(ray, tri, triT, bary) || triT >= hit.t || triT < ray.tMin)
+            continue;
+
+        hit.t = triT;
+        hit.objectId = tri.extra.x;
+        hit.faceIndex = tri.extra.y;
+        hit.triangleIndex = first + i;
+        hit.barycentric = bary;
+        if (anyHit)
+            return true;
+    }
+    return false;
+}
+
 HitRecord TraceRay(in Ray ray, uint rootIndex, uint maxStackDepth, bool anyHit)
 {
     vec3 invDir = 1.0 / ray.direction;
@@ -185,6 +222,11 @@ HitRecord TraceRay(in Ray ray, uint rootIndex, uint maxStackDepth, bool anyHit)
     uint stack[XR_BVH_STACK_MAX];
     uint stackPtr = 0u;
     stack[stackPtr++] = start;
+    if (uDiagnosticsEnabled != 0u)
+    {
+        atomicAdd(gRayTraceCount, 1u);
+        atomicMax(gRayMaxStackOccupancy, stackPtr);
+    }
 
     while (stackPtr > 0u)
     {
@@ -200,46 +242,49 @@ HitRecord TraceRay(in Ray ray, uint rootIndex, uint maxStackDepth, bool anyHit)
         bool isLeaf = (node.flags & XR_BVH_LEAF_FLAG) != 0u;
         if (isLeaf)
         {
-            uint first = node.primitiveRange.x;
-            uint count = node.primitiveRange.y;
-            // Clamp the primitive range to the triangle buffer so a malformed
-            // leaf (or a node misread as a leaf) cannot spin the inner loop over
-            // billions of out-of-range entries and hang the GPU.
-            if (first >= triCount)
-                continue;
-            count = min(count, triCount - first);
-            for (uint i = 0u; i < count; ++i)
-            {
-                float triT;
-                vec3 bary;
-                PackedTriangle tri = gTriangles[first + i];
-                if (!IntersectTriangle(ray, tri, triT, bary))
-                    continue;
-
-                if (triT >= hit.t || triT < ray.tMin)
-                    continue;
-
-                hit.t = triT;
-                hit.objectId = tri.extra.x;
-                hit.faceIndex = tri.extra.y;
-                hit.triangleIndex = first + i;
-                hit.barycentric = bary;
-
-                if (anyHit)
-                    return hit;
-            }
+            if (TracePrimitiveRange(ray, node.primitiveRange.x, node.primitiveRange.y, triCount, anyHit, hit))
+                return hit;
         }
         else
         {
             uint left = node.leftChild;
             uint right = node.rightChild;
 
-            if (stackPtr + 2u <= maxStackDepth && stackPtr + 2u <= XR_BVH_STACK_MAX)
+            float leftT = 0.0;
+            float rightT = 0.0;
+            bool hitLeft = left != XR_BVH_INVALID_INDEX && left < nodeCount &&
+                IntersectAabb(ray, invDir, gNodes[left], leftT) && leftT <= hit.t;
+            bool hitRight = right != XR_BVH_INVALID_INDEX && right < nodeCount &&
+                IntersectAabb(ray, invDir, gNodes[right], rightT) && rightT <= hit.t;
+            uint childCount = uint(hitLeft) + uint(hitRight);
+
+            if (stackPtr + childCount <= maxStackDepth && stackPtr + childCount <= XR_BVH_STACK_MAX)
             {
-                if (left != XR_BVH_INVALID_INDEX && left < nodeCount)
+                // Push far first so the near child is popped first and can tighten hit.t.
+                if (hitLeft && hitRight)
+                {
+                    uint nearChild = leftT <= rightT ? left : right;
+                    uint farChild = leftT <= rightT ? right : left;
+                    stack[stackPtr++] = farChild;
+                    stack[stackPtr++] = nearChild;
+                }
+                else if (hitLeft)
                     stack[stackPtr++] = left;
-                if (right != XR_BVH_INVALID_INDEX && right < nodeCount)
+                else if (hitRight)
                     stack[stackPtr++] = right;
+
+                if (uDiagnosticsEnabled != 0u)
+                    atomicMax(gRayMaxStackOccupancy, stackPtr);
+            }
+            else
+            {
+                if (uDiagnosticsEnabled != 0u)
+                {
+                    atomicAdd(gRayStackOverflows, 1u);
+                    atomicAdd(gRayConservativeRecoveries, 1u);
+                }
+                if (TracePrimitiveRange(ray, node.primitiveRange.x, node.primitiveRange.y, triCount, anyHit, hit))
+                    return hit;
             }
         }
     }

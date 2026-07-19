@@ -15,6 +15,8 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Rendering Runtime Overview](architecture/rendering/runtime-overview.md)
 - [Frame Lifecycle And Dispatch Paths](architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
 - [Mesh Submission Strategies](architecture/rendering/mesh-submission-strategies.md)
+- [CPU Scene BVH](architecture/rendering/cpu-scene-bvh.md)
+- [GPU Scene BVH](architecture/rendering/gpu-scene-bvh.md)
 - [Scene Architecture](architecture/scene/overview.md)
 - [Transform Architecture](architecture/scene/transforms.md)
 - [Physics Architecture](architecture/physics/overview.md)

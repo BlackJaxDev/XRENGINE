@@ -2,7 +2,7 @@
 
 // LBVH build from pre-sorted Morton keys.
 // Emits leaves (up to MAX_LEAF_PRIMITIVES each), generates internal connectivity,
-// and writes primitive ranges for downstream refinement/refit passes.
+// and embeds primitive ranges directly in compact nodes.
 #define OVERFLOW_MORTON 1u
 #define OVERFLOW_NODE 2u
 #define OVERFLOW_QUEUE 4u
@@ -10,7 +10,6 @@
 
 // Note: Using uniforms instead of Vulkan-specific specialization constants for OpenGL compatibility.
 uniform uint MAX_LEAF_PRIMITIVES; // number of primitives per leaf (default 1)
-uniform uint BVH_MODE;            // 0 = Morton-only, 1 = Morton + SAH refinement
 
 #include "bvh_nodes.glslinc"
 
@@ -45,11 +44,6 @@ layout(std430, binding = 2) buffer BvhNodes
     BvhNode nodes[];
 };
 
-layout(std430, binding = 3) buffer PrimitiveRanges
-{
-    uvec2 ranges[];
-};
-
 layout(std430, binding = 8) buffer OverflowFlags
 {
     uint overflowFlags;
@@ -58,7 +52,6 @@ layout(std430, binding = 8) buffer OverflowFlags
 uniform uint numPrimitives;
 uniform uint buildStage; // 0 = emit leaves + header, 1 = generate internal nodes, 2 = assign parent indices, 3 = compute root index
 uniform uint nodeScalarCapacity;
-uniform uint rangeScalarCapacity;
 uniform uint mortonCapacity;
 
 // --- Morton helpers over leaf blocks ---
@@ -154,14 +147,10 @@ void main()
     uint maxNodesByBuffer = (nodeScalarCapacity > BVH_NODE_STRIDE_SCALARS)
         ? (nodeScalarCapacity - 4u) / BVH_NODE_STRIDE_SCALARS
         : 0u;
-    uint maxRangesByBuffer = (rangeScalarCapacity > 0u)
-        ? (rangeScalarCapacity / BVH_RANGE_STRIDE_SCALARS)
-        : 0u;
-
-    if (gid == 0u && (mortonCap == 0u || numPrimitives > mortonCap || totalNodes > maxNodesByBuffer || totalNodes > maxRangesByBuffer))
+    if (gid == 0u && (mortonCap == 0u || numPrimitives > mortonCap || totalNodes > maxNodesByBuffer))
         atomicOr(overflowFlags, OVERFLOW_BVH);
 
-    if (mortonCap == 0u || numPrimitives > mortonCap || totalNodes > maxNodesByBuffer || totalNodes > maxRangesByBuffer)
+    if (mortonCap == 0u || numPrimitives > mortonCap || totalNodes > maxNodesByBuffer)
         return;
 
     if (buildStage == 0u && gid == 0u)
@@ -197,7 +186,6 @@ void main()
         leaf.parentIndex = uint(-1);
         leaf.flags = BVH_FLAG_LEAF;
         nodes[gid] = leaf;
-        ranges[gid] = uvec2(start, count);
     }
 
     // Build internal connectivity (LBVH).
@@ -230,7 +218,6 @@ void main()
         n.flags = 0u; // internal
 
         nodes[nodeIndex] = n;
-        ranges[nodeIndex] = combined;
     }
 
     // Stage 2: assign parent indices (run after stage 1 has finished).

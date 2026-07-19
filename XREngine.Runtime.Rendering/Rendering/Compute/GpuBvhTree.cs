@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using System.Threading;
 using XREngine.Data.Geometry;
 
 namespace XREngine.Rendering.Compute;
@@ -38,7 +39,7 @@ namespace XREngine.Rendering.Compute;
 ///         link-readiness polling, and teardown.</item>
 ///   <item><c>GpuBvhTree.Buffers.cs</c> — SSBO sizing and lifetime.</item>
 ///   <item><c>GpuBvhTree.Dispatch.cs</c> — per-stage compute dispatches
-///         (Morton, sort, build, refine, refit).</item>
+///         (Morton, sort, build, refit).</item>
 ///   <item><c>GpuBvhTree.Overflow.cs</c> — async overflow-flag readback,
 ///         fence management, and diagnostics.</item>
 /// </list>
@@ -46,26 +47,39 @@ namespace XREngine.Rendering.Compute;
 /// </remarks>
 public sealed partial class GpuBvhTree : IDisposable
 {
+    private static long s_nextDiagnosticId;
+
+    /// <summary>Refit interval for the GPU-resident O(nodes) quality snapshot.</summary>
+    public const uint QualityAnalysisRefitCadence = 30u;
     /// <summary>
     /// Shader SSBO binding points. These must match the
     /// <c>layout(std430, binding = N)</c> declarations in every BVH compute
     /// shader (<c>bvh_build.comp</c>, <c>bvh_refit.comp</c>,
-    /// <c>bvh_sah_refine.comp</c>, <c>morton_codes.comp</c>,
-    /// <c>sort_morton*.comp</c>, <c>pad_morton.comp</c>,
-    /// <c>merge_morton.comp</c>, <c>merge_morton_local.comp</c>).
+    /// <c>morton_codes.comp</c>, <c>sort_morton.comp</c>, and
+    /// <c>radix_morton_*.comp</c>).
     /// </summary>
     internal static class Bindings
     {
         public const uint Aabb = 0u;
         public const uint Morton = 1u;
         public const uint Node = 2u;
-        public const uint Range = 3u;
         public const uint OverflowFlag = 8u;
         public const uint Counters = 11u;
+        public const uint RadixScratch = 12u;
+        public const uint RadixOffsets = 13u;
+        public const uint QualityDiagnostics = 14u;
     }
 
     private bool _disposed;
     private readonly object _syncRoot = new();
+    private readonly string _diagnosticName;
+    private readonly string _nodeBufferName;
+    private readonly string _mortonBufferName;
+    private readonly string _counterBufferName;
+    private readonly string _radixScratchBufferName;
+    private readonly string _radixOffsetsBufferName;
+    private readonly string _qualityDiagnosticsBufferName;
+    private readonly string _overflowFlagBufferName;
 
     // Build state (mutated under _syncRoot during Build).
     private uint _lastNodeCount;
@@ -73,6 +87,40 @@ public sealed partial class GpuBvhTree : IDisposable
     private bool _isDirty = true;
     private BvhBuildMode _buildMode = BvhBuildMode.MortonOnly;
     private uint _maxLeafPrimitives = 1;
+    private ulong _buildCount;
+    private ulong _refitCount;
+    private ulong _skippedCleanFrameCount;
+    private ulong _clearCount;
+    private ulong _bufferReallocationCount;
+    private ulong _initialBuildCount;
+    private ulong _topologyChangeRebuildCount;
+    private ulong _normalizationEscapeRebuildCount;
+    private ulong _periodicQualityRebuildCount;
+    private uint _lastDirtyLeafCount;
+    private ulong _lastAabbUploadBytes;
+    private ulong _lastAabbCopyBytes;
+    private ulong _synchronousReadbackBytes;
+    private ulong _asynchronousReadbackBytes;
+    private ulong _zeroReadbackSubmissionCount;
+    private GpuBvhRebuildReason _pendingRebuildReason = GpuBvhRebuildReason.InitialOrUnavailable;
+    private uint _qualityAnalysisRevision;
+    private ulong _qualityAnalysisCount;
+    private GpuBvhBuildIdentity _lastBuildIdentity;
+    private bool _buildPendingResources;
+
+    /// <summary>Creates a GPU BVH with a stable label used by backend resource diagnostics.</summary>
+    public GpuBvhTree(string ownerName = "Unowned")
+    {
+        long id = Interlocked.Increment(ref s_nextDiagnosticId);
+        _diagnosticName = $"GpuBvhTree[{ownerName}:{id}]";
+        _nodeBufferName = $"{_diagnosticName}.Nodes";
+        _mortonBufferName = $"{_diagnosticName}.Morton";
+        _counterBufferName = $"{_diagnosticName}.Counters";
+        _radixScratchBufferName = $"{_diagnosticName}.RadixScratch";
+        _radixOffsetsBufferName = $"{_diagnosticName}.RadixOffsets";
+        _qualityDiagnosticsBufferName = $"{_diagnosticName}.QualityDiagnostics";
+        _overflowFlagBufferName = $"{_diagnosticName}.OverflowFlag";
+    }
 
     /// <summary>Number of nodes in the most recently built BVH.</summary>
     public uint NodeCount => _lastNodeCount;
@@ -80,17 +128,35 @@ public sealed partial class GpuBvhTree : IDisposable
     /// <summary>Number of primitives (leaf objects) in the most recently built BVH.</summary>
     public uint PrimitiveCount => _lastPrimitiveCount;
 
+    /// <summary>
+    /// True while a required buffer upload is still being published. Callers
+    /// must retry the build rather than classify this transient state as a
+    /// capacity or topology failure.
+    /// </summary>
+    public bool IsBuildPendingResources => _buildPendingResources;
+
+    /// <summary>Returns the current lifecycle, logical-use, and retained-capacity counters.</summary>
+    public GpuBvhDiagnostics Diagnostics
+    {
+        get
+        {
+            lock (_syncRoot)
+                return CreateDiagnostics();
+        }
+    }
+
     /// <summary>Construction mode for the next build.</summary>
     public BvhBuildMode BuildMode
     {
         get => _buildMode;
         set
         {
+            if (value == BvhBuildMode.MortonPlusSah)
+                throw new NotSupportedException("MortonPlusSah is disabled because it does not preserve valid topology for multi-primitive leaves.");
+
             if (_buildMode == value)
                 return;
             _buildMode = value;
-            // BVH_MODE is a plain uniform, not a specialization constant, so
-            // existing shaders/programs stay valid. Just rebuild.
             MarkDirty();
         }
     }
@@ -135,6 +201,10 @@ public sealed partial class GpuBvhTree : IDisposable
     {
         lock (_syncRoot)
         {
+            // This flag describes only the current build attempt. Validation,
+            // clear, and program failures must not inherit a prior allocation wait.
+            _buildPendingResources = false;
+
             // Consume any prior async overflow flag first; that result tells
             // us whether the previous build actually completed.
             if (PollPendingOverflowCore())
@@ -146,45 +216,85 @@ public sealed partial class GpuBvhTree : IDisposable
                 return;
             }
 
+            if (!TryNormalizeSceneBounds(sceneBounds, out Vector3 sceneMin, out Vector3 sceneMax))
+            {
+                Debug.LogWarning("[GpuBvhTree] Refusing to build with invalid or non-finite Morton normalization bounds.");
+                return;
+            }
+
+            // A scene BVH can be requested by more than one pipeline consumer
+            // in a frame. Identical clean inputs already describe the published
+            // tree, so do not reset/upload the overflow flag or resubmit compute.
+            if (CanReuseCompletedBuild(_isDirty, _lastBuildIdentity, aabbBuffer, primitiveCount, sceneMin, sceneMax))
+            {
+                _skippedCleanFrameCount++;
+                return;
+            }
+
             _aabbBuffer = aabbBuffer;
 
-            // Bail before any GPU work if a required program failed to link
-            // — otherwise the individual Dispatch* methods would silently
-            // skip and we would mark the BVH clean over a partial / stale
-            // build.
+            // Bail before any GPU work if a required program failed to link.
             if (!EnsureProgramsReady(primitiveCount))
                 return;
 
             EnsureBuffers(primitiveCount);
+            _lastPrimitiveCount = primitiveCount;
             DropPendingOverflowFence("superseded by a new BVH build", warnIfOld: true);
-            ResetOverflowFlagBuffer();
+            if (!IsOverflowFlagBufferReady())
+            {
+                _buildPendingResources = true;
+                return;
+            }
 
-            Vector3 sceneMin = sceneBounds.Min;
-            Vector3 sceneMax = sceneBounds.Max;
-            // Expand any degenerate axis independently; Vector3 == is an exact
-            // all-components compare and would miss e.g. a flat ground plane.
-            const float DegenerateAxisEpsilon = 1e-6f;
-            if (sceneMax.X - sceneMin.X < DegenerateAxisEpsilon) { sceneMin.X -= 0.5f; sceneMax.X += 0.5f; }
-            if (sceneMax.Y - sceneMin.Y < DegenerateAxisEpsilon) { sceneMin.Y -= 0.5f; sceneMax.Y += 0.5f; }
-            if (sceneMax.Z - sceneMin.Z < DegenerateAxisEpsilon) { sceneMin.Z -= 0.5f; sceneMax.Z += 0.5f; }
+            using var cpuSubmission = BvhGpuProfiler.Instance.SubmissionScope(BvhGpuProfiler.Stage.Build);
+            using var gpuTiming = BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Build, 1u);
 
             // GPU build pipeline.
             DispatchMortonCodes(primitiveCount, sceneMin, sceneMax);
             SortMortonCodes(primitiveCount);
             DispatchBuild(primitiveCount);
-            if (_buildMode == BvhBuildMode.MortonPlusSah)
-                DispatchRefine();
             DispatchRefit();
+            DispatchQualityAnalysis(_pendingRebuildReason);
 
             // If we observed an overflow synchronously (no fence support),
             // the BVH has been wiped — bail and let the caller fall back.
             if (EnqueueOverflowFlagReadback(primitiveCount, _lastNodeCount))
                 return;
 
-            _lastPrimitiveCount = primitiveCount;
             _isDirty = false;
+            _lastBuildIdentity = new GpuBvhBuildIdentity(aabbBuffer, primitiveCount, sceneMin, sceneMax);
+            _buildCount++;
+            RecordConsumedRebuildReason(_pendingRebuildReason);
+            _pendingRebuildReason = GpuBvhRebuildReason.None;
         }
     }
+
+    internal static bool TryNormalizeSceneBounds(AABB bounds, out Vector3 min, out Vector3 max)
+    {
+        min = bounds.Min;
+        max = bounds.Max;
+        if (!IsFinite(min) || !IsFinite(max) ||
+            min.X > max.X || min.Y > max.Y || min.Z > max.Z)
+            return false;
+
+        const float DegenerateAxisEpsilon = 1e-6f;
+        if (max.X - min.X < DegenerateAxisEpsilon) { min.X -= 0.5f; max.X += 0.5f; }
+        if (max.Y - min.Y < DegenerateAxisEpsilon) { min.Y -= 0.5f; max.Y += 0.5f; }
+        if (max.Z - min.Z < DegenerateAxisEpsilon) { min.Z -= 0.5f; max.Z += 0.5f; }
+        return true;
+    }
+
+    private static bool IsFinite(in Vector3 value)
+        => float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
+
+    internal static bool CanReuseCompletedBuild(
+        bool isDirty,
+        in GpuBvhBuildIdentity identity,
+        XRDataBuffer aabbBuffer,
+        uint primitiveCount,
+        in Vector3 sceneMin,
+        in Vector3 sceneMax)
+        => !isDirty && identity.Matches(aabbBuffer, primitiveCount, sceneMin, sceneMax);
 
     /// <summary>
     /// Refits the BVH bounds without rebuilding the hierarchy.
@@ -201,11 +311,16 @@ public sealed partial class GpuBvhTree : IDisposable
 
         lock (_syncRoot)
         {
+            using var cpuSubmission = BvhGpuProfiler.Instance.SubmissionScope(BvhGpuProfiler.Stage.Refit);
+            using var gpuTiming = BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Refit, 1u);
             // Refit only needs the refit program; don't link the morton /
             // sort / build / sah programs just to bounce bounds up the tree.
             if (!EnsureProgramReady(_refitProgram ??= CreateProgram(ref _refitShader, "Scene3D/RenderPipeline/bvh_refit.comp")))
                 return;
             DispatchRefit();
+            if ((_refitCount + 1u) % QualityAnalysisRefitCadence == 0u)
+                DispatchQualityAnalysis(GpuBvhRebuildReason.None);
+            _refitCount++;
             // bvh_refit.comp does not write to OverflowFlags (binding 8), so
             // a CPU readback here would always return 0 and only cost a
             // pipeline stall. Overflow is exclusively a build-time condition.
@@ -223,13 +338,60 @@ public sealed partial class GpuBvhTree : IDisposable
     {
         DropPendingOverflowFence("BVH cleared", warnIfOld: false);
 
+        if (_lastNodeCount == 0 && _lastPrimitiveCount == 0)
+            return;
+
         _lastNodeCount = 0;
         _lastPrimitiveCount = 0;
         _isDirty = true;
+        _clearCount++;
 
-        ClearBuffer(_nodeBuffer);
-        ClearBuffer(_rangeBuffer);
-        ClearBuffer(_mortonBuffer);
+        ClearNodeHeader(_nodeBuffer);
+    }
+
+    internal void RecordCleanFrameSkipped()
+    {
+        lock (_syncRoot)
+            _skippedCleanFrameCount++;
+    }
+
+    internal void RecordRebuildReason(GpuBvhRebuildReason reason)
+    {
+        lock (_syncRoot)
+        {
+            _pendingRebuildReason = reason;
+            if (reason != GpuBvhRebuildReason.None)
+                _isDirty = true;
+        }
+    }
+
+    internal void RecordRefitTransfer(uint dirtyLeafCount, ulong uploadBytes, ulong copyBytes)
+    {
+        lock (_syncRoot)
+        {
+            _lastDirtyLeafCount = dirtyLeafCount;
+            _lastAabbUploadBytes = uploadBytes;
+            _lastAabbCopyBytes = copyBytes;
+        }
+    }
+
+    private void RecordConsumedRebuildReason(GpuBvhRebuildReason reason)
+    {
+        switch (reason)
+        {
+            case GpuBvhRebuildReason.InitialOrUnavailable:
+                _initialBuildCount++;
+                break;
+            case GpuBvhRebuildReason.TopologyChanged:
+                _topologyChangeRebuildCount++;
+                break;
+            case GpuBvhRebuildReason.NormalizationDomainEscaped:
+                _normalizationEscapeRebuildCount++;
+                break;
+            case GpuBvhRebuildReason.PeriodicQualityCeiling:
+                _periodicQualityRebuildCount++;
+                break;
+        }
     }
 
     public void Dispose()
