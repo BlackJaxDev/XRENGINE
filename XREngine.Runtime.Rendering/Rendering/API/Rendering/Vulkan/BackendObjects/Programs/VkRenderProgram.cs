@@ -1763,7 +1763,7 @@ public unsafe partial class VulkanRenderer
                 {
                     case DescriptorType.UniformBuffer:
                     case DescriptorType.StorageBuffer:
-                        if (!TryResolveComputeBuffer(binding, imageIndex, snapshot, out DescriptorBufferInfo bufferInfo))
+                        if (!TryResolveComputeBuffer(binding, imageIndex, snapshot, reusableDescriptorBindingKey, out DescriptorBufferInfo bufferInfo))
                         {
                             hasUnresolvedBinding = true;
                             WarnComputeOnce($"Skipping unresolved {binding.DescriptorType} binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}). Compute dispatch will be skipped.");
@@ -2220,6 +2220,7 @@ public unsafe partial class VulkanRenderer
             DescriptorBindingInfo binding,
             uint imageIndex,
             ComputeDispatchSnapshot snapshot,
+            ulong dispatchKey,
             out DescriptorBufferInfo bufferInfo)
         {
             bufferInfo = default;
@@ -2230,7 +2231,7 @@ public unsafe partial class VulkanRenderer
             if (binding.DescriptorType == DescriptorType.UniformBuffer &&
                 TryGetAutoUniformBlockFuzzy(binding.Name, binding.Set, binding.Binding, out AutoUniformBlockInfo block))
             {
-                if (TryGetOrUpdateComputeAutoUniformBuffer(imageIndex, binding, snapshot, block, out bufferInfo))
+                if (TryGetOrUpdateComputeAutoUniformBuffer(imageIndex, binding, snapshot, block, dispatchKey, out bufferInfo))
                     return true;
             }
 
@@ -2244,7 +2245,7 @@ public unsafe partial class VulkanRenderer
             }
 
             if (binding.DescriptorType == DescriptorType.UniformBuffer &&
-                TryGetOrUpdateComputeFallbackUniformBuffer(imageIndex, binding, out bufferInfo))
+                TryGetOrUpdateComputeFallbackUniformBuffer(imageIndex, binding, dispatchKey, out bufferInfo))
             {
                 RecordComputeDescriptorFallback(binding);
                 return true;
@@ -2256,6 +2257,7 @@ public unsafe partial class VulkanRenderer
         private bool TryGetOrUpdateComputeFallbackUniformBuffer(
             uint imageIndex,
             DescriptorBindingInfo binding,
+            ulong dispatchKey,
             out DescriptorBufferInfo bufferInfo)
         {
             bufferInfo = default;
@@ -2266,7 +2268,8 @@ public unsafe partial class VulkanRenderer
                 imageIndex,
                 binding.Set,
                 binding.Binding,
-                binding.Name ?? string.Empty);
+                binding.Name ?? string.Empty,
+                dispatchKey);
 
             if (!TryGetOrCreateComputeUniformBuffer(key, fallbackSize, out ComputeUniformBuffer resource, out bool created))
                 return false;
@@ -2294,6 +2297,7 @@ public unsafe partial class VulkanRenderer
             DescriptorBindingInfo binding,
             ComputeDispatchSnapshot snapshot,
             AutoUniformBlockInfo block,
+            ulong dispatchKey,
             out DescriptorBufferInfo bufferInfo)
         {
             bufferInfo = default;
@@ -2304,7 +2308,8 @@ public unsafe partial class VulkanRenderer
                 imageIndex,
                 binding.Set,
                 binding.Binding,
-                block.InstanceName);
+                block.InstanceName,
+                dispatchKey);
 
             if (!TryGetOrCreateComputeUniformBuffer(key, size, out ComputeUniformBuffer resource, out _))
                 return false;
@@ -2343,12 +2348,12 @@ public unsafe partial class VulkanRenderer
 
                 if (TryGetAutoUniformBlockFuzzy(binding.Name, binding.Set, binding.Binding, out AutoUniformBlockInfo block))
                 {
-                    if (!TryUpdateExistingComputeAutoUniformBuffer(imageIndex, binding, snapshot, block))
+                    if (!TryUpdateExistingComputeAutoUniformBuffer(imageIndex, binding, snapshot, block, reusableDescriptorBindingKey))
                         return false;
                     continue;
                 }
 
-                if (!HasExistingComputeFallbackUniformBuffer(imageIndex, binding))
+                if (!HasExistingComputeFallbackUniformBuffer(imageIndex, binding, reusableDescriptorBindingKey))
                     return false;
             }
 
@@ -2397,7 +2402,7 @@ public unsafe partial class VulkanRenderer
                 {
                     case DescriptorType.UniformBuffer:
                     case DescriptorType.StorageBuffer:
-                        if (!TryResolveComputeBuffer(binding, imageIndex, snapshot, out DescriptorBufferInfo bufferInfo))
+                        if (!TryResolveComputeBuffer(binding, imageIndex, snapshot, reusableDescriptorBindingKey, out DescriptorBufferInfo bufferInfo))
                         {
                             hasUnresolvedBinding = true;
                             RecordComputeDescriptorFailure(binding, "buffer refresh failed", skippedDispatch: true);
@@ -2482,7 +2487,8 @@ public unsafe partial class VulkanRenderer
             uint imageIndex,
             DescriptorBindingInfo binding,
             ComputeDispatchSnapshot snapshot,
-            AutoUniformBlockInfo block)
+            AutoUniformBlockInfo block,
+            ulong dispatchKey)
         {
             uint size = Math.Max(block.Size, 1u);
             ComputeUniformBufferKey key = new(
@@ -2490,7 +2496,8 @@ public unsafe partial class VulkanRenderer
                 imageIndex,
                 binding.Set,
                 binding.Binding,
-                block.InstanceName);
+                block.InstanceName,
+                dispatchKey);
 
             if (!_computeUniformBuffers.TryGetValue(key, out ComputeUniformBuffer resource) ||
                 resource.Buffer.Handle == 0 ||
@@ -2502,7 +2509,7 @@ public unsafe partial class VulkanRenderer
             return TryWriteComputeAutoUniformBuffer(resource, size, snapshot, block);
         }
 
-        private bool HasExistingComputeFallbackUniformBuffer(uint imageIndex, DescriptorBindingInfo binding)
+        private bool HasExistingComputeFallbackUniformBuffer(uint imageIndex, DescriptorBindingInfo binding, ulong dispatchKey)
         {
             const uint fallbackSize = 4096u;
             ComputeUniformBufferKey key = new(
@@ -2510,7 +2517,8 @@ public unsafe partial class VulkanRenderer
                 imageIndex,
                 binding.Set,
                 binding.Binding,
-                binding.Name ?? string.Empty);
+                binding.Name ?? string.Empty,
+                dispatchKey);
 
             return _computeUniformBuffers.TryGetValue(key, out ComputeUniformBuffer resource) &&
                 resource.Buffer.Handle != 0 &&

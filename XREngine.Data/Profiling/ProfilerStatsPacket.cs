@@ -805,6 +805,9 @@ public sealed partial class BvhMetricsPacket
     public double CullMilliseconds { get; set; }
     public uint RaycastCount { get; set; }
     public double RaycastMilliseconds { get; set; }
+    public double TraversalMilliseconds { get; set; }
+    public double CommandEmissionMilliseconds { get; set; }
+    public double CommandEmissionSubmissionMilliseconds { get; set; }
 }
 
 /// <summary>

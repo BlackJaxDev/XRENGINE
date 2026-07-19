@@ -48,6 +48,17 @@ namespace XREngine.Rendering
         public const uint BvhRawNodeCount = 34;
         public const uint BvhSafeNodeCount = 35;
 
-        public const uint FieldCount = 36;
+        public const uint BvhVisitedInternalNodes = 36;
+        public const uint BvhVisitedLeaves = 37;
+        public const uint BvhVisitedCommands = 38;
+        public const uint BvhFrustumPlaneTests = 39;
+        public const uint BvhPlaneMaskReductions = 40;
+        public const uint BvhInternalRejections = 41;
+        public const uint BvhLeafRejections = 42;
+        public const uint BvhEmittedCommands = 43;
+        public const uint BvhMaxQueueOccupancy = 44;
+        public const uint BvhQueueOverflows = 45;
+
+        public const uint FieldCount = 46;
     }
 }

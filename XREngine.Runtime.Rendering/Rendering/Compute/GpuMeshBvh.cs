@@ -20,7 +20,7 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
     private const uint PackedTriangleGroupSize = 128u;
     public const uint DefaultMaxLeafPrimitives = 1u;
 
-    private readonly GpuBvhTree _tree = new();
+    private readonly GpuBvhTree _tree = new("GpuMeshBvh");
 
     private XRDataBuffer? _aabbBuffer;
     private XRDataBuffer? _triangleIndexBuffer;
@@ -35,6 +35,8 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
     private XRRenderProgram? _packedTriangleProgram;
     private TriangleGpuIndex[]? _triangleIndices;
     private TriangleAabb[]? _staticAabbs;
+    private XRDataBuffer? _staticGeometrySource;
+    private ulong _staticGeometryRevision;
 
     private XRMesh? _sourceMesh;
     private XRMeshRenderer? _sourceRenderer;
@@ -130,6 +132,7 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
             // building a bind-pose GPU BVH once, then refit it later when skinned buffers appear.
             LastUpdateUsedGpuSkinning = false;
             LocalToWorldMatrix = renderable.Component.Transform.RenderMatrix;
+            InvalidateStaticGeometryIfChanged(mesh);
             bool fallbackAabbsWillUpload = !_staticAabbsUploaded;
             if (!UploadStaticAabbsIfNeeded(mesh, triangles, triangleCount))
                 return false;
@@ -140,6 +143,7 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
 
         LastUpdateUsedGpuSkinning = false;
         LocalToWorldMatrix = renderable.Component.Transform.RenderMatrix;
+        InvalidateStaticGeometryIfChanged(mesh);
         bool staticAabbsWillUpload = !_staticAabbsUploaded;
         if (!UploadStaticAabbsIfNeeded(mesh, triangles, triangleCount))
             return false;
@@ -165,6 +169,24 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
         _built = false;
         _staticAabbsUploaded = false;
         _packedTrianglesUploaded = false;
+        _staticGeometrySource = null;
+        _staticGeometryRevision = 0u;
+        _tree.MarkDirty();
+    }
+
+    private void InvalidateStaticGeometryIfChanged(XRMesh mesh)
+    {
+        XRDataBuffer? source = mesh.Interleaved ? mesh.InterleavedVertexBuffer : mesh.PositionsBuffer;
+        ulong revision = source?.Revision ?? 0u;
+        if (ReferenceEquals(_staticGeometrySource, source) && _staticGeometryRevision == revision)
+            return;
+
+        _staticGeometrySource = source;
+        _staticGeometryRevision = revision;
+        _staticAabbsUploaded = false;
+        _packedTrianglesUploaded = false;
+        _built = false;
+        ReleaseStaticStorageViews();
         _tree.MarkDirty();
     }
 
@@ -282,6 +304,12 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
 
     private bool PackStaticTriangles(XRMesh mesh, uint triangleCount)
     {
+        // Static geometry and its Morton permutation remain valid until the
+        // mesh BVH is explicitly dirtied or its source changes. Avoid
+        // repacking immutable triangles on every preview/pick preparation.
+        if (_packedTrianglesUploaded)
+            return true;
+
         XRDataBuffer? positions = mesh.Interleaved
             ? null
             : GetOrCreateStorageView(
@@ -510,6 +538,8 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
         _triangleAabbShader = null;
         _packedTriangleProgram = null;
         _packedTriangleShader = null;
+        _staticGeometrySource = null;
+        _staticGeometryRevision = 0u;
     }
 
     [StructLayout(LayoutKind.Sequential)]

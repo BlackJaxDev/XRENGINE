@@ -77,9 +77,9 @@ public class GpuSceneBvhTests
 
     /// <summary>
     /// BVH Node structure matching BvhRaycastCore.glsl / bvh_nodes.glslinc layout
-    /// (80 bytes / 20 uint scalars, leaf flag in bit 0 of <see cref="Flags"/>).
+    /// (48 bytes / 12 uint scalars, leaf flag in bit 0 of <see cref="Flags"/>).
     /// </summary>
-    [StructLayout(LayoutKind.Explicit, Size = 80)]
+    [StructLayout(LayoutKind.Explicit, Size = 48)]
     private struct GpuBvhNode
     {
         [FieldOffset(0)] public Vector3 MinBounds;
@@ -209,8 +209,8 @@ public class GpuSceneBvhTests
     [Test]
     public void GpuBvhNode_StructLayout_CorrectSize()
     {
-        // BvhNode matches bvh_nodes.glslinc: 80 bytes / 20 uint scalars.
-        int expectedSize = 80;
+        // BvhNode matches bvh_nodes.glslinc: 48 bytes / 12 uint scalars.
+        int expectedSize = 48;
         int actualSize = Marshal.SizeOf<GpuBvhNode>();
         actualSize.ShouldBe(expectedSize);
     }

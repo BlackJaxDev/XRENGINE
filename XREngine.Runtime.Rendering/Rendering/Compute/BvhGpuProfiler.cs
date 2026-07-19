@@ -18,7 +18,15 @@ namespace XREngine.Rendering.Compute
             Build = 0,
             Refit = 1,
             Cull = 2,
-            Raycast = 3
+            Raycast = 3,
+            Morton = 4,
+            Sort = 5,
+            HierarchyBuild = 6,
+            Refinement = 7,
+            RefitClear = 8,
+            LeafRefit = 9,
+            Traversal = 10,
+            CommandEmission = 11
         }
 
         public readonly struct Metrics(
@@ -29,7 +37,18 @@ namespace XREngine.Rendering.Compute
             uint buildCount,
             uint refitCount,
             uint cullCount,
-            uint raycastCount)
+            uint raycastCount,
+            ulong mortonNs,
+            ulong sortNs,
+            ulong hierarchyBuildNs,
+            ulong refinementNs,
+            ulong refitClearNs,
+            ulong leafRefitNs,
+            ulong traversalNs,
+            ulong commandEmissionNs,
+            ulong buildSubmissionNs,
+            ulong refitSubmissionNs,
+            ulong commandEmissionSubmissionNs)
         {
             public readonly ulong BuildNanoseconds = buildNs;
             public readonly ulong RefitNanoseconds = refitNs;
@@ -39,13 +58,29 @@ namespace XREngine.Rendering.Compute
             public readonly uint RefitCount = refitCount;
             public readonly uint CullCount = cullCount;
             public readonly uint RaycastCount = raycastCount;
+            public readonly ulong MortonNanoseconds = mortonNs;
+            public readonly ulong SortNanoseconds = sortNs;
+            public readonly ulong HierarchyBuildNanoseconds = hierarchyBuildNs;
+            public readonly ulong RefinementNanoseconds = refinementNs;
+            public readonly ulong RefitClearNanoseconds = refitClearNs;
+            public readonly ulong LeafRefitNanoseconds = leafRefitNs;
+            public readonly ulong TraversalNanoseconds = traversalNs;
+            public readonly ulong CommandEmissionNanoseconds = commandEmissionNs;
+            public readonly ulong BuildSubmissionNanoseconds = buildSubmissionNs;
+            public readonly ulong RefitSubmissionNanoseconds = refitSubmissionNs;
+            public readonly ulong CommandEmissionSubmissionNanoseconds = commandEmissionSubmissionNs;
 
             public double BuildMilliseconds => BuildNanoseconds / 1_000_000.0;
             public double RefitMilliseconds => RefitNanoseconds / 1_000_000.0;
             public double CullMilliseconds => CullNanoseconds / 1_000_000.0;
             public double RaycastMilliseconds => RaycastNanoseconds / 1_000_000.0;
+            public double TraversalMilliseconds => TraversalNanoseconds / 1_000_000.0;
+            public double CommandEmissionMilliseconds => CommandEmissionNanoseconds / 1_000_000.0;
+            public double CommandEmissionSubmissionMilliseconds => CommandEmissionSubmissionNanoseconds / 1_000_000.0;
 
-            public static Metrics Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0);
+            public static Metrics Empty { get; } = new(
+                0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         }
 
         public readonly struct TimingScope : IDisposable
@@ -64,6 +99,14 @@ namespace XREngine.Rendering.Compute
                 if (_handle.HasValue)
                     _profiler.End(_handle.Value);
             }
+        }
+
+        public readonly struct CpuSubmissionScope(BvhGpuProfiler profiler, Stage stage) : IDisposable
+        {
+            private readonly long _started = System.Diagnostics.Stopwatch.GetTimestamp();
+
+            public void Dispose()
+                => profiler.RecordCpuSubmission(stage, System.Diagnostics.Stopwatch.GetTimestamp() - _started);
         }
 
         public readonly struct TimingHandle(BvhGpuProfiler.Stage stage, uint workCount, GLRenderQuery startQuery, OpenGLRenderer renderer)
@@ -92,6 +135,17 @@ namespace XREngine.Rendering.Compute
             public uint RefitCount;
             public uint CullCount;
             public uint RaycastCount;
+            public ulong MortonTime;
+            public ulong SortTime;
+            public ulong HierarchyBuildTime;
+            public ulong RefinementTime;
+            public ulong RefitClearTime;
+            public ulong LeafRefitTime;
+            public ulong TraversalTime;
+            public ulong CommandEmissionTime;
+            public ulong BuildSubmissionTime;
+            public ulong RefitSubmissionTime;
+            public ulong CommandEmissionSubmissionTime;
 
             public void Reset()
             {
@@ -103,10 +157,26 @@ namespace XREngine.Rendering.Compute
                 RefitCount = 0;
                 CullCount = 0;
                 RaycastCount = 0;
+                MortonTime = 0;
+                SortTime = 0;
+                HierarchyBuildTime = 0;
+                RefinementTime = 0;
+                RefitClearTime = 0;
+                LeafRefitTime = 0;
+                TraversalTime = 0;
+                CommandEmissionTime = 0;
+                BuildSubmissionTime = 0;
+                RefitSubmissionTime = 0;
+                CommandEmissionSubmissionTime = 0;
             }
 
             public readonly Metrics ToMetrics()
-                => new(BuildTime, RefitTime, CullTime, RaycastTime, BuildCount, RefitCount, CullCount, RaycastCount);
+                => new(
+                    BuildTime, RefitTime, CullTime, RaycastTime,
+                    BuildCount, RefitCount, CullCount, RaycastCount,
+                    MortonTime, SortTime, HierarchyBuildTime, RefinementTime,
+                    RefitClearTime, LeafRefitTime, TraversalTime, CommandEmissionTime,
+                    BuildSubmissionTime, RefitSubmissionTime, CommandEmissionSubmissionTime);
 
             public void Add(Stage stage, ulong ns, uint workCount)
             {
@@ -128,7 +198,41 @@ namespace XREngine.Rendering.Compute
                         RaycastTime += ns;
                         RaycastCount += workCount;
                         break;
+                    case Stage.Morton:
+                        MortonTime += ns;
+                        break;
+                    case Stage.Sort:
+                        SortTime += ns;
+                        break;
+                    case Stage.HierarchyBuild:
+                        HierarchyBuildTime += ns;
+                        break;
+                    case Stage.Refinement:
+                        RefinementTime += ns;
+                        break;
+                    case Stage.RefitClear:
+                        RefitClearTime += ns;
+                        break;
+                    case Stage.LeafRefit:
+                        LeafRefitTime += ns;
+                        break;
+                    case Stage.Traversal:
+                        TraversalTime += ns;
+                        break;
+                    case Stage.CommandEmission:
+                        CommandEmissionTime += ns;
+                        break;
                 }
+            }
+
+            public void AddCpuSubmission(Stage stage, ulong ns)
+            {
+                if (stage == Stage.Build)
+                    BuildSubmissionTime += ns;
+                else if (stage == Stage.Refit)
+                    RefitSubmissionTime += ns;
+                else if (stage == Stage.CommandEmission)
+                    CommandEmissionSubmissionTime += ns;
             }
         }
 
@@ -150,10 +254,23 @@ namespace XREngine.Rendering.Compute
         public TimingScope Scope(Stage stage, uint workCount = 0)
             => new(this, Begin(stage, workCount));
 
+        public CpuSubmissionScope SubmissionScope(Stage stage)
+            => new(this, stage);
+
         public void RecordDispatch(Stage stage, uint workCount)
         {
             lock (_lock)
                 _frameAccumulator.Add(stage, 0, workCount);
+        }
+
+        public void RecordCpuSubmission(Stage stage, long elapsedStopwatchTicks)
+        {
+            if (elapsedStopwatchTicks <= 0)
+                return;
+
+            ulong nanoseconds = (ulong)((double)elapsedStopwatchTicks * 1_000_000_000.0 / System.Diagnostics.Stopwatch.Frequency);
+            lock (_lock)
+                _frameAccumulator.AddCpuSubmission(stage, nanoseconds);
         }
 
         public Metrics ResolveAndPublish(long frameTimestampTicks, XRDataBuffer? statsBuffer)
@@ -296,7 +413,7 @@ namespace XREngine.Rendering.Compute
             if (wroteAny)
             {
                 int byteOffset = (int)(GpuStatsLayout.BvhBuildCount * (uint)sizeof(uint));
-                uint byteLength = (GpuStatsLayout.FieldCount - GpuStatsLayout.BvhBuildCount) * (uint)sizeof(uint);
+                uint byteLength = (GpuStatsLayout.StatsTriangleCount - GpuStatsLayout.BvhBuildCount) * (uint)sizeof(uint);
                 buffer.PushSubData(byteOffset, byteLength);
             }
         }

@@ -27,6 +27,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
     // leaf buffer every frame when SkinnedBoundsGpuDirectAabbWrite is enabled.
     private readonly object _registrySync = new();
     private readonly HashSet<RenderableMesh> _registeredSkinnedMeshes = [];
+    private readonly List<RenderableMesh> _registeredSkinnedMeshSnapshot = [];
     // Re-used scratch list for Path A dispatch to avoid per-frame allocations.
     private readonly List<uint> _pathAScratchIndices = new(16);
 
@@ -538,24 +539,39 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         if (targetScene is null || !RuntimeEngine.IsRenderThread)
             return;
 
-        RenderableMesh[] snapshot;
         lock (_registrySync)
         {
             if (_registeredSkinnedMeshes.Count == 0)
                 return;
-            snapshot = new RenderableMesh[_registeredSkinnedMeshes.Count];
-            _registeredSkinnedMeshes.CopyTo(snapshot);
+
+            _registeredSkinnedMeshSnapshot.Clear();
+            foreach (RenderableMesh registeredMesh in _registeredSkinnedMeshes)
+                _registeredSkinnedMeshSnapshot.Add(registeredMesh);
         }
 
-        for (int i = 0; i < snapshot.Length; i++)
+        for (int i = 0; i < _registeredSkinnedMeshSnapshot.Count; i++)
         {
-            var mesh = snapshot[i];
+            RenderableMesh mesh = _registeredSkinnedMeshSnapshot[i];
             // Only refresh meshes belonging to the same VisualScene as targetScene.
             var visualScene = mesh.World?.VisualScene;
             if (visualScene is null || !ReferenceEquals(visualScene.GPUCommands, targetScene))
                 continue;
 
-            DispatchPathADirectWrite(mesh, targetScene, _pathAScratchIndices);
+            XRMeshRenderer? renderer = mesh.CurrentLODRenderer;
+            if (renderer is null)
+                continue;
+
+            if (DispatchPathADirectWrite(mesh, targetScene, _pathAScratchIndices))
+                continue;
+
+            targetScene.RestoreCpuCommandAabbsForRenderer(
+                renderer,
+                mesh.RenderInfo,
+                _pathAScratchIndices);
+            Debug.RenderingWarningEvery(
+                $"SkinnedBounds.PathADirectWriteUnavailable.{RuntimeHelpers.GetHashCode(mesh)}",
+                TimeSpan.FromSeconds(2),
+                "[GPU BVH] Skinned AABB direct write was unavailable; CPU bounds were republished and the stale GPU-owned bounds were revoked.");
         }
     }
 

@@ -54,8 +54,18 @@ layout(std430, binding = 8) buffer StatsBuffer {
     uint MaterialScatterMetadataLength;    // 31
     uint MaterialScatterCulledCount;        // 32
     uint MaterialScatterKeyCount;           // 33
-    uint BvhRawNodeCount;                    // 34
-    uint BvhSafeNodeCount;                   // 35
+    uint BvhRawNodeCount;                   // 34
+    uint BvhSafeNodeCount;                  // 35
+    uint BvhVisitedInternalNodes;           // 36
+    uint BvhVisitedLeaves;                  // 37
+    uint BvhVisitedCommands;                // 38
+    uint BvhFrustumPlaneTests;              // 39
+    uint BvhPlaneMaskReductions;            // 40
+    uint BvhInternalRejections;             // 41
+    uint BvhLeafRejections;                 // 42
+    uint BvhEmittedCommands;                // 43
+    uint BvhMaxQueueOccupancy;              // 44
+    uint BvhQueueOverflows;                 // 45
 };
 
 void main() {
@@ -115,4 +125,14 @@ void main() {
     MaterialScatterKeyCount = 0u;
     BvhRawNodeCount = 0u;
     BvhSafeNodeCount = 0u;
+    BvhVisitedInternalNodes = 0u;
+    BvhVisitedLeaves = 0u;
+    BvhVisitedCommands = 0u;
+    BvhFrustumPlaneTests = 0u;
+    BvhPlaneMaskReductions = 0u;
+    BvhInternalRejections = 0u;
+    BvhLeafRejections = 0u;
+    BvhEmittedCommands = 0u;
+    BvhMaxQueueOccupancy = 0u;
+    BvhQueueOverflows = 0u;
 }

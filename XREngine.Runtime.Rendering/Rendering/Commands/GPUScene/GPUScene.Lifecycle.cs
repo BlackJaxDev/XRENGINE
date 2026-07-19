@@ -232,6 +232,12 @@ namespace XREngine.Rendering.Commands
             _boundsDirtyRange.Clear();
             _materialStateDirtyRange.Clear();
             _skinningPaletteDirtyRange.Clear();
+            _commandAabbDirtyRange.Clear();
+            _commandAabbAccountingRange.Clear();
+            Array.Clear(_commandAabbDirtyLeaves);
+            _pendingCommandAabbDirtyLeafCount = 0u;
+            _pendingCommandAabbUploadBytes = 0u;
+            _pendingCommandAabbCopyBytes = 0u;
             _totalCommandCount = 0;
             _updatingCommandCount = 0;
             _skinnedCommandCount = 0;
@@ -249,6 +255,13 @@ namespace XREngine.Rendering.Commands
             _bvhRefitPending = false;
             _bvhBuildSuppressed = false;
             _bvhSuppressedCommandCount = 0;
+            _commandAabbRevision = 0;
+            _lastAppliedCommandAabbRevision = -1;
+            _consecutiveBvhRefits = 0u;
+            _hasBvhNormalizationBounds = false;
+            _commandAabbBackfillRequired = true;
+            _commandAabbPublishedContentVersion = -1;
+            _pendingBvhRebuildReason = GpuBvhRebuildReason.InitialOrUnavailable;
             _meshletsDirty = true;
         }
 

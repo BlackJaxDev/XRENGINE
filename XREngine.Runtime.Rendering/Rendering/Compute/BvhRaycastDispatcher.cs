@@ -16,7 +16,7 @@ namespace XREngine.Rendering.Compute;
 /// <summary>
 /// Dispatches GPU BVH raycasts and delivers the results once the GPU readback fence signals.
 /// </summary>
-public sealed class BvhRaycastDispatcher
+public sealed class BvhRaycastDispatcher : IDisposable
 {
     private const uint LocalSizeX = 32u;
     private const uint DefaultStackLimit = 64u;
@@ -34,6 +34,7 @@ public sealed class BvhRaycastDispatcher
     private XRRenderProgram? _raycastProgram;
     private XRRenderProgram? _anyHitProgram;
     private XRRenderProgram? _closestHitProgram;
+    private XRDataBuffer? _fallbackTraversalDiagnosticsBuffer;
 
     /// <summary>
     /// Enqueues a raycast request. Thread-safe; actual dispatch occurs on the render thread.
@@ -222,6 +223,9 @@ public sealed class BvhRaycastDispatcher
         while (_completedResults.TryDequeue(out _)) { }
         while (_completedCallbacks.TryDequeue(out _)) { }
 
+        _fallbackTraversalDiagnosticsBuffer?.Dispose();
+        _fallbackTraversalDiagnosticsBuffer = null;
+
         if (clearedWork > 0 && !string.IsNullOrWhiteSpace(reason))
             Debug.MeshesWarning($"[BvhRaycastDispatcher] Cleared GPU BVH raycasts ({reason}).");
     }
@@ -269,6 +273,8 @@ public sealed class BvhRaycastDispatcher
         program.BindBuffer(request.NodeBuffer, 1);
         program.BindBuffer(request.TriangleBuffer, 2);
         program.BindBuffer(request.HitBuffer, 3);
+        XRDataBuffer traversalDiagnostics = request.TraversalDiagnosticsBuffer ?? EnsureFallbackTraversalDiagnosticsBuffer();
+        program.BindBuffer(traversalDiagnostics, 4);
 
         program.Uniform("uRayCount", request.RayCount);
         program.Uniform("uRootIndex", request.RootNodeIndex);
@@ -276,6 +282,7 @@ public sealed class BvhRaycastDispatcher
         program.Uniform("uUsePacketMode", request.UsePacketMode ? 1u : 0u);
         program.Uniform("uAnyHitMode", request.AnyHit ? 1u : 0u);
         program.Uniform("uMaxStackDepth", request.MaxStackDepth ?? DefaultStackLimit);
+        program.Uniform("uDiagnosticsEnabled", request.TraversalDiagnosticsBuffer is not null ? 1u : 0u);
 
         using (BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Raycast, request.RayCount))
             program.DispatchCompute(groupsX, 1u, 1u, EMemoryBarrierMask.ShaderStorage);
@@ -287,6 +294,44 @@ public sealed class BvhRaycastDispatcher
         uint clampedBytes = (uint)Math.Min(requestedBytes, (ulong)request.HitBuffer.Length);
 
         _inFlight.Add(new InFlightRaycast(request, fence, clampedBytes));
+    }
+
+    private XRDataBuffer EnsureFallbackTraversalDiagnosticsBuffer()
+    {
+        if (_fallbackTraversalDiagnosticsBuffer is not null)
+            return _fallbackTraversalDiagnosticsBuffer;
+
+        var buffer = new XRDataBuffer(
+            "BvhRaycastDispatcher.FallbackTraversalDiagnostics",
+            EBufferTarget.ShaderStorageBuffer,
+            4u,
+            EComponentType.UInt,
+            1,
+            false,
+            true)
+        {
+            Usage = EBufferUsage.DynamicDraw,
+            Resizable = false,
+            DisposeOnPush = false,
+            PadEndingToVec4 = true,
+            ShouldMap = false,
+        };
+        buffer.SetDataRaw(new uint[4], 4);
+        buffer.Generate();
+        buffer.PushSubData();
+        _fallbackTraversalDiagnosticsBuffer = buffer;
+        return buffer;
+    }
+
+    public void Dispose()
+    {
+        Reset("dispatcher disposed");
+        _raycastProgram?.Destroy();
+        _anyHitProgram?.Destroy();
+        _closestHitProgram?.Destroy();
+        _raycastShader?.Destroy();
+        _anyHitShader?.Destroy();
+        _closestHitShader?.Destroy();
     }
 
     private XRRenderProgram ResolveProgram(BvhRaycastVariant variant)
@@ -381,6 +426,11 @@ public sealed record BvhRaycastRequest
     public XRDataBuffer? NodeBuffer { get; init; }
     public XRDataBuffer? TriangleBuffer { get; init; }
     public XRDataBuffer? HitBuffer { get; init; }
+    /// <summary>
+    /// Optional four-uint GPU-resident buffer: trace count, maximum stack
+    /// occupancy, stack overflows, and conservative range recoveries.
+    /// </summary>
+    public XRDataBuffer? TraversalDiagnosticsBuffer { get; init; }
     public uint RayCount { get; init; }
     public uint RootNodeIndex { get; init; }
     public uint PacketWidth { get; init; } = 1u;

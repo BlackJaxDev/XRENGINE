@@ -191,6 +191,197 @@ namespace XREngine.Rendering.Commands
             public Vector4 Max;
         }
 
+        private const uint CommandAabbStrideBytes = 8u * sizeof(float);
+
+        private readonly record struct AabbTransferBatch(uint DirtyLeafCount, ulong UploadBytes, ulong CopyBytes);
+
+        private void WriteCommandAabb(uint commandIndex, in CommandWorldAabb entry, bool uploadImmediately, bool forceDirty = false)
+        {
+            XRDataBuffer? buffer = _commandAabbBuffer;
+            if (buffer is null || commandIndex >= buffer.ElementCount)
+                return;
+
+            CommandWorldAabb previous = buffer.GetDataRawAtIndex<CommandWorldAabb>(commandIndex);
+            if (!uploadImmediately && !forceDirty && previous.Min == entry.Min && previous.Max == entry.Max)
+                return;
+
+            buffer.SetDataRawAtIndex(commandIndex, entry);
+            if (uploadImmediately)
+            {
+                buffer.PushSubData(checked((int)(commandIndex * CommandAabbStrideBytes)), CommandAabbStrideBytes);
+                _pendingCommandAabbUploadBytes += CommandAabbStrideBytes;
+            }
+            else
+                _commandAabbDirtyRange.Mark(commandIndex);
+
+            EnsureCommandAabbDirtyLeafCapacity(buffer.ElementCount);
+            if (!_commandAabbDirtyLeaves[commandIndex])
+            {
+                _commandAabbDirtyLeaves[commandIndex] = true;
+                _pendingCommandAabbDirtyLeafCount++;
+                _commandAabbAccountingRange.Mark(commandIndex);
+            }
+
+            Interlocked.Increment(ref _commandAabbRevision);
+            Vector3 min = new(entry.Min.X, entry.Min.Y, entry.Min.Z);
+            Vector3 max = new(entry.Max.X, entry.Max.Y, entry.Max.Z);
+            if (!uploadImmediately && _hasBvhNormalizationBounds && IsFinite(min) && IsFinite(max) &&
+                !Contains(_bvhNormalizationBounds, min, max))
+            {
+                MarkBvhDirty(GpuBvhRebuildReason.NormalizationDomainEscaped);
+                return;
+            }
+
+            if (_bvhReady && !_bvhDirty && _bvhPrimitiveCount == UpdatingCommandCount)
+                _bvhRefitPending = true;
+        }
+
+        /// <summary>
+        /// Mirrors a swap-removed command's world AABB into its new command slot.
+        /// Command metadata and BVH leaf input use the same dense index space and
+        /// must move together.
+        /// </summary>
+        private void MoveCommandAabb(uint sourceIndex, uint targetIndex)
+        {
+            XRDataBuffer? buffer = _commandAabbBuffer;
+            if (buffer is null || sourceIndex >= buffer.ElementCount || targetIndex >= buffer.ElementCount)
+                return;
+
+            CommandWorldAabb moved = buffer.GetDataRawAtIndex<CommandWorldAabb>(sourceIndex);
+            WriteCommandAabb(targetIndex, moved, uploadImmediately: false);
+        }
+
+        private AabbTransferBatch FlushCommandAabbDirtyRange()
+        {
+            if (_commandAabbDirtyRange.HasValue && _commandAabbBuffer is not null)
+            {
+                uint min = _commandAabbDirtyRange.Min;
+                uint maxExclusive = Math.Min(_commandAabbDirtyRange.MaxExclusive, _commandAabbBuffer.ElementCount);
+                if (maxExclusive > min)
+                {
+                    uint bytes = (maxExclusive - min) * CommandAabbStrideBytes;
+                    _commandAabbBuffer.PushSubData(checked((int)(min * CommandAabbStrideBytes)), bytes);
+                    _pendingCommandAabbUploadBytes += bytes;
+                }
+            }
+
+            var result = new AabbTransferBatch(
+                _pendingCommandAabbDirtyLeafCount,
+                _pendingCommandAabbUploadBytes,
+                _pendingCommandAabbCopyBytes);
+            if (_commandAabbAccountingRange.HasValue)
+            {
+                uint min = _commandAabbAccountingRange.Min;
+                uint maxExclusive = Math.Min(_commandAabbAccountingRange.MaxExclusive, (uint)_commandAabbDirtyLeaves.Length);
+                for (uint i = min; i < maxExclusive; ++i)
+                    _commandAabbDirtyLeaves[i] = false;
+            }
+            _commandAabbDirtyRange.Clear();
+            _commandAabbAccountingRange.Clear();
+            _pendingCommandAabbDirtyLeafCount = 0u;
+            _pendingCommandAabbUploadBytes = 0u;
+            _pendingCommandAabbCopyBytes = 0u;
+            return result;
+        }
+
+        private void EnsureCommandAabbDirtyLeafCapacity(uint count)
+        {
+            if ((uint)_commandAabbDirtyLeaves.Length >= count)
+                return;
+
+            Array.Resize(ref _commandAabbDirtyLeaves, checked((int)NextPowerOfTwo(Math.Max(count, 1u))));
+        }
+
+        /// <summary>
+        /// Initializes historical command AABBs when GPU BVH ownership is enabled
+        /// after commands already exist. BoundsGpu is the authoritative render
+        /// snapshot; the command sphere and configured world bounds are conservative
+        /// recovery sources for malformed entries.
+        /// </summary>
+        private void BackfillCommandAabbsFromRenderSnapshot(uint commandCount)
+        {
+            XRDataBuffer? commandAabbs = _commandAabbBuffer;
+            XRDataBuffer? commands = _allLoadedCommandsBuffer;
+            if (commandAabbs is null || commands is null)
+                return;
+
+            uint count = Math.Min(commandCount, Math.Min(commandAabbs.ElementCount, commands.ElementCount));
+            for (uint commandIndex = 0u; commandIndex < count; ++commandIndex)
+            {
+                // The skinned-bounds reducer owns these slots and has already
+                // published its sentinel/output in the acceleration-structure
+                // pass. CPU backfill must not overwrite GPU-produced bounds.
+                if (IsCommandOwnedByGpuAabb(commandIndex))
+                    continue;
+
+                GPUIndirectRenderCommand command = commands.GetDataRawAtIndex<GPUIndirectRenderCommand>(commandIndex);
+                uint boundsId = command.BoundsID;
+                if (_allLoadedDrawMetadataBuffer is not null && commandIndex < _allLoadedDrawMetadataBuffer.ElementCount)
+                    boundsId = _allLoadedDrawMetadataBuffer.GetDataRawAtIndex<DrawMetadata>(commandIndex).BoundsID;
+
+                BoundsGpu bounds = default;
+                bool hasBounds = false;
+                XRDataBuffer? boundsBuffer = _allLoadedBoundsBuffer;
+                if (boundsBuffer is not null && boundsId < boundsBuffer.ElementCount)
+                {
+                    bounds = boundsBuffer.GetDataRawAtIndex<BoundsGpu>(boundsId);
+                    hasBounds = bounds.BoundsVersion != 0u;
+                }
+
+                CommandWorldAabb entry = CreateBackfillCommandAabb(hasBounds, bounds, command.BoundingSphere, _bounds);
+                WriteCommandAabb(commandIndex, entry, uploadImmediately: false, forceDirty: true);
+            }
+
+            _commandAabbPublishedContentVersion = _lastSwappedCommandsContentVersion;
+            _commandAabbBackfillRequired = count != commandCount ||
+                _commandAabbPublishedContentVersion != Interlocked.Read(ref _updatingCommandsContentVersion);
+        }
+
+        private static CommandWorldAabb CreateBackfillCommandAabb(
+            bool hasBounds,
+            in BoundsGpu bounds,
+            in Vector4 commandSphere,
+            in AABB configuredBounds)
+        {
+            Vector3 min = bounds.AabbMin.XYZ();
+            Vector3 max = bounds.AabbMax.XYZ();
+            if (hasBounds && IsFinite(min) && IsFinite(max) &&
+                min.X <= max.X && min.Y <= max.Y && min.Z <= max.Z)
+            {
+                return new CommandWorldAabb { Min = new Vector4(min, 0.0f), Max = new Vector4(max, 0.0f) };
+            }
+
+            Vector3 center = commandSphere.XYZ();
+            float radius = commandSphere.W;
+            if (IsFinite(center) && float.IsFinite(radius) && radius >= 0.0f)
+            {
+                Vector3 extent = new(radius);
+                return new CommandWorldAabb
+                {
+                    Min = new Vector4(center - extent, 0.0f),
+                    Max = new Vector4(center + extent, 0.0f),
+                };
+            }
+
+            if (configuredBounds.IsValid && IsFinite(configuredBounds.Min) && IsFinite(configuredBounds.Max))
+            {
+                return new CommandWorldAabb
+                {
+                    Min = new Vector4(configuredBounds.Min, 0.0f),
+                    Max = new Vector4(configuredBounds.Max, 0.0f),
+                };
+            }
+
+            // Last-resort finite conservative domain. Keeping the entry valid is
+            // safer than letting an uninitialized zero/sentinel box enter Morton build.
+            const float FallbackExtent = 1.0e10f;
+            return new CommandWorldAabb
+            {
+                Min = new Vector4(-FallbackExtent, -FallbackExtent, -FallbackExtent, 0.0f),
+                Max = new Vector4(FallbackExtent, FallbackExtent, FallbackExtent, 0.0f),
+            };
+        }
+
         /// <summary>
         /// Computes a tight world-space AABB from <paramref name="renderInfo"/>'s culling
         /// volume + basis matrix (falling back to <paramref name="fallbackLocal"/> +
@@ -279,10 +470,7 @@ namespace XREngine.Rendering.Commands
                 Min = new Vector4(min, 0f),
                 Max = new Vector4(max, 0f),
             };
-            buffer.SetDataRawAtIndex(commandIndex, entry);
-
-            const int CommandAabbStrideBytes = 32; // 8 floats
-            buffer.PushSubData((int)(commandIndex * CommandAabbStrideBytes), CommandAabbStrideBytes);
+            WriteCommandAabb(commandIndex, entry, uploadImmediately: false);
         }
 
         // -------------------------------------------------------------------------
@@ -334,10 +522,9 @@ namespace XREngine.Rendering.Commands
                 Min = _gpuAabbSentinelMin,
                 Max = _gpuAabbSentinelMax,
             };
-            buffer.SetDataRawAtIndex(commandIndex, entry);
-
-            const int CommandAabbStrideBytes = 32;
-            buffer.PushSubData((int)(commandIndex * CommandAabbStrideBytes), CommandAabbStrideBytes);
+            // The following GPU reduction consumes this sentinel immediately,
+            // so this path cannot wait for the normal coalesced publication.
+            WriteCommandAabb(commandIndex, entry, uploadImmediately: true);
         }
 
         /// <summary>
@@ -370,6 +557,76 @@ namespace XREngine.Rendering.Commands
             return renderer is not null && _gpuAabbRenderers.Contains(renderer);
         }
 
+        private const float BvhConfiguredBoundsMaxAxisDilution = 2.0f;
+        private const float BvhNormalizationHysteresisMaxVolumeRatio = 4.0f;
+
+        private AABB ResolveBvhNormalizationBounds(uint commandCount)
+        {
+            Vector3 liveMin = new(float.PositiveInfinity);
+            Vector3 liveMax = new(float.NegativeInfinity);
+            uint validCount = 0u;
+
+            if (_commandAabbBuffer is not null)
+            {
+                uint count = Math.Min(commandCount, _commandAabbBuffer.ElementCount);
+                for (uint i = 0u; i < count; ++i)
+                {
+                    CommandWorldAabb aabb = _commandAabbBuffer.GetDataRawAtIndex<CommandWorldAabb>(i);
+                    Vector3 min = aabb.Min.XYZ();
+                    Vector3 max = aabb.Max.XYZ();
+                    if (!IsFinite(min) || !IsFinite(max) || min.X > max.X || min.Y > max.Y || min.Z > max.Z)
+                        continue;
+
+                    liveMin = Vector3.Min(liveMin, min);
+                    liveMax = Vector3.Max(liveMax, max);
+                    validCount++;
+                }
+            }
+
+            AABB configured = _bounds;
+            bool configuredValid = configured.IsValid && IsFinite(configured.Min) && IsFinite(configured.Max);
+            if (validCount == 0u)
+                return configuredValid ? configured : AABB.FromCenterSize(Vector3.Zero, Vector3.One);
+
+            Vector3 liveSize = Vector3.Max(liveMax - liveMin, new Vector3(1e-3f));
+            Vector3 margin = Vector3.Max(liveSize * 0.1f, new Vector3(0.5f));
+            AABB candidate = new(liveMin - margin, liveMax + margin);
+
+            // Prefer explicitly configured world bounds when they contain the
+            // scene without diluting Morton precision by more than one octree level.
+            if (configuredValid && Contains(configured, liveMin, liveMax))
+            {
+                Vector3 configuredSize = configured.Max - configured.Min;
+                if (configuredSize.X <= liveSize.X * BvhConfiguredBoundsMaxAxisDilution &&
+                    configuredSize.Y <= liveSize.Y * BvhConfiguredBoundsMaxAxisDilution &&
+                    configuredSize.Z <= liveSize.Z * BvhConfiguredBoundsMaxAxisDilution)
+                    candidate = configured;
+            }
+
+            // Retain a still-useful prior domain to avoid rebuild oscillation.
+            if (_hasBvhNormalizationBounds &&
+                Contains(_bvhNormalizationBounds, candidate.Min, candidate.Max) &&
+                Volume(_bvhNormalizationBounds) <= Volume(candidate) * BvhNormalizationHysteresisMaxVolumeRatio)
+                return _bvhNormalizationBounds;
+
+            _bvhNormalizationBounds = candidate;
+            _hasBvhNormalizationBounds = true;
+            return candidate;
+        }
+
+        private static bool Contains(in AABB outer, in Vector3 min, in Vector3 max)
+            => min.X >= outer.Min.X && min.Y >= outer.Min.Y && min.Z >= outer.Min.Z &&
+               max.X <= outer.Max.X && max.Y <= outer.Max.Y && max.Z <= outer.Max.Z;
+
+        private static bool IsFinite(in Vector3 value)
+            => float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
+
+        private static float Volume(in AABB bounds)
+        {
+            Vector3 size = Vector3.Max(bounds.Max - bounds.Min, new Vector3(1e-3f));
+            return size.X * size.Y * size.Z;
+        }
+
         /// <summary>
         /// Fills <paramref name="output"/> with every active GPU command index that
         /// belongs to <paramref name="renderer"/>. Returns true if at least one was found.
@@ -393,6 +650,43 @@ namespace XREngine.Rendering.Commands
                 any |= list.Count > 0;
             }
             return any;
+        }
+
+        /// <summary>
+        /// Revokes GPU ownership and republishes conservative CPU-authored bounds for
+        /// every command owned by <paramref name="renderer"/>. This is the explicit
+        /// recovery path when the per-frame skinned-bounds reduction cannot dispatch;
+        /// stale GPU data must never remain reachable by the scene BVH.
+        /// </summary>
+        public void RestoreCpuCommandAabbsForRenderer(
+            XRMeshRenderer renderer,
+            RenderInfo renderInfo,
+            List<uint> scratchIndices)
+        {
+            SetRendererOwnsGpuAabb(renderer, false);
+            if (!TryGetCommandIndicesForRenderer(renderer, scratchIndices))
+                return;
+
+            for (int i = 0; i < scratchIndices.Count; i++)
+            {
+                uint commandIndex = scratchIndices[i];
+                if (!_commandIndexLookup.TryGetValue(commandIndex, out var entry))
+                    continue;
+
+                IRenderCommandMesh command = entry.command;
+                (XRMesh? mesh, XRMaterial? material)[]? subMeshes = command.Mesh?.GetMeshes();
+                if (subMeshes is null || (uint)entry.subMeshIndex >= (uint)subMeshes.Length)
+                    continue;
+
+                XRMesh? mesh = subMeshes[entry.subMeshIndex].mesh;
+                if (mesh is null)
+                    continue;
+
+                Matrix4x4 modelMatrix = command.WorldMatrixIsModelMatrix
+                    ? command.WorldMatrix
+                    : Matrix4x4.Identity;
+                WriteTightCommandAabb(commandIndex, renderInfo, mesh.Bounds, modelMatrix);
+            }
         }
 
     }

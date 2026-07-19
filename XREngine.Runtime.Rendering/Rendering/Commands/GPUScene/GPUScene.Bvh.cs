@@ -29,6 +29,11 @@ namespace XREngine.Rendering.Commands
 {
     public partial class GPUScene
     {
+        private static readonly bool ForceGpuBvhRebuildEveryFrame =
+            string.Equals(
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ForceGpuBvhRebuildEveryFrame),
+                "1",
+                StringComparison.OrdinalIgnoreCase);
 
         // -------------------------------------------------------------------------
         // BVH Configuration: Settings for GPU-accelerated hierarchical culling.
@@ -82,7 +87,14 @@ namespace XREngine.Rendering.Commands
                 if (!SetField(ref _useInternalBvh, value))
                     return;
 
-                if (value)
+                if (value && (_commandAabbBuffer is null ||
+                    _commandAabbPublishedContentVersion != Interlocked.Read(ref _updatingCommandsContentVersion)))
+                    _commandAabbBackfillRequired = true;
+
+                // Per-viewport strategies can temporarily disable this shared
+                // provider. Preserve retained topology when it is enabled again;
+                // the normal preparation path still builds a missing/not-ready tree.
+                if (value && (_gpuBvhTree is null || !_bvhReady))
                     MarkBvhDirty();
             }
         }
@@ -118,6 +130,24 @@ namespace XREngine.Rendering.Commands
         /// <summary>Flag indicating a BVH refit is pending on the render thread.</summary>
         private volatile bool _bvhRefitPending = false;
 
+        /// <summary>CPU/GPU AABB publication revision consumed by the active tree.</summary>
+        private long _commandAabbRevision;
+        private long _lastAppliedCommandAabbRevision = -1;
+        private DirtyRange _commandAabbDirtyRange;
+        private DirtyRange _commandAabbAccountingRange;
+        private uint _consecutiveBvhRefits;
+        private AABB _bvhNormalizationBounds;
+        private bool _hasBvhNormalizationBounds;
+        private bool _commandAabbBackfillRequired = true;
+        private long _commandAabbPublishedContentVersion = -1;
+        private GpuBvhRebuildReason _pendingBvhRebuildReason = GpuBvhRebuildReason.InitialOrUnavailable;
+        private bool[] _commandAabbDirtyLeaves = [];
+        private uint _pendingCommandAabbDirtyLeafCount;
+        private ulong _pendingCommandAabbUploadBytes;
+        // CPU-authored AABBs currently upload directly. This remains exactly
+        // zero until a GPU buffer-to-buffer publication path is introduced.
+        private ulong _pendingCommandAabbCopyBytes;
+
         /// <summary>True after a failed BVH build until scene command data changes.</summary>
         private bool _bvhBuildSuppressed = false;
 
@@ -139,14 +169,27 @@ namespace XREngine.Rendering.Commands
         /// <inheritdoc/>
         bool IGpuBvhProvider.IsBvhReady => _useInternalBvh && _bvhReady && !_bvhDirty && _bvhNodeCount > 0;
 
+        /// <summary>Latest internal GPU-BVH lifecycle and retained-capacity diagnostics.</summary>
+        public GpuBvhDiagnostics GpuBvhDiagnostics => _gpuBvhTree?.Diagnostics ?? default;
+
+        /// <summary>
+        /// GPU-resident Morton distribution and hierarchy-quality snapshot for
+        /// diagnostics overlays and capture tools. Normal rendering never maps it.
+        /// </summary>
+        public XRDataBuffer? GpuBvhQualityDiagnosticsBuffer => _gpuBvhTree?.QualityDiagnosticsBuffer;
+
         /// <summary>
         /// Marks the internal BVH as needing a rebuild.
         /// </summary>
         public void MarkBvhDirty()
+            => MarkBvhDirty(GpuBvhRebuildReason.TopologyChanged);
+
+        private void MarkBvhDirty(GpuBvhRebuildReason reason)
         {
             _bvhDirty = true;
             _bvhBuildSuppressed = false;
             _bvhSuppressedCommandCount = 0;
+            _pendingBvhRebuildReason = reason;
         }
 
         private void MarkBvhDirtyUnlessSuppressed(uint commandCount)
@@ -189,6 +232,9 @@ namespace XREngine.Rendering.Commands
             }
 
             EnsureGpuBvhResources(commandCount);
+            if (_commandAabbBackfillRequired)
+                BackfillCommandAabbsFromRenderSnapshot(commandCount);
+
             if (!EnsureBvhProgramsReady(commandCount))
             {
                 _bvhReady = false;
@@ -202,13 +248,29 @@ namespace XREngine.Rendering.Commands
             // sphere), which compounded up the BVH and produced loose visualization /
             // suboptimal cull bounds.
 
-            _gpuBvhTree!.Build(_commandAabbBuffer!, commandCount, _bounds);
+            AabbTransferBatch transfer = FlushCommandAabbDirtyRange();
+            AABB normalizationBounds = ResolveBvhNormalizationBounds(commandCount);
+            _gpuBvhTree!.RecordRebuildReason(_pendingBvhRebuildReason);
+            _gpuBvhTree.RecordRefitTransfer(transfer.DirtyLeafCount, transfer.UploadBytes, transfer.CopyBytes);
+            _gpuBvhTree!.Build(_commandAabbBuffer!, commandCount, normalizationBounds);
+
+            if (_gpuBvhTree.IsBuildPendingResources)
+            {
+                _bvhReady = false;
+                return false;
+            }
 
             _bvhNodeCount = _gpuBvhTree.NodeCount;
             _bvhPrimitiveCount = _gpuBvhTree.PrimitiveCount;
-            _bvhReady = _bvhNodeCount > 0 && _bvhPrimitiveCount == commandCount;
+            _bvhReady = !_gpuBvhTree.IsDirty && _bvhNodeCount > 0 && _bvhPrimitiveCount == commandCount;
             _bvhBuildSuppressed = !_bvhReady;
             _bvhSuppressedCommandCount = _bvhBuildSuppressed ? commandCount : 0u;
+            if (_bvhReady)
+            {
+                _lastAppliedCommandAabbRevision = Interlocked.Read(ref _commandAabbRevision);
+                _consecutiveBvhRefits = 0u;
+                _pendingBvhRebuildReason = GpuBvhRebuildReason.None;
+            }
 
             if (IsGpuSceneLoggingEnabled())
             {
@@ -232,6 +294,9 @@ namespace XREngine.Rendering.Commands
             if (commandCount == 0 || _bvhPrimitiveCount == 0)
                 return true;
 
+            if (_commandAabbBackfillRequired)
+                BackfillCommandAabbsFromRenderSnapshot(commandCount);
+
             if (!EnsureBvhProgramsReady(commandCount))
             {
                 _bvhReady = false;
@@ -240,11 +305,18 @@ namespace XREngine.Rendering.Commands
 
             // Tight per-command world AABBs are maintained via WriteTightCommandAabb on
             // every insert/update; nothing to refresh here.
+            AabbTransferBatch transfer = FlushCommandAabbDirtyRange();
+            _gpuBvhTree.RecordRefitTransfer(transfer.DirtyLeafCount, transfer.UploadBytes, transfer.CopyBytes);
             _gpuBvhTree.Refit();
 
             _bvhNodeCount = _gpuBvhTree.NodeCount;
             _bvhPrimitiveCount = _gpuBvhTree.PrimitiveCount;
-            _bvhReady = _bvhNodeCount > 0 && _bvhPrimitiveCount == commandCount;
+            _bvhReady = !_gpuBvhTree.IsDirty && _bvhNodeCount > 0 && _bvhPrimitiveCount == commandCount;
+            if (_bvhReady)
+            {
+                _lastAppliedCommandAabbRevision = Interlocked.Read(ref _commandAabbRevision);
+                _consecutiveBvhRefits++;
+            }
             return true;
         }
 
@@ -260,6 +332,9 @@ namespace XREngine.Rendering.Commands
             // If GPU BVH is not enabled, we can skip building the BVH and return early.
             if (!_useInternalBvh)
                 return;
+
+            if (ForceGpuBvhRebuildEveryFrame)
+                MarkBvhDirty(GpuBvhRebuildReason.TopologyChanged);
 
             // If there are no commands or the command buffer is null, reset the BVH state and return early.
             if (commandCount == 0 || _allLoadedCommandsBuffer is null)
@@ -318,16 +393,36 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
+            long aabbRevision = Interlocked.Read(ref _commandAabbRevision);
+            _bvhRefitPending |= aabbRevision != _lastAppliedCommandAabbRevision;
+
+            // Bound quality under sustained motion even before asynchronous SAH
+            // diagnostics are enabled. A periodic rebuild refreshes Morton order.
+            const uint MaxConsecutiveRefits = 120u;
+            if (_bvhRefitPending && _consecutiveBvhRefits >= MaxConsecutiveRefits)
+            {
+                MarkBvhDirty(GpuBvhRebuildReason.PeriodicQualityCeiling);
+                if (RebuildInternalBvh())
+                {
+                    _bvhDirty = false;
+                    _bvhRefitPending = false;
+                }
+                return;
+            }
+
             if (_bvhRefitPending)
             {
                 if (RefitInternalBvh(commandCount))
                     _bvhRefitPending = false;
+                return;
             }
+
+            _gpuBvhTree.RecordCleanFrameSkipped();
         }
 
         private void EnsureGpuBvhResources(uint commandCount)
         {
-            _gpuBvhTree ??= new GpuBvhTree();
+            _gpuBvhTree ??= new GpuBvhTree("GPUScene.CommandBvh");
             EnsureCommandAabbBuffer(commandCount);
             // The legacy GPU AABB build program (EnsureCommandAabbProgram) is intentionally
             // not initialized here: per-command world AABBs are now CPU-populated tight
@@ -362,10 +457,11 @@ namespace XREngine.Rendering.Commands
         {
             if (_commandAabbBuffer is null)
             {
+                uint capacity = NextPowerOfTwo(Math.Max(commandCount, 1u));
                 _commandAabbBuffer = new XRDataBuffer(
                     "GPUScene_CommandAabbs",
                     EBufferTarget.ShaderStorageBuffer,
-                    commandCount,
+                    capacity,
                     EComponentType.Float,
                     8,
                     false,
@@ -377,11 +473,24 @@ namespace XREngine.Rendering.Commands
                     PadEndingToVec4 = true,
                     ShouldMap = false
                 };
+                _commandAabbBackfillRequired = true;
             }
             else if (_commandAabbBuffer.ElementCount < commandCount)
             {
-                _commandAabbBuffer.Resize(commandCount, false, true);
+                _commandAabbBuffer.Resize(NextPowerOfTwo(commandCount), false, true);
             }
+        }
+
+        private static uint NextPowerOfTwo(uint value)
+        {
+            value = Math.Max(value, 1u);
+            value--;
+            value |= value >> 1;
+            value |= value >> 2;
+            value |= value >> 4;
+            value |= value >> 8;
+            value |= value >> 16;
+            return value + 1u;
         }
 
         private void EnsureCommandAabbProgram()

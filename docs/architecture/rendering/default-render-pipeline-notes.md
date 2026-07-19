@@ -478,6 +478,12 @@ The prepass follows the resolved mesh submission strategy, not merely the reques
 
 The lit `OpaqueForward` and `MaskedForward` GPU passes must not use the current `DepthView` as a command-level Hi-Z occlusion source while this prepass is enabled. That depth can already contain the same forward candidates; using it for occlusion can reject whole commands before meshlet expansion, leaving AO/depth silhouettes without matching color. Those passes keep frustum/BVH results and allow meshlet task-shader frustum/cone culling, but current-depth Hi-Z refine is skipped for color parity.
 
+The scene BVH feeding those passes uses the compact, root-down contract in
+[GPU Scene BVH](gpu-scene-bvh.md). Its hierarchy is reused across views; flat
+GPU frustum culling remains the explicit small-workload and unavailable-resource
+fallback. Queue or ray-stack pressure is conservative and observable, never a
+reason to hide geometry.
+
 Generated vertex shaders are allowed to trim `FragTransformId` for ordinary passes, but the forward depth-normal prepass must push `RequireGeneratedVertexTransformId`. Without that render-state requirement, a generated vertex program cached for a normal forward material can be reused with a depth-normal fragment variant that consumes `FragTransformId`, causing pipeline interface mismatches.
 
 ---

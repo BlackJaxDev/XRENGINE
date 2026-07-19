@@ -1,0 +1,52 @@
+#version 460
+
+struct MortonObject
+{
+    uint mortonCode;
+    uint objectId;
+};
+
+layout(std430, binding = 1) readonly buffer MortonInput
+{
+    MortonObject inputObjects[];
+};
+
+layout(std430, binding = 12) writeonly buffer MortonOutput
+{
+    MortonObject outputObjects[];
+};
+
+layout(std430, binding = 13) readonly buffer RadixOffsets
+{
+    uint offsets[];
+};
+
+uniform uint numObjects;
+uniform uint radixShift;
+
+shared uint digits[256];
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint lane = gl_LocalInvocationID.x;
+    uint index = gl_GlobalInvocationID.x;
+    uint digit = 0xFFFFFFFFu;
+    if (index < numObjects)
+        digit = (inputObjects[index].mortonCode >> radixShift) & 0xFFu;
+    digits[lane] = digit;
+    barrier();
+
+    if (index >= numObjects)
+        return;
+
+    // Stable rank within this 256-element block. The fixed upper bound keeps
+    // the pass linear in object count while preserving duplicate-key order.
+    uint localRank = 0u;
+    for (uint prior = 0u; prior < lane; ++prior)
+        localRank += uint(digits[prior] == digit);
+
+    uint outputIndex = offsets[gl_WorkGroupID.x * 256u + digit] + localRank;
+    outputObjects[outputIndex] = inputObjects[index];
+}

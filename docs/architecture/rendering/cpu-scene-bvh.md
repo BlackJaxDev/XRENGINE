@@ -5,6 +5,11 @@ The CPU scene BVH is the production CPU-direct spatial index used by
 flat-array BVH optimized for immutable multi-view reads and sparse scene-item
 motion. It is distinct from the legacy per-mesh triangle BVH.
 
+The implementation is centered on `CpuBvhRenderTree<T>` and is selected by the
+CPU-direct mesh-submission strategy. The tree supplies conservative candidates;
+frustum, shadow, ray, and occlusion consumers retain ownership of their final
+visibility or hit decisions.
+
 ## Mutation and publication contract
 
 - Adds/removes increment the topology revision and conservatively rebuild the
@@ -46,6 +51,12 @@ by a deterministic rebuild.
 
 `CpuBvhOptions.EnableLocalRestructuring` is the rollout kill switch.
 
+Selected defaults are four reusable snapshot slots, 16 SAH bins, an eight-item
+leaf cap, and at most 32 local rotations per refit batch. A normalized SAH ratio
+of 1.75, root-volume growth of 3.0, or 512 consecutive refits requests a full
+quality rebuild. These values are configurable, deterministic, and observable
+through diagnostics.
+
 ## Traversal contract
 
 The typed `ICpuBvhVisitor<T>` path is the allocation-free render hot path.
@@ -80,3 +91,24 @@ Use `--counts 1000000` for the memory-permitting stress tier and
 `--leaf-capacities 1,2,4,8,16` for the leaf-capacity sweep. The report separates
 build, clean swap, each dirty ratio, and each visible-ratio/view-count traversal,
 including managed allocation and GC counts.
+
+The implementation was promoted after randomized brute-force mutation/query
+parity, concurrent reader/writer generation tests, degenerate-input coverage,
+and allocation tests passed. The durable completion and benchmark record is
+[CPU BVH Scene-Tree Improvements](../../work/progress/rendering/cpu-bvh-scene-tree-improvements.md).
+
+## Legacy per-mesh BVH boundary
+
+The older triangle/object BVH under `XREngine.Data/Trees/BVH` is not the scene
+index. Its corrected contract uses positioned exact triangle bounds, reachable
+rotation selection, allocation-conscious construction, normalized and clamped
+segment queries, and disk-cache schema `BVH/v2` with hash schema 2. Scene-level
+snapshot generations and mutation revisions do not apply to that per-mesh
+structure.
+
+## Research basis
+
+- [Embree: A Kernel Framework for Efficient CPU Ray Tracing](https://www.embree.org/papers/2014-Siggraph-Embree.pdf)
+- [Fast, Effective BVH Updates for Animated Scenes](https://hwrt.cs.utah.edu/papers/hwrt_rotations.pdf)
+- [Selective BVH Restructuring](https://diglib.eg.org/server/api/core/bitstreams/679b22a1-314e-4102-bfba-5db17383005f/content)
+- [PBRT: Bounding Volume Hierarchies](https://pbr-book.org/4ed/Primitives_and_Intersection_Acceleration/Bounding_Volume_Hierarchies)
