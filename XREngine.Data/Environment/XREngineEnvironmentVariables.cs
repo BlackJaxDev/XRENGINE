@@ -277,6 +277,10 @@ public static class XREngineEnvironmentVariables
     public const string VulkanPhase524bInjectDesktopRejection = "XRE_VULKAN_PHASE524B_INJECT_DESKTOP_REJECTION";
     public const string VulkanPhase524bTsrResolutionScale = "XRE_VULKAN_PHASE524B_TSR_RESOLUTION_SCALE";
     public const string VulkanDirectionalCascades = "XRE_VULKAN_DIRECTIONAL_CASCADES";
+    /// <summary>Forces scene-BVH traversal for explicit diagnostics/capture runs.</summary>
+    public const string ForceGpuBvhCulling = "XRE_FORCE_GPU_BVH_CULLING";
+    /// <summary>Forces scene-BVH reconstruction each frame for producer/consumer captures.</summary>
+    public const string ForceGpuBvhRebuildEveryFrame = "XRE_FORCE_GPU_BVH_REBUILD_EVERY_FRAME";
 
     public const string CaptureDefaultPipelineSkipFrames = "XRE_CAPTURE_DEFAULT_PIPELINE_SKIP_FRAMES";
     public const string CaptureDefaultPipelineFbo = "XRE_CAPTURE_DEFAULT_PIPELINE_FBO";

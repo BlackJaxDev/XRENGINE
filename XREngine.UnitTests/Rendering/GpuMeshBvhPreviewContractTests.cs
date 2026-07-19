@@ -62,17 +62,44 @@ public sealed class GpuMeshBvhPreviewContractTests
     }
 
     [Test]
-    public void GpuMeshBvhLargeMortonSort_AlternatesTileDirectionForBitonicMerge()
+    public void GpuMeshBvhLargeMortonSort_UsesStableRadixPipeline()
     {
         string dispatchSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuBvhTree.Dispatch.cs");
-        string tileSortShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/OctreeGeneration/sort_morton_tiles.comp");
-        string mergeShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/OctreeGeneration/merge_morton.comp");
+        string programsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuBvhTree.Programs.cs");
+        string histogramShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/OctreeGeneration/radix_morton_histogram.comp");
+        string prefixShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/OctreeGeneration/radix_morton_prefix.comp");
+        string scatterShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/OctreeGeneration/radix_morton_scatter.comp");
 
-        dispatchSource.ShouldContain("tileProgram.DispatchCompute(paddedCount / 1024u");
-        tileSortShader.ShouldContain("uint i = base + tid;");
-        tileSortShader.ShouldContain("bool up = ((i & k) == 0u);");
-        tileSortShader.ShouldNotContain("bool up = ((tid & k) == 0u);");
-        mergeShader.ShouldContain("bool up = ((i & K) == 0u);");
+        dispatchSource.ShouldContain("for (uint shift = 0u; shift < 32u; shift += 8u)");
+        dispatchSource.ShouldContain("histogramProgram.DispatchCompute");
+        dispatchSource.ShouldContain("prefixProgram.DispatchCompute");
+        dispatchSource.ShouldContain("scatterProgram.DispatchCompute");
+        programsSource.ShouldContain("radix_morton_histogram.comp");
+        programsSource.ShouldContain("radix_morton_prefix.comp");
+        programsSource.ShouldContain("radix_morton_scatter.comp");
+        histogramShader.ShouldContain("atomicAdd(histogram[digit], 1u)");
+        prefixShader.ShouldContain("offsets[index] = running");
+        scatterShader.ShouldContain("localRank += uint(digits[prior] == digit)");
+        scatterShader.ShouldContain("outputObjects[outputIndex] = inputObjects[index]");
+    }
+
+    [Test]
+    public void GpuMeshBvhStaticTriangles_ArePackedOnlyWhenInvalidated()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuMeshBvh.cs");
+        string staticPack = Slice(
+            source,
+            "private bool PackStaticTriangles(XRMesh mesh, uint triangleCount)",
+            "private static XRDataBuffer? GetOrCreateStorageView",
+            StringComparison.Ordinal);
+
+        staticPack.ShouldContain("if (_packedTrianglesUploaded)");
+        staticPack.ShouldContain("return true;");
+        source.ShouldContain("InvalidateStaticGeometryIfChanged(mesh);");
+        source.ShouldContain("_staticGeometryRevision == revision");
+        source.ShouldContain("ulong revision = source?.Revision ?? 0u;");
+        source.ShouldContain("_packedTrianglesUploaded = false;");
+        source.ShouldContain("_packedTrianglesUploaded = true;");
     }
 
     [Test]

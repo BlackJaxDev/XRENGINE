@@ -42,6 +42,16 @@ layout(std430, binding = 8) buffer StatsBuffer {
     uint MeshletTaskRecordsFrustumCulled;  // 19
     uint MeshletTaskRecordsConeCulled;     // 20
     uint MeshletTaskRecordsHiZCulled;      // 21
+    uint BvhVisitedInternalNodes;           // 22
+    uint BvhVisitedLeaves;                  // 23
+    uint BvhVisitedCommands;                // 24
+    uint BvhFrustumPlaneTests;              // 25
+    uint BvhPlaneMaskReductions;            // 26
+    uint BvhInternalRejections;             // 27
+    uint BvhLeafRejections;                 // 28
+    uint BvhEmittedCommands;                // 29
+    uint BvhMaxQueueOccupancy;               // 30
+    uint BvhQueueOverflows;                  // 31
 };
 
 void main() {
@@ -87,4 +97,14 @@ void main() {
     MeshletTaskRecordsFrustumCulled = 0u;
     MeshletTaskRecordsConeCulled = 0u;
     MeshletTaskRecordsHiZCulled = 0u;
+    BvhVisitedInternalNodes = 0u;
+    BvhVisitedLeaves = 0u;
+    BvhVisitedCommands = 0u;
+    BvhFrustumPlaneTests = 0u;
+    BvhPlaneMaskReductions = 0u;
+    BvhInternalRejections = 0u;
+    BvhLeafRejections = 0u;
+    BvhEmittedCommands = 0u;
+    BvhMaxQueueOccupancy = 0u;
+    BvhQueueOverflows = 0u;
 }

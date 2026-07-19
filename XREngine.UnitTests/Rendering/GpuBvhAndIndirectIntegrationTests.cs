@@ -221,6 +221,46 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
     }
 
     [Test]
+    public void BvhTraversalAndRadixShaders_CompileSuccessfully()
+    {
+        var (gl, window) = CreateGLContext();
+        if (gl == null || window == null)
+        {
+            Assert.Inconclusive("Could not create OpenGL context");
+            return;
+        }
+
+        try
+        {
+            string[] relativePaths =
+            [
+                Path.Combine("Scene3D", "RenderPipeline", "bvh_frustum_cull.comp"),
+                Path.Combine("Scene3D", "RenderPipeline", "OctreeGeneration", "radix_morton_histogram.comp"),
+                Path.Combine("Scene3D", "RenderPipeline", "OctreeGeneration", "radix_morton_prefix.comp"),
+                Path.Combine("Scene3D", "RenderPipeline", "OctreeGeneration", "radix_morton_scatter.comp"),
+                Path.Combine("Scene3D", "RenderPipeline", "bvh_quality_diagnostics.comp"),
+            ];
+
+            foreach (string relativePath in relativePaths)
+            {
+                string shaderPath = Path.Combine(ShaderBasePath, relativePath);
+                File.Exists(shaderPath).ShouldBeTrue($"Compute shader not found: {shaderPath}");
+                string source = ResolveIncludes(File.ReadAllText(shaderPath), Path.GetDirectoryName(shaderPath)!);
+                uint shader = CompileComputeShader(gl, source);
+                uint program = CreateComputeProgram(gl, shader);
+                program.ShouldBeGreaterThan(0u, $"Compute program should link: {relativePath}");
+                gl.DeleteProgram(program);
+                gl.DeleteShader(shader);
+            }
+        }
+        finally
+        {
+            window.Close();
+            window.Dispose();
+        }
+    }
+
+    [Test]
     public void BvhRefitShader_UsesWorldSpaceAabbs_DoesNotRequireTransformBuffer()
     {
         string shaderPath = Path.Combine(ShaderBasePath, "Scene3D", "RenderPipeline", "bvh_refit.comp");
@@ -243,7 +283,8 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
         string source = File.ReadAllText(shaderPath);
 
         source.ShouldContain("uint propagationGuard = safeNodeCount;");
-        source.ShouldContain("if (propagationGuard == 0u || parent >= safeNodeCount || parent >= uint(counters.length()))");
+        source.ShouldContain("if (propagationGuard == 0u || parent >= safeNodeCount || parent < leafCount)");
+        source.ShouldContain("uint counterIndex = parent - leafCount;");
         source.ShouldContain("propagationGuard--;");
         source.ShouldContain("if (primIndex >= uint(aabbs.length()))");
     }
@@ -257,9 +298,11 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
         string source = File.ReadAllText(shaderPath);
 
         source.ShouldContain("uint safeNodeCount = min(nodeCount, uint(nodes.length()));");
-        source.ShouldContain("BvhNode leaf = nodes[gid];");
-        source.ShouldContain("(leaf.flags & BVH_FLAG_LEAF) == 0u");
-        source.ShouldContain("!AabbVisible(leaf.minBounds, leaf.maxBounds)");
+        source.ShouldContain("if (!SelectPartitionRoot(safeNodeCount, partitionRoot))");
+        source.ShouldContain("TraversalQueue[0] = uvec2(partitionRoot");
+        source.ShouldContain("if (!AabbVisibleMasked(node.minBounds, node.maxBounds");
+        source.ShouldContain("TryEnqueue(child, childPlaneMask)");
+        source.ShouldContain("ProcessRange(nodes[child].primitiveRange, childPlaneMask, false)");
         source.ShouldNotContain("node.parentIndex");
         source.ShouldNotContain("uint stack[32]");
     }
@@ -303,11 +346,11 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
 
             string buildSrc = File.ReadAllText(buildPath);
             buildSrc = ResolveIncludes(buildSrc, Path.GetDirectoryName(buildPath)!);
-            buildSrc = StripVulkanSpecializationConstants(buildSrc, maxLeafPrimitives: 1, bvhMode: 0);
+            buildSrc = StripVulkanSpecializationConstants(buildSrc, maxLeafPrimitives: 1);
 
             string refitSrc = File.ReadAllText(refitPath);
             refitSrc = ResolveIncludes(refitSrc, Path.GetDirectoryName(refitPath)!);
-            refitSrc = StripVulkanSpecializationConstants(refitSrc, maxLeafPrimitives: 1, bvhMode: 0);
+            refitSrc = StripVulkanSpecializationConstants(refitSrc, maxLeafPrimitives: 1);
 
             uint buildShader = CompileComputeShader(gl, buildSrc);
             uint buildProgram = CreateComputeProgram(gl, buildShader);
@@ -342,25 +385,21 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
                 3u, 3u,
             ];
 
-            // BVH nodes buffer: header(4 uints) + nodes(nodeCount * 20 uints)
-            uint nodeStrideScalars = 20u;
+            // BVH nodes buffer: header(4 uints) + compact nodes(nodeCount * 12 uints)
+            uint nodeStrideScalars = 12u;
             uint nodeHeaderScalars = 4u;
             uint nodeScalars = nodeHeaderScalars + nodeCount * nodeStrideScalars;
             uint[] nodeData = new uint[nodeScalars];
 
-            // Primitive ranges buffer: nodeCount * 2 uints
-            uint[] ranges = new uint[nodeCount * 2u];
-
             // Overflow flag buffer: single uint
             uint[] overflow = [0u];
 
-            // Refit counters: nodeCount uints
-            uint[] counters = new uint[nodeCount];
+            // Refit counters: internal nodes only
+            uint[] counters = new uint[internalCount];
 
             uint aabbBuf = gl.GenBuffer();
             uint mortonBuf = gl.GenBuffer();
             uint nodeBuf = gl.GenBuffer();
-            uint rangeBuf = gl.GenBuffer();
             uint overflowBuf = gl.GenBuffer();
             uint counterBuf = gl.GenBuffer();
 
@@ -377,10 +416,6 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, nodeData.AsSpan(), BufferUsageARB.DynamicCopy);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 2, nodeBuf);
 
-            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, rangeBuf);
-            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, ranges.AsSpan(), BufferUsageARB.DynamicCopy);
-            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 3, rangeBuf);
-
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, overflowBuf);
             gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, overflow.AsSpan(), BufferUsageARB.DynamicCopy);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 8, overflowBuf);
@@ -388,10 +423,8 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             // Build stage 0 + 1
             gl.UseProgram(buildProgram);
             gl.Uniform1(gl.GetUniformLocation(buildProgram, "MAX_LEAF_PRIMITIVES"), maxLeafPrims);
-            gl.Uniform1(gl.GetUniformLocation(buildProgram, "BVH_MODE"), 0u);
             gl.Uniform1(gl.GetUniformLocation(buildProgram, "numPrimitives"), numPrimitives);
             gl.Uniform1(gl.GetUniformLocation(buildProgram, "nodeScalarCapacity"), nodeScalars);
-            gl.Uniform1(gl.GetUniformLocation(buildProgram, "rangeScalarCapacity"), (uint)ranges.Length);
             gl.Uniform1(gl.GetUniformLocation(buildProgram, "mortonCapacity"), numPrimitives);
 
             gl.Uniform1(gl.GetUniformLocation(buildProgram, "buildStage"), 0u);
@@ -485,17 +518,18 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             // Refit stage 0 (clear counters) then stage 1 (leaf refit + propagate)
             gl.UseProgram(refitProgram);
             gl.Uniform1(gl.GetUniformLocation(refitProgram, "MAX_LEAF_PRIMITIVES"), maxLeafPrims);
-            gl.Uniform1(gl.GetUniformLocation(refitProgram, "BVH_MODE"), 0u);
             // Avoid driver quirks around SSBO runtime-sized array .length() for struct arrays.
             gl.Uniform1(gl.GetUniformLocation(refitProgram, "debugValidation"), 0u);
+            gl.Uniform1(gl.GetUniformLocation(refitProgram, "leafCount"), leafCount);
+            gl.Uniform1(gl.GetUniformLocation(refitProgram, "internalCount"), internalCount);
 
             gl.Uniform1(gl.GetUniformLocation(refitProgram, "refitStage"), 0u);
-            gl.DispatchCompute((nodeCount + 255u) / 256u, 1, 1);
+            gl.DispatchCompute((internalCount + 255u) / 256u, 1, 1);
             gl.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
             gl.Finish();
 
             gl.Uniform1(gl.GetUniformLocation(refitProgram, "refitStage"), 1u);
-            gl.DispatchCompute((nodeCount + 255u) / 256u, 1, 1);
+            gl.DispatchCompute((leafCount + 255u) / 256u, 1, 1);
             gl.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
             gl.Finish();
 
@@ -545,7 +579,7 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, counterBuf);
             uint* counterPtr = (uint*)gl.MapBuffer(BufferTargetARB.ShaderStorageBuffer, BufferAccessARB.ReadOnly);
             Assert.That((nint)counterPtr, Is.Not.EqualTo(nint.Zero));
-            uint rootCounter = counterPtr[rootIndex];
+            uint rootCounter = counterPtr[rootIndex - leafCount];
             gl.UnmapBuffer(BufferTargetARB.ShaderStorageBuffer);
             // Root should be processed by the second child arrival.
             rootCounter.ShouldBe(2u);
@@ -569,7 +603,6 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             // Cleanup
             gl.DeleteBuffer(counterBuf);
             gl.DeleteBuffer(overflowBuf);
-            gl.DeleteBuffer(rangeBuf);
             gl.DeleteBuffer(nodeBuf);
             gl.DeleteBuffer(mortonBuf);
             gl.DeleteBuffer(aabbBuf);
@@ -1745,7 +1778,7 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
     /// in plain OpenGL GLSL. Converts them to regular const declarations.
     /// This matches what the engine does in GpuBvhTree via uniform patching.
     /// </summary>
-    private static string StripVulkanSpecializationConstants(string source, uint maxLeafPrimitives = 4, uint bvhMode = 0)
+    private static string StripVulkanSpecializationConstants(string source, uint maxLeafPrimitives = 4)
     {
         // Match layout(constant_id = N) const uint declarations and convert to regular const
         var regex = new System.Text.RegularExpressions.Regex(
@@ -1758,7 +1791,6 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             return varName switch
             {
                 "MAX_LEAF_PRIMITIVES" => $"const uint MAX_LEAF_PRIMITIVES = {maxLeafPrimitives}u;",
-                "BVH_MODE" => $"const uint BVH_MODE = {bvhMode}u;",
                 _ => $"const uint {varName} = 0u;" // Default fallback
             };
         });

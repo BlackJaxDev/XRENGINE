@@ -1,0 +1,43 @@
+#version 460
+
+layout(std430, binding = 13) buffer RadixOffsets
+{
+    uint offsets[];
+};
+
+uniform uint blockCount;
+
+shared uint totals[256];
+shared uint binBases[256];
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint bin = gl_LocalInvocationID.x;
+    uint total = 0u;
+    for (uint block = 0u; block < blockCount; ++block)
+        total += offsets[block * 256u + bin];
+    totals[bin] = total;
+    barrier();
+
+    if (bin == 0u)
+    {
+        uint base = 0u;
+        for (uint i = 0u; i < 256u; ++i)
+        {
+            binBases[i] = base;
+            base += totals[i];
+        }
+    }
+    barrier();
+
+    uint running = binBases[bin];
+    for (uint block = 0u; block < blockCount; ++block)
+    {
+        uint index = block * 256u + bin;
+        uint count = offsets[index];
+        offsets[index] = running;
+        running += count;
+    }
+}

@@ -1,0 +1,147 @@
+#version 460
+
+// GPU-resident BVH quality accounting. The host never maps this buffer during
+// normal submission; overlays and capture tooling may inspect it explicitly.
+
+#include "bvh_nodes.glslinc"
+
+struct MortonObject
+{
+    uint mortonCode;
+    uint objectId;
+};
+
+layout(std430, binding = 1) readonly buffer MortonCodes
+{
+    MortonObject mortonObjects[];
+};
+
+layout(std430, binding = 2) readonly buffer BvhNodes
+{
+    uint nodeCount;
+    uint rootIndex;
+    uint nodeStrideScalars;
+    uint maxLeafPrimitives;
+    BvhNode nodes[];
+};
+
+// Header fields 0..15, 64 occupied-prefix bins at 16..79, and 33 LCP bins at
+// 80..112. Fixed-point quality values use 20 fractional bits.
+layout(std430, binding = 14) buffer QualityDiagnostics
+{
+    uint values[];
+};
+
+uniform uint primitiveCount;
+uniform uint analysisRevision;
+uniform uint rebuildReason;
+uniform uint analysisStage; // 0 clear/header, 1 parallel analysis, 2 reduce prefixes
+
+const uint HEADER_SCALARS = 16u;
+const uint PREFIX_BIN_COUNT = 64u;
+const uint PREFIX_BINS = HEADER_SCALARS;
+const uint LCP_BINS = PREFIX_BINS + PREFIX_BIN_COUNT;
+const uint QUALITY_SCALARS = LCP_BINS + 33u;
+const float FIXED_SCALE = 1048576.0;
+
+float SurfaceArea(vec3 minB, vec3 maxB)
+{
+    vec3 e = max(maxB - minB, vec3(0.0));
+    return 2.0 * (e.x * e.y + e.y * e.z + e.z * e.x);
+}
+
+float Volume(vec3 minB, vec3 maxB)
+{
+    vec3 e = max(maxB - minB, vec3(0.0));
+    return e.x * e.y * e.z;
+}
+
+uint ToFixed(float value)
+{
+    return uint(clamp(value, 0.0, 4095.0) * FIXED_SCALE);
+}
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+
+    if (analysisStage == 0u)
+    {
+        for (uint i = gl_LocalInvocationID.x; i < QUALITY_SCALARS; i += gl_WorkGroupSize.x)
+            values[i] = 0u;
+        barrier();
+        if (gl_LocalInvocationID.x == 0u)
+        {
+            values[0] = primitiveCount;
+            values[1] = nodeCount;
+            values[11] = rebuildReason;
+            values[12] = analysisRevision;
+        }
+        return;
+    }
+
+    if (analysisStage == 1u)
+    {
+        if (gid < primitiveCount)
+        {
+            uint code = mortonObjects[gid].mortonCode;
+            atomicAdd(values[PREFIX_BINS + ((code >> 24u) & 63u)], 1u);
+            if (gid + 1u < primitiveCount)
+            {
+                uint nextCode = mortonObjects[gid + 1u].mortonCode;
+                uint x = code ^ nextCode;
+                uint lcp = x == 0u ? 32u : uint(findMSB(x) < 0 ? 32 : 31 - findMSB(x));
+                atomicAdd(values[2], uint(code == nextCode));
+                atomicAdd(values[3], lcp);
+                atomicMax(values[4], lcp);
+                atomicAdd(values[LCP_BINS + min(lcp, 32u)], 1u);
+            }
+        }
+
+        uint safeNodeCount = min(nodeCount, uint(nodes.length()));
+        if (gid < safeNodeCount)
+        {
+            BvhNode node = nodes[gid];
+            if ((node.flags & BVH_FLAG_LEAF) == 0u &&
+                node.leftChild < safeNodeCount && node.rightChild < safeNodeCount)
+            {
+                BvhNode left = nodes[node.leftChild];
+                BvhNode right = nodes[node.rightChild];
+                vec3 overlapMin = max(left.minBounds, right.minBounds);
+                vec3 overlapMax = min(left.maxBounds, right.maxBounds);
+                float parentVolume = max(Volume(node.minBounds, node.maxBounds), 1e-20);
+                float overlapProxy = Volume(overlapMin, overlapMax) / parentVolume;
+
+                float parentArea = max(SurfaceArea(node.minBounds, node.maxBounds), 1e-20);
+                float leftWeight = float(left.primitiveRange.y);
+                float rightWeight = float(right.primitiveRange.y);
+                float parentWeight = max(float(node.primitiveRange.y), 1.0);
+                float sahProxy = (SurfaceArea(left.minBounds, left.maxBounds) * leftWeight +
+                    SurfaceArea(right.minBounds, right.maxBounds) * rightWeight) /
+                    (parentArea * parentWeight);
+
+                // Sum normalized contributions so the aggregate remains a
+                // fixed-point average and cannot overflow at million-node scale.
+                float sampleCount = max(float((safeNodeCount - 1u) / 2u), 1.0);
+                uint overlapFixed = ToFixed(overlapProxy / sampleCount);
+                uint sahFixed = ToFixed(sahProxy);
+                atomicAdd(values[6], overlapFixed);
+                atomicMax(values[7], ToFixed(overlapProxy));
+                atomicAdd(values[8], ToFixed(sahProxy / sampleCount));
+                atomicMax(values[9], sahFixed);
+                atomicAdd(values[10], 1u);
+            }
+        }
+        return;
+    }
+
+    if (analysisStage == 2u && gl_LocalInvocationID.x == 0u)
+    {
+        uint occupied = 0u;
+        for (uint i = 0u; i < PREFIX_BIN_COUNT; ++i)
+            occupied += uint(values[PREFIX_BINS + i] != 0u);
+        values[5] = occupied;
+    }
+}

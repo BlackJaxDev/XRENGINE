@@ -1018,9 +1018,7 @@ namespace XREngine.Rendering
                     {
                         foreach (var scene in TargetWorld.Scenes)
                             LoadScene(scene);
-                        if (VisualScene.GenericRenderTree is I3DRenderTree tree)
-                            tree.Remake(TargetWorld.Settings.Bounds);
-   
+
                         // Apply world settings when the target world changes
                         ApplySettings(TargetWorld.Settings);
    
@@ -2197,8 +2195,7 @@ namespace XREngine.Rendering
           PhysicsScene.Gravity = settings.Gravity;
     break;
         case nameof(WorldSettings.Bounds):
-   if (VisualScene.GenericRenderTree is I3DRenderTree tree)
-                tree.Remake(settings.Bounds);
+          VisualScene.SetBounds(settings.Bounds);
           break;
          case nameof(WorldSettings.MasterVolume):
       case nameof(WorldSettings.SpeedOfSound):
@@ -2261,8 +2258,7 @@ namespace XREngine.Rendering
     /// </summary>
         private void ApplyBoundsSettings(WorldSettings settings)
     {
-            if (VisualScene.GenericRenderTree is I3DRenderTree tree)
-        tree.Remake(settings.Bounds);
+            VisualScene.SetBounds(settings.Bounds);
   }
 
         /// <summary>

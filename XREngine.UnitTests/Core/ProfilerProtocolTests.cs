@@ -1014,6 +1014,9 @@ public sealed class ProfilerProtocolTests
             CullMilliseconds = 0.123,
             RaycastCount = 10,
             RaycastMilliseconds = 0.045,
+            TraversalMilliseconds = 0.091,
+            CommandEmissionMilliseconds = 0.017,
+            CommandEmissionSubmissionMilliseconds = 0.006,
         };
 
         var clone = RoundTrip(original);
@@ -1023,6 +1026,9 @@ public sealed class ProfilerProtocolTests
         clone.RefitCount.ShouldBe(200u);
         clone.CullMilliseconds.ShouldBe(0.123);
         clone.RaycastCount.ShouldBe(10u);
+        clone.TraversalMilliseconds.ShouldBe(0.091);
+        clone.CommandEmissionMilliseconds.ShouldBe(0.017);
+        clone.CommandEmissionSubmissionMilliseconds.ShouldBe(0.006);
     }
 
     // ── JobSystemStatsPacket ───────────────────────────────────────────

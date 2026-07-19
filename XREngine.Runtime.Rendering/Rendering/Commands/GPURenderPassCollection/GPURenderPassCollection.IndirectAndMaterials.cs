@@ -446,7 +446,9 @@ namespace XREngine.Rendering.Commands
             }
 
             uint dispatchGroups = Math.Max(1, XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u)).Item1);
-            _indirectRenderTaskShader.DispatchCompute(dispatchGroups, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            using (BvhGpuProfiler.Instance.SubmissionScope(BvhGpuProfiler.Stage.CommandEmission))
+            using (BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.CommandEmission, dispatchCommands))
+                _indirectRenderTaskShader.DispatchCompute(dispatchGroups, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
             Dbg($"Indirect dispatch groups={dispatchGroups} visible={VisibleCommandCount}", "Indirect");
             LogVulkanCounterDiagnostics("after-build");
@@ -1025,7 +1027,9 @@ namespace XREngine.Rendering.Commands
                 ? Math.Min(Math.Max(VisibleCommandCount, 1u), _keyIndexBufferA.ElementCount)
                 : Math.Max(VisibleCommandCount, 1u);
             uint groups = Math.Max(1u, XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u), MaterialScatterLocalSizeX).Item1);
-            _materialScatterComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            using (BvhGpuProfiler.Instance.SubmissionScope(BvhGpuProfiler.Stage.CommandEmission))
+            using (BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.CommandEmission, dispatchCommands))
+                _materialScatterComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
             LogVulkanCounterDiagnostics("after-material-scatter");
             return true;
@@ -2312,6 +2316,8 @@ namespace XREngine.Rendering.Commands
             ReadUints(_statsBuffer, values);
 
             var stats = new GpuRenderStats(values);
+            if (stats.Input > 0u)
+                _gpuBvhEstimatedVisibleRatio = Math.Clamp((float)stats.Culled / stats.Input, 0.0f, 1.0f);
             int cpuFallbackEvents = RuntimeEngine.Rendering.Stats.GpuFallback.GpuCpuFallbackEvents;
             int cpuFallbackRecovered = RuntimeEngine.Rendering.Stats.GpuFallback.GpuCpuFallbackRecoveredCommands;
             uint consumedDrawCount = 0u;
@@ -2354,7 +2360,11 @@ namespace XREngine.Rendering.Commands
                     Debug.Meshes($"{FormatDebugPrefix("Stats")} [BVH] Build={stats.BvhBuildCount} ({stats.BvhBuildMs:F3} ms) " +
                              $"Refit={stats.BvhRefitCount} ({stats.BvhRefitMs:F3} ms) " +
                              $"Cull={stats.BvhCullCount} ({stats.BvhCullMs:F3} ms) " +
-                             $"Ray={stats.BvhRayCount} ({stats.BvhRayMs:F3} ms)");
+                             $"Ray={stats.BvhRayCount} ({stats.BvhRayMs:F3} ms) " +
+                             $"Visited=({stats.BvhVisitedInternalNodes} internal, {stats.BvhVisitedLeaves} leaves, {stats.BvhVisitedCommands} commands) " +
+                             $"Rejected=({stats.BvhInternalRejections} internal, {stats.BvhLeafRejections} leaves) " +
+                             $"Planes={stats.BvhFrustumPlaneTests} MaskReductions={stats.BvhPlaneMaskReductions} " +
+                             $"QueueMax={stats.BvhMaxQueueOccupancy} QueueOverflow={stats.BvhQueueOverflows}");
                 }
             }
 
@@ -2536,6 +2546,16 @@ namespace XREngine.Rendering.Commands
             public double BvhRefitMs { get; }
             public double BvhCullMs { get; }
             public double BvhRayMs { get; }
+            public uint BvhVisitedInternalNodes { get; }
+            public uint BvhVisitedLeaves { get; }
+            public uint BvhVisitedCommands { get; }
+            public uint BvhFrustumPlaneTests { get; }
+            public uint BvhPlaneMaskReductions { get; }
+            public uint BvhInternalRejections { get; }
+            public uint BvhLeafRejections { get; }
+            public uint BvhEmittedCommands { get; }
+            public uint BvhMaxQueueOccupancy { get; }
+            public uint BvhQueueOverflows { get; }
 
             public bool HasBvhActivity => BvhBuildCount + BvhRefitCount + BvhCullCount + BvhRayCount > 0;
 
@@ -2555,6 +2575,16 @@ namespace XREngine.Rendering.Commands
                 MeshletTaskRecordsFrustumCulled = values[(int)GpuStatsLayout.MeshletTaskRecordsFrustumCulled];
                 MeshletTaskRecordsConeCulled = values[(int)GpuStatsLayout.MeshletTaskRecordsConeCulled];
                 MeshletTaskRecordsHiZCulled = values[(int)GpuStatsLayout.MeshletTaskRecordsHiZCulled];
+                BvhVisitedInternalNodes = values[(int)GpuStatsLayout.BvhVisitedInternalNodes];
+                BvhVisitedLeaves = values[(int)GpuStatsLayout.BvhVisitedLeaves];
+                BvhVisitedCommands = values[(int)GpuStatsLayout.BvhVisitedCommands];
+                BvhFrustumPlaneTests = values[(int)GpuStatsLayout.BvhFrustumPlaneTests];
+                BvhPlaneMaskReductions = values[(int)GpuStatsLayout.BvhPlaneMaskReductions];
+                BvhInternalRejections = values[(int)GpuStatsLayout.BvhInternalRejections];
+                BvhLeafRejections = values[(int)GpuStatsLayout.BvhLeafRejections];
+                BvhEmittedCommands = values[(int)GpuStatsLayout.BvhEmittedCommands];
+                BvhMaxQueueOccupancy = values[(int)GpuStatsLayout.BvhMaxQueueOccupancy];
+                BvhQueueOverflows = values[(int)GpuStatsLayout.BvhQueueOverflows];
 
                 BvhBuildMs = ToMs(values[(int)GpuStatsLayout.BvhBuildTimeLo], values[(int)GpuStatsLayout.BvhBuildTimeHi]);
                 BvhRefitMs = ToMs(values[(int)GpuStatsLayout.BvhRefitTimeLo], values[(int)GpuStatsLayout.BvhRefitTimeHi]);

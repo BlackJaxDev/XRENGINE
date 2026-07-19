@@ -53,27 +53,21 @@ namespace XREngine.Rendering.Commands
 
             using (_lock.EnterScope())
             {
-                // P3: XRE_SKIP_COMMAND_SWAP_IF_CLEAN â€” short-circuit the Memory.Move + PushSubData
-                // when the updating buffer's tracked content version has not advanced since the
-                // previous swap. This is an env-var bisect for O-6; if it closes most of the
-                // static-scene gap without visual artefacts, swap cost (and the implicit driver
-                // sync it triggers against the previous-frame compute read of RenderCommandsBuffer)
-                // is the dominant remaining cost.
                 long currentVersion = System.Threading.Interlocked.Read(ref _updatingCommandsContentVersion);
-                if (XREngine.Rendering.P3Diagnostics.SkipCommandSwapIfClean
-                    && _lastSwappedCommandsContentVersion == currentVersion
-                    && _updatingCommandCount == _totalCommandCount)
-                {
+                bool commandSnapshotDirty = _lastSwappedCommandsContentVersion != currentVersion ||
+                    _updatingCommandCount != _totalCommandCount;
+                if (!commandSnapshotDirty)
                     XREngine.Rendering.P3Diagnostics.IncCommandSwapCleanSkipped();
-                    return;
+                else
+                {
+                    XREngine.Rendering.P3Diagnostics.IncCommandSwapExecuted();
+                    _lastSwappedCommandsContentVersion = currentVersion;
                 }
-                XREngine.Rendering.P3Diagnostics.IncCommandSwapExecuted();
-                _lastSwappedCommandsContentVersion = currentVersion;
 
                 // Copy the updating buffer data to the render buffer
                 // This ensures the render buffer has the latest commands while keeping
                 // the updating buffer's indices consistent with _commandIndexLookup
-                if (_updatingCommandsBuffer is not null && _allLoadedCommandsBuffer is not null)
+                if (commandSnapshotDirty && _updatingCommandsBuffer is not null && _allLoadedCommandsBuffer is not null)
                 {
                     // Ensure render buffer has sufficient capacity
                     if (_allLoadedCommandsBuffer.ElementCount < _updatingCommandsBuffer.ElementCount)
@@ -103,10 +97,10 @@ namespace XREngine.Rendering.Commands
                     }
                 }
 
-                CopyDrawIndexedSoABuffersToRenderSnapshot(_updatingCommandCount);
+                CopyDrawIndexedSoABuffersToRenderSnapshot();
                 CopyDirtyStableSoABuffersToRenderSnapshot();
 
-                if (_updatingTransparencyMetadataBuffer is not null && _allLoadedTransparencyMetadataBuffer is not null)
+                if (commandSnapshotDirty && _updatingTransparencyMetadataBuffer is not null && _allLoadedTransparencyMetadataBuffer is not null)
                 {
                     if (_allLoadedTransparencyMetadataBuffer.ElementCount < _updatingTransparencyMetadataBuffer.ElementCount)
                         _allLoadedTransparencyMetadataBuffer.Resize(_updatingTransparencyMetadataBuffer.ElementCount);
@@ -137,13 +131,13 @@ namespace XREngine.Rendering.Commands
                 // Update the render count to match the updating count
                 TotalCommandCount = _updatingCommandCount;
 
+                if (_useInternalBvh && !_commandAabbBackfillRequired)
+                    _commandAabbPublishedContentVersion = _lastSwappedCommandsContentVersion;
+
                 // Update BVH
                 if (_useInternalBvh)
                 {
-                    bool canRefit = _bvhReady && !_bvhDirty && _gpuBvhTree is not null && _bvhPrimitiveCount == _updatingCommandCount;
-                    if (canRefit)
-                        _bvhRefitPending = true;
-                    else
+                    if (_bvhPrimitiveCount != _updatingCommandCount)
                         MarkBvhDirtyUnlessSuppressed(_updatingCommandCount);
                 }
             }
@@ -171,19 +165,10 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private void CopyDrawIndexedSoABuffersToRenderSnapshot(uint commandCount)
+        private void CopyDrawIndexedSoABuffersToRenderSnapshot()
         {
-            if (commandCount == 0u)
-                return;
-
-            if (_updatingDrawMetadataBuffer is not null && _allLoadedDrawMetadataBuffer is not null)
-                CopyBufferRange(_updatingDrawMetadataBuffer, _allLoadedDrawMetadataBuffer, 0u, commandCount);
-
-            if (_updatingBoundsBuffer is not null && _allLoadedBoundsBuffer is not null)
-                CopyBufferRange(_updatingBoundsBuffer, _allLoadedBoundsBuffer, 0u, commandCount);
-
-            _drawMetadataDirtyRange.Clear();
-            _boundsDirtyRange.Clear();
+            CopyDirtyRange(_updatingDrawMetadataBuffer, _allLoadedDrawMetadataBuffer, ref _drawMetadataDirtyRange);
+            CopyDirtyRange(_updatingBoundsBuffer, _allLoadedBoundsBuffer, ref _boundsDirtyRange);
         }
 
         private static void CopyDirtyRange(
@@ -803,7 +788,15 @@ namespace XREngine.Rendering.Commands
         public AABB Bounds
         {
             get => _bounds;
-            set => SetField(ref _bounds, value);
+            set
+            {
+                if (!SetField(ref _bounds, value))
+                    return;
+
+                _hasBvhNormalizationBounds = false;
+                if (_gpuBvhTree is not null)
+                    MarkBvhDirty();
+            }
         }
 
         /// <summary>Command count for the render buffer (read by render thread).</summary>

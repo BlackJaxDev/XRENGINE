@@ -53,7 +53,7 @@ public sealed partial class GpuBvhTree
         if (_overflowFlagBuffer is not null)
             return;
 
-        _overflowFlagBuffer = new XRDataBuffer("GpuBvhTree.OverflowFlag", EBufferTarget.ShaderStorageBuffer, 1, EComponentType.UInt, 1, false, true)
+        _overflowFlagBuffer = new XRDataBuffer(_overflowFlagBufferName, EBufferTarget.ShaderStorageBuffer, 1, EComponentType.UInt, 1, false, true)
         {
             Usage = EBufferUsage.DynamicDraw,
             Resizable = false,
@@ -66,19 +66,17 @@ public sealed partial class GpuBvhTree
         _overflowFlagBuffer.SetBlockIndex(Bindings.OverflowFlag);
         _overflowFlagBuffer.SetDataRaw(new uint[] { 0u }, 1);
         _overflowFlagBuffer.Generate();
-        _overflowFlagBuffer.PushSubData();
     }
 
-    private void ResetOverflowFlagBuffer()
+    /// <summary>
+    /// Ensures the overflow buffer has a stable GPU allocation before compute
+    /// snapshots are captured. The Morton shader resets the flag in-band so a
+    /// CPU sub-upload cannot recreate the buffer between binding and dispatch.
+    /// </summary>
+    private bool IsOverflowFlagBufferReady()
     {
         EnsureOverflowFlagBuffer();
-        if (_overflowFlagBuffer is null)
-            return;
-
-        // EnsureOverflowFlagBuffer always initializes ClientSideSource on first
-        // creation, so SetDataRawAtIndex is safe here without an extra alloc.
-        _overflowFlagBuffer.SetDataRawAtIndex(0, 0u);
-        _overflowFlagBuffer.PushSubData();
+        return _overflowFlagBuffer?.IsReadyForGpuUse == true;
     }
 
     /// <summary>
@@ -95,11 +93,14 @@ public sealed partial class GpuBvhTree
         // Strict zero-readback profiling cannot enqueue or consume even a
         // 4-byte diagnostic readback.
         if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy())
+        {
+            _zeroReadbackSubmissionCount++;
             return false;
+        }
 
         XRGpuFence? fence = AbstractRenderer.Current?.InsertGpuFence();
         if (fence is null)
-            return ConsumeOverflowFlag(primitiveCount, nodeCount);
+            return ConsumeOverflowFlag(primitiveCount, nodeCount, synchronous: true);
 
         _pendingOverflowFence = fence;
         _pendingOverflowPrimitiveCount = primitiveCount;
@@ -142,7 +143,7 @@ public sealed partial class GpuBvhTree
             return false;
         }
 
-        return ConsumeOverflowFlag(primitiveCount, nodeCount);
+        return ConsumeOverflowFlag(primitiveCount, nodeCount, synchronous: false);
     }
 
     private void DropPendingOverflowFence(string reason, bool warnIfOld)
@@ -164,7 +165,7 @@ public sealed partial class GpuBvhTree
         _warnedPendingOverflowFenceDelay = false;
     }
 
-    private bool ConsumeOverflowFlag(uint primitiveCount, uint nodeCount)
+    private bool ConsumeOverflowFlag(uint primitiveCount, uint nodeCount, bool synchronous)
     {
         if (_overflowFlagBuffer is null)
             return false;
@@ -177,7 +178,7 @@ public sealed partial class GpuBvhTree
 
         // Map only after a queued GPU fence has already signaled. Backends
         // that cannot expose a fence fall back to the old synchronous read.
-        uint flags = ReadOverflowFlagFromGpu();
+        uint flags = ReadOverflowFlagFromGpu(synchronous);
         if (flags == 0u)
             return false;
 
@@ -200,7 +201,7 @@ public sealed partial class GpuBvhTree
     /// back to it. A real map/unmap (or <c>glGetBufferSubData</c>) is required
     /// to read data written by the GPU.
     /// </summary>
-    private uint ReadOverflowFlagFromGpu()
+    private uint ReadOverflowFlagFromGpu(bool synchronous)
     {
         if (_overflowFlagBuffer is null)
             return 0u;
@@ -220,6 +221,10 @@ public sealed partial class GpuBvhTree
                         // GpuReadbackBytes stays honest under the instrumented
                         // strategy. This is a 4-byte read, but it counts.
                         RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(sizeof(uint));
+                        if (synchronous)
+                            _synchronousReadbackBytes += sizeof(uint);
+                        else
+                            _asynchronousReadbackBytes += sizeof(uint);
                         return *((uint*)addr.Pointer);
                     }
                 }
@@ -261,15 +266,13 @@ public sealed partial class GpuBvhTree
     private void LogOverflowTrace(uint flags, uint primitiveCount, uint nodeCount)
     {
         uint nodeScalars = _nodeBuffer?.ElementCount ?? 0u;
-        uint rangeScalars = _rangeBuffer?.ElementCount ?? 0u;
         uint mortonScalars = _mortonBuffer?.ElementCount ?? 0u;
         uint nodesByBuffer = nodeScalars > GpuBvhLayout.NodeStrideScalars
             ? (nodeScalars - GpuBvhLayout.NodeHeaderScalarCount) / GpuBvhLayout.NodeStrideScalars
             : 0u;
-        uint rangesByBuffer = rangeScalars / GpuBvhLayout.RangeStrideScalars;
         uint mortonCapacity = mortonScalars / 2u;
 
-        bool nodeCapacityHit = (flags & OverflowNodeBit) != 0 || nodeCount > nodesByBuffer || nodeCount > rangesByBuffer;
+        bool nodeCapacityHit = (flags & OverflowNodeBit) != 0 || nodeCount > nodesByBuffer;
         bool mortonCapacityHit = (flags & OverflowMortonBit) != 0 || primitiveCount > mortonCapacity;
         bool bvhBit = (flags & OverflowBvhBit) != 0;
         string suspect = (bvhBit && !nodeCapacityHit && !mortonCapacityHit)
@@ -279,7 +282,7 @@ public sealed partial class GpuBvhTree
         Debug.LogWarning(
             $"[GpuBvhTree][trace] flags=0x{flags:X} buildMode={_buildMode} maxLeaf={_maxLeafPrimitives} " +
             $"primitives={primitiveCount} nodes={nodeCount} " +
-            $"nodeCapacity={nodesByBuffer} rangeCapacity={rangesByBuffer} mortonCapacity={mortonCapacity} " +
+            $"nodeCapacity={nodesByBuffer} mortonCapacity={mortonCapacity} " +
             $"=> {suspect}");
     }
 
