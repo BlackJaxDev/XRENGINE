@@ -21,6 +21,7 @@ namespace XREngine.Rendering.Vulkan
             if (Window?.VkSurface is null)
                 throw new Exception("Windowing platform doesn't support Vulkan.");
 
+            PrepareStreamlineVulkanRequirements();
             CreateInstance();
             SetupDebugMessenger();
             CreateSurface();

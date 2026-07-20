@@ -1296,6 +1296,80 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Performs the non-mutating portion of descriptor lifetime validation while the caller owns
+    /// <see cref="_vulkanResourceLifetimeLock"/>. Recoverable generation-retirement races use this
+    /// path so they can rebuild descriptor snapshots without throwing first-chance exceptions.
+    /// </summary>
+    private bool TryPrevalidateVulkanDescriptorWrites_NoLock(
+        uint writeCount,
+        WriteDescriptorSet* writes,
+        out string failureReason)
+    {
+        failureReason = string.Empty;
+        if (writeCount == 0 || writes is null)
+            return true;
+
+        for (int writeIndex = 0; writeIndex < writeCount; writeIndex++)
+        {
+            WriteDescriptorSet write = writes[writeIndex];
+            if (write.DstSet.Handle == 0)
+                continue;
+
+            VulkanResourceLifetimeKey setKey = ResourceKey(ObjectType.DescriptorSet, write.DstSet.Handle);
+            VulkanResourceLifetimeRecord setResource = GetOrRegisterVulkanResource_NoLock(setKey, "DescriptorSet.Update.Prevalidate");
+            if ((setResource.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) != 0)
+            {
+                failureReason = $"Cannot update retired Vulkan descriptor set {setKey}.";
+                return false;
+            }
+
+            bool setUseCompleted = UpdateVulkanResourceCompletionState_NoLock(setResource);
+            bool usesUpdateAfterBind =
+                _vulkanDescriptorSetLifetimes.TryGetValue(write.DstSet.Handle, out VulkanDescriptorSetLifetimeRecord? setState) &&
+                setState.UsesUpdateAfterBind &&
+                CanUseUpdateAfterBind(write.DescriptorType);
+            if (!setUseCompleted && !usesUpdateAfterBind)
+            {
+                failureReason =
+                    $"Cannot update in-flight Vulkan descriptor set {setKey}; binding={write.DstBinding} type={write.DescriptorType} was not registered for update-after-bind.";
+                return false;
+            }
+
+            for (uint descriptorIndex = 0; descriptorIndex < write.DescriptorCount; descriptorIndex++)
+            {
+                VulkanDescriptorReferencePair references = ResolveDescriptorReferences(write, descriptorIndex);
+                if (!TryPrevalidateVulkanDescriptorReference_NoLock(setKey, references.First, out failureReason) ||
+                    !TryPrevalidateVulkanDescriptorReference_NoLock(setKey, references.Second, out failureReason))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private bool TryPrevalidateVulkanDescriptorReference_NoLock(
+        VulkanResourceLifetimeKey setKey,
+        VulkanResourceLifetimeKey referenceKey,
+        out string failureReason)
+    {
+        failureReason = string.Empty;
+        if (!referenceKey.IsValid)
+            return true;
+
+        VulkanResourceLifetimeRecord reference = GetOrRegisterVulkanResource_NoLock(
+            referenceKey,
+            "DescriptorSet.Reference.Prevalidate");
+        if ((reference.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) == 0)
+            return true;
+
+        failureReason =
+            $"Cannot update descriptor set {setKey} with retired Vulkan resource {referenceKey} generation {reference.Generation}.";
+        return false;
+    }
+
     private void ValidateAndPropagateVulkanDescriptorReference_NoLock(
         VulkanResourceLifetimeKey setKey,
         VulkanResourceLifetimeRecord setResource,
@@ -1961,6 +2035,13 @@ public unsafe partial class VulkanRenderer
                         referenceKey,
                         out failureReason))
                 {
+                    VulkanResourceLifetimeKey descriptorSetKey = ResourceKey(ObjectType.DescriptorSet, key.Handle);
+                    string descriptorSetOwner = _vulkanResourceLifetimes.TryGetValue(
+                        descriptorSetKey,
+                        out VulkanResourceLifetimeRecord? descriptorSetResource)
+                        ? descriptorSetResource.Owner
+                        : "unknown";
+                    failureReason = $"{failureReason}; referenced by {descriptorSetKey} owner={descriptorSetOwner} snapshotGeneration={snapshot.Generation}";
                     failureKey = referenceKey;
                     return false;
                 }

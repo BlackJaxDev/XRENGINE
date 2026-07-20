@@ -135,6 +135,26 @@ namespace XREngine.Rendering.DLSS
             }
         }
 
+        /// <summary>
+        /// Maximum number of interpolated frames the active Streamline runtime reports it can
+        /// generate between engine-rendered frames. Zero means no active state has been reported yet.
+        /// </summary>
+        public static uint FrameGenerationMaximumFramesToGenerate
+            => Native.FrameGenerationMaximumFramesToGenerate;
+
+        /// <summary>
+        /// Number of interpolated frames Streamline reports as actually presented since its previous
+        /// state query. This is presentation telemetry, not an engine render-frame counter.
+        /// </summary>
+        public static uint FrameGenerationFramesActuallyPresented
+            => Native.FrameGenerationFramesActuallyPresented;
+
+        /// <summary>
+        /// Running total of interpolated frames reported as actually presented by Streamline.
+        /// </summary>
+        public static ulong FrameGenerationFramesActuallyPresentedTotal
+            => Native.FrameGenerationFramesActuallyPresentedTotal;
+
         private static void EnsureRuntimeDllsProbed()
         {
             if (_runtimeDllsProbed)
@@ -362,7 +382,9 @@ namespace XREngine.Rendering.DLSS
             && RuntimeEngine.EffectiveSettings.NvidiaDlssFrameGenerationMode != ENvidiaDlssFrameGenerationMode.Off;
 
         internal static ENvidiaDlssFrameGenerationMode ResolveFrameGenerationMode()
-            => RuntimeEngine.EffectiveSettings.NvidiaDlssFrameGenerationMode switch
+            => !IsFrameGenerationRequested
+                ? ENvidiaDlssFrameGenerationMode.Off
+                : RuntimeEngine.EffectiveSettings.NvidiaDlssFrameGenerationMode switch
             {
                 ENvidiaDlssFrameGenerationMode.OneX => ENvidiaDlssFrameGenerationMode.OneX,
                 ENvidiaDlssFrameGenerationMode.TwoX => ENvidiaDlssFrameGenerationMode.TwoX,
@@ -394,7 +416,7 @@ namespace XREngine.Rendering.DLSS
             }
 
             return RuntimeEngine.Rendering.Settings.DlssQuality == EDlssQualityMode.Custom
-                ? Math.Clamp(RuntimeEngine.Rendering.Settings.DlssCustomScale, MinScale, MaxScale)
+                ? Math.Clamp(RuntimeEngine.EffectiveSettings.DlssCustomScale, MinScale, MaxScale)
                 : Math.Clamp(ScaleForMode(RuntimeEngine.Rendering.Settings.DlssQuality), MinScale, MaxScale);
         }
     }

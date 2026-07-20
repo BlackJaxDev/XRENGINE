@@ -452,8 +452,27 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     private Result EndCommandBufferTracked(CommandBuffer commandBuffer, bool cacheVariant = true)
     {
+        Result result = EndCommandBufferTracked(
+            commandBuffer,
+            cacheVariant,
+            out string trackingFailure);
+        if (!string.IsNullOrEmpty(trackingFailure))
+            throw new InvalidOperationException(trackingFailure);
+        return result;
+    }
+
+    /// <summary>
+    /// Ends a recording and reports a resource-lifetime publication race without using an
+    /// exception. Primary recording uses this path so it can immediately rebuild against the
+    /// committed resource generation; callers for which the race is unexpected use the wrapper.
+    /// </summary>
+    private Result EndCommandBufferTracked(
+        CommandBuffer commandBuffer,
+        bool cacheVariant,
+        out string trackingFailure)
+    {
         Result result = Api!.EndCommandBuffer(commandBuffer);
-        string trackingFailure = string.Empty;
+        trackingFailure = string.Empty;
         bool trackingPublished = result != Result.Success ||
             TryFlushCommandBufferTrackingBatch(commandBuffer, out trackingFailure);
 
@@ -477,9 +496,6 @@ public unsafe partial class VulkanRenderer
                     lifetime.FrameDataLease.AbandonRecording();
             }
         }
-
-        if (!trackingPublished)
-            throw new InvalidOperationException(trackingFailure);
 
         return result;
     }
@@ -583,8 +599,34 @@ public unsafe partial class VulkanRenderer
             };
             if (!TryFlushCommandBufferTrackingBatch(commandBuffer, out string failureReason))
             {
-                throw new InvalidOperationException(
-                    $"Cannot retire Vulkan resource {resourceKey} while command-buffer dependency publication failed: {failureReason}");
+                ulong commandBufferHandle = pendingCommandBuffers[i];
+                _ = InvalidateCachedCommandBuffersByHandle(
+                    [commandBufferHandle],
+                    $"retirement dependency publication rejected: {failureReason}");
+
+                // The batch can no longer be submitted: one of its dependencies crossed
+                // retirement before the deferred publication completed. Discarding only
+                // this invalid batch closes the retirement race and lets the next frame
+                // record against the replacement resource generation.
+                lock (_vulkanResourceLifetimeLock)
+                {
+                    if (_commandBufferTrackingBatches.TryGetValue(commandBufferHandle, out VulkanCommandBufferTrackingBatch? batch))
+                    {
+                        lock (batch)
+                        {
+                            if (batch.QueuedSubmissionCount == 0)
+                                _commandBufferTrackingBatches.TryRemove(commandBufferHandle, out _);
+                        }
+                    }
+                }
+
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.ResourceLifetime.DiscardInvalidTrackingBatch.{commandBufferHandle}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan.ResourceLifetime] Discarded invalid command-buffer tracking batch 0x{0:X} while retiring {1}: {2}",
+                    commandBufferHandle,
+                    resourceKey,
+                    failureReason);
             }
         }
     }

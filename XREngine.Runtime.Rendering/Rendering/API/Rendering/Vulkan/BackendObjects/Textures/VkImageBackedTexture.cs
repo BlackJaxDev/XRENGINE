@@ -138,6 +138,7 @@ public unsafe partial class VulkanRenderer
                 && !IsDescriptorDirty
                 && _view.Handle != 0
                 && IsImageViewBackedByCurrentImage(_view)
+                && Renderer.IsImageViewAvailableForDescriptor(_view)
                 && (!CreateSampler || _sampler.Handle != 0);
             if (!descriptorHandlesReady)
                 return false;
@@ -190,6 +191,7 @@ public unsafe partial class VulkanRenderer
                 _image.Handle != 0 &&
                 _view.Handle != 0 &&
                 IsImageViewBackedByCurrentImage(_view) &&
+                Renderer.IsImageViewAvailableForDescriptor(_view) &&
                 (!CreateSampler || _sampler.Handle != 0);
             if (!handlesReady)
                 return;
@@ -213,6 +215,8 @@ public unsafe partial class VulkanRenderer
                     Generate();
                     if (!RefreshPhysicalGroupImageIfStaleNoLock())
                         return false;
+                    if (!RefreshPrimaryDescriptorViewForUseNoLock())
+                        return false;
 
                     PublishPlannerBackedDescriptorIfReadyNoLock();
                     if (IsDescriptorReadyNoLock())
@@ -232,7 +236,7 @@ public unsafe partial class VulkanRenderer
                 }
 
                 EnsureDescriptorReadyForVulkanUse(reason);
-                return true;
+                return RefreshPrimaryDescriptorViewForUseNoLock();
             }
             catch (VulkanOutOfMemoryException ex)
             {
@@ -245,6 +249,54 @@ public unsafe partial class VulkanRenderer
                     ex.Message);
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Replaces a primary descriptor view that no longer belongs to the current live resource
+        /// generation. Generation retirement can begin after a texture published its descriptor,
+        /// so descriptor dirtiness alone is not sufficient to decide whether the cached view is usable.
+        /// </summary>
+        private bool RefreshPrimaryDescriptorViewForUseNoLock()
+        {
+            if (_view.Handle != 0 &&
+                IsImageViewBackedByCurrentImage(_view) &&
+                Renderer.IsImageViewAvailableForDescriptor(_view))
+            {
+                return true;
+            }
+
+            if (_image.Handle == 0)
+                return false;
+
+            if (_view.Handle != 0)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Texture.RefreshRetiringPrimaryDescriptorView.{Data.GetHashCode()}.{_view.Handle}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Replacing stale or retiring primary descriptor image view 0x{0:X} for texture '{1}' against current image 0x{2:X}.",
+                    _view.Handle,
+                    ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName(),
+                    _image.Handle);
+            }
+
+            // The lifetime manager already owns retirement of an unavailable view. Forgetting it
+            // avoids enqueueing the same handle again while forcing a fresh generation.
+            ForgetCurrentViews(removeActiveCacheEntry: true);
+            CreateImageView(default);
+            bool refreshed = _view.Handle != 0 &&
+                IsImageViewBackedByCurrentImage(_view) &&
+                Renderer.IsImageViewAvailableForDescriptor(_view);
+            if (refreshed)
+                PublishDescriptorViewRefreshNoLock();
+            return refreshed;
+        }
+
+        private void PublishDescriptorViewRefreshNoLock()
+        {
+            // The image contents did not change, but every descriptor consumer must observe the
+            // replacement handle rather than reusing a fingerprint from the retired view.
+            MarkDescriptorDirty();
+            MarkDescriptorPublished();
         }
 
         public bool IsLayoutReadyForSampling
@@ -473,12 +525,13 @@ public unsafe partial class VulkanRenderer
                     ? GetDescriptorViewNoLock(viewType)
                     : _view
             };
-            if (view.Handle != 0 && !IsImageViewBackedByCurrentImage(view))
+            if (view.Handle != 0 &&
+                (!IsImageViewBackedByCurrentImage(view) || !Renderer.IsImageViewAvailableForDescriptor(view)))
             {
                 Debug.VulkanWarningEvery(
                     $"Vulkan.Texture.StaleDescriptorView.{Data.GetHashCode()}.{view.Handle}",
                     TimeSpan.FromSeconds(2),
-                    "[Vulkan] Refreshing stale descriptor image view 0x{0:X} for texture '{1}' because it is not backed by the current image 0x{2:X}.",
+                    "[Vulkan] Refreshing stale or retiring descriptor image view 0x{0:X} for texture '{1}' against current image 0x{2:X}.",
                     view.Handle,
                     ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName(),
                     _image.Handle);
@@ -492,10 +545,19 @@ public unsafe partial class VulkanRenderer
                         ? GetDescriptorViewNoLock(viewType)
                         : _view
                 };
+                if (view.Handle != 0 &&
+                    IsImageViewBackedByCurrentImage(view) &&
+                    Renderer.IsImageViewAvailableForDescriptor(view))
+                {
+                    PublishDescriptorViewRefreshNoLock();
+                }
             }
 
             ImageLayout trackedLayout = ResolveTrackedImageLayoutNoLock();
-            bool ready = IsDescriptorReadyNoLock() && view.Handle != 0 && IsImageViewBackedByCurrentImage(view);
+            bool ready = IsDescriptorReadyNoLock() &&
+                view.Handle != 0 &&
+                IsImageViewBackedByCurrentImage(view) &&
+                Renderer.IsImageViewAvailableForDescriptor(view);
             snapshot = new(
                 _image,
                 _memory,
@@ -1067,7 +1129,7 @@ public unsafe partial class VulkanRenderer
 
             if (group is not null)
             {
-                RetireDedicatedImageBeforeBorrowingPhysicalGroup();
+                ReleaseCurrentImageBeforeBorrowingPhysicalGroup(group);
 
                 // Borrow the image from the resource-planner physical group.
                 _physicalGroup = group;
@@ -1121,11 +1183,15 @@ public unsafe partial class VulkanRenderer
             ResetAttachmentLayoutTracking();
         }
 
-        private void RetireDedicatedImageBeforeBorrowingPhysicalGroup()
+        private void ReleaseCurrentImageBeforeBorrowingPhysicalGroup(VulkanPhysicalImageGroup targetGroup)
         {
             if (!_ownsImageMemory)
             {
-                DestroyAllViews();
+                bool switchingBorrowedImage = _physicalGroup is not null &&
+                    !ReferenceEquals(_physicalGroup, targetGroup);
+                bool replacingUnownedImage = _physicalGroup is null && _image.Handle != 0;
+                if (switchingBorrowedImage || replacingUnownedImage)
+                    DestroyCurrentViews(removeActiveCacheEntry: true);
                 return;
             }
 
@@ -2168,12 +2234,16 @@ public unsafe partial class VulkanRenderer
                 }
             };
 
-            if (Renderer.IsLiveImageViewStructurallyEquivalent(reusableView, in viewInfo))
+            if (Renderer.IsImageViewAvailableForDescriptor(reusableView) &&
+                Renderer.IsLiveImageViewStructurallyEquivalent(reusableView, in viewInfo))
                 return reusableView;
 
             if (Api!.CreateImageView(Device, ref viewInfo, null, out ImageView created) != Result.Success)
                 throw new Exception("Failed to create image view.");
-            Renderer.TrackLiveImageView(created, in viewInfo, "VkImageBackedTexture.View");
+            Renderer.TrackLiveImageView(
+                created,
+                in viewInfo,
+                $"VkImageBackedTexture.View:{ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName()}");
             return created;
         }
 
@@ -2327,11 +2397,11 @@ public unsafe partial class VulkanRenderer
                     return default;
                 }
 
-                if (_view.Handle != 0 && !IsImageViewBackedByCurrentImage(_view))
-                    _view = default;
-
-                if (_view.Handle == 0)
-                    CreateImageView(default);
+                // Physical images can be reused across render-resource generations, so matching
+                // the current VkImage is not enough: every cached view must also be outside the
+                // pending-retirement state before a new command buffer records it.
+                if (!RefreshPrimaryDescriptorViewForUseNoLock())
+                    return default;
 
                 AttachmentViewKey key = BuildAttachmentViewKey(mipLevel, layerIndex);
                 if (key == default)
@@ -2354,7 +2424,8 @@ public unsafe partial class VulkanRenderer
                 }
 
                 if (_attachmentViews.TryGetValue(key, out ImageView cached) &&
-                    !IsImageViewBackedByCurrentImage(cached))
+                    (!IsImageViewBackedByCurrentImage(cached) ||
+                     !Renderer.IsImageViewAvailableForDescriptor(cached)))
                 {
                     _attachmentViews.Remove(key);
                     cached = default;
@@ -2364,7 +2435,10 @@ public unsafe partial class VulkanRenderer
                 {
                     cached = CreateView(key);
                     if (cached.Handle != 0)
+                    {
                         _attachmentViews[key] = cached;
+                        PublishDescriptorViewRefreshNoLock();
+                    }
                 }
 
                 if (BloomVulkanDiagnosticsEnabled && IsBloomDiagnosticName(ResolveLogicalResourceName() ?? Data.Name))
@@ -3544,7 +3618,8 @@ public unsafe partial class VulkanRenderer
 
             return Renderer.TryGetImageViewBackingImage(view, out Image backingImage) &&
                 backingImage.Handle == image.Handle &&
-                Renderer.IsLiveImageViewBackedByLiveImage(view);
+                Renderer.IsLiveImageViewBackedByLiveImage(view) &&
+                Renderer.IsImageViewAvailableForDescriptor(view);
         }
 
         private int FindPhysicalImageViewCacheIndex(VulkanPhysicalImageGroup? group, ulong imageHandle)

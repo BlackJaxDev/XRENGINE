@@ -198,6 +198,12 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool IsPlayModeTransitioning => Engine.PlayMode.IsTransitioning;
     public string PlayModeStateName => Engine.PlayMode.State.ToString();
     public EAntiAliasingMode DefaultAntiAliasingMode => Engine.EffectiveSettings.AntiAliasingMode;
+    public bool EnableNvidiaDlss => Engine.EffectiveSettings.EnableNvidiaDlss;
+    public EDlssQualityMode DlssQuality => Engine.EffectiveSettings.DlssQuality;
+    public float DlssCustomScale => Engine.Rendering.Settings.DlssCustomScale;
+    public float DlssSharpness => Engine.Rendering.Settings.DlssSharpness;
+    public bool EnableNvidiaDlssFrameGeneration => Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration;
+    public ENvidiaDlssFrameGenerationMode NvidiaDlssFrameGenerationMode => Engine.EffectiveSettings.NvidiaDlssFrameGenerationMode;
     public uint DefaultMsaaSampleCount => Engine.EffectiveSettings.MsaaSampleCount;
     public bool DefaultOutputHDR => Engine.Rendering.Settings.OutputHDR;
     public float DefaultTsrRenderScale => Engine.Rendering.Settings.TsrRenderScale;

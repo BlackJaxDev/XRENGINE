@@ -445,6 +445,11 @@ namespace XREngine.Rendering.Vulkan
             SeedRecordedImageLayoutState(commandBuffer, predecessorCommandBuffer);
             CmdBeginLabel(commandBuffer, "DynamicUIBatchTextOverlay");
 
+            RecordDynamicUiBatchTextStreamlineUi(
+                commandBuffer,
+                imageIndex,
+                secondaryCommandBuffer);
+
             TransitionSwapchainImageForImGuiOverlay(
                 commandBuffer,
                 imageIndex,
@@ -503,6 +508,65 @@ namespace XREngine.Rendering.Vulkan
 
             overlayCommandBuffer = commandBuffer;
             return true;
+        }
+
+        /// <summary>
+        /// Adds native dynamic text to the same premultiplied UI surface used for
+        /// DLSS-G UI recomposition. ImGui has already cleared and populated it.
+        /// </summary>
+        private void RecordDynamicUiBatchTextStreamlineUi(
+            CommandBuffer commandBuffer,
+            uint imageIndex,
+            CommandBuffer secondaryCommandBuffer)
+        {
+            if (!TryGetStreamlineUiAttachment(
+                    imageIndex,
+                    out Image uiImage,
+                    out ImageView uiView,
+                    out ImageLayout oldLayout))
+            {
+                return;
+            }
+
+            TransitionStreamlineUiImage(
+                commandBuffer,
+                uiImage,
+                oldLayout,
+                ImageLayout.ColorAttachmentOptimal);
+
+            RenderingAttachmentInfo colorAttachment = new()
+            {
+                SType = StructureType.RenderingAttachmentInfo,
+                ImageView = uiView,
+                ImageLayout = ImageLayout.ColorAttachmentOptimal,
+                LoadOp = AttachmentLoadOp.Load,
+                StoreOp = AttachmentStoreOp.Store,
+            };
+
+            RenderingInfo renderingInfo = new()
+            {
+                SType = StructureType.RenderingInfo,
+                Flags = RenderingFlags.ContentsSecondaryCommandBuffersBit,
+                RenderArea = new Rect2D
+                {
+                    Offset = new Offset2D(0, 0),
+                    Extent = swapChainExtent,
+                },
+                LayerCount = 1,
+                ColorAttachmentCount = 1,
+                PColorAttachments = &colorAttachment,
+            };
+
+            CmdBeginDynamicRendering(commandBuffer, &renderingInfo);
+            CmdExecuteCommandsTracked(commandBuffer, 1, &secondaryCommandBuffer);
+            CmdEndDynamicRendering(commandBuffer);
+
+            TransitionStreamlineUiImage(
+                commandBuffer,
+                uiImage,
+                ImageLayout.ColorAttachmentOptimal,
+                ImageLayout.General);
+            MarkStreamlineUiImageInitialized(imageIndex);
         }
 
         private void RecordScheduledMeshCommandChainWorker(

@@ -592,6 +592,15 @@ public sealed class VulkanP0ValidationTests
     }
 
     [Test]
+    public void VulkanImGuiOverlay_ClosesTrackedCommandBufferRecording()
+    {
+        string imguiSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs");
+
+        imguiSource.ShouldContain("EndCommandBufferTracked(commandBuffer)");
+        imguiSource.ShouldNotContain("Api.EndCommandBuffer(commandBuffer)");
+    }
+
+    [Test]
     public void VulkanFramebufferAttachments_TrackMipLayoutsIndependently()
     {
         string attachmentSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/IVkFrameBufferAttachmentSource.cs");
@@ -619,10 +628,49 @@ public sealed class VulkanP0ValidationTests
         string method = SliceMethod(source, "internal ImageLayout ResolveDescriptorImageLayout");
 
         method.ShouldContain("ImageLayout requestedLayout = GetDefaultSampledDescriptorLayout(source);");
-        method.ShouldContain("CanSampleFromTrackedGeneralLayout(source.DescriptorUsage, trackedLayout)");
-        method.ShouldContain(": requestedLayout;");
+        method.ShouldContain("ResolveTrackedSampledDescriptorLayout(source.DescriptorUsage, trackedLayout, requestedLayout)");
         method.ShouldNotContain("TryTransitionDedicatedImageLayout");
     }
+
+    [TestCase(ImageLayout.ShaderReadOnlyOptimal)]
+    [TestCase(ImageLayout.DepthStencilReadOnlyOptimal)]
+    [TestCase(ImageLayout.DepthReadOnlyOptimal)]
+    [TestCase(ImageLayout.StencilReadOnlyOptimal)]
+    [TestCase(ImageLayout.ReadOnlyOptimal)]
+    public void VulkanSampledDescriptorLayout_PreservesTrackedReadableLayout(ImageLayout trackedLayout)
+        => VulkanRenderer.ResolveTrackedSampledDescriptorLayout(
+                ImageUsageFlags.SampledBit,
+                trackedLayout,
+                ImageLayout.General)
+            .ShouldBe(trackedLayout);
+
+    [Test]
+    public void VulkanSampledDescriptorLayout_DoesNotInferGeneralFromTransientTrackedState()
+        => VulkanRenderer.ResolveTrackedSampledDescriptorLayout(
+                ImageUsageFlags.SampledBit | ImageUsageFlags.DepthStencilAttachmentBit,
+                ImageLayout.General,
+                ImageLayout.DepthStencilReadOnlyOptimal)
+            .ShouldBe(ImageLayout.DepthStencilReadOnlyOptimal);
+
+    [Test]
+    public void VulkanSampledDescriptorLayout_PreservesGeneralForStorageSamplingContract()
+        => VulkanRenderer.ResolveTrackedSampledDescriptorLayout(
+                ImageUsageFlags.SampledBit | ImageUsageFlags.StorageBit,
+                ImageLayout.General,
+                ImageLayout.ShaderReadOnlyOptimal)
+            .ShouldBe(ImageLayout.General);
+
+    [TestCase(ImageLayout.Undefined)]
+    [TestCase(ImageLayout.ColorAttachmentOptimal)]
+    [TestCase(ImageLayout.DepthStencilAttachmentOptimal)]
+    [TestCase(ImageLayout.TransferSrcOptimal)]
+    [TestCase(ImageLayout.TransferDstOptimal)]
+    public void VulkanSampledDescriptorLayout_FallsBackWhenTrackedLayoutIsNotReadable(ImageLayout trackedLayout)
+        => VulkanRenderer.ResolveTrackedSampledDescriptorLayout(
+                ImageUsageFlags.SampledBit,
+                trackedLayout,
+                ImageLayout.DepthStencilReadOnlyOptimal)
+            .ShouldBe(ImageLayout.DepthStencilReadOnlyOptimal);
 
     [Test]
     public void VulkanTextureViews_UseViewLocalSamplerState()

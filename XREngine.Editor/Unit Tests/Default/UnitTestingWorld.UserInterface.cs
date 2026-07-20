@@ -18,6 +18,7 @@ using XREngine.Editor.UI.Components;
 using XREngine.Editor.UI.Toolbar;
 using XREngine.Editor.UI.Tools;
 using XREngine.Rendering;
+using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
@@ -136,6 +137,21 @@ public static partial class EditorUnitTests
             builder.Append("ms | gpu ");
             AppendFixed(builder, gpuCmdMs, "F2", 6);
             builder.Append("ms");
+
+            if (Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration)
+            {
+                uint generatedPresented = NvidiaDlssManager.FrameGenerationFramesActuallyPresented;
+                uint maximumGenerated = NvidiaDlssManager.FrameGenerationMaximumFramesToGenerate;
+                float estimatedPresentedHz = averageHz * (1.0f + generatedPresented);
+                builder.Append("\ndlss-g: presented ");
+                AppendFixed(builder, estimatedPresentedHz, "F0", 3);
+                builder.Append("hz est | generated +");
+                builder.Append(generatedPresented);
+                builder.Append(" | total ");
+                builder.Append(NvidiaDlssManager.FrameGenerationFramesActuallyPresentedTotal);
+                builder.Append(" | max ");
+                builder.Append(maximumGenerated);
+            }
 
             if (vrActive)
                 AppendVrRenderStats(builder, vrHz, vrPassMs);

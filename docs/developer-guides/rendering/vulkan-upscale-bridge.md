@@ -1,6 +1,6 @@
 # Vulkan Upscale Bridge
 
-Last updated: 2026-06-16
+Last updated: 2026-07-19
 
 The Vulkan upscale bridge lets the OpenGL renderer use Vulkan-only vendor upscalers without migrating the whole renderer to Vulkan. OpenGL remains authoritative for the frame graph and final present, while a per-viewport Vulkan sidecar owns shared bridge images, imports them through Win32 external-memory interop, runs DLSS or XeSS, and returns the upscaled output to OpenGL through external semaphore synchronization.
 
@@ -134,6 +134,8 @@ The native Vulkan default pipeline now routes DLSS Super Resolution through the 
 
 The queued DLSS op records inside the frame command buffer. It transitions the tagged images to `General`, passes the renderer-owned Vulkan image/memory/view handles to Streamline, uploads constants, tags resources, and calls `slEvaluateFeature`. Preflight failures and command-recording failures are logged as render errors. A requested DLSS path does not silently fall back to a regular blit.
 
+Before creating the native Vulkan instance and device, the renderer initializes Streamline in manual-hooking mode and calls `slGetFeatureRequirements` for every enabled feature. DLSS-G queries include DLSS-G, Reflex, and PCL, plus DLSS Super Resolution when it is also selected. The renderer merges all reported instance/device extensions, Vulkan 1.2/1.3 feature names, and extra graphics/compute/optical-flow queue counts into its normal Vulkan bootstrap. Streamline receives the actual reserved queue-family and starting-index ranges through `slSetVulkanInfo`; native optical flow also enables `VkPhysicalDeviceOpticalFlowFeaturesNV`. Missing requirements fail before swapchain creation with a specific diagnostic instead of producing a partially initialized feature later in the frame.
+
 DLSS frame generation is wired on the native Vulkan default renderer:
 
 - NVIDIA DLSS frame generation requests use `EnableNvidiaDlssFrameGeneration` plus `NvidiaDlssFrameGenerationMode` (`OneX`, `TwoX`, or `ThreeX`). These map to Streamline `numFramesToGenerate` values of 1, 2, and 3.
@@ -141,8 +143,14 @@ DLSS frame generation is wired on the native Vulkan default renderer:
 - When frame generation is enabled, the Vulkan swapchain is created through Streamline and frame acquire/present route through Streamline's `vkAcquireNextImageKHR` and `vkQueuePresentKHR` proxy functions.
 - The native DLSS command tags depth, motion vectors, scaling input/output, exposure, and the HUD-less color output for Streamline. When frame generation is active, the resources needed by DLSS-G are tagged with `ValidUntilPresent`, and constants use the same frame index as the Reflex/PCL present markers.
 - Reflex is enabled through `slReflexSetOptions`, and the Vulkan frame loop emits Streamline PCL markers around render-submit and present. The required frame-generation runtime set includes `sl.interposer.dll`, `sl.common.dll`, `sl.dlss_g.dll`, `sl.reflex.dll`, `sl.pcl.dll`, and `nvngx_dlssg.dll`.
-- Swapchain recreation and destruction send `DLSSGMode.Off` first, because Streamline requires frame generation to be disabled before fullscreen/window/resolution manipulation. HDR DLSS-G prefers RGB10/UINT10 HDR10 swapchain formats and rejects FP16/scRGB backbuffers. Vulkan DLSS-G prefers `Mailbox` or `Immediate` present modes; `FIFO` fallback is logged because Vulkan VSync with DLSS-G is not supported by Streamline.
+- Swapchain recreation and destruction send `DLSSGMode.Off` first, because Streamline requires frame generation to be disabled before fullscreen/window/resolution manipulation. HDR DLSS-G prefers RGB10/UINT10 HDR10 swapchain formats and rejects FP16/scRGB backbuffers. SDR DLSS-G selects an `UNORM` back buffer with the nonlinear sRGB color space because Streamline rejects sRGB Vulkan back-buffer formats; the final vendor-output blit performs the required linear-to-sRGB encoding. Vulkan DLSS-G prefers `Mailbox` or `Immediate` present modes; `FIFO` fallback is logged because Vulkan VSync with DLSS-G is not supported by Streamline.
+- DLSS-G resource tags and common constants are recorded before `slDLSSGSetOptions` enables generation for that frame. Deferred or failed command recording therefore leaves generation disabled instead of presenting with missing/stale frame metadata. Repeated recording of the same engine frame does not repeat the options call.
+- Streamline frame tokens use the upcoming Vulkan callback index because viewport commands are prepared before the callback advances the renderer counter; this keeps DLSS/DLSS-G constants aligned with PCL and proxy-present markers.
+- If Vulkan must present previously completed fallback content for a rejected/deferred frame, it sends `DLSSGMode.Off` before that proxy present because the rejected frame has no current tags or constants. The next successfully recorded DLSS-G operation re-enables generation after publishing valid metadata.
+- Equivalent DLSS-G options for the same Streamline viewport/frame token are coalesced across command-recording retries and duplicate pipeline submissions, avoiding redundant `slDLSSGSetOptions` calls.
 - Missing DLSS-G runtime DLLs, unsupported Streamline feature requirements, missing Streamline proxy functions, Reflex setup failure, `slDLSSGSetOptions` failure, non-OK `slDLSSGGetState`, or a swapchain not created through Streamline are logged as render errors and stop the requested vendor path. No fallback blit is rendered for requested DLSS frame generation.
+- DLSS/DLAA and DLSS-G must be selected before the Vulkan renderer is created so their immutable device extensions, feature bits, and queue reservations can be provisioned. Changing only quality, sharpness, or the frame multiplier remains a live operation; enabling a newly unprovisioned Streamline feature requires recreating the Vulkan renderer.
+- The optional hidden secondary Vulkan GPU compute context is suppressed while DLSS/DLAA/DLSS-G is active, with a diagnostic and main-renderer job fallback. Streamline and the engine's presentation resources are process-global and must remain bound to the presentation renderer.
 - `XRE_BYPASS_VENDOR_UPSCALE=1` is not allowed to silently bypass a requested vendor feature; it is reported as an error while DLSS/XeSS/frame generation is enabled.
 
 ## Diagnostics And Validation

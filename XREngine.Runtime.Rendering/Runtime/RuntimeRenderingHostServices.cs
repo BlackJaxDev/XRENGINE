@@ -191,6 +191,12 @@ public static class RuntimeRenderingHostServices
         public bool IsPlayModeTransitioning => RuntimeRenderingHostServiceDefaults.IsPlayModeTransitioning;
         public string PlayModeStateName => RuntimeRenderingHostServiceDefaults.PlayModeStateName;
         public EAntiAliasingMode DefaultAntiAliasingMode => RuntimeRenderingHostServiceDefaults.DefaultAntiAliasingMode;
+        public bool EnableNvidiaDlss => RuntimeRenderingHostServiceDefaults.EnableNvidiaDlss;
+        public EDlssQualityMode DlssQuality => RuntimeRenderingHostServiceDefaults.DlssQuality;
+        public float DlssCustomScale => RuntimeRenderingHostServiceDefaults.DlssCustomScale;
+        public float DlssSharpness => RuntimeRenderingHostServiceDefaults.DlssSharpness;
+        public bool EnableNvidiaDlssFrameGeneration => RuntimeRenderingHostServiceDefaults.EnableNvidiaDlssFrameGeneration;
+        public ENvidiaDlssFrameGenerationMode NvidiaDlssFrameGenerationMode => RuntimeRenderingHostServiceDefaults.NvidiaDlssFrameGenerationMode;
         public uint DefaultMsaaSampleCount => RuntimeRenderingHostServiceDefaults.DefaultMsaaSampleCount;
         public bool DefaultOutputHDR => RuntimeRenderingHostServiceDefaults.DefaultOutputHDR;
         public float DefaultTsrRenderScale => RuntimeRenderingHostServiceDefaults.DefaultTsrRenderScale;

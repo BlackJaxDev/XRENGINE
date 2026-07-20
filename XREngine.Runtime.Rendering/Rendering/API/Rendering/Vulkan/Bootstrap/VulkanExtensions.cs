@@ -553,8 +553,12 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            // Begin dynamic rendering using either the core commands or the VK_KHR_dynamic_rendering extension.
-            if (UseCoreDynamicRenderingCommands)
+            // Streamline 2.12 frame generation is provisioned through the Vulkan extension
+            // contract. Keep recording on the KHR command aliases while it is active instead
+            // of crossing back through Vulkan 1.4's core dispatch table after DLSS-G hooks
+            // have engaged. Both entry points have identical Vulkan semantics.
+            bool useKhrDynamicRendering = IsStreamlineFrameGenerationRequested && _khrDynamicRendering is not null;
+            if (UseCoreDynamicRenderingCommands && !useKhrDynamicRendering)
             {
                 Api!.CmdBeginRendering(commandBuffer, renderingInfo);
                 return;
@@ -573,9 +577,8 @@ namespace XREngine.Rendering.Vulkan
         /// <exception cref="InvalidOperationException">Thrown if the appropriate dynamic rendering command extension is not loaded.</exception>
         private void CmdEndDynamicRendering(CommandBuffer commandBuffer)
         {
-            // Use the core dynamic rendering commands if available, 
-            // otherwise fall back to the VK_KHR_dynamic_rendering extension.
-            if (UseCoreDynamicRenderingCommands)
+            bool useKhrDynamicRendering = IsStreamlineFrameGenerationRequested && _khrDynamicRendering is not null;
+            if (UseCoreDynamicRenderingCommands && !useKhrDynamicRendering)
             {
                 Api!.CmdEndRendering(commandBuffer);
                 return;
@@ -866,6 +869,16 @@ namespace XREngine.Rendering.Vulkan
             var openXrRequirements = OpenXRAPI.GetRequestedVulkanRuntimeRequirements();
             if (openXrRequirements.InstanceExtensions.Length > 0)
                 extensions = [.. extensions, .. openXrRequirements.InstanceExtensions];
+            if (_streamlineRequiredInstanceExtensions.Length > 0)
+            {
+                foreach (string extension in _streamlineRequiredInstanceExtensions)
+                {
+                    if (!IsInstanceExtensionAvailable(extension))
+                        throw new NotSupportedException($"Streamline requires unavailable Vulkan instance extension '{extension}'.");
+                }
+
+                extensions = [.. extensions, .. _streamlineRequiredInstanceExtensions];
+            }
 
             if (EnableValidationLayers || _diagnosticOptions.EnableDebugUtils)
                 extensions = [.. extensions, ExtDebugUtils.ExtensionName];

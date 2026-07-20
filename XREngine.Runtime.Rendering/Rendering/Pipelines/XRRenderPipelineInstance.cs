@@ -641,7 +641,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return true;
         }
 
-        var dimensions = ResolveViewportResourceDimensions(viewport);
+        var dimensions = ResolvePipelineResourceDimensions(viewport);
         ResourceGenerationKey key = BuildResourceGenerationKey(
             dimensions.DisplayWidth,
             dimensions.DisplayHeight,
@@ -773,6 +773,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             viewport.Height,
             viewport.InternalWidth,
             viewport.InternalHeight);
+
+    private (int DisplayWidth, int DisplayHeight, int InternalWidth, int InternalHeight) ResolvePipelineResourceDimensions(XRViewport viewport)
+    {
+        var dimensions = ResolveViewportResourceDimensions(viewport);
+        return Pipeline?.UsesDisplayResolutionForManagedResources == true
+            ? (dimensions.DisplayWidth, dimensions.DisplayHeight, dimensions.DisplayWidth, dimensions.DisplayHeight)
+            : dimensions;
+    }
 
     /// <summary>
     /// Resolves the display and internal dimensions for a given viewport, ensuring that they are valid and non-zero. This method takes into account the viewport's properties and any external swapchain targets to determine the appropriate dimensions for resource generation. It guarantees that the returned dimensions are at least 1x1, preventing invalid resource sizes.
@@ -1444,7 +1452,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return false;
         }
 
-        var dimensions = ResolveViewportResourceDimensions(viewport);
+        var dimensions = ResolvePipelineResourceDimensions(viewport);
         key = BuildResourceGenerationKey(
             dimensions.DisplayWidth,
             dimensions.DisplayHeight,
@@ -1609,7 +1617,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         XRViewport? viewport = RenderState.WindowViewport ?? LastWindowViewport;
         if (viewport is not null)
         {
-            var dimensions = ResolveViewportResourceDimensions(viewport);
+            var dimensions = ResolvePipelineResourceDimensions(viewport);
             if (RequestResourceGeneration(
                 dimensions.DisplayWidth,
                 dimensions.DisplayHeight,
@@ -1773,6 +1781,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             viewport?.Height ?? internalHeight,
             internalWidth,
             internalHeight);
+        if (Pipeline?.UsesDisplayResolutionForManagedResources == true)
+        {
+            dimensions = (
+                dimensions.DisplayWidth,
+                dimensions.DisplayHeight,
+                dimensions.DisplayWidth,
+                dimensions.DisplayHeight);
+        }
 
         if (RequestResourceGeneration(
             dimensions.DisplayWidth,

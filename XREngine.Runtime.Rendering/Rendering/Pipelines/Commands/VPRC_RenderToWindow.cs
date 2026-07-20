@@ -21,16 +21,10 @@ layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
 uniform sampler2D SourceTexture;
-uniform bool FlipSourceYOnVulkan;
 
 vec2 ResolvePresentTextureUv(vec2 clipXY)
 {
-    vec2 uv = clipXY * 0.5 + 0.5;
-#ifdef XRENGINE_VULKAN
-    if (FlipSourceYOnVulkan)
-        uv.y = 1.0 - uv.y;
-#endif
-    return uv;
+    return clipXY * 0.5 + 0.5;
 }
 
 void main()
@@ -52,16 +46,10 @@ layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
 uniform sampler2DArray SourceTexture;
-uniform bool FlipSourceYOnVulkan;
 
 vec2 ResolvePresentTextureUv(vec2 clipXY)
 {
-    vec2 uv = clipXY * 0.5 + 0.5;
-#ifdef XRENGINE_VULKAN
-    if (FlipSourceYOnVulkan)
-        uv.y = 1.0 - uv.y;
-#endif
-    return uv;
+    return clipXY * 0.5 + 0.5;
 }
 
 void main()
@@ -89,7 +77,6 @@ void main()
     public bool ClearColor { get; set; }
     public bool ClearDepth { get; set; }
     public bool ClearStencil { get; set; }
-    public bool FlipSourceYOnVulkan { get; set; }
 
     internal override void AllocateContainerResources(XRRenderPipelineInstance instance)
     {
@@ -463,6 +450,5 @@ void main()
         }
 
         program.Sampler("SourceTexture", sourceTexture, 0);
-        program.Uniform("FlipSourceYOnVulkan", FlipSourceYOnVulkan);
     }
 }

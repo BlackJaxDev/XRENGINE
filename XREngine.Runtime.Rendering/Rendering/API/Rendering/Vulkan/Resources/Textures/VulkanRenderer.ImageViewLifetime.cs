@@ -62,7 +62,7 @@ public unsafe partial class VulkanRenderer
         lock (_internedImageViewsLock)
         {
             if (_internedImageViews.TryGetValue(key, out InternedImageViewEntry? existing) &&
-                IsLiveImageViewBackedByLiveImage(existing.View))
+                IsImageViewAvailableForDescriptor(existing.View))
             {
                 existing.ReferenceCount++;
                 imageView = existing.View;
@@ -246,6 +246,24 @@ public unsafe partial class VulkanRenderer
             return true;
 
         return _imageAllocations.ContainsKey(image.Handle) && !_retiringImageHandles.ContainsKey(image.Handle);
+    }
+
+    /// <summary>
+    /// Returns whether an image view can be published into a newly written descriptor set.
+    /// A view may remain natively live while waiting for its retirement ticket, but descriptor
+    /// validation must not add new references to it during that interval.
+    /// </summary>
+    internal bool IsImageViewAvailableForDescriptor(ImageView imageView)
+    {
+        if (!IsLiveImageViewBackedByLiveImage(imageView))
+            return false;
+
+        VulkanResourceLifetimeKey viewKey = new(ObjectType.ImageView, imageView.Handle);
+        lock (_vulkanResourceLifetimeLock)
+        {
+            return !_vulkanResourceLifetimes.TryGetValue(viewKey, out VulkanResourceLifetimeRecord? lifetime) ||
+                (lifetime.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) == 0;
+        }
     }
 
     internal bool TryGetImageViewBackingImage(ImageView imageView, out Image image)

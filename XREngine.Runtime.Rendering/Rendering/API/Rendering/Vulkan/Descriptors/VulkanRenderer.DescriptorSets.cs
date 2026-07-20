@@ -16,8 +16,48 @@ public unsafe partial class VulkanRenderer
         if (!IsDeviceOperational)
             throw new InvalidOperationException($"Cannot update Vulkan descriptors while device state is {DeviceState}.");
 
-        ValidateAndRecordVulkanDescriptorWrites(descriptorWriteCount, descriptorWrites);
-        Api!.UpdateDescriptorSets(device, descriptorWriteCount, descriptorWrites, 0, null);
+        lock (_vulkanResourceLifetimeLock)
+        {
+            ValidateAndRecordVulkanDescriptorWrites(descriptorWriteCount, descriptorWrites);
+            Api!.UpdateDescriptorSets(device, descriptorWriteCount, descriptorWrites, 0, null);
+        }
+    }
+
+    /// <summary>
+    /// Attempts a tracked descriptor update that may race a render-resource generation
+    /// retirement. Callers that can rebuild their descriptor inputs on the next frame use
+    /// this path so a retired image view defers that draw instead of aborting the frame and
+    /// leaving the previously published descriptor snapshot permanently stale.
+    /// </summary>
+    internal bool TryUpdateDescriptorSetsTracked(
+        uint descriptorWriteCount,
+        WriteDescriptorSet* descriptorWrites,
+        out string failureReason)
+    {
+        if (!IsDeviceOperational)
+        {
+            failureReason = $"Cannot update Vulkan descriptors while device state is {DeviceState}.";
+            return false;
+        }
+
+        lock (_vulkanResourceLifetimeLock)
+        {
+            if (!TryPrevalidateVulkanDescriptorWrites_NoLock(
+                    descriptorWriteCount,
+                    descriptorWrites,
+                    out failureReason))
+            {
+                return false;
+            }
+
+            // Keep retirement excluded until Vulkan has copied the descriptor payload. Otherwise a
+            // generation can retire after validation but before vkUpdateDescriptorSets, leaving the
+            // lifetime ledger and native descriptor contents describing different resources.
+            ValidateAndRecordVulkanDescriptorWrites(descriptorWriteCount, descriptorWrites);
+            Api!.UpdateDescriptorSets(device, descriptorWriteCount, descriptorWrites, 0, null);
+            failureReason = string.Empty;
+            return true;
+        }
     }
 
     /// <summary>

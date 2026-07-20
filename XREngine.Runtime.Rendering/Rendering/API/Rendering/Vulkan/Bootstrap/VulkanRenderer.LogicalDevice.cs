@@ -1027,39 +1027,79 @@ public unsafe partial class VulkanRenderer
             Api!.GetPhysicalDeviceQueueFamilyProperties(_physicalDevice, ref queueFamilyCount, queueFamiliesPtr);
 
         uint graphicsFamilyQueueCount = queueFamilies[indices.GraphicsFamilyIndex!.Value].QueueCount;
-        uint requestedGraphicsQueueCount = Math.Min(2u, graphicsFamilyQueueCount);
-        _supportsMultipleGraphicsQueues = requestedGraphicsQueueCount > 1;
+        uint engineGraphicsQueueCount = Math.Min(2u, graphicsFamilyQueueCount);
+        _supportsMultipleGraphicsQueues = engineGraphicsQueueCount > 1;
 
-        // Create an array of queue family indices needed by this device
-        var uniqueQueueFamilies = new[]
+        uint graphicsFamily = indices.GraphicsFamilyIndex.Value;
+        uint computeFamily = indices.ComputeFamilyIndex ?? graphicsFamily;
+        uint transferFamily = indices.TransferFamilyIndex ?? computeFamily;
+        uint presentFamily = indices.PresentFamilyIndex!.Value;
+        Dictionary<uint, uint> requestedQueueCounts = [];
+
+        static void RequireEngineQueues(Dictionary<uint, uint> counts, uint family, uint count)
         {
-            indices.GraphicsFamilyIndex!.Value,
-            indices.PresentFamilyIndex!.Value,
-            indices.ComputeFamilyIndex ?? indices.GraphicsFamilyIndex!.Value,
-            indices.TransferFamilyIndex ?? indices.ComputeFamilyIndex ?? indices.GraphicsFamilyIndex!.Value
-        };
-        // Remove duplicates (graphics and present queue might be the same family)
-        uniqueQueueFamilies = [.. uniqueQueueFamilies.Distinct()];
+            if (!counts.TryGetValue(family, out uint existing) || existing < count)
+                counts[family] = count;
+        }
+
+        RequireEngineQueues(requestedQueueCounts, graphicsFamily, engineGraphicsQueueCount);
+        RequireEngineQueues(requestedQueueCounts, presentFamily, 1);
+        RequireEngineQueues(requestedQueueCounts, computeFamily, 1);
+        RequireEngineQueues(requestedQueueCounts, transferFamily, 1);
+
+        _streamlineGraphicsQueueFamily = graphicsFamily;
+        _streamlineComputeQueueFamily = computeFamily;
+        _streamlineOpticalFlowQueueFamily = 0;
+        _streamlineGraphicsQueueIndex = AppendRequiredQueues(
+            requestedQueueCounts,
+            queueFamilies,
+            graphicsFamily,
+            _streamlineQueueRequirements.GraphicsQueues,
+            "graphics");
+        _streamlineComputeQueueIndex = AppendRequiredQueues(
+            requestedQueueCounts,
+            queueFamilies,
+            computeFamily,
+            _streamlineQueueRequirements.ComputeQueues,
+            "compute");
+
+        if (_streamlineQueueRequirements.OpticalFlowQueues > 0)
+        {
+            _streamlineOpticalFlowQueueFamily = FindOpticalFlowQueueFamily(queueFamilies);
+            _streamlineOpticalFlowQueueIndex = AppendRequiredQueues(
+                requestedQueueCounts,
+                queueFamilies,
+                _streamlineOpticalFlowQueueFamily,
+                _streamlineQueueRequirements.OpticalFlowQueues,
+                "optical-flow");
+        }
+        else
+        {
+            _streamlineOpticalFlowQueueIndex = 0;
+        }
+
+        uint[] uniqueQueueFamilies = [.. requestedQueueCounts.Keys];
 
         // Allocate memory for queue create infos
         using var mem = GlobalMemory.Allocate(uniqueQueueFamilies.Length * sizeof(DeviceQueueCreateInfo));
         var queueCreateInfos = (DeviceQueueCreateInfo*)Unsafe.AsPointer(ref mem.GetPinnableReference());
 
         // Configure queue priorities (1.0 = highest priority)
-        float* queuePriorities = stackalloc float[2] { 1.0f, 1.0f };
+        int maxRequestedQueueCount = checked((int)requestedQueueCounts.Values.Max());
+        float* queuePriorities = stackalloc float[maxRequestedQueueCount];
+        for (int queueIndex = 0; queueIndex < maxRequestedQueueCount; queueIndex++)
+            queuePriorities[queueIndex] = 1.0f;
+
         // Set up creation info for each queue family
         for (int i = 0; i < uniqueQueueFamilies.Length; i++)
         {
             uint queueFamilyIndex = uniqueQueueFamilies[i];
-            uint queueCount = queueFamilyIndex == indices.GraphicsFamilyIndex!.Value
-                ? requestedGraphicsQueueCount
-                : 1u;
 
             queueCreateInfos[i] = new()
             {
                 SType = StructureType.DeviceQueueCreateInfo,
                 QueueFamilyIndex = queueFamilyIndex,
-                QueueCount = queueCount,
+                QueueCount = requestedQueueCounts[queueFamilyIndex],
                 PQueuePriorities = queuePriorities
             };
         }
@@ -1131,6 +1171,18 @@ public unsafe partial class VulkanRenderer
 
         // Build the list of extensions to enable (required + supported optional)
         var extensionsToEnable = new List<string>(_requiredDeviceExtensions);
+        foreach (string requiredStreamlineExtension in _streamlineRequiredDeviceExtensions)
+        {
+            if (!availableExtensionSet.Contains(requiredStreamlineExtension))
+            {
+                throw new NotSupportedException(
+                    $"Streamline requires Vulkan device extension '{requiredStreamlineExtension}', but the selected physical device does not expose it.");
+            }
+
+            if (!extensionsToEnable.Contains(requiredStreamlineExtension, StringComparer.Ordinal))
+                extensionsToEnable.Add(requiredStreamlineExtension);
+        }
+
         var openXrRequirements = OpenXRAPI.GetRequestedVulkanRuntimeRequirements();
         foreach (string requiredOpenXrExtension in openXrRequirements.DeviceExtensions)
         {
@@ -1658,6 +1710,16 @@ public unsafe partial class VulkanRenderer
             HostQueryReset = enableHostQueryResetFeature,
         };
 
+        PhysicalDeviceVulkan13Features vulkan13FeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceVulkan13Features,
+            PNext = null,
+            DynamicRendering = enableDynamicRenderingFeature,
+            Synchronization2 = enableSynchronization2Feature,
+            Maintenance4 = enableMaintenance4Feature,
+            PipelineCreationCacheControl = enablePipelineCreationCacheControlFeature,
+        };
+
         PhysicalDeviceIndexTypeUint8FeaturesEXT indexTypeUint8FeatureEnable = new()
         {
             SType = StructureType.PhysicalDeviceIndexTypeUint8FeaturesExt,
@@ -1811,10 +1873,80 @@ public unsafe partial class VulkanRenderer
             DescriptorHeapCaptureReplay = false,
         };
 
-        // Keep promoted feature structs separate. Mixing VkPhysicalDeviceVulkan12Features
-        // with the promoted per-feature structs is invalid and Monado rejects the device
-        // created from that pNext chain during xrCreateSession.
-        bool useVulkan12FeatureEnable = false;
+        // Keep promoted feature structs separate. Mixing VkPhysicalDeviceVulkan12/13Features
+        // with their promoted per-feature structs is invalid. Streamline reports feature names
+        // in the aggregate 1.2/1.3 structs, so consolidate existing engine features into those
+        // aggregate structs whenever Streamline requires one of them.
+        bool useVulkan12FeatureEnable = _streamlineRequiredFeatures12.Length > 0;
+        bool useVulkan13FeatureEnable = _streamlineRequiredFeatures13.Length > 0;
+        if (useVulkan12FeatureEnable || useVulkan13FeatureEnable)
+        {
+            PhysicalDeviceVulkan12Features streamlineSupportedFeatures12 = new()
+            {
+                SType = StructureType.PhysicalDeviceVulkan12Features,
+            };
+            PhysicalDeviceVulkan13Features streamlineSupportedFeatures13 = new()
+            {
+                SType = StructureType.PhysicalDeviceVulkan13Features,
+            };
+            PhysicalDeviceFeatures2 streamlineSupportedFeatures = new()
+            {
+                SType = StructureType.PhysicalDeviceFeatures2,
+            };
+
+            if (useVulkan12FeatureEnable)
+            {
+                streamlineSupportedFeatures.PNext = &streamlineSupportedFeatures12;
+                streamlineSupportedFeatures12.PNext = useVulkan13FeatureEnable ? &streamlineSupportedFeatures13 : null;
+            }
+            else
+            {
+                streamlineSupportedFeatures.PNext = &streamlineSupportedFeatures13;
+            }
+
+            Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &streamlineSupportedFeatures);
+            if (useVulkan12FeatureEnable)
+            {
+                PopulateStreamlineRequiredFeatures(
+                    ref vulkan12FeatureEnable,
+                    in streamlineSupportedFeatures12,
+                    _streamlineRequiredFeatures12,
+                    "Vulkan 1.2");
+            }
+
+            if (useVulkan13FeatureEnable)
+            {
+                PopulateStreamlineRequiredFeatures(
+                    ref vulkan13FeatureEnable,
+                    in streamlineSupportedFeatures13,
+                    _streamlineRequiredFeatures13,
+                    "Vulkan 1.3");
+            }
+        }
+
+        bool enableStreamlineOpticalFlow = _streamlineQueueRequirements.OpticalFlowQueues > 0;
+        PhysicalDeviceOpticalFlowFeaturesNV opticalFlowFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceOpticalFlowFeaturesNV,
+            PNext = null,
+            OpticalFlow = enableStreamlineOpticalFlow,
+        };
+
+        if (enableStreamlineOpticalFlow)
+        {
+            PhysicalDeviceOpticalFlowFeaturesNV supportedOpticalFlow = new()
+            {
+                SType = StructureType.PhysicalDeviceOpticalFlowFeaturesNV,
+            };
+            PhysicalDeviceFeatures2 supportedOpticalFlowFeatures = new()
+            {
+                SType = StructureType.PhysicalDeviceFeatures2,
+                PNext = &supportedOpticalFlow,
+            };
+            Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &supportedOpticalFlowFeatures);
+            if (!supportedOpticalFlow.OpticalFlow)
+                throw new NotSupportedException("Streamline DLSS-G requires VkPhysicalDeviceOpticalFlowFeaturesNV::opticalFlow, but the selected Vulkan device does not support it.");
+        }
 
         void* enabledFeaturesPNext = null;
         if (enableDescriptorIndexing && !useVulkan12FeatureEnable)
@@ -1847,7 +1979,7 @@ public unsafe partial class VulkanRenderer
             enabledFeaturesPNext = &descriptorHeapFeatureEnable;
         }
 
-        if (enableDynamicRenderingFeature)
+        if (enableDynamicRenderingFeature && !useVulkan13FeatureEnable)
         {
             dynamicRenderingFeatureEnable.PNext = enabledFeaturesPNext;
             enabledFeaturesPNext = &dynamicRenderingFeatureEnable;
@@ -1879,13 +2011,19 @@ public unsafe partial class VulkanRenderer
             enabledFeaturesPNext = &vulkan12FeatureEnable;
         }
 
+        if (useVulkan13FeatureEnable)
+        {
+            vulkan13FeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &vulkan13FeatureEnable;
+        }
+
         if (enableIndexTypeUint8Feature)
         {
             indexTypeUint8FeatureEnable.PNext = enabledFeaturesPNext;
             enabledFeaturesPNext = &indexTypeUint8FeatureEnable;
         }
 
-        if (enableMaintenance4Feature)
+        if (enableMaintenance4Feature && !useVulkan13FeatureEnable)
         {
             maintenance4FeatureEnable.PNext = enabledFeaturesPNext;
             enabledFeaturesPNext = &maintenance4FeatureEnable;
@@ -1917,7 +2055,7 @@ public unsafe partial class VulkanRenderer
             enabledFeaturesPNext = &hostQueryResetFeatureEnable;
         }
 
-        if (enableSynchronization2Feature)
+        if (enableSynchronization2Feature && !useVulkan13FeatureEnable)
         {
             synchronization2FeatureEnable.PNext = enabledFeaturesPNext;
             enabledFeaturesPNext = &synchronization2FeatureEnable;
@@ -1941,7 +2079,7 @@ public unsafe partial class VulkanRenderer
             enabledFeaturesPNext = &graphicsPipelineLibraryFeatureEnable;
         }
 
-        if (enablePipelineCreationCacheControlFeature)
+        if (enablePipelineCreationCacheControlFeature && !useVulkan13FeatureEnable)
         {
             pipelineCreationCacheControlFeatureEnable.PNext = enabledFeaturesPNext;
             enabledFeaturesPNext = &pipelineCreationCacheControlFeatureEnable;
@@ -1987,6 +2125,12 @@ public unsafe partial class VulkanRenderer
         {
             nvDiagnosticsConfigFeatureEnable.PNext = enabledFeaturesPNext;
             enabledFeaturesPNext = &nvDiagnosticsConfigFeatureEnable;
+        }
+
+        if (enableStreamlineOpticalFlow)
+        {
+            opticalFlowFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &opticalFlowFeatureEnable;
         }
 
         PhysicalDeviceFeatures2 featureChain = new()
@@ -2366,7 +2510,8 @@ public unsafe partial class VulkanRenderer
     {
         bool descriptorIndexingExtensionLoaded = enabledExtensions.Contains("VK_EXT_descriptor_indexing");
 
-        if (enabledExtensions.Contains("VK_KHR_dynamic_rendering") && !UseCoreDynamicRenderingCommands)
+        if (enabledExtensions.Contains("VK_KHR_dynamic_rendering") &&
+            (!UseCoreDynamicRenderingCommands || _streamlineFrameGenerationProvisioned))
         {
             if (Api!.TryGetDeviceExtension(instance, device, out _khrDynamicRendering))
             {
