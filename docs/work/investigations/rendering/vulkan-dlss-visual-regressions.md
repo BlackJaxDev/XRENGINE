@@ -23,7 +23,7 @@ Each result must be captured from the same camera view and inspected as an image
 
 ## Issues and hypotheses
 
-1. The vendor final-blit shader's non-AA Vulkan source-Y flip is a presentation invariant. The clip-space toggle is already applied by Vulkan viewport construction; making the final flip conditional double-applies the policy.
+1. Final presentation must resolve the selected source FBO's texture orientation independently from clip-space viewport construction. Direct and vendor-fallback blits use source-specific Vulkan Y correction; treating the backend viewport policy as sufficient can invert framebuffer-backed sources.
 2. DLSS output is transitioned to `GENERAL` before evaluation and sampled afterward, but visual correctness of that output has not yet been verified independently from the final swapchain blit.
 3. DLSS-G tags depth, motion vectors, and HUD-less color. NVIDIA's integration guide requires HUD-less data to remain valid through present and recommends an explicit UI buffer for correct UI recomposition. The current native UI is drawn directly to the intercepted swapchain and no UI mask/color buffer is tagged.
 4. Streamline Vulkan device requirements are fixed at renderer creation. Runtime feature toggles must either provision the requirements up front or perform an explicit renderer recreation; partially enabling a feature on an unprovisioned device is invalid.
@@ -47,7 +47,7 @@ Each result must be captured from the same camera view and inspected as an image
 
 - OS window capture: `Build/_AgentValidation/20260719-vulkan-dlss/visual-regression/ydown/mcp-captures/ydown-window.png`
 - Result: the 3D scene and screen-space engine diagnostic text map positive clip-space Y downward, while the later ImGui editor overlay remains top-left oriented.
-- Interpretation: this is the documented `YDown` semantic, not the intended default. The final source flip must remain invariant; an attempted conditional flip did not correct the view because viewport construction already owns the clip-space policy.
+- Interpretation: this is the documented `YDown` semantic, not the intended default. The later 2026-07-20 regression showed that clip-space policy and framebuffer source orientation are separate inputs; the final blit must use the selected source FBO's orientation rule rather than blindly mirroring the clip-space toggle.
 - Final default is restored to `YUp`. Final OS capture: `Build/_AgentValidation/20260719-vulkan-dlss/visual-regression/final-default/mcp-captures/default-yup-window.png`.
 - Final result: upright non-black scene with complete UI.
 
@@ -127,7 +127,7 @@ The corrected contract distinguishes a declared storage/sampling contract from a
 - exact tracked read-only variants are preserved, while attachment, transfer, and undefined states fall back to the descriptor's requested layout;
 - DLSS output and framebuffer publish behavior for explicitly storage-capable sampled images remains unchanged.
 
-The broader regression run also exposed a still-active direct window-present Vulkan UV flip. Direct presentation now relies exclusively on the backend viewport/image-display policy, preventing a second Y inversion. The vendor-upscale fallback retains its explicit source-orientation rule and additionally applies the configured `ClipSpaceYDirection == YDown` policy.
+The broader regression run originally concluded that the direct window-present Vulkan UV correction was redundant. That conclusion was superseded by the 2026-07-20 before/pipeline/after capture sequence in [CPU async-query occlusion during camera motion](cpu-query-camera-motion-2026-07-20.md): the final pipeline texture was upright while the OS window was inverted. Direct presentation now applies the same source-specific `ShouldFlipVulkanPresentSourceY(...)` policy as the vendor fallback, restoring framebuffer source orientation without changing OpenGL.
 
 Validation completed so far:
 

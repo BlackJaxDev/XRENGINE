@@ -964,6 +964,27 @@ public unsafe partial class VulkanRenderer
             regions);
     }
 
+    private void CmdResolveImageTracked(
+        CommandBuffer commandBuffer,
+        Image source,
+        ImageLayout sourceLayout,
+        Image destination,
+        ImageLayout destinationLayout,
+        uint regionCount,
+        ImageResolve* regions)
+    {
+        TrackVulkanCommandBufferResource(commandBuffer, ObjectType.Image, source.Handle, "ResolveImage.Source");
+        TrackVulkanCommandBufferResource(commandBuffer, ObjectType.Image, destination.Handle, "ResolveImage.Destination");
+        Api!.CmdResolveImage(
+            commandBuffer,
+            source,
+            sourceLayout,
+            destination,
+            destinationLayout,
+            regionCount,
+            regions);
+    }
+
     private void CmdBlitImageTracked(
         CommandBuffer commandBuffer,
         Image source,

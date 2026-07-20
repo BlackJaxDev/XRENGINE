@@ -461,15 +461,21 @@ public sealed class VulkanP0ValidationTests
     }
 
     [Test]
-    public void VulkanPresentTextureShaders_KeepWindowAndFallbackOrientationPoliciesSeparate()
+    public void VulkanPresentTextureShaders_ApplySourceOrientationToDirectAndFallbackPaths()
     {
         string renderToWindow = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderToWindow.cs");
         string vendorUpscale = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_VendorUpscale.cs");
+        string defaultPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
+        string defaultPipeline2 = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs");
 
-        renderToWindow.Contains("#ifdef XRENGINE_VULKAN", StringComparison.Ordinal).ShouldBeFalse(
-            "Window presentation uses backend-specific viewport/image display policy; it must not add an unconditional Vulkan texture flip.");
-        renderToWindow.ShouldContain("return clipXY * 0.5 + 0.5;");
+        renderToWindow.ShouldContain("uniform bool FlipSourceYOnVulkan;");
+        renderToWindow.ShouldContain("#ifdef XRENGINE_VULKAN");
+        renderToWindow.ShouldContain("if (FlipSourceYOnVulkan)");
+        renderToWindow.ShouldContain("uv.y = 1.0 - uv.y;");
         renderToWindow.ShouldContain("vec2 uv = ResolvePresentTextureUv(clipXY);");
+        renderToWindow.ShouldContain("program.Uniform(\"FlipSourceYOnVulkan\", FlipSourceYOnVulkan);");
+        defaultPipeline.ShouldContain("present.FlipSourceYOnVulkan = ShouldFlipVulkanPresentSourceY(sourceFboName);");
+        defaultPipeline2.ShouldContain("present.FlipSourceYOnVulkan = ShouldFlipVulkanPresentSourceY(sourceFboName);");
 
         vendorUpscale.Contains("#ifdef XRENGINE_VULKAN", StringComparison.Ordinal).ShouldBeTrue(
             "The default pipeline's vendor-upscale fallback still resolves source-FBO orientation for final output.");

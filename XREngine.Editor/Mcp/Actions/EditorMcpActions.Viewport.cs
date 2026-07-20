@@ -58,20 +58,17 @@ namespace XREngine.Editor.Mcp
                 return new McpToolResponse("No viewport found to capture.", isError: true);
 
             string folder = outputDir ?? Path.Combine(Environment.CurrentDirectory, "McpCaptures");
-            string fileName = $"Screenshot_{DateTime.Now:yyyyMMdd_HHmmss}.png";
+            string fileName = $"Screenshot_{DateTime.Now:yyyyMMdd_HHmmss_fff}_{Guid.NewGuid():N}.png";
             string path = Path.Combine(folder, fileName);
 
             Utility.EnsureDirPathExists(path);
 
-            static void BeginCapture(AbstractRenderer renderer, XRViewport viewport, string path, TaskCompletionSource<string> tcs)
+            static void BeginCapture(
+                AbstractRenderer renderer,
+                XRViewport viewport,
+                string path,
+                TaskCompletionSource<(string Path, ScreenshotReadbackResult Readback)> tcs)
             {
-                if (renderer is VulkanRenderer)
-                {
-                    tcs.TrySetException(new NotSupportedException(
-                        "Vulkan viewport screenshot readback is temporarily disabled because its synchronous transfer path can trigger a GPU watchdog reset. Use an OS window capture until Vulkan readback synchronization is hardened."));
-                    return;
-                }
-
                 using IDisposable? readbackScope = renderer is VulkanRenderer
                     ? viewport.EnterRenderPipelineReadbackScope()
                     : null;
@@ -89,29 +86,47 @@ namespace XREngine.Editor.Mcp
                     renderer.BindFrameBuffer(EFramebufferTarget.ReadFramebuffer, null);
                 }
 
-                renderer.GetScreenshotAsync(captureRegion, false, (img, _) =>
+                bool queued = renderer.TryQueueScreenshotReadback(captureRegion, false, result =>
                 {
-                    if (img is null)
+                    if (!result.Succeeded || result.Image is null)
                     {
-                        tcs.TrySetException(new InvalidOperationException("Screenshot capture returned null."));
+                        tcs.TrySetException(new InvalidOperationException(
+                            result.Error ?? "Screenshot capture returned null."));
+                        return;
+                    }
+
+                    MagickImage img = result.Image;
+                    if (tcs.Task.IsCompleted)
+                    {
+                        img.Dispose();
                         return;
                     }
 
                     try
                     {
-                        if (renderer.ScreenshotRequiresVerticalFlip)
-                            img.Flip();
-                        img.Write(path);
-                        tcs.TrySetResult(path);
+                        using (img)
+                        {
+                            if (renderer.ScreenshotRequiresVerticalFlip)
+                                img.Flip();
+                            img.Write(path);
+                        }
+                        tcs.TrySetResult((path, result));
                     }
                     catch (Exception ex)
                     {
                         tcs.TrySetException(ex);
                     }
-                });
+                }, out string? queueFailure);
+
+                if (!queued)
+                {
+                    tcs.TrySetException(new InvalidOperationException(
+                        queueFailure ?? "The renderer rejected the screenshot readback request."));
+                }
             }
 
-            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var tcs = new TaskCompletionSource<(string Path, ScreenshotReadbackResult Readback)>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
             Action? deferredHandler = null;
 
             var window = viewport.Window
@@ -163,8 +178,23 @@ namespace XREngine.Editor.Mcp
 
             try
             {
-                string savedPath = await tcs.Task;
-                return new McpToolResponse($"Captured screenshot to '{savedPath}'.", new { path = savedPath });
+                (string savedPath, ScreenshotReadbackResult readback) = await tcs.Task;
+                return new McpToolResponse(
+                    $"Captured screenshot to '{savedPath}'.",
+                    new
+                    {
+                        path = savedPath,
+                        readback = new
+                        {
+                            backend = readback.Backend,
+                            source_format = readback.SourceFormat,
+                            raw_byte_count = readback.RawByteCount,
+                            used_multisample_resolve = readback.UsedMultisampleResolve,
+                            queue_slot = readback.QueueSlot,
+                            gpu_completion_seconds = readback.GpuCompletionSeconds,
+                            cpu_processing_seconds = readback.CpuProcessingSeconds,
+                        },
+                    });
             }
             catch (Exception ex)
             {

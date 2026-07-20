@@ -37,28 +37,39 @@ function Build-TableFromSource {
     $actionFiles = Get-ChildItem -Path (Join-Path $repoRoot "XREngine.Editor\Mcp\Actions") -Filter "*.cs" -File
     $entries = @{}
 
+    # Match the complete method-attribute block so optional attributes such as
+    # McpThreadAffinity can sit between XRMcp and Description. The previous
+    # fallback looked for McpName on methods (it is a parameter attribute), so
+    # an offline generation attempt could replace the table with only headers.
+    $toolPattern = '(?ms)^\s*\[XRMcp\s*\(\s*Name\s*=\s*"(?<name>[^"]+)"[^\r\n]*\)\]\s*\r?\n(?<attrs>.*?)^\s*public\s+static\b'
+    $descriptionPattern = '\[Description\("(?<desc>(?:\\.|[^"\\])*)"\)\]'
+
     foreach ($file in $actionFiles) {
         $text = Get-Content -Raw -Path $file.FullName
 
-        $patternA = '\[McpName\("(?<name>[^"]+)"\)\]\s*\r?\n\s*\[Description\("(?<desc>[^"]*)"\)\]'
-        $patternB = '\[Description\("(?<desc>[^"]*)"\)\]\s*\r?\n\s*\[McpName\("(?<name>[^"]+)"\)\]'
-
-        foreach ($match in [System.Text.RegularExpressions.Regex]::Matches($text, $patternA)) {
-            $entries[$match.Groups['name'].Value] = $match.Groups['desc'].Value
-        }
-        foreach ($match in [System.Text.RegularExpressions.Regex]::Matches($text, $patternB)) {
-            $entries[$match.Groups['name'].Value] = $match.Groups['desc'].Value
+        foreach ($match in [System.Text.RegularExpressions.Regex]::Matches($text, $toolPattern)) {
+            $descriptionMatch = [System.Text.RegularExpressions.Regex]::Match(
+                $match.Groups['attrs'].Value,
+                $descriptionPattern)
+            if ($descriptionMatch.Success) {
+                $entries[$match.Groups['name'].Value] = $descriptionMatch.Groups['desc'].Value
+            }
         }
     }
 
-    $names = $entries.Keys | Sort-Object
+    if ($entries.Count -eq 0) {
+        throw "MCP source fallback found no XRMcp tools; refusing to replace the documentation table."
+    }
+
+    [string[]]$names = @($entries.Keys)
+    [System.Array]::Sort($names, [System.StringComparer]::OrdinalIgnoreCase)
     $lines = @('| Tool | Description |', '|------|-------------|')
     foreach ($name in $names) {
         $desc = ''
         if ($entries.ContainsKey($name)) {
             $desc = [string]$entries[$name]
         }
-        $desc = $desc.Replace('|', '\\|')
+        $desc = $desc.Replace('|', '\|')
         $lines += ('| `{0}` | {1} |' -f $name, $desc)
     }
 
@@ -69,7 +80,7 @@ Push-Location $repoRoot
 try {
     if (Test-Path $projectPath) {
         try {
-            dotnet run --project $projectPath -c $Configuration --no-launch-profile
+            dotnet run --project $projectPath -c $Configuration --no-launch-profile --no-restore
             if ($LASTEXITCODE -eq 0) {
                 exit 0
             }

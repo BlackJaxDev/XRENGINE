@@ -49,7 +49,22 @@ public unsafe partial class VulkanRenderer
         bool dlssRequested = RuntimeEngine.EffectiveSettings.EnableNvidiaDlss
             || RuntimeEngine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Dlaa;
         bool frameGenerationRequested = NvidiaDlssManager.IsFrameGenerationRequested;
-        bool provisionRuntimeToggles = ShouldProvisionStreamlineRuntimeToggles();
+        // RenderDoc and Streamline both interpose Vulkan entry points. Provisioning a
+        // proxy swapchain solely for a future editor toggle makes an otherwise plain
+        // RenderDoc capture fail during startup even when DLSS and DLSS-G are off.
+        // Explicit requests remain authoritative below and still surface any
+        // incompatibility instead of silently falling back.
+        bool provisionRuntimeToggles = !_diagnosticOptions.RenderDocFriendly
+            && ShouldProvisionStreamlineRuntimeToggles();
+        if (_diagnosticOptions.RenderDocFriendly
+            && !dlssRequested
+            && !frameGenerationRequested
+            && (NvidiaDlssManager.RequiredRuntimeDllsAvailable
+                || NvidiaDlssManager.FrameGenerationRuntimeDllsAvailable))
+        {
+            Debug.Rendering(
+                "[Vulkan] RenderDoc-friendly diagnostics skipped optional Streamline runtime-toggle provisioning. Explicit DLSS/DLSS-G requests remain strict.");
+        }
         bool includeDlss = dlssRequested
             || (provisionRuntimeToggles && NvidiaDlssManager.RequiredRuntimeDllsAvailable);
         bool includeFrameGeneration = frameGenerationRequested

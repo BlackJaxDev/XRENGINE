@@ -750,6 +750,62 @@ namespace XREngine.Rendering
 
         public abstract void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback);
 
+        /// <summary>
+        /// Queues a screenshot readback and reports structured completion or failure diagnostics.
+        /// The callback owns and must dispose the successful result image.
+        /// </summary>
+        public virtual bool TryQueueScreenshotReadback(
+            BoundingRectangle region,
+            bool withTransparency,
+            Action<ScreenshotReadbackResult> callback,
+            out string? failure)
+        {
+            ArgumentNullException.ThrowIfNull(callback);
+            failure = null;
+
+            try
+            {
+                GetScreenshotAsync(region, withTransparency, (image, pixelCount) =>
+                {
+                    if (image is null)
+                    {
+                        callback(ScreenshotReadbackResult.Failure(
+                            "The renderer returned a null screenshot image.",
+                            GetType().Name));
+                        return;
+                    }
+
+                    callback(ScreenshotReadbackResult.Success(
+                        image,
+                        pixelCount,
+                        checked((int)image.Width),
+                        checked((int)image.Height),
+                        GetType().Name));
+                });
+                return true;
+            }
+            catch (Exception ex)
+            {
+                failure = ex.Message;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Polls asynchronous screenshot readbacks without waiting for GPU work.
+        /// </summary>
+        public virtual void PollScreenshotReadbacks() { }
+
+        /// <summary>
+        /// Returns current screenshot readback queue diagnostics.
+        /// </summary>
+        public virtual ScreenshotReadbackStatus GetScreenshotReadbackStatus()
+            => new()
+            {
+                Backend = GetType().Name,
+                Supported = true,
+            };
+
         public abstract bool TryReadTextureMipRgbaFloat(
             XRTexture texture,
             int mipLevel,
