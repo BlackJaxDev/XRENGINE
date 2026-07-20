@@ -2815,6 +2815,13 @@ namespace XREngine.Rendering
                 }
                 RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.PollGpuRenderStatsReadbacks", phaseStart);
 
+                phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                using (var screenshotReadbackSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.PollScreenshotReadbacks"))
+                {
+                    frameRenderer.PollScreenshotReadbacks();
+                }
+                RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.PollScreenshotReadbacks", phaseStart);
+
                 // Process any pending async buffer uploads within the frame budget.
                 phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 using (var uploadSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.ProcessPendingUploads"))

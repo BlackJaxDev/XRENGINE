@@ -739,80 +739,17 @@ namespace XREngine.Rendering.Vulkan
 
         public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback)
         {
-            XRFrameBuffer? boundReadFrameBuffer = ActiveBoundReadFrameBuffer;
-            if (boundReadFrameBuffer is not null)
+            if (TryQueueScreenshotReadback(
+                    region,
+                    withTransparency,
+                    result => imageCallback?.Invoke(result.Image!, result.PixelCount),
+                    out string? failure))
             {
-                ClampReadbackRegion(region, boundReadFrameBuffer.Width, boundReadFrameBuffer.Height, out int fboX, out int fboY, out int fboW, out int fboH);
-
-                if (TryResolveBlitImage(
-                        boundReadFrameBuffer,
-                        _lastPresentedImageIndex,
-                        ActiveReadBufferMode,
-                        wantColor: true,
-                        wantDepth: false,
-                        wantStencil: false,
-                        out BlitImageInfo colorSource,
-                        isSource: true) &&
-                    TryReadColorRegionRgba8(colorSource, fboX, fboY, fboW, fboH, out byte[] rgbaPixels))
-                {
-                    if (!withTransparency)
-                        ForceOpaqueAlpha(rgbaPixels);
-
-                    try
-                    {
-                        var magickImage = new MagickImage(rgbaPixels, new MagickReadSettings
-                        {
-                            Width = (uint)fboW,
-                            Height = (uint)fboH,
-                            Format = MagickFormat.Rgba,
-                            Depth = 8
-                        });
-
-                        imageCallback?.Invoke(magickImage, fboW * fboH);
-                        return;
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.VulkanWarning($"GetScreenshotAsync failed to create image from read FBO: {ex.Message}");
-                        imageCallback?.Invoke(null!, 0);
-                        return;
-                    }
-                }
-
-                Debug.VulkanWarningEvery(
-                    "Vulkan.Readback.ScreenshotBoundFboFailed",
-                    TimeSpan.FromSeconds(1),
-                    "[Vulkan] GetScreenshotAsync fallback to swapchain: unable to resolve/read bound read framebuffer '{0}'.",
-                    boundReadFrameBuffer.Name ?? "<unnamed>");
-            }
-
-            if (!TryReadLastWindowPresentColorRegionRgba8(region, out byte[] pixels, out int w, out int h))
-            {
-                WarnUnsupportedPostPresentSwapchainReadback(nameof(GetScreenshotAsync));
-                imageCallback?.Invoke(null!, 0);
                 return;
             }
 
-            try
-            {
-                if (!withTransparency)
-                    ForceOpaqueAlpha(pixels);
-
-                var magickImage = new MagickImage(pixels, new MagickReadSettings
-                {
-                    Width = (uint)w,
-                    Height = (uint)h,
-                    Format = MagickFormat.Rgba,
-                    Depth = 8
-                });
-
-                imageCallback?.Invoke(magickImage, w * h);
-            }
-            catch (Exception ex)
-            {
-                Debug.VulkanWarning($"GetScreenshotAsync failed to create image: {ex.Message}");
-                imageCallback?.Invoke(null!, 0);
-            }
+            Debug.VulkanWarning("[Vulkan] GetScreenshotAsync could not queue a nonblocking readback: {0}", failure ?? "unknown failure");
+            imageCallback?.Invoke(null!, 0);
         }
 
         private bool TryReadLastWindowPresentColorRegionRgba8(BoundingRectangle region, out byte[] rgbaPixels, out int width, out int height)

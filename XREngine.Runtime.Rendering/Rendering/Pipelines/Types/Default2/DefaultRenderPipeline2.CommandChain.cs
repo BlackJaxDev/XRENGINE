@@ -1473,6 +1473,7 @@ public partial class DefaultRenderPipeline2
         else
             present.SourceFBOName = sourceFboName;
 
+        present.FlipSourceYOnVulkan = ShouldFlipVulkanPresentSourceY(sourceFboName);
         return cmds;
     }
 

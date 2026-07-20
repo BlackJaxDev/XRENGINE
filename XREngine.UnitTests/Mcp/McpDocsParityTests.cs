@@ -18,7 +18,7 @@ public class McpDocsParityTests
     public void McpServerDoc_ToolTableMatchesRuntimeRegistry()
     {
         string repoRoot = FindRepositoryRoot();
-        string docPath = Path.Combine(repoRoot, "docs", "features", "mcp-server.md");
+        string docPath = Path.Combine(repoRoot, "docs", "developer-guides", "ai", "mcp-server.md");
 
         File.Exists(docPath).ShouldBeTrue($"Expected MCP docs file at {docPath}");
 

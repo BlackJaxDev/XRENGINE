@@ -1,8 +1,10 @@
 using System;
 using System.ComponentModel;
+using System.Linq;
 using System.Threading.Tasks;
 using XREngine;
 using XREngine.Data.Core;
+using XREngine.Rendering.Occlusion;
 using GpuPipelineStats = XREngine.Engine.Rendering.Stats.GpuPipelineProfiler;
 using OcclusionTelemetry = XREngine.Rendering.Occlusion.OcclusionTelemetry;
 using VrStats = XREngine.Engine.Rendering.Stats.Vr;
@@ -120,12 +122,37 @@ namespace XREngine.Editor.Mcp
                         cpu_query_latency_max_frames = OcclusionTelemetry.CpuQueryLatencyMaxFrames,
                         cpu_budget_skipped_total = OcclusionTelemetry.CpuBudgetSkippedTotal,
                         cpu_forced_visible_total = OcclusionTelemetry.CpuForcedVisibleTotal,
+                        cpu_forced_visible_reasons = Enum.GetValues<ECpuOcclusionForceVisibleReason>()
+                            .Select(reason => new
+                            {
+                                reason = reason.ToString(),
+                                count = OcclusionTelemetry.GetCpuForcedVisibleCount(reason),
+                            })
+                            .Where(static entry => entry.count > 0)
+                            .ToArray(),
+                        cpu_query_submitted_reasons = Enum.GetValues<ECpuOcclusionQueryReason>()
+                            .Select(reason => new
+                            {
+                                reason = reason.ToString(),
+                                count = OcclusionTelemetry.GetCpuQuerySubmittedCount(reason),
+                            })
+                            .Where(static entry => entry.count > 0)
+                            .ToArray(),
+                        cpu_query_resolved_reasons = Enum.GetValues<ECpuOcclusionQueryReason>()
+                            .Select(reason => new
+                            {
+                                reason = reason.ToString(),
+                                count = OcclusionTelemetry.GetCpuQueryResolvedCount(reason),
+                            })
+                            .Where(static entry => entry.count > 0)
+                            .ToArray(),
                         cpu_unsupported_stereo_query_mode = OcclusionTelemetry.CpuUnsupportedStereoQueryMode,
                         cpu_query_async_submitted = OcclusionTelemetry.CpuQueryAsyncSubmitted,
                         cpu_query_async_resolved = OcclusionTelemetry.CpuQueryAsyncResolved,
                         cpu_query_async_occluded = OcclusionTelemetry.CpuQueryAsyncOccluded,
                         cpu_soc_tested = OcclusionTelemetry.CpuSocTested,
                         cpu_soc_culled = OcclusionTelemetry.CpuSocCulled,
+                        cpu_view_snapshots = OcclusionTelemetry.GetCpuViewSnapshots(),
                     },
                     vr = new
                     {

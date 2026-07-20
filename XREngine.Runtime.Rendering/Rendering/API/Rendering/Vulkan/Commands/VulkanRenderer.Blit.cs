@@ -24,7 +24,8 @@ namespace XREngine.Rendering.Vulkan
             PipelineStageFlags stageMask,
             AccessFlags accessMask,
             VulkanRenderer.IVkImageDescriptorSource? descriptorSource = null,
-            VulkanRenderer.VkRenderBuffer? renderBufferSource = null)
+            VulkanRenderer.VkRenderBuffer? renderBufferSource = null,
+            SampleCountFlags samples = default)
         {
             public Image Image { get; } = image;
             public Format Format { get; } = format;
@@ -38,6 +39,11 @@ namespace XREngine.Rendering.Vulkan
             public AccessFlags AccessMask { get; } = accessMask;
             public IVkImageDescriptorSource? DescriptorSource { get; } = descriptorSource;
             public VkRenderBuffer? RenderBufferSource { get; } = renderBufferSource;
+            public SampleCountFlags Samples { get; } = samples != default
+                ? samples
+                : descriptorSource?.DescriptorSamples
+                    ?? renderBufferSource?.Samples
+                    ?? SampleCountFlags.Count1Bit;
             public bool IsValid => Image.Handle != 0;
 
             public BlitImageInfo WithResolvedState(Image image, ImageLayout preferredLayout, Extent2D extent)
@@ -53,7 +59,8 @@ namespace XREngine.Rendering.Vulkan
                     StageMask,
                     AccessMask,
                     DescriptorSource,
-                    RenderBufferSource);
+                    RenderBufferSource,
+                    Samples);
 
             public BlitImageInfo WithLayerCount(uint layerCount)
                 => new(
@@ -68,7 +75,8 @@ namespace XREngine.Rendering.Vulkan
                     StageMask,
                     AccessMask,
                     DescriptorSource,
-                    RenderBufferSource);
+                    RenderBufferSource,
+                    Samples);
         }
 
         // =========== Blit / Copy Operations ===========
@@ -424,7 +432,8 @@ namespace XREngine.Rendering.Vulkan
                 new Extent2D(width, height),
                 layout,
                 stage,
-                access);
+                access,
+                samples: group.Samples);
             return info.IsValid;
         }
 

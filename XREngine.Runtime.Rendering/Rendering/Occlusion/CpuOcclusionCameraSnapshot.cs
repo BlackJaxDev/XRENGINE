@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 
 namespace XREngine.Rendering.Occlusion;
 
@@ -14,7 +15,8 @@ internal readonly struct CpuOcclusionCameraSnapshot
         Vector3 up,
         Matrix4x4 projection,
         Matrix4x4 viewProjection,
-        float nearZ)
+        float nearZ,
+        int cameraIdentity = 0)
     {
         Position = position;
         Forward = NormalizeOrFallback(forward, Vector3.UnitZ);
@@ -22,6 +24,7 @@ internal readonly struct CpuOcclusionCameraSnapshot
         Projection = projection;
         ViewProjection = viewProjection;
         NearZ = nearZ;
+        CameraIdentity = cameraIdentity;
         IsValid = IsFinite(position) &&
             IsFinite(Forward) &&
             IsFinite(Up) &&
@@ -37,6 +40,7 @@ internal readonly struct CpuOcclusionCameraSnapshot
     internal Matrix4x4 Projection { get; }
     internal Matrix4x4 ViewProjection { get; }
     internal float NearZ { get; }
+    internal int CameraIdentity { get; }
     internal bool IsValid { get; }
 
     internal static CpuOcclusionCameraSnapshot Capture(XRCamera camera)
@@ -46,7 +50,8 @@ internal readonly struct CpuOcclusionCameraSnapshot
             camera.Transform.RenderUp,
             camera.ProjectionMatrixUnjittered,
             camera.ViewProjectionMatrixUnjittered,
-            camera.NearZ);
+            camera.NearZ,
+            RuntimeHelpers.GetHashCode(camera));
 
     private static Vector3 NormalizeOrFallback(in Vector3 value, in Vector3 fallback)
         => value.LengthSquared() > 0.000001f ? Vector3.Normalize(value) : fallback;

@@ -238,7 +238,16 @@ public readonly record struct CpuOcclusionViewTelemetrySnapshot(
     int MaxRecoveryAgeFrames,
     int CurrentResultAgeFrames,
     int MaxResultAgeFrames,
-    int RecoveryLatencyFrames);
+    int RecoveryLatencyFrames,
+    ECpuOcclusionMotionTier MotionTier,
+    ECpuOcclusionMotionCause MotionCause,
+    float MotionDistanceMeters,
+    float MotionRotationDegrees,
+    float MotionProjectionDelta,
+    bool PreviousCameraSnapshotValid,
+    bool CurrentCameraSnapshotValid,
+    int PreviousCameraIdentity,
+    int CurrentCameraIdentity);
 
 public enum ECpuOcclusionMotionTier
 {

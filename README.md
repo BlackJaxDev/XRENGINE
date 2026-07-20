@@ -99,6 +99,17 @@ dotnet build XRENGINE.slnx
 
 If you want the broadest one-command repo setup instead, run `ExecTool --bootstrap`.
 
+Contributors who also want the repository-scoped code-review graph and Codex
+integration can opt in during bootstrap:
+
+```powershell
+ExecTool --bootstrap --with-agent-tools
+```
+
+This creates an isolated Python environment under `Build/Dependencies/`, builds
+the local graph, and enables the checked-in `.codex` MCP server and hooks after
+the repository is trusted and Codex is restarted.
+
 For bootstrap scope, first-time setup, and what still needs manual installation afterward, see `docs/user-guide/setup/bootstrap.md`.
 
 ### Run the editor

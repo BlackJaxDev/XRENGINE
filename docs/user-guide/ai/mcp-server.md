@@ -50,13 +50,27 @@ Add this workspace MCP config when you want Copilot or another MCP-aware client 
 }
 ```
 
-Start the editor, enable the server, then check the client tool picker for XRENGINE tools such as `list_worlds`, `list_scene_nodes`, and `capture_viewport_screenshot`.
+Start the editor, enable the server, then check the client tool picker for XRENGINE tools such as `list_worlds`, `list_scene_nodes`, `capture_viewport_screenshot`, and `start_viewport_sequence_capture`.
 
 ## In-Editor Assistant
 
 The ImGui editor includes **Tools > MCP Assistant**. It can use provider keys from editor preferences or environment variables such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and `GITHUB_TOKEN`.
 
 For scene or material edits, prefer prompts that ask the assistant to inspect the current world, make a bounded change, and verify with read-back or a viewport screenshot.
+
+## Capture Subsequent Viewport Frames
+
+For animation, physics, flicker, streaming, and temporal-rendering issues, ask the assistant to start a viewport sequence capture. The assistant can capture an exact number of subsequent frames or sample for a bounded number of seconds, poll `get_viewport_sequence_capture`, and inspect the resulting individual PNGs, `contact-sheet.png`, and `manifest.json`.
+
+Example prompts:
+
+- *"Capture the next 12 consecutive viewport frames and inspect the contact sheet for flicker."*
+- *"Sample the editor viewport at 10 FPS for five seconds and identify which frames differ most."*
+- *"List active viewport sequence captures and cancel the one still running."*
+
+The default overflow policy fails rather than silently omitting a requested consecutive frame. Captures are bounded by frame, duration, pixel, memory, and contact-sheet limits. Both OpenGL and Vulkan are supported. Vulkan capture uses bounded GPU staging slots and nonblocking fence polling; the manifest reports GPU completion time, CPU conversion time, source format, queue slot, and whether an MSAA resolve was needed. If the renderer queue is full, `overflow_policy: "fail"` stops the sequence while `"drop"` records the skipped frame. There is no silent CPU or OS-window fallback.
+
+On Vulkan, an unsignaled capture fence produces a warning after two seconds and fails the requesting capture after ten seconds without blocking the render thread. The slot stays quarantined until the GPU finishes or the renderer is recreated. This protects the editor-side workflow from hanging, while the operating system's GPU watchdog remains responsible for recovering a GPU submission that is genuinely stuck.
 
 ## Safety Notes
 

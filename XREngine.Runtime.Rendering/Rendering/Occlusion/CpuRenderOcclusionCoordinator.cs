@@ -214,35 +214,46 @@ namespace XREngine.Rendering.Occlusion
                 state.ForceVisibleThisFrame = false;
                 state.ForceVisibleReason = ECpuOcclusionForceVisibleReason.None;
 
-                ECpuOcclusionMotionTier tier = UpdateCameraVisibilityState(state, camera);
+                CpuOcclusionMotionClassification motion = UpdateCameraVisibilityState(state, camera);
+                ECpuOcclusionMotionTier tier = motion.Tier;
                 state.MotionTier = tier;
+                if (sceneCommandCount > 0u)
+                    state.Telemetry.RecordMotion(motion);
 
-                if (!ownership.IsValid)
-                    ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.MissingOwnership);
+                if (sceneCommandCount > 0u)
+                {
+                    if (!ownership.IsValid)
+                        ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.MissingOwnership);
+                    else if (commandSetChanged)
+                    {
+                        InvalidateForCommandSetChange(state, frameId);
+                        ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.CommandSetChanged);
+                    }
+                    else if (tier == ECpuOcclusionMotionTier.CameraCut)
+                    {
+                        InvalidatePov(state.Pov);
+                        ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.CameraCut);
+                    }
+                    else if (!IsHardwareQueryBackendSupported())
+                        ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.UnsupportedBackend);
+                    else if (IsUnsupportedSharedStereoScope(state.ViewKey))
+                        ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.UnsupportedStereoMode);
+                }
                 else if (commandSetChanged)
-                {
                     InvalidateForCommandSetChange(state, frameId);
-                    ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.CommandSetChanged);
-                }
-                else if (tier == ECpuOcclusionMotionTier.CameraCut)
-                {
-                    InvalidatePov(state.Pov);
-                    ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.CameraCut);
-                }
-                else if (!IsHardwareQueryBackendSupported())
-                    ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.UnsupportedBackend);
-                else if (IsUnsupportedSharedStereoScope(state.ViewKey))
-                    ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.UnsupportedStereoMode);
 
                 ResolveAvailableResultsForPov(state.Pov);
                 EvictStaleOwnershipStates(globalFrameId);
-                OcclusionTelemetry.RecordCpuMotionTier(state.MotionTier);
-                OcclusionTelemetry.RecordCpuActiveViewScope(state.ViewKey.Scope);
-                state.Telemetry.RecordPassBegin((int)sceneCommandCount);
-                if (state.ForceVisibleThisFrame)
+                if (sceneCommandCount > 0u)
                 {
-                    OcclusionTelemetry.RecordCpuGlobalConservativeFrame(state.ForceVisibleReason);
-                    state.Telemetry.RecordForcedVisible();
+                    OcclusionTelemetry.RecordCpuMotionTier(state.MotionTier);
+                    OcclusionTelemetry.RecordCpuActiveViewScope(state.ViewKey.Scope);
+                    state.Telemetry.RecordPassBegin((int)sceneCommandCount);
+                    if (state.ForceVisibleThisFrame)
+                    {
+                        OcclusionTelemetry.RecordCpuGlobalConservativeFrame(state.ForceVisibleReason);
+                        state.Telemetry.RecordForcedVisible();
+                    }
                 }
 
                 return state.MotionTier == ECpuOcclusionMotionTier.CameraCut;
@@ -2199,7 +2210,7 @@ namespace XREngine.Rendering.Occlusion
             }
         }
 
-        private static ECpuOcclusionMotionTier UpdateCameraVisibilityState(PassState state, XRCamera camera)
+        private static CpuOcclusionMotionClassification UpdateCameraVisibilityState(PassState state, XRCamera camera)
         {
             CpuOcclusionCameraSnapshot current = CpuOcclusionCameraSnapshot.Capture(camera);
             state.CurrentCameraSnapshot = current;
@@ -2208,7 +2219,16 @@ namespace XREngine.Rendering.Occlusion
             {
                 state.HasCameraState = true;
                 state.LastCameraSnapshot = current;
-                return ECpuOcclusionMotionTier.Stable;
+                return new CpuOcclusionMotionClassification(
+                    ECpuOcclusionMotionTier.Stable,
+                    ECpuOcclusionMotionCause.FirstSample,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    current.IsValid,
+                    current.IsValid,
+                    current.CameraIdentity,
+                    current.CameraIdentity);
             }
 
             bool vrScope = state.ViewKey.Scope is EOcclusionViewScope.VrLeftEye
@@ -2216,13 +2236,14 @@ namespace XREngine.Rendering.Occlusion
                 or EOcclusionViewScope.VrStereoPair
                 or EOcclusionViewScope.VrSinglePassStereo
                 or EOcclusionViewScope.VrFoveatedView;
-            ECpuOcclusionMotionTier tier = CpuOcclusionTemporalPolicy.ClassifyMotion(
+            CpuOcclusionTemporalPolicy.ClassifyMotion(
                 state.LastCameraSnapshot,
                 current,
                 vrScope,
-                RuntimeRenderingHostServices.Current.RenderDeltaSeconds);
+                RuntimeRenderingHostServices.Current.RenderDeltaSeconds,
+                out CpuOcclusionMotionClassification classification);
             state.LastCameraSnapshot = current;
-            return tier;
+            return classification;
         }
     }
 }

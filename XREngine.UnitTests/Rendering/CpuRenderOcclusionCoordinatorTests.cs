@@ -298,10 +298,10 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         ECpuOcclusionDecision decision = coordinator.ShouldRender(RenderPass, camera, queryKey, out CpuOcclusionProbeRequest request);
 
         GetMotionTier(coordinator, camera).ShouldBe(ECpuOcclusionMotionTier.VrHeadPoseMotion);
-        decision.ShouldBe(ECpuOcclusionDecision.Visible);
+        decision.ShouldBe(ECpuOcclusionDecision.ProbeOnly);
         request.Requested.ShouldBeTrue();
-        request.RecoveryProbe.ShouldBeFalse();
-        request.Reason.ShouldBe(ECpuOcclusionQueryReason.StaleStateRefresh);
+        request.RecoveryProbe.ShouldBeTrue();
+        request.Reason.ShouldBe(ECpuOcclusionQueryReason.CameraMotionRevalidation);
     }
 
     [Test]
@@ -774,6 +774,24 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         OcclusionTelemetry.GetCpuViewSnapshots()
             .Any(value => value.ViewKey.Equals(key))
             .ShouldBeFalse();
+    }
+
+    [Test]
+    public void BeginPass_EmptyPassDoesNotReplaceActiveMotionTelemetry()
+    {
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        OcclusionViewOwnership ownership = OcclusionViewOwnership.Independent(406);
+
+        OcclusionTelemetry.RecordCpuMotionTier(ECpuOcclusionMotionTier.SmallMotion);
+        OcclusionTelemetry.BeginFrame();
+        coordinator.BeginPass(RenderPass, camera, sceneCommandCount: 0u, ownership);
+        coordinator.BeginPass(RenderPass, camera, sceneCommandCount: 0u, ownership);
+        OcclusionTelemetry.BeginFrame();
+
+        OcclusionTelemetry.CpuMotionTier.ShouldBe(ECpuOcclusionMotionTier.SmallMotion);
+        OcclusionTelemetry.GetCpuForcedVisibleCount(ECpuOcclusionForceVisibleReason.CameraCut).ShouldBe(0);
+        OcclusionTelemetry.GetCpuForcedVisibleCount(ECpuOcclusionForceVisibleReason.UnsupportedBackend).ShouldBe(0);
     }
 
     [Test]

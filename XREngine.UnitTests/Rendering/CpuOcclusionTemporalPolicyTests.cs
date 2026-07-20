@@ -25,6 +25,33 @@ public sealed class CpuOcclusionTemporalPolicyTests
     }
 
     [Test]
+    public void ClassifyMotion_ReportsProjectionAsCameraCutCause()
+    {
+        CpuOcclusionCameraSnapshot previous = CreateSnapshot(Vector3.Zero);
+        Matrix4x4 changedProjection = previous.Projection;
+        changedProjection.M11 += CpuOcclusionTemporalPolicy.ProjectionCutDelta + 0.01f;
+        CpuOcclusionCameraSnapshot current = new(
+            previous.Position,
+            previous.Forward,
+            previous.Up,
+            changedProjection,
+            previous.ViewProjection,
+            previous.NearZ);
+
+        CpuOcclusionTemporalPolicy.ClassifyMotion(
+            previous,
+            current,
+            vrScope: false,
+            1.0 / 60.0,
+            out CpuOcclusionMotionClassification classification).ShouldBe(ECpuOcclusionMotionTier.CameraCut);
+
+        classification.Cause.ShouldBe(ECpuOcclusionMotionCause.Projection);
+        classification.ProjectionDelta.ShouldBeGreaterThan(CpuOcclusionTemporalPolicy.ProjectionCutDelta);
+        classification.PreviousSnapshotValid.ShouldBeTrue();
+        classification.CurrentSnapshotValid.ShouldBeTrue();
+    }
+
+    [Test]
     public void ComputeMaximumResultAge_IncludesMovingSceneSweepAndBackendLatency()
     {
         int maximumAge = CpuOcclusionTemporalPolicy.ComputeMaximumResultAge(

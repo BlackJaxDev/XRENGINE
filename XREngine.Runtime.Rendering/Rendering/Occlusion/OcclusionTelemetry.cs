@@ -36,6 +36,15 @@ namespace XREngine.Rendering.Occlusion
             public int CurrentResultAgeFrames;
             public int MaxResultAgeFrames;
             public int RecoveryLatencyFrames;
+            public int MotionTier;
+            public int MotionCause;
+            public int MotionDistanceBits;
+            public int MotionRotationBits;
+            public int MotionProjectionDeltaBits;
+            public int PreviousCameraSnapshotValid;
+            public int CurrentCameraSnapshotValid;
+            public int PreviousCameraIdentity;
+            public int CurrentCameraIdentity;
             public int LastTouchedEpoch;
             public int LastSnapshotEpoch = -1;
             public CpuOcclusionViewTelemetrySnapshot LastSnapshot;
@@ -57,7 +66,16 @@ namespace XREngine.Rendering.Occlusion
                     Interlocked.Exchange(ref MaxRecoveryAgeFrames, 0),
                     Interlocked.Exchange(ref CurrentResultAgeFrames, 0),
                     Interlocked.Exchange(ref MaxResultAgeFrames, 0),
-                    Interlocked.Exchange(ref RecoveryLatencyFrames, 0));
+                    Interlocked.Exchange(ref RecoveryLatencyFrames, 0),
+                    (ECpuOcclusionMotionTier)Volatile.Read(ref MotionTier),
+                    (ECpuOcclusionMotionCause)Volatile.Read(ref MotionCause),
+                    BitConverter.Int32BitsToSingle(Volatile.Read(ref MotionDistanceBits)),
+                    BitConverter.Int32BitsToSingle(Volatile.Read(ref MotionRotationBits)),
+                    BitConverter.Int32BitsToSingle(Volatile.Read(ref MotionProjectionDeltaBits)),
+                    Volatile.Read(ref PreviousCameraSnapshotValid) != 0,
+                    Volatile.Read(ref CurrentCameraSnapshotValid) != 0,
+                    Volatile.Read(ref PreviousCameraIdentity),
+                    Volatile.Read(ref CurrentCameraIdentity));
 
                 // Desktop and XR outputs can publish their frame boundaries at
                 // different times. Preserve each output's newest completed sample
@@ -91,6 +109,23 @@ namespace XREngine.Rendering.Occlusion
                 CpuViewCounters? counters = Touch();
                 if (counters is not null && candidateCount > 0)
                     Interlocked.Add(ref counters.CandidateCount, candidateCount);
+            }
+
+            public void RecordMotion(in CpuOcclusionMotionClassification classification)
+            {
+                CpuViewCounters? counters = Touch();
+                if (counters is null)
+                    return;
+
+                Volatile.Write(ref counters.MotionTier, (int)classification.Tier);
+                Volatile.Write(ref counters.MotionCause, (int)classification.Cause);
+                Volatile.Write(ref counters.MotionDistanceBits, BitConverter.SingleToInt32Bits(classification.DistanceMeters));
+                Volatile.Write(ref counters.MotionRotationBits, BitConverter.SingleToInt32Bits(classification.RotationDegrees));
+                Volatile.Write(ref counters.MotionProjectionDeltaBits, BitConverter.SingleToInt32Bits(classification.ProjectionDelta));
+                Volatile.Write(ref counters.PreviousCameraSnapshotValid, classification.PreviousSnapshotValid ? 1 : 0);
+                Volatile.Write(ref counters.CurrentCameraSnapshotValid, classification.CurrentSnapshotValid ? 1 : 0);
+                Volatile.Write(ref counters.PreviousCameraIdentity, classification.PreviousCameraIdentity);
+                Volatile.Write(ref counters.CurrentCameraIdentity, classification.CurrentCameraIdentity);
             }
 
             public void RecordSubmission()

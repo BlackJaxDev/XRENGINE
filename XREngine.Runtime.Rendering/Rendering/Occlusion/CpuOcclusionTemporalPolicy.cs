@@ -22,9 +22,32 @@ internal static class CpuOcclusionTemporalPolicy
         in CpuOcclusionCameraSnapshot current,
         bool vrScope,
         double renderDeltaSeconds)
+        => ClassifyMotion(previous, current, vrScope, renderDeltaSeconds, out _);
+
+    internal static ECpuOcclusionMotionTier ClassifyMotion(
+        in CpuOcclusionCameraSnapshot previous,
+        in CpuOcclusionCameraSnapshot current,
+        bool vrScope,
+        double renderDeltaSeconds,
+        out CpuOcclusionMotionClassification classification)
     {
-        if (!previous.IsValid || !current.IsValid)
+        if (!previous.IsValid)
+        {
+            classification = CreateInvalidClassification(
+                previous,
+                current,
+                ECpuOcclusionMotionCause.InvalidPreviousSnapshot);
             return ECpuOcclusionMotionTier.CameraCut;
+        }
+
+        if (!current.IsValid)
+        {
+            classification = CreateInvalidClassification(
+                previous,
+                current,
+                ECpuOcclusionMotionCause.InvalidCurrentSnapshot);
+            return ECpuOcclusionMotionTier.CameraCut;
+        }
 
         float distance = Vector3.Distance(previous.Position, current.Position);
         float angle = MathF.Max(
@@ -32,10 +55,42 @@ internal static class CpuOcclusionTemporalPolicy
             DotToDegrees(Vector3.Dot(previous.Up, current.Up)));
         float projectionDelta = GetProjectionDelta(previous.Projection, current.Projection);
 
-        if (distance >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionCameraCutMeters ||
-            angle >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionCameraCutRotationDegrees ||
-            projectionDelta > ProjectionCutDelta)
+        if (projectionDelta > ProjectionCutDelta)
         {
+            classification = CreateClassification(
+                ECpuOcclusionMotionTier.CameraCut,
+                ECpuOcclusionMotionCause.Projection,
+                distance,
+                angle,
+                projectionDelta,
+                previous,
+                current);
+            return ECpuOcclusionMotionTier.CameraCut;
+        }
+
+        if (distance >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionCameraCutMeters)
+        {
+            classification = CreateClassification(
+                ECpuOcclusionMotionTier.CameraCut,
+                ECpuOcclusionMotionCause.Translation,
+                distance,
+                angle,
+                projectionDelta,
+                previous,
+                current);
+            return ECpuOcclusionMotionTier.CameraCut;
+        }
+
+        if (angle >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionCameraCutRotationDegrees)
+        {
+            classification = CreateClassification(
+                ECpuOcclusionMotionTier.CameraCut,
+                ECpuOcclusionMotionCause.Rotation,
+                distance,
+                angle,
+                projectionDelta,
+                previous,
+                current);
             return ECpuOcclusionMotionTier.CameraCut;
         }
 
@@ -44,6 +99,14 @@ internal static class CpuOcclusionTemporalPolicy
             angle <= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionSmallRotationDegrees * thresholdScale &&
             projectionDelta <= StableProjectionDelta)
         {
+            classification = CreateClassification(
+                ECpuOcclusionMotionTier.Stable,
+                ECpuOcclusionMotionCause.Stable,
+                distance,
+                angle,
+                projectionDelta,
+                previous,
+                current);
             return ECpuOcclusionMotionTier.Stable;
         }
 
@@ -51,22 +114,47 @@ internal static class CpuOcclusionTemporalPolicy
             distance <= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionVrHeadMotionMeters * thresholdScale &&
             angle <= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionVrHeadRotationDegrees * thresholdScale)
         {
+            classification = CreateClassification(
+                ECpuOcclusionMotionTier.VrHeadPoseMotion,
+                ECpuOcclusionMotionCause.VrHeadPose,
+                distance,
+                angle,
+                projectionDelta,
+                previous,
+                current);
             return ECpuOcclusionMotionTier.VrHeadPoseMotion;
         }
 
+        ECpuOcclusionMotionTier tier;
         if (distance >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionLargeMotionMeters * thresholdScale ||
             angle >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionLargeRotationDegrees * thresholdScale)
         {
-            return ECpuOcclusionMotionTier.LargeMotion;
+            tier = ECpuOcclusionMotionTier.LargeMotion;
         }
-
-        if (distance >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMediumMotionMeters * thresholdScale ||
+        else if (distance >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMediumMotionMeters * thresholdScale ||
             angle >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMediumRotationDegrees * thresholdScale)
         {
-            return ECpuOcclusionMotionTier.MediumMotion;
+            tier = ECpuOcclusionMotionTier.MediumMotion;
+        }
+        else
+        {
+            tier = ECpuOcclusionMotionTier.SmallMotion;
         }
 
-        return ECpuOcclusionMotionTier.SmallMotion;
+        ECpuOcclusionMotionCause cause = projectionDelta > StableProjectionDelta
+            ? ECpuOcclusionMotionCause.Projection
+            : distance >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionSmallMotionMeters * thresholdScale
+                ? ECpuOcclusionMotionCause.Translation
+                : ECpuOcclusionMotionCause.Rotation;
+        classification = CreateClassification(
+            tier,
+            cause,
+            distance,
+            angle,
+            projectionDelta,
+            previous,
+            current);
+        return tier;
     }
 
     /// <summary>
@@ -231,4 +319,38 @@ internal static class CpuOcclusionTemporalPolicy
 
     private static float DotToDegrees(float dot)
         => MathF.Acos(Math.Clamp(dot, -1.0f, 1.0f)) * (180.0f / MathF.PI);
+
+    private static CpuOcclusionMotionClassification CreateInvalidClassification(
+        in CpuOcclusionCameraSnapshot previous,
+        in CpuOcclusionCameraSnapshot current,
+        ECpuOcclusionMotionCause cause)
+        => new(
+            ECpuOcclusionMotionTier.CameraCut,
+            cause,
+            0.0f,
+            0.0f,
+            0.0f,
+            previous.IsValid,
+            current.IsValid,
+            previous.CameraIdentity,
+            current.CameraIdentity);
+
+    private static CpuOcclusionMotionClassification CreateClassification(
+        ECpuOcclusionMotionTier tier,
+        ECpuOcclusionMotionCause cause,
+        float distanceMeters,
+        float rotationDegrees,
+        float projectionDelta,
+        in CpuOcclusionCameraSnapshot previous,
+        in CpuOcclusionCameraSnapshot current)
+        => new(
+            tier,
+            cause,
+            distanceMeters,
+            rotationDegrees,
+            projectionDelta,
+            previous.IsValid,
+            current.IsValid,
+            previous.CameraIdentity,
+            current.CameraIdentity);
 }
