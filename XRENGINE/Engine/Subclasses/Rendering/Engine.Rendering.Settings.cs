@@ -1825,7 +1825,7 @@ namespace XREngine
                 }
 
                 [Category("Occlusion")]
-                [Description("CPU-query occlusion: camera translation threshold in meters for SmallMotion.")]
+                [Description("CPU-query occlusion: translation treated as Stable at a nominal 60 Hz, scaled by render delta.")]
                 public float CpuQueryOcclusionSmallMotionMeters
                 {
                     get => _cpuQueryOcclusionSmallMotionMeters;
@@ -1833,7 +1833,7 @@ namespace XREngine
                 }
 
                 [Category("Occlusion")]
-                [Description("CPU-query occlusion: camera translation threshold in meters for MediumMotion.")]
+                [Description("CPU-query occlusion: nominal 60 Hz translation threshold for MediumMotion, scaled by render delta.")]
                 public float CpuQueryOcclusionMediumMotionMeters
                 {
                     get => _cpuQueryOcclusionMediumMotionMeters;
@@ -1841,7 +1841,7 @@ namespace XREngine
                 }
 
                 [Category("Occlusion")]
-                [Description("CPU-query occlusion: camera translation threshold in meters for LargeMotion.")]
+                [Description("CPU-query occlusion: nominal 60 Hz translation threshold for LargeMotion, scaled by render delta.")]
                 public float CpuQueryOcclusionLargeMotionMeters
                 {
                     get => _cpuQueryOcclusionLargeMotionMeters;
@@ -1857,7 +1857,7 @@ namespace XREngine
                 }
 
                 [Category("Occlusion")]
-                [Description("CPU-query occlusion: camera rotation threshold in degrees for SmallMotion.")]
+                [Description("CPU-query occlusion: rotation treated as Stable at a nominal 60 Hz, scaled by render delta.")]
                 public float CpuQueryOcclusionSmallRotationDegrees
                 {
                     get => _cpuQueryOcclusionSmallRotationDegrees;
@@ -1865,7 +1865,7 @@ namespace XREngine
                 }
 
                 [Category("Occlusion")]
-                [Description("CPU-query occlusion: camera rotation threshold in degrees for MediumMotion.")]
+                [Description("CPU-query occlusion: nominal 60 Hz rotation threshold for MediumMotion, scaled by render delta.")]
                 public float CpuQueryOcclusionMediumRotationDegrees
                 {
                     get => _cpuQueryOcclusionMediumRotationDegrees;
@@ -1873,7 +1873,7 @@ namespace XREngine
                 }
 
                 [Category("Occlusion")]
-                [Description("CPU-query occlusion: camera rotation threshold in degrees for LargeMotion.")]
+                [Description("CPU-query occlusion: nominal 60 Hz rotation threshold for LargeMotion, scaled by render delta.")]
                 public float CpuQueryOcclusionLargeRotationDegrees
                 {
                     get => _cpuQueryOcclusionLargeRotationDegrees;

@@ -172,7 +172,8 @@ public unsafe partial class VulkanRenderer
 
         var availableExtensionNames = availableExtensions.Select(extension => Marshal.PtrToStringAnsi((IntPtr)extension.ExtensionName)).ToHashSet();
 
-        return _requiredDeviceExtensions.All(availableExtensionNames.Contains);
+        return _requiredDeviceExtensions.All(availableExtensionNames.Contains)
+            && _streamlineRequiredDeviceExtensions.All(availableExtensionNames.Contains);
 
     }
 

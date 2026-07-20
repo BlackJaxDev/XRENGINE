@@ -3811,6 +3811,17 @@ public static partial class EditorImGuiUI
                 return true;
             }
 
+            uint maximumGeneratedFrames = NvidiaDlssManager.FrameGenerationMaximumFramesToGenerate;
+            uint requestedGeneratedFrames = (uint)Engine.EffectiveSettings.NvidiaDlssFrameGenerationMode;
+            if (IsNvidiaDlssFrameGenerationMember(member)
+                && Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration
+                && maximumGeneratedFrames != 0
+                && requestedGeneratedFrames > maximumGeneratedFrames)
+            {
+                warning = $"DLSS frame generation requested {requestedGeneratedFrames} generated frames, but this GPU/runtime supports at most {maximumGeneratedFrames}. The engine is using {maximumGeneratedFrames}.";
+                return true;
+            }
+
             return false;
         }
 

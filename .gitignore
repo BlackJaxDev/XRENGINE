@@ -42,6 +42,8 @@ Generated\ Files/
 !/ThirdParty/NVIDIA/SDK/README.md
 !/ThirdParty/NVIDIA/SDK/win-x64/.gitkeep
 /Build/Dependencies/Streamline/**
+/Build/Dependencies/CodeReviewGraph/**
+/.code-review-graph/**
 
 # MSTest test Results
 [Tt]est[Rr]esult*/

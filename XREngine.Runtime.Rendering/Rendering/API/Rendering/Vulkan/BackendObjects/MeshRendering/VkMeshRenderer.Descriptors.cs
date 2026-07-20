@@ -1709,7 +1709,16 @@ public unsafe partial class VulkanRenderer
 						}
 					}
 
-					Renderer.UpdateDescriptorSetsTracked(1, &write);
+					if (!Renderer.TryUpdateDescriptorSetsTracked(1, &write, out string updateFailureReason))
+					{
+						reason = $"frame-source sampler '{binding.Name}' update deferred: {updateFailureReason}";
+						Debug.VulkanWarningEvery(
+							$"Vulkan.MeshRenderer.FrameSourceDescriptorGenerationRace.{GetHashCode()}",
+							TimeSpan.FromSeconds(1),
+							"[Vulkan] Deferred frame-source sampler descriptor update because a render-resource generation retired concurrently: {0}",
+							updateFailureReason);
+						return false;
+					}
 					Renderer.RecordVulkanDescriptorTableGeneration("MeshRendererDescriptorSet.SingleUpdate");
 				}
 
@@ -2352,8 +2361,16 @@ public unsafe partial class VulkanRenderer
 						}
 					}
 
-					if (!TryUpdateDescriptorSetsWithTemplates(frameSets, writeArray))
-						Renderer.UpdateDescriptorSetsTracked((uint)writeArray.Length, writePtr);
+					if (!TryUpdateDescriptorSetsWithTemplates(frameSets, writeArray) &&
+						!Renderer.TryUpdateDescriptorSetsTracked((uint)writeArray.Length, writePtr, out string updateFailureReason))
+					{
+						Debug.VulkanWarningEvery(
+							$"Vulkan.MeshRenderer.DescriptorGenerationRace.{GetHashCode()}",
+							TimeSpan.FromSeconds(1),
+							"[Vulkan] Deferred mesh descriptor update because a render-resource generation retired concurrently: {0}",
+							updateFailureReason);
+						return false;
+					}
 					Renderer.RecordVulkanDescriptorTableGeneration("MeshRendererDescriptorSets.Update");
 
 					foreach (var (_, imageIndex, binding, descriptorCount) in imageMap)

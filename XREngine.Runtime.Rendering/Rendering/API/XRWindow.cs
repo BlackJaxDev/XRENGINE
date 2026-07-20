@@ -640,8 +640,10 @@ namespace XREngine.Rendering
             WindowOptions options,
             bool useNativeTitleBar,
             bool windowVSyncRequested = false,
-            EInteractiveWindowResizeStrategy interactiveResizeStrategy = EInteractiveWindowResizeStrategy.Default)
+            EInteractiveWindowResizeStrategy interactiveResizeStrategy = EInteractiveWindowResizeStrategy.Default,
+            bool isSecondaryGpuContext = false)
         {
+            IsSecondaryGpuContext = isSecondaryGpuContext;
             _viewports.CollectionChanged += ViewportsChanged;
             _scenePanelAdapter = RuntimeRenderingHostServices.Current.CreateWindowScenePanelAdapter();
             InteractiveResizeStrategy = interactiveResizeStrategy;
@@ -720,6 +722,12 @@ namespace XREngine.Rendering
 
             _renderer = CreateRendererForCurrentWindow("initial window construction");
         }
+
+        /// <summary>
+        /// Gets whether this hidden window owns the optional background GPU context rather than a presentation renderer.
+        /// Process-global presentation middleware such as Streamline must not bind to this context.
+        /// </summary>
+        public bool IsSecondaryGpuContext { get; }
 
         #endregion
 
@@ -2806,6 +2814,13 @@ namespace XREngine.Rendering
                     frameRenderer.PollGpuRenderStatsReadbacks();
                 }
                 RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.PollGpuRenderStatsReadbacks", phaseStart);
+
+                phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                using (var screenshotReadbackSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.PollScreenshotReadbacks"))
+                {
+                    frameRenderer.PollScreenshotReadbacks();
+                }
+                RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.PollScreenshotReadbacks", phaseStart);
 
                 // Process any pending async buffer uploads within the frame budget.
                 phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();

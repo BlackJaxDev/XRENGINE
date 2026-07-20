@@ -11,8 +11,8 @@ To enable NVIDIA features locally:
    ```
 
    The installer downloads the official NVIDIA-RTX Streamline SDK release,
-   verifies the archive digest, and stages the production x64 runtime files in
-   this folder.
+   pinned by default to version 2.12.0 and its published SHA-256 digest, and
+   stages the production x64 runtime files in this folder.
 
    Manual install is still supported. Download the official NVIDIA
    Streamline/DLSS SDK from NVIDIA:

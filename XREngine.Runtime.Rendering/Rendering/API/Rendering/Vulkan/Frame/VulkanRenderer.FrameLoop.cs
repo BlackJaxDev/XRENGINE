@@ -786,19 +786,19 @@ namespace XREngine.Rendering.Vulkan
                         return;
                     }
 
-                    bool frameGenerationRequested = NvidiaDlssManager.IsFrameGenerationRequested;
-                    bool frameGenerationDlssRuntimeRequested = frameGenerationRequested
-                        && NvidiaDlssManager.Native.ShouldLoadDlssFeatureForFrameGenerationRuntime;
-                    if (_streamlineFrameGenerationSwapchainActive != frameGenerationRequested
+                    bool frameGenerationProxyRequired = _streamlineFrameGenerationProvisioned;
+                    bool frameGenerationProxyIncludesDlss = frameGenerationProxyRequired
+                        && _streamlineDlssProvisioned;
+                    if (_streamlineFrameGenerationSwapchainActive != frameGenerationProxyRequired
                         || (_streamlineFrameGenerationSwapchainActive
-                            && _streamlineFrameGenerationSwapchainIncludesDlss != frameGenerationDlssRuntimeRequested))
+                            && _streamlineFrameGenerationSwapchainIncludesDlss != frameGenerationProxyIncludesDlss))
                     {
                         RecreateSwapchainImmediately(
-                            frameGenerationRequested
-                                ? frameGenerationDlssRuntimeRequested
-                                    ? "NVIDIA DLSS/DLAA changed while DLSS frame generation is enabled; recreating Streamline swapchain with DLSS + DLSS-G"
-                                    : "NVIDIA DLSS frame generation enabled; recreating swapchain through Streamline"
-                                : "NVIDIA DLSS frame generation disabled; recreating swapchain without Streamline");
+                            frameGenerationProxyRequired
+                                ? frameGenerationProxyIncludesDlss
+                                    ? "NVIDIA DLSS/DLSS-G capability provisioned; recreating Streamline swapchain with DLSS + DLSS-G"
+                                    : "NVIDIA DLSS-G capability provisioned; recreating swapchain through Streamline"
+                                : "NVIDIA DLSS-G capability unavailable; recreating swapchain without Streamline");
                         return;
                     }
 
@@ -1312,6 +1312,12 @@ namespace XREngine.Rendering.Vulkan
                             long presentStartTimestamp = Stopwatch.GetTimestamp();
                             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.DirtyAbortQueuePresent"))
                             {
+                                // A rejected frame has no current DLSS-G tags or constants. Disable
+                                // generation for this fallback present; the next successfully recorded
+                                // DLSS-G op re-enables it after publishing that frame's metadata.
+                                DisableStreamlineFrameGenerationBeforeSwapchainMutation(
+                                    $"presenting rejected Vulkan frame {frameNumber} ({rejectionStage})");
+                                DrainStreamlineFrameGenerationDisableBeforePresent();
                                 MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker.PresentStart);
                                 if (!TryPresentToQueueTracked(
                                     presentQueue,
@@ -1505,6 +1511,25 @@ namespace XREngine.Rendering.Vulkan
                                     "Deferred-recording fallback could not return acquired image ownership");
                                 return;
                             }
+                        }
+                        catch (InvalidOperationException recordEx) when (IsTransientResourceRetirementRecordingFailure(recordEx))
+                        {
+                            ReleaseUnsubmittedTextureUploadCommandBuffer("command buffer resource generation retired during recording");
+                            MarkCommandBuffersDirty("command buffer resource generation retired during recording");
+
+                            if (TryPresentAbortedDirtyFrame(
+                                    commandBufferDirtyFlagSet: true,
+                                    commandBuffersDirtiedAfterSceneRecord: true,
+                                    recordedSwapchainWriteCount: 0,
+                                    rejectionStage: "RecordResourceRetired",
+                                    rejectedSubmitResult: null))
+                                return;
+
+                            currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+                            ConsumeAcquireSemaphoreForAbortedFrame("RecordResourceRetired");
+                            ScheduleSwapchainRecreate(
+                                "Retired-resource recording fallback could not return acquired image ownership");
+                            return;
                         }
                         catch (Exception recordEx)
                         {
@@ -1882,6 +1907,7 @@ namespace XREngine.Rendering.Vulkan
                     stageStartTimestamp = Stopwatch.GetTimestamp();
                     using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.QueuePresent"))
                     {
+                        DrainStreamlineFrameGenerationDisableBeforePresent();
                         MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker.PresentStart);
                         if (!TryPresentToQueueTracked(
                             presentQueue,
@@ -2001,5 +2027,13 @@ namespace XREngine.Rendering.Vulkan
                 Interlocked.Exchange(ref _windowRenderCallbackInProgress, 0);
             }
         }
+
+        private static bool IsTransientResourceRetirementRecordingFailure(InvalidOperationException exception)
+            => IsTransientResourceRetirementRecordingFailure(exception.Message);
+
+        private static bool IsTransientResourceRetirementRecordingFailure(string failureReason)
+            => failureReason.Contains(
+                "attempted to record retired Vulkan resource",
+                StringComparison.Ordinal);
     }
 }

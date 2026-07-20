@@ -22,10 +22,10 @@ public unsafe partial class VulkanRenderer
         // Resolve the tracked layout for the submitted descriptor.
         ImageLayout trackedLayout = ResolveSubmittedDescriptorLayout(source, source.DescriptorView);
 
-        // If the tracked layout allows sampling from the general layout, use the general layout.
-        return CanSampleFromTrackedGeneralLayout(source.DescriptorUsage, trackedLayout) 
-            ? ImageLayout.General 
-            : requestedLayout;
+        // General is a stable sampling contract only for images that are also used as storage.
+        // Other images can pass through General during native feature evaluation, but return to
+        // their aspect-appropriate read-only layout before a descriptor-backed draw.
+        return ResolveTrackedSampledDescriptorLayout(source.DescriptorUsage, trackedLayout, requestedLayout);
     }
 
     /// <summary>
@@ -50,10 +50,7 @@ public unsafe partial class VulkanRenderer
         // Resolve the tracked layout for the submitted descriptor based on the snapshot.
         ImageLayout trackedLayout = ResolveSubmittedDescriptorLayout(source, snapshot.View, snapshot.TrackedLayout);
 
-        // If the tracked layout allows sampling from the general layout, use the general layout.
-        return CanSampleFromTrackedGeneralLayout(snapshot.Usage, trackedLayout) 
-            ? ImageLayout.General 
-            : requestedLayout;
+        return ResolveTrackedSampledDescriptorLayout(snapshot.Usage, trackedLayout, requestedLayout);
     }
 
     /// <summary>
@@ -63,8 +60,6 @@ public unsafe partial class VulkanRenderer
     /// <returns>The default Vulkan image layout for the sampled descriptor.</returns>
     private static ImageLayout GetDefaultSampledDescriptorLayout(IVkImageDescriptorSource source)
     {
-        // If the usage flags indicate that the general layout should be used, 
-        // return the general layout.
         if (UsesGeneralSampledDescriptorLayout(source.DescriptorUsage))
             return ImageLayout.General;
 
@@ -80,14 +75,23 @@ public unsafe partial class VulkanRenderer
     }
 
     /// <summary>
-    /// Determines whether a sampled image can be read from the tracked general layout.
+    /// Uses an exact tracked read layout when one is known, preserves General only for an explicit
+    /// storage-and-sampling contract, and otherwise uses the aspect-appropriate requested layout.
     /// </summary>
-    /// <param name="usage">The usage flags of the Vulkan image.</param>
-    /// <param name="trackedLayout">The tracked Vulkan image layout.</param>
-    /// <returns>True if the sampled image can be read from the tracked general layout; otherwise, false.</returns>
-    private static bool CanSampleFromTrackedGeneralLayout(ImageUsageFlags usage, ImageLayout trackedLayout)
-        => trackedLayout == ImageLayout.General &&
-           (usage & ImageUsageFlags.SampledBit) != 0;
+    internal static ImageLayout ResolveTrackedSampledDescriptorLayout(
+        ImageUsageFlags usage,
+        ImageLayout trackedLayout,
+        ImageLayout requestedLayout)
+        => trackedLayout == ImageLayout.General && UsesGeneralSampledDescriptorLayout(usage)
+            ? ImageLayout.General
+            : trackedLayout is
+                ImageLayout.ShaderReadOnlyOptimal or
+                ImageLayout.DepthStencilReadOnlyOptimal or
+                ImageLayout.DepthReadOnlyOptimal or
+                ImageLayout.StencilReadOnlyOptimal or
+                ImageLayout.ReadOnlyOptimal
+                ? trackedLayout
+                : requestedLayout;
 
     /// <summary>
     /// Gets the default Vulkan image layout for a sampled descriptor based on the descriptor snapshot.
@@ -96,7 +100,6 @@ public unsafe partial class VulkanRenderer
     /// <returns>The default Vulkan image layout for the sampled descriptor.</returns>
     private static ImageLayout GetDefaultSampledDescriptorLayout(in VkImageDescriptorSnapshot snapshot)
     {
-        // Check if the usage flags indicate that the general layout should be used.
         if (UsesGeneralSampledDescriptorLayout(snapshot.Usage))
             return ImageLayout.General;
 
@@ -112,10 +115,8 @@ public unsafe partial class VulkanRenderer
     }
 
     /// <summary>
-    /// Determines whether the sampled descriptor should use the general layout based on its usage flags.
+    /// Determines whether a sampled descriptor intentionally remains in the general layout.
     /// </summary>
-    /// <param name="usage">The usage flags of the Vulkan image.</param>
-    /// <returns>True if the sampled descriptor should use the general layout; otherwise, false.</returns>
     private static bool UsesGeneralSampledDescriptorLayout(ImageUsageFlags usage)
         => (usage & ImageUsageFlags.StorageBit) != 0 &&
            (usage & ImageUsageFlags.SampledBit) != 0;

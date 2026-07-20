@@ -1,9 +1,9 @@
 # GPU-Driven Occlusion Culling Architecture TODO
 
-Last Updated: 2026-07-01
+Last Updated: 2026-07-20
 Owner: Rendering
-Status: Not started (design/todo)
-Target Branch: `rendering-gpu-driven-occlusion`
+Status: Active supporting tracker for Vulkan Core Hardening Phase 5.2B/5.2C
+Execution: Current worktree only; do not create or switch branches for this effort.
 
 Research sources:
 
@@ -15,6 +15,7 @@ Research sources:
 
 Related local docs:
 
+- [Canonical Vulkan Core Hardening And Device-Loss TODO](../vulkan-core-hardening-and-device-loss-todo.md)
 - [Frame Lifecycle And Dispatch Paths](../../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
 - [Mesh Submission Strategies](../../../../architecture/rendering/mesh-submission-strategies.md)
 - [Default Render Pipeline Notes](../../../../architecture/rendering/default-render-pipeline-notes.md)
@@ -106,6 +107,11 @@ see [GPU Scene BVH](../../../../architecture/rendering/gpu-scene-bvh.md).
 - Every fallback is observable: telemetry distinguishes phase-1/phase-2 draw
   counts, node rejections, and any conservative-visible passthrough with a
   reason.
+- GPU-written visibility, compacted commands, indirect counts, and delayed stats
+  are frame data, not command topology. Production Vulkan records stable
+  pass-level dispatch, resource-specific barrier, and indirect-count packets and
+  rerecords only for an explicit topology, capacity, binding, pipeline, or
+  resource-generation change.
 
 ## Target Architecture
 
@@ -137,9 +143,11 @@ Key structures:
 - **BVH node visibility**: optional per-node last-visible frame id so fully
   occluded subtrees are skipped in phase 1 and only re-tested in phase 2.
 
-## Phase 0 - Branch And Baseline
+## Phase 0 - Baseline
 
-- [ ] Create branch `rendering-gpu-driven-occlusion`.
+- [ ] Execute and report this supporting work through the canonical Phase
+  5.2B/5.2C gates; do not create a separate branch or independent completion
+  status.
 - [ ] Capture baseline profiles in the Unit Testing World (Vulkan +
   `GPURenderDispatch=true`, DevParity and ShippingFast profiles): FPS, cull
   dispatch ms, HiZ stage stats (`HiZStageStats`), draw counts with `GpuHiZ`
@@ -168,6 +176,10 @@ Key structures:
   build (compute), phase-2 dispatch, and indirect count draws under
   synchronization2; confirm OpenGL equivalents map to existing
   `MemoryBarrier` masks.
+- [ ] Define the stable recorded packet topology for cull, compact, pyramid,
+  phase-2 recovery, and indirect draws. Identify the exact structural and
+  binding generations that invalidate it; exclude ordinary GPU-written contents
+  and counts from those invalidators.
 
 Acceptance criteria:
 
@@ -210,6 +222,9 @@ Acceptance criteria:
 - [ ] Emit two indirect batches per pass (phase-1, phase-2) or one combined
   append buffer with a second count slot; both drawn via
   `MultiDraw*IndirectCount` with no CPU count knowledge.
+- [ ] Keep those pass-level dispatch/barrier/indirect calls reusable across
+  frame slots. Changing visibility bits or generated command/count contents must
+  not mark the primary as a mutable GPU-driven frame operation.
 - [ ] Delete/param-gate `XRE_GPU_HIZ_DIRTY_BYPASS`: camera jumps and scene
   mutations are handled naturally (phase 1 draws last-visible, phase 2
   recovers the rest). Keep the explicit memory-barrier contract from the
@@ -312,6 +327,13 @@ Acceptance criteria:
     frustum-only).
   - [ ] Zero CPU readback bytes per frame in zero-readback modes
     (`Stats.GpuReadback`).
+- [ ] Canonical command-reuse counters show zero warmed primary rerecords caused
+  solely by GPU-written visibility/command/count changes; every miss names a
+  topology, capacity, binding, pipeline, or resource-generation change.
+- [ ] Matched low-, medium-, and high-count Phase 5.2A/5.2B scaling curves
+  separate CPU recording from GPU execution and demonstrate the approved
+  high-count/occlusion crossover or scaling advantage before performance
+  promotion.
 - [ ] OpenGL parity run (instrumented + zero-readback) on the same scene.
 
 ## Open Questions
@@ -333,5 +355,6 @@ Acceptance criteria:
 
 ## Final Task
 
-- [ ] Merge `rendering-gpu-driven-occlusion` back into `master` after all
-  phases validate.
+- [ ] Close this supporting tracker only when the canonical Phase 5.2B and each
+  applicable 5.2C gate record the same implementation, validation, and
+  documentation evidence.

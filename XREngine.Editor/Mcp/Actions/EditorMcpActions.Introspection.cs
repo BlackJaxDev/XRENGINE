@@ -837,6 +837,9 @@ namespace XREngine.Editor.Mcp
                         : NvidiaDlssManager.FrameGenerationRuntimeDllsUnavailableReason,
                     frameGenerationAvailable = NvidiaDlssManager.FrameGenerationAvailable,
                     frameGenerationUnavailableReason = NvidiaDlssManager.FrameGenerationUnavailableReason,
+                    frameGenerationMaximumFramesToGenerate = NvidiaDlssManager.FrameGenerationMaximumFramesToGenerate,
+                    frameGenerationFramesActuallyPresented = NvidiaDlssManager.FrameGenerationFramesActuallyPresented,
+                    frameGenerationFramesActuallyPresentedTotal = NvidiaDlssManager.FrameGenerationFramesActuallyPresentedTotal,
                     effectiveFrameGenerationEnabled = Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration,
                     effectiveFrameGenerationMode = Engine.EffectiveSettings.NvidiaDlssFrameGenerationMode.ToString(),
                     effectiveFrameGenerationRequested = Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration

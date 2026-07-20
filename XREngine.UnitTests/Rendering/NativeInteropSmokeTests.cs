@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using NUnit.Framework;
+using XREngine.Rendering.DLSS;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -38,6 +39,30 @@ public class NativeInteropSmokeTests
         {
             NativeLibrary.Free(handle);
         }
+    }
+
+    [Test]
+    public void StreamlineLibrary_ReportsVulkanRequirementsForDlssAndFrameGeneration()
+    {
+        bool resolved = NvidiaDlssManager.Native.TryGetRequiredVulkanRequirements(
+            includeDlss: true,
+            includeFrameGeneration: true,
+            out string[] instanceExtensions,
+            out string[] deviceExtensions,
+            out string[] featureNames12,
+            out string[] featureNames13,
+            out NvidiaDlssManager.Native.StreamlineQueueRequirements queueRequirements,
+            out string failureReason);
+
+        Assert.That(resolved, Is.True, failureReason);
+        Assert.That(deviceExtensions, Does.Contain("VK_KHR_push_descriptor"), "The Streamline Vulkan runtime must report its mandatory push-descriptor device extension.");
+        Assert.That(featureNames12, Does.Contain("timelineSemaphore"), "The Streamline Vulkan runtime must report its mandatory timeline-semaphore feature.");
+        Assert.That(featureNames12, Does.Contain("bufferDeviceAddress"), "The Streamline Vulkan runtime must report its mandatory buffer-device-address feature.");
+
+        TestContext.Progress.WriteLine(
+            $"Streamline Vulkan requirements: instance=[{string.Join(',', instanceExtensions)}] device=[{string.Join(',', deviceExtensions)}] " +
+            $"features12=[{string.Join(',', featureNames12)}] features13=[{string.Join(',', featureNames13)}] " +
+            $"queues=G{queueRequirements.GraphicsQueues}/C{queueRequirements.ComputeQueues}/OF{queueRequirements.OpticalFlowQueues}");
     }
 
     [Test]

@@ -1,12 +1,13 @@
 # Engine Rendering Optimization Roadmap
 
-Last Updated: 2026-07-01
+Last Updated: 2026-07-20
 Owner: Rendering
-Status: Active roadmap
-Target Branch: `rendering-engine-optimization-roadmap`
+Status: Active supporting roadmap for Vulkan Core Hardening Phase 5.2A-5.2C
+Execution: Vulkan Phase 5.2 work uses the current worktree; do not create or switch branches for that effort.
 
 Design source:
 
+- [Canonical Vulkan Core Hardening And Device-Loss TODO](../vulkan-core-hardening-and-device-loss-todo.md)
 - [Engine Rendering Optimization Design](../../../design/rendering/engine-optimization-and-avatar-optimizer-design.md)
 - [Mesh Submission Strategies](../../../../architecture/rendering/mesh-submission-strategies.md)
 - [Frame Lifecycle And Dispatch Paths](../../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
@@ -44,11 +45,15 @@ Avatar asset transformation is tracked separately under
 
 ## Global Invariants
 
-- CPU direct remains the correctness baseline and the fallback path.
+- CPU direct remains the correctness baseline and an explicitly selected
+  fallback path. A requested accelerated strategy never enters it silently.
 - `GpuIndirectZeroReadback` must not read GPU visibility, counters, ranges, or
   query results needed by the current frame.
 - GPU-driven rendering must compact to active work. Full material, bucket, or
   meshlet scans are diagnostic or transitional only.
+- Vulkan CPU-direct and GPU-driven paths must reuse generation-validated stable
+  command topology. Data-only frame-slot, upload, visibility, indirect-command,
+  and count changes do not invalidate compatible recorded ranges.
 - Shader/program/pipeline work must be warmed before measured interactive
   frames and persisted to disk where the backend supports it.
 - Render submission hot paths must avoid heap allocations, LINQ, captured
@@ -70,9 +75,10 @@ Avatar asset transformation is tracked separately under
 | Visibility buffer | Hero avatars, material-diverse dense meshes | Material table, meshlet/indirect geometry IDs |
 | VR performance contract | Production XR acceptance | OpenVR/OpenXR paths, ViewSet/multiview plumbing |
 
-## Phase 0 - Branch, Baseline, And Triage
+## Phase 0 - Baseline And Triage
 
-- [ ] Create dedicated branch `rendering-engine-optimization-roadmap`.
+- [ ] Coordinate Vulkan work through the canonical Phase 5.2A-5.2C gates in the
+  current worktree; do not create an independent branch or promotion status.
 - [ ] Confirm the active design docs are linked from this roadmap and from
   `docs/work/README.md`.
 - [ ] Record current build status:
@@ -217,7 +223,7 @@ Acceptance criteria:
   strategy, asset content, material fan-out, texture residency, skinning,
   blendshapes, visibility-buffer shading, cluster rendering, or splat rendering.
 
-## Final Validation And Merge
+## Final Validation And Closeout
 
 - [ ] Run targeted rendering unit/source-contract tests touched by the focused
   TODOs.
@@ -225,5 +231,6 @@ Acceptance criteria:
   `GpuIndirectZeroReadback`.
 - [ ] Run at least one VR or stereo smoke when hardware/runtime is available.
 - [ ] Update this roadmap with completed status and links to evidence.
-- [ ] Merge branch `rendering-engine-optimization-roadmap` back into `main`
-  after implementation, validation, and documentation updates are complete.
+- [ ] Close Vulkan-owned work only when the canonical Phase 5.2A and every
+  supported 5.2B/5.2C gate record the same evidence or an explicit v1
+  removal/deferral decision.

@@ -36,6 +36,15 @@ namespace XREngine.Rendering.Occlusion
             public int CurrentResultAgeFrames;
             public int MaxResultAgeFrames;
             public int RecoveryLatencyFrames;
+            public int MotionTier;
+            public int MotionCause;
+            public int MotionDistanceBits;
+            public int MotionRotationBits;
+            public int MotionProjectionDeltaBits;
+            public int PreviousCameraSnapshotValid;
+            public int CurrentCameraSnapshotValid;
+            public int PreviousCameraIdentity;
+            public int CurrentCameraIdentity;
             public int LastTouchedEpoch;
             public int LastSnapshotEpoch = -1;
             public CpuOcclusionViewTelemetrySnapshot LastSnapshot;
@@ -57,7 +66,16 @@ namespace XREngine.Rendering.Occlusion
                     Interlocked.Exchange(ref MaxRecoveryAgeFrames, 0),
                     Interlocked.Exchange(ref CurrentResultAgeFrames, 0),
                     Interlocked.Exchange(ref MaxResultAgeFrames, 0),
-                    Interlocked.Exchange(ref RecoveryLatencyFrames, 0));
+                    Interlocked.Exchange(ref RecoveryLatencyFrames, 0),
+                    (ECpuOcclusionMotionTier)Volatile.Read(ref MotionTier),
+                    (ECpuOcclusionMotionCause)Volatile.Read(ref MotionCause),
+                    BitConverter.Int32BitsToSingle(Volatile.Read(ref MotionDistanceBits)),
+                    BitConverter.Int32BitsToSingle(Volatile.Read(ref MotionRotationBits)),
+                    BitConverter.Int32BitsToSingle(Volatile.Read(ref MotionProjectionDeltaBits)),
+                    Volatile.Read(ref PreviousCameraSnapshotValid) != 0,
+                    Volatile.Read(ref CurrentCameraSnapshotValid) != 0,
+                    Volatile.Read(ref PreviousCameraIdentity),
+                    Volatile.Read(ref CurrentCameraIdentity));
 
                 // Desktop and XR outputs can publish their frame boundaries at
                 // different times. Preserve each output's newest completed sample
@@ -91,6 +109,23 @@ namespace XREngine.Rendering.Occlusion
                 CpuViewCounters? counters = Touch();
                 if (counters is not null && candidateCount > 0)
                     Interlocked.Add(ref counters.CandidateCount, candidateCount);
+            }
+
+            public void RecordMotion(in CpuOcclusionMotionClassification classification)
+            {
+                CpuViewCounters? counters = Touch();
+                if (counters is null)
+                    return;
+
+                Volatile.Write(ref counters.MotionTier, (int)classification.Tier);
+                Volatile.Write(ref counters.MotionCause, (int)classification.Cause);
+                Volatile.Write(ref counters.MotionDistanceBits, BitConverter.SingleToInt32Bits(classification.DistanceMeters));
+                Volatile.Write(ref counters.MotionRotationBits, BitConverter.SingleToInt32Bits(classification.RotationDegrees));
+                Volatile.Write(ref counters.MotionProjectionDeltaBits, BitConverter.SingleToInt32Bits(classification.ProjectionDelta));
+                Volatile.Write(ref counters.PreviousCameraSnapshotValid, classification.PreviousSnapshotValid ? 1 : 0);
+                Volatile.Write(ref counters.CurrentCameraSnapshotValid, classification.CurrentSnapshotValid ? 1 : 0);
+                Volatile.Write(ref counters.PreviousCameraIdentity, classification.PreviousCameraIdentity);
+                Volatile.Write(ref counters.CurrentCameraIdentity, classification.CurrentCameraIdentity);
             }
 
             public void RecordSubmission()
@@ -306,6 +341,10 @@ namespace XREngine.Rendering.Occlusion
         private static int _lastFrameCpuQueryLatencyMaxFrames;
         private static int _cpuUnsupportedStereoQueryMode;
         private static int _lastFrameCpuUnsupportedStereoQueryMode;
+        private static int _cpuTemporalReprojectionAccepted;
+        private static int _lastFrameCpuTemporalReprojectionAccepted;
+        private static int _cpuTemporalReprojectionRejected;
+        private static int _lastFrameCpuTemporalReprojectionRejected;
         private static int _currentCpuMotionTier = (int)ECpuOcclusionMotionTier.Stable;
         private static int _lastCpuMotionTier = (int)ECpuOcclusionMotionTier.Stable;
         private static int _currentCpuViewScope = (int)EOcclusionViewScope.MonoDesktop;
@@ -417,6 +456,8 @@ namespace XREngine.Rendering.Occlusion
                 ? (double)_lastFrameCpuQueryLatencyTotalFrames / _lastFrameCpuQueryLatencySamples
                 : 0.0;
         public static int CpuUnsupportedStereoQueryMode => _lastFrameCpuUnsupportedStereoQueryMode;
+        public static int CpuTemporalReprojectionAccepted => _lastFrameCpuTemporalReprojectionAccepted;
+        public static int CpuTemporalReprojectionRejected => _lastFrameCpuTemporalReprojectionRejected;
 
         public static int GetCpuForcedVisibleCount(ECpuOcclusionForceVisibleReason reason)
             => GetCount(_lastFrameCpuForcedVisibleReasons, (int)reason);
@@ -628,6 +669,8 @@ namespace XREngine.Rendering.Occlusion
             _lastFrameCpuQueryLatencyTotalFrames = _cpuQueryLatencyTotalFrames;
             _lastFrameCpuQueryLatencyMaxFrames = _cpuQueryLatencyMaxFrames;
             _lastFrameCpuUnsupportedStereoQueryMode = _cpuUnsupportedStereoQueryMode;
+            _lastFrameCpuTemporalReprojectionAccepted = _cpuTemporalReprojectionAccepted;
+            _lastFrameCpuTemporalReprojectionRejected = _cpuTemporalReprojectionRejected;
             _lastCpuMotionTier = _currentCpuMotionTier;
             _lastCpuViewScope = _currentCpuViewScope;
             SnapshotAndReset(_cpuForcedVisibleReasons, _lastFrameCpuForcedVisibleReasons);
@@ -676,6 +719,8 @@ namespace XREngine.Rendering.Occlusion
             _cpuQueryLatencyTotalFrames = 0;
             _cpuQueryLatencyMaxFrames = 0;
             _cpuUnsupportedStereoQueryMode = 0;
+            _cpuTemporalReprojectionAccepted = 0;
+            _cpuTemporalReprojectionRejected = 0;
 
             _cpuQueryAsyncSubmitted = 0;
             _cpuQueryAsyncResolved = 0;
@@ -805,6 +850,12 @@ namespace XREngine.Rendering.Occlusion
 
         public static void RecordCpuUnsupportedStereoQueryMode()
             => Interlocked.Increment(ref _cpuUnsupportedStereoQueryMode);
+
+        public static void RecordCpuTemporalReprojectionAccepted()
+            => Interlocked.Increment(ref _cpuTemporalReprojectionAccepted);
+
+        public static void RecordCpuTemporalReprojectionRejected()
+            => Interlocked.Increment(ref _cpuTemporalReprojectionRejected);
 
         /// <summary>Records one CPU-query pass with its candidate count.</summary>
         public static void RecordCpuPassBegin(int candidateCount)

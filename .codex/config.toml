@@ -1,0 +1,7 @@
+[mcp_servers.code-review-graph]
+command = "powershell"
+args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "Tools\\Invoke-CodeReviewGraph.ps1", "serve"]
+cwd = ".."
+type = "stdio"
+required = false
+startup_timeout_sec = 30

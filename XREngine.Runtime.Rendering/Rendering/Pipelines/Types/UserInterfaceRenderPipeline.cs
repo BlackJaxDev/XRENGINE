@@ -12,6 +12,8 @@ public class UserInterfaceRenderPipeline : RenderPipeline
 {
     public const string SceneShaderPath = "Scene3D";
 
+    internal override bool UsesDisplayResolutionForManagedResources => true;
+
     /// <summary>
     /// When set, UI render passes dispatch batched instanced draws for material quads and text quads
     /// instead of individual per-component draw calls. Set by the owning <see cref="UICanvasComponent"/>.
