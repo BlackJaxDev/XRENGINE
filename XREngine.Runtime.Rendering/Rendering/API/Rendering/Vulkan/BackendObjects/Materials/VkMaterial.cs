@@ -752,6 +752,12 @@ namespace XREngine.Rendering.Vulkan
             /// <param name="frameIndex">The frame-in-flight index to update.</param>
             /// <returns><c>true</c> if all descriptors were resolved and the update call succeeded.</returns>
             private bool UpdateFrameDescriptorSet(ProgramDescriptorState state, int frameIndex)
+                => UpdateFrameDescriptorSetCore(state, frameIndex, allowRetirementRetry: true);
+
+            private bool UpdateFrameDescriptorSetCore(
+                ProgramDescriptorState state,
+                int frameIndex,
+                bool allowRetirementRetry)
             {
                 // Accumulate write operations and their associated descriptor infos.
                 // Index maps record which write corresponds to which info entry so that
@@ -901,8 +907,31 @@ namespace XREngine.Rendering.Vulkan
                             }
                         }
 
-                        if (!TryUpdateDescriptorSetsWithTemplates(state, frameIndex, writeArray))
-                            Renderer.UpdateDescriptorSetsTracked((uint)writeArray.Length, writePtr);
+                        if (!TryUpdateDescriptorSetsWithTemplates(state, frameIndex, writeArray) &&
+                            !Renderer.TryUpdateDescriptorSetsTracked(
+                                (uint)writeArray.Length,
+                                writePtr,
+                                out string descriptorUpdateFailure))
+                        {
+                            if (allowRetirementRetry &&
+                                descriptorUpdateFailure.Contains("retired Vulkan resource", StringComparison.Ordinal))
+                            {
+                                // Re-resolve every image snapshot immediately. The failed preflight did not
+                                // publish native descriptors, and the texture path will replace views that the
+                                // just-committed generation marked for retirement.
+                                return UpdateFrameDescriptorSetCore(
+                                    state,
+                                    frameIndex,
+                                    allowRetirementRetry: false);
+                            }
+
+                            Debug.VulkanWarningEvery(
+                                $"Vulkan.MaterialDescriptorUpdate.RetiredResource.{Data.GetHashCode()}",
+                                TimeSpan.FromSeconds(1),
+                                "[Vulkan] Deferred material descriptor update because a render-resource generation retired concurrently: {0}",
+                                descriptorUpdateFailure);
+                            return false;
+                        }
                         Renderer.RecordVulkanDescriptorTableGeneration("MaterialDescriptorSets.Update");
                     }
                 }

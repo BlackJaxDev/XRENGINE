@@ -21,6 +21,7 @@ namespace XREngine.Rendering.Vulkan
             if (Window?.VkSurface is null)
                 throw new Exception("Windowing platform doesn't support Vulkan.");
 
+            PrepareStreamlineVulkanRequirements();
             CreateInstance();
             SetupDebugMessenger();
             CreateSurface();
@@ -98,7 +99,9 @@ namespace XREngine.Rendering.Vulkan
             CancelPendingImportedTextureUploadFrameOps("Vulkan renderer shutdown");
             CancelRecordedTextureUploadPublications("Vulkan renderer shutdown");
             DrainVulkanPipelineCompileQueueForShutdown();
+            DrainScreenshotReadbacksForShutdown();
             WaitForPendingReadbackTasks(TimeSpan.FromSeconds(6));
+            DisposeScreenshotReadbacks();
             DisposeGpuRenderStatsReadbacks();
             DestroyComputeTransientResources();
             DestroyComputeDescriptorCaches();

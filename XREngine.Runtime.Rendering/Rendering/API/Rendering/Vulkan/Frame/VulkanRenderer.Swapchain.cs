@@ -39,6 +39,14 @@ public unsafe partial class VulkanRenderer
         new(Format.R8G8B8A8Unorm, ColorSpaceKHR.SpaceSrgbNonlinearKhr),
     ];
 
+    private static readonly SurfaceFormatPreference[] DlssFrameGenerationSdrSurfacePreferences =
+    [
+        // Streamline DLSS-G rejects sRGB VkFormats for back buffers. The nonlinear
+        // color space still applies the expected SDR transfer function.
+        new(Format.B8G8R8A8Unorm, ColorSpaceKHR.SpaceSrgbNonlinearKhr),
+        new(Format.R8G8B8A8Unorm, ColorSpaceKHR.SpaceSrgbNonlinearKhr),
+    ];
+
     public Format PreferredFormat { get; set; } = Format.B8G8R8A8Srgb;
     public ColorSpaceKHR PreferredColorSpace { get; set; } = ColorSpaceKHR.SpaceSrgbNonlinearKhr;
     public PresentModeKHR PreferredPresentMode { get; set; } = PresentModeKHR.MailboxKhr;
@@ -160,6 +168,7 @@ public unsafe partial class VulkanRenderer
     private void DestroyAllSwapChainObjects()
     {
         DestroySwapchainImGuiResources();
+        DestroyStreamlineUiResources();
         DestroyDepth();
         DestroySwapchainCommandBuffers();
         DestroyFrameBuffers();
@@ -206,10 +215,30 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    private void DrainStreamlineFrameGenerationDisableBeforePresent()
+    {
+        if (!_streamlineFrameGenerationSwapchainActive || NvidiaDlssManager.IsFrameGenerationRequested)
+            return;
+
+        var viewports = XRWindow.Viewports;
+        for (int i = 0; i < viewports.Count; i++)
+        {
+            XRViewport viewport = viewports[i];
+            if (NvidiaDlssManager.Native.TryDrainFrameGenerationDisableForPresent(this, viewport, out string failureReason))
+                continue;
+
+            Debug.RenderingError(
+                "NVIDIA DLSS frame generation could not finish its disable drain for viewport {0}: {1}",
+                viewport.Index,
+                failureReason);
+        }
+    }
+
     private void CreateAllSwapChainObjects()
     {
         CreateSwapChain();
         CreateImageViews();
+        CreateStreamlineUiResources();
 
         _swapchainDepthFormat = FindDepthFormat();
         _swapchainDepthAspect = IsDepthStencilFormat(_swapchainDepthFormat)
@@ -408,9 +437,13 @@ public unsafe partial class VulkanRenderer
         if (!Api!.TryGetDeviceExtension(instance, device, out khrSwapChain))
             throw new NotSupportedException("VK_KHR_swapchain extension not found.");
 
-        bool requestStreamlineFrameGeneration = NvidiaDlssManager.IsFrameGenerationRequested;
+        // Streamline's proxy swapchain is a provisioned device capability, not a live
+        // frame-generation option. Keeping it for the renderer lifetime lets the UI
+        // toggle DLSS-G without destroying the swapchain and all generation-bound
+        // descriptors. Frame generation itself remains disabled until requested.
+        bool requestStreamlineFrameGeneration = _streamlineFrameGenerationProvisioned;
         bool requestStreamlineFrameGenerationDlss = requestStreamlineFrameGeneration
-            && NvidiaDlssManager.Native.ShouldLoadDlssFeatureForFrameGenerationRuntime;
+            && _streamlineDlssProvisioned;
         Result createResult;
         if (requestStreamlineFrameGeneration)
         {
@@ -481,7 +514,7 @@ public unsafe partial class VulkanRenderer
         if (_streamlineFrameGenerationSwapchainActive)
         {
             Debug.Rendering(
-                "[Vulkan] NVIDIA DLSS frame generation requested: swapchain created through Streamline proxy. format={0} extent={1}x{2} images={3}",
+                "[Vulkan] NVIDIA DLSS frame generation provisioned: swapchain created through Streamline proxy. format={0} extent={1}x{2} images={3}",
                 swapChainImageFormat,
                 swapChainExtent.Width,
                 swapChainExtent.Height,
@@ -496,12 +529,26 @@ public unsafe partial class VulkanRenderer
 
         if (_supportsSwapchainColorspace
             && requestHdr
-            && NvidiaDlssManager.IsFrameGenerationRequested
+            && _streamlineFrameGenerationProvisioned
             && TrySelectSurfaceFormat(availableFormats, DlssFrameGenerationHdrSurfacePreferences, out SurfaceFormatKHR dlssFrameGenerationHdrFormat))
         {
             PreferredFormat = dlssFrameGenerationHdrFormat.Format;
             PreferredColorSpace = dlssFrameGenerationHdrFormat.ColorSpace;
             return dlssFrameGenerationHdrFormat;
+        }
+
+        if (_streamlineFrameGenerationProvisioned
+            && TrySelectSurfaceFormat(availableFormats, DlssFrameGenerationSdrSurfacePreferences, out SurfaceFormatKHR dlssFrameGenerationSdrFormat))
+        {
+            PreferredFormat = dlssFrameGenerationSdrFormat.Format;
+            PreferredColorSpace = dlssFrameGenerationSdrFormat.ColorSpace;
+            return dlssFrameGenerationSdrFormat;
+        }
+
+        if (_streamlineFrameGenerationProvisioned)
+        {
+            throw new NotSupportedException(
+                "NVIDIA DLSS frame generation requires an RGB10 HDR10 or UNORM SDR Vulkan swapchain format; this surface exposes no Streamline-compatible back-buffer format.");
         }
 
         if (_supportsSwapchainColorspace &&
@@ -543,7 +590,7 @@ public unsafe partial class VulkanRenderer
 
     private PresentModeKHR ChoosePresentMode(IReadOnlyList<PresentModeKHR> availablePresentModes)
     {
-        if (NvidiaDlssManager.IsFrameGenerationRequested)
+        if (_streamlineFrameGenerationProvisioned)
         {
             for (int preferenceIndex = 0; preferenceIndex < DlssFrameGenerationPresentModePreferences.Length; preferenceIndex++)
             {

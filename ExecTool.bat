@@ -9,6 +9,7 @@ REM    ExecTool              (interactive menu)
 REM    ExecTool <number>     (run tool by number directly)
 REM    ExecTool --list       (print tool list and exit)
 REM    ExecTool --help       (show help)
+REM    ExecTool --bootstrap --with-agent-tools
 REM ============================================================================
 
 cd /d "%~dp0"
@@ -37,6 +38,12 @@ call :AddTool "Repo" "Tools\Initialize-Submodules.bat" "Initialize and update al
 call :AddTool "Repo" "Tools\Reset-GlobalConfig.bat" "Delete global editor preferences (factory reset)"
 call :AddTool "Repo" "Tools\Reset-SandboxConfig.bat" "Delete sandbox config (engine_settings, user_settings, build_settings)"
 call :AddRunAll "Repo"
+call :AddSep
+call :AddTool "Agent" "Tools\Setup-CodeReviewGraph.ps1 -InstallPrerequisites" "Set up the isolated code-review-graph environment and build/update the graph"
+call :AddTool "Agent" "Tools\Invoke-CodeReviewGraph.ps1 build" "Rebuild the code-review graph"
+call :AddTool "Agent" "Tools\Invoke-CodeReviewGraph.ps1 update" "Incrementally update the code-review graph"
+call :AddTool "Agent" "Tools\Invoke-CodeReviewGraph.ps1 status" "Show code-review graph status"
+call :AddTool "Agent" "Tools\Invoke-CodeReviewGraph.ps1 visualize" "Generate the interactive code-review graph"
 call :AddSep
 call :AddTool "Docs" "Tools\Start-DocFxServer.bat" "Build and serve DocFX docs locally on port 8080"
 call :AddTool "Docs" "Tools\Invoke-GameProject.bat" "Helper for game-project workflows (compile/build/run/publish)"
@@ -197,6 +204,13 @@ echo   XRENGINE Full Bootstrap
 echo  ============================================================
 echo.
 set "BOOT_FAIL=0"
+set "BOOT_WITH_AGENT_TOOLS=0"
+if /I "%~2"=="--with-agent-tools" set "BOOT_WITH_AGENT_TOOLS=1"
+if not "%~2"=="" if /I not "%~2"=="--with-agent-tools" (
+    echo  Unknown bootstrap option: %~2
+    echo  Supported option: --with-agent-tools
+    exit /b 1
+)
 
 REM Step 1: Initialize submodules
 echo  [1/7] Initializing git submodules...
@@ -234,6 +248,18 @@ if !ERRORLEVEL! NEQ 0 (
     set "BOOT_FAIL=1"
 )
 echo.
+
+REM Optional agent tooling: isolated code-review-graph environment and local graph
+if "!BOOT_WITH_AGENT_TOOLS!"=="1" (
+    echo  [3A/7] Setting up code-review-graph agent tooling...
+    echo  ------------------------------------------------------------
+    powershell -NoProfile -ExecutionPolicy Bypass -File "Tools\Setup-CodeReviewGraph.ps1" -InstallPrerequisites
+    if !ERRORLEVEL! NEQ 0 (
+        echo  WARNING: code-review-graph setup reported errors.
+        set "BOOT_FAIL=1"
+    )
+    echo.
+)
 
 REM Step 4: Generate local unit-testing world settings
 echo  [4/7] Generating UnitTestingWorldSettings files...
@@ -305,6 +331,8 @@ echo  Usage:
 echo    ExecTool              Launch interactive menu
 echo    ExecTool ^<number^>     Run a specific tool by its menu number
 echo    ExecTool --bootstrap  Full project setup (submodules, deps, settings, build, launch)
+echo    ExecTool --bootstrap --with-agent-tools
+echo                          Also create the isolated code-review-graph environment and graph
 echo    ExecTool --list       Print the tool list and exit
 echo    ExecTool --help       Show this help
 echo.

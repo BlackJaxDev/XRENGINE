@@ -4685,8 +4685,7 @@ public unsafe partial class VulkanRenderer
         out string failureReason)
     {
         failureReason = string.Empty;
-        if (IsRenderingExternalSwapchainTarget)
-            RebaseFrameOpResourcesToActiveResourcePlan(ops, plannerContext.ResourceRegistry);
+        RebaseFrameOpResourcesToActiveResourcePlan(ops);
         HashSet<object> visitedRegistries = _commandBufferRecordingScratch.Value!.VisitedResourceRegistries;
         visitedRegistries.Clear();
         if (!TryRefreshResourceRegistryWrappers(plannerContext.ResourceRegistry, visitedRegistries, reason, allowSynchronousUpload, out failureReason))
@@ -4701,20 +4700,30 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
-    private static void RebaseFrameOpResourcesToActiveResourcePlan(
-        FrameOp[] ops,
-        RenderResourceRegistry? activeRegistry)
+    private void RebaseFrameOpResourcesToActiveResourcePlan(FrameOp[] ops)
     {
-        if (activeRegistry is null)
-            return;
-
         for (int opIndex = 0; opIndex < ops.Length; opIndex++)
         {
-            FrameOp op = RebaseFrameOpTargetsToActiveResourcePlan(ops[opIndex], activeRegistry);
-            ops[opIndex] = op;
-            XRRenderPipelineInstance? pipeline = op.Context.PipelineInstance;
+            FrameOp capturedOp = ops[opIndex];
+            XRRenderPipelineInstance? pipeline = capturedOp.Context.PipelineInstance;
             if (pipeline is null)
                 continue;
+
+            RenderResourceRegistry activeRegistry = pipeline.Resources;
+            FrameOpContext context = capturedOp.Context with
+            {
+                ResourceRegistry = activeRegistry,
+                DisplayWidth = pipeline.ResourceDisplayWidth ?? capturedOp.Context.DisplayWidth,
+                DisplayHeight = pipeline.ResourceDisplayHeight ?? capturedOp.Context.DisplayHeight,
+                InternalWidth = pipeline.ResourceInternalWidth ?? capturedOp.Context.InternalWidth,
+                InternalHeight = pipeline.ResourceInternalHeight ?? capturedOp.Context.InternalHeight,
+                ResourceGeneration = unchecked((ulong)Math.Max(pipeline.ResourceGeneration, 0)),
+                DescriptorGeneration = ResolveFrameOpContextDescriptorGeneration(activeRegistry),
+                ResourceRegistrySignatureSnapshot = ComputeResourceRegistrySignature(activeRegistry),
+            };
+            context = RefreshFrameOpContextRecordingFingerprint(context);
+            FrameOp op = RebaseFrameOpTargetsToActiveResourcePlan(capturedOp with { Context = context }, activeRegistry);
+            ops[opIndex] = op;
 
             ComputeDispatchSnapshot? snapshot = op switch
             {
@@ -4881,11 +4890,27 @@ public unsafe partial class VulkanRenderer
             if (texture is XRTexture3D)
                 continue;
 
+            // A registry retains logical resources whose predicates are disabled so a later pipeline
+            // generation can activate them without rebuilding the declaration set. Those dormant render
+            // targets deliberately have no entry in the active Vulkan allocation plan. Trying to refresh
+            // their old wrappers makes an unrelated optional target (for example the overdraw debug target)
+            // defer every frame after a DLSS/DLSS-G resource-generation change.
+            if ((texture.FrameBufferAttachment.HasValue || texture.RequiresStorageUsage) &&
+                (string.IsNullOrWhiteSpace(texture.Name) ||
+                 !ResourceAllocator.TryGetPhysicalGroupForResource(texture.Name, out VulkanPhysicalImageGroup? physicalGroup) ||
+                 physicalGroup?.IsAllocated != true))
+            {
+                continue;
+            }
+
             if (GetOrCreateAPIRenderObject(texture, generateNow: true) is IVkImageDescriptorSource imageSource &&
                 !imageSource.TryEnsureDescriptorReadyForUse(reason, allowSynchronousUpload))
             {
-                failureReason = $"texture '{texture.Name ?? texture.GetDescribingName()}' descriptor is not ready during {reason}";
-                return false;
+                // Registry refresh is a prewarm over every declared texture, including optional resources
+                // that no op in this command chain consumes. The draw/dispatch descriptor paths validate
+                // their actual bindings before recording, so leave an unready unrelated wrapper for a
+                // later generation instead of rejecting the entire desktop frame.
+                continue;
             }
         }
         XRRenderBuffer[] renderBuffers = registry.GetRenderBufferInstanceSnapshot();

@@ -161,7 +161,9 @@ public static partial class EditorImGuiUI
             OcclusionTelemetry.CpuBudgetSkippedTotal +
             OcclusionTelemetry.CpuForcedVisibleTotal +
             OcclusionTelemetry.CpuGlobalConservativeFrames +
-            OcclusionTelemetry.CpuUnsupportedStereoQueryMode;
+            OcclusionTelemetry.CpuUnsupportedStereoQueryMode +
+            OcclusionTelemetry.CpuTemporalReprojectionAccepted +
+            OcclusionTelemetry.CpuTemporalReprojectionRejected;
         if (cpuPasses > 0 || cpuHealthSignals > 0)
         {
             ImGui.Spacing();
@@ -171,6 +173,8 @@ public static partial class EditorImGuiUI
             ImGui.Text($"    Submitted / Resolved: {OcclusionTelemetry.CpuQuerySubmittedTotal:N0} / {OcclusionTelemetry.CpuQueryResolvedTotal:N0}");
             if (OcclusionTelemetry.CpuQueryLatencySamples > 0)
                 ImGui.Text($"    Latency Frames      : avg={OcclusionTelemetry.CpuQueryLatencyAverageFrames:F1} max={OcclusionTelemetry.CpuQueryLatencyMaxFrames}");
+            if (OcclusionTelemetry.CpuTemporalReprojectionAccepted + OcclusionTelemetry.CpuTemporalReprojectionRejected > 0)
+                ImGui.Text($"    Temporal Reprojection: accepted={OcclusionTelemetry.CpuTemporalReprojectionAccepted:N0} rejected={OcclusionTelemetry.CpuTemporalReprojectionRejected:N0}");
             if (OcclusionTelemetry.CpuGlobalConservativeFrames > 0)
                 ImGui.TextColored(new Vector4(1.0f, 0.85f, 0.4f, 1.0f),
                     $"    Conservative Frames : {OcclusionTelemetry.CpuGlobalConservativeFrames:N0}");

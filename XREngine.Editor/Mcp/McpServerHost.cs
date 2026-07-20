@@ -132,6 +132,18 @@ namespace XREngine.Editor.Mcp
             if (cliEnabled)
                 SetCliOverride(overrides.McpServerEnabledOverride, true);
 
+            // CLI overrides must be reflected before UpdateServerState reads the
+            // effective preferences. Depending on when the project settings root
+            // was loaded, nested override notifications may not be tracked yet.
+            if (cliPort.HasValue || cliPermissionPolicy.HasValue || cliEnabled)
+                Engine.RefreshEffectiveEditorPreferences();
+
+            Debug.Out(
+                $"[MCP] initialize cli_enabled={cliEnabled} cli_port={cliPort?.ToString() ?? "<none>"} " +
+                $"cli_permission={cliPermissionPolicy?.ToString() ?? "<none>"} " +
+                $"effective_enabled={Engine.EditorPreferences.McpServerEnabled} " +
+                $"effective_port={Engine.EditorPreferences.McpServerPort}");
+
             // Subscribe to preference changes
             Engine.EditorPreferences.PropertyChanged += Instance.OnPreferencesChanged;
 

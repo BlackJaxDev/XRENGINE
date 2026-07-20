@@ -870,7 +870,8 @@ namespace XREngine.Rendering.Commands
                             camera,
                             queryKey,
                             out probeRequest,
-                            occlusionOwnership);
+                            occlusionOwnership,
+                            cmd.CullingVolume);
                     }
                     bool needsHardwareQuery = probeRequest.Requested;
 
@@ -1039,7 +1040,12 @@ namespace XREngine.Rendering.Commands
                                     camera!));
                             }
                             if (queryScheduled)
-                                s_cpuOcclusionCoordinator.BeginQuery(renderPass, camera, queryKey, occlusionOwnership);
+                                s_cpuOcclusionCoordinator.BeginQuery(
+                                    renderPass,
+                                    camera,
+                                    queryKey,
+                                    occlusionOwnership,
+                                    visibleProbeBounds);
                             try
                             {
                                 RenderWithGpuScope(cmd, renderPass);
@@ -1174,9 +1180,19 @@ namespace XREngine.Rendering.Commands
                 foreach (var probe in deferredProbes)
                 {
                     if (probe.IsHierarchyGroup)
-                        s_cpuOcclusionCoordinator.BeginHierarchyQuery(renderPass, camera, probe.HierarchyGroupKey, occlusionOwnership);
+                        s_cpuOcclusionCoordinator.BeginHierarchyQuery(
+                            renderPass,
+                            camera,
+                            probe.HierarchyGroupKey,
+                            occlusionOwnership,
+                            probe.WorldBounds);
                     else
-                        s_cpuOcclusionCoordinator.BeginQuery(renderPass, camera, probe.QueryKey, occlusionOwnership);
+                        s_cpuOcclusionCoordinator.BeginQuery(
+                            renderPass,
+                            camera,
+                            probe.QueryKey,
+                            occlusionOwnership,
+                            probe.WorldBounds);
                     try
                     {
                         XREngine.Rendering.Occlusion.CpuOcclusionProxyRenderer.Draw(probe.WorldBounds, camera!);
@@ -1231,6 +1247,25 @@ namespace XREngine.Rendering.Commands
             distance = MathF.Max(0.001f, MathF.Abs(camera.DistanceFromRenderNearPlane(center)));
             float projectedRadius = radius / distance;
             float priority = projectedRadius * projectedRadius;
+
+            if (CpuOcclusionProjectionFootprint.TryProject(
+                    bounds,
+                    camera.ViewProjectionMatrixUnjittered,
+                    out CpuOcclusionProjectionFootprint footprint))
+            {
+                const float priorityEdgeBand = 0.20f;
+                float edgePressure = Math.Clamp(
+                    (priorityEdgeBand - footprint.ViewportEdgeMargin) / priorityEdgeBand,
+                    0.0f,
+                    1.0f);
+                priority += edgePressure * 2.0f;
+            }
+            else
+            {
+                // Near-plane crossings and invalid clip projections have the highest
+                // reveal risk and should be refreshed ahead of central, stable proxies.
+                priority += 4.0f;
+            }
 
             float edgeRisk = 0.0f;
             AccumulateRevealRisk(camera, new Vector3(bounds.Min.X, bounds.Min.Y, bounds.Min.Z), ref edgeRisk);

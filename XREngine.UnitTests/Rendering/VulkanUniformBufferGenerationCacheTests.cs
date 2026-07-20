@@ -447,8 +447,57 @@ public sealed class VulkanUniformBufferGenerationCacheTests
 
         familyBases[new(firstRenderer, firstFamily)].ShouldBe(0);
         familyBases[new(secondRenderer, secondFamily)].ShouldBe(0);
-        requirements[firstRenderer].ShouldBe(32);
-        requirements[secondRenderer].ShouldBe(32);
+        requirements[firstRenderer].ShouldBe(4);
+        requirements[secondRenderer].ShouldBe(8);
+    }
+
+    [Test]
+    public void FrameWideManifest_DenseSingleDrawFamiliesKeepPerRendererCapacityBounded()
+    {
+        const int rendererCount = 400;
+        var requirements = new Dictionary<VulkanRenderer.VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
+        var rendererFamilies = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+        var familyStrides = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>();
+        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+        var family = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(
+            0,
+            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
+            VulkanRenderer.EVulkanFrameOpContextKind.Shadow,
+            10,
+            20,
+            30,
+            40,
+            50,
+            0,
+            false,
+            false);
+
+        for (int i = 0; i < rendererCount; i++)
+        {
+            var renderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+                typeof(VulkanRenderer.VkMeshRenderer));
+            rendererFamilies.Add(new(renderer, family), 1);
+        }
+        familyStrides.Add(family, 1);
+
+        VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
+        manifest.TryRegister(
+                100,
+                requirements,
+                rendererFamilies,
+                familyStrides,
+                familyBases,
+                sealAfterRegister: true,
+                out _,
+                out _)
+            .ShouldBeTrue();
+
+        requirements.Count.ShouldBe(rendererCount);
+        foreach (int requiredSlots in requirements.Values)
+            requiredSlots.ShouldBe(4);
+        manifest.PublishedFamilyCount.ShouldBe(rendererCount);
     }
 
     [Test]
@@ -493,10 +542,10 @@ public sealed class VulkanUniformBufferGenerationCacheTests
                 out _)
             .ShouldBeTrue();
         int firstBase = familyBases[new(renderer, family)];
-        requirements[renderer].ShouldBeGreaterThanOrEqualTo(firstBase + 32);
+        requirements[renderer].ShouldBeGreaterThanOrEqualTo(firstBase + 4);
 
-        rendererFamilies[new(renderer, family)] = 20;
-        familyStrides[family] = 20;
+        rendererFamilies[new(renderer, family)] = 4;
+        familyStrides[family] = 4;
         manifest.TryRegister(
                 100,
                 requirements,

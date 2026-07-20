@@ -114,6 +114,12 @@ public static class RuntimeRenderingHostServiceDefaults
     public const EThreePlayerPreference ThreePlayerViewportPreference = EThreePlayerPreference.PreferFirstPlayer;
     public const RuntimeGraphicsApiKind CurrentRenderBackend = RuntimeGraphicsApiKind.Unknown;
     public const EAntiAliasingMode DefaultAntiAliasingMode = EAntiAliasingMode.None;
+    public const bool EnableNvidiaDlss = false;
+    public const EDlssQualityMode DlssQuality = EDlssQualityMode.Quality;
+    public const float DlssCustomScale = 1.0f;
+    public const float DlssSharpness = 0.0f;
+    public const bool EnableNvidiaDlssFrameGeneration = false;
+    public const ENvidiaDlssFrameGenerationMode NvidiaDlssFrameGenerationMode = ENvidiaDlssFrameGenerationMode.Off;
     public const XRCamera.EDepthMode SceneCameraDepthModePreference = XRCamera.EDepthMode.Normal;
 
     public const bool ProvidesShadowAtlasSettings = false;

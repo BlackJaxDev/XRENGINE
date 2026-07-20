@@ -17,13 +17,71 @@ public sealed class McpServerAutomationTests
         string docs = ReadWorkspaceFile("docs/developer-guides/ai/mcp-server.md");
 
         viewportActions.ShouldContain("[XRMcp(Name = \"capture_viewport_screenshot\")]");
-        viewportActions.ShouldContain("renderer.GetScreenshotAsync(viewport.Region");
+        viewportActions.ShouldContain("renderer.TryQueueScreenshotReadback(captureRegion");
         viewportActions.ShouldContain("renderer.ScreenshotRequiresVerticalFlip");
         rendererSource.ShouldContain("public virtual bool ScreenshotRequiresVerticalFlip => true;");
         vulkanReadback.ShouldContain("public override bool ScreenshotRequiresVerticalFlip => false;");
         vulkanReadback.ShouldContain("if (!withTransparency)");
         vulkanReadback.ShouldContain("ForceOpaqueAlpha");
         docs.ShouldContain("capture_viewport_screenshot");
+    }
+
+    [Test]
+    public void McpServer_ExposesBoundedViewportSequenceCaptureTools()
+    {
+        string actions = ReadWorkspaceFile("XREngine.Editor/Mcp/Actions/EditorMcpActions.ViewportSequence.cs");
+        string sessionLifecycle = ReadWorkspaceFile("XREngine.Editor/Mcp/Capture/ViewportSequenceCaptureSession.cs");
+        string sessionCapture = ReadWorkspaceFile("XREngine.Editor/Mcp/Capture/ViewportSequenceCaptureSession.Capture.cs");
+        string sessionFinalization = ReadWorkspaceFile("XREngine.Editor/Mcp/Capture/ViewportSequenceCaptureSession.Finalization.cs");
+        string options = ReadWorkspaceFile("XREngine.Editor/Mcp/Capture/ViewportSequenceCaptureOptions.cs");
+        string docs = ReadWorkspaceFile("docs/developer-guides/ai/mcp-server.md");
+
+        actions.ShouldContain("[XRMcp(Name = \"start_viewport_sequence_capture\"");
+        actions.ShouldContain("[XRMcp(Name = \"get_viewport_sequence_capture\"");
+        actions.ShouldContain("[XRMcp(Name = \"list_viewport_sequence_captures\"");
+        actions.ShouldContain("[XRMcp(Name = \"cancel_viewport_sequence_capture\"");
+        sessionLifecycle.ShouldContain("PostRenderViewportsCallback += OnPostRenderViewports");
+        sessionCapture.ShouldContain("PostRenderViewportsCallback -= OnPostRenderViewports");
+        sessionCapture.ShouldContain("Consecutive-frame capture stopped instead of silently dropping a frame");
+        sessionFinalization.ShouldContain("ViewportSequenceCaptureImageAnalyzer.Analyze");
+        sessionFinalization.ShouldContain("ViewportSequenceCaptureContactSheetWriter.TryWrite");
+        options.ShouldContain("MaximumTotalOutputPixels");
+        options.ShouldContain("MaximumInFlightReadbackBytes");
+        docs.ShouldContain("start_viewport_sequence_capture");
+        docs.ShouldContain("manifest.json");
+        docs.ShouldContain("contact-sheet.png");
+    }
+
+    [Test]
+    public void VulkanViewportCapture_UsesBoundedNonblockingFencePolling()
+    {
+        string vulkanReadback = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ScreenshotReadback.cs");
+        string windowLoop = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");
+        string sequenceManager = ReadWorkspaceFile(
+            "XREngine.Editor/Mcp/Capture/ViewportSequenceCaptureManager.cs");
+        string sequenceCapture = ReadWorkspaceFile(
+            "XREngine.Editor/Mcp/Capture/ViewportSequenceCaptureSession.Capture.cs");
+        string viewportActions = ReadWorkspaceFile(
+            "XREngine.Editor/Mcp/Actions/EditorMcpActions.Viewport.cs");
+
+        vulkanReadback.ShouldContain("private const int ScreenshotReadbackRingSize = 8;");
+        vulkanReadback.ShouldContain("MaximumScreenshotReadbackRawBytes");
+        vulkanReadback.ShouldContain("SubmitToQueueTracked(");
+        vulkanReadback.ShouldContain("Api!.GetFenceStatus(device, slot.Fence)");
+        vulkanReadback.ShouldContain("CmdResolveImageTracked(");
+        vulkanReadback.ShouldContain("FailPendingScreenshotReadbacksForDeviceLoss");
+        vulkanReadback.ShouldContain("Task.Run(() => ProcessScreenshotReadbackPixels");
+        vulkanReadback.ShouldNotContain("WaitForFences");
+        vulkanReadback.ShouldNotContain("QueueWaitIdle");
+
+        windowLoop.ShouldContain("frameRenderer.PollScreenshotReadbacks();");
+        sequenceManager.ShouldNotContain("Vulkan viewport sequence readback is disabled");
+        sequenceCapture.ShouldContain("_viewport.EnterRenderPipelineReadbackScope()");
+        sequenceCapture.ShouldContain("renderer.TryQueueScreenshotReadback");
+        viewportActions.ShouldNotContain("Vulkan viewport screenshot readback is temporarily disabled");
+        viewportActions.ShouldContain("renderer.TryQueueScreenshotReadback");
     }
 
     [Test]
@@ -54,6 +112,7 @@ public sealed class McpServerAutomationTests
         host.ShouldContain("SetCliOverride(overrides.McpPermissionPolicyOverride, cliPermissionPolicy.Value);");
         host.ShouldContain("SetCliOverride(overrides.McpServerEnabledOverride, true);");
         host.ShouldContain("SetCliOverride(overrides.McpServerPortOverride, cliPort.Value);");
+        host.ShouldContain("Engine.RefreshEffectiveEditorPreferences();");
         host.ShouldContain("McpPermissionPolicy.AllowAll");
         host.ShouldContain("permissionPolicy = prefs.McpPermissionPolicy.ToString()");
         host.ShouldContain("private static void SetCliOverride<T>(OverrideableSetting<T> setting, T value)");

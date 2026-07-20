@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -32,6 +31,7 @@ namespace XREngine.Rendering.Occlusion
             public ulong LastVisibleFrame;
             public ulong LastOccludedFrame;
             public ulong LastQueryFrame;
+            public ulong LastResultFrame;
             public ulong PendingSinceFrame;
             public bool QueryPending;
             public bool DiscardPendingResult;
@@ -43,6 +43,16 @@ namespace XREngine.Rendering.Occlusion
             public ECpuOcclusionDecision LastDecision = ECpuOcclusionDecision.Visible;
             public CpuOcclusionProbeRequest LastProbeRequest = CpuOcclusionProbeRequest.None;
             public ulong QueryIssuedFrameId = ulong.MaxValue;
+
+            public AABB CurrentWorldBounds;
+            public bool HasCurrentWorldBounds;
+            public CpuOcclusionCameraSnapshot PendingCameraSnapshot;
+            public AABB PendingWorldBounds;
+            public bool HasPendingTemporalState;
+            public CpuOcclusionCameraSnapshot ResolvedCameraSnapshot;
+            public AABB ResolvedWorldBounds;
+            public bool HasResolvedTemporalState;
+            public float LastTemporalRevealRisk;
         }
 
         private sealed class HierarchyGroupState
@@ -74,10 +84,8 @@ namespace XREngine.Rendering.Occlusion
             public OcclusionViewOwnership Ownership;
             public PovState Pov = null!;
             public OcclusionTelemetry.CpuViewTelemetryHandle Telemetry;
-            public Vector3 LastCameraPosition;
-            public Vector3 LastCameraForward;
-            public Vector3 LastCameraUp;
-            public Matrix4x4 LastProjection;
+            public CpuOcclusionCameraSnapshot LastCameraSnapshot;
+            public CpuOcclusionCameraSnapshot CurrentCameraSnapshot;
             public bool HasCameraState;
             public ECpuOcclusionMotionTier MotionTier = ECpuOcclusionMotionTier.Stable;
             public bool ForceVisibleThisFrame;
@@ -154,9 +162,6 @@ namespace XREngine.Rendering.Occlusion
         private const int HierarchyGroupShift = 5;
         private const int HierarchyMinChildren = 4;
         private const ulong VulkanQueryResolveMinLatencyFrames = 2UL;
-        private const float CameraMotionEpsilon = 0.0001f;
-        private const float ProjectionDeltaThreshold = 0.001f;
-        private const float ProjectionCutDeltaThreshold = 0.125f;
 
         private static int GetOccludedRetestPeriodFrames()
         {
@@ -209,35 +214,46 @@ namespace XREngine.Rendering.Occlusion
                 state.ForceVisibleThisFrame = false;
                 state.ForceVisibleReason = ECpuOcclusionForceVisibleReason.None;
 
-                ECpuOcclusionMotionTier tier = UpdateCameraVisibilityState(state, camera);
+                CpuOcclusionMotionClassification motion = UpdateCameraVisibilityState(state, camera);
+                ECpuOcclusionMotionTier tier = motion.Tier;
                 state.MotionTier = tier;
+                if (sceneCommandCount > 0u)
+                    state.Telemetry.RecordMotion(motion);
 
-                if (!ownership.IsValid)
-                    ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.MissingOwnership);
+                if (sceneCommandCount > 0u)
+                {
+                    if (!ownership.IsValid)
+                        ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.MissingOwnership);
+                    else if (commandSetChanged)
+                    {
+                        InvalidateForCommandSetChange(state, frameId);
+                        ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.CommandSetChanged);
+                    }
+                    else if (tier == ECpuOcclusionMotionTier.CameraCut)
+                    {
+                        InvalidatePov(state.Pov);
+                        ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.CameraCut);
+                    }
+                    else if (!IsHardwareQueryBackendSupported())
+                        ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.UnsupportedBackend);
+                    else if (IsUnsupportedSharedStereoScope(state.ViewKey))
+                        ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.UnsupportedStereoMode);
+                }
                 else if (commandSetChanged)
-                {
                     InvalidateForCommandSetChange(state, frameId);
-                    ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.CommandSetChanged);
-                }
-                else if (tier == ECpuOcclusionMotionTier.CameraCut)
-                {
-                    InvalidatePov(state.Pov);
-                    ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.CameraCut);
-                }
-                else if (!IsHardwareQueryBackendSupported())
-                    ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.UnsupportedBackend);
-                else if (IsUnsupportedSharedStereoScope(state.ViewKey))
-                    ForceVisibleForPass(state, ECpuOcclusionForceVisibleReason.UnsupportedStereoMode);
 
                 ResolveAvailableResultsForPov(state.Pov);
                 EvictStaleOwnershipStates(globalFrameId);
-                OcclusionTelemetry.RecordCpuMotionTier(state.MotionTier);
-                OcclusionTelemetry.RecordCpuActiveViewScope(state.ViewKey.Scope);
-                state.Telemetry.RecordPassBegin((int)sceneCommandCount);
-                if (state.ForceVisibleThisFrame)
+                if (sceneCommandCount > 0u)
                 {
-                    OcclusionTelemetry.RecordCpuGlobalConservativeFrame(state.ForceVisibleReason);
-                    state.Telemetry.RecordForcedVisible();
+                    OcclusionTelemetry.RecordCpuMotionTier(state.MotionTier);
+                    OcclusionTelemetry.RecordCpuActiveViewScope(state.ViewKey.Scope);
+                    state.Telemetry.RecordPassBegin((int)sceneCommandCount);
+                    if (state.ForceVisibleThisFrame)
+                    {
+                        OcclusionTelemetry.RecordCpuGlobalConservativeFrame(state.ForceVisibleReason);
+                        state.Telemetry.RecordForcedVisible();
+                    }
                 }
 
                 return state.MotionTier == ECpuOcclusionMotionTier.CameraCut;
@@ -290,13 +306,20 @@ namespace XREngine.Rendering.Occlusion
             XRCamera? camera,
             uint sourceCommandIndex,
             out CpuOcclusionProbeRequest probeRequest,
-            OcclusionViewOwnership ownership)
+            OcclusionViewOwnership ownership,
+            AABB? worldBounds = null)
         {
             lock (_lock)
             {
                 PassState state = GetPassStateForOwnership(renderPass, camera, ownership);
                 QueryState queryState = GetOrCreateQueryState(state, sourceCommandIndex);
                 ulong frameId = state.FrameEpoch;
+
+                if (worldBounds is { IsValid: true } bounds)
+                {
+                    queryState.CurrentWorldBounds = bounds;
+                    queryState.HasCurrentWorldBounds = true;
+                }
 
                 if (queryState.LastDecidedFrameId == frameId)
                 {
@@ -334,6 +357,25 @@ namespace XREngine.Rendering.Occlusion
                         // its result resolves. No sibling eye may consume the old
                         // all-occluded aggregate during that pending window.
                         return SetDecision(state, queryState, ECpuOcclusionDecision.Visible, CpuOcclusionProbeRequest.None, ECpuDecisionKind.ForcedVisible, out probeRequest);
+                    }
+
+                    ECpuOcclusionForceVisibleReason pendingResultInvalidReason = GetNegativeResultInvalidReason(
+                        state,
+                        queryState,
+                        frameId,
+                        recordTelemetry: true);
+                    if (pendingResultInvalidReason != ECpuOcclusionForceVisibleReason.None)
+                    {
+                        BeginRecovery(state, queryState, frameId);
+                        OcclusionTelemetry.RecordCpuForcedVisible(pendingResultInvalidReason);
+                        state.Telemetry.RecordForcedVisible();
+                        return SetDecision(
+                            state,
+                            queryState,
+                            ECpuOcclusionDecision.Visible,
+                            CpuOcclusionProbeRequest.None,
+                            ECpuDecisionKind.ForcedVisible,
+                            out probeRequest);
                     }
 
                     return SetDecision(state, queryState, ECpuOcclusionDecision.Skip, CpuOcclusionProbeRequest.None, ECpuDecisionKind.Skip, out probeRequest);
@@ -406,9 +448,6 @@ namespace XREngine.Rendering.Occlusion
 
                 queryState.StateKind = ECpuOcclusionQueryStateKind.PredictedOccluded;
 
-                if (IsHierarchyFreshOccluded(state, sourceCommandIndex, frameId))
-                    return SetDecision(state, queryState, ECpuOcclusionDecision.Skip, CpuOcclusionProbeRequest.None, ECpuDecisionKind.Skip, out probeRequest);
-
                 if (queryState.ConsecutiveOccludedFrames < VisibleDemotionZeroConfidenceFrames)
                 {
                     queryState.ConsecutiveOccludedFrames++;
@@ -416,14 +455,28 @@ namespace XREngine.Rendering.Occlusion
                     return SetDecision(state, queryState, ECpuOcclusionDecision.Visible, request, ECpuDecisionKind.VisibleHysteresis, out probeRequest);
                 }
 
-                if (ShouldForceVisibleForStaleOcclusion(state, queryState, frameId))
+                ECpuOcclusionForceVisibleReason invalidReason = GetNegativeResultInvalidReason(
+                    state,
+                    queryState,
+                    frameId,
+                    recordTelemetry: true);
+                if (invalidReason != ECpuOcclusionForceVisibleReason.None)
                 {
                     BeginRecovery(state, queryState, frameId);
-                    OcclusionTelemetry.RecordCpuForcedVisible(ECpuOcclusionForceVisibleReason.StaleResult);
+                    OcclusionTelemetry.RecordCpuForcedVisible(invalidReason);
                     state.Telemetry.RecordForcedVisible();
-                    var request = new CpuOcclusionProbeRequest(true, ECpuOcclusionQueryReason.StaleStateRefresh, recoveryProbe: false, priorityBias: 4.0f);
+                    var request = new CpuOcclusionProbeRequest(
+                        true,
+                        invalidReason == ECpuOcclusionForceVisibleReason.TemporalReprojectionUnsafe
+                            ? ECpuOcclusionQueryReason.CameraMotionRevalidation
+                            : ECpuOcclusionQueryReason.StaleStateRefresh,
+                        recoveryProbe: false,
+                        priorityBias: 4.0f + MathF.Min(4.0f, queryState.LastTemporalRevealRisk));
                     return SetDecision(state, queryState, ECpuOcclusionDecision.Visible, request, ECpuDecisionKind.VisibleHysteresis, out probeRequest);
                 }
+
+                if (IsHierarchyFreshOccluded(state, sourceCommandIndex, frameId))
+                    return SetDecision(state, queryState, ECpuOcclusionDecision.Skip, CpuOcclusionProbeRequest.None, ECpuDecisionKind.Skip, out probeRequest);
 
                 if (ShouldScheduleRecoveryProbe(queryState, sourceCommandIndex, frameId, state.MotionTier))
                 {
@@ -479,10 +532,11 @@ namespace XREngine.Rendering.Occlusion
                         state.FrameEpoch,
                         out _))
                     return true;
-                if (ShouldForceVisibleForStaleOcclusion(
+                if (GetNegativeResultInvalidReason(
                         state,
                         queryState,
-                        state.FrameEpoch))
+                        state.FrameEpoch,
+                        recordTelemetry: false) != ECpuOcclusionForceVisibleReason.None)
                     return true;
                 if (queryState.QueryPending && queryState.PendingQueryWasVisibleDraw)
                     return true;
@@ -776,12 +830,18 @@ namespace XREngine.Rendering.Occlusion
             int renderPass,
             XRCamera? camera,
             uint sourceCommandIndex,
-            OcclusionViewOwnership ownership)
+            OcclusionViewOwnership ownership,
+            AABB? worldBounds = null)
         {
             lock (_lock)
             {
                 PassState state = GetPassStateForOwnership(renderPass, camera, ownership);
                 QueryState queryState = GetOrCreateQueryState(state, sourceCommandIndex);
+                if (worldBounds is { IsValid: true } bounds)
+                {
+                    queryState.CurrentWorldBounds = bounds;
+                    queryState.HasCurrentWorldBounds = true;
+                }
                 BeginQueryCore(state, queryState);
             }
         }
@@ -824,12 +884,18 @@ namespace XREngine.Rendering.Occlusion
             int renderPass,
             XRCamera? camera,
             uint hierarchyGroupKey,
-            OcclusionViewOwnership ownership)
+            OcclusionViewOwnership ownership,
+            AABB? worldBounds = null)
         {
             lock (_lock)
             {
                 PassState state = GetPassStateForOwnership(renderPass, camera, ownership);
                 HierarchyGroupState group = GetOrCreateHierarchyGroup(state, hierarchyGroupKey);
+                if (worldBounds is { IsValid: true } bounds)
+                {
+                    group.Query.CurrentWorldBounds = bounds;
+                    group.Query.HasCurrentWorldBounds = true;
+                }
                 BeginQueryCore(state, group.Query);
             }
         }
@@ -1212,6 +1278,11 @@ namespace XREngine.Rendering.Occlusion
                 ? ECpuOcclusionQueryStateKind.PendingOccludedProbe
                 : ECpuOcclusionQueryStateKind.PendingVisibleProbe;
             queryState.LastQueryFrame = frameId;
+            queryState.PendingCameraSnapshot = state.CurrentCameraSnapshot;
+            queryState.PendingWorldBounds = queryState.CurrentWorldBounds;
+            queryState.HasPendingTemporalState =
+                state.CurrentCameraSnapshot.IsValid &&
+                queryState.HasCurrentWorldBounds;
             OcclusionTelemetry.RecordCpuQuerySubmitted(request.Reason);
             return true;
         }
@@ -1339,6 +1410,8 @@ namespace XREngine.Rendering.Occlusion
 
             if (!queryState.DiscardPendingResult)
                 ApplyResolvedQueryState(queryState, frameId, anySamplesPassed);
+            else
+                queryState.HasPendingTemporalState = false;
 
             queryState.DiscardPendingResult = false;
             queryState.PendingReason = ECpuOcclusionQueryReason.None;
@@ -1358,6 +1431,18 @@ namespace XREngine.Rendering.Occlusion
         private static void ApplyResolvedQueryState(QueryState queryState, ulong frameId, bool anySamplesPassed)
         {
             queryState.LastAnySamplesPassed = anySamplesPassed;
+            queryState.LastResultFrame = frameId;
+            if (queryState.HasPendingTemporalState)
+            {
+                queryState.ResolvedCameraSnapshot = queryState.PendingCameraSnapshot;
+                queryState.ResolvedWorldBounds = queryState.PendingWorldBounds;
+                queryState.HasResolvedTemporalState = true;
+            }
+            else
+            {
+                queryState.HasResolvedTemporalState = false;
+            }
+            queryState.HasPendingTemporalState = false;
             if (anySamplesPassed)
             {
                 queryState.StateKind = ECpuOcclusionQueryStateKind.PredictedVisible;
@@ -1453,6 +1538,7 @@ namespace XREngine.Rendering.Occlusion
             queryState.PendingQueryWasVisibleDraw = false;
             queryState.PendingReason = ECpuOcclusionQueryReason.None;
             queryState.QueryIssuedFrameId = ulong.MaxValue;
+            queryState.HasPendingTemporalState = false;
             NotePendingQueryRemoved(state);
             _queryManager.Release(expiredQuery, pendingResult: true);
         }
@@ -1517,67 +1603,52 @@ namespace XREngine.Rendering.Occlusion
             return ((frameId + sourceCommandIndex) % (ulong)stagger) == 0UL || motionTier != ECpuOcclusionMotionTier.Stable;
         }
 
-        private static bool ShouldForceVisibleForStaleOcclusion(PassState state, QueryState queryState, ulong frameId)
+        private static ECpuOcclusionForceVisibleReason GetNegativeResultInvalidReason(
+            PassState state,
+            QueryState queryState,
+            ulong frameId,
+            bool recordTelemetry)
         {
-            if (queryState.LastQueryFrame == 0UL || frameId < queryState.LastQueryFrame)
-                return true;
-
-            int period = GetOccludedRetestPeriodFrames();
-            int maximumAge = state.MotionTier switch
+            if (queryState.HasCurrentWorldBounds)
             {
-                ECpuOcclusionMotionTier.Stable => Math.Max(2, period * 2),
-                ECpuOcclusionMotionTier.SmallMotion => Math.Max(2, period),
-                ECpuOcclusionMotionTier.MediumMotion => Math.Max(1, period / 2),
-                ECpuOcclusionMotionTier.LargeMotion => 1,
-                ECpuOcclusionMotionTier.VrHeadPoseMotion => Math.Max(1, RuntimeEngine.EffectiveSettings.CpuQueryOcclusionRecoveryMinCadenceFrames),
-                _ => 1,
-            };
-            maximumAge = ExpandStableResultAgeForWorkload(state, maximumAge);
-            return frameId - queryState.LastQueryFrame > (ulong)maximumAge;
-        }
+                float revealRisk = 4.0f;
+                bool reusable = queryState.HasResolvedTemporalState &&
+                    CpuOcclusionTemporalPolicy.CanReuseNegativeResult(
+                        queryState.ResolvedCameraSnapshot,
+                        queryState.ResolvedWorldBounds,
+                        state.CurrentCameraSnapshot,
+                        queryState.CurrentWorldBounds,
+                        out revealRisk);
+                queryState.LastTemporalRevealRisk = float.IsFinite(revealRisk) ? revealRisk : 4.0f;
+                if (recordTelemetry)
+                {
+                    if (reusable)
+                        OcclusionTelemetry.RecordCpuTemporalReprojectionAccepted();
+                    else
+                        OcclusionTelemetry.RecordCpuTemporalReprojectionRejected();
+                }
 
-        private static int ExpandStableResultAgeForWorkload(PassState state, int baseMaximumAge)
-        {
-            if (state.MotionTier != ECpuOcclusionMotionTier.Stable || state.LastSceneCommandCount == 0u)
-                return baseMaximumAge;
+                if (!reusable)
+                    return ECpuOcclusionForceVisibleReason.TemporalReprojectionUnsafe;
+            }
 
-            int maxQueries = RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMaxQueriesPerFrame;
-            ComputeBudgets(state.MotionTier, maxQueries, out int visibleBudget, out _);
-            if (visibleBudget <= 0)
-                return baseMaximumAge;
+            ulong evidenceFrame = queryState.LastResultFrame != 0UL
+                ? queryState.LastResultFrame
+                : queryState.LastQueryFrame;
+            if (evidenceFrame == 0UL || frameId < evidenceFrame)
+                return ECpuOcclusionForceVisibleReason.StaleResult;
 
-            int commandCount = state.LastSceneCommandCount > int.MaxValue
-                ? int.MaxValue
-                : (int)state.LastSceneCommandCount;
-            int sweepFrames = Math.Max(
-                1,
-                (int)Math.Min(
-                    int.MaxValue,
-                    ((long)commandCount + visibleBudget - 1L) / visibleBudget));
-            long convergenceAgeLong =
-                (long)sweepFrames * VisibleDemotionZeroConfidenceFrames +
-                (long)VulkanQueryResolveMinLatencyFrames +
-                2L;
-            int convergenceAge = convergenceAgeLong >= int.MaxValue
-                ? int.MaxValue
-                : (int)convergenceAgeLong;
-            return Math.Max(baseMaximumAge, convergenceAge);
+            int maximumAge = GetMaximumOccludedResultAge(state);
+            return frameId - evidenceFrame > (ulong)maximumAge
+                ? ECpuOcclusionForceVisibleReason.StaleResult
+                : ECpuOcclusionForceVisibleReason.None;
         }
 
         private static int GetRecoveryCadence(ECpuOcclusionMotionTier motionTier)
-        {
-            int period = GetOccludedRetestPeriodFrames();
-            int minCadence = RuntimeEngine.EffectiveSettings.CpuQueryOcclusionRecoveryMinCadenceFrames;
-            return motionTier switch
-            {
-                ECpuOcclusionMotionTier.Stable => Math.Max(minCadence, period),
-                ECpuOcclusionMotionTier.SmallMotion => Math.Max(minCadence, (period + 1) / 2),
-                ECpuOcclusionMotionTier.MediumMotion => minCadence,
-                ECpuOcclusionMotionTier.LargeMotion => 1,
-                ECpuOcclusionMotionTier.VrHeadPoseMotion => minCadence,
-                _ => period,
-            };
-        }
+            => CpuOcclusionTemporalPolicy.GetRecoveryCadence(
+                motionTier,
+                GetOccludedRetestPeriodFrames(),
+                RuntimeEngine.EffectiveSettings.CpuQueryOcclusionRecoveryMinCadenceFrames);
 
         private static float GetMotionPriorityBias(ECpuOcclusionMotionTier tier)
             => tier switch
@@ -1618,15 +1689,12 @@ namespace XREngine.Rendering.Occlusion
         }
 
         private static void ComputeBudgets(ECpuOcclusionMotionTier tier, int maxQueries, out int visibleBudget, out int recoveryBudget)
-        {
-            float visibleFraction = RuntimeEngine.EffectiveSettings.CpuQueryOcclusionVisibleDemotionBudgetFraction;
-            visibleBudget = Math.Clamp((int)MathF.Round(maxQueries * visibleFraction), 0, maxQueries);
-
-            if (tier is ECpuOcclusionMotionTier.MediumMotion or ECpuOcclusionMotionTier.LargeMotion or ECpuOcclusionMotionTier.VrHeadPoseMotion)
-                visibleBudget = Math.Min(visibleBudget, Math.Max(1, maxQueries / 8));
-
-            recoveryBudget = Math.Max(0, maxQueries - visibleBudget);
-        }
+            => CpuOcclusionTemporalPolicy.ComputeBudgets(
+                tier,
+                maxQueries,
+                RuntimeEngine.EffectiveSettings.CpuQueryOcclusionVisibleDemotionBudgetFraction,
+                out visibleBudget,
+                out recoveryBudget);
 
         private static int CountPendingQueries(PassState state)
         {
@@ -1844,9 +1912,7 @@ namespace XREngine.Rendering.Occlusion
                 return true;
             }
 
-            int maximumAge = ExpandStableResultAgeForWorkload(
-                state,
-                GetMaximumOccludedResultAge(state.MotionTier));
+            int maximumAge = GetMaximumOccludedResultAge(state);
             int currentAge = 0;
             for (int bit = 0; bit < 4; bit++)
             {
@@ -1876,19 +1942,17 @@ namespace XREngine.Rendering.Occlusion
             return (query.VisibleCoverageMask & required) != 0u;
         }
 
-        private static int GetMaximumOccludedResultAge(ECpuOcclusionMotionTier motionTier)
-        {
-            int period = GetOccludedRetestPeriodFrames();
-            return motionTier switch
-            {
-                ECpuOcclusionMotionTier.Stable => Math.Max(2, period * 2),
-                ECpuOcclusionMotionTier.SmallMotion => Math.Max(2, period),
-                ECpuOcclusionMotionTier.MediumMotion => Math.Max(1, period / 2),
-                ECpuOcclusionMotionTier.LargeMotion => 1,
-                ECpuOcclusionMotionTier.VrHeadPoseMotion => Math.Max(1, RuntimeEngine.EffectiveSettings.CpuQueryOcclusionRecoveryMinCadenceFrames),
-                _ => 1,
-            };
-        }
+        private static int GetMaximumOccludedResultAge(PassState state)
+            => CpuOcclusionTemporalPolicy.ComputeMaximumResultAge(
+                state.MotionTier,
+                GetOccludedRetestPeriodFrames(),
+                state.LastSceneCommandCount,
+                RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMaxQueriesPerFrame,
+                RuntimeEngine.EffectiveSettings.CpuQueryOcclusionVisibleDemotionBudgetFraction,
+                RuntimeEngine.EffectiveSettings.CpuQueryOcclusionRecoveryMinCadenceFrames,
+                AbstractRenderer.Current is VulkanRenderer
+                    ? (int)VulkanQueryResolveMinLatencyFrames
+                    : 1);
 
         private static PovQueryState GetOrCreatePovQueryState(PovState pov, uint sourceCommandIndex)
         {
@@ -1947,8 +2011,10 @@ namespace XREngine.Rendering.Occlusion
                 BeginRecovery(state, query, frameId);
                 query.StateKind = ECpuOcclusionQueryStateKind.Unknown;
                 query.LastAnySamplesPassed = true;
+                query.LastResultFrame = 0UL;
                 query.ConsecutiveVisibleFrames = 0;
                 query.ConsecutiveOccludedFrames = 0;
+                query.HasResolvedTemporalState = false;
                 query.LastDecidedFrameId = ulong.MaxValue;
                 query.QueryIssuedFrameId = ulong.MaxValue;
                 query.LastProbeRequest = CpuOcclusionProbeRequest.None;
@@ -1964,6 +2030,8 @@ namespace XREngine.Rendering.Occlusion
                 group.LastOccludedFrame = 0UL;
                 group.ScheduledFrameId = ulong.MaxValue;
                 group.ChildProbeCount = 0;
+                group.Query.LastResultFrame = 0UL;
+                group.Query.HasResolvedTemporalState = false;
                 if (group.Query.QueryPending)
                     group.Query.DiscardPendingResult = true;
             }
@@ -1986,6 +2054,7 @@ namespace XREngine.Rendering.Occlusion
                 or ECpuOcclusionForceVisibleReason.ProjectionDiscontinuity
                 or ECpuOcclusionForceVisibleReason.PendingTooOld
                 or ECpuOcclusionForceVisibleReason.StaleResult
+                or ECpuOcclusionForceVisibleReason.TemporalReprojectionUnsafe
                 or ECpuOcclusionForceVisibleReason.ResourceGenerationChanged
                 or ECpuOcclusionForceVisibleReason.CommandSetChanged;
 
@@ -2141,85 +2210,40 @@ namespace XREngine.Rendering.Occlusion
             }
         }
 
-        private static ECpuOcclusionMotionTier UpdateCameraVisibilityState(PassState state, XRCamera camera)
+        private static CpuOcclusionMotionClassification UpdateCameraVisibilityState(PassState state, XRCamera camera)
         {
-            Vector3 position = camera.Transform.RenderTranslation;
-            Vector3 forward = SafeNormalize(camera.Transform.RenderForward, Vector3.UnitZ);
-            Vector3 up = SafeNormalize(camera.Transform.RenderUp, Vector3.UnitY);
-            Matrix4x4 projection = camera.ProjectionMatrixUnjittered;
+            CpuOcclusionCameraSnapshot current = CpuOcclusionCameraSnapshot.Capture(camera);
+            state.CurrentCameraSnapshot = current;
 
             if (!state.HasCameraState)
             {
                 state.HasCameraState = true;
-                state.LastCameraPosition = position;
-                state.LastCameraForward = forward;
-                state.LastCameraUp = up;
-                state.LastProjection = projection;
-                return ECpuOcclusionMotionTier.Stable;
+                state.LastCameraSnapshot = current;
+                return new CpuOcclusionMotionClassification(
+                    ECpuOcclusionMotionTier.Stable,
+                    ECpuOcclusionMotionCause.FirstSample,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    current.IsValid,
+                    current.IsValid,
+                    current.CameraIdentity,
+                    current.CameraIdentity);
             }
-
-            float distance = Vector3.Distance(state.LastCameraPosition, position);
-            float forwardAngle = DotToDegrees(Vector3.Dot(state.LastCameraForward, forward));
-            float upAngle = DotToDegrees(Vector3.Dot(state.LastCameraUp, up));
-            float angle = MathF.Max(forwardAngle, upAngle);
-            float projectionDelta =
-                MathF.Abs(state.LastProjection.M11 - projection.M11) +
-                MathF.Abs(state.LastProjection.M22 - projection.M22) +
-                MathF.Abs(state.LastProjection.M31 - projection.M31) +
-                MathF.Abs(state.LastProjection.M32 - projection.M32) +
-                MathF.Abs(state.LastProjection.M33 - projection.M33) +
-                MathF.Abs(state.LastProjection.M43 - projection.M43);
-
-            state.LastCameraPosition = position;
-            state.LastCameraForward = forward;
-            state.LastCameraUp = up;
-            state.LastProjection = projection;
-
-            if (distance <= CameraMotionEpsilon && angle <= 0.001f && projectionDelta <= ProjectionDeltaThreshold)
-                return ECpuOcclusionMotionTier.Stable;
 
             bool vrScope = state.ViewKey.Scope is EOcclusionViewScope.VrLeftEye
                 or EOcclusionViewScope.VrRightEye
                 or EOcclusionViewScope.VrStereoPair
                 or EOcclusionViewScope.VrSinglePassStereo
                 or EOcclusionViewScope.VrFoveatedView;
-            if (vrScope &&
-                distance <= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionVrHeadMotionMeters &&
-                angle <= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionVrHeadRotationDegrees &&
-                projectionDelta <= ProjectionCutDeltaThreshold)
-            {
-                return ECpuOcclusionMotionTier.VrHeadPoseMotion;
-            }
-
-            if (distance >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionCameraCutMeters ||
-                angle >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionCameraCutRotationDegrees ||
-                projectionDelta > ProjectionCutDeltaThreshold)
-            {
-                return ECpuOcclusionMotionTier.CameraCut;
-            }
-
-            if (distance >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionLargeMotionMeters ||
-                angle >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionLargeRotationDegrees)
-            {
-                return ECpuOcclusionMotionTier.LargeMotion;
-            }
-
-            if (distance >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMediumMotionMeters ||
-                angle >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMediumRotationDegrees)
-            {
-                return ECpuOcclusionMotionTier.MediumMotion;
-            }
-
-            return ECpuOcclusionMotionTier.SmallMotion;
+            CpuOcclusionTemporalPolicy.ClassifyMotion(
+                state.LastCameraSnapshot,
+                current,
+                vrScope,
+                RuntimeRenderingHostServices.Current.RenderDeltaSeconds,
+                out CpuOcclusionMotionClassification classification);
+            state.LastCameraSnapshot = current;
+            return classification;
         }
-
-        private static float DotToDegrees(float dot)
-        {
-            float clamped = Math.Clamp(dot, -1.0f, 1.0f);
-            return MathF.Acos(clamped) * (180.0f / MathF.PI);
-        }
-
-        private static Vector3 SafeNormalize(Vector3 value, Vector3 fallback)
-            => value.LengthSquared() > 0.000001f ? Vector3.Normalize(value) : fallback;
     }
 }

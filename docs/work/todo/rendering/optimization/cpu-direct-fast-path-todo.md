@@ -1,12 +1,13 @@
 # CPU Direct Fast Path TODO
 
-Last Updated: 2026-07-01
+Last Updated: 2026-07-20
 Owner: Rendering
-Status: Active
-Target Branch: `rendering-cpu-direct-fast-path`
+Status: Active supporting tracker for Vulkan Core Hardening Phase 5.2A
+Execution: Current worktree only; do not create or switch branches for this effort.
 
 Design source:
 
+- [Canonical Vulkan Core Hardening And Device-Loss TODO](../vulkan-core-hardening-and-device-loss-todo.md)
 - [Engine Rendering Optimization Design](../../../design/rendering/engine-optimization-and-avatar-optimizer-design.md)
 - [Engine Rendering Optimization Roadmap](engine-rendering-optimization-roadmap.md)
 - [Render Submission Performance Debug Plan](../../../design/rendering/render-submission-perf-debug-plan.md)
@@ -39,14 +40,16 @@ backend cases, and performance comparisons against GPU-driven strategies.
 
 ## Backend Scope
 
-- Phases 0, 1, 5, and 6 are backend-agnostic and apply to CPU direct on both
-  OpenGL and Vulkan. They can proceed independently of the GL-specific phases.
-- Phases 2-4 target the OpenGL CPU direct backend specifically
-  (`glBufferSubData`, `glUseProgram`, VAO binds, persistent-mapped rings). The
-  Vulkan equivalents are tracked in
-  [Vulkan Primary Command Recording Fast Path](vulkan-primary-command-recording-fast-path-todo.md).
-  Before starting Phases 2-4, confirm with a Phase 0 baseline that the measured
-  submission cost is on the GL backend.
+- Every phase defines a backend-neutral `CpuDirect` performance contract and is
+  validated on matched OpenGL and Vulkan workloads.
+- OpenGL implements the contract with persistent-mapped rings and redundant
+  program/VAO/buffer/texture-bind elimination.
+- Vulkan implements it with frame-indexed upload/storage arenas, stable
+  descriptor/dynamic-offset bindings, capacity-backed resources, compatible
+  primary/secondary reuse, and redundant pipeline/descriptor/mesh-bind
+  elimination. The Vulkan recording details remain owned by
+  [Vulkan Primary Command Recording Fast Path](vulkan-primary-command-recording-fast-path-todo.md),
+  while the canonical Phase 5.2A gate owns promotion.
 
 ## Non-Goals
 
@@ -56,9 +59,10 @@ backend cases, and performance comparisons against GPU-driven strategies.
 - Do not add per-frame shader parsing, material layout synthesis, or asset
   deserialization to render submission.
 
-## Phase 0 - Branch, Baseline, And Audit
+## Phase 0 - Baseline And Audit
 
-- [ ] Create dedicated branch `rendering-cpu-direct-fast-path`.
+- [ ] Execute and report this supporting work through the canonical Phase 5.2A
+  gate; do not create a separate branch or independent completion status.
 - [ ] Capture Release CPU direct baseline for the unit-testing avatar scene,
   Sponza/static high-object scene, and a material-diverse scene. Use the
   existing tasks (`Measurement-Baseline-CpuDirect`,
@@ -122,6 +126,9 @@ Acceptance criteria:
 - [ ] Bind per-pass object constant buffers once where possible.
 - [ ] Keep per-material state in material tables or stable material buffers,
   even for CPU direct where backend support allows it.
+- [ ] On Vulkan, keep the buffer/descriptor binding topology stable across
+  value-only updates and address ordinary frame changes through frame-slot or
+  dynamic offsets. Data publication must not dirty compatible command ranges.
 - [ ] Add counters for object constant bytes uploaded, dirty ranges merged, and
   constant-buffer bind count.
 - [ ] Validate static, skinned, blendshape, instanced, shadow, velocity, editor
@@ -134,10 +141,14 @@ Acceptance criteria:
 - [ ] CPU direct object constant upload bytes scale with dirty objects, not
   visible objects.
 
-## Phase 3 - Persistent-Mapped Ring Buffer Uploads
+## Phase 3 - Persistent-Mapped And Frame-Indexed Uploads
 
 - [ ] Implement or verify an OpenGL persistent-mapped ring buffer path for
   per-frame dynamic uploads.
+- [ ] Implement or verify Vulkan frame-indexed, persistently mapped host-visible
+  upload arenas with safe device-local copies or direct bindings as appropriate.
+  Reuse stable descriptor bindings and advance offsets/slots instead of
+  recreating resources.
 - [ ] Use fence sync to prevent overwriting GPU-visible ranges.
 - [ ] Provide a safe fallback path for drivers without persistent mapping.
 - [ ] Route transforms, previous transforms, bone matrices, blendshape weights,
@@ -145,10 +156,16 @@ Acceptance criteria:
   appropriate.
 - [ ] Avoid `glBufferSubData` in steady-state production submission except for
   explicitly documented fallback paths.
+- [ ] On Vulkan, update dirty subranges of capacity-backed buffers. Exact logical
+  element-count changes, including `LinesBuffer` debug geometry, must not
+  recreate backing allocations unless capacity is exceeded.
 - [ ] Add upload allocator counters: bytes reserved, bytes committed, wraps,
   stalls, fence waits, orphan/fallback events, and high-water mark.
 - [ ] Fail loud in diagnostics if the upload ring is undersized and would block
   repeatedly.
+- [ ] Grow capacity only at a safe generation boundary, preserve old backing
+  until its last timeline use completes, and report growth separately from
+  steady uploads.
 
 Acceptance criteria:
 
@@ -170,6 +187,10 @@ Acceptance criteria:
 - [ ] Skip redundant `glUseProgram`, `glBindVertexArray`, `glBindBufferBase`,
   texture bind, and uniform calls.
 - [ ] Add counters for avoided redundant binds and unavoidable state changes.
+- [ ] Add Vulkan equivalents for avoided/repeated pipeline, descriptor-set,
+  vertex-buffer, index-buffer, dynamic-offset, and push-constant state changes.
+- [ ] Ensure opaque Vulkan sorting/bucketing is compatible with reusable
+  secondary command ranges and does not mix volatile overlays into static work.
 - [ ] Add tests or source-contract checks for transparent order preservation.
 
 Acceptance criteria:
@@ -195,6 +216,8 @@ Acceptance criteria:
 Acceptance criteria:
 
 - [ ] Warm-start frame 0 does not link shader programs for the measured scene.
+- [ ] After declared Vulkan warmup, required pipeline pending/compile counts,
+  pipeline-caused `RecordDeferred`, and whole-frame rejection are zero.
 - [ ] Late asset or texture work is visible as asset-streaming-bound, not
   mistaken for CPU direct submission cost.
 
@@ -204,6 +227,9 @@ Acceptance criteria:
   material table bindings, shader prewarm, and upload allocator behavior.
 - [ ] Run Release CPU direct baseline after each major phase (same
   `Measurement-*` tasks as Phase 0).
+- [ ] Run matched Release OpenGL/Vulkan low-, medium-, and high-draw-count plus
+  material-diverse cohorts with identical scene/output/occlusion/debug/warmup
+  manifests. Separate collection/recording, native API, and GPU execution time.
 - [ ] Compare before/after p50, p90, p99 frame time and state counters.
 - [ ] Capture at least one CPU sampled profile after optimization.
 - [ ] Validate unit-testing avatar scene with lights disabled and enabled.
@@ -216,11 +242,13 @@ Acceptance criteria:
 - [ ] CPU direct is stable, allocation-free in steady-state submission, and no
   longer performs render-thread shader linking or asset deserialization during
   measured frames.
+- [ ] Vulkan reaches the canonical command-reuse, no-buffer-recreation,
+  no-pipeline-deferral, absolute frame-time, and matched-OpenGL Phase 5.2A gates.
 
-## Final Validation And Merge
+## Final Validation And Closeout
 
 - [ ] Update linked design or architecture docs if the CPU direct contract
   changes.
 - [ ] Record final before/after results in this TODO.
-- [ ] Merge branch `rendering-cpu-direct-fast-path` back into `main` after
-  implementation, validation, and documentation updates are complete.
+- [ ] Close this supporting tracker only when the canonical Phase 5.2A gate
+  records the same implementation, validation, and documentation evidence.

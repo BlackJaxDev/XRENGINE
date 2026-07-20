@@ -12,7 +12,7 @@ The XREngine MCP Server exposes the editor's functionality via HTTP, allowing ex
 - Create, modify, and delete scene nodes
 - Add and configure components
 - Modify transforms (position, rotation, scale)
-- Capture viewport screenshots
+- Capture single viewport screenshots or bounded temporal frame sequences
 - List worlds and scenes
 
 The server implements the [Model Context Protocol](https://modelcontextprotocol.io/) specification (version `2024-11-05`).
@@ -120,6 +120,7 @@ Once connected, you can ask Copilot to interact with the engine:
 - *"Create a new scene node called 'Player' and add a MeshComponent to it"*
 - *"Move the node with ID xyz to position (10, 5, 0)"*
 - *"Take a screenshot of the current viewport"*
+- *"Capture the next 12 viewport frames and return a contact sheet"*
 
 ### In-Editor MCP Assistant (ImGui)
 
@@ -343,6 +344,10 @@ For detailed documentation of each command including parameters and return value
 | `find_asset`                 | Find assets by ID, path, or name              |
 | `create_material_asset`      | Create and save XRMaterial assets              |
 | `capture_viewport_screenshot`| Capture a screenshot from the viewport         |
+| `start_viewport_sequence_capture` | Start a bounded asynchronous viewport frame sequence |
+| `get_viewport_sequence_capture` | Poll sequence progress and artifact paths    |
+| `list_viewport_sequence_captures` | List active and recent sequence sessions     |
+| `cancel_viewport_sequence_capture` | Cancel and finalize a partial sequence       |
 | `undo` / `redo`              | Apply editor undo or redo                      |
 | `clear_selection`            | Clear current node selection                   |
 | `delete_selected_nodes`      | Delete all selected nodes                      |
@@ -351,6 +356,49 @@ For detailed documentation of each command including parameters and return value
 | `create_primitive_shape`     | Create primitive nodes (cube/box/sphere/cone) |
 | `save_world` / `load_world`  | Save or load world assets                      |
 | `list_tools`                 | List MCP tools from inside a tool call         |
+
+### Viewport Sequence Capture Sessions
+
+Temporal captures use an asynchronous session so an MCP request does not remain open for the duration of capture and exceed the server's request timeout. Start a session, poll it by `capture_id`, and optionally cancel it. Only one sequence capture may be active for a given viewport at a time.
+
+`start_viewport_sequence_capture` requires exactly one stop condition:
+
+- `frame_count`: number of images to produce. With `frame_stride: 1` and the default `overflow_policy: "fail"`, the tool either captures subsequent render frames or reports that it could not preserve the sequence.
+- `duration_seconds`: wall-clock duration, up to 60 seconds. `capture_fps` optionally limits sampling cadence; `max_frames` remains a hard output cap.
+
+Both modes support camera/window/viewport targeting, `frame_stride`, post-readback `output_scale`, alpha preservation, bounded in-flight readbacks, automatic or fixed contact-sheet columns, and optional temporal image analysis. The start result returns immediately with a `capture_id` and unique output directory.
+
+```json
+{
+  "name": "start_viewport_sequence_capture",
+  "arguments": {
+    "frame_count": 12,
+    "frame_stride": 1,
+    "max_in_flight_readbacks": 3,
+    "overflow_policy": "fail",
+    "output_scale": 0.5,
+    "create_contact_sheet": true,
+    "compute_frame_differences": true,
+    "output_dir": "Build/_AgentValidation/20260720-temporal-artifact/mcp-captures"
+  }
+}
+```
+
+Each unique capture directory contains:
+
+- `frame_000000.png`, `frame_000001.png`, and subsequent individual frames.
+- `contact-sheet.png` when contact-sheet generation is enabled and at least one frame succeeds. Tiles are row-major; zero-based row/column coordinates are recorded per frame.
+- `manifest.json`, atomically written after all in-flight readbacks drain. It includes render frame IDs, UTC and elapsed timestamps, render delta, camera pose, source/output dimensions, GPU readback format/byte count/queue slot, GPU-fence and CPU-conversion timings, MSAA-resolve use, SHA-256 hashes, mean luminance, black-pixel ratio, normalized differences from the previous frame, dropped-frame records, renderer queue diagnostics, warnings, and terminal state.
+
+Configuration caps are 300 frames, 60 seconds for duration-based capture, 250 million output pixels, eight in-flight readbacks, 256 MiB of estimated queued readback storage, and a 64-megapixel contact sheet. `overflow_policy: "drop"` is opt-in and records every skipped eligible render frame; the default `fail` policy never silently breaks a consecutive sequence. Output filenames are capture-ID scoped and never overwrite an earlier session.
+
+OpenGL uses its asynchronous PBO/fence path. Vulkan uses a renderer-owned ring of eight readback slots: the render thread records an image-to-buffer transfer on the graphics queue and returns immediately, the frame loop polls `vkGetFenceStatus`, and RGBA conversion plus all image resizing, PNG encoding, analysis, contact-sheet assembly, and manifest I/O run outside the render callback. The Vulkan path supports RGBA/BGRA 8-bit, 16-bit normalized/float, 32-bit float, and packed B10G11R11 color sources, restores the tracked source layout, resolves multisampled color targets into a bounded single-sample image, and reports the source format and timings per frame.
+
+The Vulkan queue has both an eight-request limit and a 256 MiB raw in-flight budget. It uses the engine staging-buffer pool, preserves command-buffer resource lifetime pins until fence completion, and applies the same `overflow_policy` semantics as the session queue if another capture consumer occupies renderer slots. A fence still unsignaled after two seconds emits a diagnostic without waiting; after ten seconds its MCP consumer fails and the submitted slot remains quarantined until the fence signals or the renderer is destroyed. Device loss completes every pending consumer exactly once. There is no synchronous `vkWaitForFences`, `vkQueueWaitIdle`, CPU renderer, or OS-window fallback in the capture path.
+
+For RenderDoc validation, `XRE_VULKAN_DIAGNOSTIC_PRESET=RenderDocFriendly` skips optional Streamline proxy provisioning when DLSS and DLSS-G are not requested because both systems interpose Vulkan entry points. An explicit DLSS or DLSS-G request remains strict and reports the incompatibility instead of silently changing the requested rendering path.
+
+A GPU watchdog is the operating-system/driver recovery mechanism that detects GPU work which appears stuck for too long. On Windows this is commonly called Timeout Detection and Recovery (TDR). A blocking host wait does not itself make a copy command expensive, but an unbounded wait in the render path can freeze the editor while a genuinely stalled submission approaches TDR. The asynchronous queue keeps the CPU responsive and makes a slow or lost fence observable; it cannot rescue an invalid shader or GPU command that actually hangs the device.
 
 ### Tool Aliases (Backward Compatibility)
 
@@ -380,6 +428,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `batch_create_nodes` | Create multiple scene nodes in a single call. Each entry: {name, parent_id?, components?: string[], transform?: {x?,y?,z?,pitch?,yaw?,roll?,sx?,sy?,sz?}}. |
 | `batch_set_properties` | Set properties on multiple components/nodes in one call. Each operation: {node_id, component_type?, property_name, value}. |
 | `bulk_reparent_nodes` | Reparent multiple scene nodes to a new parent (or root) in one call. |
+| `cancel_viewport_sequence_capture` | Cancel an active viewport sequence capture, drain in-flight readbacks, and finalize its partial manifest/contact sheet. |
 | `capture_openxr_desktop_mirror_texture` | Capture the latest OpenXR desktop mirror texture and report pixel statistics. |
 | `capture_openxr_eye_preview_texture` | Capture the latest OpenXR preview copy for the left or right eye and report pixel statistics. |
 | `capture_render_pipeline_texture` | Capture a named live render-pipeline texture to PNG, EXR, or Radiance HDR and report pixel statistics. |
@@ -452,6 +501,8 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `get_type_info` | Get full type metadata (name, namespace, base type, interfaces, flags) for any loaded type. |
 | `get_type_members` | Get properties, fields, methods, events, and constructors from any loaded type. |
 | `get_undo_history` | Get undo/redo history entries. |
+| `get_viewport_sequence_capture` | Get viewport sequence capture progress, terminal state, artifact paths, and optionally per-frame metadata. |
+| `get_vulkan_frame_op_trace` | Return the latest Vulkan frame-op trace snapshot. Requires launching with XRE_VULKAN_FRAMEOP_TRACE=1. |
 | `import_scene` | Import a scene asset from disk and add it to the active world. |
 | `import_third_party_asset` | Import a third-party file (GLTF, FBX, OBJ, PNG, WAV, etc.) into game assets using the engine's import pipeline. |
 | `instantiate_prefab` | Instantiate a prefab into the active scene by asset ID or path. |
@@ -478,6 +529,9 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `list_tools` | List all MCP tools currently registered by the editor. |
 | `list_transform_children` | List immediate child transforms for a scene node. |
 | `list_transform_types` | List available transform types. |
+| `list_ui_viewport_diagnostics` | List hidden/editor UI viewport components and their offscreen render command state. |
+| `list_viewport_sequence_captures` | List active and recently completed viewport sequence captures without per-frame payloads. |
+| `list_vulkan_image_allocation_diagnostics` | List live Vulkan image allocation sizes by debug name for VRAM pressure diagnostics. |
 | `list_worlds` | List active world instances and their scenes. |
 | `load_world` | Load a world asset and set it as active on the current world instance. |
 | `move_node_sibling` | Reorder a scene node among siblings. |
@@ -525,6 +579,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `set_tag` | Assign or remove a tag on a scene node. |
 | `set_transform` | Set a scene node transform (translation, rotation, scale). |
 | `snapshot_world_state` | Capture an in-memory snapshot of the active world state for later restore. |
+| `start_viewport_sequence_capture` | Start a bounded asynchronous viewport frame-sequence capture with manifest, contact sheet, timing, camera, and image-difference metadata. |
 | `sweep_render_pipeline_depth` | Read depth from every live render-pipeline FBO that has a depth/stencil attachment at a normalized viewport coordinate. |
 | `toggle_scene_visibility` | Toggle scene visibility. |
 | `transaction_begin` | Begin an MCP transaction by capturing a rollback snapshot of the current world state. |
@@ -639,6 +694,8 @@ The MCP implementation consists of the following classes:
 | <xref:XREngine.Editor.Mcp.McpToolResponse>      | Standard response structure                    |
 | <xref:XREngine.Editor.Mcp.McpWorldResolver>     | Resolves active world instance                 |
 | <xref:XREngine.Editor.Mcp.EditorMcpActions>     | Tool implementations (partial class)           |
+| `ViewportSequenceCaptureManager`                | Active/recent capture registry and per-viewport exclusivity |
+| `ViewportSequenceCaptureSession`                | Bounded frame scheduling, readback draining, and artifact finalization |
 
 ### Tool Organization
 
@@ -653,6 +710,7 @@ The tool surface is split across focused `EditorMcpActions.*.cs` partials under 
 | `EditorMcpActions.Settings.cs` | Game, editor, and engine settings/configuration |
 | `EditorMcpActions.SceneAuthoring.cs` | Prefab workflows, batch scene edits, and scene cloning |
 | `EditorMcpActions.ExtendedWorkflow.cs` | Integrity checks, snapshots, transactions, reference queries, and editor commands |
+| `EditorMcpActions.ViewportSequence.cs` | Start/status/list/cancel lifecycle for temporal viewport captures |
 
 ### Adding New Tools
 

@@ -22,7 +22,59 @@ The bootstrap flow in `ExecTool.bat` currently does these steps:
 6. launches the DocFX server
 7. launches the editor
 
+Passing `--with-agent-tools` also sets up the optional code-review graph after
+submodules are built. The standard bootstrap does not install or run agent
+tooling.
+
 If all you want is the standard working repo setup, this is the right place to start.
+
+## Optional code-review graph and Codex integration
+
+Use the agent-tooling bootstrap when this checkout will be used with Codex or
+the code-review-graph CLI:
+
+```powershell
+ExecTool --bootstrap --with-agent-tools
+```
+
+The opt-in step:
+
+1. finds Python 3.10 or newer, or installs Python 3.13 through `winget` when the
+   explicit prerequisite-install flag is used
+2. creates `Build/Dependencies/CodeReviewGraph/venv`
+3. installs the versions pinned in
+   `Tools/Dependencies/code-review-graph-requirements.txt`
+4. verifies that the C# Tree-sitter parser loads in Python isolated mode
+5. builds `.code-review-graph/graph.db` on a fresh checkout, or updates an
+   existing graph
+
+The environment and graph are checkout-local and ignored by Git. The graph can
+consume roughly 500 MB for the current repository and the first full build can
+take several minutes.
+
+Codex reads the checked-in `.codex/config.toml` and `.codex/hooks.json` only
+after the repository is trusted. Restart Codex after first-time setup. The MCP
+wrapper reports a clear setup error if Codex is started before the isolated
+environment exists; it never falls back to a global Python installation.
+
+To set up only this tool without running the full engine bootstrap:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Setup-CodeReviewGraph.ps1 -InstallPrerequisites
+```
+
+Useful maintenance commands:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Invoke-CodeReviewGraph.ps1 status
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Invoke-CodeReviewGraph.ps1 update
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Invoke-CodeReviewGraph.ps1 build
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Invoke-CodeReviewGraph.ps1 visualize
+```
+
+Use `-ForceRecreateEnvironment` on `Setup-CodeReviewGraph.ps1` to replace only
+the isolated virtual environment, and `-ForceRebuild` to rebuild the graph from
+scratch.
 
 ## What it does not cover
 
@@ -53,6 +105,9 @@ ExecTool --bootstrap
 ```
 
 This is the recommended path for most contributors.
+
+Add `--with-agent-tools` when the checkout should also host the optional Codex
+code-review graph.
 
 ### Option 2: Manual setup
 
@@ -102,6 +157,12 @@ After bootstrap, you should be able to do the following:
 3. launch the editor
 4. launch the Unit Testing World
 5. open local docs if DocFX built successfully
+
+When agent tooling was requested, also verify:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Invoke-CodeReviewGraph.ps1 status
+```
 
 Useful checks:
 

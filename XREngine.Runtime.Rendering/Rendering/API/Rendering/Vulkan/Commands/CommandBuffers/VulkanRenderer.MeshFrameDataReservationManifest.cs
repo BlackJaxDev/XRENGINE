@@ -16,10 +16,10 @@ public unsafe partial class VulkanRenderer
         // Draw counts within an output family vary slightly with bounded work such as
         // asynchronous occlusion probes. Publishing the exact first-observed count would
         // relocate that family as soon as a later frame schedules one more probe, leaving
-        // already-recorded command buffers pointing at the old draw-slot base. Reserve a
-        // modest power-of-two block on first publication so the base remains stable across
-        // normal per-frame variation without turning every renderer into a large sparse slab.
-        private const int MinimumFamilySlotCapacity = 32;
+        // already-recorded command buffers pointing at the old draw-slot base. This floor is
+        // applied per renderer, not once per output family: keeping it small prevents a dense
+        // shadow refresh from reserving 32 slots for each mostly single-draw mesh renderer.
+        private const int MinimumFamilySlotCapacity = 4;
 
         private readonly record struct FamilyAllocation(int BaseSlot, int SlotCount);
 

@@ -79,6 +79,11 @@ public unsafe partial class VulkanRenderer
         Debug.VulkanWarning(
             "[Vulkan] Logical device lost. Reason={0}. The current Vulkan renderer cannot submit more work; recreate the renderer/window to recover.",
             deviceLostReason);
+
+        // Device-loss observation may stop the normal frame poll immediately. Complete
+        // screenshot consumers now so MCP sessions cannot remain stuck waiting on fences
+        // that Vulkan guarantees will never signal after logical-device loss.
+        FailPendingScreenshotReadbacksForDeviceLoss(deviceLostReason);
     }
 
     private void MarkDeviceDisposed()

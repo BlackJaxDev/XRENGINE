@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat >/dev/null || true; repo_root=$(git rev-parse --show-toplevel 2>/dev/null) && powershell -NoProfile -ExecutionPolicy Bypass -File \"$repo_root/Tools/Invoke-CodeReviewGraph.ps1\" update --skip-flows || true",
+            "timeout": 30,
+            "statusMessage": "Updating code-review-graph"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat >/dev/null || true; repo_root=$(git rev-parse --show-toplevel 2>/dev/null) && powershell -NoProfile -ExecutionPolicy Bypass -File \"$repo_root/Tools/Invoke-CodeReviewGraph.ps1\" status || true",
+            "timeout": 10,
+            "statusMessage": "Checking code-review-graph status"
+          }
+        ]
+      }
+    ]
+  }
+}
