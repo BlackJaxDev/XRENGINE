@@ -1,9 +1,9 @@
 # Vulkan Primary Command Recording Fast Path TODO
 
-Last Updated: 2026-07-01
+Last Updated: 2026-07-20
 Owner: Rendering / Vulkan
-Status: Proposed
-Target Branch: `rendering-vulkan-primary-recording-fast-path`
+Status: Active supporting tracker for Vulkan Core Hardening Phase 5.2A-5.2C
+Execution: Current worktree only; do not create or switch branches for this effort.
 
 Evidence source:
 
@@ -14,6 +14,7 @@ Evidence source:
 
 Related local docs:
 
+- [Canonical Vulkan Core Hardening And Device-Loss TODO](../vulkan-core-hardening-and-device-loss-todo.md)
 - [Engine Rendering Optimization Roadmap](engine-rendering-optimization-roadmap.md)
 - [CPU Direct Fast Path TODO](cpu-direct-fast-path-todo.md)
 - [Compact Zero-Readback Rendering TODO](compact-zero-readback-rendering-todo.md)
@@ -48,6 +49,14 @@ emission, descriptor/pipeline binding, draw recording, and texture upload ops.
 The current profiler label is too broad to identify which of those sub-costs is
 responsible in steady state.
 
+The current source also keeps primary reuse behind
+`VulkanPrimaryCommandBufferReuseSafe = false` because mutable descriptor and
+GPU-publication generations are not complete in the variant key. Static
+`CpuDirect` frames therefore force fresh primaries, while GPU-driven frames may
+also force fresh recording merely because their GPU-resident outputs are marked
+mutable. Removing that quarantine safely is a Phase 5.2A deliverable, not an
+optional tuning experiment.
+
 ## Why This Matters
 
 VR budgets are around 11.1 ms at 90 Hz and 13.9 ms at 72 Hz. A 150-250 ms
@@ -74,6 +83,16 @@ visibility buffers, or XR frame pacing will not show their real benefit.
 - Cache static render work where safe. Static skybox, static opaque meshes,
   stable full-screen passes, and unchanged shadow passes should be candidates
   for secondary command buffer reuse or precompiled frame-op ranges.
+- Validate every cached primary/secondary range with the canonical immutable
+  command dependency signature. Distinguish structural, binding-identity, and
+  data-only changes; value publication into a safe frame slot must preserve
+  compatible recorded topology.
+- Keep Vulkan dynamic data in capacity-backed, frame-indexed upload/storage
+  arenas with stable bindings. Ordinary transform/material/debug-line updates
+  must not recreate exact-sized buffers or dirty static ranges.
+- Treat stable GPU pass dispatches, barriers, and indirect-count calls as
+  reusable topology. GPU-written visibility, command, and count values changing
+  each frame is not itself a command-recording mutation.
 - Remove or gate expensive debug behavior in measured frames: command labels,
   detailed barrier summaries, verbose planner diagnostics, and per-pass warning
   construction should not run in production profiling mode.
@@ -88,7 +107,9 @@ visibility buffers, or XR frame pacing will not show their real benefit.
 
 ## Phase 0 - Instrument The Broad Scope
 
-- [ ] Create dedicated branch `rendering-vulkan-primary-recording-fast-path`.
+- [ ] Execute and report this supporting work through the canonical Phase 5.2
+  promotion gates; do not create a separate branch or independent acceptance
+  status.
 - [ ] Add sub-scopes under `Vulkan.RecordPrimary.MainOpLoop`.
 - [ ] Add counters for frame ops, context changes, render pass switches,
   barrier counts, descriptor binds, pipeline binds, draw calls, and allocations.
@@ -115,12 +136,20 @@ Acceptance criteria:
   list generation.
 - [ ] Ensure render graph planner warnings are produced at plan-build time, not
   every measured recording frame.
+- [ ] Add Vulkan frame-indexed upload/storage arenas and stable dynamic-offset
+  bindings for ordinary per-view, per-object, material, skinning, and debug data.
+- [ ] Convert resizable dynamic buffers to capacity growth plus subrange updates;
+  include `LinesBuffer` in the retained regression workload.
+- [ ] Move required pipeline/shader creation out of primary recording and define
+  a declared warmup boundary with explicit pending/deferred counters.
 
 Acceptance criteria:
 
 - [ ] Steady-state primary recording produces zero or near-zero managed
   allocations in the validation scenes.
 - [ ] Primary recording p95 improves without changing rendered output.
+- [ ] After warmup, required pipeline compilation, exact-size dynamic-buffer
+  recreation, and pipeline-caused whole-frame deferral are zero.
 
 ## Phase 2 - Cache Stable Command Ranges
 
@@ -128,12 +157,22 @@ Acceptance criteria:
   geometry, skybox, full-screen fixed post passes, and stable shadow passes.
 - [ ] Add invalidation keys for cached command ranges: framebuffer generation,
   render area, material/pipeline generation, mesh buffer generation, descriptor
-  generation, and debug mode.
+  layout/set/publication generation, resource allocation generation, bounded
+  frame-slot/external-target variant, dynamic-rendering inheritance, and debug
+  topology mode.
+- [ ] Build keys from immutable prepared recording snapshots and classify misses
+  as structural, binding-identity, or data-only. Data-only changes do not miss.
 - [ ] Record cacheable ranges into secondary command buffers where Vulkan state
   rules allow it.
 - [ ] Keep dynamic ranges separate: editor UI, dynamic text overlays,
   transforms, streaming uploads, and swapchain-dependent presentation.
 - [ ] Add cache hit/miss counters and miss reasons.
+- [ ] Replace the compile-time primary-reuse hard-off gate with the completed
+  dependency validation contract. A setting/environment override may select
+  forced-record diagnostics but is not the production correctness mechanism.
+- [ ] Record stable GPU-driven dispatch/barrier/indirect-count topology once;
+  changing GPU-written buffer contents must not set a generic mutable-frame-op
+  reason or force primary rerecording.
 
 Acceptance criteria:
 
@@ -141,16 +180,28 @@ Acceptance criteria:
 - [ ] Cache misses are visible and attributable.
 - [ ] Cache invalidation never reuses commands across incompatible resources or
   swapchain generations.
+- [ ] Primary reuse is enabled in the normal production policy, reaches the
+  canonical >=99% warmed static-scene target, and requires neither a hard-coded
+  safety override nor an environment flag.
+- [ ] Camera/transform/material-value/debug-line and GPU indirect/count updates
+  preserve compatible cached ranges; every actual miss identifies the changed
+  dependency field.
 
 ## Phase 3 - Validate Desktop And VR
 
 - [ ] Validate desktop mono, desktop mirror while VR is active, OpenXR
   true-single-pass stereo, and any OpenVR path available locally.
+- [ ] Run matched Release Vulkan/OpenGL `CpuDirect` low-, medium-, and high-count
+  cohorts plus the opened GPU-indirect/meshlet cohorts required by the canonical
+  Phase 5.2B/5.2C gates.
 - [ ] Compare screenshots or RenderDoc captures before and after caching.
 - [ ] Confirm GPU pipeline time remains comparable while render-thread wall
   time falls.
 - [ ] Confirm command recording does not hide GPU/accelerated paths behind CPU
   fallback.
+- [ ] Separate managed planning/recording time, native Vulkan call time, and GPU
+  execution in every retained result; record pipeline readiness, dynamic-buffer
+  growth, cache reuse, and miss-reason counters.
 
 Acceptance criteria:
 

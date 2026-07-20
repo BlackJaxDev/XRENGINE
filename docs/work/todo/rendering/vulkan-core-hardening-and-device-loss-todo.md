@@ -1,6 +1,6 @@
 # Vulkan Core Hardening And Device-Loss TODO
 
-Last Updated: 2026-07-18
+Last Updated: 2026-07-20
 Owner: Rendering
 Status: P0 Complete; Inherited Validation Debt And Phase 5.2+ Remain Open
 Execution: Current worktree only; do not create or switch branches for this effort.
@@ -91,6 +91,17 @@ turn device-loss investigations into actionable diagnostics.
   timing are respected.
 - Hot paths must avoid per-frame heap allocation, LINQ, captured closures,
   boxing, and string formatting except behind explicit diagnostics.
+- Recorded command reuse must be validated from an immutable dependency
+  signature that includes every structural, binding-identity, allocation, and
+  publication generation consumed by the recording. A global safety boolean or
+  diagnostic environment flag is not an acceptable production cache contract.
+- Classify render changes as structural, binding-identity, or data-only.
+  Data-only updates to a stable frame slot, buffer range, descriptor set, or
+  indirect/count buffer must not invalidate unrelated recorded command ranges.
+- Vulkan dynamic data uses bounded, frame-indexed upload/storage arenas and
+  stable bindings. Ordinary camera, transform, material, skinning, debug-line,
+  and GPU-generated count changes must update safe ranges rather than recreate
+  exact-sized backing resources or rerecord static scene topology.
 - Diagnostic features are capability-gated and additive. Unsupported standard
   or vendor extensions must be reported explicitly, not silently treated as
   successful diagnostic coverage.
@@ -105,6 +116,10 @@ turn device-loss investigations into actionable diagnostics.
   unavailable accelerated path behind a silent CPU fallback.
 - Zero-readback strategies must not require CPU-visible candidate, bucket, draw,
   visibility, or count data in their steady-state path.
+- GPU-driven strategies must expose stable pass-level dispatch, barrier, and
+  indirect-draw topology after warmup. Changing GPU-resident visibility,
+  commands, counts, or statistics is data mutation, not by itself a reason to
+  rebuild or rerecord a primary command buffer.
 - Desktop, secondary, capture, probe, and debug work must not delay required
   OpenXR submission.
 - Transient physical-image aliasing remains disabled until actual
@@ -165,6 +180,10 @@ Post-P0 follow-ups retained in this active tracker:
 
 - [ ] Reduce the remaining approximately 322.7 KiB/frame forced-primary
   diagnostic allocation to zero as part of Phase 5.2.5's allocation work.
+- [ ] Replace the current hard-disabled primary-reuse safety quarantine with
+  generation-complete dependency validation. The public setting or environment
+  override must not be advertised as effective while a compile-time safety gate
+  forces reuse off.
 - [ ] Re-enable parallel command recording only after workers consume immutable
   recording snapshots and improve or preserve the repeated validation matrix.
 - [ ] Capture an external Vulkan action/marker tree showing the named engine
@@ -222,12 +241,23 @@ Those efforts must consume this same frame-view/output/plan contract and must
 not introduce a desktop-only scheduler, a second attachment identity model, or
 another independently constructed runtime view set.
 
-The blocking Phase 5.2 promotion lane is `CpuDirect`, matching the current
-production-readiness boundary. Accelerated masked GPU visibility, zero-readback
-draw generation, meshlet visibility, and persistent GPU Hi-Z requirements are
-retained below as follow-up promotion lanes. They become binding when their
-own readiness checklists open, but they do not block Phase 6 and must not be
-misreported as Phase 5.2 failures in the meantime.
+Phase 5.2 has three separately reported promotion gates:
+
+- **Phase 5.2A - CpuDirect production gate.** This is the current blocking gate
+  for beginning Phase 6 and owns the immediate Vulkan/OpenGL CPU-direct
+  regression boundary.
+- **Phase 5.2B - GPU indirect production gate.** This opens after the compact
+  zero-readback and GPU visibility readiness checklists are complete. It owns
+  instrumented-reference parity plus production zero-readback performance.
+- **Phase 5.2C - GPU meshlet production gate.** This opens only on supported
+  hardware after meshlet parity/readiness is complete.
+
+Phase 6 may begin after Phase 5.2A passes while 5.2B/5.2C continue independently.
+The entire Vulkan hardening tracker must not be marked complete until every
+supported production lane is promoted, explicitly removed from the v1 contract,
+or deferred by a recorded owner decision with replacement acceptance criteria.
+An unsupported hardware lane reports `unsupported`; an unfinished lane reports
+`not ready`, never a zero-cost or passing result.
 
 ### 5.2.5 - Make Render Plans And Resource Arenas Versioned And Nonblocking
 
@@ -279,6 +309,79 @@ misreported as Phase 5.2 failures in the meantime.
 - [ ] Add plan-cache hit/miss, plan-generation, arena high-water, alias reuse,
   pending-retirement bytes, and eviction-defer telemetry by output family.
 
+Command-recording dependency and reuse requirements:
+
+- [ ] Define one immutable command-recording dependency signature used by
+  primary variants, secondary ranges, and command-chain schedules. Include the
+  output/pass and attachment signature, render area, view mask, queue family,
+  dynamic-rendering inheritance, pipeline/layout generation, mesh/index/vertex
+  binding identity, buffer/image/view/sampler allocation generation,
+  descriptor-layout/set/publication generation, resource-plan generation, and
+  bounded external-target/frame-slot variant.
+- [ ] Build the signature from the prepared immutable plan/recording snapshot,
+  never by rereading mutable renderer or descriptor state during reuse choice.
+- [ ] Classify invalidation as `Structural`, `BindingIdentity`, or `DataOnly`.
+  Structural changes rebuild the relevant plan and recorded ranges;
+  binding-identity changes invalidate only ranges that consume the binding;
+  data-only publication into a completed frame slot preserves compatible
+  command recordings.
+- [ ] Move the minimum descriptor/resource/publication-generation fingerprint
+  required for safe command reuse into Phase 5.2.5. Phase 6 expands descriptor
+  coverage and diagnostics; it must not be a prerequisite hidden behind Phase
+  5.2A's reuse acceptance gate.
+- [ ] Replace `VulkanPrimaryCommandBufferReuseSafe = false` with validated
+  capability derived from the complete dependency contract. Remove permanent
+  hard-off behavior; settings and environment overrides may select a diagnostic
+  policy but must not substitute for correctness validation.
+- [ ] Replace global command-buffer dirtiness for local resource mutations with
+  dependency-indexed invalidation. Every miss reports the first incompatible
+  signature field and affected range/family.
+- [ ] Keep static primary/secondary topology separate from volatile overlays,
+  uploads, queries, and presentation. A volatile suffix must not force static
+  opaque, skybox, shadow, or fixed post-process ranges to rerecord.
+
+Vulkan `CpuDirect` dynamic-data requirements:
+
+- [ ] Define a stable per-object/per-material/per-view/per-pass data layout for
+  transforms, previous transforms, material IDs, skinning/blendshape IDs,
+  editor IDs, flags, and pass masks. Update dirty ranges instead of rebuilding
+  or uploading all visible-object data.
+- [ ] Route ordinary dynamic data through bounded frame-indexed, persistently
+  mapped host-visible upload arenas and safe device-local copies or direct
+  bindings as appropriate. Use timeline/frame-slot completion to prevent range
+  overwrite without blocking the render thread.
+- [ ] Use stable descriptor bindings plus dynamic/frame-slot offsets where
+  practical. Camera motion, animation, and value-only material changes must
+  update bytes without changing the recorded binding topology.
+- [ ] Make resizable Vulkan buffers capacity-based. Grow only when capacity is
+  exceeded, publish the replacement as a new safe generation, and update used
+  subranges thereafter. Exact logical element-count changes must not recreate
+  backing storage every frame.
+- [ ] Apply the capacity contract to editor/debug geometry, including
+  `LinesBuffer`, so mesh bounds and other variable debug primitives do not emit
+  steady `VkDataBufferRecreated` invalidation.
+- [ ] Sort/bucket opaque CPU-direct packets by compatible pass, pipeline/state
+  class, material binding layout, and mesh binding where semantics permit.
+  Preserve transparent, UI, editor-overlay, and explicitly ordered diagnostic
+  behavior.
+
+Pipeline and shader readiness requirements:
+
+- [ ] Derive required graphics/compute pipeline variants from the compiled
+  structural plan and prewarm them before a cohort enters steady-state
+  measurement. Include CPU-direct, GPU-indirect, meshlet, shadow, velocity,
+  editor-ID, override, stereo/multiview, and dynamic/legacy target variants that
+  the workload can reach.
+- [ ] Keep pipeline creation, shader compilation, texture residency, and asset
+  streaming outside command recording. Separate startup, warmup, streaming, and
+  steady-state profiler phases.
+- [ ] If optional asynchronous compilation is still pending, defer only the
+  dependent optional node with an explicit reason. A required production pass
+  must be ready before submission; it must not reject or defer the entire frame
+  after declared warmup.
+- [ ] Version pipeline-cache entries and retire replaced pipelines behind their
+  last submitted timeline without globally invalidating unrelated recordings.
+
 Render-graph dataflow requirements:
 
 - [ ] Represent every resource use with resource identity, subresource range,
@@ -326,6 +429,19 @@ Acceptance criteria:
 - [ ] Resource-derived dependencies may reorder independent declaration order
   without changing results, and standard/synchronization validation stays clean
   across mono, multiview, async-compute, resize, and OpenXR lanes.
+- [ ] Primary reuse is production-enabled without a compile-time hard-off gate
+  or a required diagnostic environment flag. Reuse enabled and forced-record
+  modes are visually equivalent and validation-clean under descriptor
+  publication, streaming, hot reload, resize, and frame-slot rotation.
+- [ ] Camera, transform, animation, material-value, query-result, debug-line,
+  indirect-command, and count-buffer data updates do not rerecord compatible
+  static ranges. Cache misses identify a structural or binding-identity change.
+- [ ] After warmup, `LinesBuffer` and other capacity-backed dynamic buffers
+  perform no steady backing recreation; growth occurs only on capacity overflow
+  and publishes a bounded new generation safely.
+- [ ] After declared warmup, required pipeline pending/compile counts,
+  pipeline-caused `RecordDeferred`, whole-frame rejection, and render-thread
+  shader compilation are zero for retained steady-state cohorts.
 
 ### 5.2.6 - Build The Immutable Snapshot, Logical View Set, And View-Family DAG
 
@@ -413,7 +529,7 @@ remaining IDs.
 #### 5.2.6.4 - Preserve Accelerated Masked-Visibility Promotion Lanes
 
 The following work is retained but is not part of the current `CpuDirect`
-Phase 5.2 promotion gate.
+Phase 5.2A promotion gate.
 
 - [ ] Upload all active main-view frusta in a compact frame-view buffer and
   replace the GPU BVH shader's leaf-to-parent walk with a root-down work queue
@@ -440,6 +556,19 @@ Phase 5.2 promotion gate.
   work exceeds added submission cost.
 - [ ] Keep transparent sorting and LOD projection correct per point of view;
   document any conservative shared-LOD policy used by a multiview union draw.
+- [ ] Compile GPU-driven work into stable pass-level dispatch, resource-specific
+  barrier, and `Draw*IndirectCount` packets that can be recorded once and reused
+  while frame-slot inputs and GPU-written output contents change.
+- [ ] Stop treating GPU-written visibility, command, count, overflow, and delayed
+  statistics values as `mutable-gpu-driven-frame-ops`. Only a topology,
+  capacity, binding-identity, pipeline, or resource-generation change may force
+  the compatible recorded range to rebuild.
+- [ ] Keep active draw, material, state-class, and bucket work compact. The CPU
+  must not scan all potential buckets, inspect current-frame counts, or construct
+  commands per surviving GPU draw in a production zero-readback frame.
+- [ ] Use bounded frame-slot resources for GPU cull/compact/indirect output so
+  the GPU may mutate contents without racing an in-flight submission or rotating
+  structural cache identity every frame.
 
 #### 5.2.6.5 - Integrate Physical-Eye Hi-Z And Persistent Visibility
 
@@ -622,19 +751,22 @@ Acceptance criteria:
 
 ### 5.2.10 - Validation Matrix And Promotion Gate
 
-This promotion gate currently validates only the supported `CpuDirect` mesh
-submission lane. `GpuIndirectInstrumented`, `GpuIndirectZeroReadback`, and
-meshlet submission are unfinished and explicitly outside this matrix. Do not
-run, compare, or require those cohorts until their implementations have their
-own readiness checklist, that checklist is complete, and the owner explicitly
-opens a separate promotion lane. The former zero-readback comparison cohort is
-therefore deferred rather than a Phase 5.2 blocker.
+This first matrix is the Phase 5.2A `CpuDirect` production gate and the shared
+baseline inherited by later lanes. `GpuIndirectInstrumented`,
+`GpuIndirectZeroReadback`, and meshlet submission must not be reported as
+passing until their readiness checklists open Phase 5.2B or 5.2C. Their current
+absence does not block Phase 6 after 5.2A, but it does remain visible tracker
+debt and prevents whole-tracker completion under the promotion semantics above.
 
 - [ ] Extend the controlled P0.2 baseline with mono desktop, OpenXR sequential
   stereo, true two-eye multiview, available quad-view lanes, desktop/secondary
   outputs, and current per-pass visibility-dispatch counts. Record candidate and
   emitted-draw counts, culling/recording CPU and GPU duration, queue transfers,
   barrier-stage flushes, missed XR frames, and steady-state allocation.
+- [ ] Add matched Release Vulkan/OpenGL `CpuDirect` cohorts with identical
+  scene, camera, lights, output extent/scale, warmup state, occlusion, debug
+  features, and profiler settings. Run low-, medium-, and high-draw-count plus
+  material-diverse workloads and retain the exact configuration manifest.
 - [ ] Add focused contract tests proving stable logical-view/history identity,
   planned-batch selection, `CpuDirect` CPU-BVH ownership, and the distinction
   between pass eligibility, frustum visibility, occlusion visibility, and
@@ -657,6 +789,11 @@ therefore deferred rather than a Phase 5.2 blocker.
   scene snapshots/visibility builds, record/reuse/dirty counts, allocation,
   resource retirement, plan churn, queue waits/submits, and quality/fallback
   events.
+- [ ] Record primary/secondary record and reuse time separately from native
+  Vulkan call time and GPU execution. Also record pipeline pending/created/
+  cache-hit counts, deferred/rejected-frame reasons, dynamic-buffer capacity/
+  growth/recreation, dirty object/range counts, uploaded bytes, pipeline/
+  descriptor/vertex/index bind counts, and avoided redundant binds.
 - [ ] Also record candidate count after shared traversal, exact visible count
   per logical-view bit, per-batch union/intersection/Jaccard values where
   applicable, per-view frustum/occlusion rejection, Hi-Z source/invalidation/
@@ -677,11 +814,23 @@ therefore deferred rather than a Phase 5.2 blocker.
 - [ ] On the RTX 3090 / 0.67-scale desktop diagnostic scene, require CPU frame
   p50 <= 10 ms, p95 <= 12 ms, and p99 <= 14 ms, or approve and document a new
   workload-equivalent baseline before promotion.
+- [ ] By default, require warmed Vulkan `CpuDirect` CPU p95 to remain within 10%
+  of matched OpenGL `CpuDirect` p95 or beat the absolute Vulkan target above.
+  Any exception requires a repeated profile that attributes the delta to named
+  backend work, an approved threshold, and a retained follow-up; Debug-build or
+  cold-cache results cannot waive this gate.
+- [ ] Require Vulkan CPU-direct collection, upload, and state-change curves to
+  scale with dirty objects/ranges and compatible state groups rather than all
+  visible objects times pass count. Preserve the measured low/medium/high-count
+  curves as the baseline for Phase 5.2B/5.2C crossover analysis.
 - [ ] Require dynamic rendering to remain within 5% of legacy p50/p95/p99 across
   repetitions unless an explained GPU-side win justifies a measured CPU cost.
 - [ ] Require >=99% clean command reuse, zero stable record-path allocation,
   zero steady resource retirement/plan replacement, zero rejected submissions,
   and zero global waits/force flushes for static-output cohorts.
+- [ ] Require zero post-warmup required-pipeline deferrals, pipeline-caused
+  whole-frame rejections, steady exact-size dynamic-buffer recreation, and
+  render-thread shader compilation in retained cohorts.
 - [ ] Define and meet an XR missed-deadline threshold before running auxiliary
   work. The threshold must be based on the active runtime refresh rate and
   separately report runtime/compositor-owned misses.
@@ -704,25 +853,46 @@ Final acceptance criteria:
   retirement, resize, hot reload, target rotation, and device-loss injection.
 - [ ] No tested workload hides a requested accelerated path behind a CPU fallback
   or unreported quality/cadence reduction.
-- [ ] Only after all Phase 5.2 acceptance criteria pass may Phase 6 begin.
+- [ ] Only after all shared and Phase 5.2A acceptance criteria pass may Phase 6
+  begin. Phase 5.2B/5.2C remain independently visible promotion gates and still
+  govern whole-tracker completion.
 
-Accelerated-lane promotion requirements, activated separately when ready:
+Phase 5.2B/5.2C accelerated-lane promotion requirements, activated separately
+when their readiness checklists are complete:
 
 - [ ] Validate GPU indirect instrumented, GPU indirect zero-readback, and each
   supported meshlet strategy independently across mono, sequential stereo,
   parallel recording, true two-eye multiview, supported quad view, desktop
   mirror, and secondary output.
+- [ ] Require Phase 5.2B to complete the active-list, overflow, barrier batching,
+  indirect-count, delayed-diagnostics, and final-validation contracts in the
+  compact zero-readback tracker. Phase 5.2C additionally requires its meshlet
+  readiness/parity checklist on each supported hardware lane.
 - [ ] Compare disabled, temporal Hi-Z, and current-frame Hi-Z, including camera
   cuts, tracking jumps, moving occluders, and scene/BVH revisions.
 - [ ] Require exact GPU visibility to match the per-view reference collector,
   zero unexpected CPU readback for zero-readback lanes, and one main-camera BVH
   traversal per compatible frame visibility domain.
+- [ ] Require warmed production GPU lanes to reuse stable pass-level dispatch,
+  barrier, and indirect-draw command topology. Per-frame changes to GPU-written
+  visibility/command/count contents must produce zero primary rerecords unless a
+  reported topology, capacity, binding, pipeline, or resource generation changes.
+- [ ] Require production zero-readback CPU submission work to scale with active
+  pass/state-class batches, not visible draw count, scene capacity, or the full
+  material/bucket table. Instrumented diagnostic readback cost is reported
+  separately and cannot stand in for the production result.
 - [ ] Require supported quad-view OpenXR to use two planned stereo batches by
   default, with no geometry emitted into a logical view whose exact bit is clear.
 - [ ] Require zero steady-state managed allocation in frame-view construction,
   visibility, compaction, graph scheduling, and submission; zero new Vulkan/
   OpenXR validation errors; and no more than 5% two-eye CPU/GPU regression
   without a documented downstream win and owner approval.
+- [ ] Capture matched low-, medium-, and high-count scaling curves for 5.2A,
+  5.2B, and supported 5.2C lanes with CPU recording and GPU execution separated.
+  GPU-driven rendering is not required to beat `CpuDirect` in the low-count
+  scene, but a production accelerated lane must demonstrate an approved
+  crossover or scaling advantage in a retained high-count/occluded workload.
+  If it does not, it remains correctness-ready rather than performance-promoted.
 
 Recommended implementation order:
 
@@ -731,13 +901,20 @@ Recommended implementation order:
    `RenderFrameViewSet` with its allocation-free GPU adapter.
 3. Put existing two-eye multiview behind runtime batch planning, then add the
    supported wide/inset two-pair quad layout.
-4. Implement exact masked `CpuDirect` traversal and reuse it across compatible
+4. Implement generation-complete command reuse plus the capacity-backed Vulkan
+   CPU-direct upload/data path.
+5. Implement exact masked `CpuDirect` traversal and reuse it across compatible
    main-camera passes and outputs.
-5. Integrate output terminal nodes, XR critical-path analysis, optional-output
+6. Prewarm all reachable pipeline variants and separate warmup/streaming from
+   steady-state submission.
+7. Integrate output terminal nodes, XR critical-path analysis, optional-output
    reuse, and deadline-ordered submission.
-6. Complete the `CpuDirect` validation matrix and promote Phase 5.2.
-7. Open accelerated lanes in order: exact GPU masked traversal, batch-oriented
-   indirect generation, meshlet parity, then persistent physical-eye Hi-Z.
+8. Complete the `CpuDirect` validation matrix and promote Phase 5.2A.
+9. Open Phase 5.2B with exact GPU masked traversal, compact batch-oriented
+   indirect generation, stable recorded topology, and persistent physical-eye
+   Hi-Z.
+10. Open Phase 5.2C after GPU indirect promotion and complete meshlet parity on
+    supported hardware.
 
 Guardrails:
 
@@ -764,9 +941,12 @@ Guardrails:
 
 ## Phase 6 - Descriptor And Binding Robustness
 
-Build on Phase 5.2's allocation-free, generation-driven descriptor publication
-seam. Descriptor hardening must not restore per-draw fingerprint construction,
-global command-cache invalidation, or identical-write generation churn.
+Build on Phase 5.2A's allocation-free, generation-driven descriptor publication
+and command-reuse seam. The minimum generations needed to validate cached
+recordings already belong to Phase 5.2.5; this phase completes descriptor
+coverage, pool robustness, null-binding policy, and crash diagnostics.
+Descriptor hardening must not restore per-draw fingerprint construction, global
+command-cache invalidation, or identical-write generation churn.
 
 - [ ] Define descriptor fingerprint inputs for all descriptor-affecting resources:
   - [ ] image handle,
@@ -988,8 +1168,23 @@ Acceptance criteria:
 
 - [ ] One canonical immutable frame view set drives every live Vulkan/OpenXR
   consumer with stable logical identities and predicted-time consistency.
+- [ ] Generation-complete command dependency validation replaces the hard
+  primary-reuse safety quarantine. Production reuse requires no diagnostic
+  environment flag, and data-only frame-slot publication does not invalidate
+  compatible recorded ranges.
 - [ ] `CpuDirect` generates exact main-view visibility with one masked CPU-BVH
   traversal per compatible frame domain and reuses it across eligible passes.
+- [ ] Vulkan `CpuDirect` uses bounded capacity-backed dynamic resources and
+  dirty-range/frame-slot updates. Ordinary transforms, animation, material
+  values, camera motion, queries, and debug geometry do not recreate backing
+  storage or rerecord static work after warmup.
+- [ ] Matched Release Vulkan/OpenGL CPU-direct baselines and low/medium/high-count
+  scaling curves pass the Phase 5.2A thresholds with CPU recording separated
+  from native API and GPU execution time.
+- [ ] Every promoted GPU-driven lane submits compact active work through stable
+  reusable dispatch/barrier/indirect topology, performs no forbidden
+  current-frame readback, and demonstrates the approved high-count/occlusion
+  crossover or scaling advantage.
 - [ ] Supported OpenXR view configurations render through capability-planned
   batches, including two stereo pairs for supported quad view, without silent
   sequential fallback from strict single-pass mode.
@@ -1007,12 +1202,18 @@ Acceptance criteria:
   and reports a useful breadcrumb summary.
 - [ ] Hot-path allocation checks remain clean for command recording and
   submission.
+- [ ] Declared steady-state cohorts have zero required-pipeline deferrals,
+  pipeline-caused whole-frame rejections, render-thread shader compilation, and
+  exact-size dynamic-buffer recreation.
 - [ ] The final validation matrix names exact hardware/runtime configurations,
   run duration/frame counts, diagnostic coverage, warning/VUID allowlist, peak
   memory, maximum submission time, and OpenXR missed-frame threshold.
 - [ ] Device-fault and vendor diagnostic artifacts are collected when supported;
   unsupported capabilities are explicit in the result manifest.
 - [ ] Documentation, source-contract tests, and smoke tests are updated.
+- [ ] Phase 5.2A is promoted, and every supported Phase 5.2B/5.2C production
+  lane is promoted or has an explicit recorded v1 removal/deferral decision;
+  unfinished accelerated lanes are not hidden by the overall tracker status.
 
 ## Remaining Design Decisions
 

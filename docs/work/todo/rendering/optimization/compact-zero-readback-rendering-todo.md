@@ -1,12 +1,13 @@
 # Compact Zero-Readback Rendering TODO
 
-Last Updated: 2026-05-29
+Last Updated: 2026-07-20
 Owner: Rendering
-Status: Active
-Target Branch: `rendering-compact-zero-readback`
+Status: Active supporting tracker for Vulkan Core Hardening Phase 5.2B
+Execution: Current worktree only; do not create or switch branches for this effort.
 
 Design source:
 
+- [Canonical Vulkan Core Hardening And Device-Loss TODO](../vulkan-core-hardening-and-device-loss-todo.md)
 - [Engine Rendering Optimization Design](../../../design/rendering/engine-optimization-and-avatar-optimizer-design.md)
 - [Zero-Readback GPU-Driven Rendering Plan](../../../design/rendering/zero-readback-gpu-driven-rendering-plan.md)
 - [Production GPU-Driven Rendering Roadmap](../gpu/production-rendering-pipeline-roadmap.md)
@@ -27,6 +28,7 @@ and report its true cost.
 - One-phase and two-phase Hi-Z integration.
 - Barrier and synchronization batching.
 - Indirect-count draw/dispatch submission.
+- Stable reusable pass-level dispatch/barrier/indirect command topology.
 - Delayed diagnostics that do not affect the current frame.
 
 ## Non-Goals
@@ -35,10 +37,14 @@ and report its true cost.
 - Do not make CPU direct slower to make zero-readback look better.
 - Do not rely on CPU-visible counters for current-frame draw decisions.
 - Do not hide fallback draws in strict zero-readback profiles.
+- Do not classify changing GPU-written contents or counts as structurally
+  mutable command operations. Strict production frames rerecord only for a
+  reported topology, capacity, binding, pipeline, or resource-generation change.
 
-## Phase 0 - Branch, Baseline, And Audit
+## Phase 0 - Baseline And Audit
 
-- [ ] Create dedicated branch `rendering-compact-zero-readback`.
+- [ ] Execute and report this supporting work through the canonical Phase 5.2B
+  gate; do not create a separate branch or independent completion status.
 - [ ] Capture Release baselines for `CpuDirect`, `GpuIndirectInstrumented`, and
   `GpuIndirectZeroReadback` on low-object, high-object, occluded, material-diverse,
   and skinned-avatar scenes.
@@ -67,6 +73,9 @@ Acceptance criteria:
   material slots.
 - [ ] Add static-scene reuse or short-circuit rules where camera, topology, BVH,
   material table, and visibility inputs are unchanged.
+- [ ] Keep CPU-recorded dispatch, resource-specific barrier, and
+  `Draw*IndirectCount` packets stable across frames. Frame-slot inputs and
+  GPU-written active lists/counts may change without changing recorded topology.
 - [ ] Keep diagnostic full scans behind explicit flags and profiler labels.
 
 Acceptance criteria:
@@ -101,7 +110,9 @@ Acceptance criteria:
 - [ ] Clamp written counts on overflow.
 - [ ] Increment `GpuCompactionOverflow` or a more specific overflow counter.
 - [ ] Emit a conservative fallback where possible, such as parent cluster,
-  coarser LOD, or next-frame CPU-direct fallback.
+  coarser LOD, or explicitly visible uncullable GPU work. Strict zero-readback
+  must never switch to next-frame CPU-direct automatically; a user-authorized
+  strategy transition is a separate, reported policy event.
 - [ ] Resize buffers across frames, never mid-frame.
 - [ ] Surface overflow in editor diagnostics and profile capture JSON.
 - [ ] Add tests for empty input, exact-capacity input, overflow input, and
@@ -167,11 +178,17 @@ Acceptance criteria:
   the selected strategy.
 - [ ] Add source-contract checks preventing CPU draw-count readback in
   `GpuIndirectZeroReadback`.
+- [ ] Ensure ordinary GPU-written command/count changes do not set a generic
+  mutable-frame-op flag, invalidate the primary, or rebuild the pass-level
+  command packet.
 
 Acceptance criteria:
 
 - [ ] The CPU submits stable pass-level indirect calls and does not inspect the
   generated draw count for the current frame.
+- [ ] Warm steady-state frames reuse the pass-level dispatch/barrier/indirect
+  topology; every rerecord identifies a topology, capacity, binding, pipeline,
+  or resource-generation change.
 
 ## Phase 7 - Delayed Diagnostics
 
@@ -190,12 +207,15 @@ Acceptance criteria:
 - [ ] Diagnostics explain what the GPU path did without changing what the
   current frame renders.
 
-## Final Validation And Merge
+## Final Validation And Closeout
 
 - [ ] Run targeted GPU indirect, material table, Hi-Z, and profiler tests.
 - [ ] Run Release baselines after implementation on low-count, high-count,
   occluded, material-diverse, and skinned-avatar scenes.
+- [ ] Compare matched Phase 5.2A/5.2B scaling curves with CPU recording and GPU
+  execution separated. A production accelerated lane must demonstrate its
+  approved high-count/occlusion crossover or scaling advantage.
 - [ ] Capture at least one GPU trace showing barrier and compaction behavior.
 - [ ] Update the engine optimization roadmap with final results.
-- [ ] Merge branch `rendering-compact-zero-readback` back into `main` after
-  implementation, validation, and documentation updates are complete.
+- [ ] Close this supporting tracker only when the canonical Phase 5.2B gate
+  records the same implementation, validation, and documentation evidence.

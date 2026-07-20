@@ -1,26 +1,29 @@
 # Production GPU-Driven Rendering Roadmap
 
-Last Updated: 2026-07-01
-Status: Canonical production GPU-driven rendering roadmap. Supersedes the old broad [gpu-rendering.md](gpu-rendering.md) checklist, which is now a redirect into this roadmap and the dedicated meshlet tracker.
+Last Updated: 2026-07-20
+Status: Canonical production GPU-driven rendering roadmap and supporting owner for Vulkan Core Hardening Phase 5.2B/5.2C. Supersedes the retired broad `gpu-rendering.md` checklist, whose remaining work is folded into this roadmap and the dedicated meshlet design.
 
 Source documents folded in:
 
+- [Vulkan Core Hardening And Device-Loss TODO](../vulkan-core-hardening-and-device-loss-todo.md)
 - External report: "Fully GPU-Resident Scene Rendering for Vulkan and OpenGL in C# Silk.NET"
-- [gpu-rendering.md](gpu-rendering.md) — retired internal zero-readback + meshlet architecture TODO, folded into this roadmap on 2026-05-19
-- [gpu-meshlet-zero-readback-rendering-todo.md](gpu-meshlet-zero-readback-rendering-todo.md) — dedicated production meshlet execution tracker
+- Retired `gpu-rendering.md` internal zero-readback + meshlet architecture TODO,
+  folded into this roadmap on 2026-05-19.
+- [GPU Meshlet Zero-Readback Rendering Design](../../../design/rendering/gpu-meshlet-zero-readback-rendering-design.md)
+  - dedicated production meshlet execution design and acceptance contract.
 - [../../design/rendering/zero-readback-gpu-driven-rendering-plan.md](../../../design/rendering/zero-readback-gpu-driven-rendering-plan.md)
 - [../../design/rendering/render-submission-perf-debug-plan.md](../../../design/rendering/render-submission-perf-debug-plan.md)
-- [../../../architecture/rendering/mesh-submission-strategies.md](../../../architecture/rendering/mesh-submission-strategies.md)
-- [../../../architecture/rendering/default-render-pipeline-notes.md](../../../architecture/rendering/default-render-pipeline-notes.md)
+- [Mesh Submission Strategies](../../../../architecture/rendering/mesh-submission-strategies.md)
+- [Default Render Pipeline Notes](../../../../architecture/rendering/default-render-pipeline-notes.md)
 
 Spot-checked code:
 
-- [GPURenderPassCollection.Occlusion.cs](../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.Occlusion.cs)
-- [VPRC_RenderMeshesPassMeshlet.cs](../../../../XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Meshlet/VPRC_RenderMeshesPassMeshlet.cs)
-- [GPURenderMaterialScatter.comp](../../../../Build/CommonAssets/Shaders/Compute/Indirect/GPURenderMaterialScatter.comp)
-- [GPURenderLODSelect.comp](../../../../Build/CommonAssets/Shaders/Compute/Indirect/GPURenderLODSelect.comp)
-- [GPUScene.cs](../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPUScene.cs)
-- [MeshletCollection.cs](../../../../XREngine.Runtime.Rendering/Rendering/Meshlets/MeshletCollection.cs)
+- [GPURenderPassCollection.Occlusion.cs](../../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Occlusion.cs)
+- [VPRC_RenderMeshesPassMeshlet.cs](../../../../../XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Meshlet/VPRC_RenderMeshesPassMeshlet.cs)
+- [GPURenderMaterialScatter.comp](../../../../../Build/CommonAssets/Shaders/Compute/Indirect/GPURenderMaterialScatter.comp)
+- [GPURenderLODSelect.comp](../../../../../Build/CommonAssets/Shaders/Compute/Indirect/GPURenderLODSelect.comp)
+- [GPUScene.cs](../../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.cs)
+- [MeshletCollection.cs](../../../../../XREngine.Runtime.Rendering/Rendering/Meshlets/MeshletCollection.cs)
 - `EnableZeroReadbackMaterialScatter` / `EZeroReadbackMaterialDrawPath` settings surfaces
 
 2026-05-19 consolidation note:
@@ -38,6 +41,10 @@ The external report and the internal plans agree on the core architecture, with 
 **Where we are aligned with the report:**
 
 - Compute culling + indirect-count draw is the mandatory baseline.
+- Production Vulkan records reusable pass-level dispatch, resource-specific
+  barrier, and indirect-count topology. GPU-written visibility, command, count,
+  and delayed-stat contents are data-only changes and do not force primary
+  rerecording.
 - Mesh shaders are an *optional* enhancement, not a foundation.
 - OpenGL mesh shading is non-portable (`GL_NV_mesh_shader` only) and must remain opportunistic.
 - Hybrid geometry: coarse LODs with meshlets *inside* each LOD is the correct production target.
@@ -80,7 +87,7 @@ The external report and the internal plans agree on the core architecture, with 
 | Render-graph metadata is real | `XREngine.Runtime.Rendering/RenderGraph/` | The report's "render graph with explicit resource declarations" recommendation is already in place. |
 | GPU Hi-Z occlusion + CPU async query, with temporal hysteresis and pass-aware exclusion | `GPURenderHiZSoACulling.comp`, `GPURenderPassCollection.Occlusion.cs` | Matches Phase 3 of the internal plan. **Now actually executing**: the silent no-op due to depth-view typing has been fixed (`TryResolveHiZDepthSource` accepts `XRTexture2D`, `XRTexture2DView`, and single-layer `XRTexture2DArrayView`). |
 | ViewSet + multi-view fan-out, OVR multiview preferred / NV stereo fallback | Phase 5 (complete) | Goes beyond the report. |
-| Mesh submission strategy is an *explicit*, switchable contract | `EMeshSubmissionStrategy { CpuDirect, GpuIndirectInstrumented, GpuIndirectZeroReadback, GpuMeshletInstrumented, GpuMeshletZeroReadback }` and per-strategy invariants in [mesh-submission-strategies.md](../../../architecture/rendering/mesh-submission-strategies.md) | Lets us A/B regressions cleanly. Report has no equivalent because it doesn't address pre-v1 engines. |
+| Mesh submission strategy is an *explicit*, switchable contract | `EMeshSubmissionStrategy { CpuDirect, GpuIndirectInstrumented, GpuIndirectZeroReadback, GpuMeshletInstrumented, GpuMeshletZeroReadback }` and per-strategy invariants in [mesh-submission-strategies.md](../../../../architecture/rendering/mesh-submission-strategies.md) | Lets us A/B regressions cleanly. Report has no equivalent because it doesn't address pre-v1 engines. |
 | `GpuBackendParityValidator` runtime snapshot | Phase 6 (complete) | Maintains OpenGL/Vulkan parity confidence. |
 | `MeshletGenerator` via meshoptimizer P/Invoke | `XREngine/Rendering/Meshlets/MeshletGenerator.cs` | Matches the report's "use meshoptimizer over reimplementing" advice. |
 | Strategy-gated readbacks | `GpuIndirectInstrumented` owns diagnostic readbacks; `GpuIndirectZeroReadback` is forbidden from readback in steady state | Separation of debug-vs-shipping concerns the report's §15 also calls out. |
@@ -93,11 +100,11 @@ Concrete deviations from the report and from our own internal plans that should 
 
 | # | Issue | Source of evidence | Severity |
 | --- | --- | --- | --- |
-| W1 | Fixed in Phase C: `GPUIndirectRenderCommand` is now a compact 20-lane compatibility envelope; world/previous matrices live in `TransformBuffer` / `PrevTransformBuffer`, and culling reads metadata + bounds. | Report §7.1, internal zero-readback plan §7.1, [gpu-rendering.md](gpu-rendering.md) Current Pipeline Architecture | Resolved |
+| W1 | Fixed in Phase C: `GPUIndirectRenderCommand` is now a compact 20-lane compatibility envelope; world/previous matrices live in `TransformBuffer` / `PrevTransformBuffer`, and culling reads metadata + bounds. | Report §7.1, internal zero-readback plan §7.1, retired `gpu-rendering.md` Current Pipeline Architecture | Resolved |
 | W2 | Fixed in Phase E: `GPURenderLODSelect.comp` now selects from explicit projected screen-space radius thresholds using camera projection scale plus active viewport/render-area dimensions while preserving `LODTableBuffer`, request masks, and transition state writes. | Retired `gpu-rendering.md` Phase 9 vs current shader/code | Resolved |
 | W3 | Fixed in Phase B: `VPRC_RenderMeshesPassMeshlet` is documented as wired and no longer runs the CPU mesh pass before the GPU meshlet path. Remaining meshlet work is atlas/LOD/Hi-Z integration. | Code spot-check vs internal doc | Resolved |
 | W4 | Fixed in Phase C at the batching layer: material scatter and sort keys now use `DrawMetadata.StateClassID`. Phase D still needs the final per-draw bindless material table for texture-correct arbitrary materials. | Report §"materials, descriptors, bindless"; internal plan §14.1 | Resolved / D follow-up |
-| W5 | Bindless / descriptor-indexing material table now has real handle population, but the next correctness step is replacing fixed opaque-deferred row assumptions with pass-declared dynamic layouts. | [gpu-rendering.md](gpu-rendering.md) 2026-05-08 update; [Dynamic Indirect Material Bindings](../../../design/rendering/dynamic-indirect-material-bindings.md) | D follow-up |
+| W5 | Bindless / descriptor-indexing material table now has real handle population, but the next correctness step is replacing fixed opaque-deferred row assumptions with pass-declared dynamic layouts. | Retired `gpu-rendering.md` 2026-05-08 update; [Dynamic Indirect Material Bindings](../../../design/rendering/dynamic-indirect-material-bindings.md) | D follow-up |
 | W6 | Fixed in Phase B for shipping: `GpuIndirectZeroReadback` uses GPU command-AABB direct writes for skinned bounds and skips the `WaitForGpu()` readback path. Diagnostic/non-shipping compute-bounds readback remains available. | Internal zero-readback plan §13.4 | Resolved |
 | W7 | Fixed in Phase B for shipping: `GPURenderBuildBatches.comp`, `DispatchBuildGpuBatches`, and `ReadGpuBatchRanges()` are behind `XRE_DEBUG_BATCH_RANGE_READBACK`; `GpuIndirectZeroReadback` scatters directly. | Internal plan §2.1, Phase 7 acceptance criteria | Resolved |
 | W8 | Static-scene short-circuit (skip cull/sort if camera + topology + BVH gen unchanged) is missing. The recurring cost of recomputing HZB and redispatching cull on a static two-Sponza scene is exactly this hole. | Perf doc P7 (since retracted) still identified the redundancy; report §"hierarchical occlusion" implies temporal reuse | Medium |
@@ -136,7 +143,9 @@ Goal: zero CPU readbacks in the shipping path. The old Phase 7 checklist has bee
 
 - [x] **B1.** Delete `GPURenderBuildBatches.comp` + `ReadGpuBatchRanges()` from shipping builds. Move them under a `#define XRE_DEBUG_BATCH_RANGE_READBACK` (or equivalent build flag) and exclude from `GpuIndirectZeroReadback`. Done 2026-05-13: shader load, dispatch, buffer allocation, and batch-range readback are compile-flagged; zero-readback scatters directly.
 - [x] **B2.** Remove the CPU `RenderCPU` call from `VPRC_RenderMeshesPassMeshlet.Execute`. Done 2026-05-13.
-- [x] **B3.** Retire [gpu-rendering.md](gpu-rendering.md) as a stale active checklist. Done 2026-05-19: it now redirects to this roadmap and the dedicated meshlet tracker.
+- [x] **B3.** Retire `gpu-rendering.md` as a stale active checklist. Done
+  2026-05-19: its remaining work is folded into this roadmap and the dedicated
+  meshlet design.
 - [x] **B4.** Confirm `Engine.Rendering.Stats.GpuReadbackBytes == 0` for a full Release frame on B1 under `GpuIndirectZeroReadback`. Add a unit test asserting this on a representative frame. Done 2026-05-13: unit/source-contract coverage added; live Release B1 capture remains part of A5/H1 measurement runs.
 - [x] **B5.** Skinned bounds on GPU without readback (internal W6, plan §13.4). Write skinned bounds into a GPU-resident `BoundsBuffer` consumed by culling directly. Remove `SkinnedMeshBoundsCalculator.WaitForGpu()` from the shipping path. Done 2026-05-13: zero-readback uses the GPU command-AABB buffer direct-write path and skips the CPU readback result path. `SkinnedMeshBoundsCalculator.WaitForGpu()` calls remain in diagnostic/non-shipping compute-bounds paths only; the zero-readback strategy bypasses that class entirely via `RenderableMesh.ApplyGpuResidentSkinnedBoundsDispatchLocked → DispatchPathADirectWrite`.
 
@@ -207,12 +216,12 @@ Merged status from retired `gpu-rendering.md`: Phase 9A/9C and the basic Phase 9
 - [x] **E1.** Upgrade `GPURenderLODSelect.comp` from raw distance thresholds to *projected screen-space radius* selection. Done 2026-05-19: `SubMeshLOD.MinProjectedScreenRadiusPixels` is the explicit GPU LOD threshold, `GPUScene.LODTableBuffer` lanes store minimum projected radius pixels with conservative defaults for unset thresholds, the LOD pass binds projection scale and active render-area/viewport size, and the shader selects by projected radius while preserving request/transition contracts. Tests cover source bindings, the LOD table contract, and large-near versus small-near selection.
 - [x] **E2.** `LODTableBuffer` with clean `LogicalMeshID` mapping, resident LOD mesh IDs, `RequestLODLoad`, and `ReleaseLOD`. Done before consolidation: `GPUScene.LODTableEntry`, `LODTableBuffer`, `LODRequestBuffer`, and logical mesh registration are present and covered by backlog tests.
 - [x] **E3.** Basic dithered LOD transition state for the indirect path. Done before consolidation: `LodTransitionBuffer`, `GPURenderLODSelect.comp` transition progress, previous-LOD duplicate indirect draws, and generated fragment-shader Bayer dither are wired. Meshlet transition expansion was completed under E7.
-- [x] **E4.** Production meshlet capability honesty. Split direct mesh-task dispatch from production indirect/count meshlet dispatch; model dialects as `None`, `OpenGLNV`, `OpenGLEXT`, and `VulkanEXT`; make unsupported `GpuMeshletZeroReadback`/`GpuMeshletInstrumented` visibly fall back to `GpuIndirectZeroReadback`. Done 2026-05-19 in [gpu-meshlet-zero-readback-rendering-todo.md](gpu-meshlet-zero-readback-rendering-todo.md) Phase 1, then split into the explicit instrumented-vs-zero-readback enum values on 2026-05-20.
-- [x] **E5.** Move meshlet vertex/triangle/descriptor data into `GPUScene` ownership. Done 2026-05-19 in [gpu-meshlet-zero-readback-rendering-todo.md](gpu-meshlet-zero-readback-rendering-todo.md) Phases 3-4: `GPUScene` owns meshlet ranges, descriptors, vertex-reference indices, and triangle-local indices keyed by `MeshDataID`/LOD; `MeshletCollection` is now diagnostic/compatibility ownership, not the production source.
+- [x] **E4.** Production meshlet capability honesty. Split direct mesh-task dispatch from production indirect/count meshlet dispatch; model dialects as `None`, `OpenGLNV`, `OpenGLEXT`, and `VulkanEXT`; make unsupported `GpuMeshletZeroReadback`/`GpuMeshletInstrumented` visibly fall back to `GpuIndirectZeroReadback`. Done 2026-05-19 under [GPU Meshlet Zero-Readback Rendering Design](../../../design/rendering/gpu-meshlet-zero-readback-rendering-design.md) Phase 1, then split into the explicit instrumented-vs-zero-readback enum values on 2026-05-20.
+- [x] **E5.** Move meshlet vertex/triangle/descriptor data into `GPUScene` ownership. Done 2026-05-19 under the meshlet design's storage/expansion phases: `GPUScene` owns meshlet ranges, descriptors, vertex-reference indices, and triangle-local indices keyed by `MeshDataID`/LOD; `MeshletCollection` is now diagnostic/compatibility ownership, not the production source.
 - [x] **E6.** Add cooked meshlet descriptor payloads and generation settings. Done 2026-05-19: `XRMesh` owns a cooked `MeshletPayload` with CPU descriptors, cone data, settings/freshness hashes, disabled-generation manifests, runtime cooked-binary round trip, warm-cache render startup reuse, and GPU layout handoff. The disposable model-cache chunk/container remains owned by [model-import-binary-cache-todo.md](../../assets/model-import-binary-cache-todo.md) Phase 5 and is no longer a blocker for renderer Phase E.
-- [x] **E7.** GPU meshlet expansion + indirect-count task dispatch. Done 2026-05-19 in [gpu-meshlet-zero-readback-rendering-todo.md](gpu-meshlet-zero-readback-rendering-todo.md) Phases 5-6: `GPURenderExpandMeshlets.comp`, `GpuMeshletTaskRecord`, task-count/dispatch buffers, overflow handling, previous-LOD task records, and backend indirect-count mesh-task dispatch wrappers are wired; missing meshlet ranges route through traditional zero-readback indirect rendering.
-- [x] **E8.** Production task/mesh shader integration. Done 2026-05-19 in [gpu-meshlet-zero-readback-rendering-todo.md](gpu-meshlet-zero-readback-rendering-todo.md) Phase 7: production shader filenames consume task records, transform bounds through `TransformBuffer`, perform pass-gated frustum/cone/primary-view Hi-Z culling, and emit atlas-backed material-compatible mesh outputs. The old direct-dispatch NV shaders are now explicitly diagnostic files.
-- [x] **E9.** Material/pass parity and validation for `GpuMeshletZeroReadback`/`GpuMeshletInstrumented`: opaque, alpha-tested, shadow/depth, velocity, skinned, stereo, bindless/descriptor material table, fallback-only environments, and zero-readback/instrumented stats. Done 2026-05-19 at renderer/source-contract scope and refined 2026-05-20 for split strategy stats: runtime meshlet dispatch uses the shared material-table policy where supported, binds `MaterialStateBuffer`/texture handle tables, disables unsafe stereo Hi-Z, routes override/depth-normal/shadow/skinned unsupported cases through traditional zero-readback indirect with visible warnings, publishes meshlet counters/profile-capture stats, and records instrumented visible/dispatched/overflow/dispatch/readback-byte telemetry only under diagnostics. Hardware visual parity, fallback smoke, 100K/readback stress, performance, and soak validation remain tracked by Phase H plus [gpu-meshlet-zero-readback-rendering-todo.md](gpu-meshlet-zero-readback-rendering-todo.md) Phase 10.
+- [x] **E7.** GPU meshlet expansion + indirect-count task dispatch. Done 2026-05-19 under the meshlet design's GPU expansion/count-dispatch phase: `GPURenderExpandMeshlets.comp`, `GpuMeshletTaskRecord`, task-count/dispatch buffers, overflow handling, previous-LOD task records, and backend indirect-count mesh-task dispatch wrappers are wired; missing meshlet ranges route through traditional zero-readback indirect rendering.
+- [x] **E8.** Production task/mesh shader integration. Done 2026-05-19 under the meshlet design's production-shader phase: production shader filenames consume task records, transform bounds through `TransformBuffer`, perform pass-gated frustum/cone/primary-view Hi-Z culling, and emit atlas-backed material-compatible mesh outputs. The old direct-dispatch NV shaders are now explicitly diagnostic files.
+- [x] **E9.** Material/pass parity and validation for `GpuMeshletZeroReadback`/`GpuMeshletInstrumented`: opaque, alpha-tested, shadow/depth, velocity, skinned, stereo, bindless/descriptor material table, fallback-only environments, and zero-readback/instrumented stats. Done 2026-05-19 at renderer/source-contract scope and refined 2026-05-20 for split strategy stats: runtime meshlet dispatch uses the shared material-table policy where supported, binds `MaterialStateBuffer`/texture handle tables, disables unsafe stereo Hi-Z, routes override/depth-normal/shadow/skinned unsupported cases through traditional zero-readback indirect with visible warnings, publishes meshlet counters/profile-capture stats, and records instrumented visible/dispatched/overflow/dispatch/readback-byte telemetry only under diagnostics. Hardware visual parity, fallback smoke, 100K/readback stress, performance, and soak validation remain tracked by Phase H plus the meshlet design's hardening/test plan.
 
 Acceptance: Phase E source contracts are complete: LOD selection is projected-radius based, meshlets share the SoA scene database, production dispatch uses GPU-written counts, and unsupported material/pass/backend cases visibly fall back to zero-readback indirect. Hardware parity/performance acceptance is carried by Phase H.
 
@@ -268,8 +277,18 @@ Acceptance: dynamic tier evicts under stress without thrashing visible-frame dat
 - [x] **H8.** Eliminate the BVH overflow-flag readback in `GpuBvhTree.ConsumeOverflowFlag`. Done 2026-05-19 for OpenGL: `Build(...)` now enqueues an `XRGpuFence`, `PollPendingOverflow()` consumes signaled fences without blocking, `GPUScene.PrepareBvhForCulling(...)` polls even when the BVH is already clean, and `GpuIndirectZeroReadback` performs no overflow-flag readback.
 - [ ] **H9.** Wire `VkDataBuffer.DeviceAddress` consumers. Phase D5 enabled `VK_KHR_buffer_device_address` on the eight scene-database SSBOs (`VulkanSceneDatabaseAddresses.SceneDatabaseDeviceAddressBuffers`) and resolves each buffer's device address via `GetBufferDeviceAddress`, but `VkDataBuffer.TryGetDeviceAddress` has zero callers in the engine. Pass scene-DB SSBO addresses through `pNext` chains, push constants, or indirect-draw structures so descriptor rebinds for these buffers can be skipped on the Vulkan path. Acceptance: at least one production-path Vulkan draw submission consumes a resolved `DeviceAddress` instead of a descriptor binding for one of the eight enumerated SSBOs.
 - [ ] **H10.** Backfill the narrowed validation backlog from the retired `gpu-rendering.md`: zero-readback material scatter draw-count/empty-bucket tests, tiered-atlas dynamic add/remove + defrag tests, streaming no-stall validation, LOD transition dither tests, meshlet fallback tests, and 100K/high-material-diversity/rapid-LOD stress coverage. Projected-radius LOD source/logic tests landed in E1 on 2026-05-19; runtime rapid-LOD stress remains here.
+- [ ] **H11.** Pass the canonical Phase 5.2B command-topology and scaling gate:
+  warmed GPU-written visibility/command/count changes cause zero primary
+  rerecords, production CPU submission scales with active pass/state-class
+  batches rather than draw/table capacity, and matched low/medium/high-count
+  curves demonstrate the approved high-count/occlusion crossover.
+- [ ] **H12.** Pass Phase 5.2C separately for every supported meshlet lane, or
+  record an explicit v1 removal/deferral decision. Unsupported hardware reports
+  `unsupported`; unfinished implementation reports `not ready`.
 
-Acceptance: 30-minute Release stress on all five modes with zero corruption, zero readbacks in shipping modes, stable frame time, no fallback thrashing.
+Acceptance: 30-minute Release stress on all five modes with zero corruption,
+zero readbacks in shipping modes, stable frame time, no fallback thrashing, and
+canonical Phase 5.2B/5.2C promotion evidence for every supported production lane.
 
 ---
 
