@@ -392,8 +392,8 @@ namespace XREngine.Components.Animation
                 if (bendDirection == Vector3.Zero)
                     bendDirection = bone1ToBone2;
 
-                Engine.Rendering.Debug.RenderLine(bone1WorldPos, bone1WorldPos + bendDirection, ColorF4.Red);
-                //Engine.Rendering.Debug.RenderLine(bone1WorldPos, bone1WorldPos + currentBendNormal, ColorF4.Orange);
+                RuntimeAnimationHostServices.Current.RenderLine(bone1WorldPos, bone1WorldPos + bendDirection, ColorF4.Red);
+                //RuntimeAnimationHostServices.Current.RenderLine(bone1WorldPos, bone1WorldPos + currentBendNormal, ColorF4.Orange);
 
                 // Rotating bone 1
                 Quaternion bone1Rot = _bone1.GetRotation(bendDirection, currentBendNormal);
@@ -403,8 +403,8 @@ namespace XREngine.Components.Animation
                 var bone2ToIK = weightedWorldPos - bone2WorldPos;
                 Vector3 bendNormal = _bone2.GetBendNormalFromCurrentRotation();
 
-                Engine.Rendering.Debug.RenderLine(bone2WorldPos, bone2WorldPos + bone2ToIK, ColorF4.Green);
-                //Engine.Rendering.Debug.RenderLine(bone2WorldPos, bone2WorldPos + bendNormal, ColorF4.Yellow);
+                RuntimeAnimationHostServices.Current.RenderLine(bone2WorldPos, bone2WorldPos + bone2ToIK, ColorF4.Green);
+                //RuntimeAnimationHostServices.Current.RenderLine(bone2WorldPos, bone2WorldPos + bendNormal, ColorF4.Yellow);
 
                 Quaternion bone2Rot = _bone2.GetRotation(bone2ToIK, bendNormal);
                 _bone2._transform.SetWorldRotation(bone2Rot);

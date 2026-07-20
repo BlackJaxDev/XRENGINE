@@ -21,6 +21,8 @@
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.AnimationIntegration\XREngine.Runtime.AnimationIntegration.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
+    <!-- ModelImporter remains facade-owned; retain this edge until its job/settings/profiling host calls move to Runtime.ModelingBridge. -->
     <ProjectReference Include="..\XRENGINE\XREngine.csproj" />
   </ItemGroup>
 

@@ -1,12 +1,25 @@
 using XREngine.Extensions;
 using System.ComponentModel;
 using XREngine.Input.Devices;
+using XREngine.Rendering;
 using XREngine.Rendering.UI;
 
 namespace XREngine.Components
 {
     public abstract class FlyingCameraPawnBaseComponent : PawnComponent
     {
+        /// <summary>Typed rendering-layer view of the core pawn camera.</summary>
+        public new CameraComponent? CameraComponent
+        {
+            get => base.CameraComponent as CameraComponent;
+            set => base.CameraComponent = value;
+        }
+
+        /// <summary>Typed input-layer view of the core pawn input provider.</summary>
+        public new LocalInputInterface? LocalInput => base.LocalInput as LocalInputInterface;
+
+        /// <summary>Typed rendering-layer view of the core pawn viewport.</summary>
+        public new XRViewport? Viewport => base.Viewport as XRViewport;
         protected static readonly bool CameraInputDiagnosticsEnabled =
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DebugCameraInput), "1", StringComparison.OrdinalIgnoreCase)
             || string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CameraInputDiag), "1", StringComparison.OrdinalIgnoreCase);
@@ -108,8 +121,10 @@ namespace XREngine.Components
         [Category("Movement")]
         public float KeyboardRotateSpeed { get; set; } = 1.0f;
 
-        public override void RegisterInput(InputInterface input)
+        public override void RegisterInput(object inputInterface)
         {
+            if (inputInterface is not InputInterface input)
+                return;
             input.RegisterMouseScroll(OnScrolled);
             input.RegisterMouseMove(MouseMove, EMouseMoveType.Relative);
 
@@ -248,7 +263,7 @@ namespace XREngine.Components
 
         public bool IsHoveringUI()
         {
-            foreach (var canvasInput in LinkedUICanvasInputs)
+            foreach (UICanvasInputComponent canvasInput in LinkedUICanvasInputs.OfType<UICanvasInputComponent>())
             {
                 if (canvasInput.TopMostInteractable is { } interactable)
                 {

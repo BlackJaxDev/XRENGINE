@@ -1,4 +1,4 @@
-using XREngine.Extensions;
+﻿using XREngine.Extensions;
 using MathNet.Numerics;
 using System.Collections.Concurrent;
 using System.ComponentModel;
@@ -680,7 +680,7 @@ namespace XREngine.Components
 
             Vector3 worldForward = Transform.WorldForward;
 
-            float delta = Engine.Delta;
+            float delta = RuntimeAudioIntegrationServices.Current.UpdateDeltaSeconds;
             foreach (var pair in ActiveListeners)
             {
                 ListenerContext listener = pair.Key;

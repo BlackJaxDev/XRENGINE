@@ -1,4 +1,5 @@
-﻿using MagicPhysX;
+﻿using XREngine.Scene.Physics.Physx;
+using MagicPhysX;
 using System.Collections.Concurrent;
 using System.Numerics;
 using XREngine.Components;
@@ -255,6 +256,17 @@ namespace XREngine.Rendering.Physics.Physx
         {
             get => _owningComponent;
             set => SetField(ref _owningComponent, value);
+        }
+
+        XRComponent? IAbstractDynamicRigidBody.OwningComponent
+        {
+            get => OwningComponent;
+            set => OwningComponent = value switch
+            {
+                null => null,
+                DynamicRigidBodyComponent owner => owner,
+                _ => throw new ArgumentException($"{nameof(PhysxDynamicRigidBody)} requires a {nameof(DynamicRigidBodyComponent)} owner.", nameof(value)),
+            };
         }
 
         public override XRComponent? GetOwningComponent()

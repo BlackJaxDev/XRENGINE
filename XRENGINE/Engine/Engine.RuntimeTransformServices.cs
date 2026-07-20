@@ -25,9 +25,14 @@ internal sealed class EngineRuntimeTransformServices : IRuntimeTransformServices
     public bool TransformCullingIsAxisAligned => Engine.Rendering.Settings.TransformCullingIsAxisAligned;
     public bool IsShadowPass => Engine.Rendering.State.IsShadowPass;
     public bool IsRenderThread => Engine.IsRenderThread;
+    public bool IsEditing => Engine.PlayMode.IsEditing;
     public ELoopType ChildRecalculationLoopType => Engine.Rendering.Settings.RecalcChildMatricesLoopType;
     public ERenderMatrixUpdateMode RenderMatrixUpdateMode => Engine.Rendering.Settings.RenderMatrixUpdateMode;
     public float UpdateDeltaSeconds => Engine.Time.Timer.Update.Delta;
+    public float DilatedUpdateDeltaSeconds => Engine.Time.Timer.Update.DilatedDelta;
+    public long UpdateDeltaTicks => Engine.Time.Timer.Update.DeltaTicks;
+    public long FixedUpdateDeltaTicks => Engine.Time.Timer.FixedUpdateDeltaTicks;
+    public float UndilatedUpdateDeltaSeconds => Engine.Time.Timer.Update.Delta;
     public float SmoothedDilatedUpdateDeltaSeconds => Engine.Time.Timer.Update.SmoothedDilatedDelta;
     public float TargetUpdateFrequency => Engine.Time.Timer.TargetUpdateFrequency;
     public float TransformReplicationKeyframeIntervalSeconds => Engine.EffectiveSettings.TransformReplicationKeyframeIntervalSec;

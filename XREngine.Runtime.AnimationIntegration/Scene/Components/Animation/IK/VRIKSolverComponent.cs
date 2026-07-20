@@ -4,7 +4,6 @@ using System.Numerics;
 using XREngine.Core.Attributes;
 using XREngine.Networking;
 using XREngine.Scene.Transforms;
-using XREngine.Timers;
 
 namespace XREngine.Components.Animation
 {
@@ -15,7 +14,7 @@ namespace XREngine.Components.Animation
     public class VRIKSolverComponent : IKSolverComponent, IVRIKSolverHandle
     {
         private const double BaselineIntervalSeconds = 1.0;
-        private static readonly long BaselineIntervalTicks = EngineTimer.SecondsToStopwatchTicks(BaselineIntervalSeconds);
+        private static readonly long BaselineIntervalTicks = Math.Max(1L, (long)Math.Round(BaselineIntervalSeconds * System.Diagnostics.Stopwatch.Frequency));
         private static readonly Dictionary<ushort, (QuantizedHumanoidPose pose, ushort sequence)> _receivedBaselines = new();
         private static readonly Dictionary<ushort, VRIKSolverComponent> _registry = new();
 
@@ -134,7 +133,7 @@ namespace XREngine.Components.Animation
 
         public override void Visualize()
         {
-            using var profilerState = Engine.Profiler.Start("VRIKSolverComponent.Visualize");
+            using var profilerState = RuntimeAnimationHostServices.Current.StartProfileScope("VRIKSolverComponent.Visualize");
             Solver.Visualize();
         }
 
@@ -205,7 +204,7 @@ namespace XREngine.Components.Animation
             if (!PoseBroadcastEnabled)
                 return;
 
-            if (Engine.Networking is not BaseNetworkingManager net)
+            if (!RuntimeAnimationHostServices.Current.HumanoidPoseTransportAvailable)
                 return;
 
             if (Root is null || Humanoid is null)
@@ -216,7 +215,7 @@ namespace XREngine.Components.Animation
 
             HumanoidPosePacketBuilder builder = new(_quantization, _delta);
 
-            long nowTicks = Engine.ElapsedTicks;
+            long nowTicks = RuntimeAnimationHostServices.Current.ElapsedTicks;
             bool sendBaseline = ShouldSendBaseline(_baselinePose is null, nowTicks, _lastBaselineTicks);
             if (sendBaseline)
             {
@@ -237,7 +236,7 @@ namespace XREngine.Components.Animation
             }
 
             HumanoidPoseFrame frame = builder.BuildFrame();
-            net.BroadcastHumanoidPoseFrame(frame, compress: false);
+            RuntimeAnimationHostServices.Current.BroadcastHumanoidPoseFrame(frame, compress: false);
         }
 
         private HumanoidPoseSample CapturePose()
@@ -377,20 +376,10 @@ namespace XREngine.Components.Animation
         }
 
         private void SubscribeNetworking()
-        {
-            if (Engine.Networking is not BaseNetworkingManager net)
-                return;
-
-            net.HumanoidPoseFrameReceived += OnHumanoidPoseFrame;
-        }
+            => RuntimeAnimationHostServices.Current.HumanoidPoseFrameReceived += OnHumanoidPoseFrame;
 
         private void UnsubscribeNetworking()
-        {
-            if (Engine.Networking is not BaseNetworkingManager net)
-                return;
-
-            net.HumanoidPoseFrameReceived -= OnHumanoidPoseFrame;
-        }
+            => RuntimeAnimationHostServices.Current.HumanoidPoseFrameReceived -= OnHumanoidPoseFrame;
 
         private void OnHumanoidPoseFrame(HumanoidPoseFrame frame)
         {

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -9,44 +9,6 @@ using XREngine.Rendering.Models;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Physics;
-
-internal readonly struct ConvexHullInput(Vector3[] positions, int[] indices)
-{
-    public Vector3[] Positions { get; } = positions;
-    public int[] Indices { get; } = indices;
-}
-
-internal enum ConvexHullInputSource
-{
-    RuntimeMeshes,
-    AssetMeshes,
-}
-
-internal readonly record struct ConvexHullInputBatch(ConvexHullInputSource Source, List<ConvexHullInput> Inputs, int SourceMeshCount)
-{
-    public string SourceLabel => Source switch
-    {
-        ConvexHullInputSource.RuntimeMeshes => "runtime render meshes",
-        ConvexHullInputSource.AssetMeshes => "asset submeshes",
-        _ => "collision meshes",
-    };
-
-    public int InputCount => Inputs.Count;
-    public int VertexCount => Inputs.Sum(static input => input.Positions.Length);
-    public int TriangleCount => Inputs.Sum(static input => input.Indices.Length / 3);
-}
-
-internal readonly record struct ConvexHullInputCollection(ConvexHullInputBatch Runtime, ConvexHullInputBatch Asset)
-{
-    public IEnumerable<ConvexHullInputBatch> EnumeratePreferredBatches()
-    {
-        if (Runtime.InputCount > 0)
-            yield return Runtime;
-
-        if (Asset.InputCount > 0)
-            yield return Asset;
-    }
-}
 
 internal static class ConvexHullUtility
 {

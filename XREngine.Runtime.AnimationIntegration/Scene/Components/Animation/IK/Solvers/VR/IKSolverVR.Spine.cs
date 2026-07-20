@@ -4,7 +4,6 @@ using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
-using static XREngine.Engine.Rendering.Debug;
 
 namespace XREngine.Components.Animation
 {
@@ -434,34 +433,34 @@ namespace XREngine.Components.Animation
 
                 if (HeadTarget != null)
                 {
-                    RenderText(HeadTarget.WorldTranslation, "Head Target", ColorF4.Black);
-                    RenderPoint(HeadTarget.WorldTranslation, ColorF4.Black);
+                    RuntimeAnimationHostServices.Current.RenderText(HeadTarget.WorldTranslation, "Head Target", ColorF4.Black);
+                    RuntimeAnimationHostServices.Current.RenderPoint(HeadTarget.WorldTranslation, ColorF4.Black);
                 }
 
                 if (ChestGoal != null)
                 {
-                    RenderText(ChestGoal.WorldTranslation, "Chest Target", ColorF4.Black);
-                    RenderPoint(ChestGoal.WorldTranslation, ColorF4.Black);
+                    RuntimeAnimationHostServices.Current.RenderText(ChestGoal.WorldTranslation, "Chest Target", ColorF4.Black);
+                    RuntimeAnimationHostServices.Current.RenderPoint(ChestGoal.WorldTranslation, ColorF4.Black);
                 }
 
                 if (HipsTarget != null)
                 {
-                    RenderText(HipsTarget.WorldTranslation, "Hips Target", ColorF4.Black);
-                    RenderPoint(HipsTarget.WorldTranslation, ColorF4.Black);
+                    RuntimeAnimationHostServices.Current.RenderText(HipsTarget.WorldTranslation, "Hips Target", ColorF4.Black);
+                    RuntimeAnimationHostServices.Current.RenderPoint(HipsTarget.WorldTranslation, ColorF4.Black);
                 }
 
-                RenderText(Hips.SolverPosition, "Hips", ColorF4.Black);
-                RenderText(FirstSpineBone.SolverPosition, "Spine", ColorF4.Black);
+                RuntimeAnimationHostServices.Current.RenderText(Hips.SolverPosition, "Hips", ColorF4.Black);
+                RuntimeAnimationHostServices.Current.RenderText(FirstSpineBone.SolverPosition, "Spine", ColorF4.Black);
                 if (_hasChest)
-                    RenderText(Chest.SolverPosition, "Chest", ColorF4.Black);
-                RenderText(Head.SolverPosition, "Head", ColorF4.Black);
-                RenderText(Neck.SolverPosition, "Neck", ColorF4.Black);
+                    RuntimeAnimationHostServices.Current.RenderText(Chest.SolverPosition, "Chest", ColorF4.Black);
+                RuntimeAnimationHostServices.Current.RenderText(Head.SolverPosition, "Head", ColorF4.Black);
+                RuntimeAnimationHostServices.Current.RenderText(Neck.SolverPosition, "Neck", ColorF4.Black);
 
                 //Render chest goal position
                 if (Quality < EQuality.Semi && _chestGoalWeight > 0.0f)
                 {
-                    RenderPoint(_goalPositionChest, ColorF4.Red);
-                    RenderText(_goalPositionChest, "Chest Goal", ColorF4.Black);
+                    RuntimeAnimationHostServices.Current.RenderPoint(_goalPositionChest, ColorF4.Red);
+                    RuntimeAnimationHostServices.Current.RenderText(_goalPositionChest, "Chest Goal", ColorF4.Black);
                 }
             }
 

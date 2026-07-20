@@ -1,4 +1,4 @@
-using MagicPhysX;
+﻿using MagicPhysX;
 using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Scene;

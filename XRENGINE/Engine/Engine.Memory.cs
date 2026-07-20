@@ -2,32 +2,6 @@ using System.Runtime;
 
 namespace XREngine;
 
-public enum EngineMaintenanceGcReason
-{
-    SceneOrWorldUnload,
-    BulkAssetImportCompleted,
-    EditorExitedPlayMode,
-    BenchmarkSetup,
-    BenchmarkTeardown,
-    EditorIdleMemoryReclaim,
-    DynamicAssemblyUnload,
-    EngineShutdown,
-}
-
-public readonly record struct EngineMaintenanceGcRequest(
-    EngineMaintenanceGcReason Reason,
-    string Detail,
-    int Generation = 2,
-    bool CompactLargeObjectHeap = false,
-    bool WaitForPendingFinalizers = true);
-
-public readonly record struct EngineMaintenanceGcResult(
-    bool Ran,
-    string Message,
-    long HeapBeforeBytes,
-    long HeapAfterBytes,
-    int Generation);
-
 public static partial class Engine
 {
     private static int _memoryPolicyConfigured;

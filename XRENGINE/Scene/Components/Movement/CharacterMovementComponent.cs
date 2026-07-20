@@ -17,6 +17,7 @@ using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
+using XREngine.Scene.Physics;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
 
@@ -738,13 +739,13 @@ namespace XREngine.Components.Movement
             _subUpdateTick = GroundMovementTick;
             RegisterMovementTick();
 
-            var physicsScene = WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene;
+            var physicsScene = WorldAs<IRuntimePhysicsWorldContext>()?.PhysicsScene;
             if (physicsScene is null)
                 return;
 
             // Keep our transform driven by the controller after each physics step.
             // Without wrapping the controller actor as a rigid body, nothing else updates the RigidBodyTransform.
-            if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is { } sceneForEvents && _subscribedPhysicsScene != sceneForEvents)
+            if (WorldAs<IRuntimePhysicsWorldContext>()?.PhysicsScene is { } sceneForEvents && _subscribedPhysicsScene != sceneForEvents)
             {
                 _subscribedPhysicsScene?.OnSimulationStep -= OnPhysicsSimulationStep;
                 sceneForEvents.OnSimulationStep += OnPhysicsSimulationStep;
@@ -799,7 +800,7 @@ namespace XREngine.Components.Movement
                 return;
 
             int initVersion = Interlocked.Increment(ref _controllerInitVersion);
-            Engine.EnqueuePhysicsThreadTask(() => CreateControllerOnPhysicsThread(physicsScene, position, initVersion));
+            RuntimeThreadServices.Current.EnqueuePhysicsThread(() => CreateControllerOnPhysicsThread(physicsScene, position, initVersion));
         }
 
         private void CreateControllerOnPhysicsThread(
@@ -813,7 +814,7 @@ namespace XREngine.Components.Movement
             if (!IsActiveInHierarchy)
                 return;
 
-            if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene != physicsScene)
+            if (WorldAs<IRuntimePhysicsWorldContext>()?.PhysicsScene != physicsScene)
                 return;
 
             if (ActiveController is not null)
@@ -857,7 +858,7 @@ namespace XREngine.Components.Movement
                 return;
             }
 
-            Engine.EnqueueUpdateThreadTask(() => BindOwnedController(physicsScene, controller, initVersion));
+            RuntimeThreadServices.Current.EnqueueUpdateThread(() => BindOwnedController(physicsScene, controller, initVersion));
         }
 
         private void ReportUnsupportedSettings(PhysicsCharacterControllerCapabilities capabilities)
@@ -903,7 +904,7 @@ namespace XREngine.Components.Movement
         {
             if (initVersion != Volatile.Read(ref _controllerInitVersion)
                 || !IsActiveInHierarchy
-                || WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene != physicsScene)
+                || WorldAs<IRuntimePhysicsWorldContext>()?.PhysicsScene != physicsScene)
             {
                 controller.RequestRelease();
                 return;
@@ -1103,7 +1104,9 @@ namespace XREngine.Components.Movement
             }
         }
 
-        private float DeltaTime => TickInputWithPhysics ? Engine.FixedDelta : Engine.Delta;
+        private float DeltaTime => TickInputWithPhysics
+            ? RuntimePhysicsServices.Current.FixedDeltaSeconds
+            : RuntimeTransformServices.Current?.DilatedUpdateDeltaSeconds ?? 0.0f;
 
         private ETickGroup MovementTickGroup
             => TickInputWithPhysics ? ETickGroup.PrePhysics : ETickGroup.Late;
@@ -1162,7 +1165,7 @@ namespace XREngine.Components.Movement
         private MovementModule.MovementContext CreateMovementContext(Vector3 inputDirection, float dt, bool isGrounded)
         {
             Vector3 gravity = Vector3.Zero;
-            if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is { } scene)
+            if (WorldAs<IRuntimePhysicsWorldContext>()?.PhysicsScene is { } scene)
                 gravity = (GravityOverride ?? scene.Gravity) * MovementModule.GravityScale;
 
             return new MovementModule.MovementContext(
@@ -1259,7 +1262,7 @@ namespace XREngine.Components.Movement
 
         protected virtual unsafe Vector3 AirMovementTick(Vector3 posDelta)
         {
-            if (ActiveController is null || WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is not { } scene)
+            if (ActiveController is null || WorldAs<IRuntimePhysicsWorldContext>()?.PhysicsScene is not { } scene)
                 return Vector3.Zero;
 
             float dt = DeltaTime;
@@ -1306,7 +1309,7 @@ namespace XREngine.Components.Movement
 
         protected virtual unsafe Vector3 SwimmingMovementTick(Vector3 posDelta)
         {
-            if (ActiveController is null || WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is not { } scene)
+            if (ActiveController is null || WorldAs<IRuntimePhysicsWorldContext>()?.PhysicsScene is not { } scene)
                 return Vector3.Zero;
 
             float dt = DeltaTime;

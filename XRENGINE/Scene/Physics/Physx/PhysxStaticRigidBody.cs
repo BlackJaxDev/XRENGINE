@@ -1,4 +1,5 @@
-﻿using MagicPhysX;
+using XREngine.Scene.Physics.Physx;
+using MagicPhysX;
 using System.Collections.Concurrent;
 using System.Numerics;
 using XREngine.Components;
@@ -8,7 +9,7 @@ using static MagicPhysX.NativeMethods;
 
 namespace XREngine.Rendering.Physics.Physx
 {
-    public unsafe class PhysxStaticRigidBody : PhysxRigidActor, IAbstractStaticRigidBody
+    public unsafe class PhysxStaticRigidBody : PhysxRigidActor, IAbstractStaticRigidBody, IStaticRigidBodySettingsSink
     {
         private readonly unsafe PxRigidStatic* _obj;
 
@@ -96,8 +97,39 @@ namespace XREngine.Rendering.Physics.Physx
             set => SetField(ref _owningComponent, value);
         }
 
+        XRComponent? IAbstractStaticRigidBody.OwningComponent
+        {
+            get => OwningComponent;
+            set => OwningComponent = value switch
+            {
+                null => null,
+                StaticRigidBodyComponent owner => owner,
+                _ => throw new ArgumentException($"{nameof(PhysxStaticRigidBody)} requires a {nameof(StaticRigidBodyComponent)} owner.", nameof(value)),
+            };
+        }
+
         public override XRComponent? GetOwningComponent()
             => OwningComponent;
+
+        public void ApplyStaticRigidBodySettings(in StaticRigidBodyRuntimeSettings settings)
+        {
+            GravityEnabled = settings.GravityEnabled;
+            SimulationEnabled = settings.SimulationEnabled;
+            DebugVisualize = settings.DebugVisualization;
+            SendSleepNotifies = settings.SendSleepNotifies;
+            CollisionGroup = settings.CollisionGroup;
+            PxGroupsMask mask;
+            mask.bits0 = (ushort)settings.GroupsMask.Word0;
+            mask.bits1 = (ushort)settings.GroupsMask.Word1;
+            mask.bits2 = (ushort)settings.GroupsMask.Word2;
+            mask.bits3 = (ushort)settings.GroupsMask.Word3;
+            GroupsMask = mask;
+            DominanceGroup = settings.DominanceGroup;
+            if (Scene is null)
+                OwnerClient = settings.PhysxOwnerClient;
+            if (settings.ActorName is not null)
+                Name = settings.ActorName;
+        }
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {

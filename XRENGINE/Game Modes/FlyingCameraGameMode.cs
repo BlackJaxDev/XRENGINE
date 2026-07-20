@@ -1,5 +1,6 @@
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
@@ -21,7 +22,7 @@ namespace XREngine
 
         protected override PawnComponent? SpawnDefaultPlayerPawn(ELocalPlayerIndex playerIndex)
         {
-            var pawn = base.SpawnDefaultPlayerPawn(playerIndex);
+            var pawn = base.SpawnDefaultPlayerPawn(playerIndex) as PawnComponent;
             if (pawn is not null)
                 _primaryPawns[playerIndex] = pawn;
             return pawn;
@@ -39,7 +40,7 @@ namespace XREngine
 
         public virtual FlyingCameraPawnComponent? EnableNoClip(ELocalPlayerIndex playerIndex)
         {
-            if (WorldInstance is null)
+            if (WorldInstance is not XRWorldInstance worldInstance)
                 return null;
 
             if (_noClipPawns.TryGetValue(playerIndex, out var existing) && existing is not null && !existing.IsDestroyed)
@@ -51,7 +52,7 @@ namespace XREngine
             var spawnTransform = GetNoClipSpawnTransform(playerIndex);
 
             var nodeName = $"Player{(int)playerIndex + 1}_NoClipPawn";
-            var pawnNode = new SceneNode(WorldInstance, nodeName);
+            var pawnNode = new SceneNode(worldInstance, nodeName);
 
             if (pawnNode.AddComponent(typeof(FlyingCameraPawnComponent)) is not FlyingCameraPawnComponent pawn)
             {
@@ -59,10 +60,9 @@ namespace XREngine
                 return null;
             }
 
-            WorldInstance.RootNodes.Add(pawnNode);
+            worldInstance.RootNodes.Add(pawnNode);
 
-            if (pawnNode.Transform is TransformBase transform)
-                ApplySpawnTransform(transform, spawnTransform.Position, spawnTransform.Rotation);
+            RuntimeGameModeHostServices.Current?.ApplySpawnTransform(pawn, spawnTransform.Position, spawnTransform.Rotation);
 
             TrackAutoSpawnedPawn(pawn);
             _noClipPawns[playerIndex] = pawn;

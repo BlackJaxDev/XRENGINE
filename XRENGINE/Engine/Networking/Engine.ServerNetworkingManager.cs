@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -256,7 +256,7 @@ namespace XREngine
                 var worldInstance = connection.WorldInstance;
                 worldInstance.GameMode ??= new CustomGameMode { WorldInstance = worldInstance };
 
-                connection.Pawn = worldInstance.GameMode.CreateDefaultPawn(ELocalPlayerIndex.One)
+                connection.Pawn = worldInstance.GameMode.CreateDefaultPawn(ELocalPlayerIndex.One) as PawnComponent
                     ?? CreateFallbackPawn(worldInstance, connection.ServerPlayerIndex, displayName);
 
                 if (connection.Pawn is not null)

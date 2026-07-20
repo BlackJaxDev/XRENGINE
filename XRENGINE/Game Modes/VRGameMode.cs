@@ -19,11 +19,11 @@ namespace XREngine
 
         public override PawnComponent? CreateDefaultPawn(ELocalPlayerIndex playerIndex)
         {
-            if (WorldInstance is null)
+            if (WorldInstance is not XRWorldInstance worldInstance)
                 return null;
 
             var pawnNodeName = $"Player{(int)playerIndex + 1}_VRPawn";
-            var pawnNode = new SceneNode(WorldInstance, pawnNodeName);
+            var pawnNode = new SceneNode(worldInstance, pawnNodeName);
 
             var rbTfm = pawnNode.SetTransform<RigidBodyTransform>();
             rbTfm.InterpolationMode = RigidBodyTransform.EInterpolationMode.Interpolate;
@@ -58,7 +58,7 @@ namespace XREngine
             // Tracker collection node (optional devices).
             _ = pawnNode.NewChild("VRTrackers").AddComponent<VRTrackerCollectionComponent>();
 
-            WorldInstance.RootNodes.Add(pawnNode);
+            worldInstance.RootNodes.Add(pawnNode);
 
             return pawn;
         }

@@ -100,6 +100,7 @@ public sealed class NetworkingContractsTests
     [TestCase(GameModeBootstrapRegistry.VrBootstrapId, typeof(VRGameMode))]
     public void GameModeBootstrapRegistry_CreatesBuiltInsWithoutReflection(string bootstrapId, Type expectedType)
     {
+        GameModeCompositionBootstrap.RegisterBuiltInGameModes();
         GameModeBootstrapRegistry.TryCreate(bootstrapId, out GameMode? gameMode).ShouldBeTrue();
 
         gameMode.ShouldNotBeNull();

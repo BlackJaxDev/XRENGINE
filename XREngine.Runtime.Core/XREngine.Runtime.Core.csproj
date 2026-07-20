@@ -26,17 +26,22 @@
 
   <ItemGroup>
     <PackageReference Include="BitsKit" Version="1.2.0" />
+    <PackageReference Include="DotnetNoise" Version="1.0.0" />
+    <PackageReference Include="JoltPhysicsSharp" Version="2.20.1" />
+    <PackageReference Include="MagicPhysX" Version="1.0.0" />
+    <PackageReference Include="Jitter2" Version="2.7.9" />
     <PackageReference Include="MemoryPack" Version="1.21.4" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Reference Include="OpenVR.NET">
-      <HintPath>..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll</HintPath>
-    </Reference>
-  </ItemGroup>
 
+  <ItemGroup>
+    <None Update="runtimes\win-x64\native\libmagicphysx.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />

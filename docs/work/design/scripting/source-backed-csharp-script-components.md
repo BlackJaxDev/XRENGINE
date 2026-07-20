@@ -17,7 +17,7 @@ The repository already has the main compile and hot-load pieces:
 
 - [`XREngine.Editor/CodeManager.cs`](../../../XREngine.Editor/CodeManager.cs) treats `.cs` files under `Engine.Assets.GameAssetsPath` as game code.
 - `CodeManager.RemakeSolutionAsDLL()` generates a game `.csproj` from the assets tree, compiles it as a DLL, and asks the loader to hot-load it.
-- [`XRENGINE/Scene/Components/Scripting/GameCSProjLoader.cs`](../../../XRENGINE/Scene/Components/Scripting/GameCSProjLoader.cs) loads the DLL into a collectible `AssemblyLoadContext`, discovers exported `XRComponent` subclasses, and exposes them through `LoadedAssemblies`.
+- [`XREngine.Runtime.Core/Scene/Components/Scripting/GameCSProjLoader.cs`](../../../XREngine.Runtime.Core/Scene/Components/Scripting/GameCSProjLoader.cs) loads the DLL into a collectible `AssemblyLoadContext`, discovers exported `XRComponent` subclasses, and exposes them through `LoadedAssemblies`.
 - [`XREngine.Runtime.Core/Scene/SceneNode.Components.cs`](../../../XREngine.Runtime.Core/Scene/SceneNode.Components.cs) can add components from a `Type`, which is how dynamically discovered component types can be attached once compiled.
 - [`XREngine.Runtime.Core/Scene/SceneNode.cs`](../../../XREngine.Runtime.Core/Scene/SceneNode.cs) currently serializes the actual component list through `ComponentsSerialized`.
 - [`XREngine.Editor/Mcp/Actions/EditorMcpActions.Scripting.cs`](../../../XREngine.Editor/Mcp/Actions/EditorMcpActions.Scripting.cs) already exposes script CRUD, compile, compile status, and compile diagnostics over MCP.

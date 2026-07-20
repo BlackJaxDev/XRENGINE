@@ -5,7 +5,6 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Reflection.Attributes;
 using XREngine.Data;
 using XREngine.Data.Components;
-using XREngine.Timers;
 
 namespace XREngine.Components
 {
@@ -79,7 +78,7 @@ namespace XREngine.Components
     [XRComponentEditor("XREngine.Editor.ComponentEditors.Audio2Face3DComponentEditor")]
     public sealed class Audio2Face3DComponent : XRComponent
     {
-        private static readonly long AudioActivityWindowTicks = EngineTimer.SecondsToStopwatchTicks(0.25f);
+        private static readonly long AudioActivityWindowTicks = RuntimeAudioIntegrationServices.SecondsToElapsedTicks(0.25f);
         private static readonly char[] EmotionTargetSeparators = [',', ';', '|'];
 
         private readonly object _liveFrameSync = new();
@@ -385,7 +384,7 @@ namespace XREngine.Components
                 return false;
             }
 
-            string resolvedPath = ResolveAnimationCsvPath(AnimationCsvPath, Engine.CurrentProject?.ProjectDirectory, Directory.GetCurrentDirectory());
+            string resolvedPath = ResolveAnimationCsvPath(AnimationCsvPath, RuntimeAudioIntegrationServices.Current.ProjectDirectory, Directory.GetCurrentDirectory());
 
             if (!File.Exists(resolvedPath))
             {
@@ -509,7 +508,7 @@ namespace XREngine.Components
             if (SourceMode != EAudio2Face3DSourceMode.CsvPlayback)
                 return;
 
-            _lastAudioTicks = Engine.ElapsedTicks;
+            _lastAudioTicks = RuntimeAudioIntegrationServices.Current.ElapsedTicks;
             if (AutoPlayOnAudio && !_isPlaying)
                 PlayFromStart();
         }
@@ -529,28 +528,28 @@ namespace XREngine.Components
             if (_animation is null)
                 return;
 
-            bool hasRecentAudio = HasRecentAudioData(Engine.ElapsedTicks, _lastAudioTicks);
+            bool hasRecentAudio = HasRecentAudioData(RuntimeAudioIntegrationServices.Current.ElapsedTicks, _lastAudioTicks);
             if (hasRecentAudio && _isPlaying)
             {
                 AdvancePlaybackTime();
                 if (_targetWeights is not null && _appliedWeights is not null)
                 {
                     _animation.Sample(_playbackTime, _targetWeights);
-                    SmoothTowardTarget(_targetWeights, _appliedWeights, GetSmoothingFactor(Engine.Delta, InputSmoothSpeed), WeightMultiplier);
+                    SmoothTowardTarget(_targetWeights, _appliedWeights, GetSmoothingFactor(RuntimeAudioIntegrationServices.Current.UpdateDeltaSeconds, InputSmoothSpeed), WeightMultiplier);
                 }
 
                 if (_targetEmotionWeights is not null && _appliedEmotionWeights is not null)
                 {
                     _animation.SampleEmotions(_playbackTime, _targetEmotionWeights);
-                    SmoothTowardTarget(_targetEmotionWeights, _appliedEmotionWeights, GetSmoothingFactor(Engine.Delta, EmotionSmoothSpeed), EmotionWeightMultiplier);
+                    SmoothTowardTarget(_targetEmotionWeights, _appliedEmotionWeights, GetSmoothingFactor(RuntimeAudioIntegrationServices.Current.UpdateDeltaSeconds, EmotionSmoothSpeed), EmotionWeightMultiplier);
                 }
             }
             else
             {
                 if (_appliedWeights is not null)
-                    FadeOutAppliedWeights(_appliedWeights, GetSmoothingFactor(Engine.Delta, SilenceResetSpeed));
+                    FadeOutAppliedWeights(_appliedWeights, GetSmoothingFactor(RuntimeAudioIntegrationServices.Current.UpdateDeltaSeconds, SilenceResetSpeed));
                 if (_appliedEmotionWeights is not null)
-                    FadeOutAppliedWeights(_appliedEmotionWeights, GetSmoothingFactor(Engine.Delta, SilenceResetSpeed));
+                    FadeOutAppliedWeights(_appliedEmotionWeights, GetSmoothingFactor(RuntimeAudioIntegrationServices.Current.UpdateDeltaSeconds, SilenceResetSpeed));
 
                 if (AreWeightsAtRest(_appliedWeights) && AreWeightsAtRest(_appliedEmotionWeights))
                 {
@@ -583,22 +582,22 @@ namespace XREngine.Components
             if (_appliedWeights is null && _appliedEmotionWeights is null)
                 return;
 
-            bool hasRecentLiveFrame = liveBlendshapeNames is not null && liveWeights is not null && HasRecentAudioData(Engine.ElapsedTicks, _lastLiveFrameTicks);
+            bool hasRecentLiveFrame = liveBlendshapeNames is not null && liveWeights is not null && HasRecentAudioData(RuntimeAudioIntegrationServices.Current.ElapsedTicks, _lastLiveFrameTicks);
             if (_appliedWeights is not null)
             {
                 if (hasRecentLiveFrame && liveWeights is not null)
-                    SmoothTowardTarget(liveWeights, _appliedWeights, GetSmoothingFactor(Engine.Delta, InputSmoothSpeed), WeightMultiplier);
+                    SmoothTowardTarget(liveWeights, _appliedWeights, GetSmoothingFactor(RuntimeAudioIntegrationServices.Current.UpdateDeltaSeconds, InputSmoothSpeed), WeightMultiplier);
                 else
-                    FadeOutAppliedWeights(_appliedWeights, GetSmoothingFactor(Engine.Delta, SilenceResetSpeed));
+                    FadeOutAppliedWeights(_appliedWeights, GetSmoothingFactor(RuntimeAudioIntegrationServices.Current.UpdateDeltaSeconds, SilenceResetSpeed));
             }
 
-            bool hasRecentLiveEmotion = liveEmotionWeights is not null && HasRecentAudioData(Engine.ElapsedTicks, _lastLiveEmotionTicks);
+            bool hasRecentLiveEmotion = liveEmotionWeights is not null && HasRecentAudioData(RuntimeAudioIntegrationServices.Current.ElapsedTicks, _lastLiveEmotionTicks);
             if (_appliedEmotionWeights is not null)
             {
                 if (hasRecentLiveEmotion && liveEmotionWeights is not null)
-                    SmoothTowardTarget(liveEmotionWeights, _appliedEmotionWeights, GetSmoothingFactor(Engine.Delta, EmotionSmoothSpeed), EmotionWeightMultiplier);
+                    SmoothTowardTarget(liveEmotionWeights, _appliedEmotionWeights, GetSmoothingFactor(RuntimeAudioIntegrationServices.Current.UpdateDeltaSeconds, EmotionSmoothSpeed), EmotionWeightMultiplier);
                 else
-                    FadeOutAppliedWeights(_appliedEmotionWeights, GetSmoothingFactor(Engine.Delta, SilenceResetSpeed));
+                    FadeOutAppliedWeights(_appliedEmotionWeights, GetSmoothingFactor(RuntimeAudioIntegrationServices.Current.UpdateDeltaSeconds, SilenceResetSpeed));
             }
 
             ApplyCombinedBlendshapeWeights(model, liveBlendshapeNames, _appliedWeights, _appliedEmotionWeights);
@@ -609,7 +608,7 @@ namespace XREngine.Components
             if (_animation is null)
                 return;
 
-            _playbackTime += Engine.Delta;
+            _playbackTime += RuntimeAudioIntegrationServices.Current.UpdateDeltaSeconds;
             if (_animation.Duration <= 0.0f)
             {
                 _playbackTime = 0.0f;
@@ -731,7 +730,7 @@ namespace XREngine.Components
             }
 
             EnsureAppliedWeightBuffer(copiedWeights.Length);
-            _lastLiveFrameTicks = Engine.ElapsedTicks;
+            _lastLiveFrameTicks = RuntimeAudioIntegrationServices.Current.ElapsedTicks;
             _isLiveConnected = true;
             LastLiveError = string.Empty;
             if (sourceNamesChanged)
@@ -770,7 +769,7 @@ namespace XREngine.Components
                 _liveEmotionWeights = mappedWeights;
 
             EnsureEmotionWeightBuffers();
-            _lastLiveEmotionTicks = Engine.ElapsedTicks;
+            _lastLiveEmotionTicks = RuntimeAudioIntegrationServices.Current.ElapsedTicks;
             _isLiveConnected = true;
             LastLiveError = string.Empty;
             return true;

@@ -102,9 +102,9 @@ What it does not provide:
 
 Relevant code:
 
-- [XRENGINE/Scene/Physics/Physx/PhysxTetrahedronMesh.cs](../../../XRENGINE/Scene/Physics/Physx/PhysxTetrahedronMesh.cs)
+- [XREngine.Runtime.Core/Scene/Physics/Physx/PhysxTetrahedronMesh.cs](../../../../../XREngine.Runtime.Core/Scene/Physics/Physx/PhysxTetrahedronMesh.cs)
 - [XRENGINE/Scene/Physics/Physx/PhysxScene.cs](../../../XRENGINE/Scene/Physics/Physx/PhysxScene.cs)
-- [XRENGINE/Scene/Physics/Physx/Geometry/PhysxNativeGeometryExtensions.cs](../../../../../XRENGINE/Scene/Physics/Physx/Geometry/PhysxNativeGeometryExtensions.cs)
+- [XREngine.Runtime.Core/Scene/Physics/Physx/Geometry/PhysxNativeGeometryExtensions.cs](../../../../../XREngine.Runtime.Core/Scene/Physics/Physx/Geometry/PhysxNativeGeometryExtensions.cs)
 
 The repository exposes tetrahedron mesh access and low-level PhysX softbody copy/apply hooks, but there is no discovered `SoftBodyComponent` or engine-facing authoring/runtime wrapper on top of those bindings.
 

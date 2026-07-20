@@ -35,7 +35,7 @@ public sealed class PhysicsP0ApiContractTests
     [Test]
     public void AbstractPhysicsScene_DefinesPortableQueryAndControllerContracts()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Scene/Physics/PhysicsContracts.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Physics/PhysicsContracts.cs");
 
         source.ShouldContain("public readonly struct PhysicsQueryFilter(");
         source.ShouldContain("public interface IAbstractCharacterController : IAbstractRigidPhysicsActor");
@@ -46,7 +46,7 @@ public sealed class PhysicsP0ApiContractTests
     [Test]
     public void JoltSweepQueries_UseNeutralQueryFilterInsteadOfPhysxCompatibilityFlags()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Scene/Physics/Jolt/JoltScene.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Physics/Jolt/JoltScene.cs");
 
         source.ShouldContain("GetQueryActorTypeInclusion(filter, out bool includeStatic, out bool includeDynamic);");
         source.ShouldNotContain("PhysxScene.PhysxQueryFilter physxFilter");
@@ -55,8 +55,8 @@ public sealed class PhysicsP0ApiContractTests
     [Test]
     public void PhysicsP1_DefinesReusableControllerAndColliderAuthoringContracts()
     {
-        string controller = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/CharacterControllerComponent.cs");
-        string authoring = ReadWorkspaceFile("XRENGINE/Scene/Physics/PhysicsAuthoring.cs");
+        string controller = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Physics/CharacterControllerComponent.cs");
+        string authoring = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Physics/PhysicsAuthoring.cs");
         string dynamicBody = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/DynamicRigidBodyComponent.cs");
 
         controller.ShouldContain("public class CharacterControllerComponent : XRComponent, IPhysicsReplicationTarget");
@@ -71,10 +71,10 @@ public sealed class PhysicsP0ApiContractTests
     [Test]
     public void PhysicsP2_DefinesProductionHardeningContracts()
     {
-        string authoring = ReadWorkspaceFile("XRENGINE/Scene/Physics/PhysicsAuthoring.cs");
+        string authoring = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Physics/PhysicsAuthoring.cs");
         string dynamicBody = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/DynamicRigidBodyComponent.cs");
-        string staticBody = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/StaticRigidBodyComponent.cs");
-        string joltScene = ReadWorkspaceFile("XRENGINE/Scene/Physics/Jolt/JoltScene.cs");
+        string staticBody = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Physics/StaticRigidBodyComponent.cs");
+        string joltScene = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Physics/Jolt/JoltScene.cs");
 
         authoring.ShouldContain("public enum PhysicsReplicationAuthority");
         dynamicBody.ShouldContain("public PhysicsReplicationAuthority ReplicationAuthority");

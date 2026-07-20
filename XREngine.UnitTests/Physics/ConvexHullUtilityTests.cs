@@ -289,7 +289,7 @@ public sealed class ConvexHullUtilityTests
         component.Meshes.Add(new RenderableMesh(runtimeSubMesh, component));
     }
 
-    private sealed class TestPhysicsActorComponent : PhysicsActorComponent
+    private sealed class TestPhysicsActorComponent : ConvexPhysicsActorComponent
     {
         private readonly StubRunner _runner = new();
 
@@ -322,7 +322,7 @@ public sealed class ConvexHullUtilityTests
         }
     }
 
-    private sealed class SequencedPhysicsActorComponent : PhysicsActorComponent
+    private sealed class SequencedPhysicsActorComponent : ConvexPhysicsActorComponent
     {
         private readonly SequencedRunner _runner = new();
 

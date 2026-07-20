@@ -365,20 +365,20 @@ namespace XREngine.Components.Animation
                                     Vector3 worldDir = Vector3.Transform(
                                         _goal == ELimbEndEffector.LeftHand ? new(-ad.Direction.X, ad.Direction.Y, ad.Direction.Z) : ad.Direction,
                                         localToParentRot);
-                                    Engine.Rendering.Debug.RenderLine(origin, origin + worldDir * lineLen, dirColor);
-                                    Engine.Rendering.Debug.RenderPoint(origin + worldDir * lineLen, dirColor);
+                                    RuntimeAnimationHostServices.Current.RenderLine(origin, origin + worldDir * lineLen, dirColor);
+                                    RuntimeAnimationHostServices.Current.RenderPoint(origin + worldDir * lineLen, dirColor);
                                 }
 
                                 // Axis vectors: the bend axis that would be used at this direction
                                 Vector3 axisWorld = _goal == ELimbEndEffector.LeftHand ? -ad.Axis : ad.Axis;
                                 axisWorld = Vector3.Transform(axisWorld, localToParentRot);
                                 Vector3 axisOrigin = origin + Vector3.UnitY * 0.02f * (i + 1);
-                                Engine.Rendering.Debug.RenderLine(axisOrigin, axisOrigin + axisWorld * lineLen * 0.7f, axColor);
+                                RuntimeAnimationHostServices.Current.RenderLine(axisOrigin, axisOrigin + axisWorld * lineLen * 0.7f, axColor);
                             }
 
                             // Also show the final blended bend normal
-                            Engine.Rendering.Debug.RenderLine(origin, origin + armBendNormal * lineLen * 1.2f, ColorF4.Red);
-                            Engine.Rendering.Debug.RenderPoint(origin + armBendNormal * lineLen * 1.2f, ColorF4.Red);
+                            RuntimeAnimationHostServices.Current.RenderLine(origin, origin + armBendNormal * lineLen * 1.2f, ColorF4.Red);
+                            RuntimeAnimationHostServices.Current.RenderPoint(origin + armBendNormal * lineLen * 1.2f, ColorF4.Red);
                         }
 
                         if (weight.AlmostEqual(1.0f))

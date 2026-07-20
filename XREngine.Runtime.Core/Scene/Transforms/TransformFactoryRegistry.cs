@@ -11,6 +11,7 @@ public static class TransformFactoryRegistry
     static TransformFactoryRegistry()
     {
         Register<Transform>(static () => new Transform());
+        Register<RigidBodyTransform>(static () => new RigidBodyTransform());
     }
 
     public static void Register<TTransform>(Func<TTransform> factory)

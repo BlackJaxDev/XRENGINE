@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Numerics;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Colors;
@@ -19,7 +19,7 @@ namespace XREngine.Components.Physics
     /// and rebinding when connected bodies change.
     /// </summary>
     [Category("Physics")]
-    public abstract class PhysicsJointComponent : XRComponent, IRenderable, IPhysicsReplicationTarget
+    public abstract class PhysicsJointComponent : XRComponent, IRenderable, IPhysicsReplicationTarget, IPhysicsJointOwner
     {
         private PhysicsActorComponent? _connectedBody;
         private PhysicsActorComponent? _localBody;
@@ -471,7 +471,7 @@ namespace XREngine.Components.Physics
         /// <summary>
         /// Called by the physics backend when the joint breaks.
         /// </summary>
-        internal void NotifyJointBroken()
+        public void NotifyJointBroken()
         {
             JointBroken?.Invoke(this);
             DestroyNativeJoint();

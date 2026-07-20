@@ -555,11 +555,11 @@ Final acceptance criteria:
 ## Primary Implementation Areas
 
 - `XRENGINE/Scene/Components/Movement/CharacterMovementComponent.cs`
-- `XRENGINE/Scene/Physics/PhysicsBackendService.cs`
-- `XRENGINE/Scene/Physics/PhysicsContracts.cs`
-- `XRENGINE/Scene/Physics/Jolt/JoltCharacterVirtualController.cs`
-- `XRENGINE/Scene/Physics/Jolt/JoltBackendService.cs`
-- `XRENGINE/Scene/Physics/Jolt/JoltScene.cs`
+- `XREngine.Runtime.Core/Scene/Physics/PhysicsBackendService.cs`
+- `XREngine.Runtime.Core/Scene/Physics/PhysicsContracts.cs`
+- `XREngine.Runtime.Core/Scene/Physics/Jolt/JoltCharacterVirtualController.cs`
+- `XREngine.Runtime.Core/Scene/Physics/Jolt/JoltBackendService.cs`
+- `XREngine.Runtime.Core/Scene/Physics/Jolt/JoltScene.cs`
 - `XRENGINE/Scene/Physics/Physx/PhysxBackendService.cs`
 - `XREngine.UnitTests/Physics/JoltControllerParityTests.cs`
 

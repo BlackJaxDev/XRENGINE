@@ -158,19 +158,19 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             DepthHitNormalizedViewportPoint.HasValue ? DepthHitNormalizedViewportPoint.Value.Z : 0.0f,
             NearZ,
             FarZ,
-            GetCamera()?.Camera?.IsReversedDepth ?? false);
+            this.GetCamera()?.Camera?.IsReversedDepth ?? false);
 
     /// <summary>
     /// The near Z distance of the camera's frustum.
     /// </summary>
     [Browsable(false)]
-    public float NearZ => GetCamera()?.Camera.NearZ ?? 0.0f;
+    public float NearZ => this.GetCamera()?.Camera.NearZ ?? 0.0f;
 
     /// <summary>
     /// The far Z distance of the camera's frustum.
     /// </summary>
     [Browsable(false)]
-    public float FarZ => GetCamera()?.Camera.FarZ ?? 0.0f;
+    public float FarZ => this.GetCamera()?.Camera.FarZ ?? 0.0f;
 
     private bool _renderWorldDragPoint = false;
     /// <summary>
@@ -731,7 +731,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
         if (RenderFrustum && !DebugCameraMode)
         {
-            var cam = GetCamera();
+            var cam = this.GetCamera();
             if (cam is not null)
                 Engine.Rendering.Debug.RenderFrustum(cam.Camera.WorldFrustum(), ColorF4.Red);
         }
@@ -855,7 +855,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// </summary>
     private void EnterDebugCameraMode()
     {
-        var editorCamera = GetCamera();
+        var editorCamera = this.GetCamera();
         if (editorCamera is null)
             return;
 
@@ -883,7 +883,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// </summary>
     private void ExitDebugCameraMode()
     {
-        var editorCamera = GetCamera();
+        var editorCamera = this.GetCamera();
         if (editorCamera is null)
             return;
 
@@ -920,7 +920,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (_debugCameraNode is not null)
             return;
 
-        var editorCamera = GetCamera();
+        var editorCamera = this.GetCamera();
         if (editorCamera is null)
             return;
 
@@ -971,7 +971,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (!DebugCameraMode)
             return;
 
-        var editorCamera = GetCamera();
+        var editorCamera = this.GetCamera();
         if (editorCamera is null)
             return;
 
@@ -1253,7 +1253,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             return;
         }
 
-        var cam = GetCamera();
+        var cam = this.GetCamera();
         if (cam is null)
         {
             ClearLastViewportMouseSegment();
@@ -2403,7 +2403,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             avgPoint = Vector3.Zero; return false;
         }
         avgPoint = GetAverageSelectionPoint();
-        if (!(GetCamera()?.Camera?.WorldFrustum().ContainsPoint(avgPoint) ?? false))
+        if (!(this.GetCamera()?.Camera?.WorldFrustum().ContainsPoint(avgPoint) ?? false))
         {
             avgPoint = Vector3.Zero; return false;
         }
@@ -2791,7 +2791,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             radius = DefaultFocusRadius;
 
         float distance = radius + FocusRadiusPadding;
-        var cameraComponent = GetCamera();
+        var cameraComponent = this.GetCamera();
         if (cameraComponent?.Camera.Parameters is XRPerspectiveCameraParameters perspective)
         {
             float fovRadians = XRMath.DegToRad(perspective.VerticalFieldOfView);
@@ -2807,7 +2807,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         float distance = ComputeFocusDistance(focusBounds.HalfExtents.Length());
 
-        var cameraComponent = GetCamera();
+        var cameraComponent = this.GetCamera();
         if (cameraComponent?.Camera.Parameters is not XRPerspectiveCameraParameters perspective)
             return distance;
 
@@ -2972,7 +2972,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         var canvas = root.GetComponent<UICanvasComponent>() ?? root.AddComponent<UICanvasComponent>();
         if (canvas is not null)
         {
-            var cam = GetCamera();
+            var cam = this.GetCamera();
             if (cam is not null && cam.UserInterface != canvas)
                 cam.UserInterface = canvas;
         }
@@ -3021,8 +3021,10 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         }
     }
 
-    public override void RegisterInput(InputInterface input)
+    public override void RegisterInput(object inputInterface)
     {
+        if (inputInterface is not InputInterface input)
+            return;
         base.RegisterInput(input);
         input.RegisterKeyEvent(EKey.F12, EButtonInputType.Pressed, TakeScreenshot);
         input.RegisterKeyEvent(EKey.F11, EButtonInputType.Pressed, ToggleEditorImGuiOverlay);
@@ -3201,7 +3203,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private (bool ctrl, bool alt, bool shift) CaptureSelectionModifiers()
     {
-        var kbd = LocalInput?.Keyboard;
+        var kbd = (LocalInput as LocalInputInterface)?.Keyboard;
         bool ctrl = kbd is not null && (kbd.GetKeyState(EKey.ControlLeft, EButtonInputType.Pressed) || kbd.GetKeyState(EKey.ControlRight, EButtonInputType.Pressed));
         bool alt = kbd is not null && (kbd.GetKeyState(EKey.AltLeft, EButtonInputType.Pressed) || kbd.GetKeyState(EKey.AltRight, EButtonInputType.Pressed));
         bool shift = kbd is not null && (kbd.GetKeyState(EKey.ShiftLeft, EButtonInputType.Pressed) || kbd.GetKeyState(EKey.ShiftRight, EButtonInputType.Pressed));
@@ -3322,7 +3324,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private bool TryBuildSelectionFrustum(XRViewport vp, Vector2 minUv, Vector2 maxUv, out Frustum frustum)
     {
         frustum = default;
-        var camera = GetCamera()?.Camera;
+        var camera = this.GetCamera()?.Camera;
         if (camera is null)
             return false;
 

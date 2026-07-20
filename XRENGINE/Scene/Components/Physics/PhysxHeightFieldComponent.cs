@@ -1,4 +1,5 @@
-﻿using XREngine.Core.Attributes;
+﻿using XREngine.Scene.Physics.Physx;
+using XREngine.Core.Attributes;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Components.Physics;
 

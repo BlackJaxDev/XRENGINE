@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Animation.IK;
 using XREngine.Core.Attributes;
 using XREngine.Data.Colors;
@@ -61,9 +61,9 @@ namespace XREngine.Components.Animation
                 if (target is null)
                     continue;
 
-                Engine.Rendering.Debug.RenderPoint(target.WorldTranslation, ColorF4.Green);
+                RuntimeAnimationHostServices.Current.RenderPoint(target.WorldTranslation, ColorF4.Green);
                 if (limb._bone3._transform is not null)
-                    Engine.Rendering.Debug.RenderLine(limb._bone3._transform.WorldTranslation, target.WorldTranslation, ColorF4.Green);
+                    RuntimeAnimationHostServices.Current.RenderLine(limb._bone3._transform.WorldTranslation, target.WorldTranslation, ColorF4.Green);
             }
         }
 

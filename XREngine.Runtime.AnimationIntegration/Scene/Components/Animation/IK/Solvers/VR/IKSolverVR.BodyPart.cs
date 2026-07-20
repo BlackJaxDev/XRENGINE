@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 
@@ -124,7 +124,7 @@ namespace XREngine.Components.Animation
                     return;
 
                 for (int i = 0; i < _bones.Length - 1; i++)
-                    Engine.Rendering.Debug.RenderLine(_bones[i].SolverPosition, _bones[i + 1].SolverPosition, color);
+                    RuntimeAnimationHostServices.Current.RenderLine(_bones[i].SolverPosition, _bones[i + 1].SolverPosition, color);
             }
 
             public void Visualize()

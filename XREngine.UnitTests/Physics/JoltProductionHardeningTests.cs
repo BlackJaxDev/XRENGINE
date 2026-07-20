@@ -88,10 +88,10 @@ public sealed class JoltProductionHardeningTests
     [Test]
     public void DebugExtraction_DrawsNativeShapesConstraintsAndCapturedContacts()
     {
-        PhysicsVisualizeSettings previous = Engine.Rendering.Settings.PhysicsVisualizeSettings;
+        IRuntimePhysicsServices previous = RuntimePhysicsServices.Current;
         PhysicsVisualizeSettings settings = new();
         settings.SetAllTrue();
-        Engine.Rendering.Settings.PhysicsVisualizeSettings = settings;
+        RuntimePhysicsServices.Current = new TestRuntimePhysicsServices(settings);
         try
         {
             _scene!.CreateStaticRigidBody(
@@ -114,7 +114,7 @@ public sealed class JoltProductionHardeningTests
         }
         finally
         {
-            Engine.Rendering.Settings.PhysicsVisualizeSettings = previous;
+            RuntimePhysicsServices.Current = previous;
         }
     }
 
@@ -135,6 +135,17 @@ public sealed class JoltProductionHardeningTests
             _scene.Destroy();
             _scene.GetDiagnostics().ShouldBe(default);
         }
+    }
+
+    private sealed class TestRuntimePhysicsServices(PhysicsVisualizeSettings settings) : IRuntimePhysicsServices
+    {
+        public float FixedDeltaSeconds => 1.0f / 60.0f;
+        public PhysicsVisualizeSettings VisualizeSettings => settings;
+        public bool JoltDebugRenderDiagnostics => false;
+
+        public void RenderLine(Vector3 start, Vector3 end, XREngine.Data.Colors.ColorF4 color) { }
+        public void RenderSphere(Vector3 center, float radius, bool solid, XREngine.Data.Colors.ColorF4 color) { }
+        public void RenderCapsule(Vector3 start, Vector3 end, float radius, bool solid, XREngine.Data.Colors.ColorF4 color) { }
     }
 
     private JoltDynamicRigidBody CreateDynamic(Vector3 position)

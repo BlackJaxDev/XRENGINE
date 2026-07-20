@@ -1,4 +1,5 @@
-﻿using MagicPhysX;
+﻿using XREngine.Scene.Physics.Physx;
+using MagicPhysX;
 using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.InteropServices;

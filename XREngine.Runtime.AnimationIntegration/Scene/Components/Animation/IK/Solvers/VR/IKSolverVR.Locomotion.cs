@@ -262,7 +262,7 @@ namespace XREngine.Components.Animation
                     isTurning = false;
                 }
 
-                _turn = Interp.Lerp(_turn, turnTarget, Engine.Delta * 3f);
+                _turn = Interp.Lerp(_turn, turnTarget, RuntimeAnimationHostServices.Current.DilatedUpdateDeltaSeconds * 3f);
                 _animator.SetFloat(PARAM_Turn, _turn * 2f);
 
                 // Local Velocity, animation smoothing

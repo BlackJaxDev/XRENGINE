@@ -59,18 +59,18 @@ namespace XREngine.VRClient
             }
 
             // Initialize VR
-            if (settings.ActionManifest is null)
+            if (settings.ActionManifest is not IActionManifest actionManifest)
             {
-                Debug.LogWarning("VR settings not initialized correctly; missing ActionManifest.");
+                Debug.LogWarning("VR settings not initialized correctly; missing or invalid ActionManifest.");
                 Console.In.ReadLine();
             }
-            else if (settings.VRManifest is null)
+            else if (settings.VRManifest is not VrManifest vrManifest)
             {
-                Debug.LogWarning("VR settings not initialized correctly; missing VRManifest.");
+                Debug.LogWarning("VR settings not initialized correctly; missing or invalid VRManifest.");
                 Console.In.ReadLine();
             }
             else
-                Engine.VRState.IninitializeClient(settings.ActionManifest, settings.VRManifest).GetAwaiter().GetResult();
+                Engine.VRState.IninitializeClient(actionManifest, vrManifest).GetAwaiter().GetResult();
 
             // Run the game
             // We don't need to load a game state because this app only sends inputs to the game and receives renders

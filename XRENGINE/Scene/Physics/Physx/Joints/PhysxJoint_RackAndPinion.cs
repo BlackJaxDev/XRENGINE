@@ -1,4 +1,5 @@
-﻿using MagicPhysX;
+﻿using XREngine.Scene.Physics.Physx;
+using MagicPhysX;
 
 namespace XREngine.Rendering.Physics.Physx.Joints
 {

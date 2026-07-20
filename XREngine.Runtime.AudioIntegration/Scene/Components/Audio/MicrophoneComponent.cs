@@ -19,7 +19,7 @@ namespace XREngine.Components
         private WaveInEvent? _waveIn;
         private int _deviceIndex = 0;
         private int _bufferMs = 100;
-        private int _sampleRate = Engine.Audio.SampleRate;
+        private int _sampleRate = RuntimeAudioIntegrationServices.Current.SampleRate;
         private int _bitsPerSample = 8;
         private bool _receive = true;
         private bool _capture = true;

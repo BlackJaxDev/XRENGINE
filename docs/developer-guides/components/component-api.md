@@ -76,7 +76,7 @@ if (stage?.TryGetBacking(out VolumetricFogSettings? fogSettings) == true)
 
 ## Networking Helpers
 ### `RestApiComponent`
-- Lives in `XRENGINE/Scene/Components/Networking/RestApiComponent.cs` and exposes an `HttpClient`-backed bridge for REST APIs.
+- Lives in `XREngine.Runtime.Core/Scene/Components/Networking/RestApiComponent.cs` and exposes an `HttpClient`-backed bridge for REST APIs.
 - Handles default headers, request queueing, and cancellation when a component or node is deactivated.
 - Emits `RequestStarted`, `ResponseReceived`, `RequestFailed`, and `DataUpdated` events on the main thread so UI or gameplay systems can react immediately.
 - Maintains a keyed JSON data store; set `RestApiRequest.ResponseDataKey` to cache structured responses for later queries via `TryGetData`.
@@ -104,7 +104,7 @@ if (rest.TryGetData("world-state", out JsonNode? json))
 ```
 
 ### `WebSocketClientComponent`
-- Located at `XRENGINE/Scene/Components/Networking/WebSocketClientComponent.cs`; maintains a resilient `ClientWebSocket` connection.
+- Located at `XREngine.Runtime.Core/Scene/Components/Networking/WebSocketClientComponent.cs`; maintains a resilient `ClientWebSocket` connection.
 - Supports handshake headers, auto-reconnect with configurable delay, and main-thread events for connection state, errors, and incoming messages.
 - Provide UTF-8 text or binary payloads using `SendTextAsync` / `SendBinaryAsync`.
 
@@ -120,7 +120,7 @@ await socket.SendTextAsync("{\"op\":\"subscribe\"}");
 ```
 
 ### `WebhookListenerComponent`
-- Located at `XRENGINE/Scene/Components/Networking/WebhookListenerComponent.cs`; wraps an `HttpListener` to ingest inbound webhook callbacks.
+- Located at `XREngine.Runtime.Core/Scene/Components/Networking/WebhookListenerComponent.cs`; wraps an `HttpListener` to ingest inbound webhook callbacks.
 - Emits events on the main thread, queues pending payloads for polling, and responds with configurable status/headers.
 - Remember that HTTP prefixes must be registered with `netsh http add urlacl ...` when binding to non-admin ports on Windows.
 
@@ -137,7 +137,7 @@ listener.StartListening();
 ```
 
 ### `TcpClientComponent`
-- Located at `XRENGINE/Scene/Components/Networking/TcpClientComponent.cs`; keeps a resilient TCP connection alive with optional TLS negotiation.
+- Located at `XREngine.Runtime.Core/Scene/Components/Networking/TcpClientComponent.cs`; keeps a resilient TCP connection alive with optional TLS negotiation.
 - Supports auto-reconnect, configurable timeouts, optional text dispatch, and main-thread events for connection, data, and errors.
 - Call `SendAsync` for arbitrary bytes or `SendStringAsync` for UTF-8 payloads; enable TLS by toggling `UseTls` and providing `TlsHostName` when required.
 
@@ -155,7 +155,7 @@ await client.SendStringAsync("ping\n");
 ```
 
 ### `UdpSocketComponent`
-- Located at `XRENGINE/Scene/Components/Networking/UdpSocketComponent.cs`; binds to a local port, listens for datagrams, and can broadcast to peers.
+- Located at `XREngine.Runtime.Core/Scene/Components/Networking/UdpSocketComponent.cs`; binds to a local port, listens for datagrams, and can broadcast to peers.
 - Offers optional multicast join, auto-rebind on failure, and helper events for raw payloads plus decoded text.
 - Use `SendAsync`/`SendStringAsync` for unicast traffic or override the host/port per call when broadcasting.
 
@@ -172,7 +172,7 @@ await udp.SendStringAsync("discover");
 ```
 
 ### `TcpServerComponent`
-- Located at `XRENGINE/Scene/Components/Networking/TcpServerComponent.cs`; accepts multiple clients and dispatches events per connection.
+- Located at `XREngine.Runtime.Core/Scene/Components/Networking/TcpServerComponent.cs`; accepts multiple clients and dispatches events per connection.
 - Exposes `ClientConnected`, `ClientDisconnected`, and data events on the main thread while providing `SendAsync`/`BroadcastAsync` helpers.
 - Configure `ListenAddress`, `ListenPort`, and `AutoStartOnActivate` for quick local test servers or in-game debugging consoles.
 

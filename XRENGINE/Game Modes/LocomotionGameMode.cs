@@ -19,11 +19,11 @@ namespace XREngine
 
         public override PawnComponent? CreateDefaultPawn(ELocalPlayerIndex playerIndex)
         {
-            if (WorldInstance is null)
+            if (WorldInstance is not XRWorldInstance worldInstance)
                 return null;
 
             var pawnNodeName = $"Player{(int)playerIndex + 1}_CharacterPawn";
-            var pawnNode = new SceneNode(WorldInstance, pawnNodeName);
+            var pawnNode = new SceneNode(worldInstance, pawnNodeName);
 
             // Match UnitTestingWorld: prefer a rigid-body transform for smoother physics interpolation.
             var rbTfm = pawnNode.SetTransform<RigidBodyTransform>();
@@ -51,7 +51,7 @@ namespace XREngine
             pawn.InputOrientationTransform = cameraNode.Transform;
             pawn.ViewRotationTransform = cameraOffsetTfm;
 
-            WorldInstance.RootNodes.Add(pawnNode);
+            worldInstance.RootNodes.Add(pawnNode);
 
             return pawn;
         }

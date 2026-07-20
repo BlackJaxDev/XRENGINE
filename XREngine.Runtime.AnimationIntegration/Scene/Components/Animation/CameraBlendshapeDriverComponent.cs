@@ -199,7 +199,10 @@ namespace XREngine.Components.Animation
             if (CameraOverride?.Camera is XRCamera cam)
                 return cam;
 
-            return Engine.State.MainPlayer?.Viewport as XRViewport is XRViewport viewport ? viewport.ActiveCamera : null;
+            return RuntimeRenderingHostServices.Current.EnumerateLocalPlayers()
+                .FirstOrDefault(static player => player.LocalPlayerIndex == ELocalPlayerIndex.One)?.Viewport is XRViewport viewport
+                ? viewport.ActiveCamera
+                : null;
         }
 
         private TransformBase GetEffectiveTargetTransform()
