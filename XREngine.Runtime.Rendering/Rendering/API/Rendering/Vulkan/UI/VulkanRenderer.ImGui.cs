@@ -56,6 +56,7 @@ public unsafe partial class VulkanRenderer
         public ulong ImageViewHandle;
         public ulong SamplerHandle;
         public ImageLayout ImageLayout;
+        public ulong DescriptorGeneration;
     }
 
     private struct ImGuiDrawBufferSet
@@ -1589,6 +1590,8 @@ public unsafe partial class VulkanRenderer
 
         if (useDynamicRendering)
         {
+            RecordImGuiStreamlineUi(commandBuffer, imageIndex, drawData);
+
             TransitionSwapchainImageForImGuiOverlay(
                 commandBuffer,
                 imageIndex,
@@ -1664,11 +1667,73 @@ public unsafe partial class VulkanRenderer
 
         CmdEndLabel(commandBuffer);
 
-        if (Api.EndCommandBuffer(commandBuffer) != Result.Success)
+        if (EndCommandBufferTracked(commandBuffer) != Result.Success)
             throw new InvalidOperationException("Failed to end ImGui overlay command buffer.");
 
         overlayCommandBuffer = commandBuffer;
         return true;
+    }
+
+    /// <summary>
+    /// Renders ImGui into the transparent, premultiplied-alpha surface consumed by DLSS-G.
+    /// The regular swapchain overlay is still rendered below for non-generated frames.
+    /// </summary>
+    private void RecordImGuiStreamlineUi(
+        CommandBuffer commandBuffer,
+        uint imageIndex,
+        ImGuiFrameSnapshot drawData)
+    {
+        if (!TryGetStreamlineUiAttachment(
+                imageIndex,
+                out Image uiImage,
+                out ImageView uiView,
+                out ImageLayout oldLayout))
+        {
+            return;
+        }
+
+        TransitionStreamlineUiImage(
+            commandBuffer,
+            uiImage,
+            oldLayout,
+            ImageLayout.ColorAttachmentOptimal);
+
+        RenderingAttachmentInfo colorAttachment = new()
+        {
+            SType = StructureType.RenderingAttachmentInfo,
+            ImageView = uiView,
+            ImageLayout = ImageLayout.ColorAttachmentOptimal,
+            LoadOp = AttachmentLoadOp.Clear,
+            StoreOp = AttachmentStoreOp.Store,
+            ClearValue = new ClearValue
+            {
+                Color = new ClearColorValue(0f, 0f, 0f, 0f),
+            },
+        };
+
+        RenderingInfo renderingInfo = new()
+        {
+            SType = StructureType.RenderingInfo,
+            RenderArea = new Rect2D
+            {
+                Offset = new Offset2D(0, 0),
+                Extent = swapChainExtent,
+            },
+            LayerCount = 1,
+            ColorAttachmentCount = 1,
+            PColorAttachments = &colorAttachment,
+        };
+
+        CmdBeginDynamicRendering(commandBuffer, &renderingInfo);
+        RenderImGuiSnapshot(commandBuffer, imageIndex, drawData);
+        CmdEndDynamicRendering(commandBuffer);
+
+        TransitionStreamlineUiImage(
+            commandBuffer,
+            uiImage,
+            ImageLayout.ColorAttachmentOptimal,
+            ImageLayout.General);
+        MarkStreamlineUiImageInitialized(imageIndex);
     }
 
     private static bool HasRenderableImGuiSnapshot(ImGuiFrameSnapshot drawData)
@@ -1976,7 +2041,8 @@ public unsafe partial class VulkanRenderer
         if (textureId == 0)
             return _imguiFontDescriptorSet;
 
-        RefreshImGuiRegisteredTexture(textureId);
+        if (!RefreshImGuiRegisteredTexture(textureId))
+            return _imguiFontDescriptorSet;
 
         if (_imguiTextureDescriptorSets.TryGetValue(textureId, out DescriptorSet set) && set.Handle != 0)
             return set;
@@ -1984,41 +2050,54 @@ public unsafe partial class VulkanRenderer
         return _imguiFontDescriptorSet;
     }
 
-    private void RefreshImGuiRegisteredTexture(nint textureId)
+    private bool RefreshImGuiRegisteredTexture(nint textureId)
     {
         if (!_imguiTexturesById.TryGetValue(textureId, out XRTexture? texture))
-            return;
+            return false;
 
         if (!_imguiRegisteredTextures.TryGetValue(texture, out ImGuiTextureRegistration registration) ||
             registration.Id != textureId)
-            return;
+            return false;
 
         if (!_imguiTextureDescriptorSets.TryGetValue(textureId, out DescriptorSet descriptorSet) ||
             descriptorSet.Handle == 0)
-            return;
+            return false;
 
-        if (!TryResolveImGuiDescriptorBinding(texture, out ImageView descriptorView, out Sampler descriptorSampler, out ImageLayout descriptorLayout))
-            return;
+        if (!TryResolveImGuiDescriptorBinding(
+                texture,
+                out ImageView descriptorView,
+                out Sampler descriptorSampler,
+                out ImageLayout descriptorLayout,
+                out ulong descriptorGeneration))
+            return false;
 
         if (registration.ImageViewHandle == descriptorView.Handle &&
             registration.SamplerHandle == descriptorSampler.Handle &&
-            registration.ImageLayout == descriptorLayout)
+            registration.ImageLayout == descriptorLayout &&
+            registration.DescriptorGeneration == descriptorGeneration)
         {
-            return;
+            return true;
         }
 
-        UpdateImGuiDescriptorSet(descriptorSet, descriptorView, descriptorSampler, descriptorLayout);
+        DescriptorSet replacementSet = AllocateImGuiDescriptorSet(descriptorView, descriptorSampler, descriptorLayout);
+        if (replacementSet.Handle == 0)
+            return false;
+
+        _imguiTextureDescriptorSets[textureId] = replacementSet;
         UpdateImGuiDescriptorHeapPayload(textureId, new DescriptorImageInfo
         {
             Sampler = descriptorSampler,
             ImageView = descriptorView,
             ImageLayout = descriptorLayout,
         });
-        registration.DescriptorSet = descriptorSet;
+        registration.DescriptorSet = replacementSet;
         registration.ImageViewHandle = descriptorView.Handle;
         registration.SamplerHandle = descriptorSampler.Handle;
         registration.ImageLayout = descriptorLayout;
+        registration.DescriptorGeneration = descriptorGeneration;
         _imguiRegisteredTextures[texture] = registration;
+        RetireDescriptorSet(_imguiDescriptorPool, descriptorSet);
+        return true;
     }
 
     public IntPtr RegisterImGuiTexture(XRTexture texture)
@@ -2028,7 +2107,12 @@ public unsafe partial class VulkanRenderer
 
         EnsureImGuiFontResources();
 
-        if (!TryResolveImGuiDescriptorBinding(texture, out ImageView descriptorView, out Sampler descriptorSampler, out ImageLayout descriptorLayout))
+        if (!TryResolveImGuiDescriptorBinding(
+                texture,
+                out ImageView descriptorView,
+                out Sampler descriptorSampler,
+                out ImageLayout descriptorLayout,
+                out ulong descriptorGeneration))
             return IntPtr.Zero;
 
         if (_imguiRegisteredTextures.TryGetValue(texture, out ImGuiTextureRegistration registration))
@@ -2046,19 +2130,27 @@ public unsafe partial class VulkanRenderer
                 _imguiTexturesById[registration.Id] = texture;
                 if (registration.ImageViewHandle != descriptorView.Handle
                     || registration.SamplerHandle != descriptorSampler.Handle
-                    || registration.ImageLayout != descriptorLayout)
+                    || registration.ImageLayout != descriptorLayout
+                    || registration.DescriptorGeneration != descriptorGeneration)
                 {
-                    UpdateImGuiDescriptorSet(liveDescriptorSet, descriptorView, descriptorSampler, descriptorLayout);
+                    DescriptorSet replacementSet = AllocateImGuiDescriptorSet(descriptorView, descriptorSampler, descriptorLayout);
+                    if (replacementSet.Handle == 0)
+                        return (IntPtr)registration.Id;
+
+                    _imguiTextureDescriptorSets[registration.Id] = replacementSet;
                     UpdateImGuiDescriptorHeapPayload(registration.Id, new DescriptorImageInfo
                     {
                         Sampler = descriptorSampler,
                         ImageView = descriptorView,
                         ImageLayout = descriptorLayout,
                     });
+                    registration.DescriptorSet = replacementSet;
                     registration.ImageViewHandle = descriptorView.Handle;
                     registration.SamplerHandle = descriptorSampler.Handle;
                     registration.ImageLayout = descriptorLayout;
+                    registration.DescriptorGeneration = descriptorGeneration;
                     _imguiRegisteredTextures[texture] = registration;
+                    RetireDescriptorSet(_imguiDescriptorPool, liveDescriptorSet);
                 }
 
                 return (IntPtr)registration.Id;
@@ -2085,6 +2177,7 @@ public unsafe partial class VulkanRenderer
             ImageViewHandle = descriptorView.Handle,
             SamplerHandle = descriptorSampler.Handle,
             ImageLayout = descriptorLayout,
+            DescriptorGeneration = descriptorGeneration,
         };
         return (IntPtr)id;
     }
@@ -2121,11 +2214,17 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
-    private bool TryResolveImGuiDescriptorBinding(XRTexture texture, out ImageView descriptorView, out Sampler descriptorSampler, out ImageLayout descriptorLayout)
+    private bool TryResolveImGuiDescriptorBinding(
+        XRTexture texture,
+        out ImageView descriptorView,
+        out Sampler descriptorSampler,
+        out ImageLayout descriptorLayout,
+        out ulong descriptorGeneration)
     {
         descriptorView = default;
         descriptorSampler = default;
         descriptorLayout = ImageLayout.ShaderReadOnlyOptimal;
+        descriptorGeneration = 0;
 
         bool allowSynchronousTextureUpload = AllowSynchronousResourceUploads;
         if (GetOrCreateAPIRenderObject(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
@@ -2145,8 +2244,10 @@ public unsafe partial class VulkanRenderer
             descriptorSampler = GetPlaceholderSampler();
 
         descriptorLayout = ResolveDescriptorImageLayout(source, DescriptorType.CombinedImageSampler);
+        descriptorGeneration = source.DescriptorGeneration;
         return descriptorView.Handle != 0 &&
             IsLiveImageViewBackedByLiveImage(descriptorView) &&
+            IsImageViewAvailableForDescriptor(descriptorView) &&
             descriptorSampler.Handle != 0 &&
             IsLiveSampler(descriptorSampler);
     }

@@ -42,15 +42,29 @@ internal sealed class RuntimeEffectiveSettings
 
     public bool AllowInitialSkinnedBoundsBuildWhenNever { get; set; } = true;
     public EAntiAliasingMode AntiAliasingMode { get; set; } = EAntiAliasingMode.None;
-    public EDlssQualityMode DlssQuality => Settings.DlssQuality;
+    public EDlssQualityMode DlssQuality => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        ? services.DlssQuality
+        : Settings.DlssQuality;
+    public float DlssCustomScale => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        ? services.DlssCustomScale
+        : Settings.DlssCustomScale;
+    public float DlssSharpness => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        ? services.DlssSharpness
+        : Settings.DlssSharpness;
     public bool EnableGpuBvhTimingQueries { get; set; }
     public bool EnableGpuIndirectCpuFallback { get; set; } = true;
     public bool EnableGpuIndirectDebugLogging { get; set; }
     public bool EnableGpuIndirectValidationLogging { get; set; }
     public bool EnableIntelXess { get; set; }
-    public bool EnableNvidiaDlss => Settings.EnableNvidiaDlss;
-    public bool EnableNvidiaDlssFrameGeneration => Settings.EnableNvidiaDlssFrameGeneration;
-    public ENvidiaDlssFrameGenerationMode NvidiaDlssFrameGenerationMode => Settings.NvidiaDlssFrameGenerationMode;
+    public bool EnableNvidiaDlss => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        ? services.EnableNvidiaDlss
+        : Settings.EnableNvidiaDlss;
+    public bool EnableNvidiaDlssFrameGeneration => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        ? services.EnableNvidiaDlssFrameGeneration
+        : Settings.EnableNvidiaDlssFrameGeneration;
+    public ENvidiaDlssFrameGenerationMode NvidiaDlssFrameGenerationMode => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        ? services.NvidiaDlssFrameGenerationMode
+        : Settings.NvidiaDlssFrameGenerationMode;
     public bool EnableVulkanBindlessMaterialTable
     {
         get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)

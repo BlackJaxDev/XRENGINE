@@ -303,7 +303,8 @@ namespace XREngine.Rendering.Vulkan
 
                 return Renderer.TryGetImageViewBackingImage(view, out Image backingImage) &&
                     backingImage.Handle == _image.Handle &&
-                    Renderer.IsLiveImageViewBackedByLiveImage(view);
+                    Renderer.IsLiveImageViewBackedByLiveImage(view) &&
+                    Renderer.IsImageViewAvailableForDescriptor(view);
             }
 
             private DeviceMemory TryResolveViewedDescriptorMemoryNoLock()
@@ -920,6 +921,10 @@ namespace XREngine.Rendering.Vulkan
                     {
                         HasUploadedData = true;
                         IsInvalidated = false;
+                        // The viewed image contents are unchanged, but the Vulkan view handle is
+                        // new. Publish a new descriptor generation so external descriptor caches
+                        // cannot mistake the replacement for their previously captured binding.
+                        MarkDescriptorDirty();
                         MarkDescriptorPublished();
                     }
                 }

@@ -220,7 +220,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Dependencies\Get-Str
 ```
 
 The installer downloads the public NVIDIA-RTX Streamline SDK release, verifies
-the archive digest, and copies the production x64 runtime files into
+the pinned version 2.12.0 archive digest, and copies the production x64 runtime files into
 `ThirdParty/NVIDIA/SDK/win-x64/`. You can also run the `Install-StreamlineSdk`
 VS Code task or the matching `ExecTool` dependency entry.
 

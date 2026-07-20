@@ -7,6 +7,8 @@ using System.Linq;
 using System.Management;
 using System.Threading;
 using XREngine.Rendering;
+using XREngine.Rendering.DLSS;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine
 {
@@ -36,6 +38,19 @@ namespace XREngine
 
                     if (!Settings.EnableSecondaryGpuCompute)
                         return;
+
+                    bool streamlinePresentationRequested =
+                        Engine.EffectiveSettings.EnableNvidiaDlss
+                        || Engine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Dlaa
+                        || NvidiaDlssManager.IsFrameGenerationRequested;
+                    if (templateWindow.Renderer is VulkanRenderer vulkanRenderer &&
+                        (streamlinePresentationRequested || vulkanRenderer.StreamlineFrameGenerationProvisioned))
+                    {
+                        XREngine.Debug.RenderingWarning(
+                            "Secondary Vulkan GPU compute is disabled while NVIDIA DLSS/DLAA/DLSS-G is active or provisioned. " +
+                            "Streamline and presentation resources are process-global; secondary jobs will use the main renderer fallback.");
+                        return;
+                    }
 
                     if (!HasMultipleGpus() && !Settings.AllowSecondaryContextSharingFallback)
                         return;
@@ -164,7 +179,11 @@ namespace XREngine
                         }
                     }
 
-                    var window = new XRWindow(options, templateWindow.UseNativeTitleBar, false);
+                    var window = new XRWindow(
+                        options,
+                        templateWindow.UseNativeTitleBar,
+                        windowVSyncRequested: false,
+                        isSecondaryGpuContext: true);
                     _headlessWindow = window;
                     window.Renderer.Initialize();
                     _renderer = window.Renderer;

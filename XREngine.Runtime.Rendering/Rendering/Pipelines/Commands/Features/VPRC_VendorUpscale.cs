@@ -6,6 +6,7 @@ using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan;
 using XREngine.Rendering.XeSS;
 
@@ -74,6 +75,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         private EVulkanUpscaleBridgeVendor _lastBridgeVendor;
         private bool _fallbackApplySharpen;
         private float _fallbackSharpenStrength;
+        private bool _fallbackEncodeOutputSrgb;
         private bool _bridgeDispatchHistoryValid;
         private XRCamera? _lastBridgeCamera;
         private object? _lastBridgeScene;
@@ -102,7 +104,15 @@ layout(location = 0) in vec3 FragPos;
 uniform sampler2D SourceTexture;
 uniform bool ApplySharpen;
 uniform bool FlipSourceYOnVulkanFallback;
+uniform bool EncodeOutputSrgb;
 uniform float SharpenStrength;
+
+vec3 LinearToSrgb(vec3 color)
+{
+    vec3 low = color * 12.92;
+    vec3 high = 1.055 * pow(max(color, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055;
+    return mix(high, low, lessThanEqual(color, vec3(0.0031308)));
+}
 
 vec2 ResolvePresentTextureUv(vec2 clipXY)
 {
@@ -132,6 +142,9 @@ void main()
         vec3 sharpened = source.rgb * (1.0 + 4.0 * SharpenStrength) - (north + south + east + west) * SharpenStrength;
         source.rgb = max(sharpened, vec3(0.0));
     }
+
+    if (EncodeOutputSrgb)
+        source.rgb = LinearToSrgb(source.rgb);
 
     OutColor = source;
 }
@@ -189,6 +202,7 @@ void main()
             _lastNativeDlssScene = null;
             _fallbackApplySharpen = false;
             _fallbackSharpenStrength = 0.0f;
+            _fallbackEncodeOutputSrgb = false;
 
             base.ReleaseContainerResources(instance);
         }
@@ -220,6 +234,7 @@ void main()
         {
             _fallbackApplySharpen = false;
             _fallbackSharpenStrength = 0.0f;
+            _fallbackEncodeOutputSrgb = false;
 
             XRViewport? viewport = ActivePipelineInstance.RenderState.WindowViewport;
             XRFrameBuffer? sourceFrameBuffer = FrameBufferName is not null
@@ -238,6 +253,18 @@ void main()
             if (ForceFallbackBlit && requestedVendorFeature)
                 FailRequestedVendorFeature("vendor upscale/frame generation", "vendor upscale bypass is active while a vendor feature is requested");
 
+            bool vendorResourcesReady = AreRequestedVendorResourcesActive();
+            if (requestedVendorFeature && !vendorResourcesReady)
+            {
+                Debug.RenderingEvery(
+                    $"VendorUpscale.WaitingForResourceGeneration.{ActivePipelineInstance.ProfilerKey}",
+                    TimeSpan.FromSeconds(1),
+                    "[VendorUpscale] Keeping the active fallback presentation path until requested vendor resources commit. Pipeline={0} Active={1} Pending={2}",
+                    ActivePipelineInstance.ProfilerKey,
+                    ActivePipelineInstance.ActiveGeneration?.Key.ToString() ?? "<none>",
+                    ActivePipelineInstance.PendingGeneration?.Key.ToString() ?? "<none>");
+            }
+
             bool vendorPathAllowedInCurrentView = TryValidateVrVendorUpscaleSupport(out string vrVendorFailure);
             if (!vendorPathAllowedInCurrentView)
             {
@@ -247,7 +274,7 @@ void main()
                     FailRequestedVendorFeature("VR vendor upscale/frame generation", vrVendorFailure);
             }
 
-            if (vendorPathAllowedInCurrentView && !ForceFallbackBlit && viewport?.Window?.Renderer is VulkanRenderer)
+            if (vendorResourcesReady && vendorPathAllowedInCurrentView && !ForceFallbackBlit && viewport?.Window?.Renderer is VulkanRenderer)
             {
                 if (TryRunNativeVulkanVendor(out string nativeFailure))
                     return;
@@ -257,7 +284,7 @@ void main()
 
                 ReportNativeFallback();
             }
-            else if (vendorPathAllowedInCurrentView &&
+            else if (vendorResourcesReady && vendorPathAllowedInCurrentView &&
                 !ForceFallbackBlit &&
                 viewport?.Window?.Renderer is OpenGLRenderer openGlRenderer &&
                 IsBridgePathRequested() &&
@@ -272,7 +299,7 @@ void main()
 
                 ReportBridgeFallback(viewport, bridgeFailure);
             }
-            else if (vendorPathAllowedInCurrentView && !ForceFallbackBlit && viewport is not null && requestedVendorFeature)
+            else if (vendorResourcesReady && vendorPathAllowedInCurrentView && !ForceFallbackBlit && viewport is not null && requestedVendorFeature)
             {
                 string failureReason =
                     hasColorTexture
@@ -354,6 +381,13 @@ void main()
                 ActivePipelineInstance.EffectiveAntiAliasingModeThisFrame?.ToString() ?? "<null>");
         }
 
+        private bool AreRequestedVendorResourcesActive()
+        {
+            RenderResourceGeneration? active = ActivePipelineInstance.ActiveGeneration;
+            RenderResourceGeneration? pending = ActivePipelineInstance.PendingGeneration;
+            return active is not null && (pending is null || active.Key == pending.Key);
+        }
+
         private void FallbackBlit()
         {
             if (FrameBufferName is null || _fallbackQuad is null)
@@ -409,6 +443,7 @@ void main()
                 ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
                 : default;
 
+            _fallbackEncodeOutputSrgb = ShouldEncodeFallbackOutputForSwapchain(destFbo);
             _fallbackQuad.Render(destFbo);
         }
 
@@ -420,11 +455,21 @@ void main()
             }
 
             program.Uniform("ApplySharpen", _fallbackApplySharpen);
+            bool flipSourceY = FlipSourceYOnVulkanFallback ||
+                RuntimeEngine.Rendering.Settings.ClipSpaceYDirection == ERenderClipSpaceYDirection.YDown;
             program.Uniform(
                 "FlipSourceYOnVulkanFallback",
-                FlipSourceYOnVulkanFallback);
+                flipSourceY);
+            program.Uniform("EncodeOutputSrgb", _fallbackEncodeOutputSrgb);
             program.Uniform("SharpenStrength", _fallbackSharpenStrength);
         }
+
+        private static bool ShouldEncodeFallbackOutputForSwapchain(XRFrameBuffer? destination)
+            => destination is null
+                && AbstractRenderer.Current is VulkanRenderer renderer
+                && renderer.StreamlineFrameGenerationSwapchainActive
+                && renderer.SwapchainImageFormat is Silk.NET.Vulkan.Format.B8G8R8A8Unorm
+                    or Silk.NET.Vulkan.Format.R8G8B8A8Unorm;
 
         private bool TryRunBridge(
             OpenGLRenderer renderer,
@@ -693,7 +738,7 @@ void main()
                 OutputHdr = outputHdr,
                 DlssQuality = frameResources.DlssQuality,
                 XessQuality = frameResources.XessQuality,
-                DlssSharpness = RuntimeEngine.Rendering.Settings.DlssSharpness,
+                DlssSharpness = RuntimeEngine.EffectiveSettings.DlssSharpness,
                 XessSharpness = RuntimeEngine.Rendering.Settings.XessSharpness,
                 JitterOffsetX = jitter.X,
                 JitterOffsetY = jitter.Y,
@@ -1531,14 +1576,17 @@ void main()
                 InputHeight = inputHeight,
                 OutputWidth = outputWidth,
                 OutputHeight = outputHeight,
-                FrameIndex = unchecked((uint)Math.Min(uint.MaxValue, renderer.VulkanFrameCounter)),
+                // Viewport commands are prepared before WindowRenderCallback advances the
+                // Vulkan frame counter. Streamline tokens must identify the upcoming frame
+                // so their constants match the PCL markers and proxy Present call.
+                FrameIndex = unchecked((uint)Math.Min(uint.MaxValue, renderer.VulkanFrameCounter + 1UL)),
                 ResetHistory = resetHistory,
                 ReverseDepth = camera.IsReversedDepth,
                 IsOrthographic = camera.Parameters is XROrthographicCameraParameters,
                 OutputHdr = outputHdr,
                 DlssQuality = RuntimeEngine.EffectiveSettings.DlssQuality,
                 XessQuality = RuntimeEngine.EffectiveSettings.XessQuality,
-                DlssSharpness = RuntimeEngine.Rendering.Settings.DlssSharpness,
+                DlssSharpness = RuntimeEngine.EffectiveSettings.DlssSharpness,
                 XessSharpness = RuntimeEngine.Rendering.Settings.XessSharpness,
                 JitterOffsetX = jitter.X,
                 JitterOffsetY = jitter.Y,
@@ -2038,6 +2086,7 @@ void main()
                 ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
                 : default;
 
+            _fallbackEncodeOutputSrgb = ShouldEncodeFallbackOutputForSwapchain(destFbo);
             _fallbackQuad?.Render(destFbo);
 
             if (_diagEnabled)

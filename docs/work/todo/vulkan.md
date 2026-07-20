@@ -305,7 +305,8 @@ Optional high-end features:
 - [ ] Graceful ray tracing degradation when unsupported.
 - [ ] Vulkan memory decompression if available.
 - [ ] Vulkan indirect copy if available.
-- [ ] DLSS/XeSS native Vulkan path.
+- [x] DLSS native Vulkan Super Resolution/DLAA and frame-generation paths, including Streamline manual-hooking device requirements and proxy presentation. Hardware/image-quality validation remains tracked in the Vulkan Upscale Bridge guide.
+- [ ] XeSS native Vulkan path.
 - [x] OpenGL-to-Vulkan upscale bridge fallback behavior. Shipped as [Vulkan Upscale Bridge](../../developer-guides/rendering/vulkan-upscale-bridge.md); remaining work is hardware validation and future expansion.
 
 ## P2 Hitch And Queue Validation

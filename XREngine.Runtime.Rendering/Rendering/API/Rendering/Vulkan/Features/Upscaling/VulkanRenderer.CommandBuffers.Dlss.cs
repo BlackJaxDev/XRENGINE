@@ -50,11 +50,20 @@ public unsafe partial class VulkanRenderer
     /// <param name="commandBuffer">The Vulkan command buffer to record the operation into.</param>
     /// <param name="op">The DLSS frame generation operation to record.</param>
     /// <exception cref="InvalidOperationException">Thrown if the DLSS frame generation operation fails during Vulkan command recording.</exception>
-    private void RecordDlssFrameGenerationOp(CommandBuffer commandBuffer, DlssFrameGenerationOp op)
+    private void RecordDlssFrameGenerationOp(CommandBuffer commandBuffer, uint imageIndex, DlssFrameGenerationOp op)
     {
+        // A render-resource generation can still contain the last queued DLSS-G op while a runtime
+        // preference change is committing the non-DLSS-G generation. Do not feed Streamline an Off
+        // mode (zero generated frames); the explicit preference-change path disables the feature.
+        if (!NvidiaDlssManager.IsFrameGenerationRequested)
+            return;
+
         VulkanStreamlineImage depth = TransitionStreamlineImageToGeneral(commandBuffer, op.Depth);
         VulkanStreamlineImage motion = TransitionStreamlineImageToGeneral(commandBuffer, op.Motion);
         VulkanStreamlineImage hudlessColor = TransitionStreamlineImageToGeneral(commandBuffer, op.HudlessColor);
+        if (!TryPrepareStreamlineUiImage(commandBuffer, imageIndex, out VulkanStreamlineImage uiColorAndAlpha))
+            throw new InvalidOperationException($"DLSS frame generation requires a UI color/alpha image for swapchain image {imageIndex}.");
+
         VulkanUpscaleBridgeDispatchParameters parameters = op.Parameters;
 
         if (!NvidiaDlssManager.Native.TryRecordNativeVulkanFrameGeneration(
@@ -63,6 +72,7 @@ public unsafe partial class VulkanRenderer
                 depth,
                 motion,
                 hudlessColor,
+                uiColorAndAlpha,
                 in parameters,
                 out string failureReason))
         {

@@ -763,6 +763,13 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         => GetRequestedInternalResolutionForCamera(camera);
 
     /// <summary>
+    /// Whether managed resources for this pipeline always use the viewport display
+    /// extent. Overlay/UI pipelines must not inherit a scene pipeline's reduced
+    /// internal resolution when DLSS, XeSS, or TSR changes the shared viewport.
+    /// </summary>
+    internal virtual bool UsesDisplayResolutionForManagedResources => false;
+
+    /// <summary>
     /// Creates a texture used by PBR shading to light an opaque surface.
     /// Input is an incoming light direction and an outgoing direction (calculated using the normal)
     /// Output from this texture is ratio of refleced radiance in the outgoing direction to irradiance from the incoming direction.

@@ -12,14 +12,14 @@
     DLSS, DLSS frame generation, and Reflex/Streamline runtime paths can load.
 
 .PARAMETER Version
-    Streamline release tag to install. Defaults to v2.11.1.
+    Streamline release tag to install. Defaults to v2.12.0.
 
 .PARAMETER ArchivePath
     Use an already downloaded Streamline SDK ZIP instead of downloading one.
 
 .PARAMETER ExpectedSha256
     SHA-256 digest to require for the archive. Defaults to the pinned digest for
-    v2.11.1 or the GitHub release asset digest when available.
+    v2.12.0 or the GitHub release asset digest when available.
 
 .PARAMETER OutputDir
     Runtime DLL drop folder. Defaults to ThirdParty/NVIDIA/SDK/win-x64.
@@ -42,7 +42,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Version = "v2.11.1",
+    [string]$Version = "v2.12.0",
     [string]$ArchivePath,
     [string]$ExpectedSha256,
     [string]$OutputDir,
@@ -73,6 +73,7 @@ function Get-KnownStreamlineSha256 {
     param([Parameter(Mandatory = $true)][string]$VersionTag)
 
     switch ($VersionTag.ToLowerInvariant()) {
+        "v2.12.0" { return "f5c0a3d870707dddc3570fb4bcd3655cf48a8a68c3a9d342910cfa21b77dcf48" }
         "v2.11.1" { return "0c1d562e59557434cabfb8997157cb8c04fc7d23f077c8bdf5260975b73dfb89" }
         default { return $null }
     }

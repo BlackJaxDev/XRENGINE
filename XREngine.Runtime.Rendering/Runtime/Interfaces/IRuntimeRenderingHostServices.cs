@@ -521,6 +521,36 @@ public interface IRuntimeRenderingHostServices
     EAntiAliasingMode DefaultAntiAliasingMode { get; }
 
     /// <summary>
+    /// Gets whether NVIDIA DLSS super resolution is enabled by the effective host settings.
+    /// </summary>
+    bool EnableNvidiaDlss { get; }
+
+    /// <summary>
+    /// Gets the effective NVIDIA DLSS quality mode.
+    /// </summary>
+    EDlssQualityMode DlssQuality { get; }
+
+    /// <summary>
+    /// Gets the effective custom NVIDIA DLSS input-resolution scale.
+    /// </summary>
+    float DlssCustomScale { get; }
+
+    /// <summary>
+    /// Gets the effective NVIDIA DLSS sharpening amount.
+    /// </summary>
+    float DlssSharpness { get; }
+
+    /// <summary>
+    /// Gets whether NVIDIA DLSS frame generation is enabled by the effective host settings.
+    /// </summary>
+    bool EnableNvidiaDlssFrameGeneration { get; }
+
+    /// <summary>
+    /// Gets the effective NVIDIA DLSS frame-generation multiplier.
+    /// </summary>
+    ENvidiaDlssFrameGenerationMode NvidiaDlssFrameGenerationMode { get; }
+
+    /// <summary>
     /// Gets the default MSAA sample count used when no camera or pipeline override is active.
     /// </summary>
     uint DefaultMsaaSampleCount { get; }

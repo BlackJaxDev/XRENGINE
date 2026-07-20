@@ -193,12 +193,12 @@ public unsafe partial class VulkanRenderer
             EnableValidationLayers && _diagnosticOptions.EnableSynchronizationValidation;
     }
 
-    private static uint ResolveRequestedVulkanInstanceApiVersion()
+    private uint ResolveRequestedVulkanInstanceApiVersion()
     {
         uint defaultApiVersion = Vk.Version13;
         OpenXrVulkanRuntimeRequirements openXrRequirements = OpenXRAPI.GetRequestedVulkanRuntimeRequirements();
         if (openXrRequirements.MaxApiVersionSupported == 0)
-            return defaultApiVersion;
+            return Math.Max(defaultApiVersion, _streamlineMinimumApiVersion);
 
         uint minApiVersion = ConvertOpenXrVulkanApiVersion(openXrRequirements.MinApiVersionSupported);
         uint maxApiVersion = ConvertOpenXrVulkanApiVersion(openXrRequirements.MaxApiVersionSupported);
@@ -219,6 +219,12 @@ public unsafe partial class VulkanRenderer
             resolvedApiVersion = minApiVersion;
         if (resolvedApiVersion > maxApiVersion)
             resolvedApiVersion = maxApiVersion;
+
+        if (resolvedApiVersion < _streamlineMinimumApiVersion)
+        {
+            throw new NotSupportedException(
+                $"Streamline requires Vulkan {FormatVulkanApiVersion(_streamlineMinimumApiVersion)}, but the active OpenXR runtime caps Vulkan at {FormatVulkanApiVersion(maxApiVersion)}.");
+        }
 
         if (resolvedApiVersion != defaultApiVersion)
         {

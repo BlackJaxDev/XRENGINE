@@ -743,7 +743,10 @@ namespace XREngine.Rendering.Vulkan
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordPrimary"))
                 {
                     using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.PrimaryRecording);
-                    if (!TryRecordCommandBuffer(
+                    bool primaryRecorded = false;
+                    for (int recordingAttempt = 0; recordingAttempt < 2; recordingAttempt++)
+                    {
+                        primaryRecorded = TryRecordCommandBuffer(
                             imageIndex,
                             variant.PrimaryCommandBuffer,
                             variant.DynamicUiSecondaryCommandBuffer,
@@ -754,11 +757,30 @@ namespace XREngine.Rendering.Vulkan
                             out recordedSwapchainWriteCount,
                             out swapchainLayoutAfterCommandBuffer,
                             out recordingDeferredReason,
-                            out queryFrameOpsRequireRerecord))
+                            out queryFrameOpsRequireRerecord);
+                        if (primaryRecorded)
+                            break;
+
+                        if (recordingAttempt != 0 ||
+                            !IsTransientResourceRetirementRecordingFailure(recordingDeferredReason))
+                        {
+                            break;
+                        }
+
+                        CancelRecordedTextureUploadSubmitBatch(
+                            "command buffer resource generation retired during recording retry");
+                        Debug.VulkanWarningEvery(
+                            $"Vulkan.Primary.RetryRetiredResource.{GetHashCode()}",
+                            TimeSpan.FromSeconds(1),
+                            "[Vulkan] Retrying primary command recording immediately because a resource generation retired during the first attempt: {0}",
+                            recordingDeferredReason);
+                    }
+
+                    if (!primaryRecorded)
                     {
                         _lastEnsureCommandBufferRecordedPrimary = false;
                         CancelRecordedTextureUploadSubmitBatch(
-                            "command buffer recording deferred before vkBeginCommandBuffer");
+                            "command buffer recording deferred before or during recording");
                         return default;
                     }
                 }
@@ -6526,7 +6548,7 @@ namespace XREngine.Rendering.Vulkan
                     case DlssFrameGenerationOp frameGenerationOp:
                         EndActiveRenderPass();
                         CmdBeginLabel(commandBuffer, "DLSS.FrameGenerationInputs");
-                        RecordDlssFrameGenerationOp(commandBuffer, frameGenerationOp);
+                        RecordDlssFrameGenerationOp(commandBuffer, frameDataImageIndex, frameGenerationOp);
                         CmdEndLabel(commandBuffer);
                         break;
                         }
@@ -6813,8 +6835,17 @@ namespace XREngine.Rendering.Vulkan
 
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.EndCommandBuffer"))
                 {
-                    if (EndCommandBufferTracked(commandBuffer) != Result.Success)
+                    Result endResult = EndCommandBufferTracked(
+                        commandBuffer,
+                        cacheVariant: true,
+                        out string trackingFailure);
+                    if (endResult != Result.Success)
                         throw new Exception("Failed to record command buffer.");
+                    if (!string.IsNullOrEmpty(trackingFailure))
+                    {
+                        recordingDeferredReason = trackingFailure;
+                        return false;
+                    }
                 }
             }
             finally

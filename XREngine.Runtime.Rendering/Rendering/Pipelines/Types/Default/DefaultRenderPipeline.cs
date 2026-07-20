@@ -1997,7 +1997,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         else
             present.SourceFBOName = sourceFboName;
 
-        present.FlipSourceYOnVulkan = ShouldFlipVulkanPresentSourceY(sourceFboName);
         return cmds;
     }
 
