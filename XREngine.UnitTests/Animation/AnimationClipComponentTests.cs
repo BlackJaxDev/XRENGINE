@@ -172,9 +172,11 @@ public sealed class AnimationClipComponentTests
         var component = root.AddComponent<AnimationClipComponent>()!;
         component.Animation = clip;
 
+        IRuntimeAnimationHostServices previousHost = RuntimeAnimationHostServices.Current;
         float previousDelta = Engine.Time.Timer.Update.Delta;
         try
         {
+            RuntimeAnimationHostServices.Current = new EngineRuntimeAnimationHostServices();
             Engine.Time.Timer.Update.Delta = 0.25f;
 
             InvokePrivate(StartMethod, component);
@@ -186,6 +188,7 @@ public sealed class AnimationClipComponentTests
         finally
         {
             Engine.Time.Timer.Update.Delta = previousDelta;
+            RuntimeAnimationHostServices.Current = previousHost;
             InvokePrivate(StopMethod, component);
         }
     }
@@ -208,9 +211,11 @@ public sealed class AnimationClipComponentTests
         var component = root.AddComponent<AnimationClipComponent>()!;
         component.Animation = clip;
 
+        IRuntimeAnimationHostServices previousHost = RuntimeAnimationHostServices.Current;
         float previousDelta = Engine.Time.Timer.Update.Delta;
         try
         {
+            RuntimeAnimationHostServices.Current = new EngineRuntimeAnimationHostServices();
             Engine.Time.Timer.Update.Delta = 0.25f;
 
             InvokePrivate(StartMethod, component);
@@ -228,6 +233,7 @@ public sealed class AnimationClipComponentTests
         finally
         {
             Engine.Time.Timer.Update.Delta = previousDelta;
+            RuntimeAnimationHostServices.Current = previousHost;
             InvokePrivate(StopMethod, component);
         }
     }

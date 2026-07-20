@@ -132,6 +132,11 @@ public interface IRuntimeVrStateServices
     float ModelToRealWorldHeightRatio { get; }
 
     /// <summary>
+    /// Authored model-space avatar height in meters.
+    /// </summary>
+    float ModelHeight { get; set; }
+
+    /// <summary>
     /// OpenVR headset device when OpenVR tracking is available.
     /// </summary>
     VrDevice? Headset { get; }
@@ -260,6 +265,13 @@ public static class RuntimeVrStateServices
     /// <inheritdoc cref="IRuntimeVrStateServices.ModelToRealWorldHeightRatio"/>
     public static float ModelToRealWorldHeightRatio
         => Current.ModelToRealWorldHeightRatio;
+
+    /// <inheritdoc cref="IRuntimeVrStateServices.ModelHeight"/>
+    public static float ModelHeight
+    {
+        get => Current.ModelHeight;
+        set => Current.ModelHeight = value;
+    }
 
     /// <inheritdoc cref="IRuntimeVrStateServices.Headset"/>
     public static VrDevice? Headset
@@ -465,6 +477,7 @@ public static class RuntimeVrStateServices
         public float RealWorldIPD => 0.0f;
         public float ScaledIPD => 0.0f;
         public float ModelToRealWorldHeightRatio => 1.0f;
+        public float ModelHeight { get; set; } = 1.0f;
         public VrDevice? Headset => null;
         public VrDevice? LeftController => null;
         public VrDevice? RightController => null;

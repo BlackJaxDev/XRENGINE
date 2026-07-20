@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using XREngine.Audio;
+using XREngine.Components.Animation;
 using XREngine.Components.Physics;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
@@ -257,7 +258,20 @@ namespace XREngine
             // Wire up timer events for deferred processing
             Time.Timer.PostUpdateFrame += Timer_PostUpdateFrame;
             RuntimeWorldObjectServices.Current = new EngineRuntimeWorldObjectServices();
+            RuntimeGameModeHostServices.Current = new EngineRuntimeGameModeHostServices();
+            RuntimePawnHostServices.Current = new EngineRuntimePawnHostServices();
+            GameModeCompositionBootstrap.RegisterBuiltInGameModes();
+            RuntimeThreadServices.Current = new EngineRuntimeThreadServices();
+
+            RuntimeAnimationHostServices.Current = new EngineRuntimeAnimationHostServices();
+            RuntimePhysicsServices.Current = new EngineRuntimePhysicsServices();
+            RuntimeStaticColliderAuthoringServices.Current = new EngineRuntimeStaticColliderAuthoringServices();
+            RuntimeMaintenanceServices.Current = new EngineRuntimeMaintenanceServices();
+            RuntimeInputServices.Current = new EngineRuntimeInputServices();
+            RuntimeAudioIntegrationServices.Current = new EngineRuntimeAudioIntegrationServices();
+            XREngine.Networking.RuntimeNetworkDiscoveryHostServices.Current = new EngineRuntimeNetworkDiscoveryHostServices();
             XREngine.Scene.RuntimeSceneNodeServices.Current = new EngineRuntimeSceneNodeServices();
+            XREngine.Components.Scene.Volumes.RuntimeSceneStreamingHostServices.Current = new EngineRuntimeSceneStreamingHostServices();
             RuntimeTransformServices.Current = new EngineRuntimeTransformServices();
             RuntimeRenderObjectServices.Current = new EngineRuntimeRenderObjectServices();
             RuntimeShaderServices.Current = new EngineRuntimeShaderServices();

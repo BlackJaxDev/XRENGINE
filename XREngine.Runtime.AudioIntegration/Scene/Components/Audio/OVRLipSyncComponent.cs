@@ -2,7 +2,6 @@
 using System.Runtime.InteropServices;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data;
-using XREngine.Timers;
 using static XREngine.Components.OVRLipSync;
 using static XREngine.Data.AudioData;
 
@@ -35,7 +34,7 @@ namespace XREngine.Components
 
         private ovrLipSyncContext _ctx = new();
 
-        private static readonly long DirtyWindowTicks = EngineTimer.SecondsToStopwatchTicks(0.2f);
+        private static readonly long DirtyWindowTicks = RuntimeAudioIntegrationServices.SecondsToElapsedTicks(0.2f);
         private long _lastDirtyTicks;
         private float _inputSmoothSpeed = 10.0f;
         private float _visemeExaggeration = 1.5f;
@@ -113,8 +112,8 @@ namespace XREngine.Components
 
             // Initialize the OVRLipSync library
             // Feed data to the LipSync engine in 10 ms chunks (100 Hz)
-            var bufferSize = (int)(Engine.Audio.SampleRate * 0.1f);
-            if (ovrLipSyncDll_Initialize(Engine.Audio.SampleRate, bufferSize) == 0)
+            var bufferSize = (int)(RuntimeAudioIntegrationServices.Current.SampleRate * 0.1f);
+            if (ovrLipSyncDll_Initialize(RuntimeAudioIntegrationServices.Current.SampleRate, bufferSize) == 0)
             {
                 Debug.Audio("OVRLipSync library initialized.");
             }
@@ -128,7 +127,7 @@ namespace XREngine.Components
             ovrLipSyncResult result = ovrLipSyncDll_CreateContextEx(
                 ref _ctx,
                 ovrLipSyncContextProvider.ovrLipSyncContextProvider_EnhancedWithLaughter,
-                Engine.Audio.SampleRate,
+                RuntimeAudioIntegrationServices.Current.SampleRate,
                 true);
 
             if (result == ovrLipSyncResult.ovrLipSyncSuccess)
@@ -189,7 +188,7 @@ namespace XREngine.Components
             if (result != ovrLipSyncResult.ovrLipSyncSuccess)
                 Debug.AudioWarning("Failed to process audio data.");
             else
-                _lastDirtyTicks = Engine.ElapsedTicks;
+                _lastDirtyTicks = RuntimeAudioIntegrationServices.Current.ElapsedTicks;
         }
 
         private unsafe void OnAudioDataReceived((int frequency, bool stereo, short[] buffer) data)
@@ -218,7 +217,7 @@ namespace XREngine.Components
                 if (result != ovrLipSyncResult.ovrLipSyncSuccess)
                     Debug.AudioWarning("Failed to process audio data.");
                 else
-                    _lastDirtyTicks = Engine.ElapsedTicks;
+                    _lastDirtyTicks = RuntimeAudioIntegrationServices.Current.ElapsedTicks;
             }
             finally
             {
@@ -252,7 +251,7 @@ namespace XREngine.Components
                 if (result != ovrLipSyncResult.ovrLipSyncSuccess)
                     Debug.AudioWarning("Failed to process audio data.");
                 else
-                    _lastDirtyTicks = Engine.ElapsedTicks;
+                    _lastDirtyTicks = RuntimeAudioIntegrationServices.Current.ElapsedTicks;
             }
             finally
             {
@@ -309,10 +308,10 @@ namespace XREngine.Components
 
         private unsafe void UpdateModel()
         {
-            bool hasDataUpdated = HasRecentAudioData(Engine.ElapsedTicks, _lastDirtyTicks);
+            bool hasDataUpdated = HasRecentAudioData(RuntimeAudioIntegrationServices.Current.ElapsedTicks, _lastDirtyTicks);
             if (hasDataUpdated)
             {
-                float dt = GetSmoothingFactor(Engine.Delta, InputSmoothSpeed);
+                float dt = GetSmoothingFactor(RuntimeAudioIntegrationServices.Current.UpdateDeltaSeconds, InputSmoothSpeed);
                 for (int i = 0; i < VisemeCount; i++)
                     _visemes[i] = Interp.Lerp(_visemes[i], _lastInputVisemes[i] * VisemeExaggeration, dt);
 
@@ -320,7 +319,7 @@ namespace XREngine.Components
             }
             else // No input, move back to silence
             {
-                float dt = Engine.Delta;
+                float dt = RuntimeAudioIntegrationServices.Current.UpdateDeltaSeconds;
                 if (_laughterScore > 0.0f)
                     _laughterScore = MathF.Max(0.0f, _laughterScore - dt);
                 if (_visemes[0] < 1.0f) // Silence

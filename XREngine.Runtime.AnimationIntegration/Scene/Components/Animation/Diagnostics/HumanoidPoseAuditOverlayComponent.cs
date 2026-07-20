@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Core.Reflection.Attributes;
@@ -6,7 +6,6 @@ using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Info;
-using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using Transform = XREngine.Scene.Transforms.Transform;
@@ -57,7 +56,6 @@ namespace XREngine.Components.Animation
         private HumanoidPoseAuditReport? _referenceReport;
         private bool _referenceLoadFailed;
         private float? _resolvedReferenceScale;
-        private readonly Dictionary<string, UIText> _muscleTexts = new(StringComparer.Ordinal);
 
         public RenderInfo RenderInfo => _renderInfo;
         public RenderInfo[] RenderedObjects { get; }
@@ -222,13 +220,7 @@ namespace XREngine.Components.Animation
             _renderInfo.Layer = DefaultLayers.GizmosIndex;
         }
 
-        protected override void OnComponentDeactivated()
-        {
-            DestroyMuscleTexts();
-            base.OnComponentDeactivated();
-        }
-
-        private void Render()
+private void Render()
         {
             var humanoid = TargetHumanoid ?? GetSiblingComponent<HumanoidComponent>();
             if (humanoid is null)
@@ -276,7 +268,7 @@ namespace XREngine.Components.Animation
                 referenceByName[bone.Name] = referenceWorld;
 
                 if (ShowReferencePoints)
-                    Engine.Rendering.Debug.RenderPoint(referenceWorld, ColorF4.Cyan);
+                    RuntimeAnimationHostServices.Current.RenderPoint(referenceWorld, ColorF4.Cyan);
 
                 SceneNode? actualNode = ResolveBoneNode(humanoid, bone.Name);
                 Transform? actualTransform = actualNode?.GetTransformAs<Transform>(true);
@@ -285,7 +277,7 @@ namespace XREngine.Components.Animation
 
                 Vector3 actualWorld = actualTransform.WorldTranslation;
                 if (ShowActualPoints)
-                    Engine.Rendering.Debug.RenderPoint(actualWorld, ColorF4.White);
+                    RuntimeAnimationHostServices.Current.RenderPoint(actualWorld, ColorF4.White);
 
                 if (ShowBoneRotationBasis)
                     DrawBoneBasis(actualTransform, BoneBasisAxisLength);
@@ -293,7 +285,7 @@ namespace XREngine.Components.Animation
                 if (ShowErrorLines)
                 {
                     float error = Vector3.Distance(actualWorld, referenceWorld);
-                    Engine.Rendering.Debug.RenderLine(actualWorld, referenceWorld, GetErrorColor(error, MaxErrorMetersForColor));
+                    RuntimeAnimationHostServices.Current.RenderLine(actualWorld, referenceWorld, GetErrorColor(error, MaxErrorMetersForColor));
                 }
             }
 
@@ -305,7 +297,7 @@ namespace XREngine.Components.Animation
                 if (!referenceByName.TryGetValue(parentName, out Vector3 parent) || !referenceByName.TryGetValue(childName, out Vector3 child))
                     continue;
 
-                Engine.Rendering.Debug.RenderLine(parent, child, ColorF4.Blue);
+                RuntimeAnimationHostServices.Current.RenderLine(parent, child, ColorF4.Blue);
             }
 
             RenderMuscleDebugText(humanoid);
@@ -462,84 +454,28 @@ namespace XREngine.Components.Animation
         private static void DrawBoneBasis(Transform transform, float axisLength)
         {
             Vector3 origin = transform.WorldTranslation;
-            Engine.Rendering.Debug.RenderLine(origin, origin + transform.WorldUp * axisLength, ColorF4.Red);
-            Engine.Rendering.Debug.RenderLine(origin, origin + transform.WorldRight * axisLength, ColorF4.Green);
-            Engine.Rendering.Debug.RenderLine(origin, origin + transform.WorldForward * axisLength, ColorF4.Blue);
-            Engine.Rendering.Debug.RenderPoint(origin + transform.WorldUp * axisLength, ColorF4.Red);
-            Engine.Rendering.Debug.RenderPoint(origin + transform.WorldRight * axisLength, ColorF4.Green);
-            Engine.Rendering.Debug.RenderPoint(origin + transform.WorldForward * axisLength, ColorF4.Blue);
+            RuntimeAnimationHostServices.Current.RenderLine(origin, origin + transform.WorldUp * axisLength, ColorF4.Red);
+            RuntimeAnimationHostServices.Current.RenderLine(origin, origin + transform.WorldRight * axisLength, ColorF4.Green);
+            RuntimeAnimationHostServices.Current.RenderLine(origin, origin + transform.WorldForward * axisLength, ColorF4.Blue);
+            RuntimeAnimationHostServices.Current.RenderPoint(origin + transform.WorldUp * axisLength, ColorF4.Red);
+            RuntimeAnimationHostServices.Current.RenderPoint(origin + transform.WorldRight * axisLength, ColorF4.Green);
+            RuntimeAnimationHostServices.Current.RenderPoint(origin + transform.WorldForward * axisLength, ColorF4.Blue);
         }
 
         private void RenderMuscleDebugText(HumanoidComponent humanoid)
         {
             if (!ShowMuscleDebugText)
-            {
-                DestroyMuscleTexts();
                 return;
-            }
 
             Dictionary<string, List<MuscleDebugLabel>> labelsByBone = BuildMuscleDebugLabelsByBone(humanoid);
-            if (labelsByBone.Count == 0)
-            {
-                DestroyMuscleTexts();
-                return;
-            }
-
-            var renderedKeys = new HashSet<string>(StringComparer.Ordinal);
             foreach ((string boneName, List<MuscleDebugLabel> labels) in labelsByBone)
             {
                 SceneNode? anchorNode = ResolveBoneNode(humanoid, boneName);
                 TransformBase anchor = anchorNode?.Transform ?? humanoid.SceneNode.Transform;
-
-                UIText text = EnsureMuscleText(boneName, anchor);
-                text.TextTransform = anchor;
-                text.LocalTranslation = GetMuscleDebugLocalOffset(boneName);
-                text.Scale = MuscleDebugTextScale;
-                text.Text = BuildMuscleDebugText(labels.Select(static label => (label.Name, label.Amount)).ToArray());
-                text.Render();
-                renderedKeys.Add(boneName);
+                Vector3 worldPosition = anchor.TransformPoint(GetMuscleDebugLocalOffset(boneName), render: true);
+                string text = BuildMuscleDebugText(labels.Select(static label => (label.Name, label.Amount)).ToArray());
+                RuntimeAnimationHostServices.Current.RenderText(worldPosition, text, ColorF4.White, MuscleDebugTextScale);
             }
-
-            DestroyUnusedMuscleTexts(renderedKeys);
-        }
-
-        private UIText EnsureMuscleText(string key, TransformBase anchor)
-        {
-            if (_muscleTexts.TryGetValue(key, out UIText? text))
-                return text;
-
-            text = new UIText
-            {
-                TextTransform = anchor,
-                LocalTranslation = MuscleDebugTextOffset,
-                Scale = MuscleDebugTextScale,
-                Color = ColorF4.White,
-                RenderPass = (int)EDefaultRenderPass.OnTopForward,
-                FontSize = 18.0f,
-            };
-            _muscleTexts.Add(key, text);
-            return text;
-        }
-
-        private void DestroyUnusedMuscleTexts(HashSet<string> renderedKeys)
-        {
-            string[] staleKeys = _muscleTexts.Keys.Where(key => !renderedKeys.Contains(key)).ToArray();
-            foreach (string staleKey in staleKeys)
-            {
-                if (_muscleTexts.Remove(staleKey, out UIText? staleText) && staleText.Mesh is not null)
-                    staleText.Mesh.Destroy();
-            }
-        }
-
-        private void DestroyMuscleTexts()
-        {
-            foreach (UIText text in _muscleTexts.Values)
-            {
-                if (text.Mesh is not null)
-                    text.Mesh.Destroy();
-            }
-
-            _muscleTexts.Clear();
         }
 
         private Dictionary<string, List<MuscleDebugLabel>> BuildMuscleDebugLabelsByBone(HumanoidComponent humanoid)

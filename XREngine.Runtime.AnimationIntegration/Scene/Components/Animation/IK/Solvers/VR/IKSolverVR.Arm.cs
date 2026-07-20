@@ -6,7 +6,6 @@ using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
-using static XREngine.Engine.Rendering.Debug;
 
 namespace XREngine.Components.Animation
 {
@@ -446,31 +445,31 @@ namespace XREngine.Components.Animation
                 if (Target is not null)
                 {
                     //RenderCoordinateSystem(Target.WorldMatrix);
-                    RenderPoint(Target.RenderTranslation, ColorF4.Black);
-                    RenderText(Target.RenderTranslation, $"{side} Hand Target", ColorF4.Black);
+                    RuntimeAnimationHostServices.Current.RenderPoint(Target.RenderTranslation, ColorF4.Black);
+                    RuntimeAnimationHostServices.Current.RenderText(Target.RenderTranslation, $"{side} Hand Target", ColorF4.Black);
                 }
 
                 if (BendGoal != null)
                 {
                     //RenderCoordinateSystem(BendGoal.WorldMatrix);
-                    RenderPoint(BendGoal.RenderTranslation, ColorF4.Black);
-                    RenderText(BendGoal.RenderTranslation, $"{side} Elbow Target", ColorF4.Black);
+                    RuntimeAnimationHostServices.Current.RenderPoint(BendGoal.RenderTranslation, ColorF4.Black);
+                    RuntimeAnimationHostServices.Current.RenderText(BendGoal.RenderTranslation, $"{side} Elbow Target", ColorF4.Black);
                 }
 
                 if (_hasShoulder)
                 {
                     //RenderCoordinateSystem(Shoulder.SolverPosition, Shoulder.SolverRotation);
-                    RenderText(Shoulder.SolverPosition, $"{side} Shoulder", ColorF4.Black);
+                    RuntimeAnimationHostServices.Current.RenderText(Shoulder.SolverPosition, $"{side} Shoulder", ColorF4.Black);
                 }
 
                 //RenderCoordinateSystem(UpperArm.SolverPosition, UpperArm.SolverRotation);
-                RenderText(UpperArm.SolverPosition, $"{side} Upper Arm", ColorF4.Black);
+                RuntimeAnimationHostServices.Current.RenderText(UpperArm.SolverPosition, $"{side} Upper Arm", ColorF4.Black);
 
                 //RenderCoordinateSystem(Forearm.SolverPosition, Forearm.SolverRotation);
-                RenderText(Forearm.SolverPosition, $"{side} Forearm", ColorF4.Black);
+                RuntimeAnimationHostServices.Current.RenderText(Forearm.SolverPosition, $"{side} Forearm", ColorF4.Black);
 
                 //RenderCoordinateSystem(Hand.SolverPosition, Hand.SolverRotation);
-                RenderText(Hand.SolverPosition, $"{side} Hand", ColorF4.Black);
+                RuntimeAnimationHostServices.Current.RenderText(Hand.SolverPosition, $"{side} Hand", ColorF4.Black);
             }
 
             private Vector3 _chestForwardAxis;
@@ -488,7 +487,7 @@ namespace XREngine.Components.Animation
                 if (_initialized)
                     return;
 
-                _settings = Engine.LoadOrGenerateAsset(() => new JsonAsset<ArmSettings>(new ArmSettings()), "arms.json", true, "IKTweaks");
+                _settings = RuntimeAnimationHostServices.Current.LoadOrGenerateAsset(() => new JsonAsset<ArmSettings>(new ArmSettings()), "arms.json", true, "IKTweaks");
 
                 var rootRotation = transforms.Root.InputWorld.Rotation;
                 var side = isLeft ? transforms.Left : transforms.Right;
@@ -608,8 +607,8 @@ namespace XREngine.Components.Animation
                 _chestForward = _chestRotation.Rotate(Globals.Forward);
                 _chestUp = _chestRotation.Rotate(Globals.Up);
 
-                //RenderLine(Shoulder.SolverPosition, Shoulder.SolverPosition + _chestForward, ColorF4.Blue);
-                //RenderLine(Shoulder.SolverPosition, Shoulder.SolverPosition + _chestUp, ColorF4.Green);
+                //RuntimeAnimationHostServices.Current.RenderLine(Shoulder.SolverPosition, Shoulder.SolverPosition + _chestForward, ColorF4.Blue);
+                //RuntimeAnimationHostServices.Current.RenderLine(Shoulder.SolverPosition, Shoulder.SolverPosition + _chestUp, ColorF4.Green);
 
                 Vector3 bendNormal = SolveTrigonometric();
                 //FixShoulderTwist();
@@ -881,7 +880,7 @@ namespace XREngine.Components.Animation
                 Vector3 chestRelDir = _chestRotation.Rotate(chestDir * Length);
                 Vector3 tposeTarget = Shoulder.SolverPosition + chestRelDir;
                 Vector3 positionDiff = TargetPosition - tposeTarget;
-                //Engine.Rendering.Debug.RenderLine(TargetPosition, tposeTarget, ColorF4.Magenta);
+                //RuntimeAnimationHostServices.Current.RenderLine(TargetPosition, tposeTarget, ColorF4.Magenta);
                 Vector3 positionDiffWorkingSpace = Quaternion.Inverse(workingSpace).Rotate(positionDiff).Normalized();
 
                 float Z = Settings.FlipZInAtan2 || Settings.FlipZInCalcPitch ? -positionDiffWorkingSpace.Z : positionDiffWorkingSpace.Z;
@@ -890,7 +889,7 @@ namespace XREngine.Components.Animation
                 pitchDeg = DamperValue(pitchDeg, -45f - Settings.ShoulderPitchOffset, 45f - Settings.ShoulderPitchOffset);
 
                 //Debug.Out($"{(isLeft ? "Left" : "Right")} Shoulder | Pitch: {-pitchDeg}");
-                //Engine.Rendering.Debug.RenderLine(tposeTarget, tposeTarget + workingSpace.Rotate(Globals.Right), ColorF4.Magenta);
+                //RuntimeAnimationHostServices.Current.RenderLine(tposeTarget, tposeTarget + workingSpace.Rotate(Globals.Right), ColorF4.Magenta);
                 pitchRotation = Quaternion.CreateFromAxisAngle(workingSpace.Rotate(Globals.Right), -float.DegreesToRadians(pitchDeg)).Normalized();
             }
 
@@ -1015,8 +1014,8 @@ namespace XREngine.Components.Animation
 
             private static void Visualize(VirtualBone bone1, VirtualBone bone2, VirtualBone bone3, ColorF4 color)
             {
-                RenderLine(bone1.SolverPosition, bone2.SolverPosition, color);
-                RenderLine(bone2.SolverPosition, bone3.SolverPosition, color);
+                RuntimeAnimationHostServices.Current.RenderLine(bone1.SolverPosition, bone2.SolverPosition, color);
+                RuntimeAnimationHostServices.Current.RenderLine(bone2.SolverPosition, bone3.SolverPosition, color);
             }
         }
     }

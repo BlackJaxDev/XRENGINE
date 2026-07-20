@@ -359,8 +359,10 @@ namespace XREngine.Components
         /// camera look, jumping, crouching, and system controls.
         /// </summary>
         /// <param name="input">The input interface to register bindings with.</param>
-        public override void RegisterInput(InputInterface input)
+        public override void RegisterInput(object inputInterface)
         {
+            if (inputInterface is not InputInterface input)
+                return;
             // Configure cursor visibility based on pawn settings
             if (ShouldHideCursor)
                 input.HideCursor = !input.Unregister;
@@ -415,7 +417,7 @@ namespace XREngine.Components
         protected virtual void TickMovementInput()
         {
             // Determine which transform provides movement orientation
-            var cam = GetCamera();
+            var cam = this.GetCamera();
             var tfm = InputOrientationTransform ?? cam?.Transform ?? Transform;
 
             // Project view-relative axes onto the controller's authored movement plane.
@@ -535,6 +537,20 @@ namespace XREngine.Components
 
         #endregion
 
+        private float ViewRotationDeltaSeconds
+        {
+            get
+            {
+                IRuntimeTransformServices? services = RuntimeTransformServices.Current;
+                if (services is null)
+                    return 0.0f;
+
+                return ViewRotationAffectedByTimeDilation
+                    ? services.DilatedUpdateDeltaSeconds
+                    : services.UndilatedUpdateDeltaSeconds;
+            }
+        }
+
         #region Look Input Handlers
 
         /// <summary>
@@ -568,7 +584,7 @@ namespace XREngine.Components
         /// <param name="dy">Vertical mouse delta.</param>
         public void MouseLook(float dx, float dy)
         {
-            float dt = ViewRotationAffectedByTimeDilation ? Engine.Delta : Engine.UndilatedDelta;
+            float dt = ViewRotationDeltaSeconds;
             _viewRotation.Pitch += dt * dy * MouseYLookInputMultiplier;
             _viewRotation.Yaw -= dt * dx * MouseXLookInputMultiplier;
             ClampPitch();
@@ -582,7 +598,7 @@ namespace XREngine.Components
         /// <param name="dy">Vertical input direction.</param>
         public void KeyboardLook(float dx, float dy)
         {
-            float dt = ViewRotationAffectedByTimeDilation ? Engine.Delta : Engine.UndilatedDelta;
+            float dt = ViewRotationDeltaSeconds;
             _viewRotation.Pitch += dt * dy * KeyboardLookYInputMultiplier;
             _viewRotation.Yaw -= dt * dx * KeyboardLookXInputMultiplier;
             ClampPitch();
@@ -594,7 +610,7 @@ namespace XREngine.Components
         /// </summary>
         public void LookRight(float dx)
         {
-            float dt = ViewRotationAffectedByTimeDilation ? Engine.Delta : Engine.UndilatedDelta;
+            float dt = ViewRotationDeltaSeconds;
             _viewRotation.Yaw -= dt * dx * GamePadXLookInputMultiplier;
             RemapYaw();
         }
@@ -604,7 +620,7 @@ namespace XREngine.Components
         /// </summary>
         public void LookUp(float dy)
         {
-            float dt = ViewRotationAffectedByTimeDilation ? Engine.Delta : Engine.UndilatedDelta;
+            float dt = ViewRotationDeltaSeconds;
             _viewRotation.Pitch += dt * dy * GamePadYLookInputMultiplier;
             ClampPitch();
         }
@@ -675,10 +691,10 @@ namespace XREngine.Components
         /// </summary>
         public void ToggleMouseCapture()
         {
-            if (LocalInput is null)
+            if (LocalInput is not LocalInputInterface input)
                 return;
 
-            LocalInput.HideCursor = !LocalInput.HideCursor;
+            input.HideCursor = !input.HideCursor;
         }
 
         #endregion

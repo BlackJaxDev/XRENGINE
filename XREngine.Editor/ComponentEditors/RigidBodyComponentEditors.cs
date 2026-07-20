@@ -31,10 +31,10 @@ internal static class RigidBodyEditorShared
         public Vector3 Size => Max - Min;
     }
 
-    private static readonly ConditionalWeakTable<PhysicsActorComponent, HullPreviewState> _previewStates = new();
+    private static readonly ConditionalWeakTable<ConvexPhysicsActorComponent, HullPreviewState> _previewStates = new();
     private static readonly string[] s_spinnerFrames = ["-", "\\", "|", "/"];
 
-    public static void DrawConvexHullSection(PhysicsActorComponent component)
+    public static void DrawConvexHullSection(ConvexPhysicsActorComponent component)
     {
         ImGui.SeparatorText("Convex Hull Utilities");
 
@@ -58,7 +58,7 @@ internal static class RigidBodyEditorShared
         DrawGenerationStatus(status);
     }
 
-    private static string FormatProgressMessage(PhysicsActorComponent.ConvexHullGenerationProgress progress)
+    private static string FormatProgressMessage(ConvexPhysicsActorComponent.ConvexHullGenerationProgress progress)
     {
         if (progress.UsedCache)
             return progress.Message;
@@ -72,7 +72,7 @@ internal static class RigidBodyEditorShared
         return progress.Message;
     }
 
-    private static void DrawWireframePreviewControls(PhysicsActorComponent component, IReadOnlyList<CoACD.ConvexHullMesh>? cachedHulls)
+    private static void DrawWireframePreviewControls(ConvexPhysicsActorComponent component, IReadOnlyList<CoACD.ConvexHullMesh>? cachedHulls)
     {
         var previewState = _previewStates.GetValue(component, _ => new HullPreviewState());
 
@@ -322,7 +322,7 @@ internal static class RigidBodyEditorShared
         return vertex;
     }
 
-    private static void DrawGenerationStatus(PhysicsActorComponent.ConvexHullGenerationStatus status)
+    private static void DrawGenerationStatus(ConvexPhysicsActorComponent.ConvexHullGenerationStatus status)
     {
         if (status.InProgress)
         {
@@ -771,7 +771,7 @@ public sealed class StaticRigidBodyComponentEditor : IXRComponentEditor
         DrawOverview(rigidBodyComponent);
         DrawCreationSettings(rigidBodyComponent);
         DrawActorSettings(rigidBodyComponent);
-        RigidBodyEditorShared.DrawConvexHullSection(rigidBodyComponent);
+
         ImGui.PopID();
         ComponentEditorLayout.DrawActivePreviewDialog();
     }

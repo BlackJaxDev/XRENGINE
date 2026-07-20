@@ -452,6 +452,20 @@ $value:
         }
 
         [Test]
+        public void TransformYaml_LegacyFacadeAssemblyName_ResolvesMovedRuntimeTransform()
+        {
+            const string yaml = """
+$type: XREngine.Scene.Transforms.RigidBodyTransform, XREngine
+$value:
+    Name: LegacyRigidBodyTransform
+""";
+
+            TransformBase transform = AssetManager.Deserializer.Deserialize<TransformBase>(yaml).ShouldNotBeNull();
+
+            transform.ShouldBeOfType<RigidBodyTransform>();
+            transform.Name.ShouldBe("LegacyRigidBodyTransform");
+        }
+        [Test]
         public void TransformYaml_WrappedNestedCameraTransform_DoesNotConsumeSiblingProperties()
         {
                 string transformTypeName = typeof(Transform).AssemblyQualifiedName.ShouldNotBeNull();

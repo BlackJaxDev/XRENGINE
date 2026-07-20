@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Numerics;
 using JoltPhysicsSharp;
 using MagicPhysX;
@@ -17,7 +17,7 @@ namespace XREngine.Components.Physics
     [DisplayName("Dynamic Rigid Body")]
     [Description("Simulated rigid body that responds to forces, collisions, and networking state.")]
     [XRComponentEditor("XREngine.Editor.ComponentEditors.DynamicRigidBodyComponentEditor")]
-    public class DynamicRigidBodyComponent : PhysicsActorComponent, IPhysicsReplicationTarget
+    public class DynamicRigidBodyComponent : ConvexPhysicsActorComponent, IPhysicsReplicationTarget, IRuntimePhysicsStepListener, IRuntimeDynamicRigidBodyComponent
     {
         private const float DefaultDensity = 1.0f;
         private const float DefaultLinearDamping = 0.05f;
@@ -26,6 +26,9 @@ namespace XREngine.Components.Physics
         private int _rigidBodyOwnershipSyncDepth;
 
         public RigidBodyTransform RigidBodyTransform => SceneNode.GetTransformAs<RigidBodyTransform>(true)!;
+
+        void IRuntimePhysicsStepListener.OnPhysicsStepped()
+            => RigidBodyTransform.OnPhysicsStepped();
 
         private IAbstractDynamicRigidBody? _rigidBody;
         private bool _autoCreateRigidBody = true;

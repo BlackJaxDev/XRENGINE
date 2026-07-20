@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -630,8 +630,8 @@ namespace XREngine.Components
                 return;
 
             XRCamera? fallbackCamera =
-                (Engine.State.MainPlayer?.ControlledPawnComponent as PawnComponent)?.CameraComponent?.Camera
-                ?? (Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One)?.ControlledPawnComponent as PawnComponent)?.CameraComponent?.Camera;
+                ((Engine.State.MainPlayer?.ControlledPawnComponent as PawnComponent)?.CameraComponent as CameraComponent)?.Camera
+                ?? ((Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One)?.ControlledPawnComponent as PawnComponent)?.CameraComponent as CameraComponent)?.Camera;
 
             if (fallbackCamera is null)
                 return;
@@ -830,8 +830,8 @@ namespace XREngine.Components
             right = Globals.Right;
 
             var camera = transform.CameraSpaceCamera
-                ?? (Engine.State.MainPlayer?.ControlledPawnComponent as PawnComponent)?.CameraComponent?.Camera
-                ?? (Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One)?.ControlledPawnComponent as PawnComponent)?.CameraComponent?.Camera;
+                ?? ((Engine.State.MainPlayer?.ControlledPawnComponent as PawnComponent)?.CameraComponent as CameraComponent)?.Camera
+                ?? ((Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One)?.ControlledPawnComponent as PawnComponent)?.CameraComponent as CameraComponent)?.Camera;
 
             var cameraTransform = camera?.Transform;
             if (cameraTransform is null)
@@ -872,7 +872,7 @@ namespace XREngine.Components
             right = Globals.Right;
 
             var player = Engine.State.MainPlayer ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
-            var cameraTransform = (player?.ControlledPawnComponent as PawnComponent)?.CameraComponent?.Transform;
+            var cameraTransform = ((player?.ControlledPawnComponent as PawnComponent)?.CameraComponent as CameraComponent)?.Transform;
             if (cameraTransform is null)
                 return false;
 

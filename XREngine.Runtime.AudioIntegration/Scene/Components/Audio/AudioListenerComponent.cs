@@ -94,7 +94,7 @@ namespace XREngine.Components
             if (Listener is not null)
                 return;
 
-            Listener = Engine.Audio.NewListener(Name);
+            Listener = RuntimeAudioIntegrationServices.Current.NewListener(Name);
             (World as IRuntimeAudioListenerWorld)?.Listeners.Add(Listener);
         }
 
@@ -112,7 +112,7 @@ namespace XREngine.Components
             if (Listener is null)
                 return;
 
-            float delta = Engine.Delta;
+            float delta = RuntimeAudioIntegrationServices.Current.UpdateDeltaSeconds;
             Vector3 pos = Transform.WorldTranslation;
 
             UpdateListenerPosition(pos, delta);

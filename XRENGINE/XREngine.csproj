@@ -11,6 +11,7 @@
     <AotFactoryRegistrationGenerator>$(MSBuildProjectDirectory)\..\Tools\Generate-AotFactoryRegistrations.ps1</AotFactoryRegistrationGenerator>
     <GeneratedAotFactoryRegistrations>$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.g.cs</GeneratedAotFactoryRegistrations>
     <AotFactoryRegistrationStamp>$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.stamp</AotFactoryRegistrationStamp>
+    <AotFactoryRegistrationCoreRoot>$(MSBuildProjectDirectory)\..\XREngine.Runtime.Core</AotFactoryRegistrationCoreRoot>
     <AotFactoryRegistrationInputIntegrationRoot>$(MSBuildProjectDirectory)\..\XREngine.Runtime.InputIntegration</AotFactoryRegistrationInputIntegrationRoot>
     <AotFactoryRegistrationRenderingRoot>$(MSBuildProjectDirectory)\..\XREngine.Runtime.Rendering</AotFactoryRegistrationRenderingRoot>
     <RiveSharpManagedDll>$(MSBuildProjectDirectory)\..\Build\Submodules\rive-sharp\RiveSharp\bin\$(Configuration)\netstandard2.0\RiveSharp.dll</RiveSharpManagedDll>
@@ -19,8 +20,8 @@
 
   <ItemGroup Condition="'$(DesignTimeBuild)' != 'true'">
     <Compile Include="$(GeneratedAotFactoryRegistrations)" />
-    <AotFactoryRegistrationInput Include="$(MSBuildProjectDirectory)\**\*.cs;$(AotFactoryRegistrationInputIntegrationRoot)\**\*.cs;$(AotFactoryRegistrationRenderingRoot)\**\*.cs"
-                                 Exclude="$(MSBuildProjectDirectory)\bin\**;$(MSBuildProjectDirectory)\obj\**;$(AotFactoryRegistrationInputIntegrationRoot)\bin\**;$(AotFactoryRegistrationInputIntegrationRoot)\obj\**;$(AotFactoryRegistrationRenderingRoot)\bin\**;$(AotFactoryRegistrationRenderingRoot)\obj\**;**\*.g.cs" />
+    <AotFactoryRegistrationInput Include="$(MSBuildProjectDirectory)\**\*.cs;$(AotFactoryRegistrationCoreRoot)\**\*.cs;$(AotFactoryRegistrationInputIntegrationRoot)\**\*.cs;$(AotFactoryRegistrationRenderingRoot)\**\*.cs"
+                                 Exclude="$(MSBuildProjectDirectory)\bin\**;$(MSBuildProjectDirectory)\obj\**;$(AotFactoryRegistrationCoreRoot)\bin\**;$(AotFactoryRegistrationCoreRoot)\obj\**;$(AotFactoryRegistrationInputIntegrationRoot)\bin\**;$(AotFactoryRegistrationInputIntegrationRoot)\obj\**;$(AotFactoryRegistrationRenderingRoot)\bin\**;$(AotFactoryRegistrationRenderingRoot)\obj\**;**\*.g.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -125,11 +126,9 @@
   <ItemGroup>
     <PackageReference Include="BitsKit" Version="1.2.0" />
     <PackageReference Include="AssimpNetter" Version="6.0.2.1" />
-    <PackageReference Include="DotnetNoise" Version="1.0.0" />
     <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1" />
     <PackageReference Include="GraphQL" Version="8.8.3" />
     <PackageReference Include="ImmediateReflection" Version="2.0.0" />
-    <PackageReference Include="Jitter2" Version="2.7.9" />
     <PackageReference Include="JoltPhysicsSharp" Version="2.20.1" />
     <PackageReference Include="LZMA-SDK" Version="22.1.1" />
     <PackageReference Include="Magick.NET.Core" Version="14.14.0" />
@@ -276,9 +275,6 @@
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
     <None Update="runtimes\win-x64\native\lib_coacd.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="runtimes\win-x64\native\libmagicphysx.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="runtimes\win-x64\native\nis.license.txt">

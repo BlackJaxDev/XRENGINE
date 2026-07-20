@@ -1,6 +1,7 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Data;
 using XREngine.Components.Physics;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Movement
 {
@@ -78,7 +79,7 @@ namespace XREngine.Components.Movement
         /// Delta time to apply when consuming input.
         /// Defaults to frame delta, but components that tick input with physics should override.
         /// </summary>
-        protected virtual float InputDeltaTime => Engine.Delta;
+        protected virtual float InputDeltaTime => RuntimeTransformServices.Current?.DilatedUpdateDeltaSeconds ?? 0.0f;
 
         protected virtual Vector3 ConsumeLiteralInput()
         {

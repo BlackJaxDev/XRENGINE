@@ -36,7 +36,7 @@ namespace XREngine.Rendering
     /// This class handles all information pertaining to the rendering of a world.
     /// This object is assigned to a window and the window's renderer is responsible for applying the world's render data to the rendering API for that window.
     /// </summary>
-    public partial class XRWorldInstance : XRObjectBase, IRuntimeWorldContext, IRuntimeRenderInfo3DRegistrationTarget
+    public partial class XRWorldInstance : XRObjectBase, IRuntimeWorldContext, IRuntimePhysicsWorldContext, IRuntimeRenderInfo3DRegistrationTarget
     {
         private const float EdgeBarycentricThreshold = 0.12f;
         private const float VertexBarycentricThreshold = 0.08f;
@@ -452,7 +452,10 @@ namespace XREngine.Rendering
         private readonly Dictionary<IAbstractDynamicRigidBody, DynamicRigidBodyComponent> _physicsResetDynamicBodyLookup =
             new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
-        internal void EnqueuePhysicsResetFromMinYPlane(IAbstractDynamicRigidBody body)
+        float IRuntimePhysicsWorldContext.PhysicsResetMinYDistance => TargetWorld?.Settings?.PhysicsResetMinYDist ?? 0.0f;
+        Vector3 IRuntimePhysicsWorldContext.PhysicsGravity => PhysicsScene.Gravity;
+
+        public void EnqueuePhysicsResetFromMinYPlane(IAbstractDynamicRigidBody body)
         {
             if (!PhysicsEnabled)
                 return;

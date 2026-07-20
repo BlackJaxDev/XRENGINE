@@ -62,6 +62,15 @@ namespace XREngine.Components
         private HumanoidComponent? GetHumanoidComponent()
             => Humanoid ?? (TryGetSiblingComponent<HumanoidComponent>(out var humanoid) ? humanoid : null);
 
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+
+            // Detached scene graphs never become active-in-hierarchy, but explicitly disabling
+            // an animation owner must still release the pose it authored.
+            if (propName == nameof(IsActive) && field is bool isActive && !isActive && !IsActiveInHierarchy)
+                ResetDrivenPose();
+        }
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
@@ -87,16 +96,20 @@ namespace XREngine.Components
         {
             base.OnComponentDeactivated();
             UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);
-            var humanoid = GetHumanoidComponent();
-            if (humanoid is not null)
-                humanoid.ResetPose();
-            else
-                StateMachine.ResetAnimatedState();
+            ResetDrivenPose();
             StateMachine.Deinitialize();
             StateMachine.VariableChanged -= VariableChanged;
             _changedLastEval.Clear();
         }
 
+        private void ResetDrivenPose()
+        {
+            var humanoid = GetHumanoidComponent();
+            if (humanoid is not null)
+                humanoid.ResetPose();
+            else
+                StateMachine.ResetAnimatedState();
+        }
         protected internal void EvaluationTick()
         {
             if (SuspendedByClip)
@@ -106,7 +119,7 @@ namespace XREngine.Components
             if (humanoid is not null && !humanoid.IsAnimatedPosePreviewActive)
                 return;
 
-            StateMachine.EvaluationTick(this, Engine.Time.Timer.Update.DeltaTicks);
+            StateMachine.EvaluationTick(this, RuntimeAnimationHostServices.Current.UpdateDeltaTicks);
 
             // Keep schema in sync before sending any indexed changes.
             ReplicateParameterSchema(force: false);

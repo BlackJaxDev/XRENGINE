@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using System.ComponentModel;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
@@ -13,7 +13,6 @@ using XREngine.Rendering.Info;
 using XREngine.Rendering.Models;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
-using XREngine.Timers;
 using System.Threading;
 
 namespace XREngine.Components.Animation
@@ -1068,11 +1067,11 @@ namespace XREngine.Components.Animation
 
         private void EnsureBoneMapping()
         {
-            long nowTicks = Engine.ElapsedTicks;
+            long nowTicks = RuntimeAnimationHostServices.Current.ElapsedTicks;
             if (!ShouldAttemptRebind(_boneMappingComplete, nowTicks, _nextRebindTicks))
                 return;
 
-            _nextRebindTicks = nowTicks + EngineTimer.SecondsToStopwatchTicks(0.5f);
+            _nextRebindTicks = nowTicks + Math.Max(1L, (long)Math.Round(0.5f * System.Diagnostics.Stopwatch.Frequency));
             SetFromNode();
         }
 
@@ -1667,7 +1666,7 @@ namespace XREngine.Components.Animation
 
         private void Render()
         {
-            if (Engine.Rendering.State.IsShadowPass)
+            if (RuntimeAnimationHostServices.Current.IsShadowPass)
                 return;
 
             RenderBoneLink(Hips, Spine);
@@ -1711,9 +1710,9 @@ namespace XREngine.Components.Animation
 
             Vector3 startPos = start.Node.Transform.WorldTranslation;
             Vector3 endPos = end.Node.Transform.WorldTranslation;
-            Engine.Rendering.Debug.RenderPoint(startPos, ColorF4.Red);
-            Engine.Rendering.Debug.RenderPoint(endPos, ColorF4.Red);
-            Engine.Rendering.Debug.RenderLine(startPos, endPos, ColorF4.Red);
+            RuntimeAnimationHostServices.Current.RenderPoint(startPos, ColorF4.Red);
+            RuntimeAnimationHostServices.Current.RenderPoint(endPos, ColorF4.Red);
+            RuntimeAnimationHostServices.Current.RenderLine(startPos, endPos, ColorF4.Red);
         }
 
         public class BoneDef : XRBase
@@ -3032,7 +3031,7 @@ namespace XREngine.Components.Animation
             rootTransform.RecalculateMatrixHierarchy(
                 forceWorldRecalc: true,
                 setRenderMatrixNow: true,
-                childRecalcType: Engine.Rendering.Settings.RecalcChildMatricesLoopType).Wait();
+                childRecalcType: RuntimeAnimationHostServices.Current.ChildRecalculationLoopType).Wait();
         }
 
         private void ApplyNeutralPoseBoneRotation(SceneNode? node)

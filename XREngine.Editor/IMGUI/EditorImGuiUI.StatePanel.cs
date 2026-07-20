@@ -107,7 +107,7 @@ public static partial class EditorImGuiUI
                     {
                         ImGui.Text("  World:");
                         ImGui.SameLine();
-                        ImGui.Text(gameMode.WorldInstance.TargetWorld?.Name ?? "<unnamed>");
+                        ImGui.Text((gameMode.WorldInstance as XRWorldInstance)?.TargetWorld?.Name ?? "<unnamed>");
                     }
                 }
                 else

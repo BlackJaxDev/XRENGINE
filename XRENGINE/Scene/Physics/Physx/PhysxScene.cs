@@ -1,3 +1,4 @@
+﻿using XREngine.Scene.Physics.Physx;
 using XREngine.Extensions;
 using MagicPhysX;
 using System.Collections.Concurrent;
@@ -1134,13 +1135,7 @@ namespace XREngine.Rendering.Physics.Physx
         #endregion
 
         public static PxTransform MakeTransform(Vector3? position, Quaternion? rotation)
-        {
-            Quaternion q = rotation ?? Quaternion.Identity;
-            Vector3 p = position ?? Vector3.Zero;
-            PxVec3 pos = new() { x = p.X, y = p.Y, z = p.Z };
-            PxQuat rot = new() { x = q.X, y = q.Y, z = q.Z, w = q.W };
-            return PxTransform_new_5(&pos, &rot);
-        }
+            => PhysxConversions.MakeTransform(position, rotation);
 
         public PxSceneFlags Flags => _scene->GetFlags();
         public void SetFlag(PxSceneFlag flag, bool value)

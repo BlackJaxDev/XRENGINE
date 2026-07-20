@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using XREngine.Components;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -25,11 +25,11 @@ namespace XREngine.Components.Animation
 
         private void Render()
         {
-            if (Engine.Rendering.State.IsShadowPass)
+            if (RuntimeAnimationHostServices.Current.IsShadowPass)
                 return;
 
             if (TargetTransform is not null)
-                Engine.Rendering.Debug.RenderPoint(TargetTransform.WorldTranslation, ColorF4.Red);
+                RuntimeAnimationHostServices.Current.RenderPoint(TargetTransform.WorldTranslation, ColorF4.Red);
         }
 
         private TransformBase? _targetTransform;

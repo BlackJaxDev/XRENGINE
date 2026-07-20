@@ -40,7 +40,18 @@ namespace XREngine
             get => _actionManifest;
             set => SetField(ref _actionManifest, value);
         }
-        IActionManifest? IVRGameStartupSettings.ActionManifest => ActionManifest;
+        object? IVRGameStartupSettings.VRManifest
+        {
+            get => VRManifest;
+            set => VRManifest = value switch
+            {
+                null => null,
+                VrManifest manifest => manifest,
+                _ => throw new ArgumentException($"Expected {typeof(VrManifest).FullName}.", nameof(value)),
+            };
+        }
+
+        object? IVRGameStartupSettings.ActionManifest => ActionManifest;
 
         public EVRRuntime VRRuntime
         {

@@ -74,15 +74,20 @@ public sealed class PhysicsBackendBoundaryTests
     public void GameplayFactories_RequestBackendServicesInsteadOfConcreteScenes()
     {
         string characterController = ReadWorkspaceFile(
-            "XRENGINE/Scene/Components/Physics/CharacterControllerComponent.cs");
+            "XREngine.Runtime.Core/Scene/Components/Physics/CharacterControllerComponent.cs");
         string characterMovement = ReadWorkspaceFile(
             "XRENGINE/Scene/Components/Movement/CharacterMovementComponent.cs");
         string dynamicBody = ReadWorkspaceFile(
             "XRENGINE/Scene/Components/Physics/DynamicRigidBodyComponent.cs");
         string staticBody = ReadWorkspaceFile(
-            "XRENGINE/Scene/Components/Physics/StaticRigidBodyComponent.cs");
+            "XREngine.Runtime.Core/Scene/Components/Physics/StaticRigidBodyComponent.cs");
 
         characterController.ShouldContain("physicsScene.BackendService.CreateCharacterController(");
+        characterController.ShouldContain("World is not IRuntimePhysicsWorldContext physicsWorld");
+        characterController.ShouldContain("RuntimeThreadServices.Current.EnqueuePhysicsThread(");
+        characterController.ShouldContain("RuntimeThreadServices.Current.EnqueueUpdateThread(");
+        characterController.ShouldNotContain("XRWorldInstance");
+        characterController.ShouldNotContain("Engine.Enqueue");
         characterController.ShouldNotContain("physicsScene is PhysxScene");
         characterController.ShouldNotContain("physicsScene is JoltScene");
 
@@ -99,14 +104,19 @@ public sealed class PhysicsBackendBoundaryTests
         staticBody.ShouldContain("physicsScene.BackendService.CreateStaticRigidBody(");
         staticBody.ShouldNotContain("CreatePhysxStaticRigidBody");
         staticBody.ShouldNotContain("CreateJoltStaticRigidBody");
+        staticBody.ShouldContain("World is IRuntimePhysicsWorldContext physicsWorld");
+        staticBody.ShouldContain("RuntimeThreadServices.Current.EnqueuePhysicsThread(");
+        staticBody.ShouldNotContain("XRWorldInstance");
+        staticBody.ShouldNotContain("PhysxStaticRigidBody");
+        staticBody.ShouldNotContain("JoltStaticRigidBody");
     }
 
     [Test]
     public void GameplayPhysicsConsumers_UseNeutralQueriesAndBodyMutationContracts()
     {
-        string boom = ReadWorkspaceFile("XRENGINE/Scene/Transforms/Misc/Boom.cs");
-        string boostVolume = ReadWorkspaceFile("XRENGINE/Scene/Components/Volumes/Boost.cs");
-        string gravityVolume = ReadWorkspaceFile("XRENGINE/Scene/Components/Volumes/Gravity.cs");
+        string boom = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Transforms/Misc/Boom.cs");
+        string boostVolume = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Volumes/BoostVolumeComponent.cs");
+        string gravityVolume = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Volumes/GravityVolumeComponent.cs");
 
         boom.ShouldContain("private PhysicsQueryFilter _queryFilter");
         boom.ShouldContain("public PhysicsQueryFilter QueryFilter");
@@ -135,13 +145,13 @@ public sealed class PhysicsBackendBoundaryTests
     {
         string[] contractFiles =
         [
-            "XRENGINE/Scene/Physics/IPhysicsGeometry.cs",
-            "XRENGINE/Scene/Physics/PhysicsAuthoring.cs",
-            "XRENGINE/Scene/Physics/PhysicsContracts.cs",
-            "XRENGINE/Scene/Physics/PhysicsBackendService.cs",
-            "XRENGINE/Scene/Physics/PhysicsMaterial.cs",
-            "XRENGINE/Scene/Physics/PhysicsMeshGeometry.cs",
-            "XRENGINE/Scene/Physics/Joints/IAbstractJoint.cs",
+            "XREngine.Runtime.Core/Scene/Physics/IPhysicsGeometry.cs",
+            "XREngine.Runtime.Core/Scene/Physics/PhysicsAuthoring.cs",
+            "XREngine.Runtime.Core/Scene/Physics/PhysicsContracts.cs",
+            "XREngine.Runtime.Core/Scene/Physics/PhysicsBackendService.cs",
+            "XREngine.Runtime.Core/Scene/Physics/PhysicsMaterial.cs",
+            "XREngine.Runtime.Core/Scene/Physics/PhysicsMeshGeometry.cs",
+            "XREngine.Runtime.Core/Scene/Physics/Joints/IAbstractJoint.cs",
         ];
 
         foreach (string file in contractFiles)
@@ -184,7 +194,7 @@ public sealed class PhysicsBackendBoundaryTests
     public void ActorDependentJoints_RebindWhenActorsBecomeAvailableOrChange()
     {
         string actorComponent = ReadWorkspaceFile(
-            "XRENGINE/Scene/Components/Physics/PhysicsActorComponent.cs");
+            "XREngine.Runtime.Core/Scene/Components/Physics/PhysicsActorComponent.cs");
         string jointComponent = ReadWorkspaceFile(
             "XRENGINE/Scene/Components/Physics/Joints/PhysicsJointComponent.cs");
 

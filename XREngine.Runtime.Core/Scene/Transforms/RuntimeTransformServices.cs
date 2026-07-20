@@ -15,9 +15,14 @@ public interface IRuntimeTransformServices
     bool TransformCullingIsAxisAligned { get; }
     bool IsShadowPass { get; }
     bool IsRenderThread { get; }
+    bool IsEditing { get; }
     ELoopType ChildRecalculationLoopType { get; }
     ERenderMatrixUpdateMode RenderMatrixUpdateMode { get; }
     float UpdateDeltaSeconds { get; }
+    float DilatedUpdateDeltaSeconds { get; }
+    long UpdateDeltaTicks { get; }
+    long FixedUpdateDeltaTicks { get; }
+    float UndilatedUpdateDeltaSeconds { get; }
     float SmoothedDilatedUpdateDeltaSeconds { get; }
     float TargetUpdateFrequency { get; }
     float TransformReplicationKeyframeIntervalSeconds { get; }

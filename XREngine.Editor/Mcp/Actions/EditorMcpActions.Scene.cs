@@ -809,7 +809,7 @@ namespace XREngine.Editor.Mcp
             if (invalidateView)
                 pawn.InvalidateView();
 
-            XRViewport? viewport = pawn.Viewport;
+            XRViewport? viewport = pawn.Viewport as XRViewport;
             return Task.FromResult(new McpToolResponse("Updated editor camera render-on-demand state.", new
             {
                 enabled = pawn.RenderOnDemand,

@@ -1,6 +1,7 @@
-using System.IO;
+﻿using System.IO;
 using System.Net;
 using System.Threading.Tasks;
+using OpenVR.NET.Manifest;
 using XREngine.Networking;
 using XREngine.Rendering;
 using XREngine.Scene;
@@ -27,6 +28,9 @@ namespace XREngine
         /// </remarks>
         private static async Task<bool> InitializeVR(IVRGameStartupSettings vrSettings, bool runVRInPlace)
         {
+            VrManifest? vrManifest = vrSettings.VRManifest as VrManifest;
+            IActionManifest? actionManifest = vrSettings.ActionManifest as IActionManifest;
+
             bool result;
             if (runVRInPlace)
             {
@@ -42,13 +46,13 @@ namespace XREngine
                 }
                 else if (vrSettings.VRRuntime == EVRRuntime.OpenVR)
                 {
-                    if (vrSettings.VRManifest is null || vrSettings.ActionManifest is null)
+                    if (vrManifest is null || actionManifest is null)
                     {
                         Debug.LogWarning("VR settings are not properly initialized for OpenVR. VR will not be started.");
                         return false;
                     }
 
-                    result = await VRState.InitializeLocal(vrSettings.ActionManifest, vrSettings.VRManifest, window ?? _windows[0]);
+                    result = await VRState.InitializeLocal(actionManifest, vrManifest, window ?? _windows[0]);
                 }
                 else
                 {
@@ -56,13 +60,13 @@ namespace XREngine
                     result = VRState.InitializeOpenXR(window);
                     if (!result)
                     {
-                        if (vrSettings.VRManifest is null || vrSettings.ActionManifest is null)
+                        if (vrManifest is null || actionManifest is null)
                         {
                             Debug.LogWarning("VR settings are not properly initialized. VR will not be started.");
                             return false;
                         }
 
-                        result = await VRState.InitializeLocal(vrSettings.ActionManifest, vrSettings.VRManifest, window ?? _windows[0]);
+                        result = await VRState.InitializeLocal(actionManifest, vrManifest, window ?? _windows[0]);
                     }
                 }
             }
@@ -75,13 +79,13 @@ namespace XREngine
                     return false;
                 }
 
-                if (vrSettings.VRManifest is null || vrSettings.ActionManifest is null)
+                if (vrManifest is null || actionManifest is null)
                 {
                     Debug.LogWarning("VR settings are not properly initialized. VR will not be started.");
                     return false;
                 }
 
-                result = await VRState.IninitializeClient(vrSettings.ActionManifest, vrSettings.VRManifest);
+                result = await VRState.IninitializeClient(actionManifest, vrManifest);
             }
 
             return result;

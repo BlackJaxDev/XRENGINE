@@ -108,11 +108,11 @@ public sealed class RuntimeDistanceConstraintOwnerTests
     public void TransientGameplayConsumers_DoNotCreateOrReleaseSceneJointsDirectly()
     {
         string transformTool = ReadWorkspaceFile(
-            "XRENGINE/Scene/Components/Editing/TransformTool3D.cs");
+            "XREngine.Editor/Scene/Components/Editing/TransformTool3D.cs");
         string vrInput = ReadWorkspaceFile(
             "XRENGINE/Scene/Components/Pawns/VRPlayerInputSet.cs");
         string owner = ReadWorkspaceFile(
-            "XRENGINE/Scene/Components/Physics/Joints/RuntimeDistanceConstraintOwner.cs");
+            "XREngine.Runtime.Core/Scene/Components/Physics/Joints/RuntimeDistanceConstraintOwner.cs");
 
         transformTool.ShouldContain("_dragConstraintOwner.Bind(");
         transformTool.ShouldContain("private void MouseDownTranslation()");

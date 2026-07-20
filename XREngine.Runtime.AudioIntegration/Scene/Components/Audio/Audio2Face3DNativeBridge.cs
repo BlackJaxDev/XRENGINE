@@ -65,7 +65,10 @@ namespace XREngine.Components
                     break;
                 case 16:
                     for (int i = 0; i < sourceSampleCount; i++)
-                        normalizedSamples[i] = BitConverter.ToInt16(audioData, i * sizeof(short)) / 32768.0f;
+                    {
+                        short sample = BitConverter.ToInt16(audioData, i * sizeof(short));
+                        normalizedSamples[i] = sample >= 0 ? sample / (float)short.MaxValue : sample / 32768.0f;
+                    }
                     break;
                 case 32:
                     for (int i = 0; i < sourceSampleCount; i++)

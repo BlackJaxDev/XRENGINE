@@ -4,7 +4,6 @@ using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
-using static XREngine.Engine.Rendering.Debug;
 
 namespace XREngine.Components.Animation
 {
@@ -235,30 +234,30 @@ namespace XREngine.Components.Animation
                 if (Target is not null)
                 {
                     //RenderCoordinateSystem(Target.WorldMatrix);
-                    RenderPoint(Target.WorldTranslation, ColorF4.Black);
-                    RenderText(Target.WorldTranslation, $"{side} Foot Target", ColorF4.Black);
+                    RuntimeAnimationHostServices.Current.RenderPoint(Target.WorldTranslation, ColorF4.Black);
+                    RuntimeAnimationHostServices.Current.RenderText(Target.WorldTranslation, $"{side} Foot Target", ColorF4.Black);
                 }
 
                 if (KneeTarget is not null)
                 {
                     //RenderCoordinateSystem(KneeTarget.WorldMatrix);
-                    RenderPoint(KneeTarget.WorldTranslation, ColorF4.Black);
-                    RenderText(KneeTarget.WorldTranslation, $"{side} Knee Target", ColorF4.Black);
+                    RuntimeAnimationHostServices.Current.RenderPoint(KneeTarget.WorldTranslation, ColorF4.Black);
+                    RuntimeAnimationHostServices.Current.RenderText(KneeTarget.WorldTranslation, $"{side} Knee Target", ColorF4.Black);
                 }
 
                 //RenderCoordinateSystem(Thigh.SolverPosition, Thigh.SolverRotation);
-                RenderText(Thigh.SolverPosition, $"{side} Thigh", ColorF4.Black);
+                RuntimeAnimationHostServices.Current.RenderText(Thigh.SolverPosition, $"{side} Thigh", ColorF4.Black);
 
                 //RenderCoordinateSystem(Calf.SolverPosition, Calf.SolverRotation);
-                RenderText(Calf.SolverPosition, $"{side} Calf", ColorF4.Black);
+                RuntimeAnimationHostServices.Current.RenderText(Calf.SolverPosition, $"{side} Calf", ColorF4.Black);
 
                 //RenderCoordinateSystem(Foot.SolverPosition, Foot.SolverRotation);
-                RenderText(Foot.SolverPosition, $"{side} Foot", ColorF4.Black);
+                RuntimeAnimationHostServices.Current.RenderText(Foot.SolverPosition, $"{side} Foot", ColorF4.Black);
 
                 if (HasToes)
                 {
                     //RenderCoordinateSystem(Toes.SolverPosition, Toes.SolverRotation);
-                    RenderText(Toes.SolverPosition, $"{side} Toes", ColorF4.Black);
+                    RuntimeAnimationHostServices.Current.RenderText(Toes.SolverPosition, $"{side} Toes", ColorF4.Black);
                 }
             }
 

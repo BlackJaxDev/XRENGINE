@@ -326,7 +326,7 @@ namespace XREngine.Components
         /// <param name="y"></param>
         private void MouseMove(float x, float y)
         {
-            var vp = OwningPawn?.Viewport;
+            var vp = OwningPawn?.Viewport as XRViewport;
             if (vp is null)
                 return;
 

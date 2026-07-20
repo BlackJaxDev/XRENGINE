@@ -1,4 +1,4 @@
-﻿using Silk.NET.Input;
+using Silk.NET.Input;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 
@@ -64,7 +64,7 @@ public abstract class XRInteractableMenuItem : XRMenuItem
     public abstract void OnFocusEnter();
     public abstract void OnFocusExit();
 }
-public abstract class XRMenuItem : XRBase
+public abstract class XRMenuItem : XRBase, IRuntimeMenuItem
 {
     private string? _path;
     /// <summary>

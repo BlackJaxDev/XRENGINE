@@ -64,8 +64,10 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
     public IReadOnlyList<ModelingMeshValidationIssue> LastSaveDiagnostics => _lastSaveDiagnostics;
     public PrimitiveSelectionMode SelectionMode { get; private set; } = PrimitiveSelectionMode.Vertex;
 
-    public override void RegisterInput(InputInterface input)
+    public override void RegisterInput(object inputInterface)
     {
+        if (inputInterface is not InputInterface input)
+            return;
         base.RegisterInput(input);
         input.RegisterMouseButtonEvent(EMouseButton.LeftClick, EButtonInputType.Pressed, HandlePrimitiveSelection);
     }
@@ -87,7 +89,7 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
         if (pickedIndex is null)
             return;
 
-        var keyboard = LocalInput?.Keyboard;
+        var keyboard = (LocalInput as LocalInputInterface)?.Keyboard;
         bool ctrl = keyboard?.GetKeyState(EKey.ControlLeft, EButtonInputType.Pressed) == true
                     || keyboard?.GetKeyState(EKey.ControlRight, EButtonInputType.Pressed) == true;
         bool shift = keyboard?.GetKeyState(EKey.ShiftLeft, EButtonInputType.Pressed) == true

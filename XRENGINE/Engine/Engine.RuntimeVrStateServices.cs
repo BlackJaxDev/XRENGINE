@@ -135,6 +135,12 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices
     public float ModelToRealWorldHeightRatio
         => Engine.VRState.ModelToRealWorldHeightRatio;
 
+    public float ModelHeight
+    {
+        get => Engine.VRState.ModelHeight;
+        set => Engine.VRState.ModelHeight = value;
+    }
+
     public VrDevice? Headset
         => Engine.VRState.OpenVRApi.Headset;
 

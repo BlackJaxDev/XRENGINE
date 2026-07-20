@@ -4,7 +4,6 @@ using XREngine.Animation;
 using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
-using XREngine.Rendering.Physics.Physx;
 using static XREngine.Components.Animation.IKSolverVR.SolverTransforms;
 using Transform = XREngine.Scene.Transforms.Transform;
 
@@ -447,7 +446,7 @@ namespace XREngine.Components.Animation
             //if (_hasLegs && _lastLocomotionWeight <= 0f && _locomotion._weight > 0f)
             //    _locomotion.Reset(_readPositions, _readRotations);
 
-            float dt = Engine.Delta;
+            float dt = RuntimeAnimationHostServices.Current.DilatedUpdateDeltaSeconds;
 
             PreSolve();
             ApplyOffsets();
@@ -786,12 +785,7 @@ namespace XREngine.Components.Animation
 
         private SortedDictionary<float, List<(XRComponent? item, object? data)>> _raycastResults = [];
 
-        private PhysxScene.PhysxQueryFilter _queryFilter = new()
-        {
-            
-        };
-
-        private Vector3 GetHipsOffset(float deltaTime)
+private Vector3 GetHipsOffset(float deltaTime)
         {
             //if (_locomotion._weight <= 0f || _locomotion._blockingLayers == -1)
                 return Vector3.Zero;

@@ -117,37 +117,13 @@ namespace XREngine.Scene.Prefabs
         /// Ensures every node within the hierarchy owns prefab metadata so instances can keep a stable GUID per template node.
         /// </summary>
         public static void EnsurePrefabMetadata(SceneNode root, Guid prefabAssetId, bool overwriteExisting = true)
-        {
-            ArgumentNullException.ThrowIfNull(root);
-
-            foreach (SceneNode node in EnumerateHierarchy(root))
-            {
-                node.Prefab ??= new SceneNodePrefabLink();
-                var link = node.Prefab;
-
-                if (overwriteExisting || link.PrefabNodeId == Guid.Empty)
-                    link.PrefabNodeId = Guid.NewGuid();
-
-                if (overwriteExisting || link.PrefabAssetId == Guid.Empty)
-                    link.PrefabAssetId = prefabAssetId;
-
-                if (ReferenceEquals(node, root))
-                    link.IsPrefabRoot = true;
-                else if (overwriteExisting)
-                    link.IsPrefabRoot = false;
-            }
-        }
+            => SceneNodePrefabMetadataUtility.EnsurePrefabMetadata(root, prefabAssetId, overwriteExisting);
 
         /// <summary>
         /// Removes prefab metadata from the provided hierarchy. Useful when breaking an instance link in the editor.
         /// </summary>
         public static void ClearPrefabMetadata(SceneNode root)
-        {
-            ArgumentNullException.ThrowIfNull(root);
-
-            foreach (SceneNode node in EnumerateHierarchy(root))
-                node.Prefab = null;
-        }
+            => SceneNodePrefabMetadataUtility.ClearPrefabMetadata(root);
 
         /// <summary>
         /// Creates a deep clone of the hierarchy rooted at <paramref name="template"/> using the engine serializers.
@@ -216,20 +192,7 @@ namespace XREngine.Scene.Prefabs
         /// Applies prefab metadata to an instantiated hierarchy, ensuring every node references the correct asset ID.
         /// </summary>
         public static void BindInstanceToPrefab(SceneNode instanceRoot, Guid prefabAssetId)
-        {
-            ArgumentNullException.ThrowIfNull(instanceRoot);
-
-            foreach (SceneNode node in EnumerateHierarchy(instanceRoot))
-            {
-                node.Prefab ??= new SceneNodePrefabLink();
-                node.Prefab.PrefabAssetId = prefabAssetId;
-
-                if (node.Prefab.PrefabNodeId == Guid.Empty)
-                    node.Prefab.PrefabNodeId = Guid.NewGuid();
-
-                node.Prefab.IsPrefabRoot = ReferenceEquals(node, instanceRoot);
-            }
-        }
+            => SceneNodePrefabMetadataUtility.BindInstanceToPrefab(instanceRoot, prefabAssetId);
 
         /// <summary>
         /// Records or updates a property override on the given prefab-linked node.
@@ -239,128 +202,60 @@ namespace XREngine.Scene.Prefabs
             ArgumentNullException.ThrowIfNull(node);
             ArgumentException.ThrowIfNullOrWhiteSpace(propertyPath);
 
-            node.Prefab ??= new SceneNodePrefabLink();
-            if (node.Prefab.PrefabNodeId == Guid.Empty)
-                node.Prefab.PrefabNodeId = Guid.NewGuid();
-
             string serialized = value is null ? string.Empty : AssetManager.Serializer.Serialize(value);
-            node.Prefab.PropertyOverrides[propertyPath] = new SceneNodePrefabPropertyOverride
+            SceneNodePrefabMetadataUtility.RecordPropertyOverride(node, new SceneNodePrefabPropertyOverride
             {
                 PropertyPath = propertyPath,
                 SerializedValue = serialized,
-                SerializedType = value?.GetType()?.AssemblyQualifiedName
-            };
+                SerializedType = value?.GetType().AssemblyQualifiedName
+            });
         }
 
         /// <summary>
         /// Removes a recorded property override from the node.
         /// </summary>
         public static bool RemovePropertyOverride(SceneNode node, string propertyPath)
-        {
-            ArgumentNullException.ThrowIfNull(node);
-            ArgumentException.ThrowIfNullOrWhiteSpace(propertyPath);
-
-            if (node.Prefab?.PropertyOverrides is not { Count: > 0 } overrides)
-                return false;
-
-            bool removed = overrides.Remove(propertyPath);
-            return removed;
-        }
+            => SceneNodePrefabMetadataUtility.RemovePropertyOverride(node, propertyPath);
 
         /// <summary>
         /// Extracts all overrides stored on the instance hierarchy.
         /// </summary>
         public static List<SceneNodePrefabNodeOverride> ExtractOverrides(SceneNode instanceRoot)
-        {
-            ArgumentNullException.ThrowIfNull(instanceRoot);
-
-            List<SceneNodePrefabNodeOverride> overrides = [];
-            foreach (SceneNode node in EnumerateHierarchy(instanceRoot))
-                if (BuildNodeOverrideSnapshot(node) is SceneNodePrefabNodeOverride snapshot)
-                    overrides.Add(snapshot);
-
-            return overrides;
-        }
+            => SceneNodePrefabMetadataUtility.ExtractOverrides(instanceRoot);
 
         /// <summary>
         /// True if the node currently stores any overrides.
         /// </summary>
         public static bool HasOverrides(SceneNode node)
-            => node.Prefab?.PropertyOverrides.Count > 0;
+            => SceneNodePrefabMetadataUtility.HasOverrides(node);
 
         /// <summary>
         /// Builds a lookup table mapping prefab node IDs to the instantiated scene nodes.
         /// </summary>
         public static Dictionary<Guid, SceneNode> BuildPrefabNodeMap(SceneNode instanceRoot)
-        {
-            ArgumentNullException.ThrowIfNull(instanceRoot);
-
-            Dictionary<Guid, SceneNode> map = new();
-            foreach (SceneNode node in EnumerateHierarchy(instanceRoot))
-            {
-                Guid nodeId = node.Prefab?.PrefabNodeId ?? Guid.Empty;
-                if (nodeId != Guid.Empty)
-                    map[nodeId] = node;
-            }
-
-            return map;
-        }
+            => SceneNodePrefabMetadataUtility.BuildPrefabNodeMap(instanceRoot);
 
         /// <summary>
         /// Finds a descendant node by its prefab GUID.
         /// </summary>
         public static SceneNode? FindNodeByPrefabId(SceneNode instanceRoot, Guid prefabNodeId)
-        {
-            if (prefabNodeId == Guid.Empty)
-                return null;
-
-            foreach (SceneNode node in EnumerateHierarchy(instanceRoot))
-                if (node.Prefab?.PrefabNodeId == prefabNodeId)
-                    return node;
-
-            return null;
-        }
+            => SceneNodePrefabMetadataUtility.FindNodeByPrefabId(instanceRoot, prefabNodeId);
 
         /// <summary>
         /// Applies serialized prefab overrides to the provided instance hierarchy.
         /// </summary>
         public static void ApplyOverrides(SceneNode instanceRoot, IEnumerable<SceneNodePrefabNodeOverride>? nodeOverrides)
-        {
-            ArgumentNullException.ThrowIfNull(instanceRoot);
-
-            if (nodeOverrides is null)
-                return;
-
-            var map = BuildPrefabNodeMap(instanceRoot);
-            foreach (SceneNodePrefabNodeOverride? overrideEntry in nodeOverrides)
-            {
-                if (overrideEntry is null || overrideEntry.PrefabNodeId == Guid.Empty)
-                    continue;
-
-                if (!map.TryGetValue(overrideEntry.PrefabNodeId, out SceneNode? targetNode))
-                {
-                    Debug.LogWarning($"Prefab override references missing node {overrideEntry.PrefabNodeId}");
-                    continue;
-                }
-
-                foreach (SceneNodePrefabPropertyOverride overrideData in overrideEntry.Properties.Values)
-                    TryApplyPropertyOverride(targetNode, overrideData);
-            }
-        }
+            => SceneNodePrefabMetadataUtility.ApplyOverrides(
+                instanceRoot,
+                nodeOverrides,
+                TryApplyPropertyOverride,
+                static prefabNodeId => Debug.LogWarning($"Prefab override references missing node {prefabNodeId}"));
 
         /// <summary>
         /// Enumerates the node hierarchy depth-first.
         /// </summary>
         public static IEnumerable<SceneNode> EnumerateHierarchy(SceneNode root)
-        {
-            ArgumentNullException.ThrowIfNull(root);
-
-            yield return root;
-
-            foreach (SceneNode child in EnumerateChildren(root))
-                foreach (SceneNode descendant in EnumerateHierarchy(child))
-                    yield return descendant;
-        }
+            => SceneNodePrefabMetadataUtility.EnumerateHierarchy(root);
 
         private static IEnumerable<SceneNode> EnumerateChildren(SceneNode node)
         {
@@ -813,24 +708,6 @@ namespace XREngine.Scene.Prefabs
             value = 0.0f;
             return map.TryGetValue(key, out string? raw) &&
                 float.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
-        }
-
-        private static SceneNodePrefabNodeOverride? BuildNodeOverrideSnapshot(SceneNode node)
-        {
-            var link = node.Prefab;
-            if (link is null || link.PrefabNodeId == Guid.Empty || link.PropertyOverrides.Count == 0)
-                return null;
-
-            SceneNodePrefabNodeOverride snapshot = new()
-            {
-                PrefabNodeId = link.PrefabNodeId,
-                Properties = new Dictionary<string, SceneNodePrefabPropertyOverride>(link.PropertyOverrides.Count, StringComparer.Ordinal)
-            };
-
-            foreach (var pair in link.PropertyOverrides)
-                snapshot.Properties[pair.Key] = CloneOverride(pair.Value);
-
-            return snapshot;
         }
 
         private static SceneNodePrefabPropertyOverride CloneOverride(SceneNodePrefabPropertyOverride source)

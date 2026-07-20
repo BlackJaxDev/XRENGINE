@@ -516,11 +516,15 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
         if (string.IsNullOrWhiteSpace(typeName))
             return null;
 
-        foreach (var candidate in TransformBase.TransformTypes)
-            if ((candidate.AssemblyQualifiedName is string aqn && string.Equals(aqn, typeName, StringComparison.Ordinal)) || 
-                (candidate.FullName is string fullName && string.Equals(fullName, typeName, StringComparison.Ordinal)))
+        int assemblySeparator = typeName.IndexOf(',');
+        string fullTypeName = assemblySeparator < 0 ? typeName.Trim() : typeName[..assemblySeparator].Trim();
+
+        foreach (Type candidate in TransformBase.TransformTypes)
+        {
+            if ((candidate.AssemblyQualifiedName is string aqn && string.Equals(aqn, typeName, StringComparison.Ordinal))
+                || (candidate.FullName is string fullName && string.Equals(fullName, fullTypeName, StringComparison.Ordinal)))
                 return candidate;
-        
+        }
 
         return null;
     }

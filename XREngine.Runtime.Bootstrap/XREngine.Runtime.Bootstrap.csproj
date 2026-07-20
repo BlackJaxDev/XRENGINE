@@ -41,6 +41,10 @@
     <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.InputIntegration\XREngine.Runtime.InputIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
+    <!-- Transitional Phase 3 edge: Bootstrap still composes facade-owned world, pawn,
+         movement, and concrete physics types. Remove this reference when those open
+         ownership slices move to their target runtime assemblies. -->
+    <ProjectReference Include="..\XRENGINE\XRENGINE.csproj" />
   </ItemGroup>
 
 </Project>

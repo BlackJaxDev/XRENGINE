@@ -168,7 +168,7 @@ namespace XREngine.Components.Animation
             _deferredStartPending = true;
             int stage = 0;
 
-            Engine.AddAppThreadCoroutine(() =>
+            RuntimeAnimationHostServices.Current.AddAppThreadCoroutine(() =>
             {
                 if (version != _deferredStartVersion || IsDestroyed || SceneNode.IsDestroyed)
                 {
@@ -187,7 +187,7 @@ namespace XREngine.Components.Animation
                 switch (stage)
                 {
                     case 0:
-                        using (Engine.Profiler.Start("AnimationClipComponent.DeferredStart.BeginPlayback"))
+                        using (RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.DeferredStart.BeginPlayback"))
                         {
                             if (!TryBeginPlayback())
                             {
@@ -200,21 +200,21 @@ namespace XREngine.Components.Animation
                         return false;
 
                     case 1:
-                        using (Engine.Profiler.Start("AnimationClipComponent.DeferredStart.InitializeMembers"))
+                        using (RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.DeferredStart.InitializeMembers"))
                             EnsureInitialized();
 
                         stage++;
                         return false;
 
                     case 2:
-                        using (Engine.Profiler.Start("AnimationClipComponent.DeferredStart.PrimePropertyAnimations"))
+                        using (RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.DeferredStart.PrimePropertyAnimations"))
                             PrimePlaybackAtInitialTime(clip);
 
                         stage++;
                         return false;
 
                     case 3:
-                        using (Engine.Profiler.Start("AnimationClipComponent.DeferredStart.ApplyInitialPose"))
+                        using (RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.DeferredStart.ApplyInitialPose"))
                             CompletePlaybackStartup();
 
                         _deferredStartPending = false;
@@ -369,24 +369,24 @@ namespace XREngine.Components.Animation
             if (Animation is null || !_initialized)
                 return;
 
-            using var sample = Engine.Profiler.Start("AnimationClipComponent.TickAnimation");
+            using var sample = RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.TickAnimation");
 
             long deltaTicks;
             long playbackTimeTicks;
-            using (Engine.Profiler.Start("AnimationClipComponent.TickAnimation.AdvanceTime"))
+            using (RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.TickAnimation.AdvanceTime"))
             {
-                deltaTicks = ScaleStopwatchTicks(SecondsToStopwatchTicks(Engine.Delta), Speed);
+                deltaTicks = ScaleStopwatchTicks(SecondsToStopwatchTicks(RuntimeAnimationHostServices.Current.DilatedUpdateDeltaSeconds), Speed);
                 playbackTimeTicks = NormalizePlaybackTime(_playbackTimeTicks + deltaTicks, Animation, wrapLooped: Animation.Looped);
                 SetPlaybackTimeTicks(playbackTimeTicks);
             }
 
-            using (Engine.Profiler.Start("AnimationClipComponent.TickAnimation.SetPropertyTimes"))
+            using (RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.TickAnimation.SetPropertyTimes"))
                 SetAllPropertyAnimationTimes(Animation, playbackTimeTicks, wrapLooped: false);
 
             if (!ShouldDriveSiblingHumanoidPose())
                 return;
 
-            using (Engine.Profiler.Start("AnimationClipComponent.TickAnimation.ApplyAnimatedValues"))
+            using (RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.TickAnimation.ApplyAnimatedValues"))
                 ApplyAnimatedValues();
         }
 
@@ -516,7 +516,7 @@ namespace XREngine.Components.Animation
             if (Animation is null)
                 return;
 
-            using var sample = Engine.Profiler.Start("AnimationClipComponent.ApplyAnimatedValues");
+            using var sample = RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.ApplyAnimatedValues");
 
             var snapshot = _animatedMembersSnapshot;
             float weight = Weight;
@@ -537,7 +537,7 @@ namespace XREngine.Components.Animation
 
                 if (fullWeight)
                 {
-                    // Fast path: skip LerpValue entirely — lerp(x, y, 1.0) == y.
+                    // Fast path: skip LerpValue entirely ï¿½ lerp(x, y, 1.0) == y.
                     // ApplyRuntimeClipRemaps only affects Method members, so skip for field/property.
                     if (member.MemberType == EAnimationMemberType.Method)
                         ApplyRuntimeClipRemaps(member, ref animatedValue);
@@ -1166,7 +1166,7 @@ namespace XREngine.Components.Animation
         private void SetPlaybackTimeTicks(long playbackTimeTicks)
         {
             _playbackTimeTicks = Math.Max(0L, playbackTimeTicks);
-            // Bypass SetField — PlaybackTime fires change notifications every frame for no subscribers.
+            // Bypass SetField ï¿½ PlaybackTime fires change notifications every frame for no subscribers.
             _playbackTime = StopwatchTicksToSeconds(_playbackTimeTicks);
         }
 
