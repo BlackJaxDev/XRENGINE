@@ -1,8 +1,8 @@
 # Vulkan Core Hardening And Device-Loss Completed Work
 
-Last Updated: 2026-07-18
+Last Updated: 2026-07-20
 Owner: Rendering
-Status: Historical completion and evidence record through the 2026-07-18 P0 immediate-gate closeout
+Status: Historical completion and evidence record through the 2026-07-20 Phase 5.2.6 implementation move
 Open Work: [Vulkan core hardening and device-loss TODO](vulkan-core-hardening-and-device-loss-todo.md)
 Execution: Current worktree only; do not create or switch branches for this effort.
 
@@ -1448,6 +1448,343 @@ the matched-camera zero-readback result has not superseded the user's missing-
 Sponza observation. Visual captures, SyncValidation interaction cohorts, and a
 valid external Vulkan marker/capture artifact therefore remain in the active
 TODO; this completed matrix does not close those acceptance criteria.
+
+## Phase 5.2.5 And 5.2.6 Completed Implementation - 2026-07-20
+
+The following checked implementation criteria moved from the active tracker on
+2026-07-20. Acceptance criteria and validation-dependent promotion work remain
+in the [current todo](vulkan-core-hardening-and-device-loss-todo.md).
+
+### 5.2.5 - Versioned, Nonblocking Render Plans And Resource Arenas
+
+- [x] Make resource-generation key construction deterministic before versioning
+  plans. `BuildResourceFeatureMaskForGenerationKey` must derive every
+  feature-affecting setting from the explicit `XRRenderPipelineInstance` and
+  `XRViewport` (or an immutable settings snapshot owned by them), never from
+  ambient `RuntimeEngine.Rendering.State.CurrentRenderingPipeline` state.
+  Refactor AO resolution accordingly so resize, internal-resolution, explicit
+  invalidation, and per-frame checks observe the same enabled state and AO type.
+- [x] Route all resource-generation requests through the same feature snapshot
+  and revision. Add a diagnostic assertion/counter when two requests for the
+  same pipeline, output kind, extent, and settings revision produce different
+  feature masks or structurally different layouts.
+- [x] Break the desktop resize failure loop observed in
+  `xrengine_2026-07-16_09-14-14_pid17808`: the resize path resolved no camera and
+  requested `features=0x20CE101`, while frame preparation resolved GTAO and
+  requested `features=0x220CE101`. The alternating `ViewportResized` and
+  `FrameProfileChanged` requests continually superseded the pending generation,
+  left the active desktop generation at `1920x1080` after the window reached
+  `2560x1369`, and skipped desktop command execution while the independent
+  OpenXR eye generation continued submitting with `deviceLost=False`.
+- [x] Decouple swapchain convergence from managed render-resource catch-up. Once
+  the live and swapchain extents agree, a pending pipeline generation must not
+  repeatedly recreate the same swapchain or grow retired external-image state;
+  keep presentation fail-closed until the new generation commits, with bounded
+  last-completed-content reuse and explicit progress telemetry.
+- [x] Redefine planner/cache identity around physical compatibility: output kind,
+  view-family/pipeline identity, extent, pass graph, attachment signature,
+  resource-plan generation, and queue family. Do not key the compiled plan on a
+  rotating external swapchain/OpenXR image handle.
+- [x] Bind the current external target slot as a bounded plan/command variant;
+  keep plan identity stable across acquisition rotation.
+- [x] Store immutable compiled plan generations. A replacement publishes a new
+  generation while old plans, allocators, descriptors, and resources remain
+  alive behind their last submitted timeline/retirement ticket.
+- [x] Remove `WaitForAllInFlightWork` and force-flush calls from command
+  recording, planner-state prune, physical-plan replacement, imported-texture
+  replacement, and normal cache eviction.
+- [x] Evict planner states incrementally only after their last-use timeline is
+  complete. Cache capacity pressure must defer/retire work, not globally drain
+  the device.
+- [x] Give each concurrently active output family a bounded persistent resource
+  arena and candidate transient-lifetime plan. Reuse compatible allocations
+  across frames, but keep physical aliasing disabled until scheduled lifetimes
+  and semaphore-constrained execution prove non-overlap.
+- [x] Separate runtime-owned external images from engine-owned allocation and
+  retirement. External image rotation must not churn engine resource plans.
+- [x] Add plan-cache hit/miss, plan-generation, arena high-water, alias reuse,
+  pending-retirement bytes, and eviction-defer telemetry by output family.
+
+Command-recording dependency and reuse requirements:
+
+- [x] Define one immutable command-recording dependency signature used by
+  primary variants, secondary ranges, and command-chain schedules. Include the
+  output/pass and attachment signature, render area, view mask, queue family,
+  dynamic-rendering inheritance, pipeline/layout generation, mesh/index/vertex
+  binding identity, buffer/image/view/sampler allocation generation,
+  descriptor-layout/set/publication generation, resource-plan generation, and
+  bounded external-target/frame-slot variant.
+- [x] Build the signature from the prepared immutable plan/recording snapshot,
+  never by rereading mutable renderer or descriptor state during reuse choice.
+- [x] Classify invalidation as `Structural`, `BindingIdentity`, or `DataOnly`.
+  Structural changes rebuild the relevant plan and recorded ranges;
+  binding-identity changes invalidate only ranges that consume the binding;
+  data-only publication into a completed frame slot preserves compatible
+  command recordings.
+- [x] Move the minimum descriptor/resource/publication-generation fingerprint
+  required for safe command reuse into Phase 5.2.5. Phase 6 expands descriptor
+  coverage and diagnostics; it must not be a prerequisite hidden behind Phase
+  5.2A's reuse acceptance gate.
+- [x] Replace `VulkanPrimaryCommandBufferReuseSafe = false` with validated
+  capability derived from the complete dependency contract. Remove permanent
+  hard-off behavior; settings and environment overrides may select a diagnostic
+  policy but must not substitute for correctness validation.
+- [x] Replace global command-buffer dirtiness for local resource mutations with
+  dependency-indexed invalidation. Every miss reports the first incompatible
+  signature field and affected range/family.
+- [x] Keep static primary/secondary topology separate from volatile overlays,
+  uploads, queries, and presentation. A volatile suffix must not force static
+  opaque, skybox, shadow, or fixed post-process ranges to rerecord.
+
+Vulkan `CpuDirect` dynamic-data requirements:
+
+- [x] Define a stable per-object/per-material/per-view/per-pass data layout for
+  transforms, previous transforms, material IDs, skinning/blendshape IDs,
+  editor IDs, flags, and pass masks. Update dirty ranges instead of rebuilding
+  or uploading all visible-object data.
+- [x] Route ordinary dynamic data through bounded frame-indexed, persistently
+  mapped host-visible upload arenas and safe device-local copies or direct
+  bindings as appropriate. Use timeline/frame-slot completion to prevent range
+  overwrite without blocking the render thread.
+- [x] Use stable descriptor bindings plus dynamic/frame-slot offsets where
+  practical. Camera motion, animation, and value-only material changes must
+  update bytes without changing the recorded binding topology.
+- [x] Make resizable Vulkan buffers capacity-based. Grow only when capacity is
+  exceeded, publish the replacement as a new safe generation, and update used
+  subranges thereafter. Exact logical element-count changes must not recreate
+  backing storage every frame.
+- [x] Apply the capacity contract to editor/debug geometry, including
+  `LinesBuffer`, so mesh bounds and other variable debug primitives do not emit
+  steady `VkDataBufferRecreated` invalidation.
+- [x] Sort/bucket opaque CPU-direct packets by compatible pass, pipeline/state
+  class, material binding layout, and mesh binding where semantics permit.
+  Preserve transparent, UI, editor-overlay, and explicitly ordered diagnostic
+  behavior.
+
+Pipeline and shader readiness requirements:
+
+- [x] Derive required graphics/compute pipeline variants from the compiled
+  structural plan and prewarm them before a cohort enters steady-state
+  measurement. Include CPU-direct, GPU-indirect, meshlet, shadow, velocity,
+  editor-ID, override, stereo/multiview, and dynamic/legacy target variants that
+  the workload can reach.
+- [x] Keep pipeline creation, shader compilation, texture residency, and asset
+  streaming outside command recording. Separate startup, warmup, streaming, and
+  steady-state profiler phases.
+- [x] If optional asynchronous compilation is still pending, defer only the
+  dependent optional node with an explicit reason. A required production pass
+  must be ready before submission; it must not reject or defer the entire frame
+  after declared warmup.
+- [x] Version pipeline-cache entries and retire replaced pipelines behind their
+  last submitted timeline without globally invalidating unrelated recordings.
+
+Render-graph dataflow requirements:
+
+- [x] Represent every resource use with resource identity, subresource range,
+  stage, access, layout, and read/write intent; version each logical resource
+  after every write.
+- [x] Derive producer-to-consumer dependencies from resource versions instead
+  of declaration order alone. Reject cycles with the dependency chain and
+  reject reads of uninitialized internal resources unless they are explicitly
+  imported with a valid initial state.
+- [x] Calculate transient lifetimes from the scheduled graph and real queue
+  waits. Preserve synchronization2 barriers, queue-family transfers, timeline
+  waits/signals, and binary WSI synchronization in the same plan.
+- [x] Batch adjacent same-queue passes when it keeps submission count bounded
+  without sacrificing useful overlap or deadline boundaries.
+- [x] Publish an immutable, versioned `VulkanRenderGraphPlan` whose cache
+  identity includes the structural pass graph, resource versions, attachment
+  signature, queue plan, and output contract, but excludes rotating external
+  image handles and transient matrices.
+- [x] Emit a graph dump containing pass order, resource versions, derived and
+  explicit edges, barriers, queue assignments, submissions, output deadlines,
+  lifetimes, and predicted/measured durations.
+- [x] Keep physical-image aliasing disabled until tests prove candidate
+  lifetimes cannot overlap across actual asynchronous execution intervals.
+
+### 5.2.6 - Immutable Snapshot, Logical View Set, And View-Family DAG Completed Implementation
+
+#### 5.2.6.1 - Publish One Scene Snapshot And Canonical Frame View Set
+
+- [x] Publish one immutable render-world snapshot per engine frame containing
+  stable scene objects, transforms, lights, materials, shadow/probe state, and
+  GPU-scene references. Output workers must never reread mutable scene state.
+
+- [x] Add a focused, allocation-free frame-view builder that captures OpenXR,
+  desktop, secondary, mirror, and other active output descriptors into one
+  `RenderFrameViewSet` after the relevant OpenXR views are located.
+
+- [x] Build OpenXR descriptors from actual located poses, projections,
+  recommended extents, output layers, and previous-view-projection histories.
+  Do not synthesize wide/inset entries by copying ordinary eye matrices.
+
+- [x] Represent wide/inset parent relationships explicitly and validate the
+  pose, projection, containment, and depth-convention assumptions required for
+  shared visibility or Hi-Z use.
+
+- [x] Preserve inactive stable IDs or use an explicit stable-key mapping so
+  histories never migrate when an optional output toggles. Add an explicit
+  secondary/published-output role if `Debug` is not a durable semantic owner.
+
+- [x] Add an allocation-free adapter from `RenderFrameViewSet` to `GPUViewSet`
+  descriptors/constants and replace
+  `RenderCommandCollection.ConfigureGpuViewSet`'s independent five-view setup.
+
+- [x] Make every view consumer obtain matrices, output rectangles, parent IDs,
+  predicted time, and history keys from the captured frame set. Once visibility
+  generation begins, these values are immutable for the frame.
+
+- [x] Keep shading-rate/foveation metadata separate from real OpenXR inset-view
+  identity and delete duplicated descriptors that only reuse ordinary-eye
+  projections.
+
+#### 5.2.6.2 - Plan Runtime View Families And Render Batches
+
+- [x] Group output requests into compatible view families before collection and
+  command construction. A family owns shared scene/material/light publication
+  and contains one or more view/projection/target variants.
+
+- [x] Make `RenderFrameViewBatchPlanner` consume actual backend, target,
+  swapchain, extent, format, sample-count, layer, and layout capabilities rather
+  than remain a contract/test-only planner.
+
+- [x] Keep the existing two-eye true-multiview path as the first production
+  consumer of a planned `LayeredStereoPair`; replace the global
+  `_viewCount != 2` rejection with planned-batch validation.
+
+- [x] Represent a foveated XR eye family as real wide/inset views. For a typical
+  supported four-view configuration, plan a wide stereo pair and an inset
+  stereo pair; permit a four-layer batch only when the target/backend explicitly
+  supports its extent and layer contract.
+
+- [x] Plan desktop, secondary, and independent-camera outputs as ordinary
+  single-view batches. Preserve parallel-recording and sequential modes with
+  exact, visible selection reasons.
+
+- [x] Include stable view mask, attachment signature, output identity, and
+  resource/temporal generation in command-chain and secondary-command-buffer
+  identities without putting transient matrices or frame indices in structural
+  keys.
+
+- [x] Keep sequential rendering as a separately selected parity/unsupported-
+  hardware path. A requested strict `SinglePassStereo` mode must never silently
+  enter sequential rendering after a capability or runtime failure.
+
+#### 5.2.6.3 - Generate Frame-Scoped Exact Visibility For `CpuDirect`
+
+- [x] Define a frame-scoped candidate record with stable instance/draw identity
+  and an exact active-view mask. Keep pass eligibility, frustum visibility,
+  occlusion visibility, and final render-batch membership as separate fields or
+  buffers with explicit capacity, overflow, retirement, and frame-slot rules.
+
+- [x] Add a multi-frustum CPU BVH collection API that carries a surviving view
+  mask from parent to child, loads/tests each node bound once, and emits exact
+  per-view command collections without retraversing the main scene for every
+  output.
+
+- [x] Permit a rejected outer/parent view to reject a contained inset only when
+  that relationship is validated for the current runtime configuration/frame.
+
+- [x] Keep the existing conservative combined-stereo collector as a diagnostic
+  comparison lane until exact masked traversal is validated.
+
+- [x] Move main-camera visibility generation to the frame/family boundary so
+  depth, opaque, masked, motion-vector, transparent, and other compatible passes
+  consume the shared candidate set and apply their own pass/material filters.
+
+- [x] Keep shadows, probes, reflections, and independent cameras in distinct
+  visibility domains, while sharing the scene snapshot and rebuilding a scene
+  BVH at most once per scene revision/frame.
+
+#### 5.2.6.4 - Preserve Accelerated Masked-Visibility Promotion Lanes
+
+- [x] Upload all active main-view frusta in a compact frame-view buffer and
+  replace the GPU BVH shader's leaf-to-parent walk with a root-down work queue
+  or bounded-stack traversal that propagates the surviving view mask.
+
+- [x] Test only active frusta at each node; use validated parent/inset
+  containment to skip safe tests and compact surviving candidates with subgroup
+  or prefix-sum operations where supported.
+
+- [x] Produce one exact GPU visibility mask per surviving candidate and define
+  deterministic, visible overflow behavior that never silently falls back to
+  CPU on zero-readback strategies.
+
+- [x] Keep candidate and production counts GPU-resident for GPU strategies.
+  No CPU-generated pass mask may be reported as an exact GPU frustum result.
+
+- [x] Classify visible candidates by view batch, render pass, pipeline/state
+  class, material, mesh, and LOD; build compatible multiview union indirect
+  lists while preserving the exact logical-view mask in draw metadata.
+
+- [x] Compile GPU-driven work into stable pass-level dispatch, resource-specific
+  barrier, and `Draw*IndirectCount` packets that can be recorded once and reused
+  while frame-slot inputs and GPU-written output contents change.
+
+- [x] Stop treating GPU-written visibility, command, count, overflow, and delayed
+  statistics values as `mutable-gpu-driven-frame-ops`. Only a topology,
+  capacity, binding-identity, pipeline, or resource-generation change may force
+  the compatible recorded range to rebuild.
+
+- [x] Keep active draw, material, state-class, and bucket work compact. The CPU
+  must not scan all potential buckets, inspect current-frame counts, or construct
+  commands per surviving GPU draw in a production zero-readback frame.
+
+- [x] Use bounded frame-slot resources for GPU cull/compact/indirect output so
+  the GPU may mutate contents without racing an in-flight submission or rotating
+  structural cache identity every frame.
+
+#### 5.2.6.5 - Integrate Physical-Eye Hi-Z And Persistent Visibility
+
+- [x] Key persistent/two-phase visibility by stable logical-view identity.
+  Maintain outer-eye Hi-Z histories for physical left/right XR eyes plus
+  independent desktop and secondary histories when active.
+
+- [x] Frustum-test inset views with their exact projection, then project bounds
+  with the corresponding outer projection before sampling an outer-eye Hi-Z.
+  If relationship invariants are not proven, use an independent inset hierarchy
+  or disable inset occlusion explicitly.
+
+- [x] Support temporal Hi-Z as the low-latency/default option and optional
+  current-frame outer-eye occluder depth/layered pyramid generation only when
+  measured benefit justifies its XR critical-path dependency.
+
+- [x] Invalidate or conservatively bypass history after camera cuts, tracking
+  jumps, projection discontinuities, resource-generation changes, and unsafe
+  scene revisions; periodically compare against an occlusion-disabled frame.
+
+#### 5.2.6.6 - Model Auxiliary Outputs Without Duplicating Architecture
+
+- [x] Compose the normal desktop VR mirror from already rendered eye/family
+  outputs by default. Schedule a full independent desktop scene only when its
+  policy explicitly requires a distinct camera or quality.
+
+- [x] Model pickup/handheld and in-world mirrors as view-dependent requests with
+  stable IDs, screen coverage, maximum update rate, content-age limit,
+  resolution policy, recursion limit, and cacheable last result.
+
+- [x] Share material publication, compatible shadow results, BRDF/LUT inputs,
+  and GPU-scene buffers across families. Never share view-dependent data without
+  an explicit compatibility proof.
+
+- [x] Model probe faces, mip generation, octa conversion, irradiance, and
+  prefilter mips as individually schedulable DAG nodes with persistent
+  intermediates and resumable progress.
+
+- [x] Apply capture/post-process policy at graph construction time so one
+  output's optional stack does not force unrelated outputs through it.
+
+Implementation note: The snapshot, canonical view set, planned stereo-batch, exact CPU
+visibility and its diagnostic reference comparison, stable-view Hi-Z metadata, auxiliary-
+output graph contracts, bounded GPU candidate slots, and GPU view-batch classification
+metadata are live. Non-BVH and post-occlusion classification explicitly marks exact masks
+unavailable and remains conservative. Multiview LOD uses the highest detail required by
+the visible views; exact per-view transparent candidates are gated until split
+rendering scopes exist. Traditional layer suppression, the external OpenXR shared-
+visibility exception removal, and multiview meshlet Hi-Z are capability/validation gated
+and remain default-off because backend layer suppression, family-owned GPU culling, and
+layered physical-eye Hi-Z are not yet available. Similarity-driven submission splitting,
+those two accelerated activation gates, and all acceptance/runtime proof remain deferred.
 
 ## Continuing Work
 

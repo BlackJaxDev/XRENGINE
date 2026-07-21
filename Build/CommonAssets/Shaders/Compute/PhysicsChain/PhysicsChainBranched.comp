@@ -1,0 +1,416 @@
+#version 450
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+struct ParticleState
+{
+    vec3 Position;
+    float _pad0;
+    vec3 PrevPosition;
+    float _pad1;
+    int IsColliding;
+    float _pad2a;
+    float _pad2b;
+    float _pad2c;
+    vec3 PreviousPhysicsPosition;
+    float _pad3;
+};
+
+struct ParticleStatic
+{
+    vec3 TransformLocalPosition;
+    float _pad0;
+    int ParentIndex;
+    float Damping;
+    float Elasticity;
+    float Stiffness;
+    float Inert;
+    float Friction;
+    float Radius;
+    float BoneLength;
+    int TreeIndex;
+    int _pad1;
+    int _pad2;
+    int _pad3;
+};
+
+struct ColliderData
+{
+    vec4 Center;
+    vec4 Params;
+    vec4 Orientation;
+    int Type;
+    int _pad0;
+    int _pad1;
+    int _pad2;
+};
+
+struct PerTreeParams
+{
+    float DeltaTime;
+    float ObjectScale;
+    float Weight;
+    int FreezeAxis;
+    vec3 Force;
+    int ColliderCount;
+    vec3 Gravity;
+    int ColliderOffset;
+    vec3 ObjectMove;
+    float _pad0;
+    vec3 RestGravity;
+    int ParticleOffset;
+    int ParticleCount;
+    int LoopCount;
+    int DepthRangeOffset;
+    int DepthRangeCount;
+};
+
+struct DepthRange
+{
+    uint ParticleIdOffset;
+    uint ParticleCount;
+};
+
+layout(std430, binding = 0) buffer ParticlesBuffer
+{
+    ParticleState Particles[];
+};
+
+layout(std430, binding = 1) readonly buffer ParticleStaticBuffer
+{
+    ParticleStatic ParticleStatics[];
+};
+
+layout(std430, binding = 3) buffer TransformMatricesBuffer
+{
+    mat4 TransformMatrices[];
+};
+
+layout(std430, binding = 4) readonly buffer CollidersBuffer
+{
+    ColliderData Colliders[];
+};
+
+layout(std430, binding = 5) readonly buffer PerTreeParamsBuffer
+{
+    PerTreeParams TreeParams[];
+};
+
+layout(std430, binding = 6) readonly buffer ActiveTreeIdBuffer
+{
+    uint ActiveTreeIds[];
+};
+
+layout(std430, binding = 7) readonly buffer ActiveWorkCounterBuffer
+{
+    uint ActiveWorkCounters[];
+};
+
+layout(std430, binding = 8) readonly buffer DepthRangeBuffer
+{
+    DepthRange DepthRanges[];
+};
+
+layout(std430, binding = 9) readonly buffer DepthParticleIdBuffer
+{
+    uint DepthParticleIds[];
+};
+
+uniform int ApplyObjectMove;
+uniform int ParticleCount;
+uniform int TreeCount;
+uniform uint ActiveTreeIdBase;
+uniform uint ActiveTreeIdCapacity;
+uniform uint ActiveTreeBucket;
+uniform uint DepthRangeTotalCount;
+uniform uint DepthParticleIdCount;
+
+bool sphereColliderCollision(vec3 center, float radius, inout vec3 position, float particleRadius)
+{
+    vec3 delta = position - center;
+    float minimumDistance = particleRadius + radius;
+    float distanceSquared = dot(delta, delta);
+    if (distanceSquared >= minimumDistance * minimumDistance)
+        return false;
+
+    delta = distanceSquared <= 1e-8
+        ? vec3(0.0, 1.0, 0.0)
+        : delta * inversesqrt(distanceSquared);
+    position = center + delta * minimumDistance;
+    return true;
+}
+
+bool capsuleColliderCollision(
+    vec3 start,
+    vec3 end,
+    float inverseLengthSquared,
+    float radius,
+    inout vec3 position,
+    float particleRadius)
+{
+    vec3 direction = end - start;
+    float lengthSquared = dot(direction, direction);
+    if (lengthSquared < 1e-8)
+        return sphereColliderCollision(start, radius, position, particleRadius);
+
+    float inverseLength = inverseLengthSquared > 0.0 ? inverseLengthSquared : 1.0 / lengthSquared;
+    float projection = clamp(dot(position - start, direction) * inverseLength, 0.0, 1.0);
+    return sphereColliderCollision(start + direction * projection, radius, position, particleRadius);
+}
+
+vec3 rotateByQuaternion(vec4 quaternion, vec3 value)
+{
+    return value + 2.0 * cross(quaternion.xyz, cross(quaternion.xyz, value) + quaternion.w * value);
+}
+
+bool boxColliderCollision(vec3 center, vec3 halfExtents, vec4 orientation, inout vec3 position, float radius)
+{
+    vec4 inverseOrientation = vec4(-orientation.xyz, orientation.w);
+    vec3 local = rotateByQuaternion(inverseOrientation, position - center);
+    vec3 closest = clamp(local, -halfExtents, halfExtents);
+    vec3 delta = local - closest;
+    float distanceSquared = dot(delta, delta);
+    if (distanceSquared > radius * radius)
+        return false;
+
+    if (distanceSquared > 1e-8)
+    {
+        local = closest + delta * (radius * inversesqrt(distanceSquared));
+        position = center + rotateByQuaternion(orientation, local);
+        return true;
+    }
+
+    vec3 faceDistance = halfExtents - abs(local);
+    if (faceDistance.x <= faceDistance.y && faceDistance.x <= faceDistance.z)
+        local.x = local.x < 0.0 ? -(halfExtents.x + radius) : halfExtents.x + radius;
+    else if (faceDistance.y <= faceDistance.z)
+        local.y = local.y < 0.0 ? -(halfExtents.y + radius) : halfExtents.y + radius;
+    else
+        local.z = local.z < 0.0 ? -(halfExtents.z + radius) : halfExtents.z + radius;
+    position = center + rotateByQuaternion(orientation, local);
+    return true;
+}
+
+bool planeColliderCollision(vec3 point, vec3 normal, float bound, inout vec3 position, float radius)
+{
+    float distance = dot(position - point, normal);
+    if (bound < 0.5)
+    {
+        if (distance >= radius)
+            return false;
+        position += normal * (radius - distance);
+        return true;
+    }
+
+    if (distance <= -radius)
+        return false;
+    position -= normal * (distance + radius);
+    return true;
+}
+
+bool processColliders(int colliderOffset, int colliderCount, inout vec3 position, float radius)
+{
+    bool collided = false;
+    for (int index = 0; index < colliderCount; ++index)
+    {
+        ColliderData collider = Colliders[colliderOffset + index];
+        bool current = false;
+        if (collider.Type == 0)
+            current = sphereColliderCollision(collider.Center.xyz, collider.Center.w, position, radius);
+        else if (collider.Type == 1)
+            current = capsuleColliderCollision(collider.Center.xyz, collider.Params.xyz, collider.Params.w, collider.Center.w, position, radius);
+        else if (collider.Type == 2)
+            current = boxColliderCollision(collider.Center.xyz, collider.Params.xyz, collider.Orientation, position, radius);
+        else if (collider.Type == 3)
+            current = planeColliderCollision(collider.Center.xyz, collider.Params.xyz, collider.Params.w, position, radius);
+        collided = collided || current;
+    }
+    return collided;
+}
+
+void applyFreezeAxis(int freezeAxis, inout vec3 position, vec3 parentPosition, mat4 parentMatrix)
+{
+    if (freezeAxis < 1 || freezeAxis > 3)
+        return;
+
+    vec3 normal = freezeAxis == 1
+        ? normalize(parentMatrix[0].xyz)
+        : freezeAxis == 2
+            ? normalize(parentMatrix[1].xyz)
+            : normalize(parentMatrix[2].xyz);
+    position -= normal * dot(position - parentPosition, normal);
+}
+
+void resetParticle(int particleId, int particleStart, PerTreeParams tree)
+{
+    ParticleStatic particleStatic = ParticleStatics[particleId];
+    ParticleState particle = Particles[particleId];
+    vec3 transformPosition = TransformMatrices[particleId][3].xyz;
+    int parentIndex = particleStatic.ParentIndex;
+
+    if (parentIndex < particleStart || parentIndex >= particleId)
+    {
+        particle.PrevPosition = particle.Position;
+        particle.Position = transformPosition;
+    }
+    else
+    {
+        particle.PrevPosition += tree.ObjectMove;
+        particle.Position += tree.ObjectMove;
+        ParticleState parent = Particles[parentIndex];
+        float stiffness = mix(1.0, particleStatic.Stiffness, tree.Weight);
+        if (stiffness > 0.0)
+        {
+            mat4 parentMatrix = TransformMatrices[parentIndex];
+            parentMatrix[3].xyz = parent.Position;
+            vec3 restPosition = (parentMatrix * vec4(particleStatic.TransformLocalPosition, 1.0)).xyz;
+            vec3 displacement = restPosition - particle.Position;
+            float displacementLength = length(displacement);
+            float maximumLength = particleStatic.BoneLength * (1.0 - stiffness) * 2.0;
+            if (displacementLength > maximumLength && displacementLength > 1e-6)
+                particle.Position += displacement * ((displacementLength - maximumLength) / displacementLength);
+        }
+
+        vec3 difference = parent.Position - particle.Position;
+        float lengthSquared = dot(difference, difference);
+        if (lengthSquared > 1e-8)
+        {
+            float inverseLength = inversesqrt(lengthSquared);
+            float currentLength = lengthSquared * inverseLength;
+            particle.Position += difference * ((currentLength - particleStatic.BoneLength) * inverseLength);
+        }
+    }
+
+    Particles[particleId] = particle;
+}
+
+void simulateParticle(
+    int particleId,
+    int particleStart,
+    PerTreeParams tree,
+    vec3 force,
+    vec3 objectMove)
+{
+    ParticleStatic particleStatic = ParticleStatics[particleId];
+    ParticleState particle = Particles[particleId];
+    vec3 transformPosition = TransformMatrices[particleId][3].xyz;
+    particle.PreviousPhysicsPosition = particle.Position;
+    int parentIndex = particleStatic.ParentIndex;
+
+    if (parentIndex < particleStart || parentIndex >= particleId)
+    {
+        particle.PrevPosition = particle.Position;
+        particle.Position = transformPosition;
+        Particles[particleId] = particle;
+        return;
+    }
+
+    vec3 velocity = particle.Position - particle.PrevPosition;
+    vec3 rootMove = objectMove * particleStatic.Inert;
+    particle.PrevPosition = particle.Position + rootMove;
+    float damping = particleStatic.Damping;
+    if (particle.IsColliding > 0)
+    {
+        damping = min(damping + particleStatic.Friction, 1.0);
+        particle.IsColliding = 0;
+    }
+    particle.Position += velocity * (1.0 - damping) + force + rootMove;
+
+    ParticleState parent = Particles[parentIndex];
+    float stiffness = mix(1.0, particleStatic.Stiffness, tree.Weight);
+    if (stiffness > 0.0 || particleStatic.Elasticity > 0.0)
+    {
+        mat4 parentMatrix = TransformMatrices[parentIndex];
+        parentMatrix[3].xyz = parent.Position;
+        vec3 restPosition = (parentMatrix * vec4(particleStatic.TransformLocalPosition, 1.0)).xyz;
+        vec3 displacement = restPosition - particle.Position;
+        particle.Position += displacement * (particleStatic.Elasticity * tree.DeltaTime);
+        if (stiffness > 0.0)
+        {
+            displacement = restPosition - particle.Position;
+            float displacementLength = length(displacement);
+            float maximumLength = particleStatic.BoneLength * (1.0 - stiffness) * 2.0;
+            if (displacementLength > maximumLength && displacementLength > 1e-6)
+                particle.Position += displacement * ((displacementLength - maximumLength) / displacementLength);
+        }
+    }
+
+    float radius = particleStatic.Radius * tree.ObjectScale;
+    particle.IsColliding = processColliders(tree.ColliderOffset, tree.ColliderCount, particle.Position, radius) ? 1 : 0;
+    applyFreezeAxis(tree.FreezeAxis, particle.Position, parent.Position, TransformMatrices[parentIndex]);
+    vec3 difference = parent.Position - particle.Position;
+    float lengthSquared = dot(difference, difference);
+    if (lengthSquared > 1e-8)
+    {
+        float inverseLength = inversesqrt(lengthSquared);
+        float currentLength = lengthSquared * inverseLength;
+        particle.Position += difference * ((currentLength - particleStatic.BoneLength) * inverseLength);
+    }
+
+    Particles[particleId] = particle;
+}
+
+void completeDependencyDepth()
+{
+    memoryBarrierBuffer();
+    barrier();
+}
+
+void main()
+{
+    if (ParticleCount <= 0 || TreeCount <= 0 || ActiveTreeIdCapacity == 0u)
+        return;
+
+    uint activeTreeIndex = gl_WorkGroupID.x;
+    uint activeCount = min(ActiveWorkCounters[ActiveTreeBucket], ActiveTreeIdCapacity);
+    if (activeTreeIndex >= activeCount)
+        return;
+
+    uint treeId = ActiveTreeIds[ActiveTreeIdBase + activeTreeIndex];
+    if (treeId >= uint(TreeCount))
+        return;
+    PerTreeParams tree = TreeParams[treeId];
+    int particleStart = tree.ParticleOffset;
+    int particleEnd = particleStart + tree.ParticleCount;
+    if (particleStart < 0 || tree.ParticleCount <= 0 || particleEnd > ParticleCount)
+        return;
+    if (tree.DepthRangeOffset < 0 || tree.DepthRangeCount <= 0
+        || uint(tree.DepthRangeOffset + tree.DepthRangeCount) > DepthRangeTotalCount)
+        return;
+
+    vec3 force = tree.Gravity;
+    float gravityLengthSquared = dot(tree.Gravity, tree.Gravity);
+    if (gravityLengthSquared > 1e-8)
+    {
+        vec3 forceDirection = tree.Gravity * inversesqrt(gravityLengthSquared);
+        force -= forceDirection * max(dot(tree.RestGravity, forceDirection), 0.0);
+    }
+    force = (force + tree.Force) * (tree.ObjectScale * tree.DeltaTime);
+
+    int iterationCount = tree.LoopCount <= 0 ? 1 : clamp(tree.LoopCount, 1, 3);
+    for (int iteration = 0; iteration < iterationCount; ++iteration)
+    {
+        vec3 objectMove = ApplyObjectMove != 0 && iteration == 0 ? tree.ObjectMove : vec3(0.0);
+        for (int depth = 0; depth < tree.DepthRangeCount; ++depth)
+        {
+            DepthRange range = DepthRanges[tree.DepthRangeOffset + depth];
+            if (range.ParticleIdOffset <= DepthParticleIdCount
+                && range.ParticleCount <= DepthParticleIdCount - range.ParticleIdOffset)
+            {
+                for (uint rangeIndex = gl_LocalInvocationIndex;
+                    rangeIndex < range.ParticleCount;
+                    rangeIndex += gl_WorkGroupSize.x)
+                {
+                    uint particleId = DepthParticleIds[range.ParticleIdOffset + rangeIndex];
+                    if (particleId < uint(particleStart) || particleId >= uint(particleEnd))
+                        continue;
+                    if (tree.LoopCount <= 0)
+                        resetParticle(int(particleId), particleStart, tree);
+                    else
+                        simulateParticle(int(particleId), particleStart, tree, force, objectMove);
+                }
+            }
+            completeDependencyDepth();
+        }
+    }
+}

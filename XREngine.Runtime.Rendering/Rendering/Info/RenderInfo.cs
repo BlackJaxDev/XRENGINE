@@ -18,6 +18,14 @@ namespace XREngine.Rendering.Info
     /// </summary>
     public abstract class RenderInfo : XRBase, ITreeItem
     {
+        private static long s_nextStableInstanceId;
+
+        /// <summary>
+        /// Process-stable identity used by frame visibility candidates and diagnostics.
+        /// </summary>
+        [YamlIgnore]
+        public ulong StableInstanceId { get; } =
+            unchecked((ulong)System.Threading.Interlocked.Increment(ref s_nextStableInstanceId));
         public abstract ITreeNode? TreeNode { get; }
 
         public IRenderable? Owner { get; set; }

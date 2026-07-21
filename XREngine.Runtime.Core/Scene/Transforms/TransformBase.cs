@@ -173,6 +173,10 @@ namespace XREngine.Scene.Transforms
         private Capsule? _capsule = null;
         private bool _immediateLocalMatrixRecalculation = true;
         private readonly IRuntimeTransformDebugHandle? _debugHandle;
+        [ThreadStatic]
+        private static int _hierarchyMutationBatchDepth;
+        [ThreadStatic]
+        private static TransformBase? _hierarchyMutationTarget;
         private Guid _serializedReferenceId;
 
         #endregion
@@ -1164,6 +1168,53 @@ namespace XREngine.Scene.Transforms
         #endregion
 
         #region Matrix Modification Marking
+        /// <summary>
+        /// Begins an allocation-free hierarchy mutation scope that retains per-transform
+        /// notifications and dirty flags but registers this root with the world only once.
+        /// </summary>
+        public TransformHierarchyMutationBatch BeginHierarchyMutationBatch()
+            => new(this);
+
+        internal static void EnterHierarchyMutationBatch()
+        {
+            if (_hierarchyMutationBatchDepth != 0)
+                throw new InvalidOperationException("Transform hierarchy mutation batches cannot be nested on the same thread.");
+
+            _hierarchyMutationBatchDepth = 1;
+        }
+
+        internal static void ExitHierarchyMutationBatch()
+        {
+            if (_hierarchyMutationBatchDepth != 1)
+                throw new InvalidOperationException("No transform hierarchy mutation batch is active on this thread.");
+
+            _hierarchyMutationBatchDepth = 0;
+        }
+
+        internal static void EnterHierarchyMutation(TransformBase transform)
+        {
+            if (_hierarchyMutationBatchDepth != 1 || _hierarchyMutationTarget is not null)
+                throw new InvalidOperationException("A transform hierarchy mutation is already active on this thread.");
+
+            _hierarchyMutationTarget = transform;
+        }
+
+        internal static void ExitHierarchyMutation(TransformBase transform)
+        {
+            if (!ReferenceEquals(_hierarchyMutationTarget, transform))
+                throw new InvalidOperationException("The active transform hierarchy mutation target does not match.");
+
+            _hierarchyMutationTarget = null;
+        }
+
+
+        internal void EnqueueHierarchyRecalculation()
+        {
+            Volatile.Write(ref _worldChanged, true);
+            ((RuntimeWorldObjectBase)this).World?.AddDirtyRuntimeObject(this);
+            HasChanged = true;
+        }
+
 
         protected void MarkLocalModified()
         {
@@ -1195,7 +1246,8 @@ namespace XREngine.Scene.Transforms
         protected void MarkWorldModified()
         {
             Volatile.Write(ref _worldChanged, true);
-            ((RuntimeWorldObjectBase)this).World?.AddDirtyRuntimeObject(this);
+            if (!ReferenceEquals(_hierarchyMutationTarget, this))
+                ((RuntimeWorldObjectBase)this).World?.AddDirtyRuntimeObject(this);
             HasChanged = true;
         }
 

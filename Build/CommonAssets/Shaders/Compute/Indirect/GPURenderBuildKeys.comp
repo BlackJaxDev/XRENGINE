@@ -4,6 +4,21 @@ layout(local_size_x = 256) in;
 
 const uint COMMAND_FLOATS = 20u;
 const uint KEY_UINTS = 4u;
+const uint CLASSIFICATION_UINTS = 8u;
+const uint POLICY_CONSERVATIVE_UNION = 0u;
+const uint POLICY_TRADITIONAL_LAYER_SUPPRESSION = 1u;
+const uint POLICY_MESHLET_TASK_SUPPRESSION = 2u;
+const uint CLASS_TRANSPARENT = 1u << 0u;
+const uint CLASS_REQUIRES_PER_VIEW_LOD = 1u << 1u;
+const uint CLASS_REQUIRES_PER_VIEW_SORT = 1u << 2u;
+const uint CLASS_TRADITIONAL_LAYER_SUPPRESSION_ELIGIBLE = 1u << 3u;
+const uint CLASS_MESHLET_TASK_SUPPRESSION_ELIGIBLE = 1u << 4u;
+const uint CLASS_EXACT_MASK_UNAVAILABLE = 1u << 5u;
+const uint CLASS_TRANSPARENT_EXACT_DOMAIN = 1u << 6u;
+const uint METADATA_UINTS = 4u;
+const uint DOMAIN_APPROXIMATE = 2u;
+const uint DOMAIN_EXACT = 3u;
+const uint LOD_POLICY_PER_VIEW_EXACT = 0u;
 
 layout(std430, binding = 0) readonly buffer CulledCommands { float culled[]; };
 layout(std430, binding = 1) readonly buffer CulledCountBuffer
@@ -13,15 +28,32 @@ layout(std430, binding = 1) readonly buffer CulledCountBuffer
     uint CulledOverflow;
 };
 layout(std430, binding = 2) writeonly buffer SortKeyBuffer { uint sortKeys[]; };
+layout(std430, binding = 3) writeonly buffer ViewBatchClassificationBuffer { uint classifications[]; };
+layout(std430, binding = 4) readonly buffer TransparencyMetadataBuffer { uint metadata[]; };
+layout(std430, binding = 16) readonly buffer CulledCommandViewMaskBuffer { uvec2 CulledCommandViewMasks[]; };
 
 uniform int MaxSortKeys;
 uniform uint StateBitMask;
 uniform int SortDomain;
 uniform int SortDirection;
+uniform uint ViewBatchSubmissionPolicy;
+uniform uint ActiveViewCount;
+uniform uint ExactViewMasksValid;
+uniform uint MultiviewLodPolicy;
 
 const int SORT_DOMAIN_MATERIAL_STATE = 0;
 const int SORT_DOMAIN_OPAQUE_FRONT_TO_BACK = 1;
 const int SORT_DOMAIN_TRANSPARENT_BACK_TO_FRONT = 2;
+
+uvec2 BuildActiveViewMask()
+{
+    uint count = clamp(ActiveViewCount, 1u, 64u);
+    uint lo = count >= 32u ? 0xFFFFFFFFu : ((1u << count) - 1u);
+    uint hiCount = count > 32u ? count - 32u : 0u;
+    uint hi = hiCount == 0u ? 0u :
+        (hiCount >= 32u ? 0xFFFFFFFFu : ((1u << hiCount) - 1u));
+    return uvec2(lo, hi);
+}
 
 uint EncodeDistanceKey(float renderDistance)
 {
@@ -37,10 +69,13 @@ void main()
     uint logicalIdx = gl_GlobalInvocationID.x;
     uint total = CulledCount;
     uint availableKeyCount = uint(sortKeys.length()) / KEY_UINTS;
+    uint availableClassificationCount = uint(classifications.length()) / CLASSIFICATION_UINTS;
 
     if (logicalIdx >= total ||
         logicalIdx >= uint(MaxSortKeys) ||
-        logicalIdx >= availableKeyCount)
+        logicalIdx >= availableKeyCount ||
+        logicalIdx >= availableClassificationCount ||
+        (ExactViewMasksValid != 0u && logicalIdx >= uint(CulledCommandViewMasks.length())))
         return;
 
     uint base = logicalIdx * COMMAND_FLOATS;
@@ -56,6 +91,7 @@ void main()
     uint meshID = floatBitsToUint(culled[base + 4u]);
     uint shaderProgramID = floatBitsToUint(culled[base + 9u]);
     float renderDistance = culled[base + 10u];
+    uint lodLevel = floatBitsToUint(culled[base + 12u]);
     uint flags = floatBitsToUint(culled[base + 13u]);
     uint stateClassID = floatBitsToUint(culled[base + 17u]);
     uint drawID = floatBitsToUint(culled[base + 19u]);
@@ -65,6 +101,48 @@ void main()
         ((renderPass & 0xFFu) << 24u) |
         ((shaderProgramID & 0x0FFFu) << 12u) |
         (stateBits & 0x0FFFu);
+    bool maskIsExact = ExactViewMasksValid != 0u;
+    uvec2 exactViewMask = maskIsExact
+        ? CulledCommandViewMasks[logicalIdx]
+        : BuildActiveViewMask();
+    bool multiview = ActiveViewCount > 1u;
+    uint metadataBase = drawID * METADATA_UINTS;
+    uint transparencyDomain = metadataBase + METADATA_UINTS <= uint(metadata.length())
+        ? (metadata[metadataBase] >> 16u) & 0xFFFFu
+        : 0u;
+    bool transparent = transparencyDomain == DOMAIN_APPROXIMATE ||
+        transparencyDomain == DOMAIN_EXACT;
+    bool exactTransparent = transparencyDomain == DOMAIN_EXACT;
+    bool requiresPerViewLod = multiview &&
+        MultiviewLodPolicy == LOD_POLICY_PER_VIEW_EXACT;
+    bool requiresPerViewSort = multiview && exactTransparent;
+    uint classificationFlags = transparent ? CLASS_TRANSPARENT : 0u;
+    if (!maskIsExact)
+        classificationFlags |= CLASS_EXACT_MASK_UNAVAILABLE;
+    if (exactTransparent)
+        classificationFlags |= CLASS_TRANSPARENT_EXACT_DOMAIN;
+    if (requiresPerViewLod)
+        classificationFlags |= CLASS_REQUIRES_PER_VIEW_LOD;
+    if (requiresPerViewSort)
+        classificationFlags |= CLASS_REQUIRES_PER_VIEW_SORT;
+    if (maskIsExact &&
+        ViewBatchSubmissionPolicy == POLICY_TRADITIONAL_LAYER_SUPPRESSION &&
+        !requiresPerViewLod && !requiresPerViewSort)
+    {
+        classificationFlags |= CLASS_TRADITIONAL_LAYER_SUPPRESSION_ELIGIBLE;
+    }
+    if (maskIsExact && ViewBatchSubmissionPolicy == POLICY_MESHLET_TASK_SUPPRESSION)
+        classificationFlags |= CLASS_MESHLET_TASK_SUPPRESSION_ELIGIBLE;
+
+    uint classificationBase = logicalIdx * CLASSIFICATION_UINTS;
+    classifications[classificationBase + 0u] = exactViewMask.x;
+    classifications[classificationBase + 1u] = exactViewMask.y;
+    classifications[classificationBase + 2u] = packedPassPipelineState;
+    classifications[classificationBase + 3u] = materialID;
+    classifications[classificationBase + 4u] = meshID;
+    classifications[classificationBase + 5u] = lodLevel;
+    classifications[classificationBase + 6u] = drawID;
+    classifications[classificationBase + 7u] = classificationFlags;
 
     uint primarySortKey;
     uint secondarySortKey;

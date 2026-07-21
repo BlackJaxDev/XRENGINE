@@ -1737,6 +1737,16 @@ internal static partial class RuntimeEngine
                     RuntimeRenderingHostServices.Current.RecordRenderVulkanRetiredResourcePlanReplacement(imageCount, bufferCount);
             }
 
+            public static void RecordVulkanSwapchainRetirement(
+                int queued = 0,
+                int drained = 0,
+                int pending = 0,
+                int deferred = 0)
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVulkanSwapchainRetirement(queued, drained, pending, deferred);
+            }
+
             public static void RecordVulkanRetiredResourceDrain(
                 int descriptorPools = 0,
                 int descriptorSets = 0,
@@ -2232,6 +2242,12 @@ internal static partial class RuntimeEngine
                     => Stats.RecordVulkanPresentResult(result, accepted);
                 public static void RecordVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount)
                     => Stats.RecordVulkanRetiredResourcePlanReplacement(imageCount, bufferCount);
+                public static void RecordVulkanSwapchainRetirement(
+                    int queued = 0,
+                    int drained = 0,
+                    int pending = 0,
+                    int deferred = 0)
+                    => Stats.RecordVulkanSwapchainRetirement(queued, drained, pending, deferred);
                 public static void RecordVulkanRetiredResourceDrain(
                     int descriptorPools = 0,
                     int descriptorSets = 0,

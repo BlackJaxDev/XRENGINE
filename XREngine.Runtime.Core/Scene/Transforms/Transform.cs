@@ -119,12 +119,15 @@ namespace XREngine.Scene.Transforms
         }
 
         public void SetFrameState(TransformState state)
+            => SetField(ref _frameState, state, nameof(FrameState));
+
+        /// <summary>Updates local translation and rotation with one change notification and invalidation.</summary>
+        public void SetLocalTranslationRotation(Vector3 translation, Quaternion rotation)
         {
-            _frameState = state;
-            Translation = state.Translation;
-            Rotation = state.Rotation;
-            Scale = state.Scale;
-            Order = state.Order;
+            TransformState state = _frameState;
+            state.Translation = translation;
+            state.Rotation = rotation;
+            SetField(ref _frameState, state, nameof(FrameState));
         }
 
         /// <summary>
@@ -332,6 +335,7 @@ namespace XREngine.Scene.Transforms
                 case nameof(Scale):
                 case nameof(Translation):
                 case nameof(Rotation):
+                case nameof(FrameState):
                     MarkLocalModified();
                     break;
                 case nameof(TargetScale):

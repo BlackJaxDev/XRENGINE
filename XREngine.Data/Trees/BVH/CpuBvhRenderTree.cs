@@ -12,7 +12,7 @@ namespace XREngine.Data.Trees;
 /// Flat, revisioned CPU scene BVH. Readers lease immutable published snapshots;
 /// mutations are applied to a reusable staging snapshot and atomically published.
 /// </summary>
-public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOctreeItem
+public sealed partial class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOctreeItem
 {
     private const int MaxRaycastCommands = 10;
     private const long MaxRaycastTicksPerFrame = 3 * TimeSpan.TicksPerMillisecond;

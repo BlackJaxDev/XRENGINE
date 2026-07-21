@@ -96,11 +96,25 @@ layout(std430, binding = 5) readonly buffer PerTreeParamsBuffer
     PerTreeParams TreeParams[];
 };
 
+layout(std430, binding = 6) readonly buffer ActiveTreeIdBuffer
+{
+    uint ActiveTreeIds[];
+};
+
+layout(std430, binding = 7) readonly buffer ActiveWorkCounterBuffer
+{
+    uint ActiveWorkCounters[];
+};
+
 // --- Uniforms ---
 
 uniform int ApplyObjectMove;
 uniform int ParticleCount;
 uniform int TreeCount;
+uniform int UseActiveTreeIds;
+uniform uint ActiveTreeIdBase;
+uniform uint ActiveTreeIdCapacity;
+uniform uint ActiveTreeBucket;
 
 // --- Collision Helpers ---
 
@@ -243,10 +257,15 @@ void applyFreezeAxis(int freezeAxis, inout vec3 pos, vec3 parentPos, mat4 parent
 
 void main()
 {
-    uint treeId = gl_GlobalInvocationID.x;
-    if (ParticleCount <= 0 || TreeCount <= 0 || treeId >= uint(TreeCount))
+    uint dispatchIndex = gl_GlobalInvocationID.x;
+    if (ParticleCount <= 0 || TreeCount <= 0)
+        return;
+    if (UseActiveTreeIds != 0 && dispatchIndex >= min(ActiveWorkCounters[ActiveTreeBucket], ActiveTreeIdCapacity))
         return;
 
+    uint treeId = UseActiveTreeIds != 0 ? ActiveTreeIds[ActiveTreeIdBase + dispatchIndex] : dispatchIndex;
+    if (treeId >= uint(TreeCount))
+        return;
     PerTreeParams tp = TreeParams[treeId];
     int particleStart = tp.ParticleOffset;
     int particleEnd = particleStart + tp.ParticleCount;

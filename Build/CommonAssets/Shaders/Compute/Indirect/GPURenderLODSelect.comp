@@ -13,6 +13,36 @@ const uint LOD_TABLE_FLOATS = 12u;
 const uint FLAG_LOD_ENABLED = 1u << 15u;
 const uint LOD_TRANSITION_UINTS = 4u;
 const uint LOD_TRANSITION_ACTIVE = 1u;
+const uint LOD_POLICY_PER_VIEW_EXACT = 0u;
+const uint LOD_POLICY_CONSERVATIVE_HIGHEST_DETAIL = 1u;
+
+struct GPUViewDescriptor
+{
+    uint ViewId;
+    uint ParentViewId;
+    uint Flags;
+    uint RenderPassMaskLo;
+    uint RenderPassMaskHi;
+    uint OutputLayer;
+    uint ViewRectX;
+    uint ViewRectY;
+    uint ViewRectW;
+    uint ViewRectH;
+    uint VisibleOffset;
+    uint VisibleCapacity;
+    vec4 FoveationA;
+    vec4 FoveationB;
+};
+
+struct GPUViewConstants
+{
+    mat4 View;
+    mat4 Projection;
+    mat4 ViewProjection;
+    mat4 PrevViewProjection;
+    vec4 CameraPositionAndNear;
+    vec4 CameraForwardAndFar;
+};
 
 layout(std430, binding = 0) buffer CulledCommandsBuffer
 {
@@ -41,11 +71,29 @@ layout(std430, binding = 4) buffer LODTransitionBuffer
     uint lodTransitions[];
 };
 
+layout(std430, binding = 11) readonly buffer ViewDescriptorBuffer
+{
+    GPUViewDescriptor ViewDescriptors[];
+};
+
+layout(std430, binding = 12) readonly buffer ViewConstantsBuffer
+{
+    GPUViewConstants ViewConstants[];
+};
+
+layout(std430, binding = 16) readonly buffer CulledCommandViewMaskBuffer
+{
+    uvec2 CulledCommandViewMasks[];
+};
+
 uniform vec3 CameraPosition;
 uniform vec2 ProjectionScale;
 uniform vec2 ViewportSize;
 uniform int InputCommandCount;
 uniform float TransitionFrameStep;
+uniform uint ActiveViewCount;
+uniform uint MultiviewLodPolicy;
+uniform uint ExactViewMasksValid;
 
 uint ReadMeshDataId(uint entryBase, uint lodLevel)
 {
@@ -57,13 +105,78 @@ float ReadMinProjectedRadius(uint entryBase, uint lodLevel)
     return lodTable[entryBase + 5u + lodLevel];
 }
 
-float ComputeProjectedScreenRadius(vec3 center, float radius)
+float ComputeProjectedScreenRadius(
+    vec3 center,
+    float radius,
+    vec3 cameraPosition,
+    vec2 projectionScale,
+    vec2 viewportSize)
 {
-    float distanceToCenter = max(length(CameraPosition - center), 0.001);
-    float pixelScaleX = abs(ProjectionScale.x) * max(ViewportSize.x, 1.0) * 0.5;
-    float pixelScaleY = abs(ProjectionScale.y) * max(ViewportSize.y, 1.0) * 0.5;
+    float distanceToCenter = max(length(cameraPosition - center), 0.001);
+    float pixelScaleX = abs(projectionScale.x) * max(viewportSize.x, 1.0) * 0.5;
+    float pixelScaleY = abs(projectionScale.y) * max(viewportSize.y, 1.0) * 0.5;
     float pixelScale = max(pixelScaleX, pixelScaleY);
     return max(radius, 0.0) * pixelScale / distanceToCenter;
+}
+
+uvec2 BuildActiveViewMask()
+{
+    uint count = clamp(ActiveViewCount, 1u, 64u);
+    uint lo = count >= 32u ? 0xFFFFFFFFu : ((1u << count) - 1u);
+    uint hiCount = count > 32u ? count - 32u : 0u;
+    uint hi = hiCount == 0u ? 0u :
+        (hiCount >= 32u ? 0xFFFFFFFFu : ((1u << hiCount) - 1u));
+    return uvec2(lo, hi);
+}
+
+bool IncludesView(uvec2 mask, uint viewIndex)
+{
+    if (viewIndex < 32u)
+        return (mask.x & (1u << viewIndex)) != 0u;
+
+    return (mask.y & (1u << (viewIndex - 32u))) != 0u;
+}
+
+float ComputeConservativeMultiviewRadius(uint commandIndex, vec3 center, float radius)
+{
+    uint availableViews = min(uint(ViewDescriptors.length()), uint(ViewConstants.length()));
+    uint viewCount = min(min(ActiveViewCount, availableViews), 64u);
+    if (viewCount <= 1u)
+        return ComputeProjectedScreenRadius(center, radius, CameraPosition, ProjectionScale, ViewportSize);
+
+    uvec2 viewMask = ExactViewMasksValid != 0u &&
+        commandIndex < uint(CulledCommandViewMasks.length())
+            ? CulledCommandViewMasks[commandIndex]
+            : BuildActiveViewMask();
+
+    float largestProjectedRadius = 0.0;
+    bool foundVisibleView = false;
+    for (uint viewIndex = 0u; viewIndex < viewCount; ++viewIndex)
+    {
+        if (!IncludesView(viewMask, viewIndex))
+            continue;
+
+        GPUViewDescriptor descriptor = ViewDescriptors[viewIndex];
+        GPUViewConstants constants = ViewConstants[viewIndex];
+        vec2 viewProjectionScale = vec2(
+            abs(constants.Projection[0][0]),
+            abs(constants.Projection[1][1]));
+        vec2 viewSize = vec2(
+            max(descriptor.ViewRectW, 1u),
+            max(descriptor.ViewRectH, 1u));
+        float projectedRadius = ComputeProjectedScreenRadius(
+            center,
+            radius,
+            constants.CameraPositionAndNear.xyz,
+            viewProjectionScale,
+            viewSize);
+        largestProjectedRadius = max(largestProjectedRadius, projectedRadius);
+        foundVisibleView = true;
+    }
+
+    return foundVisibleView
+        ? largestProjectedRadius
+        : ComputeProjectedScreenRadius(center, radius, CameraPosition, ProjectionScale, ViewportSize);
 }
 
 uint FindNearestLoadedMeshDataId(uint entryBase, uint lodCount, uint preferredLevel, out uint resolvedLevel)
@@ -127,7 +240,10 @@ void main()
 
     vec3 center = vec3(culled[base + 0u], culled[base + 1u], culled[base + 2u]);
     float radius = culled[base + 3u];
-    float projectedScreenRadius = ComputeProjectedScreenRadius(center, radius);
+    float projectedScreenRadius =
+        ActiveViewCount > 1u && MultiviewLodPolicy == LOD_POLICY_CONSERVATIVE_HIGHEST_DETAIL
+            ? ComputeConservativeMultiviewRadius(idx, center, radius)
+            : ComputeProjectedScreenRadius(center, radius, CameraPosition, ProjectionScale, ViewportSize);
 
     uint selectedLevel = 0u;
     uint maxLevel = min(lodCount, 4u);

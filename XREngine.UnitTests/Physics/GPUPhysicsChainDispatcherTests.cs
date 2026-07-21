@@ -23,6 +23,8 @@ public sealed class GPUPhysicsChainDispatcherTests
     private static readonly Action<long, bool> RecordGpuCopyBytesMethod = CreateStaticDelegate<Action<long, bool>>("RecordGpuCopyBytes");
     private static readonly Action<long, bool> RecordCpuReadbackBytesMethod = CreateStaticDelegate<Action<long, bool>>("RecordCpuReadbackBytes");
     private static readonly Action<long> RecordHierarchyRecalcTicksMethod = CreateStaticDelegate<Action<long>>("RecordHierarchyRecalcTicks");
+    private static readonly Func<string?, bool, bool, GPUPhysicsChainBackendStatus> EvaluateBackendCapabilityMethod =
+        CreateStaticDelegate<Func<string?, bool, bool, GPUPhysicsChainBackendStatus>>("EvaluateBackendCapability");
 
     private sealed class HashCollidingPhysicsChainComponent : PhysicsChainComponent
     {
@@ -265,6 +267,51 @@ public sealed class GPUPhysicsChainDispatcherTests
 
         Should.NotThrow(() => dispatcher.SetEnabled(false));
         Should.NotThrow(() => dispatcher.SetEnabled(true));
+    }
+
+    [Test]
+    public void BackendCapability_OpenGlBackendIsReadyWithoutCpuFallback()
+    {
+        GPUPhysicsChainBackendStatus status = EvaluateBackendCapabilityMethod(
+            "OpenGLRenderer",
+            true,
+            true);
+
+        status.State.ShouldBe(GPUPhysicsChainBackendState.Ready);
+        status.BackendName.ShouldBe("OpenGLRenderer");
+        status.CanDispatchGpu.ShouldBeTrue();
+        status.CpuFallbackUsed.ShouldBeFalse();
+    }
+
+    [Test]
+    public void BackendCapability_UnsupportedExplicitGpuBackendIsVisibleWithoutCpuFallback()
+    {
+        GPUPhysicsChainBackendStatus status = EvaluateBackendCapabilityMethod(
+            "VulkanRenderer",
+            true,
+            false);
+
+        status.State.ShouldBe(GPUPhysicsChainBackendState.Unsupported);
+        status.BackendName.ShouldBe("VulkanRenderer");
+        status.CanDispatchGpu.ShouldBeFalse();
+        status.CpuFallbackUsed.ShouldBeFalse();
+        status.Diagnostic.ShouldContain("not implemented");
+        status.Diagnostic.ShouldContain("VulkanRenderer");
+    }
+
+    [Test]
+    public void BackendCapability_MissingRendererIsVisibleWithoutCpuFallback()
+    {
+        GPUPhysicsChainBackendStatus status = EvaluateBackendCapabilityMethod(
+            null,
+            false,
+            false);
+
+        status.State.ShouldBe(GPUPhysicsChainBackendState.Unavailable);
+        status.BackendName.ShouldBe("None");
+        status.CanDispatchGpu.ShouldBeFalse();
+        status.CpuFallbackUsed.ShouldBeFalse();
+        status.Diagnostic.ShouldContain("no active renderer");
     }
 
     [Test]

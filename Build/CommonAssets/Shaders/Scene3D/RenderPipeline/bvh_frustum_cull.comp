@@ -154,6 +154,7 @@ layout(std430, binding = 12) readonly buffer ViewConstantsBuffer { GPUViewConsta
 layout(std430, binding = 13) readonly buffer CommandViewMaskBuffer { uvec2 CommandViewMasks[]; };
 layout(std430, binding = 14) buffer PerViewVisibleIndicesBuffer { uint PerViewVisibleIndices[]; };
 layout(std430, binding = 15) buffer PerViewDrawCountBuffer { uint PerViewDrawCounts[]; };
+layout(std430, binding = 16) writeonly buffer CulledCommandViewMaskBuffer { uvec2 CulledCommandViewMasks[]; };
 
 uniform vec4 FrustumPlanes[PLANES_PER_FRUSTUM];
 uniform vec4 ClusterPlanes[PLANES_PER_FRUSTUM];
@@ -172,6 +173,8 @@ uniform uint StatsEnabled;
 uniform uint OverflowDebugEnabled;
 uniform int ActiveViewCount;
 uniform uint UseHotCommands;
+
+#include "bvh_exact_view_mask.glslinc"
 
 #define FLAG_TRANSPARENT (1u<<0)
 
@@ -265,16 +268,14 @@ bool ViewPassMatches(uint viewId)
     return hi >= 32u || (vd.RenderPassMaskHi & (1u << hi)) != 0u;
 }
 
-void AppendPerView(uint sourceCommandIndex, uint culledCommandIndex, vec3 commandCenter, uint commandFlags)
+void AppendPerView(uvec2 exactViewMask, uint culledCommandIndex, vec3 commandCenter, uint commandFlags)
 {
-    if (ActiveViewCount <= 0 || sourceCommandIndex >= CommandViewMasks.length())
+    if (ActiveViewCount <= 0)
         return;
-
-    uvec2 mask = CommandViewMasks[sourceCommandIndex];
     uint maxViews = min(uint(ActiveViewCount), min(uint(64), uint(PerViewDrawCounts.length())));
     for (uint viewId = 0u; viewId < maxViews; ++viewId)
     {
-        if (!ViewMaskContains(mask, viewId) || !ViewPassMatches(viewId))
+        if (!ViewMaskContains(exactViewMask, viewId) || !ViewPassMatches(viewId))
             continue;
 
         GPUViewDescriptor vd = ViewDescriptors[viewId];
@@ -360,7 +361,7 @@ void StoreHotCommand(uint outIndex, DrawMetadata meta, vec4 sphere, float render
     outHotCommands[base + 19u] = meta.BoundsID;
 }
 
-void AppendVisible(uint cmdIndex, DrawMetadata meta, vec4 sphere, float renderDistance)
+void AppendVisible(uint cmdIndex, DrawMetadata meta, vec4 sphere, float renderDistance, uvec2 exactViewMask)
 {
     uint outIndex = atomicAdd(CulledCount, 1u);
     if (outIndex >= uint(MaxCulledCommands))
@@ -374,6 +375,8 @@ void AppendVisible(uint cmdIndex, DrawMetadata meta, vec4 sphere, float renderDi
     StoreCommand(outIndex, meta, sphere, renderDistance);
     if (UseHotCommands != 0u)
         StoreHotCommand(outIndex, meta, sphere, renderDistance);
+    if (outIndex < CulledCommandViewMasks.length())
+        CulledCommandViewMasks[outIndex] = exactViewMask;
 
     if (StatsEnabled != 0u)
     {
@@ -382,10 +385,10 @@ void AppendVisible(uint cmdIndex, DrawMetadata meta, vec4 sphere, float renderDi
     }
 
     atomicAdd(CulledInstanceCount, meta.InstanceCount);
-    AppendPerView(cmdIndex, outIndex, sphere.xyz, meta.Flags);
+    AppendPerView(exactViewMask, outIndex, sphere.xyz, meta.Flags);
 }
 
-void ProcessCommand(uint cmdIndex, uint activePlaneMask, bool leafMatchesCommand)
+void ProcessCommand(uint cmdIndex, uint activePlaneMask, uvec2 inheritedViewMask, bool leafMatchesCommand)
 {
     if (StatsEnabled != 0u)
         atomicAdd(BvhVisitedCommands, 1u);
@@ -431,10 +434,27 @@ void ProcessCommand(uint cmdIndex, uint activePlaneMask, bool leafMatchesCommand
         return;
     }
 
-    AppendVisible(cmdIndex, meta, sphere, renderDistance);
+    if (cmdIndex >= CommandViewMasks.length())
+        return;
+
+    uvec2 eligibleViewMask = inheritedViewMask & CommandViewMasks[cmdIndex];
+    if ((eligibleViewMask.x | eligibleViewMask.y) == 0u)
+        return;
+
+    vec3 exactMin = all(lessThanEqual(bounds.AabbMin.xyz, bounds.AabbMax.xyz))
+        ? bounds.AabbMin.xyz
+        : sphere.xyz - vec3(sphere.w);
+    vec3 exactMax = all(lessThanEqual(bounds.AabbMin.xyz, bounds.AabbMax.xyz))
+        ? bounds.AabbMax.xyz
+        : sphere.xyz + vec3(sphere.w);
+    uvec2 exactViewMask = BuildExactViewMask(exactMin, exactMax, eligibleViewMask);
+    if ((exactViewMask.x | exactViewMask.y) == 0u)
+        return;
+
+    AppendVisible(cmdIndex, meta, sphere, renderDistance, exactViewMask);
 }
 
-void ProcessRange(uvec2 range, uint activePlaneMask, bool leafMatchesSingleCommand)
+void ProcessRange(uvec2 range, uint activePlaneMask, uvec2 inheritedViewMask, bool leafMatchesSingleCommand)
 {
     for (uint i = 0u; i < range.y; ++i)
     {
@@ -444,6 +464,7 @@ void ProcessRange(uvec2 range, uint activePlaneMask, bool leafMatchesSingleComma
         ProcessCommand(
             mortonObjects[mortonIndex].objectId,
             activePlaneMask,
+            inheritedViewMask,
             leafMatchesSingleCommand && range.y == 1u);
     }
 }
@@ -458,18 +479,24 @@ void ProcessRange(uvec2 range, uint activePlaneMask, bool leafMatchesSingleComma
 // exceeds the queue, that subtree's primitive range is tested immediately,
 // conservatively preserving visibility while reporting the pressure event.
 const uint TRAVERSAL_QUEUE_CAPACITY = 2048u;
-shared uvec2 TraversalQueue[TRAVERSAL_QUEUE_CAPACITY]; // node index, active plane mask
+struct TraversalWork
+{
+    uint NodeIndex;
+    uint PlaneMask;
+    uvec2 ViewMask;
+};
+shared TraversalWork TraversalQueue[TRAVERSAL_QUEUE_CAPACITY];
 shared uint QueueHead;
 shared uint QueueTail;
 shared uint BatchBegin;
 shared uint BatchEnd;
 
-bool TryEnqueue(uint nodeIndex, uint planeMask)
+bool TryEnqueue(uint nodeIndex, uint planeMask, uvec2 viewMask)
 {
     uint slot = atomicAdd(QueueTail, 1u);
     if (slot < TRAVERSAL_QUEUE_CAPACITY)
     {
-        TraversalQueue[slot] = uvec2(nodeIndex, planeMask);
+        TraversalQueue[slot] = TraversalWork(nodeIndex, planeMask, viewMask);
         return true;
     }
 
@@ -481,7 +508,7 @@ bool TryEnqueue(uint nodeIndex, uint planeMask)
     return false;
 }
 
-bool SelectPartitionRoot(uint safeNodeCount, out uint partitionRoot)
+bool SelectPartitionRoot(uint safeNodeCount, out uint partitionRoot, out uvec2 partitionViewMask)
 {
     uint workgroup = gl_WorkGroupID.x;
     uint partitionCount = gl_NumWorkGroups.x;
@@ -490,12 +517,17 @@ bool SelectPartitionRoot(uint safeNodeCount, out uint partitionRoot)
         ++partitionDepth;
 
     partitionRoot = rootIndex;
+    partitionViewMask = ActiveLogicalViewMask();
     for (uint level = 0u; level < partitionDepth; ++level)
     {
         if (partitionRoot >= safeNodeCount)
             return false;
 
         BvhNode node = nodes[partitionRoot];
+        partitionViewMask = BuildExactViewMask(node.minBounds, node.maxBounds, partitionViewMask);
+        if ((partitionViewMask.x | partitionViewMask.y) == 0u)
+            return false;
+
         bool isLeaf = (node.flags & BVH_FLAG_LEAF) != 0u;
         bool hasTwoChildren = node.leftChild != INVALID_INDEX &&
                               node.rightChild != INVALID_INDEX &&
@@ -536,14 +568,15 @@ void main()
         return;
 
     uint partitionRoot;
-    if (!SelectPartitionRoot(safeNodeCount, partitionRoot))
+    uvec2 partitionViewMask;
+    if (!SelectPartitionRoot(safeNodeCount, partitionRoot, partitionViewMask))
         return;
 
     if (lane == 0u)
     {
         QueueHead = 0u;
         QueueTail = 1u;
-        TraversalQueue[0] = uvec2(partitionRoot, (1u << PLANES_PER_FRUSTUM) - 1u);
+        TraversalQueue[0] = TraversalWork(partitionRoot, (1u << PLANES_PER_FRUSTUM) - 1u, partitionViewMask);
     }
     barrier();
 
@@ -562,11 +595,11 @@ void main()
 
         for (uint queueIndex = BatchBegin + lane; queueIndex < BatchEnd; queueIndex += gl_WorkGroupSize.x)
         {
-            uvec2 work = TraversalQueue[queueIndex];
-            if (work.x >= safeNodeCount)
+            TraversalWork work = TraversalQueue[queueIndex];
+            if (work.NodeIndex >= safeNodeCount)
                 continue;
 
-            BvhNode node = nodes[work.x];
+            BvhNode node = nodes[work.NodeIndex];
             bool isLeaf = (node.flags & BVH_FLAG_LEAF) != 0u;
             if (StatsEnabled != 0u)
             {
@@ -576,7 +609,7 @@ void main()
                     atomicAdd(BvhVisitedInternalNodes, 1u);
             }
             uint childPlaneMask;
-            if (!AabbVisibleMasked(node.minBounds, node.maxBounds, work.y, childPlaneMask))
+            if (!AabbVisibleMasked(node.minBounds, node.maxBounds, work.PlaneMask, childPlaneMask))
             {
                 if (StatsEnabled != 0u)
                 {
@@ -588,9 +621,21 @@ void main()
                 continue;
             }
 
+            uvec2 childViewMask = BuildExactViewMask(node.minBounds, node.maxBounds, work.ViewMask);
+            if ((childViewMask.x | childViewMask.y) == 0u)
+            {
+                if (StatsEnabled != 0u)
+                {
+                    if (isLeaf)
+                        atomicAdd(BvhLeafRejections, 1u);
+                    else
+                        atomicAdd(BvhInternalRejections, 1u);
+                }
+                continue;
+            }
             if (isLeaf)
             {
-                ProcessRange(node.primitiveRange, childPlaneMask, true);
+                ProcessRange(node.primitiveRange, childPlaneMask, childViewMask, true);
                 continue;
             }
 
@@ -600,8 +645,16 @@ void main()
                 uint child = children[childIndex];
                 if (child == INVALID_INDEX || child >= safeNodeCount)
                     continue;
-                if (!TryEnqueue(child, childPlaneMask))
-                    ProcessRange(nodes[child].primitiveRange, childPlaneMask, false);
+                if (!TryEnqueue(child, childPlaneMask, childViewMask))
+                {
+                    BvhNode overflowChild = nodes[child];
+                    uvec2 overflowViewMask = BuildExactViewMask(
+                        overflowChild.minBounds,
+                        overflowChild.maxBounds,
+                        childViewMask);
+                    if ((overflowViewMask.x | overflowViewMask.y) != 0u)
+                        ProcessRange(overflowChild.primitiveRange, childPlaneMask, overflowViewMask, false);
+                }
             }
             if (StatsEnabled != 0u)
                 atomicMax(BvhMaxQueueOccupancy, min(QueueTail, TRAVERSAL_QUEUE_CAPACITY));

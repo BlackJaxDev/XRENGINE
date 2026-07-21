@@ -2,7 +2,7 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly record struct VulkanLifetimeSubmission(
+    internal readonly record struct VulkanLifetimeSubmission(
         ulong QueueHandle,
         EVulkanLifetimeQueueDomain QueueDomain,
         ulong QueueSequence,

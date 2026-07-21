@@ -67,7 +67,7 @@ mass-production path.
   scalar/reference coverage for correctness.
 - [ ] The GPU zero-readback path keeps topology, static particle data,
   collider sets, runtime state, palettes, and bounds resident across frames.
-- [ ] A steady-state GPU frame uploads only dirty dynamic instance headers or
+- [x] A steady-state GPU frame uploads only dirty dynamic instance headers or
   explicitly changed resources; it does not snapshot/repack every chain or
   copy whole resident groups into transient combined buffers.
 - [ ] GPU dispatch count and barriers scale with active topology/feature
@@ -78,9 +78,9 @@ mass-production path.
 - [ ] The normal rendering path consumes current/previous palette slices and
   conservative GPU bounds directly, without writing every simulated result
   back through scene `Transform` objects.
-- [ ] Strict zero-readback profiles perform no current-frame CPU readback for
+- [x] Strict zero-readback profiles perform no current-frame CPU readback for
   simulation, palette generation, bounds, culling, or dispatch sizing.
-- [ ] Explicit CPU consumers can request narrowly gathered chain, bone, or
+- [x] Explicit CPU consumers can request narrowly gathered chain, bone, or
   socket results through a bounded asynchronous readback contract.
 - [ ] Sleep and update-rate LOD reduce work predictably while a documented
   strict full-rate mode preserves gameplay-critical behavior.
@@ -246,21 +246,21 @@ PhysicsChainWorld (one simulation owner and one render integration point)
 
 ### Reproducible benchmark setup
 
-- [ ] Create a bounded validation root under
+- [x] Create a bounded validation root under
   `Build/_AgentValidation/<timestamp>-physics-chain-scale/` for reports,
   traces, logs, and temporary captures when implementation starts.
 - [ ] Build and run Release binaries with debugger, validation layers, verbose
   per-chain logging, debug drawing, and editor-only instrumentation disabled.
-- [ ] Record exact CPU, core topology, memory configuration, GPU, driver,
+- [x] Record exact CPU, core topology, memory configuration, GPU, driver,
   Windows version, power mode, renderer backend, resolution, and refresh mode.
-- [ ] Use deterministic chain templates, collider layouts, root motion,
+- [x] Use deterministic chain templates, collider layouts, root motion,
   external forces, visibility patterns, and random seeds.
-- [ ] Separate startup allocation, shader compilation, buffer growth, asset
+- [x] Separate startup allocation, shader compilation, buffer growth, asset
   upload, and pipeline warmup from the timed steady-state interval.
-- [ ] Add an explicit settle gate that does not start timing until chain count,
+- [x] Add an explicit settle gate that does not start timing until chain count,
   arena capacities, shader/pipeline compilation, upload queues, and renderer
   object counts remain stable for the configured interval.
-- [ ] Capture cold-start and structural-churn measurements separately; do not
+- [x] Capture cold-start and structural-churn measurements separately; do not
   mix them into steady-state medians.
 - [ ] Record at least 1,000 steady-state frames per matrix point or enough time
   to produce stable p95/p99 values, whichever is greater.
@@ -316,18 +316,18 @@ PhysicsChainWorld (one simulation owner and one render integration point)
 
 ### Correctness oracle and policy decisions
 
-- [ ] Define a deterministic scalar CPU reference step used by unit tests and
+- [x] Define a deterministic scalar CPU reference step used by unit tests and
   offline comparisons; it need not be the shipping fast path.
-- [ ] Define position, orientation, constraint-length, collision, and palette
+- [x] Define position, orientation, constraint-length, collision, and palette
   tolerances for SIMD and GPU comparisons.
 - [ ] Add a targeted GPU test that exposes unordered parent/child updates and
   require the replacement kernel to pass it repeatedly across vendors.
-- [ ] Decide whether branch topology is required in the first optimized
+- [x] Decide whether branch topology is required in the first optimized
   release or may initially use an explicit measured general kernel.
-- [ ] Decide which consumers truly require scene `Transform` mutation, which
+- [x] Decide which consumers truly require scene `Transform` mutation, which
   require delayed socket/bone values, and which can consume palette/bounds
   output directly.
-- [ ] Inventory all call sites that read chain transforms or particle state on
+- [x] Inventory all call sites that read chain transforms or particle state on
   the CPU after simulation.
 - [ ] Set named-hardware physics and end-to-end frame budgets after the
   baseline is captured. Record absolute milliseconds plus scaling slopes; do
@@ -352,8 +352,8 @@ built. Do not add abstractions here that make Phases 2-5 harder to complete.
 
 ### Component and CPU quick wins
 
-- [ ] Measure and remove duplicate transform initialization/preparation work.
-- [ ] Cache authored rest length, inverse rest length where useful, final force
+- [x] Measure and remove duplicate transform initialization/preparation work.
+- [x] Cache authored rest length, inverse rest length where useful, final force
   coefficients, topology depth, and other invariants at initialization or
   structural-change time.
 - [x] Replace hot `Particle` property-notification writes with direct runtime
@@ -362,7 +362,7 @@ built. Do not add abstractions here that make Phases 2-5 harder to complete.
 - [ ] Remove LINQ, captured closures, boxing, transient arrays/lists, and
   non-struct enumeration from preparation, solve, apply, and debug paths.
 - [ ] Pre-size and reuse temporary collections by observed high-water marks.
-- [ ] Disable per-chain debug render objects and commands when debug
+- [x] Disable per-chain debug render objects and commands when debug
   visualization is not explicitly enabled.
 - [ ] Aggregate profiler counters per worker/bucket and merge once; sample or
   compile out fine-grained telemetry in production profiles.
@@ -371,9 +371,9 @@ built. Do not add abstractions here that make Phases 2-5 harder to complete.
 
 ### GPU submission and shader quick wins
 
-- [ ] Version static topology, particles, transforms, and collider resources;
+- [x] Version static topology, particles, transforms, and collider resources;
   skip snapshots/hashes/uploads when their version is unchanged.
-- [ ] Preserve stable request bucket membership across frames instead of
+- [x] Preserve stable request bucket membership across frames instead of
   sorting all active requests every frame.
 - [x] Avoid combined/resident copies when a GPU-authoritative allocation and
   its topology are unchanged.
@@ -383,9 +383,9 @@ built. Do not add abstractions here that make Phases 2-5 harder to complete.
   shader layouts remain identical and tests cover the contract.
 - [x] Use squared-distance collision rejection before square roots and
   precompute capsule direction/inverse-length terms.
-- [ ] Add specialized no-collider and small-collider paths before invoking the
+- [x] Add specialized no-collider and small-collider paths before invoking the
   general collider loop.
-- [ ] Gather only explicitly requested particles/bones for asynchronous
+- [x] Gather only explicitly requested particles/bones for asynchronous
   compatibility readback; stop copying an entire combined group for one
   request.
 
@@ -409,95 +409,95 @@ Acceptance criteria:
   simulation, and publication schedule integrated at explicit engine phases.
 - [ ] Replace per-component render commands with one render-graph integration
   point for GPU work and global debug rendering.
-- [ ] Add lock-free or low-contention command buffers for registration,
+- [x] Add lock-free or low-contention command buffers for registration,
   removal, template change, collider-set rebind, parameter update, root input,
   force/event input, visibility, quality, and readback requests.
-- [ ] Apply structural commands at a documented safe boundary and dynamic
+- [x] Apply structural commands at a documented safe boundary and dynamic
   commands without rebuilding unrelated instances.
-- [ ] Validate handle generations on every external operation and reject stale
+- [x] Validate handle generations on every external operation and reject stale
   handles deterministically.
-- [ ] Make activation/deactivation and component destruction safe while CPU or
+- [x] Make activation/deactivation and component destruction safe while CPU or
   GPU work from a previous frame is in flight.
 
 ### Template and collider deduplication
 
-- [ ] Define immutable `PhysicsChainTemplate` data separate from instance
+- [x] Define immutable `PhysicsChainTemplate` data separate from instance
   state.
-- [ ] Deduplicate templates by stable content identity; avoid per-frame deep
+- [x] Deduplicate templates by stable content identity; avoid per-frame deep
   hashes of immutable arrays.
-- [ ] Precompute topology order, parent indices, depth ranges, rest data,
+- [x] Precompute topology order, parent indices, depth ranges, rest data,
   coefficient packs, bone mappings, feature masks, and conservative influence
   bounds in each template.
-- [ ] Define explicit template rebuild/version behavior for editor changes.
-- [ ] Define shared, versioned `PhysicsChainColliderSet` resources with stable
+- [x] Define explicit template rebuild/version behavior for editor changes.
+- [x] Define shared, versioned `PhysicsChainColliderSet` resources with stable
   IDs instead of copying the same colliders into every chain.
-- [ ] Track collider transform/version dirtiness independently from collider
+- [x] Track collider transform/version dirtiness independently from collider
   topology or shape changes.
 
 ### Arenas and capacity
 
-- [ ] Add stable CPU and GPU arenas for instances, static templates, dynamic
+- [x] Add stable CPU and GPU arenas for instances, static templates, dynamic
   state, collider sets, roots/inputs, palettes, bounds, activity, and readback
   metadata.
-- [ ] Use free lists and generational slots; grow capacity geometrically or by
+- [x] Use free lists and generational slots; grow capacity geometrically or by
   measured size classes rather than exact-count reallocation.
-- [ ] Reuse the synchronization and frame-slot principles in
+- [x] Reuse the synchronization and frame-slot principles in
   `XRBufferPersistentRingAllocator` for tiny transient/dynamic header uploads
   rather than inventing per-frame buffer objects.
-- [ ] Distinguish arena capacity from live count and expose both.
-- [ ] Define fragmentation thresholds and an explicit out-of-band compaction
+- [x] Distinguish arena capacity from live count and expose both.
+- [x] Define fragmentation thresholds and an explicit out-of-band compaction
   or rebuild policy. Never move live GPU slices silently while consumers use
   them.
-- [ ] Preserve state across capacity growth and backend changes only when the
+- [x] Preserve state across capacity growth and backend changes only when the
   transition contract explicitly supports it.
 - [ ] Add capacity guards and delayed diagnostics for every arena writer.
 
 ### Backend-neutral output
 
-- [ ] Define a stable output record containing current and previous palette
+- [x] Define a stable output record containing current and previous palette
   bases, palette count, bounds slot, validity, instance generation, and backend
   status.
 - [ ] Make renderers bind output slices directly rather than discover results
   through mutated bone transforms.
-- [ ] Make CPU transform mirroring an opt-in output consumer with explicit
+- [x] Make CPU transform mirroring an opt-in output consumer with explicit
   cadence and cost.
 - [ ] Define reset/teleport semantics for current/previous state and palettes
   so motion vectors never consume unrelated history.
 
 Acceptance criteria:
 
-- [ ] A stress scene with 10,000 registered but sleeping/inactive chains has
+- [x] A stress scene with 10,000 registered but sleeping/inactive chains has
   near-constant scheduling overhead relative to active work and no per-chain
   tick/render callbacks.
 - [ ] Adding, removing, retemplating, and resizing chains cannot alias stale
   handles or corrupt another chain's state/output.
 - [ ] Shared templates and collider sets consume memory proportional to unique
   content, not instance count.
-- [ ] Existing components can author and control chains through the new world
+- [x] Existing components can author and control chains through the new world
   without requiring renderers to read scene transforms.
 
 ## Phase 3 - Data-Oriented Multithreaded CPU Backend
 
 ### Runtime layout
 
-- [ ] Replace managed runtime `Particle` objects with unmanaged or blittable
+- [x] Replace managed runtime `Particle` objects with unmanaged or blittable
   state owned by the CPU backend.
-- [ ] Separate static, input, dynamic, and output streams so a solve touches
+- [x] Separate static, input, dynamic, and output streams so a solve touches
   only required cache lines.
 - [ ] Benchmark SoA and AoSoA layouts; select block widths that match supported
   SIMD paths while retaining a scalar tail.
 - [ ] Bucket chains by segment count/topology/feature mask/collider class so
   hot loops avoid per-particle branches.
-- [ ] Use segment-major layout across a block of short chains so the same
+- [x] Use segment-major layout across a block of short chains so the same
   parent depth can be processed vector-wide.
 - [ ] Keep frequently written state away from world metadata and pad worker
   counters/output boundaries to prevent false sharing.
-- [ ] Store compact parent/depth data for general topology without pointer
+- [x] Store compact parent/depth data for general topology without pointer
   chasing.
 
 ### Scheduler
 
-- [ ] Integrate with a persistent engine job system or implement a dedicated
+- [x] Integrate with a persistent engine job system or implement a dedicated
   persistent worker pool; do not enqueue one ThreadPool work item per chain or
   allocate tasks each frame.
 - [x] Partition by estimated particle/collider/substep work, not raw component
@@ -508,7 +508,7 @@ Acceptance criteria:
   bounds generation, and opt-in transform mirror publication.
 - [x] Batch structural commands before workers begin and publish outputs after
   range completion without one atomic per chain.
-- [ ] Keep a deterministic scheduling/testing mode that produces stable
+- [x] Keep a deterministic scheduling/testing mode that produces stable
   reference ordering when needed.
 - [ ] Measure Windows scheduler overhead before considering thread affinity,
   core-class awareness, or NUMA partitioning; keep those as explicit optional
@@ -516,14 +516,14 @@ Acceptance criteria:
 
 ### Specialized solver kernels
 
-- [ ] Implement a scalar reference kernel using the new data contract.
-- [ ] Implement the common short linear-chain kernel with exact
+- [x] Implement a scalar reference kernel using the new data contract.
+- [x] Implement the common short linear-chain kernel with exact
   parent-before-child traversal and no virtual calls.
-- [ ] Vectorize across independent chains with `Vector256<float>`/AVX2 where
+- [x] Vectorize across independent chains with `Vector256<float>`/AVX2 where
   supported and retain portable/scalar fallbacks.
 - [ ] Evaluate AVX-512 only on hardware where frequency, register pressure,
   and downclock behavior produce a measured end-to-end win.
-- [ ] Precompute rest data and pack coefficients so the inner step performs no
+- [x] Precompute rest data and pack coefficients so the inner step performs no
   redundant square roots, matrix inversions, or authored-value conversion.
 - [ ] Specialize kernels by collision class: none, very small fixed count,
   candidate-list, and general.
@@ -538,24 +538,24 @@ Acceptance criteria:
 - [ ] Keep fixed-step accumulation, substep count, damping, gravity, external
   force, teleport/reset, and time-scale semantics explicit and shared with the
   GPU contract.
-- [ ] Ensure every inner loop is allocation-free and uses direct/ref access.
+- [x] Ensure every inner loop is allocation-free and uses direct/ref access.
 
 ### CPU outputs
 
-- [ ] Generate current and previous skin palettes directly into world-owned
+- [x] Generate current and previous skin palettes directly into world-owned
   contiguous output slices.
-- [ ] Generate conservative bounds from particles plus precomputed bone
+- [x] Generate conservative bounds from particles plus precomputed bone
   influence radii without mutating the transform hierarchy.
 - [ ] Provide a vectorized/batched transform-mirror writer only for consumers
   that explicitly request it.
-- [ ] Skip palette, bounds, or mirror work when no registered consumer requires
+- [x] Skip palette, bounds, or mirror work when no registered consumer requires
   that output, while preserving visible-renderer correctness.
 
 Acceptance criteria:
 
 - [ ] The new CPU backend matches the scalar reference within approved
   tolerances across topology, collider, force, reset, and timestep tests.
-- [ ] The steady-state CPU backend allocates zero bytes and takes no global
+- [x] The steady-state CPU backend allocates zero bytes and takes no global
   locks.
 - [ ] Worker traces show useful parallelism across the full pipeline, not only
   the solver, with bounded imbalance at 1,000-10,000 chains.
@@ -568,68 +568,68 @@ Acceptance criteria:
 
 ### Resource model
 
-- [ ] Define a narrow RHI-facing physics-chain compute interface for buffer
+- [x] Define a narrow RHI-facing physics-chain compute interface for buffer
   allocation/binding, compute dispatch/indirect dispatch, barriers, timestamps,
   and optional async-copy/readback.
-- [ ] Implement the OpenGL 4.6 backend first without direct
+- [x] Implement the OpenGL 4.6 backend first without direct
   `OpenGLRenderer` casts in world-level physics logic.
-- [ ] Implement or document the Vulkan mapping using the same resource and
+- [x] Implement or document the Vulkan mapping using the same resource and
   synchronization contract; keep DX12 mapping explicit for later work.
-- [ ] Fail visibly when an explicitly selected GPU backend lacks a required
+- [x] Fail visibly when an explicitly selected GPU backend lacks a required
   capability. Do not silently run CPU simulation.
 - [ ] Allocate permanent GPU arenas for template data, dynamic state,
   collider sets, roots/inputs, instance headers, active IDs, palettes, bounds,
   indirect commands, activity, and readback gather output.
 - [ ] Use stable offsets/generations for every live slice and bind them through
   compact instance records.
-- [ ] Use geometric capacity growth and copy live state only during an
+- [x] Use geometric capacity growth and copy live state only during an
   explicit resize/rebuild event, never as ordinary steady-state submission.
-- [ ] Keep old resources alive until all frames that reference them have
+- [x] Keep old resources alive until all frames that reference them have
   completed.
 
 ### Dirty updates and steady-state submission
 
-- [ ] Upload immutable template data once per template version.
-- [ ] Upload collider topology/shape data once per collider-set version and
+- [x] Upload immutable template data once per template version.
+- [x] Upload collider topology/shape data once per collider-set version and
   only dirty collider transforms thereafter.
 - [ ] Upload compact per-instance dynamic headers/roots/forces through a
   persistently mapped multi-frame ring or equivalent backend facility.
-- [ ] Track dirty ranges or dirty IDs; do not snapshot and hash entire managed
+- [x] Track dirty ranges or dirty IDs; do not snapshot and hash entire managed
   arrays each frame to discover changes.
-- [ ] Remove the resident-to-combined and combined-to-resident steady-state
+- [x] Remove the resident-to-combined and combined-to-resident steady-state
   copy model.
-- [ ] Keep active instance IDs and indirect arguments GPU-authored when their
+- [x] Keep active instance IDs and indirect arguments GPU-authored when their
   inputs are already GPU-visible.
 - [x] Ensure buffer counts and offsets required for current-frame dispatch are
   never read back to the CPU.
-- [ ] Keep resource bindings and pass-level command topology reusable across
+- [x] Keep resource bindings and pass-level command topology reusable across
   warm frames; rerecord/rebuild only for reported topology, capacity, pipeline,
   binding, or resource-generation changes.
 
 ### GPU active-work generation
 
-- [ ] Store per-instance enabled, visibility/relevance, sleep, quality tier,
+- [x] Store per-instance enabled, visibility/relevance, sleep, quality tier,
   phase, loop count, feature mask, and bucket metadata in compact GPU-readable
   records.
-- [ ] Compact active chain IDs on the GPU with subgroup/workgroup prefix sums
+- [x] Compact active chain IDs on the GPU with subgroup/workgroup prefix sums
   and one reservation atomic per group where supported.
-- [ ] Generate per-kernel/bucket indirect dispatch arguments on the GPU.
+- [x] Generate per-kernel/bucket indirect dispatch arguments on the GPU.
 - [ ] Add capacity checks, clamped counts, overflow counters, and next-frame
   resize policy for active lists and indirect arguments.
-- [ ] Treat GPU-written counts as dynamic data, not a reason to rerecord stable
+- [x] Treat GPU-written counts as dynamic data, not a reason to rerecord stable
   pass topology.
-- [ ] Retain a portable fallback for missing subgroup arithmetic and label it
+- [x] Retain a portable fallback for missing subgroup arithmetic and label it
   in profiles.
 
 Acceptance criteria:
 
-- [ ] An unchanged strict zero-readback frame uploads only expected dynamic
+- [x] An unchanged strict zero-readback frame uploads only expected dynamic
   headers/inputs and performs no whole-chain static snapshot/repack/copy.
 - [ ] CPU submission time scales with dirty structural ranges and bucket/pass
   count, not total registered chain count.
-- [ ] Current-frame dispatch sizing, activity, palette, bounds, and rendering
+- [x] Current-frame dispatch sizing, activity, palette, bounds, and rendering
   require zero CPU readback.
-- [ ] Every capacity failure or unsupported GPU capability is observable and
+- [x] Every capacity failure or unsupported GPU capability is observable and
   cannot corrupt adjacent data.
 
 ## Phase 5 - Dependency-Correct GPU Solver Kernels
@@ -648,7 +648,7 @@ Acceptance criteria:
   superior.
 - [ ] Bucket by length/topology/feature/collider class to reduce divergence and
   select the measured kernel family.
-- [ ] Keep general/fallback kernels explicit in profiler labels and counters.
+- [x] Keep general/fallback kernels explicit in profiler labels and counters.
 - [ ] Add empty/small-count handling so the high-throughput kernels do not
   impose disproportionate latency below their crossover.
 
@@ -692,14 +692,14 @@ Acceptance criteria:
   register pressure, barriers, multi-consumer reuse, and renderer timing.
 - [ ] Retain the lowest end-to-end cost per bucket, not necessarily one global
   strategy.
-- [ ] Ping-pong current/previous palette atlas roles per frame without copying
+- [x] Ping-pong current/previous palette atlas roles per frame without copying
   unchanged history.
 
 Acceptance criteria:
 
 - [ ] Repeated cross-vendor stress runs show dependency-correct results within
   approved tolerances and no data races or NaN propagation.
-- [ ] Dispatches/barriers are bounded by active kernel buckets and necessary
+- [x] Dispatches/barriers are bounded by active kernel buckets and necessary
   iteration boundaries, not chain count.
 - [ ] Each retained kernel wins its documented chain-length/count/feature
   region and exposes fallback usage in telemetry.
@@ -709,55 +709,55 @@ Acceptance criteria:
 
 ### Shared collider representation
 
-- [ ] Store colliders in shared versioned sets referenced by stable ID.
-- [ ] Use typed compact arrays or feature-specialized records so a particle
+- [x] Store colliders in shared versioned sets referenced by stable ID.
+- [x] Use typed compact arrays or feature-specialized records so a particle
   does not branch through virtual collider objects.
-- [ ] Separate static shape data from dynamic pose data and update only dirty
+- [x] Separate static shape data from dynamic pose data and update only dirty
   poses.
-- [ ] Precompute capsule direction, inverse length squared, radii combinations,
+- [x] Precompute capsule direction, inverse length squared, radii combinations,
   plane terms, and other invariant shape data.
-- [ ] Deduplicate identical authored collider sets and report unique/live set
+- [x] Deduplicate identical authored collider sets and report unique/live set
   counts and memory.
 
 ### Broadphase and narrowphase
 
-- [ ] Add a chain-level swept/conservative AABB test before particle-shape
+- [x] Add a chain-level swept/conservative AABB test before particle-shape
   narrowphase.
-- [ ] Specialize zero-collider and fixed small-count collider kernels to avoid
+- [x] Specialize zero-collider and fixed small-count collider kernels to avoid
   general list overhead.
-- [ ] Group chains sharing a collider set so CPU cache or GPU shared/cache data
+- [x] Group chains sharing a collider set so CPU cache or GPU shared/cache data
   can be reused.
-- [ ] For larger sets, build a spatial hash, grid, BVH, or compact candidate
+- [x] For larger sets, build a spatial hash, grid, BVH, or compact candidate
   list and benchmark build/refit versus query cost.
-- [ ] Keep broadphase generation CPU- or GPU-owned according to where collider
+- [x] Keep broadphase generation CPU- or GPU-owned according to where collider
   poses originate; do not add readback merely to build candidates elsewhere.
 - [x] Use squared rejection tests before expensive distance/square-root work.
 - [ ] Sort or classify candidates by collider type only when it reduces total
   divergence/memory traffic.
-- [ ] Define maximum candidates, overflow behavior, conservative fallback, and
+- [x] Define maximum candidates, overflow behavior, conservative fallback, and
   diagnostics.
-- [ ] Validate fast motion, teleports, degenerate capsules, zero radius,
+- [x] Validate fast motion, teleports, degenerate capsules, zero radius,
   coincident points, and large-coordinate scenes.
 
 ### Collision correctness and feature policy
 
-- [ ] Document whether chain particles push colliders, only receive collision,
+- [x] Document whether chain particles push colliders, only receive collision,
   or interact with dynamic physics bodies through a separate impulse/event
   path.
-- [ ] Keep gameplay-relevant collision events separate from rendering-only
+- [x] Keep gameplay-relevant collision events separate from rendering-only
   simulation and define any delayed GPU event/readback behavior explicitly.
-- [ ] Define self-collision as unsupported, opt-in, or separately accelerated;
+- [x] Define self-collision as unsupported, opt-in, or separately accelerated;
   do not let it silently enter the common kernel.
 - [ ] Verify CPU/GPU contact normal, penetration correction, friction, and
   constraint behavior within approved tolerances.
 
 Acceptance criteria:
 
-- [ ] Zero/small collider scenes pay no general broadphase or dynamic-dispatch
+- [x] Zero/small collider scenes pay no general broadphase or dynamic-dispatch
   tax.
-- [ ] Large collider-set cost scales with generated candidates rather than
+- [x] Large collider-set cost scales with generated candidates rather than
   every particle times every collider.
-- [ ] Candidate overflow is conservative, visible in diagnostics, and memory
+- [x] Candidate overflow is conservative, visible in diagnostics, and memory
   safe.
 - [ ] Shared sets measurably reduce upload bytes, memory, and cache/bandwidth
   cost in representative avatar crowds.
@@ -768,15 +768,15 @@ Acceptance criteria:
 
 - [ ] Allocate stable current/previous palette atlas slices per live chain or
   renderer-compatible instance.
-- [ ] Expose palette base/count through the existing external skin-palette
+- [x] Expose palette base/count through the existing external skin-palette
   renderer contract instead of writing bone transforms first.
 - [ ] Define sharing when multiple renderers consume one chain and avoid
   duplicate palette generation.
-- [ ] Handle partial palettes without falling back to one compute dispatch and
+- [x] Handle partial palettes without falling back to one compute dispatch and
   barrier per renderer.
 - [ ] Reset both palette histories correctly on spawn, teleport, template
   change, backend switch, and slot reuse.
-- [ ] Validate motion-vector consumers against the previous-palette contract.
+- [x] Validate motion-vector consumers against the previous-palette contract.
 
 ### Skinning and draw submission
 
@@ -799,9 +799,9 @@ Acceptance criteria:
   influence radii, or from precomputed per-bone influence bounds transformed
   by the palette.
 - [ ] Write bounds into stable GPU-visible slots consumed by GPUScene culling.
-- [ ] Avoid `WaitForGpu`, blocking maps, or bounds readback in production
+- [x] Avoid `WaitForGpu`, blocking maps, or bounds readback in production
   chain-renderer paths.
-- [ ] Retain explicit CPU bounds access only through delayed selective readback
+- [x] Retain explicit CPU bounds access only through delayed selective readback
   or a documented conservative CPU proxy.
 - [ ] Validate fast motion, long interpolation intervals, teleport, sleep,
   offscreen wake, and previous/current-frame culling behavior.
@@ -832,56 +832,56 @@ Acceptance criteria:
 
 ### Activity and sleep
 
-- [ ] Define activity error from particle velocity, constraint error, root
+- [x] Define activity error from particle velocity, constraint error, root
   acceleration, collider motion, external force, and recent visibility/use.
-- [ ] Add sleep thresholds, minimum quiet duration, and hysteresis to prevent
+- [x] Add sleep thresholds, minimum quiet duration, and hysteresis to prevent
   rapid sleep/wake oscillation.
-- [ ] Wake on root teleport/acceleration, collider-set or collider-pose change,
+- [x] Wake on root teleport/acceleration, collider-set or collider-pose change,
   force/event input, explicit gameplay request, visibility/relevance change,
   template/parameter change, and excessive accumulated error.
 - [ ] Preserve current/previous output coherently while sleeping.
 - [ ] Compute GPU activity and compact sleeping chains without reading activity
   back to the CPU.
-- [ ] Expose delayed aggregate active/sleep/wake counters and bounded selected
+- [x] Expose delayed aggregate active/sleep/wake counters and bounded selected
   instance inspection.
 
 ### Explicit quality tiers
 
-- [ ] Define named tiers such as full rate, 30 Hz, 15 Hz, 7.5 Hz, and sleep;
+- [x] Define named tiers such as full rate, 30 Hz, 15 Hz, 7.5 Hz, and sleep;
   store exact rate/substep/iteration/collision/palette policy rather than magic
   integers.
 - [x] Provide a strict full-rate tier for gameplay-critical or captured
   deterministic scenarios.
-- [ ] Base automatic tier selection on distance, projected size, visibility,
+- [x] Base automatic tier selection on distance, projected size, visibility,
   importance, recent interaction, and measured budget pressure.
-- [ ] Add independent policy controls for simulation, collision, palette, and
+- [x] Add independent policy controls for simulation, collision, palette, and
   bounds cadence only where interpolation/conservatism makes decoupling safe.
 - [x] Phase-stagger lower-rate chains to flatten per-frame work.
-- [ ] Interpolate current/previous simulated outputs for rendering without
+- [x] Interpolate current/previous simulated outputs for rendering without
   changing physical elapsed time or accumulating timestep drift.
-- [ ] Add hysteresis and minimum residency time per tier.
-- [ ] Define offscreen behavior explicitly: simulate, decay then sleep, or
+- [x] Add hysteresis and minimum residency time per tier.
+- [x] Define offscreen behavior explicitly: simulate, decay then sleep, or
   sleep immediately depending on authored importance.
 - [ ] Ensure GPU tier assignment and active compaction remain zero-readback.
 
 ### Budget controller
 
-- [ ] Add configurable CPU and GPU physics-chain budgets in milliseconds or
+- [x] Add configurable CPU and GPU physics-chain budgets in milliseconds or
   normalized work units.
-- [ ] Use delayed timing/error data to adjust only chains authorized for
+- [x] Use delayed timing/error data to adjust only chains authorized for
   automatic quality changes.
-- [ ] Cap quality changes per frame to avoid visible waves and oscillation.
-- [ ] Prefer sleeping irrelevant chains and reducing distant update cadence
+- [x] Cap quality changes per frame to avoid visible waves and oscillation.
+- [x] Prefer sleeping irrelevant chains and reducing distant update cadence
   before reducing constraint/collision quality on important chains.
-- [ ] Surface requested versus effective tier, reason, and time in tier in
+- [x] Surface requested versus effective tier, reason, and time in tier in
   profiler/editor diagnostics.
 - [x] Provide a deterministic fixed-tier mode for tests and captures.
 
 Acceptance criteria:
 
-- [ ] Tier transitions preserve elapsed-time behavior, current/previous output
+- [x] Tier transitions preserve elapsed-time behavior, current/previous output
   history, and bounded visual error.
-- [ ] Wake triggers prevent stale chains when roots, colliders, forces, or
+- [x] Wake triggers prevent stale chains when roots, colliders, forces, or
   visibility change.
 - [ ] Budgeted scenarios meet the approved frame budget without silently
   changing strict chains.
@@ -892,40 +892,40 @@ Acceptance criteria:
 
 ### Request contract
 
-- [ ] Inventory required CPU consumers and classify them as chain particles,
+- [x] Inventory required CPU consumers and classify them as chain particles,
   specific bones, sockets, bounds, collision events, debug data, or full
   transform mirror.
-- [ ] Define asynchronous request handles with instance generation, requested
+- [x] Define asynchronous request handles with instance generation, requested
   fields, submission frame, expected earliest completion, and cancellation.
-- [ ] Document latency and freshness. Callers must never mistake delayed data
+- [x] Document latency and freshness. Callers must never mistake delayed data
   for current-frame authoritative state.
 - [x] Reject stale generation results after instance destruction or slot reuse.
-- [ ] Coalesce duplicate requests and cap per-frame requested elements/bytes.
-- [ ] Make overflow, expiry, timeout, or unavailable data explicit rather than
+- [x] Coalesce duplicate requests and cap per-frame requested elements/bytes.
+- [x] Make overflow, expiry, timeout, or unavailable data explicit rather than
   blocking the render thread.
 
 ### GPU gather and transfer
 
-- [ ] Compact requested instance/output IDs into a small gather list.
-- [ ] Gather only requested particles, bone/socket matrices, bounds, or events
+- [x] Compact requested instance/output IDs into a small gather list.
+- [x] Gather only requested particles, bone/socket matrices, bounds, or events
   into a tightly packed GPU transfer buffer.
-- [ ] Use a double/triple-buffered staging ring with fences and non-blocking
+- [x] Use a double/triple-buffered staging ring with fences and non-blocking
   polling.
 - [x] Never copy or map a whole simulation arena/group because one chain was
   requested.
 - [x] Schedule copy after the producing pass with the narrowest required
   synchronization and no current-frame wait.
-- [ ] Record requested, gathered, transferred, discarded-stale, and delivered
+- [x] Record requested, gathered, transferred, discarded-stale, and delivered
   element/byte counts plus latency histograms.
 
 ### Transform mirror
 
 - [x] Keep full scene-transform mirroring disabled by default.
-- [ ] Allow selected chains to mirror at an explicit rate on a worker job after
+- [x] Allow selected chains to mirror at an explicit rate on a worker job after
   data becomes available.
-- [ ] Batch hierarchy updates and invalidation instead of one notification path
+- [x] Batch hierarchy updates and invalidation instead of one notification path
   per property/particle where transform semantics permit.
-- [ ] Make the cost and age of mirrored data visible to editor/gameplay code.
+- [x] Make the cost and age of mirrored data visible to editor/gameplay code.
 
 Acceptance criteria:
 
@@ -934,47 +934,47 @@ Acceptance criteria:
   not alter current-frame dispatch/render decisions.
 - [x] No render-thread or simulation-thread blocking wait is reachable from
   production readback APIs.
-- [ ] Destroy/reuse/resize/backend-switch tests cannot deliver data to the wrong
+- [x] Destroy/reuse/resize/backend-switch tests cannot deliver data to the wrong
   chain generation.
 
 ## Phase 10 - Tests, Profiling Gates, Migration, And Closeout
 
 ### Unit and contract tests
 
-- [ ] Add template deduplication/version/rebuild tests.
-- [ ] Add generational handle reuse and stale-command rejection tests.
-- [ ] Add arena allocation, free, fragmentation, growth, in-flight lifetime,
+- [x] Add template deduplication/version/rebuild tests.
+- [x] Add generational handle reuse and stale-command rejection tests.
+- [x] Add arena allocation, free, fragmentation, growth, in-flight lifetime,
   overflow, and state-preservation tests.
-- [ ] Add structural command ordering tests for add/remove/retemplate/rebind
+- [x] Add structural command ordering tests for add/remove/retemplate/rebind
   during active frames.
-- [ ] Add scalar versus SIMD parity tests for all retained feature kernels.
+- [x] Add scalar versus SIMD parity tests for all retained feature kernels.
 - [ ] Add scalar versus GPU tolerance tests across chain lengths, topologies,
   colliders, substeps, forces, reset, teleport, and large coordinates.
-- [ ] Add repeated GPU parent/child dependency-ordering regression tests.
-- [ ] Add NaN/Inf containment and degenerate-input tests.
-- [ ] Add sleep/wake, quality transition, phase staggering, and deterministic
+- [x] Add repeated GPU parent/child dependency-ordering regression tests.
+- [x] Add NaN/Inf containment and degenerate-input tests.
+- [x] Add sleep/wake, quality transition, phase staggering, and deterministic
   fixed-tier tests.
-- [ ] Add current/previous palette history and motion-vector reset tests.
+- [x] Add current/previous palette history and motion-vector reset tests.
 - [ ] Add GPU bounds conservatism and culling tests under motion/interpolation.
-- [ ] Add zero-readback source/runtime contract tests for strict GPU profiles.
-- [ ] Add selective readback ordering, byte-count, latency, stale generation,
+- [x] Add zero-readback source/runtime contract tests for strict GPU profiles.
+- [x] Add selective readback ordering, byte-count, latency, stale generation,
   overflow, and cancellation tests.
-- [ ] Add backend capability/failure tests proving there is no silent CPU
+- [x] Add backend capability/failure tests proving there is no silent CPU
   fallback.
 
 ### Performance gates
 
-- [ ] Extend the current benchmark controller or create a focused benchmark
+- [x] Extend the current benchmark controller or create a focused benchmark
   harness with warmup/settle, deterministic motion, automated matrix sweeps,
   raw capture, and summary output.
 - [ ] Run the Phase 0 matrix after every major backend phase on the same named
   hardware and settings.
 - [ ] Compare p50/p95/p99/max, scaling slope, per-active-chain/particle cost,
   upload/copy/readback bytes, dispatch/barrier counts, allocations, and memory.
-- [ ] Require three or more matched runs for acceptance and report variance.
+- [x] Require three or more matched runs for acceptance and report variance.
 - [ ] Capture at least one CPU profile for strict CPU, one GPU trace for strict
   zero-readback, and one end-to-end rendered crowd trace at target scale.
-- [ ] Verify no hidden setup, shader compilation, capacity growth, or upload
+- [x] Verify no hidden setup, shader compilation, capacity growth, or upload
   backlog contaminates steady-state windows.
 - [ ] Verify low-count latency remains within its approved threshold while
   high-count throughput improves.
@@ -990,7 +990,7 @@ Acceptance criteria:
   separate migration plan before editing assets or storage formats.
 - [ ] Add an explicit backend/mode selector for old versus new runtime only
   while comparison is necessary; do not retain two permanent architectures.
-- [ ] Report selected CPU/GPU kernel family, backend, quality policy, and any
+- [x] Report selected CPU/GPU kernel family, backend, quality policy, and any
   explicit compatibility feature in diagnostics.
 - [ ] Remove obsolete queues, component work-item orchestration, transient GPU
   repacking, unsafe shader kernels, and redundant transform paths after parity
@@ -999,13 +999,13 @@ Acceptance criteria:
 
 ### Documentation and evidence
 
-- [ ] Update the physics-chain performance guide with the final architecture,
+- [x] Update the physics-chain performance guide with the final architecture,
   selection policy, profiling procedure, and tuning controls.
 - [ ] Update the performance test plan with exact accepted hardware, scenes,
   commands, budgets, and final measurements.
-- [ ] Document authoring guidance for shared templates/collider sets, strict
+- [x] Document authoring guidance for shared templates/collider sets, strict
   chains, automatic tiers, readback/socket requests, and debug inspection.
-- [ ] Document backend capability requirements and visible failure behavior.
+- [x] Document backend capability requirements and visible failure behavior.
 - [ ] Record final before/after tables and trace paths in a durable progress
   note; ignored validation output is evidence, not the sole record.
 - [ ] Mark this TODO complete only after all accepted deferrals have named

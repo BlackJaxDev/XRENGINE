@@ -1,6 +1,6 @@
 # Physics Chain Performance Testing
 
-Last updated: 2026-04-28
+Last updated: 2026-07-20
 
 The physics-chain optimization implementation is largely landed. This page tracks the remaining validation, benchmark, and evidence capture work.
 
@@ -51,6 +51,39 @@ Automated tests live in:
 Coverage includes zero-readback contracts, stale generation/submission rejection, async/fenced readback ordering, transform dirty-range detection, per-tree parameter warm-path allocation guards, GPU-driven renderer registration, and bandwidth snapshot accounting.
 
 ## Related Documentation
+## Scale-Matrix Acceptance Procedure
+
+The complete accepted matrix is defined by
+`PhysicsChainBenchmarkRequiredMatrix`; do not replace it with a hand-picked
+subset. It covers 100 through 10,000 chains, 4/8/16/32 dynamic segments,
+linear and branched topology, four collider cases, shared and unique collider
+ownership, four activity profiles, four rendering modes, strict and
+quality-tiered CPU/GPU modes, four readback modes, OpenGL/Vulkan, and
+30/60/90/120 Hz fixed simulation.
+
+Each matrix point has separate cold-start, structural-churn, and steady-state
+records and at least three matched runs. Accepted steady-state evidence must:
+
+- pass Release/no-debug/no-validation/no-verbose-log preflight;
+- settle chain counts, capacities, pipelines, uploads, and renderer counts;
+- retain at least 1,000 frames and 30 seconds of raw samples;
+- use `PhysicsChainBenchmarkDeterministicScenario` for templates, colliders,
+  fixed-step root motion, forces, activity, visibility, and seed behavior;
+- preserve CPU and resolved GPU whole-frame samples plus stage/population,
+  upload/copy/readback, dispatch/barrier, allocation, hardware-counter, and
+  per-resource arena metrics under `Build/_AgentValidation/<run>/reports/`;
+- record unsupported backend cases instead of silently dropping them.
+
+Use the primary machine and controls in
+[Physics Chain Named-Hardware Matrix](physics-chain-named-hardware-matrix-2026-07-20.md).
+The exact implementation state and remaining capture blockers are tracked in
+[Physics Chain Benchmark Contract Progress](../progress/physics/physics-chain-benchmark-contract-2026-07-20.md).
+
+Absolute strict/quality budgets, low-count latency limits, scaling slopes,
+CPU/GPU break-even points, and final measurements are intentionally not filled
+in until the matched Release captures exist. Contract/unit tests are not a
+substitute for those measurements.
+
 
 - [Physics Chain Performance](../../developer-guides/rendering/physics-chain-performance.md)
 - [GPU Physics Chain Zero-Readback Skinned Mesh Plan](../design/gpu-physics-chain-zero-readback-skinned-mesh-plan.md)

@@ -60,7 +60,19 @@ layout(std430, binding = 3) writeonly buffer LinesBuffer
     vec4 Lines[];
 };
 
-uniform int ParticleOffset;
+struct DebugItem
+{
+    uint ParticleIndex;
+    float InterpolationAlpha;
+    uint InterpolationMode;
+    uint Padding;
+layout(std430, binding = 4) readonly buffer DebugItemBuffer
+{
+    DebugItem DebugItems[];
+};
+
+};
+
 uniform int ParticleCount;
 uniform vec4 PointColor;
 uniform vec4 LineColor;
@@ -82,11 +94,12 @@ void main()
     if (localIndex >= uint(ParticleCount))
         return;
 
-    uint particleIndex = uint(ParticleOffset) + localIndex;
+    DebugItem item = DebugItems[localIndex];
+    uint particleIndex = item.ParticleIndex;
     ParticleState particle = Particles[particleIndex];
     ParticleStatic particleStatic = ParticleStatics[particleIndex];
 
-    vec3 pos = resolveRenderPosition(particle, InterpolationAlpha, InterpolationMode);
+    vec3 pos = resolveRenderPosition(particle, item.InterpolationAlpha, int(item.InterpolationMode));
 
     Points[localIndex].Position = vec4(pos, 1.0);
     Points[localIndex].Color = PointColor;
@@ -95,7 +108,7 @@ void main()
     if (particleStatic.ParentIndex >= 0)
     {
         ParticleState parent = Particles[particleStatic.ParentIndex];
-        vec3 parentPos = resolveRenderPosition(parent, InterpolationAlpha, InterpolationMode);
+        vec3 parentPos = resolveRenderPosition(parent, item.InterpolationAlpha, int(item.InterpolationMode));
         Lines[lineIndex + 0u] = vec4(parentPos, 1.0);
         Lines[lineIndex + 1u] = vec4(pos, 1.0);
         Lines[lineIndex + 2u] = LineColor;

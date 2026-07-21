@@ -10,6 +10,12 @@ const uint LOD_TRANSITION_UINTS = 4u;
 const uint LOD_TRANSITION_ACTIVE = 1u;
 const uint PREVIOUS_LOD_DRAW_FLAG = 0x40000000u;
 const uint COMMAND_INDEX_MASK = 0x3FFFFFFFu;
+const uint CLASSIFICATION_UINTS = 8u;
+const uint CLASS_TRADITIONAL_LAYER_SUPPRESSION_ELIGIBLE = 1u << 3u;
+const uint CLASS_EXACT_MASK_UNAVAILABLE = 1u << 5u;
+const uint METADATA_UINTS = 4u;
+const uint DOMAIN_EXACT = 3u;
+const uint POLICY_TRADITIONAL_LAYER_SUPPRESSION = 1u;
 
 /* Command layout (float[20]):
  0-3 BoundingSphere, 4 MeshID, 5 SubmeshID, 6 MaterialID, 7 InstanceCount,
@@ -97,6 +103,8 @@ layout(std430, binding = 12) readonly buffer ViewConstantsBuffer { GPUViewConsta
 layout(std430, binding = 13) readonly buffer CommandViewMaskBuffer { uvec2 CommandViewMasks[]; };
 layout(std430, binding = 14) readonly buffer PerViewVisibleIndicesBuffer { uint PerViewVisibleIndices[]; };
 layout(std430, binding = 15) readonly buffer PerViewDrawCountBuffer { uint PerViewDrawCount[]; };
+layout(std430, binding = 17) readonly buffer ViewBatchClassificationBuffer { uint classifications[]; };
+layout(std430, binding = 18) readonly buffer TransparencyMetadataBuffer { uint transparencyMetadata[]; };
 
 // === Uniforms ===
 uniform int CurrentRenderPass;     // -1 accepts all
@@ -105,6 +113,9 @@ uniform uint StatsEnabled;         // 0 when stats buffer is unbound
 uniform int ActiveViewCount;
 uniform int SourceViewId;
 uniform int UseHotCommands;
+uniform uint ViewBatchSubmissionPolicy;
+uniform uint UseViewBatchClassification;
+uniform uint RejectExactTransparentMultiview;
 //uniform int UseSorted;             // 1 = use keyIndexPairs for ordering
 
 bool TryReserveDrawSlot(out uint outIndex)
@@ -180,14 +191,17 @@ void main()
     uint total = CulledCount; // snapshot
     uint sourceViewId = SourceViewId < 0 ? 0u : uint(SourceViewId);
 
-    if (ActiveViewCount > 0 && sourceViewId < uint(PerViewDrawCount.length()))
+    // Layer suppression/classification is not live yet. A multiview batch must consume
+    // the conservative union so candidates visible only outside SourceViewId survive.
+    bool usePerViewSelection = ActiveViewCount == 1;
+    if (usePerViewSelection && sourceViewId < uint(PerViewDrawCount.length()))
         total = min(total, PerViewDrawCount[sourceViewId]);
 
     if (logicalIdx >= total)
         return;
 
     uint idx = logicalIdx;
-    if (ActiveViewCount > 0 &&
+    if (usePerViewSelection &&
         sourceViewId < uint(ViewDescriptors.length()) &&
         sourceViewId < uint(PerViewDrawCount.length()))
     {
@@ -231,6 +245,38 @@ void main()
         instanceCount = floatBitsToUint(culled[base + 7]);
         meshID = floatBitsToUint(culled[base + 4]);
         drawID = floatBitsToUint(culled[base + 19]);
+    }
+
+    if (UseViewBatchClassification != 0u)
+    {
+        uint classificationBase = idx * CLASSIFICATION_UINTS;
+        if (classificationBase + CLASSIFICATION_UINTS > uint(classifications.length()))
+            return;
+
+        uvec2 classifiedMask = uvec2(
+            classifications[classificationBase + 0u],
+            classifications[classificationBase + 1u]);
+        uint classifiedDrawID = classifications[classificationBase + 6u];
+        uint classificationFlags = classifications[classificationBase + 7u];
+        if ((classifiedMask.x | classifiedMask.y) == 0u || classifiedDrawID != drawID)
+            return;
+        if (ViewBatchSubmissionPolicy == POLICY_TRADITIONAL_LAYER_SUPPRESSION &&
+            ((classificationFlags & CLASS_EXACT_MASK_UNAVAILABLE) != 0u ||
+             (classificationFlags & CLASS_TRADITIONAL_LAYER_SUPPRESSION_ELIGIBLE) == 0u))
+        {
+            return;
+        }
+    }
+
+    if (RejectExactTransparentMultiview != 0u)
+    {
+        uint metadataBase = drawID * METADATA_UINTS;
+        if (metadataBase + METADATA_UINTS > uint(transparencyMetadata.length()))
+            return;
+
+        uint domain = (transparencyMetadata[metadataBase] >> 16u) & 0xFFFFu;
+        if (domain == DOMAIN_EXACT)
+            return;
     }
 
     // Defensive pass filter (culling shader should already filter by pass, but keep this to avoid

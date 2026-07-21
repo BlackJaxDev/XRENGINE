@@ -947,13 +947,45 @@ namespace XREngine.Rendering
             //if (Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DebugRenderSubmit) == "1")
                 beforeUpdatingCount = commandCollection.GetUpdatingCommandCount();
 
-            world?.VisualScene?.CollectRenderedItems(
-                commandCollection,
+            VisualScene visualScene = world!.VisualScene!;
+            bool stereoFamily =
+                RenderFrameViewSetPublication.TryGet(State.RenderFrameId, out RenderFrameViewSet publishedViews) &&
+                publishedViews.ViewCount > 1 &&
+                camera.StereoEyeLeft.HasValue;
+            XRRenderPipelineInstance.RenderingState visibilityState = _renderPipeline.CollectVisibleState;
+            using var visibilityStateScope = visibilityState.PushMainAttributes(
+                this,
+                visualScene,
                 camera,
-                CameraComponent?.CullWithFrustum ?? CullWithFrustum,
-                CameraComponent?.CullingCameraOverride,
-                collectionVolumeOverride,
-                collectMirrors);
+                stereoRightEyeCamera: null,
+                target: null,
+                shadowPass: false,
+                stereoPass: stereoFamily,
+                globalMaterialOverride: null,
+                screenSpaceUI: null,
+                meshRenderCommands: commandCollection);
+
+            if (visualScene is VisualScene3D scene3D)
+            {
+                scene3D.CollectRenderedItems(
+                    commandCollection,
+                    camera,
+                    CameraComponent?.CullWithFrustum ?? CullWithFrustum,
+                    CameraComponent?.CullingCameraOverride,
+                    collectionVolumeOverride,
+                    collectMirrors,
+                    visibilityState);
+            }
+            else
+            {
+                visualScene.CollectRenderedItems(
+                    commandCollection,
+                    camera,
+                    CameraComponent?.CullWithFrustum ?? CullWithFrustum,
+                    CameraComponent?.CullingCameraOverride,
+                    collectionVolumeOverride,
+                    collectMirrors);
+            }
 
             //if (Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DebugRenderSubmit) == "1")
             {
@@ -1514,7 +1546,43 @@ namespace XREngine.Rendering
             EFrameOutputKind outputKind = ResolveFrameOutputKind(fallbackOutputKind);
             bool xrCritical = viewKind is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye ||
                 outputKind is EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit;
-            return RuntimeRenderingHostServices.Current.EvaluateFrameOutputPacing(viewKind, outputKind, xrCritical);
+            IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
+            FrameOutputPacingDecision pacing = hostServices.EvaluateFrameOutputPacing(
+                viewKind, outputKind, xrCritical);
+            RenderOutputRequest request = BuildFrameOutputRequest(pacing);
+            hostServices.PlanRenderOutput(request, pacing.IsDue);
+            return pacing with { Request = request };
+        }
+
+        private RenderOutputRequest BuildFrameOutputRequest(in FrameOutputPacingDecision pacing)
+        {
+            RenderOutputRequest request = pacing.Request.IsDefined
+                ? pacing.Request
+                : RenderOutputRequest.CreateDefault(
+                    pacing.ViewKind,
+                    pacing.OutputKind,
+                    pacing.FrameId,
+                    pacing.ConfiguredTargetRateHz,
+                    pacing.SourceRateHz);
+            ulong outputId = MixFrameOutputIdentity(request.OutputId, _frameOutputIdentity);
+            bool sharedXrFamily = pacing.OutputKind is
+                EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit;
+            request = request with
+            {
+                OutputId = outputId,
+                ViewFamilyId = sharedXrFamily
+                    ? request.ViewFamilyId
+                    : MixFrameOutputIdentity(request.ViewFamilyId, _frameOutputIdentity),
+            };
+            return request.WithTarget(request.Target with
+            {
+                StableTargetId = outputId,
+                TargetGeneration = unchecked((ulong)Math.Max(0, _renderPipeline.ResourceGeneration)),
+                DisplayWidth = (uint)Math.Max(0, Width),
+                DisplayHeight = (uint)Math.Max(0, Height),
+                InternalWidth = (uint)Math.Max(0, InternalWidth),
+                InternalHeight = (uint)Math.Max(0, InternalHeight),
+            });
         }
 
         private EVrOutputViewKind ResolveOutputViewKind()
@@ -1629,31 +1697,7 @@ namespace XREngine.Rendering
 
             RenderOutputRequest request = pacing.Request.IsDefined
                 ? pacing.Request
-                : RenderOutputRequest.CreateDefault(
-                    viewKind,
-                    outputKind,
-                    pacing.FrameId,
-                    pacing.ConfiguredTargetRateHz,
-                    pacing.SourceRateHz);
-            ulong outputId = MixFrameOutputIdentity(request.OutputId, _frameOutputIdentity);
-            bool sharedXrFamily = outputKind is EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit;
-            request = request with
-            {
-                OutputId = outputId,
-                ViewFamilyId = sharedXrFamily
-                    ? request.ViewFamilyId
-                    : MixFrameOutputIdentity(request.ViewFamilyId, _frameOutputIdentity),
-            };
-            RenderOutputTargetDescriptor target = request.Target with
-            {
-                StableTargetId = outputId,
-                TargetGeneration = unchecked((ulong)Math.Max(0, _renderPipeline.ResourceGeneration)),
-                DisplayWidth = (uint)Math.Max(0, Width),
-                DisplayHeight = (uint)Math.Max(0, Height),
-                InternalWidth = (uint)Math.Max(0, InternalWidth),
-                InternalHeight = (uint)Math.Max(0, InternalHeight),
-            };
-            request = request.WithTarget(target);
+                : BuildFrameOutputRequest(pacing);
 
             var telemetry = new FrameOutputTelemetry(
                 outputKind,

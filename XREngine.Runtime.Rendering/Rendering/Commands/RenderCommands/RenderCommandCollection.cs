@@ -12,6 +12,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 
 namespace XREngine.Rendering.Commands
@@ -431,6 +432,63 @@ namespace XREngine.Rendering.Commands
         private Dictionary<int, GPURenderPassCollection> _gpuPasses = [];
         private Dictionary<int, RenderPassMetadata> _passMetadata = [];
         private IRuntimeRenderPipelineDebugContext? _ownerPipeline;
+        private bool _reportedCpuExactTransparentSpsRejection;
+        private uint _reportedCpuExactTransparentSpsViewMask;
+        private ETransparentMultiviewPolicy _reportedCpuExactTransparentSpsPolicy;
+        private uint _activeCpuExactTransparentSpsViewMask;
+        private ETransparentMultiviewPolicy _activeCpuExactTransparentSpsPolicy;
+
+        private bool BeginCpuExactTransparentSpsFilter(int renderPass)
+        {
+            if (renderPass != (int)EDefaultRenderPass.TransparentForward ||
+                AbstractRenderer.Current is not VulkanRenderer renderer ||
+                !renderer.HasActiveMultiviewDrawTarget ||
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline is not XRRenderPipelineInstance pipeline)
+            {
+                _reportedCpuExactTransparentSpsRejection = false;
+                return false;
+            }
+
+            ETransparentMultiviewPolicy policy =
+                pipeline.RenderState.LastVisibilityContentPolicy.TransparentPolicy;
+            if (policy is not ETransparentMultiviewPolicy.PerViewSorted and
+                not ETransparentMultiviewPolicy.ForceSplit)
+            {
+                _reportedCpuExactTransparentSpsRejection = false;
+                return false;
+            }
+
+            _activeCpuExactTransparentSpsViewMask = renderer.CurrentDrawViewMask;
+            _activeCpuExactTransparentSpsPolicy = policy;
+            return true;
+        }
+
+        private bool ShouldSkipCpuExactTransparentSpsCommand(bool filterActive, RenderCommand command)
+        {
+            if (!filterActive || command is not IRenderCommandMesh meshCommand)
+                return false;
+
+            XRMaterial? material = meshCommand.MaterialOverride ?? meshCommand.Mesh?.Material;
+            if (material is null ||
+                GpuTransparencyClassification.ResolveDomain(material.GetEffectiveTransparencyMode()) !=
+                    EGpuTransparencyDomain.TransparentExact)
+            {
+                return false;
+            }
+
+            if (!_reportedCpuExactTransparentSpsRejection ||
+                _reportedCpuExactTransparentSpsViewMask != _activeCpuExactTransparentSpsViewMask ||
+                _reportedCpuExactTransparentSpsPolicy != _activeCpuExactTransparentSpsPolicy)
+            {
+                _reportedCpuExactTransparentSpsRejection = true;
+                _reportedCpuExactTransparentSpsViewMask = _activeCpuExactTransparentSpsViewMask;
+                _reportedCpuExactTransparentSpsPolicy = _activeCpuExactTransparentSpsPolicy;
+                Debug.RenderingWarning(
+                    $"[CPU-PIPELINE] Rejected exact-sorted transparent CPU candidates for Vulkan multiview mask 0x{_activeCpuExactTransparentSpsViewMask:X8}: policy {_activeCpuExactTransparentSpsPolicy} requires split per-view ordering. Approximate and OIT-compatible candidates continue.");
+            }
+
+            return true;
+        }
 
         // Dirty-delta swap queue. AddCPU enqueues a command only when the command is dirty and has
         // not already been queued in this collection for this swap cycle. The queue membership must
@@ -815,9 +873,16 @@ namespace XREngine.Rendering.Commands
                 deferredProbes.Clear();
             }
 
+            bool filterExactTransparentSps = BeginCpuExactTransparentSpsFilter(renderPass);
             uint cpuCmdIndex = 0;
             foreach (var cmd in list)
             {
+                if (ShouldSkipCpuExactTransparentSpsCommand(filterExactTransparentSps, cmd))
+                {
+                    cpuCmdIndex++;
+                    continue;
+                }
+
                 if (skipGpuCommands && cmd is IRenderCommandMesh meshCmd)
                 {
                     // Skip mesh commands that should go through GPU dispatch.
@@ -1392,9 +1457,15 @@ namespace XREngine.Rendering.Commands
             if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
                 return;
 
+            bool filterExactTransparentSps = BeginCpuExactTransparentSpsFilter(renderPass);
             foreach (var cmd in list)
-                if (cmd is IRenderCommandMesh)
+            {
+                if (cmd is IRenderCommandMesh &&
+                    !ShouldSkipCpuExactTransparentSpsCommand(filterExactTransparentSps, cmd))
+                {
                     RenderWithGpuScope(cmd, renderPass);
+                }
+            }
         }
 
         /// <summary>
@@ -1413,9 +1484,13 @@ namespace XREngine.Rendering.Commands
             if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
                 return;
 
+            bool filterExactTransparentSps = BeginCpuExactTransparentSpsFilter(renderPass);
             foreach (var cmd in list)
             {
                 if (cmd is null)
+                    continue;
+
+                if (ShouldSkipCpuExactTransparentSpsCommand(filterExactTransparentSps, cmd))
                     continue;
 
                 if (cmd is IRenderCommandMesh meshCmd)
@@ -1642,7 +1717,8 @@ namespace XREngine.Rendering.Commands
             if (camera is null)
                 return;
 
-            var scene = renderState.RenderingScene;
+            RenderWorldSnapshot? worldSnapshot = renderState.WorldSnapshot;
+            IRuntimeRenderCommandSceneContext? scene = worldSnapshot?.Scene ?? renderState.RenderingScene;
             if (scene is null)
                 return;
 
@@ -1660,10 +1736,13 @@ namespace XREngine.Rendering.Commands
             try
             {
                 gpuPass.MeshSubmissionStrategy = meshSubmissionStrategy;
-                ConfigureGpuViewSet(gpuPass, renderState, camera);
+                RenderFrameViewSet configuredViewSet = ConfigureGpuViewSet(gpuPass, renderState, camera);
+                gpuPass.ConfigureStableHiZViewSet(
+                    configuredViewSet,
+                    worldSnapshot?.FrameId ?? RuntimeEngine.Rendering.State.RenderFrameId);
 
-                if (meshletStrategy && scene is GPUScene gpuScene)
-                    gpuScene.EnsureRuntimeMeshletPayloadsForMeshletDispatch();
+                if (meshletStrategy && worldSnapshot is RenderWorldSnapshot snapshot)
+                    snapshot.GpuScene.EnsureRuntimeMeshletPayloadsForMeshletDispatch();
 
                 scene.RenderGpuPass(gpuPass);
 
@@ -1752,154 +1831,40 @@ namespace XREngine.Rendering.Commands
                 ?? renderState?.SceneCamera as XRCamera;
         }
 
-        private static void ConfigureGpuViewSet(GPURenderPassCollection gpuPass, IRuntimeRenderCommandExecutionState renderState, IRuntimeRenderCamera leftCamera)
+        private static RenderFrameViewSet ConfigureGpuViewSet(GPURenderPassCollection gpuPass, IRuntimeRenderCommandExecutionState renderState, IRuntimeRenderCamera leftCamera)
         {
-            IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
-            IRuntimeRenderCamera? rightCamera = renderState.StereoPass ? renderState.StereoRightEyeCamera : null;
-            bool stereo = renderState.StereoPass && rightCamera is not null;
-            bool includeMirror = hostServices.RenderWindowsWhileInVR && hostServices.VrMirrorComposeFromEyeTextures;
-            bool includeFoveated = stereo && hostServices.EnableVrFoveatedViewSet;
-            float foveationOuter = Math.Clamp(
-                hostServices.VrFoveationOuterRadius + hostServices.VrFoveationVisibilityMargin,
-                hostServices.VrFoveationInnerRadius,
-                1.5f);
-            float fullResNearDistance = hostServices.VrFoveationForceFullResForUiAndNearField
-                ? hostServices.VrFoveationFullResNearDistanceMeters
-                : 0.0f;
-
-            int viewCount = stereo ? 2 : 1;
-            if (includeFoveated)
-                viewCount += 2;
-            if (includeMirror)
-                viewCount += 1;
-
-            Span<GPUViewDescriptor> descriptors = stackalloc GPUViewDescriptor[5];
-            Span<GPUViewConstants> constants = stackalloc GPUViewConstants[5];
-
-            int width = Math.Max(1, renderState.WindowViewport?.InternalWidth ?? renderState.WindowViewport?.Width ?? 1);
-            int height = Math.Max(1, renderState.WindowViewport?.InternalHeight ?? renderState.WindowViewport?.Height ?? 1);
-
-            uint passBit = gpuPass.RenderPass >= 0 && gpuPass.RenderPass < 32
-                ? (1u << gpuPass.RenderPass)
+            RenderFrameViewSet viewSet = renderState.FrameViewSet ?? RenderFrameViewSetCapture.Capture(renderState);
+            Span<GPUViewDescriptor> descriptors = stackalloc GPUViewDescriptor[RenderFrameViewSet.MaxViewCount];
+            Span<GPUViewConstants> constants = stackalloc GPUViewConstants[RenderFrameViewSet.MaxViewCount];
+            uint passMaskLo = gpuPass.RenderPass >= 0 && gpuPass.RenderPass < 32
+                ? 1u << gpuPass.RenderPass
                 : uint.MaxValue;
+            uint passMaskHi = gpuPass.RenderPass >= 32 && gpuPass.RenderPass < 64
+                ? 1u << (gpuPass.RenderPass - 32)
+                : 0u;
 
-            uint cursor = 0u;
-            GPUViewFlags primaryEyeFlag = leftCamera.StereoEyeLeft == false
-                ? GPUViewFlags.StereoEyeRight
-                : GPUViewFlags.StereoEyeLeft;
-            descriptors[(int)cursor] = CreateViewDescriptor(
-                cursor,
-                GPUViewSetLayout.InvalidViewId,
-                primaryEyeFlag | GPUViewFlags.FullRes | GPUViewFlags.UsesSharedVisibility,
-                passBit,
-                0u,
-                0,
-                0,
-                width,
-                height,
-                0u,
-                gpuPass.CommandCapacity);
-            constants[(int)cursor] = CreateViewConstants(leftCamera);
-            cursor++;
+            RenderFrameViewSetGpuAdapter.Write(
+                viewSet,
+                passMaskLo,
+                passMaskHi,
+                gpuPass.CommandCapacity,
+                descriptors,
+                constants);
+            ReadOnlySpan<GPUViewDescriptor> activeDescriptors = descriptors[..viewSet.ViewCount];
+            ValidateViewDescriptorLayout(activeDescriptors, gpuPass.CommandCapacity);
+            gpuPass.ConfigureViewSet(activeDescriptors, constants[..viewSet.ViewCount]);
 
-            if (stereo && rightCamera is not null)
-            {
-                descriptors[(int)cursor] = CreateViewDescriptor(
-                    cursor,
-                    GPUViewSetLayout.InvalidViewId,
-                    GPUViewFlags.StereoEyeRight | GPUViewFlags.FullRes | GPUViewFlags.UsesSharedVisibility,
-                    passBit,
-                    1u,
-                    0,
-                    0,
-                    width,
-                    height,
-                    gpuPass.CommandCapacity,
-                    gpuPass.CommandCapacity);
-                constants[(int)cursor] = CreateViewConstants(rightCamera);
-                cursor++;
-            }
-
-            if (includeFoveated)
-            {
-                descriptors[(int)cursor] = CreateViewDescriptor(
-                    cursor,
-                    0u,
-                    GPUViewFlags.StereoEyeLeft | GPUViewFlags.Foveated | GPUViewFlags.UsesSharedVisibility,
-                    passBit,
-                    0u,
-                    0,
-                    0,
-                    width,
-                    height,
-                    gpuPass.CommandCapacity * cursor,
-                    gpuPass.CommandCapacity);
-                descriptors[(int)cursor].FoveationA = new Vector4(
-                    hostServices.VrFoveationCenterUv,
-                    hostServices.VrFoveationInnerRadius,
-                    foveationOuter);
-                descriptors[(int)cursor].FoveationB = new Vector4(
-                    hostServices.VrFoveationShadingRates,
-                    fullResNearDistance);
-                constants[(int)cursor] = CreateViewConstants(leftCamera);
-                cursor++;
-
-                if (rightCamera is not null)
-                {
-                    descriptors[(int)cursor] = CreateViewDescriptor(
-                        cursor,
-                        1u,
-                        GPUViewFlags.StereoEyeRight | GPUViewFlags.Foveated | GPUViewFlags.UsesSharedVisibility,
-                        passBit,
-                        1u,
-                        0,
-                        0,
-                        width,
-                        height,
-                        gpuPass.CommandCapacity * cursor,
-                        gpuPass.CommandCapacity);
-                    descriptors[(int)cursor].FoveationA = new Vector4(
-                        hostServices.VrFoveationCenterUv,
-                        hostServices.VrFoveationInnerRadius,
-                        foveationOuter);
-                    descriptors[(int)cursor].FoveationB = new Vector4(
-                        hostServices.VrFoveationShadingRates,
-                        fullResNearDistance);
-                    constants[(int)cursor] = CreateViewConstants(rightCamera);
-                    cursor++;
-                }
-            }
-
-            if (includeMirror)
-            {
-                descriptors[(int)cursor] = CreateViewDescriptor(
-                    cursor,
-                    0u,
-                    GPUViewFlags.Mirror | GPUViewFlags.UsesSharedVisibility,
-                    passBit,
-                    0u,
-                    0,
-                    0,
-                    width,
-                    height,
-                    gpuPass.CommandCapacity * cursor,
-                    gpuPass.CommandCapacity);
-                constants[(int)cursor] = CreateViewConstants(leftCamera);
-                cursor++;
-            }
-
-            ValidateViewDescriptorLayout(descriptors.Slice(0, (int)cursor), gpuPass.CommandCapacity);
-            gpuPass.ConfigureViewSet(descriptors.Slice(0, (int)cursor), constants.Slice(0, (int)cursor));
+            IRuntimeRenderCamera? rightCamera = renderState.StereoPass ? renderState.StereoRightEyeCamera : null;
             uint requestedSourceView = DetermineIndirectSourceViewId(renderState, leftCamera, rightCamera);
             gpuPass.SetIndirectSourceViewId(requestedSourceView);
-
             if (requestedSourceView != gpuPass.IndirectSourceViewId)
             {
                 throw new InvalidOperationException(
                     $"Indirect source view id {requestedSourceView} was clamped to {gpuPass.IndirectSourceViewId} for active views {gpuPass.ActiveViewCount}.");
             }
-        }
 
+            return viewSet;
+        }
         private static void ValidateViewDescriptorLayout(ReadOnlySpan<GPUViewDescriptor> descriptors, uint commandCapacity)
         {
             uint expectedOffset = 0u;
@@ -1940,63 +1905,6 @@ namespace XREngine.Rendering.Commands
                 return 1u;
 
             return 0u;
-        }
-
-        private static GPUViewDescriptor CreateViewDescriptor(
-            uint viewId,
-            uint parentViewId,
-            GPUViewFlags flags,
-            uint passMaskLo,
-            uint outputLayer,
-            int rectX,
-            int rectY,
-            int rectW,
-            int rectH,
-            uint visibleOffset,
-            uint visibleCapacity)
-        {
-            return new GPUViewDescriptor
-            {
-                ViewId = viewId,
-                ParentViewId = parentViewId,
-                Flags = (uint)flags,
-                RenderPassMaskLo = passMaskLo,
-                RenderPassMaskHi = 0u,
-                OutputLayer = outputLayer,
-                ViewRectX = (uint)Math.Max(0, rectX),
-                ViewRectY = (uint)Math.Max(0, rectY),
-                ViewRectW = (uint)Math.Max(1, rectW),
-                ViewRectH = (uint)Math.Max(1, rectH),
-                VisibleOffset = visibleOffset,
-                VisibleCapacity = Math.Max(1u, visibleCapacity),
-                FoveationA = Vector4.Zero,
-                FoveationB = Vector4.Zero
-            };
-        }
-
-        private static GPUViewConstants CreateViewConstants(IRuntimeRenderCamera camera)
-        {
-            Matrix4x4 view = camera.Transform.InverseRenderMatrix;
-            Matrix4x4 projection = camera.ProjectionMatrix;
-            Matrix4x4 viewProjection = view * projection;
-            Vector3 cameraPos = camera.Transform.RenderTranslation;
-            Vector3 cameraForward = camera.Transform.RenderForward;
-
-            // Use previous-frame VP from the temporal accumulation pass when available,
-            // so the GPU-driven path has correct motion history for motion vectors.
-            Matrix4x4 prevViewProjection = VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporal) && temporal.HistoryReady
-                ? temporal.PrevViewProjectionUnjittered
-                : viewProjection;
-
-            return new GPUViewConstants
-            {
-                View = view,
-                Projection = projection,
-                ViewProjection = viewProjection,
-                PrevViewProjection = prevViewProjection,
-                CameraPositionAndNear = new Vector4(cameraPos, camera.NearZ),
-                CameraForwardAndFar = new Vector4(cameraForward, camera.FarZ)
-            };
         }
 
         public bool TryGetGpuPass(int renderPass, out GPURenderPassCollection gpuPass)

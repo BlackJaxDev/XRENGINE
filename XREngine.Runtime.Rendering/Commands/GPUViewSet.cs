@@ -13,7 +13,9 @@ namespace XREngine.Rendering.Commands
         FullRes = 1u << 2,
         Foveated = 1u << 3,
         Mirror = 1u << 4,
-        UsesSharedVisibility = 1u << 5
+        UsesSharedVisibility = 1u << 5,
+        ParentContainsView = 1u << 6,
+        DepthZeroToOne = 1u << 7
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -93,6 +95,7 @@ namespace XREngine.Rendering.Commands
         public const int CommandViewMaskBuffer = 13;
         public const int PerViewVisibleIndicesBuffer = 14;
         public const int PerViewDrawCountBuffer = 15;
+        public const int CulledCommandViewMaskBuffer = 16;
     }
 
     public static class GPUViewSetLayout

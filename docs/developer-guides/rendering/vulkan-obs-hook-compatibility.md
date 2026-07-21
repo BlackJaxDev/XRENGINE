@@ -1,6 +1,6 @@
 # Vulkan OBS Hook Compatibility
 
-Last updated: 2026-06-18
+Last updated: 2026-07-21
 
 XRENGINE's Vulkan renderer is compatible with OBS Studio's Windows Vulkan game-capture layer, `VK_LAYER_OBS_HOOK`. OBS owns and installs that implicit layer; the engine does not ship or emulate it. The engine-side feature is a startup compatibility contract that keeps the OBS layer visible by default, reports whether the selected Vulkan device can support OBS's shared-texture capture path, and provides explicit controls for disabling or requiring OBS capture support.
 
@@ -12,7 +12,7 @@ OBS captures Vulkan applications through an implicit Vulkan layer. When the laye
 
 XRENGINE supports that model by:
 
-1. Checking whether the Vulkan loader reports `VK_LAYER_OBS_HOOK` before `vkCreateInstance`.
+1. Inspecting enabled Windows Vulkan implicit-layer registry entries and their JSON manifests for `VK_LAYER_OBS_HOOK` before `vkCreateInstance`, without calling the Vulkan loader.
 2. Leaving the implicit layer enabled by default.
 3. Enabling `VK_KHR_external_memory_win32` whenever the selected device exposes it.
 4. Probing the selected device for D3D11 texture KMT import support, matching OBS's shared-texture capture path.
@@ -25,7 +25,7 @@ Use `XRE_VK_OBS_HOOK` to control the engine's OBS hook policy:
 
 | Value | Behavior |
 |---|---|
-| `Auto` | Default. Leaves OBS's implicit layer alone and logs compatibility details if the layer is visible. |
+| `Auto` | Default. Leaves OBS's implicit layer alone and logs compatibility details if an enabled manifest registration is present. |
 | `Disable` | Sets `DISABLE_VULKAN_OBS_CAPTURE=1` before Vulkan instance creation so OBS's Vulkan hook does not attach to the process. |
 | `Require` | Fails Vulkan startup if `VK_LAYER_OBS_HOOK` is unavailable, disabled by environment, or the selected device cannot support OBS shared-texture capture. |
 
@@ -46,7 +46,7 @@ Accepted aliases:
 
 The engine considers OBS capture-ready only when all of these are true:
 
-- `VK_LAYER_OBS_HOOK` is reported by the Vulkan loader.
+- An enabled Windows Vulkan implicit-layer manifest registration declares `VK_LAYER_OBS_HOOK`.
 - OBS capture is not disabled by `DISABLE_VULKAN_OBS_CAPTURE`.
 - Vulkan implicit layers are not disabled by loader environment settings.
 - The selected device reports `VK_KHR_external_memory_win32`.
@@ -62,14 +62,14 @@ Startup logs use the `[Vulkan][OBS]` prefix.
 Expected healthy examples:
 
 ```text
-[Vulkan][OBS] VK_LAYER_OBS_HOOK reported by the Vulkan loader (policy=Auto, disabledByObsEnv=False, disabledByLoaderEnv=False).
+[Vulkan][OBS] VK_LAYER_OBS_HOOK registered by implicit-layer manifest 'C:\\ProgramData\\obs-studio-hook\\obs-vulkan64.json' (policy=Auto, disabledByObsEnv=False, disabledByLoaderEnv=False).
 [Vulkan][OBS] Capture-ready device path confirmed: VK_KHR_external_memory_win32=enabled, D3D11 texture KMT import result=Success, features=ImportableBit.
 ```
 
 Expected unavailable examples:
 
 ```text
-[Vulkan][OBS] VK_LAYER_OBS_HOOK is not reported by the Vulkan loader (policy=Auto).
+[Vulkan][OBS] No enabled Windows Vulkan implicit-layer manifest registers VK_LAYER_OBS_HOOK (policy=Auto).
 [Vulkan][OBS] Capture device path is not ready: VK_KHR_external_memory_win32 is not reported by the selected Vulkan device.
 ```
 
@@ -109,6 +109,7 @@ The strict run should fail early if OBS is not installed or if the device path c
 Primary implementation:
 
 - `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.ObsHookCompatibility.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanImplicitLayerDiscovery.cs`
 - `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Instance.cs`
 - `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs`
 - `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs`

@@ -1010,6 +1010,7 @@ namespace XREngine.Rendering.Commands
         private void EnsureGpuDrivenBatchingBuffers(uint capacity)
         {
             EnsureSortKeyBuffer(capacity);
+            EnsureViewBatchClassificationBuffer(capacity);
             EnsureBatchCountBuffer();
 #if XRE_DEBUG_BATCH_RANGE_READBACK
             EnsureSortScratchBuffer(capacity);

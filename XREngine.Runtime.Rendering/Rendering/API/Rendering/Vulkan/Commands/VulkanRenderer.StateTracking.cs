@@ -1178,6 +1178,20 @@ public unsafe partial class VulkanRenderer
         return XRFrameBuffer.BoundForWriting ?? ActiveBoundDrawFrameBuffer;
     }
 
+    internal uint CurrentDrawViewMask
+    {
+        get
+        {
+            XRFrameBuffer? frameBuffer = GetCurrentDrawFrameBuffer();
+            return frameBuffer is null
+                ? 0u
+                : GenericToAPI<VkFrameBuffer>(frameBuffer)?.MultiviewViewMask ?? 0u;
+        }
+    }
+
+    internal bool HasActiveMultiviewDrawTarget
+        => System.Numerics.BitOperations.PopCount(CurrentDrawViewMask) > 1;
+
     internal XRFrameBuffer? ResolveCurrentFrameOpDrawTarget()
     {
         return GetCurrentDrawFrameBuffer();

@@ -12,5 +12,6 @@ public unsafe partial class VulkanRenderer
         uint OpenXrViewIndex,
         uint OpenXrImageIndex,
         ViewFoveationContext Foveation,
-        Action EmitFrameOps);
+        Action EmitFrameOps,
+        ulong ViewBatchStructuralIdentity = 0UL);
 }

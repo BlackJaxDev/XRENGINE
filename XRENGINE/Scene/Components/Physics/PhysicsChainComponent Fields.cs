@@ -114,15 +114,49 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     private bool _useBatchedDispatcher = true;
     private bool _gpuSyncToBones = false;
     private volatile bool _hasPendingGpuBoneSync;
-    private bool _debugDrawChains = true;
+    private bool _debugDrawChains;
     private PhysicsChainQualityTier _qualityTier = PhysicsChainQualityTier.Strict;
     private PhysicsChainQualityTier _effectiveQualityTier = PhysicsChainQualityTier.Strict;
+    private PhysicsChainAutomaticRelevance _automaticQualityRelevance = PhysicsChainAutomaticRelevance.Relevant;
+    private int _automaticQualityImportance = 50;
+    private PhysicsChainPolicyControl _simulationPolicy = PhysicsChainPolicyControl.InheritTier;
+    private PhysicsChainPolicyControl _collisionPolicy = PhysicsChainPolicyControl.InheritTier;
+    private PhysicsChainOutputControl _palettePolicy = PhysicsChainOutputControl.InheritTier;
+    private PhysicsChainOutputControl _boundsPolicy = PhysicsChainOutputControl.InheritTier;
+    private PhysicsChainOutputControl _transformMirrorPolicy = PhysicsChainOutputControl.InheritTier;
+    private PhysicsChainOffscreenBehavior _offscreenBehavior = PhysicsChainOffscreenBehavior.AutomaticByImportance;
+    private int _offscreenDecayFrameCount = 45;
+    private int _recentInteractionQualityFrameCount = 30;
+    private int _recentInteractionQualityFramesRemaining;
+    private int _offscreenQualityFrames;
+    private bool _runtimeVisible = true;
+    private bool _qualityPhaseInitialized;
+    private float _qualityCadencePhase;
     private bool _enableAutomaticSleep = true;
     private float _sleepVelocityThreshold = 0.0005f;
+    private float _sleepConstraintErrorThreshold = 0.0005f;
+    private float _sleepRootAccelerationThreshold = 0.001f;
+    private float _sleepExternalForceThreshold = 0.0005f;
+    private float _sleepWakeThresholdMultiplier = 2.0f;
+    private float _sleepTeleportDistance = 0.05f;
+    private int _sleepRecentUseFrameCount = 2;
     private int _sleepQuietFrameCount = 30;
     private int _quietSimulationFrames;
+    private int _recentUseFramesRemaining;
     private bool _isRuntimeSleeping;
     private Vector3 _sleepRootPosition;
+    private Vector3 _sleepLastRootPosition;
+    private Vector3 _sleepRootStep;
+    private Vector3 _previousActivityRootMove;
+    private int _sleepColliderSignature;
+    private int _sleepColliderShapeSignature;
+    private int _sleepColliderPoseSignature;
+    private int _activityColliderShapeSignature;
+    private int _activityColliderPoseSignature;
+    private int _sleepConfiguredRootSignature;
+    private PhysicsChainActivitySnapshot _lastActivitySnapshot;
+    private PhysicsChainWakeReason _lastWakeReason;
+    private ulong _wakeCount;
 
     private TransformBase? _rootBone = null;
     private float _rootInertia = 0.0f;
@@ -135,6 +169,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     private Vector3 _smoothedObjectMove;
 
     private float _time = 0;
+    private float _qualityCadenceProgress;
     private float _weight = 1.0f;
     private bool _distantDisabled = false;
     private int _preUpdateCount = 0;
@@ -365,8 +400,100 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         set => SetField(ref _qualityTier, value);
     }
 
+    [Category("Execution")]
+    [DisplayName("Automatic Quality Relevance")]
+    [Description("Selects the ideal cadence and demotion priority when Quality Tier is Automatic. Irrelevant chains may sleep; fixed tiers ignore this value.")]
+    public PhysicsChainAutomaticRelevance AutomaticQualityRelevance
+    {
+        get => _automaticQualityRelevance;
+        set => SetField(ref _automaticQualityRelevance, value);
+    }
+
+    [Category("Execution")]
+    [DisplayName("Automatic Quality Importance")]
+    [Description("Orders equally relevant automatic chains. Higher values are demoted later and promoted earlier.")]
+    public int AutomaticQualityImportance
+    {
+        get => _automaticQualityImportance;
+        set => SetField(ref _automaticQualityImportance, Math.Clamp(value, 0, 100));
+    }
+
+    [Category("Execution")]
+    public PhysicsChainPolicyControl SimulationPolicy
+    {
+        get => _simulationPolicy;
+        set => SetField(ref _simulationPolicy, value);
+    }
+
+    [Category("Execution")]
+    public PhysicsChainPolicyControl CollisionPolicy
+    {
+        get => _collisionPolicy;
+        set => SetField(ref _collisionPolicy, value);
+    }
+
+    [Category("Execution")]
+    public PhysicsChainOutputControl PalettePolicy
+    {
+        get => _palettePolicy;
+        set => SetField(ref _palettePolicy, value);
+    }
+
+    [Category("Execution")]
+    public PhysicsChainOutputControl BoundsPolicy
+    {
+        get => _boundsPolicy;
+        set => SetField(ref _boundsPolicy, value);
+    }
+
+    [Category("Execution")]
+    public PhysicsChainOutputControl TransformMirrorPolicy
+    {
+        get => _transformMirrorPolicy;
+        set => SetField(ref _transformMirrorPolicy, value);
+    }
+
+    [Category("Execution")]
+    public PhysicsChainOffscreenBehavior OffscreenBehavior
+    {
+        get => _offscreenBehavior;
+        set => SetField(ref _offscreenBehavior, value);
+    }
+
+    [Category("Execution")]
+    public int OffscreenDecayFrameCount
+    {
+        get => _offscreenDecayFrameCount;
+        set => SetField(ref _offscreenDecayFrameCount, Math.Max(value, 1));
+    }
+
+    [Category("Execution")]
+    public int RecentInteractionQualityFrameCount
+    {
+        get => _recentInteractionQualityFrameCount;
+        set => SetField(ref _recentInteractionQualityFrameCount, Math.Max(value, 0));
+    }
+
+    [Browsable(false)]
+    public bool RuntimeVisible => _runtimeVisible;
+
+    [Browsable(false)]
+    public int OffscreenQualityFrames => _offscreenQualityFrames;
+
+    [Browsable(false)]
+    public float QualityCadencePhase => _qualityCadencePhase;
+
     [Browsable(false)]
     public PhysicsChainQualityTier EffectiveQualityTier => _effectiveQualityTier;
+
+    [Browsable(false)]
+    public PhysicsChainQualityPolicy EffectiveQualityPolicy
+        => PhysicsChainQualityPolicy.Resolve(_effectiveQualityTier, UpdateRate).WithOverrides(
+            SimulationPolicy,
+            CollisionPolicy,
+            PalettePolicy,
+            BoundsPolicy,
+            TransformMirrorPolicy);
 
     [Category("Execution")]
     public bool EnableAutomaticSleep
@@ -383,6 +510,48 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     }
 
     [Category("Execution")]
+    public float SleepConstraintErrorThreshold
+    {
+        get => _sleepConstraintErrorThreshold;
+        set => SetField(ref _sleepConstraintErrorThreshold, MathF.Max(value, 0.0f));
+    }
+
+    [Category("Execution")]
+    public float SleepRootAccelerationThreshold
+    {
+        get => _sleepRootAccelerationThreshold;
+        set => SetField(ref _sleepRootAccelerationThreshold, MathF.Max(value, 0.0f));
+    }
+
+    [Category("Execution")]
+    public float SleepExternalForceThreshold
+    {
+        get => _sleepExternalForceThreshold;
+        set => SetField(ref _sleepExternalForceThreshold, MathF.Max(value, 0.0f));
+    }
+
+    [Category("Execution")]
+    public float SleepWakeThresholdMultiplier
+    {
+        get => _sleepWakeThresholdMultiplier;
+        set => SetField(ref _sleepWakeThresholdMultiplier, MathF.Max(value, 1.01f));
+    }
+
+    [Category("Execution")]
+    public float SleepTeleportDistance
+    {
+        get => _sleepTeleportDistance;
+        set => SetField(ref _sleepTeleportDistance, MathF.Max(value, 0.0f));
+    }
+
+    [Category("Execution")]
+    public int SleepRecentUseFrameCount
+    {
+        get => _sleepRecentUseFrameCount;
+        set => SetField(ref _sleepRecentUseFrameCount, Math.Max(value, 0));
+    }
+
+    [Category("Execution")]
     public int SleepQuietFrameCount
     {
         get => _sleepQuietFrameCount;
@@ -391,6 +560,15 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
     [Browsable(false)]
     public bool IsRuntimeSleeping => _isRuntimeSleeping || _effectiveQualityTier == PhysicsChainQualityTier.Sleep;
+
+    [Browsable(false)]
+    public PhysicsChainActivitySnapshot LastActivitySnapshot => _lastActivitySnapshot;
+
+    [Browsable(false)]
+    public PhysicsChainWakeReason LastWakeReason => _lastWakeReason;
+
+    [Browsable(false)]
+    public ulong WakeCount => _wakeCount;
 
     /// <summary>
     /// Optional root bone transform for character locomotion.

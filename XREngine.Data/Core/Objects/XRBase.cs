@@ -53,6 +53,11 @@ namespace XREngine.Data.Core
         /// </summary>
         public event XRPropertyChangingEventHandler? PropertyChanging;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool AreSameReference<T>(T field, T value)
+            => typeof(T).IsValueType
+                ? field is null && value is null
+                : ReferenceEquals(field, value);
         /// <summary>
         /// Helper method to set a field.
         /// Verifies if the value is changing and calls PropertyChanging, which checks if PropertyChanged should be called.
@@ -64,7 +69,7 @@ namespace XREngine.Data.Core
         /// <returns></returns>
         protected bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
         {
-            if (ReferenceEquals(field, value))
+            if (AreSameReference(field, value))
                 return false;
 
             if (ArePropertyNotificationsSuppressed)
@@ -99,7 +104,7 @@ namespace XREngine.Data.Core
 
         protected T SetFieldReturn<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
         {
-            if (ReferenceEquals(field, value))
+            if (AreSameReference(field, value))
                 return field;
 
             if (ArePropertyNotificationsSuppressed)
@@ -119,7 +124,7 @@ namespace XREngine.Data.Core
 
         protected T SetFieldReturn<T>(ref T field, T value, Action<T> beforeChanged, Action<T> afterChanged, [CallerMemberName] string? propertyName = null)
         {
-            if (ReferenceEquals(field, value))
+            if (AreSameReference(field, value))
                 return field;
 
             if (ArePropertyNotificationsSuppressed)
@@ -144,7 +149,7 @@ namespace XREngine.Data.Core
 
         protected bool SetField<T>(ref T field, T value, Action<T>? beforeChanged, [CallerMemberName] string? propertyName = null)
         {
-            if (ReferenceEquals(field, value))
+            if (AreSameReference(field, value))
                 return false;
 
             if (ArePropertyNotificationsSuppressed)
@@ -165,7 +170,7 @@ namespace XREngine.Data.Core
 
         protected bool SetField<T>(ref T field, T value, Action<T>? beforeChanged, Action<T>? afterChanged, [CallerMemberName] string? propertyName = null)
         {
-            if (ReferenceEquals(field, value))
+            if (AreSameReference(field, value))
                 return false;
 
             if (ArePropertyNotificationsSuppressed)

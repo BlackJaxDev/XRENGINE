@@ -9,6 +9,8 @@ const uint LOD_TRANSITION_UINTS = 4u;
 const uint LOD_TRANSITION_ACTIVE = 1u;
 const uint MESHLET_TASK_PREVIOUS_LOD_FLAG = 0x80000000u;
 const uint MESHLET_TASK_INDEX_MASK = 0x7FFFFFFFu;
+const uint METADATA_UINTS = 4u;
+const uint DOMAIN_EXACT = 3u;
 
 const uint COMMAND_MESH_ID = 4u;
 const uint COMMAND_MATERIAL_ID = 6u;
@@ -95,11 +97,13 @@ layout(std430, binding = 11) buffer MeshletDispatchIndirectBuffer
 layout(std430, binding = 12) buffer MeshletExpansionOverflowFlagBuffer { uint MeshletExpansionOverflowFlag; };
 layout(std430, binding = 13) readonly buffer VisibleHotCommandsBuffer { uint visibleHotCommands[]; };
 layout(std430, binding = 14) buffer MeshletDispatchCountBuffer { uint MeshletDispatchCount; };
+layout(std430, binding = 15) readonly buffer TransparencyMetadataBuffer { uint transparencyMetadata[]; };
 
 uniform int InputCommandCount;
 uniform int MaxMeshletTaskRecords;
 uniform int UseHotCommands;
 uniform int ExpandPreviousLodTransitions;
+uniform uint RejectExactTransparentMultiview;
 
 bool TryReserveTaskSlot(out uint outIndex)
 {
@@ -211,6 +215,17 @@ void main()
         drawID = floatBitsToUint(visibleCommands[base + COMMAND_DRAW_ID]);
         transformID = floatBitsToUint(visibleCommands[base + COMMAND_TRANSFORM_ID]);
         materialID = floatBitsToUint(visibleCommands[base + COMMAND_MATERIAL_ID]);
+    }
+
+    if (RejectExactTransparentMultiview != 0u)
+    {
+        uint metadataBase = drawID * METADATA_UINTS;
+        if (metadataBase + METADATA_UINTS > uint(transparencyMetadata.length()))
+            return;
+
+        uint domain = (transparencyMetadata[metadataBase] >> 16u) & 0xFFFFu;
+        if (domain == DOMAIN_EXACT)
+            return;
     }
 
     if (drawID < uint(Draws.length()))

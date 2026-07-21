@@ -12,6 +12,7 @@ namespace XREngine.Rendering.Commands
         private readonly XRDataBuffer<GPUViewConstants>?[] _viewConstantsRing = new XRDataBuffer<GPUViewConstants>?[ViewConstantsRingSize];
         private int _viewConstantsRingIndex = -1;
         private XRDataBuffer<GPUViewMask>? _commandViewMaskBuffer;
+        private XRDataBuffer<GPUViewMask>? _culledCommandViewMaskBuffer;
         private XRDataBuffer<uint>? _perViewVisibleIndicesBuffer;
         private XRDataBuffer<uint>? _perViewDrawCountBuffer;
         private GPUViewDescriptor[] _cachedViewDescriptors = Array.Empty<GPUViewDescriptor>();
@@ -27,6 +28,7 @@ namespace XREngine.Rendering.Commands
         public XRDataBuffer? ViewDescriptorBuffer => _viewDescriptorBuffer;
         public XRDataBuffer? ViewConstantsBuffer => _viewConstantsBuffer;
         public XRDataBuffer? CommandViewMaskBuffer => _commandViewMaskBuffer;
+        public XRDataBuffer? CulledCommandViewMaskBuffer => _culledCommandViewMaskBuffer;
         public XRDataBuffer? PerViewVisibleIndicesBuffer => _perViewVisibleIndicesBuffer;
         public XRDataBuffer? PerViewDrawCountBuffer => _perViewDrawCountBuffer;
 
@@ -210,6 +212,7 @@ namespace XREngine.Rendering.Commands
 
             EnsureViewCapacity(GPUViewSetLayout.DefaultMaxViewCount);
             EnsureCommandViewMaskCapacity(safeCommandCapacity);
+            EnsureCulledCommandViewMaskCapacity(safeCommandCapacity);
             EnsurePerViewVisibleIndicesCapacity(safeCommandCapacity, _viewSetCapacity);
 
             if (_activeViewCount == 0u)
@@ -221,6 +224,7 @@ namespace XREngine.Rendering.Commands
             _viewDescriptorBuffer?.BindTo(shader, GPUViewSetBindings.ViewDescriptorBuffer);
             _viewConstantsBuffer?.BindTo(shader, GPUViewSetBindings.ViewConstantsBuffer);
             _commandViewMaskBuffer?.BindTo(shader, GPUViewSetBindings.CommandViewMaskBuffer);
+            _culledCommandViewMaskBuffer?.BindTo(shader, GPUViewSetBindings.CulledCommandViewMaskBuffer);
             _perViewVisibleIndicesBuffer?.BindTo(shader, GPUViewSetBindings.PerViewVisibleIndicesBuffer);
             _perViewDrawCountBuffer?.BindTo(shader, GPUViewSetBindings.PerViewDrawCountBuffer);
         }
@@ -310,6 +314,30 @@ namespace XREngine.Rendering.Commands
             uint oldCapacity = _commandViewMaskBuffer.ElementCount;
             _commandViewMaskBuffer.Resize(commandCapacity);
             FillCommandViewMaskRange(oldCapacity, commandCapacity - oldCapacity, GPUViewMask.AllVisible);
+        }
+
+        private void EnsureCulledCommandViewMaskCapacity(uint commandCapacity)
+        {
+            if (_culledCommandViewMaskBuffer is null)
+            {
+                _culledCommandViewMaskBuffer = CreateStructBuffer<GPUViewMask>(
+                    "CulledCommandViewMaskBuffer",
+                    commandCapacity,
+                    GPUViewSetLayout.ViewMaskSize,
+                    GPUViewSetBindings.CulledCommandViewMaskBuffer);
+                ZeroStructRange<GPUViewMask>(_culledCommandViewMaskBuffer, 0u, commandCapacity);
+                return;
+            }
+
+            if (_culledCommandViewMaskBuffer.ElementCount >= commandCapacity)
+                return;
+
+            uint oldCapacity = _culledCommandViewMaskBuffer.ElementCount;
+            _culledCommandViewMaskBuffer.Resize(commandCapacity);
+            ZeroStructRange<GPUViewMask>(
+                _culledCommandViewMaskBuffer,
+                oldCapacity,
+                commandCapacity - oldCapacity);
         }
 
         private void EnsurePerViewVisibleIndicesCapacity(uint commandCapacity, uint viewCapacity)
@@ -496,6 +524,7 @@ namespace XREngine.Rendering.Commands
                 _viewConstantsRing[i] = null;
             }
             _commandViewMaskBuffer?.Dispose();
+            _culledCommandViewMaskBuffer?.Dispose();
             _perViewVisibleIndicesBuffer?.Dispose();
             _perViewDrawCountBuffer?.Dispose();
 
@@ -503,6 +532,7 @@ namespace XREngine.Rendering.Commands
             _viewConstantsBuffer = null;
             _viewConstantsRingIndex = -1;
             _commandViewMaskBuffer = null;
+            _culledCommandViewMaskBuffer = null;
             _perViewVisibleIndicesBuffer = null;
             _perViewDrawCountBuffer = null;
 

@@ -14,7 +14,14 @@ public readonly record struct RenderFrameViewDescriptor(
     Matrix4x4 ProjectionMatrix,
     Matrix4x4 PreviousViewProjectionMatrix,
     ViewFoveationContext Foveation,
-    string? DebugName = null)
+    string? DebugName = null,
+    ulong HistoryKey = 0,
+    long PredictedDisplayTime = 0,
+    Vector4 CameraPositionAndNear = default,
+    Vector4 CameraForwardAndFar = default,
+    bool ParentContainsView = false,
+    bool DepthZeroToOne = true,
+    RenderFrameViewTargetDescriptor Target = default)
 {
     public const uint InvalidViewId = uint.MaxValue;
 
@@ -27,6 +34,7 @@ public readonly record struct RenderFrameViewDescriptor(
     public bool IsRightEyeFamily => Kind is EVrOutputViewKind.RightEye or EVrOutputViewKind.RightWide or EVrOutputViewKind.RightInset;
     public bool IsXrSubmittedView => IsStereoEye || IsQuadView;
     public Matrix4x4 ViewProjectionMatrix => ViewMatrix * ProjectionMatrix;
+    public ulong EffectiveHistoryKey => HistoryKey != 0 ? HistoryKey : ViewId + 1UL;
 
     public RenderFrameViewDescriptor WithVisibilityGroup(int visibilityGroupIndex)
         => this with { VisibilityGroupIndex = visibilityGroupIndex };

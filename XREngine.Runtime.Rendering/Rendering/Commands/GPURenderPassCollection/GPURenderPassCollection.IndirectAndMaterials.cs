@@ -74,12 +74,15 @@ namespace XREngine.Rendering.Commands
             using var renderTiming = BeginTiming("GPURenderPassCollection.Render");
             CapturePassPolicySnapshot();
             GpuProgramsPendingThisFrame = false;
+            _viewBatchClassificationFrameId = 0u;
+            _viewBatchClassificationPublished = false;
             
             Log(LogCategory.Lifecycle, LogLevel.Info, "Render begin (pass={0})", RenderPass);
             Dbg("Render begin", "Lifecycle");
 
             if (!TryInitializeRender(scene, out XRCamera? camera) || camera is null)
             {
+                ClearExactTransparentMultiviewRejection();
                 ClearPassPolicySnapshot();
                 return;
             }
@@ -87,6 +90,7 @@ namespace XREngine.Rendering.Commands
             if (!TryPrepareGpuPrograms())
             {
                 GpuProgramsPendingThisFrame = true;
+                ClearExactTransparentMultiviewRejection();
                 ClearPassPolicySnapshot();
                 return;
             }
@@ -132,6 +136,16 @@ namespace XREngine.Rendering.Commands
             SelectVisibleCommandLods(scene, camera);
             ExpandVisibleMeshlets(scene);
             ClassifyTransparencyDomains(scene);
+
+            if (RequiresExactTransparentCandidateRejection)
+            {
+                ReportExactTransparentMultiviewRejection();
+            }
+            else
+            {
+                ClearExactTransparentMultiviewRejection();
+            }
+
 
             // Phase 2: do not early-out based on CPU-visible counters.
             // The default submission path uses GPU-written count buffers; a 0 count naturally results in no draws.
@@ -708,6 +722,10 @@ namespace XREngine.Rendering.Commands
             if (_lodSelectComputeShader is null ||
                 _culledSceneToRenderBuffer is null ||
                 _culledCountBuffer is null ||
+                (_activeViewCount > 1u &&
+                    (_viewDescriptorBuffer is null ||
+                     _viewConstantsBuffer is null ||
+                     _culledCommandViewMaskBuffer is null)) ||
                 !scene.HasLogicalMeshEntries)
             {
                 return;
@@ -725,12 +743,21 @@ namespace XREngine.Rendering.Commands
             _lodSelectComputeShader.Uniform("ViewportSize", ResolveLodViewportSize());
             _lodSelectComputeShader.Uniform("InputCommandCount", (int)dispatchCommands);
             _lodSelectComputeShader.Uniform("TransitionFrameStep", 1.0f / Math.Max(LodTransitionFrameCount, 1u));
+            uint activeViewCount = _activeViewCount == 0u ? 1u : _activeViewCount;
+            _lodSelectComputeShader.Uniform("ActiveViewCount", activeViewCount);
+            _lodSelectComputeShader.Uniform(
+                "MultiviewLodPolicy",
+                (uint)EffectiveMultiviewLodPolicy);
+            _lodSelectComputeShader.Uniform(
+                "ExactViewMasksValid",
+                HasCurrentFrameExactCommandViewMasks ? 1u : 0u);
 
             _culledSceneToRenderBuffer.BindTo(_lodSelectComputeShader, 0);
             _culledCountBuffer.BindTo(_lodSelectComputeShader, 1);
             scene.LODTableBuffer.BindTo(_lodSelectComputeShader, 2);
             scene.LODRequestBuffer.BindTo(_lodSelectComputeShader, 3);
             scene.LodTransitionBuffer.BindTo(_lodSelectComputeShader, 4);
+            BindViewSetBuffers(_lodSelectComputeShader);
 
             uint dispatchGroups = Math.Max(1u, XRRenderProgram.ComputeDispatch.ForCommands(dispatchCommands).Item1);
             const EMemoryBarrierMask postLodBarrier = EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command;
@@ -811,6 +838,9 @@ namespace XREngine.Rendering.Commands
             _expandMeshletsComputeShader.Uniform("MaxMeshletTaskRecords", (int)_visibleMeshletTaskBuffer.ElementCount);
             _expandMeshletsComputeShader.Uniform("UseHotCommands", inputs.UseHotCommandLayout ? 1 : 0);
             _expandMeshletsComputeShader.Uniform("ExpandPreviousLodTransitions", 1);
+            _expandMeshletsComputeShader.Uniform(
+                "RejectExactTransparentMultiview",
+                RequiresExactTransparentCandidateRejection ? 1u : 0u);
 
             BindStorageBuffer(_expandMeshletsComputeShader, inputs.VisibleCommandBuffer, (uint)GPUMeshletBindings.ExpandVisibleCommands);
             BindStorageBuffer(_expandMeshletsComputeShader, inputs.CulledCountBuffer, (uint)GPUMeshletBindings.ExpandCulledCount);
@@ -826,6 +856,9 @@ namespace XREngine.Rendering.Commands
             BindStorageBuffer(_expandMeshletsComputeShader, _meshletDispatchIndirectBuffer, (uint)GPUMeshletBindings.ExpandDispatchIndirect);
             BindStorageBuffer(_expandMeshletsComputeShader, _meshletExpansionOverflowFlagBuffer, (uint)GPUMeshletBindings.ExpandOverflow);
             BindStorageBuffer(_expandMeshletsComputeShader, _meshletDispatchCountBuffer, (uint)GPUMeshletBindings.ExpandDispatchCount);
+            scene.AllLoadedTransparencyMetadataBuffer.BindTo(
+                _expandMeshletsComputeShader,
+                GPUMeshletBindings.ExpandTransparencyMetadata);
 
             if (inputs.UseHotCommandLayout && inputs.VisibleHotCommandBuffer is not null)
                 BindStorageBuffer(_expandMeshletsComputeShader, inputs.VisibleHotCommandBuffer, (uint)GPUMeshletBindings.ExpandVisibleHotCommands);
@@ -865,6 +898,15 @@ namespace XREngine.Rendering.Commands
             _indirectRenderTaskShader.Uniform("ActiveViewCount", (int)(_activeViewCount == 0u ? 1u : _activeViewCount));
             _indirectRenderTaskShader.Uniform("SourceViewId", (int)_indirectSourceViewId);
             _indirectRenderTaskShader.Uniform("UseHotCommands", _culledCommandsUseHotLayout ? 1 : 0);
+            _indirectRenderTaskShader.Uniform(
+                "ViewBatchSubmissionPolicy",
+                (uint)EffectiveViewBatchSubmissionPolicy);
+            _indirectRenderTaskShader.Uniform(
+                "UseViewBatchClassification",
+                HasCurrentFrameViewBatchClassification ? 1u : 0u);
+            _indirectRenderTaskShader.Uniform(
+                "RejectExactTransparentMultiview",
+                RequiresExactTransparentCandidateRejection ? 1u : 0u);
         }
 
         private void BindIndirectShaderBuffers(GPUScene scene)
@@ -876,6 +918,12 @@ namespace XREngine.Rendering.Commands
             _drawCountBuffer!.BindTo(_indirectRenderTaskShader!, 4);
             _indirectOverflowFlagBuffer!.BindTo(_indirectRenderTaskShader!, 5);
             scene.LodTransitionBuffer.BindTo(_indirectRenderTaskShader!, 10);
+            _viewBatchClassificationBuffer?.BindTo(
+                _indirectRenderTaskShader!,
+                GPUBatchingBindings.IndirectViewBatchClassification);
+            scene.AllLoadedTransparencyMetadataBuffer.BindTo(
+                _indirectRenderTaskShader!,
+                GPUBatchingBindings.IndirectTransparencyMetadata);
 
             _truncationFlagBuffer!.SetDataRawAtIndex(0, 0u);
             _truncationFlagBuffer.PushSubData();
@@ -937,9 +985,9 @@ namespace XREngine.Rendering.Commands
             }
 
             UpdateVisibleCountersFromBuffer();
+            DispatchBuildKeys(scene);
             if (EnableZeroReadbackMaterialScatter)
             {
-                DispatchBuildKeys();
                 bool materialScatterDispatched = DispatchMaterialScatter(scene);
                 _zeroReadbackMaterialScatterPreparedThisFrame = materialScatterDispatched &&
                     _materialTierIndirectDrawBuffer is not null &&
@@ -958,7 +1006,6 @@ namespace XREngine.Rendering.Commands
             }
 
 #if XRE_DEBUG_BATCH_RANGE_READBACK
-            DispatchBuildKeys();
             PopulateMaterialAggregationFlags(scene);
             DispatchBuildGpuBatches(scene);
             UpdateVisibleCountersFromBuffer();
@@ -1015,6 +1062,9 @@ namespace XREngine.Rendering.Commands
                 (uint)Math.Max(scene.GetAtlasVertexCount(EAtlasTier.Dynamic), 0),
                 (uint)Math.Max(scene.GetAtlasVertexCount(EAtlasTier.Streaming), 0)));
             _materialScatterComputeShader.Uniform("StatsEnabled", _statsBuffer is null ? 0u : 1u);
+            _materialScatterComputeShader.Uniform(
+                "RejectExactTransparentMultiview",
+                RequiresExactTransparentCandidateRejection ? 1u : 0u);
 
             scene.DrawMetadataBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterInputCommands);
             scene.MeshDataBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterMeshData);
@@ -1026,6 +1076,9 @@ namespace XREngine.Rendering.Commands
             _indirectOverflowFlagBuffer?.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterOverflow);
             scene.LodTransitionBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterLodTransitions);
             _statsBuffer?.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterStats);
+            scene.AllLoadedTransparencyMetadataBuffer.BindTo(
+                _materialScatterComputeShader,
+                GPUTransparencyBindings.MaterialScatterTransparencyMetadata);
 
             uint dispatchCommands = IsCpuReadbackCountDisabledForPass()
                 ? Math.Min(Math.Max(VisibleCommandCount, 1u), _keyIndexBufferA.ElementCount)
@@ -1315,12 +1368,18 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private void DispatchBuildKeys()
+        private void DispatchBuildKeys(GPUScene scene)
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.DispatchBuildKeys");
 
-            if (_buildKeysComputeShader is null || _keyIndexBufferA is null || _culledCountBuffer is null)
+            if (_buildKeysComputeShader is null ||
+                _keyIndexBufferA is null ||
+                _culledCountBuffer is null ||
+                _viewBatchClassificationBuffer is null ||
+                _culledCommandViewMaskBuffer is null)
+            {
                 return;
+            }
 
             uint dispatchCommands = IsCpuReadbackCountDisabledForPass()
                 ? Math.Min(Math.Max(VisibleCommandCount, 1u), _keyIndexBufferA.ElementCount)
@@ -1328,6 +1387,18 @@ namespace XREngine.Rendering.Commands
 
             _buildKeysComputeShader.Uniform("MaxSortKeys", (int)_keyIndexBufferA.ElementCount);
             _buildKeysComputeShader.Uniform("StateBitMask", 0x0FFFu);
+            _buildKeysComputeShader.Uniform(
+                "ViewBatchSubmissionPolicy",
+                (uint)EffectiveViewBatchSubmissionPolicy);
+            _buildKeysComputeShader.Uniform(
+                "ActiveViewCount",
+                _activeViewCount == 0u ? 1u : _activeViewCount);
+            _buildKeysComputeShader.Uniform(
+                "ExactViewMasksValid",
+                HasCurrentFrameExactCommandViewMasks ? 1u : 0u);
+            _buildKeysComputeShader.Uniform(
+                "MultiviewLodPolicy",
+                (uint)EffectiveMultiviewLodPolicy);
 
             var sortDomain = GpuSortPolicy.ResolveSortDomain(RenderPass, RuntimeEngine.Rendering.Settings.GpuSortDomainPolicy);
             var sortDirection = GpuSortPolicy.ResolveSortDirection(sortDomain);
@@ -1337,9 +1408,20 @@ namespace XREngine.Rendering.Commands
             CulledSceneToRenderBuffer.BindTo(_buildKeysComputeShader, GPUBatchingBindings.BuildKeysInputCommands);
             _culledCountBuffer.BindTo(_buildKeysComputeShader, GPUBatchingBindings.BuildKeysCulledCount);
             _keyIndexBufferA.BindTo(_buildKeysComputeShader, GPUBatchingBindings.BuildKeysSortKeys);
+            _viewBatchClassificationBuffer.BindTo(
+                _buildKeysComputeShader,
+                GPUBatchingBindings.BuildKeysClassification);
+            scene.AllLoadedTransparencyMetadataBuffer.BindTo(
+                _buildKeysComputeShader,
+                GPUBatchingBindings.BuildKeysTransparencyMetadata);
+            _culledCommandViewMaskBuffer.BindTo(
+                _buildKeysComputeShader,
+                GPUBatchingBindings.BuildKeysExactViewMasks);
 
             uint groups = Math.Max(1, XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u)).Item1);
             _buildKeysComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
+            _viewBatchClassificationFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            _viewBatchClassificationPublished = true;
         }
 
 #if XRE_DEBUG_BATCH_RANGE_READBACK
@@ -2493,6 +2575,7 @@ namespace XREngine.Rendering.Commands
             _overflowDebugBuffer?.Dispose();
             _sortedCommandBuffer?.Dispose();
             _keyIndexBufferA?.Dispose();
+            _viewBatchClassificationBuffer?.Dispose();
             _gpuBatchRangeBuffer?.Dispose();
             _gpuBatchCountBuffer?.Dispose();
             _materialSlotLookupBuffer?.Dispose();

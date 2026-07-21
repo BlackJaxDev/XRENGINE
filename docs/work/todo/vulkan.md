@@ -46,7 +46,7 @@ Useful diagnostics:
 | `XRE_VK_TRACE_PIPECREATE=1` | Logs pipeline creation details. |
 | `XRE_VK_PIPELINE_PREWARM_CAPTURE=1` | Writes observed pipeline permutations to `%LOCALAPPDATA%\XREngine\Vulkan\PipelinePrewarm\prewarm_*.json` on shutdown. |
 | `XRE_VK_RENDER_TARGET_MODE=Auto|DynamicRendering|LegacyRenderPass` | Selects dynamic rendering or retained legacy `VkRenderPass`/`VkFramebuffer` target recording. |
-| `XRE_VK_OBS_HOOK=Auto|Disable|Require` | Controls OBS Vulkan hook compatibility diagnostics. `Disable` sets `DISABLE_VULKAN_OBS_CAPTURE=1`; `Require` fails startup if `VK_LAYER_OBS_HOOK` or its shared-texture import path is unavailable. |
+| `XRE_VK_OBS_HOOK=Auto|Disable|Require` | Controls OBS Vulkan hook compatibility diagnostics. Startup discovers the enabled Windows implicit-layer manifest without calling the Vulkan loader. `Disable` sets `DISABLE_VULKAN_OBS_CAPTURE=1`; `Require` fails startup if `VK_LAYER_OBS_HOOK` or its shared-texture import path is unavailable. |
 
 Render target mode smoke commands:
 

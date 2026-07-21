@@ -34,4 +34,14 @@ public interface IRuntimeRenderCommandExecutionState
     /// Gets whether render command execution is currently producing a stereo pass.
     /// </summary>
     bool StereoPass { get; }
+
+    /// <summary>
+    /// Gets the immutable logical views captured before visibility generation for this render invocation.
+    /// </summary>
+    RenderFrameViewSet? FrameViewSet => null;
+
+    /// <summary>
+    /// Gets the frame-owned immutable publication of scene buffers and views.
+    /// </summary>
+    RenderWorldSnapshot? WorldSnapshot => null;
 }

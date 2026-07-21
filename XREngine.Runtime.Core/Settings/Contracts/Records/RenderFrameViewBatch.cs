@@ -6,7 +6,9 @@ public readonly record struct RenderFrameViewBatch(
     ERenderFrameViewBatchKind Kind,
     ulong ViewMask,
     int OutputLayerBase,
-    string? DebugName)
+    string? DebugName,
+    ulong StructuralIdentity = 0UL,
+    ViewBatchContentPolicy ContentPolicy = default)
 {
     public int ViewCount => BitOperations.PopCount(ViewMask);
     public bool IsLayered => Kind is ERenderFrameViewBatchKind.LayeredStereoPair or ERenderFrameViewBatchKind.LayeredViewSet;

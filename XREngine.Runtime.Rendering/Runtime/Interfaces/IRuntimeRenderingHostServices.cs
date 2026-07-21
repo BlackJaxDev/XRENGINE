@@ -1388,6 +1388,7 @@ public interface IRuntimeRenderingHostServices
     void RecordRenderVulkanQueueSubmit();
     void RecordRenderVulkanPresentResult(int result, bool accepted);
     void RecordRenderVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount);
+    void RecordRenderVulkanSwapchainRetirement(int queued, int drained, int pending, int deferred);
     void RecordRenderVulkanRetiredResourceDrain(
         int descriptorPools,
         int descriptorSets,
@@ -1478,8 +1479,11 @@ public interface IRuntimeRenderingHostServices
             CurrentRenderFrameId,
             GetVrOutputTargetRateHz(viewKind));
 
+    /// <summary>Registers an output request in the persistent frame-output DAG.</summary>
+    void PlanRenderOutput(in RenderOutputRequest request, bool isDue) { }
+
     /// <summary>
-    /// Records a per-output frame manifest contribution.
+    /// Records a per-output frame manifest contribution and updates DAG completion state.
     /// </summary>
     void RecordRenderFrameOutput(in FrameOutputTelemetry telemetry) { }
 

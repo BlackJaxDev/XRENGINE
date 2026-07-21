@@ -91,6 +91,9 @@ internal partial class Program
 
         if (TryRunProjectCodeBuildCommand(args))
             return;
+        if (XREngine.Editor.Benchmarks.PhysicsChain.PhysicsChainCpuBenchmarkCommand.TryRun(args))
+            return;
+
 
         if (TryRunProjectBuildCommand(args))
             return;

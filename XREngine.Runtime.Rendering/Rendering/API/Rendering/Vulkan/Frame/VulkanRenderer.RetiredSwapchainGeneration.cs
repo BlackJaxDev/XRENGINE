@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Silk.NET.Vulkan;
+using XREngine.Rendering.DLSS;
 using Image = Silk.NET.Vulkan.Image;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
 

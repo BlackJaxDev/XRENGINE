@@ -29,7 +29,8 @@ public static partial class RenderFrameViewBatchPlanner
                 ERenderFrameViewBatchKind.LayeredViewSet,
                 quadMask,
                 OutputLayerBase: 0,
-                "quad-view layered view set"));
+                "quad-view layered view set",
+                GetStructuralIdentity(viewSet, quadMask)));
             plannedMask |= quadMask;
         }
 
@@ -61,7 +62,13 @@ public static partial class RenderFrameViewBatchPlanner
                 ref plannedMask);
         }
 
-        AppendUnplannedSequentialViews(viewSet, ref batches, plannedMask);
+        ulong requiredMask = (1UL << viewSet.ViewCount) - 1UL;
+        if (plannedMask != requiredMask)
+        {
+            throw new InvalidOperationException(
+                $"Strict SinglePassStereo could not plan layered coverage for every active view. plannedMask=0x{plannedMask:X} requiredMask=0x{requiredMask:X}. Sequential fallback is forbidden.");
+        }
+
         return batches.ToPlan();
     }
 
@@ -77,7 +84,10 @@ public static partial class RenderFrameViewBatchPlanner
                 kind,
                 1UL << i,
                 (int)view.OutputLayer,
-                view.DebugName));
+                kind == ERenderFrameViewBatchKind.ParallelCommandBufferRecording
+                    ? "parallel command-buffer recording selected"
+                    : "sequential rendering selected explicitly",
+                GetStructuralIdentity(viewSet, 1UL << i)));
         }
 
         return batches.ToPlan();
@@ -99,7 +109,7 @@ public static partial class RenderFrameViewBatchPlanner
 
         RenderFrameViewDescriptor leftView = viewSet.GetView(left);
         RenderFrameViewDescriptor rightView = viewSet.GetView(right);
-        if (!supportsMixedLayerExtents && !SameExtent(leftView, rightView))
+        if (!AreLayeredTargetsCompatible(leftView, rightView, supportsMixedLayerExtents))
             return;
 
         ulong mask = (1UL << left) | (1UL << right);
@@ -107,7 +117,8 @@ public static partial class RenderFrameViewBatchPlanner
             ERenderFrameViewBatchKind.LayeredStereoPair,
             mask,
             Math.Min((int)leftView.OutputLayer, (int)rightView.OutputLayer),
-            debugName));
+            debugName,
+            GetStructuralIdentity(viewSet, mask)));
         plannedMask |= mask;
     }
 
@@ -125,10 +136,9 @@ public static partial class RenderFrameViewBatchPlanner
             return false;
 
         RenderFrameViewDescriptor first = viewSet.GetView(leftWide);
-        if (!supportsMixedLayerExtents &&
-            (!SameExtent(first, viewSet.GetView(rightWide)) ||
-             !SameExtent(first, viewSet.GetView(leftInset)) ||
-             !SameExtent(first, viewSet.GetView(rightInset))))
+        if (!AreLayeredTargetsCompatible(first, viewSet.GetView(rightWide), supportsMixedLayerExtents) ||
+            !AreLayeredTargetsCompatible(first, viewSet.GetView(leftInset), supportsMixedLayerExtents) ||
+            !AreLayeredTargetsCompatible(first, viewSet.GetView(rightInset), supportsMixedLayerExtents))
             return false;
 
         mask =
@@ -139,24 +149,73 @@ public static partial class RenderFrameViewBatchPlanner
         return true;
     }
 
-    private static void AppendUnplannedSequentialViews(
-        in RenderFrameViewSet viewSet,
-        ref RenderFrameViewBatchPlanBuilder batches,
-        ulong plannedMask)
+    private static bool AreLayeredTargetsCompatible(
+        in RenderFrameViewDescriptor first,
+        in RenderFrameViewDescriptor second,
+        bool supportsMixedLayerExtents)
     {
+        if (!supportsMixedLayerExtents && !SameExtent(first, second))
+            return false;
+
+        RenderFrameViewTargetDescriptor firstTarget = first.Target;
+        RenderFrameViewTargetDescriptor secondTarget = second.Target;
+        if (!firstTarget.IsSpecified && !secondTarget.IsSpecified)
+            return true;
+        if (!firstTarget.IsSpecified || !secondTarget.IsSpecified)
+            return false;
+
+        return firstTarget.Backend == secondTarget.Backend &&
+               firstTarget.FormatIdentity == secondTarget.FormatIdentity &&
+               firstTarget.SampleCount == secondTarget.SampleCount &&
+               firstTarget.SupportsColorAttachmentLayout &&
+               secondTarget.SupportsColorAttachmentLayout &&
+               firstTarget.SupportsTransferDestinationLayout &&
+               secondTarget.SupportsTransferDestinationLayout;
+    }
+
+    public static ulong GetStructuralIdentity(in RenderFrameViewSet viewSet, ulong viewMask)
+    {
+        ulong validMask = (1UL << viewSet.ViewCount) - 1UL;
+        if (viewMask == 0UL || (viewMask & ~validMask) != 0UL)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(viewMask),
+                $"View mask 0x{viewMask:X} must select one or more active views from 0x{validMask:X}.");
+        }
+        const ulong offsetBasis = 14695981039346656037UL;
+        const ulong prime = 1099511628211UL;
+        ulong hash = offsetBasis;
+        Add(ref hash, viewMask, prime);
+
         for (int i = 0; i < viewSet.ViewCount; i++)
         {
-            ulong mask = 1UL << i;
-            if ((plannedMask & mask) != 0UL)
+            if ((viewMask & (1UL << i)) == 0UL)
                 continue;
 
             RenderFrameViewDescriptor view = viewSet.GetView(i);
-            batches.Append(new(
-                ERenderFrameViewBatchKind.SequentialView,
-                mask,
-                (int)view.OutputLayer,
-                view.DebugName));
+            RenderFrameViewTargetDescriptor target = view.Target;
+            Add(ref hash, (ulong)view.Kind, prime);
+            Add(ref hash, view.OutputLayer, prime);
+            Add(ref hash, (ulong)(uint)view.ViewRect.Width, prime);
+            Add(ref hash, (ulong)(uint)view.ViewRect.Height, prime);
+            Add(ref hash, (ulong)target.Backend, prime);
+            Add(ref hash, target.OutputIdentity, prime);
+            Add(ref hash, target.SwapchainIdentity, prime);
+            Add(ref hash, target.AttachmentSignature, prime);
+            Add(ref hash, target.FormatIdentity, prime);
+            Add(ref hash, target.SampleCount, prime);
+            Add(ref hash, target.LayerCount, prime);
+            Add(ref hash, target.ResourceGeneration, prime);
+            Add(ref hash, target.TemporalGeneration, prime);
         }
+
+        return hash == 0UL ? 1UL : hash;
+    }
+
+    private static void Add(ref ulong hash, ulong value, ulong prime)
+    {
+        hash ^= value;
+        hash *= prime;
     }
 
     private static bool SameExtent(

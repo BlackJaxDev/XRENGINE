@@ -1,0 +1,97 @@
+#version 450
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+const uint KindParticle = 0u;
+const uint KindBone = 1u;
+const uint KindSocket = 2u;
+const uint KindFullTransform = 5u;
+
+struct ParticleState
+{
+    vec3 Position;
+    float _pad0;
+    vec3 PrevPosition;
+    float _pad1;
+    int IsColliding;
+    float _pad2a;
+    float _pad2b;
+    float _pad2c;
+    vec3 PreviousPhysicsPosition;
+    float _pad3;
+};
+
+struct GatherItem
+{
+    uint Kind;
+    uint SourceIndex;
+    uint DestinationWordOffset;
+    uint WordCount;
+};
+
+layout(std430, binding = 0) readonly buffer ParticleStateBuffer
+{
+    ParticleState Particles[];
+};
+
+layout(std430, binding = 1) readonly buffer TransformBuffer
+{
+    mat4 Transforms[];
+};
+
+layout(std430, binding = 2) readonly buffer GatherItemBuffer
+{
+    GatherItem Items[];
+};
+
+layout(std430, binding = 3) writeonly buffer PackedOutputBuffer
+{
+    uint PackedWords[];
+};
+
+uniform uint ItemCount;
+uniform uint ParticleCapacity;
+uniform uint TransformCapacity;
+uniform uint OutputWordCapacity;
+
+void writeFloat(uint destination, float value)
+{
+    if (destination < OutputWordCapacity)
+        PackedWords[destination] = floatBitsToUint(value);
+}
+
+void writeVector3(uint destination, vec3 value)
+{
+    writeFloat(destination, value.x);
+    writeFloat(destination + 1u, value.y);
+    writeFloat(destination + 2u, value.z);
+}
+
+void main()
+{
+    uint itemIndex = gl_GlobalInvocationID.x;
+    if (itemIndex >= ItemCount)
+        return;
+
+    GatherItem item = Items[itemIndex];
+    if (item.Kind == KindParticle)
+    {
+        if (item.SourceIndex >= ParticleCapacity || item.WordCount != 6u)
+            return;
+
+        ParticleState particle = Particles[item.SourceIndex];
+        writeVector3(item.DestinationWordOffset, particle.Position);
+        writeVector3(item.DestinationWordOffset + 3u, particle.PrevPosition);
+        return;
+    }
+
+    if (item.Kind == KindBone || item.Kind == KindSocket || item.Kind == KindFullTransform)
+    {
+        if (item.SourceIndex >= TransformCapacity || item.WordCount != 12u)
+            return;
+
+        mat4 transform = Transforms[item.SourceIndex];
+        for (uint word = 0u; word < 12u; ++word)
+            writeFloat(item.DestinationWordOffset + word, transform[word / 4u][word % 4u]);
+    }
+}

@@ -57,6 +57,7 @@ namespace XREngine.Rendering.Commands
         public const int ExpandOverflow = 12;
         public const int ExpandVisibleHotCommands = 13;
         public const int ExpandDispatchCount = 14;
+        public const int ExpandTransparencyMetadata = 15;
     }
 
     public static class GPUMeshletLayout

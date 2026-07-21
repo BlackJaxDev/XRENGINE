@@ -74,7 +74,7 @@ public readonly record struct RenderFrameViewSet
         for (int i = 0; i < views.Length; i++)
         {
             RenderFrameViewDescriptor view = views[i];
-            ValidateView(i, view, views.Length, visibilityGroupCount);
+            ValidateView(i, view, views, visibilityGroupCount);
             switch (i)
             {
                 case 0: view0 = view; break;
@@ -107,9 +107,10 @@ public readonly record struct RenderFrameViewSet
     private static void ValidateView(
         int index,
         in RenderFrameViewDescriptor view,
-        int viewCount,
+        ReadOnlySpan<RenderFrameViewDescriptor> views,
         int visibilityGroupCount)
     {
+        int viewCount = views.Length;
         if (view.ViewId != (uint)index)
             throw new ArgumentException("Frame view IDs must be dense and match their view-set slot.", nameof(view));
         if (!view.ViewRect.IsValid)
@@ -118,6 +119,20 @@ public readonly record struct RenderFrameViewSet
             throw new ArgumentOutOfRangeException(nameof(view.VisibilityGroupIndex));
         if (view.HasParent && view.ParentViewId >= (uint)viewCount)
             throw new ArgumentOutOfRangeException(nameof(view.ParentViewId));
+        if (view.HasParent && view.ParentViewId == view.ViewId)
+            throw new ArgumentException("A frame view cannot parent itself.", nameof(view));
+        if (view.ParentContainsView && !view.HasParent)
+            throw new ArgumentException("A containment proof requires an explicit parent view.", nameof(view));
+        if (view.ParentContainsView && !view.IsInsetView)
+            throw new ArgumentException("Only a real inset view may declare parent containment.", nameof(view));
+        if (view.ParentContainsView && views[(int)view.ParentViewId].DepthZeroToOne != view.DepthZeroToOne)
+            throw new ArgumentException("A contained child and its parent must use the same depth convention.", nameof(view));
+
+        for (int priorIndex = 0; priorIndex < index; priorIndex++)
+        {
+            if (views[priorIndex].EffectiveHistoryKey == view.EffectiveHistoryKey)
+                throw new ArgumentException("Frame view history keys must be unique and stable.", nameof(view));
+        }
     }
 
     public RenderFrameViewDescriptor GetView(int index)
@@ -166,6 +181,20 @@ public readonly record struct RenderFrameViewSet
         for (int i = 0; i < ViewCount; i++)
         {
             if (GetView(i).Kind == kind)
+                return i;
+        }
+
+        return -1;
+    }
+
+    public int FindViewByHistoryKey(ulong historyKey)
+    {
+        if (historyKey == 0)
+            return -1;
+
+        for (int i = 0; i < ViewCount; i++)
+        {
+            if (GetView(i).EffectiveHistoryKey == historyKey)
                 return i;
         }
 

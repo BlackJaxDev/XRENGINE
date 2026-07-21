@@ -230,7 +230,7 @@ DeviceCreateInfo
 
 Feature guide: [Vulkan OBS Hook Compatibility](../../developer-guides/rendering/vulkan-obs-hook-compatibility.md).
 
-The Windows OBS Vulkan game-capture path is provided by OBS as the implicit `VK_LAYER_OBS_HOOK` layer. XRENGINE does not ship that layer; instead, startup checks whether the loader reports it and whether the selected device can support the layer's shared-texture path:
+The Windows OBS Vulkan game-capture path is provided by OBS as the implicit `VK_LAYER_OBS_HOOK` layer. XRENGINE does not ship that layer; instead, startup inspects enabled Windows implicit-layer registry entries and manifests without calling the Vulkan loader, then checks whether the selected device can support the layer's shared-texture path:
 
 - the engine leaves the implicit OBS layer enabled by default (`XRE_VK_OBS_HOOK=Auto`)
 - `XRE_VK_OBS_HOOK=Disable` sets `DISABLE_VULKAN_OBS_CAPTURE=1` before `vkCreateInstance`, useful when debugging validation or RenderDoc captures affected by OBS interception

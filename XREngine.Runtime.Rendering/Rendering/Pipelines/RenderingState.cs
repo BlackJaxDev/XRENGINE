@@ -44,6 +44,14 @@ public sealed partial class XRRenderPipelineInstance
         /// </summary>
         public bool StereoPass { get; private set; } = false;
         /// <summary>
+        /// Immutable logical views captured when this render invocation begins.
+        /// </summary>
+        public RenderFrameViewSet? FrameViewSet { get; private set; }
+        /// <summary>
+        /// Frame-owned publication of stable render-side scene buffers and logical views.
+        /// </summary>
+        public RenderWorldSnapshot? WorldSnapshot { get; private set; }
+        /// <summary>
         /// If true, the current shadow pass targets a layered directional cascade framebuffer.
         /// </summary>
         public bool DirectionalCascadeLayeredShadowPass { get; private set; }
@@ -97,6 +105,24 @@ public sealed partial class XRRenderPipelineInstance
         /// </summary>
         public RenderCapturePolicy CapturePolicy { get; private set; }
 
+        /// <summary>
+        /// Most recently selected exact-visibility batch topology for this pipeline state.
+        /// </summary>
+        public ViewBatchSplitDecision? LastVisibilityBatchDecision { get; private set; }
+
+        /// <summary>
+        /// Point-of-view content policy associated with the latest visibility batch decision.
+        /// </summary>
+        public ViewBatchContentPolicy LastVisibilityContentPolicy { get; private set; } = ViewBatchContentPolicy.Exact;
+
+        internal void PublishVisibilityBatchDiagnostics(
+            in ViewBatchSplitDecision decision,
+            in ViewBatchContentPolicy contentPolicy)
+        {
+            LastVisibilityBatchDecision = decision;
+            LastVisibilityContentPolicy = contentPolicy;
+        }
+
         IRuntimeViewportHost? IRuntimeRenderCommandExecutionState.WindowViewport
             => WindowViewport;
 
@@ -137,6 +163,27 @@ public sealed partial class XRRenderPipelineInstance
             ScreenSpaceUserInterface = screenSpaceUI?.IsScreenSpace == true ? screenSpaceUI : null;
             MeshRenderCommands = meshRenderCommands;
             CapturePolicy = viewport?.CapturePolicy ?? RenderCapturePolicy.None;
+            RenderFrameViewSet? capturedViews = camera is null
+                ? null
+                : stereoPass && RenderFrameViewSetPublication.TryGet(
+                    RuntimeEngine.Rendering.State.RenderFrameId,
+                    out RenderFrameViewSet openXrViews)
+                    ? openXrViews
+                    : RenderFrameViewSetCapture.Capture(this);
+            if (Scene is not null && capturedViews is RenderFrameViewSet views)
+            {
+                RenderWorldSnapshot snapshot = RenderWorldSnapshotPublication.Acquire(
+                    RuntimeEngine.Rendering.State.RenderFrameId,
+                    Scene,
+                    Scene.GPUCommands);
+                WorldSnapshot = snapshot;
+                FrameViewSet = views;
+            }
+            else
+            {
+                WorldSnapshot = null;
+                FrameViewSet = null;
+            }
 
             if (WindowViewport is not null)
                 _renderingViewports.Push(WindowViewport);

@@ -1354,6 +1354,10 @@ public sealed class RuntimeRenderingHostServicesTests
         {
         }
 
+        public void RecordRenderVulkanSwapchainRetirement(int queued, int drained, int pending, int deferred)
+        {
+        }
+
         public void RecordRenderVulkanValidationMessage(bool isError, string? message)
         {
         }
