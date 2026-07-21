@@ -738,7 +738,8 @@ public sealed class OpenXrTimingPipelineContractTests
         imageBackedTexture.ShouldContain("extent.Width == 0 || extent.Height == 0 || extent.Depth == 0");
         imageBackedTexture.ShouldContain("private static Extent3D ResolveMipExtent");
         imageBackedTexture.ShouldContain("protected void RecreateImageForFullTextureDataUpload(string reason)");
-        imageBackedTexture.ShouldContain("WaitForInFlightWorkBeforeImportedTextureReplacement(reason);");
+        imageBackedTexture.ShouldNotContain("WaitForInFlightWorkBeforeImportedTextureReplacement");
+        imageBackedTexture.ShouldContain("Destruction is generation-safe and deferred by exact resource tickets");
     }
 
     [Test]
@@ -1245,7 +1246,7 @@ public sealed class OpenXrTimingPipelineContractTests
         diagnostics.ShouldContain("PredictedActionPoseCacheUpdated");
         diagnostics.ShouldContain("DesktopMirrorComposed");
         diagnostics.ShouldContain("PerFrameAllocationsBytes");
-        diagnostics.ShouldContain("CurrentSchemaVersion = 8");
+        diagnostics.ShouldContain("CurrentSchemaVersion = 9");
         diagnostics.ShouldContain("OpenXrSmokeFrameLedgerEntry");
         diagnostics.ShouldContain("ProjectionLayerSubmitted");
         diagnostics.ShouldContain("SmokeFrameCompleted?.Invoke");
@@ -1311,7 +1312,7 @@ public sealed class OpenXrTimingPipelineContractTests
         string frameLoop = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
         string validator = ReadWorkspaceFile("Tools/Validate-VulkanPhase524b.ps1");
 
-        summary.ShouldContain("CurrentSchemaVersion = 8");
+        summary.ShouldContain("CurrentSchemaVersion = 9");
         summary.ShouldContain("VulkanSynchronizationValidationEffective");
         summary.ShouldContain("ExternallyOwnedValidationAllowlist");
         summary.ShouldContain("RequiredCaptureStages");

@@ -139,8 +139,9 @@ public unsafe partial class VulkanRenderer
                                 renderer.StoreOrRetireSharedGraphicsPipeline(pipelineKey, result.Pipeline);
                         }
 
-                        if (!renderer.VulkanPrimaryCommandBufferReuseEnabled)
-                            renderer.MarkCommandBuffersDirty();
+                        // Publication is generation-driven. Compatible recordings observe the
+                        // immutable pipeline-cache generation on their next prepared snapshot;
+                        // do not globally dirty unrelated command buffers from a worker callback.
                     }
                     catch
                     {

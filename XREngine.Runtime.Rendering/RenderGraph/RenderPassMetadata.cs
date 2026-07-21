@@ -22,6 +22,11 @@ public sealed class RenderPassMetadata
     public int DeclarationOrder { get; }
     public ERenderGraphPassStage Stage { get; private set; }
     public string Name { get; private set; }
+    /// <summary>
+    /// Gets whether pipeline readiness for this pass is required before frame submission.
+    /// Passes are required by default; optional deferral must be declared explicitly.
+    /// </summary>
+    public bool RequiresPipelineReady { get; private set; } = true;
     public int Revision => _revision;
 
     public RenderPassMetadata(int passIndex, string name, ERenderGraphPassStage stage, int? declarationOrder = null)
@@ -99,6 +104,15 @@ public sealed class RenderPassMetadata
             return;
 
         Name = name;
+        _revision++;
+    }
+
+    internal void UpdatePipelineReadiness(bool required)
+    {
+        if (RequiresPipelineReady == required)
+            return;
+
+        RequiresPipelineReady = required;
         _revision++;
     }
 }

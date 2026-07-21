@@ -91,16 +91,11 @@ public partial class PhysicsChainComponent
     private GPUParticleData[]? _readbackData;
 
     private bool _pendingGpuExecutionReconfigure;
-    private RenderInfo3D? _gpuWorkRenderInfo;
-    private RenderCommandMethod3D? _gpuWorkRenderCommand;
-    private volatile bool _hasPendingGPUWork;
-    private int _pendingLoop;
-    private float _pendingTimeVar;
-    private readonly object _pendingWorkLock = new();
     private int _gpuExecutionGeneration;
     private long _latestGpuSubmissionId;
     private long _lastAppliedGpuSubmissionId;
     private int _preparedGpuDataVersion = -1;
+    private int _preparedParticleStateVersion = -1;
     private int _preparedTransformSignature = int.MinValue;
     private int _preparedColliderSignature = int.MinValue;
     private int _preparedTransformSnapshotSignature = int.MinValue;
@@ -151,7 +146,6 @@ public partial class PhysicsChainComponent
             _gpuDispatcherRegistered = false;
         }
 
-        _hasPendingGPUWork = false;
         ClearGpuDrivenRendererBindings();
         _gpuDrivenRendererBindingsDirty = true;
         _gpuDrivenRendererBindingRetryFrames = 0;
@@ -229,7 +223,6 @@ public partial class PhysicsChainComponent
     private void MarkGpuBuffersDirty()
     {
         CleanupBuffers();
-        _hasPendingGPUWork = false;
     }
 
     private void ExecuteGpuLateUpdate()
@@ -259,43 +252,7 @@ public partial class PhysicsChainComponent
         if (!producedResults)
             return;
 
-        if (UseBatchedDispatcher)
-        {
-            SubmitToBatchedDispatcher(loop, timeVar);
-            return;
-        }
-
-        lock (_pendingWorkLock)
-        {
-            _pendingLoop = loop;
-            _pendingTimeVar = timeVar;
-            _hasPendingGPUWork = true;
-        }
-    }
-
-    private void ExecutePendingGpuWork()
-    {
-        if (!UseGPU || UseBatchedDispatcher)
-            return;
-
-        TryCompleteStandaloneReadbacks();
-
-        if (!_hasPendingGPUWork)
-            return;
-
-        int loop;
-        float timeVar;
-        lock (_pendingWorkLock)
-        {
-            if (!_hasPendingGPUWork)
-                return;
-
-            loop = _pendingLoop;
-            timeVar = _pendingTimeVar;
-            _hasPendingGPUWork = false;
-        }
-
-        ExecuteStandaloneGpuWork(loop, timeVar);
+        SubmitToBatchedDispatcher(loop, timeVar);
     }
 
     private void ExecuteStandaloneGpuWork(int loop, float timeVar)
@@ -669,6 +626,7 @@ public partial class PhysicsChainComponent
 
         _mainPhysicsProgram.Uniform("ApplyObjectMove", applyObjectMove ? 1 : 0);
         _mainPhysicsProgram.Uniform("ParticleCount", _totalParticleCount);
+        _mainPhysicsProgram.Uniform("TreeCount", _particleTreesData.Count);
 
         _mainPhysicsProgram.BindBuffer(_particlesBuffer, 0);
         _mainPhysicsProgram.BindBuffer(_particleStaticBuffer, 1);
@@ -676,7 +634,7 @@ public partial class PhysicsChainComponent
         _mainPhysicsProgram.BindBuffer(_collidersBuffer, 4);
         _mainPhysicsProgram.BindBuffer(_perTreeParamsBuffer, 5);
 
-        int threadGroupsX = (_totalParticleCount + 127) / 128;
+        int threadGroupsX = (_particleTreesData.Count + 127) / 128;
         _mainPhysicsProgram.DispatchCompute((uint)threadGroupsX, 1, 1);
     }
 
@@ -688,12 +646,13 @@ public partial class PhysicsChainComponent
             return;
 
         _skipUpdateParticlesProgram.Uniform("ParticleCount", _totalParticleCount);
+        _skipUpdateParticlesProgram.Uniform("TreeCount", _particleTreesData.Count);
         _skipUpdateParticlesProgram.BindBuffer(_particlesBuffer, 0);
         _skipUpdateParticlesProgram.BindBuffer(_particleStaticBuffer, 1);
         _skipUpdateParticlesProgram.BindBuffer(_transformMatricesBuffer, 3);
         _skipUpdateParticlesProgram.BindBuffer(_perTreeParamsBuffer, 5);
 
-        int threadGroupsX = (_totalParticleCount + 127) / 128;
+        int threadGroupsX = (_particleTreesData.Count + 127) / 128;
         _skipUpdateParticlesProgram.DispatchCompute((uint)threadGroupsX, 1, 1);
     }
 
@@ -798,7 +757,9 @@ public partial class PhysicsChainComponent
                 ColliderOffset = 0,
                 ObjectMove = _objectMove,
                 RestGravity = _particleTreesData[i].RestGravity,
-                UpdateMode = (int)UpdateMode,
+                ParticleOffset = _particleTreesData[i].ParticleOffset,
+                ParticleCount = _particleTreesData[i].ParticleCount,
+                LoopCount = 1,
             };
         }
 
@@ -870,16 +831,15 @@ public partial class PhysicsChainComponent
         _totalParticleCount = 0;
 
         bool rebuildPreparedData = _preparedGpuDataVersion != _particlesVersion || _particleTreesData.Count != _particleTrees.Count;
+        bool rebuildParticleState = rebuildPreparedData || _preparedParticleStateVersion != _particleStateVersion;
         if (rebuildPreparedData)
         {
-            _particlesData.Clear();
             _particleStaticData.Clear();
             _particleTreesData.Clear();
         }
-        else
-        {
+
+        if (rebuildParticleState)
             _particlesData.Clear();
-        }
 
         int particleCursor = 0;
 
@@ -889,6 +849,8 @@ public partial class PhysicsChainComponent
             GPUParticleTreeData treeData = new()
             {
                 RestGravity = tree.RestGravity,
+                ParticleOffset = particleCursor,
+                ParticleCount = tree.Particles.Count,
             };
 
             if (rebuildPreparedData)
@@ -917,11 +879,12 @@ public partial class PhysicsChainComponent
                     Inert = particle.Inert,
                     Friction = particle.Friction,
                     Radius = particle.Radius,
-                    BoneLength = particle.BoneLength,
+                    BoneLength = particle.SegmentLength,
                     TreeIndex = treeIndex,
                 };
 
-                _particlesData.Add(particleData);
+                if (rebuildParticleState)
+                    _particlesData.Add(particleData);
                 if (rebuildPreparedData)
                     _particleStaticData.Add(particleStaticData);
 
@@ -941,6 +904,7 @@ public partial class PhysicsChainComponent
         }
 
         _preparedGpuDataVersion = _particlesVersion;
+        _preparedParticleStateVersion = _particleStateVersion;
         _preparedTransformSignature = transformHash.ToHashCode();
         UpdatePreparedDirtyRange(_transformMatrices, _preparedTransformSnapshot, ref _preparedTransformSnapshotSignature, _preparedTransformSignature, out _preparedTransformDirtyStart, out _preparedTransformDirtyLength);
 
@@ -956,9 +920,10 @@ public partial class PhysicsChainComponent
             PhysicsChainColliderBase collider = _effectiveColliders[colliderIndex];
             if (collider is PhysicsChainSphereCollider sphereCollider)
             {
+                TransformBase sphereTransform = sphereCollider.ColliderTransform ?? sphereCollider.Transform;
                 GPUColliderData colliderData = new()
                 {
-                    Center = new Vector4(sphereCollider.Transform.WorldTranslation, sphereCollider.Radius),
+                    Center = new Vector4(sphereTransform.WorldTranslation, sphereCollider.Radius),
                     Type = 0
                 };
                 _collidersData.Add(colliderData);
@@ -966,12 +931,16 @@ public partial class PhysicsChainComponent
             }
             else if (collider is PhysicsChainCapsuleCollider capsuleCollider)
             {
-                Vector3 start = capsuleCollider.Transform.WorldTranslation;
-                Vector3 end = capsuleCollider.Transform.TransformPoint(new Vector3(0.0f, capsuleCollider.Height, 0.0f));
+                TransformBase capsuleTransform = capsuleCollider.ColliderTransform ?? capsuleCollider.Transform;
+                Vector3 center = capsuleTransform.WorldTranslation;
+                Vector3 halfAxis = capsuleTransform.WorldUp * (capsuleCollider.Height * 0.5f);
+                Vector3 start = center - halfAxis;
+                Vector3 end = center + halfAxis;
+                float lengthSquared = Vector3.DistanceSquared(start, end);
                 GPUColliderData colliderData = new()
                 {
                     Center = new Vector4(start, capsuleCollider.Radius),
-                    Params = new Vector4(end, 0.0f),
+                    Params = new Vector4(end, lengthSquared > 1e-8f ? 1.0f / lengthSquared : 0.0f),
                     Type = 1
                 };
                 _collidersData.Add(colliderData);
@@ -979,10 +948,13 @@ public partial class PhysicsChainComponent
             }
             else if (collider is PhysicsChainBoxCollider boxCollider)
             {
+                TransformBase boxTransform = boxCollider.ColliderTransform ?? boxCollider.Transform;
+                Quaternion rotation = boxTransform.WorldRotation;
                 GPUColliderData colliderData = new()
                 {
-                    Center = new Vector4(boxCollider.Transform.WorldTranslation, 0.0f),
-                    Params = new Vector4(boxCollider.Size * 0.5f, 0.0f),
+                    Center = new Vector4(boxTransform.WorldTranslation, 0.0f),
+                    Params = new Vector4(Vector3.Abs(boxCollider.Size) * Vector3.Abs(boxTransform.LossyWorldScale) * 0.5f, 0.0f),
+                    Orientation = new Vector4(rotation.X, rotation.Y, rotation.Z, rotation.W),
                     Type = 2
                 };
                 _collidersData.Add(colliderData);
@@ -1009,6 +981,7 @@ public partial class PhysicsChainComponent
     {
         hash.Add(colliderData.Center);
         hash.Add(colliderData.Params);
+        hash.Add(colliderData.Orientation);
         hash.Add(colliderData.Type);
     }
 
@@ -1046,6 +1019,7 @@ public partial class PhysicsChainComponent
         _preparedColliderDirtyStart = 0;
         _preparedColliderDirtyLength = 0;
         _uploadedStaticDataVersion = -1;
+        _preparedParticleStateVersion = -1;
         _uploadedTransformSignature = int.MinValue;
         _uploadedColliderSignature = int.MinValue;
         _gpuParticleStateInitialized = false;

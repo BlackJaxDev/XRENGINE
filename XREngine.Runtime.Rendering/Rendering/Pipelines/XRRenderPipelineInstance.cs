@@ -36,6 +36,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     private readonly RenderResourceRegistry _legacyResources = new();
     private ResourceBuildContext? _resourceBuildContext;
     private bool _requiresManagedResourceGeneration;
+    private readonly object _resourceSettingsSnapshotLock = new();
+    private readonly Dictionary<RenderPipelineExternalTargetKind, ResourceGenerationSettingsSnapshot> _lastResourceSettingsSnapshotByOutput = [];
+    private ulong _nextResourceSettingsRevision;
+    private const int MaxResourceGenerationDiagnostics = 32;
+    private readonly Dictionary<ResourceGenerationDeterminismIdentity, ResourceGenerationRequestDiagnostic> _resourceGenerationDiagnostics = [];
+    private readonly Queue<ResourceGenerationDeterminismIdentity> _resourceGenerationDiagnosticOrder = new();
+    private long _resourceGenerationDivergenceCount;
 
     /// <summary>
     /// Stable, monotonically increasing identifier assigned at construction. Used by
@@ -126,7 +133,32 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// force re-allocation of per-command resources such as fullscreen quads.
     /// </summary>
     public int ResourceGeneration { get; private set; }
+    /// <summary>
+    /// Number of deterministic-generation contract violations observed for this instance.
+    /// </summary>
+    public long ResourceGenerationDivergenceCount
+        => System.Threading.Interlocked.Read(ref _resourceGenerationDivergenceCount);
     internal IRenderResourceGenerationBackend? ResourceGenerationBackendOverride { get; set; }
+
+    internal bool TryGetLastResourceFeatureMask(XRViewport? viewport, out ulong featureMask)
+    {
+        RenderPipelineExternalTargetKind outputKind = viewport?.RendersToExternalSwapchainTarget == true
+            ? RenderPipelineExternalTargetKind.ExternalSwapchain
+            : RenderState.OutputFBO is not null
+                ? RenderPipelineExternalTargetKind.CallerProvidedFrameBuffer
+                : RenderPipelineExternalTargetKind.Window;
+        lock (_resourceSettingsSnapshotLock)
+        {
+            if (_lastResourceSettingsSnapshotByOutput.TryGetValue(outputKind, out ResourceGenerationSettingsSnapshot snapshot))
+            {
+                featureMask = snapshot.FeatureMask;
+                return true;
+            }
+        }
+
+        featureMask = 0UL;
+        return false;
+    }
 
     // Track the last applied internal resolution scale to avoid resetting the viewport every frame.
     private float? _appliedInternalResolutionScale;
@@ -754,6 +786,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
            oldKey.MsaaSampleCount == newKey.MsaaSampleCount &&
            oldKey.Stereo == newKey.Stereo &&
            oldKey.FeatureMask == newKey.FeatureMask &&
+           oldKey.SettingsRevision == newKey.SettingsRevision &&
            oldKey.ReservedViewCount == newKey.ReservedViewCount &&
            oldKey.ReservedEyeIndex == newKey.ReservedEyeIndex &&
            (oldKey.DisplayWidth != newKey.DisplayWidth ||
@@ -856,6 +889,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (pipeline is null)
             return false;
 
+        ValidateResourceGenerationFeatureMask(key, reason);
+
         if (!force && ActiveGeneration?.Key == key)
         {
             DiscardPendingGeneration($"Active generation already matches request: {reason}");
@@ -892,6 +927,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 ex.Message);
             return false;
         }
+
+        ValidateResourceGenerationLayout(key, layout, reason);
 
         if (layout.OrderedSpecs.Count == 0)
         {
@@ -951,6 +988,107 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             PendingGenerationDebounceRemainingMilliseconds());
         return true;
     }
+
+    private void ValidateResourceGenerationFeatureMask(ResourceGenerationKey key, string reason)
+    {
+        lock (_resourceSettingsSnapshotLock)
+        {
+            ResourceGenerationDeterminismIdentity identity = ResourceGenerationDeterminismIdentity.From(key);
+            if (_resourceGenerationDiagnostics.TryGetValue(identity, out ResourceGenerationRequestDiagnostic? previous))
+            {
+                if (previous.Key.FeatureMask != key.FeatureMask)
+                    RecordResourceGenerationDivergence(
+                        reason,
+                        key,
+                        $"feature mask changed from 0x{previous.Key.FeatureMask:X} to 0x{key.FeatureMask:X}");
+
+                return;
+            }
+
+            AddResourceGenerationDiagnostic(identity, new ResourceGenerationRequestDiagnostic(key, null));
+        }
+    }
+
+    private void ValidateResourceGenerationLayout(
+        ResourceGenerationKey key,
+        RenderPipelineResourceLayout layout,
+        string reason)
+    {
+        lock (_resourceSettingsSnapshotLock)
+        {
+            ResourceGenerationDeterminismIdentity identity = ResourceGenerationDeterminismIdentity.From(key);
+            if (_resourceGenerationDiagnostics.TryGetValue(identity, out ResourceGenerationRequestDiagnostic? previous))
+            {
+                if (previous.Layout is { } previousLayout)
+                {
+                    if (!previousLayout.IsStructurallyEquivalentTo(layout))
+                        RecordResourceGenerationDivergence(
+                            reason,
+                            key,
+                            $"layout changed: {previousLayout.DescribeStructuralDifferenceTo(layout)}");
+                    return;
+                }
+
+                _resourceGenerationDiagnostics[identity] = previous with { Layout = layout };
+                return;
+            }
+
+            AddResourceGenerationDiagnostic(identity, new ResourceGenerationRequestDiagnostic(key, layout));
+        }
+    }
+
+    private void AddResourceGenerationDiagnostic(
+        ResourceGenerationDeterminismIdentity identity,
+        ResourceGenerationRequestDiagnostic diagnostic)
+    {
+        while (_resourceGenerationDiagnostics.Count >= MaxResourceGenerationDiagnostics &&
+               _resourceGenerationDiagnosticOrder.TryDequeue(out ResourceGenerationDeterminismIdentity oldest))
+        {
+            _resourceGenerationDiagnostics.Remove(oldest);
+        }
+
+        _resourceGenerationDiagnostics.Add(identity, diagnostic);
+        _resourceGenerationDiagnosticOrder.Enqueue(identity);
+    }
+
+    private void RecordResourceGenerationDivergence(
+        string reason,
+        ResourceGenerationKey key,
+        string difference)
+    {
+        long count = System.Threading.Interlocked.Increment(ref _resourceGenerationDivergenceCount);
+        Debug.RenderingWarning(
+            "[RenderResources][DeterminismViolation] Equivalent resource-generation request diverged. Pipeline={0} Reason={1} Count={2} Key={3} Difference={4}",
+            ProfilerKey,
+            reason,
+            count,
+            key,
+            difference);
+    }
+
+    private readonly record struct ResourceGenerationDeterminismIdentity(
+        string PipelineName,
+        RenderPipelineExternalTargetKind ExternalTargetKind,
+        uint DisplayWidth,
+        uint DisplayHeight,
+        uint InternalWidth,
+        uint InternalHeight,
+        ulong SettingsRevision)
+    {
+        public static ResourceGenerationDeterminismIdentity From(ResourceGenerationKey key)
+            => new(
+                key.PipelineName,
+                key.ExternalTargetKind,
+                key.DisplayWidth,
+                key.DisplayHeight,
+                key.InternalWidth,
+                key.InternalHeight,
+                key.SettingsRevision);
+    }
+
+    private sealed record ResourceGenerationRequestDiagnostic(
+        ResourceGenerationKey Key,
+        RenderPipelineResourceLayout? Layout);
 
     /// <summary>
     /// Configures the debounce timing for a pending resource generation request. 
@@ -1035,6 +1173,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             deltas.Add($"stereo:{old.Stereo}->{newKey.Stereo}");
         if (old.FeatureMask != newKey.FeatureMask)
             deltas.Add($"features:0x{old.FeatureMask:X}->0x{newKey.FeatureMask:X}");
+        if (old.SettingsRevision != newKey.SettingsRevision)
+            deltas.Add($"settings-revision:{old.SettingsRevision}->{newKey.SettingsRevision}");
         if (old.ReservedViewCount != newKey.ReservedViewCount)
             deltas.Add($"views:{old.ReservedViewCount}->{newKey.ReservedViewCount}");
         if (old.ReservedEyeIndex != newKey.ReservedEyeIndex)
@@ -1085,40 +1225,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         XRViewport? viewport = null)
     {
         RenderPipeline? pipeline = _pipeline;
-
-        bool stereo = pipeline?.UsesStereoResources(this, viewport) ?? RenderState.StereoPass;
-        XRCamera? viewportCamera = viewport?.ActiveCamera;
-
-        bool outputHdr = EffectiveOutputHDRThisFrame
-            ?? LastSceneCamera?.OutputHDROverride
-            ?? LastRenderingCamera?.OutputHDROverride
-            ?? viewportCamera?.OutputHDROverride
-            ?? RuntimeRenderingHostServices.Current.DefaultOutputHDR;
-
-        EAntiAliasingMode antiAliasingMode = EffectiveAntiAliasingModeThisFrame
-            ?? LastSceneCamera?.AntiAliasingModeOverride
-            ?? LastRenderingCamera?.AntiAliasingModeOverride
-            ?? viewportCamera?.AntiAliasingModeOverride
-            ?? RuntimeRenderingHostServices.Current.DefaultAntiAliasingMode;
-
-        uint msaaSamples = Math.Max(1u,
-            EffectiveMsaaSampleCountThisFrame
-                ?? LastSceneCamera?.MsaaSampleCountOverride
-                ?? LastRenderingCamera?.MsaaSampleCountOverride
-                ?? viewportCamera?.MsaaSampleCountOverride
-                ?? RuntimeRenderingHostServices.Current.DefaultMsaaSampleCount);
-
-        ulong featureMask = pipeline?.BuildResourceFeatureMaskForGenerationKey(
-            this,
-            viewport ?? RenderState.WindowViewport ?? LastWindowViewport) ?? 0UL;
-
-        uint reservedViewCount = stereo ? 2u : 1u;
-        uint reservedEyeIndex = 0u;
-        RenderPipelineExternalTargetKind externalTargetKind = viewport?.RendersToExternalSwapchainTarget == true
-            ? RenderPipelineExternalTargetKind.ExternalSwapchain
-            : RenderState.OutputFBO is not null
-                ? RenderPipelineExternalTargetKind.CallerProvidedFrameBuffer
-                : RenderPipelineExternalTargetKind.Window;
+        XRViewport? resolvedViewport = viewport ?? RenderState.WindowViewport ?? LastWindowViewport;
+        ResourceGenerationSettingsSnapshot settings = CaptureResourceGenerationSettingsSnapshot(pipeline, resolvedViewport);
 
         return new ResourceGenerationKey(
             pipeline?.DebugName ?? DebugName,
@@ -1126,14 +1234,69 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             (uint)Math.Max(1, displayHeight),
             (uint)Math.Max(1, internalWidth),
             (uint)Math.Max(1, internalHeight),
+            settings.OutputHDR,
+            settings.AntiAliasingMode,
+            settings.MsaaSampleCount,
+            settings.Stereo,
+            settings.FeatureMask,
+            settings.ReservedViewCount,
+            settings.ReservedEyeIndex,
+            settings.ExternalTargetKind,
+            settings.Revision);
+    }
+
+    private ResourceGenerationSettingsSnapshot CaptureResourceGenerationSettingsSnapshot(
+        RenderPipeline? pipeline,
+        XRViewport? viewport)
+    {
+        XRCamera? viewportCamera = viewport?.ActiveCamera;
+        bool stereo = pipeline?.UsesStereoResources(this, viewport) ?? RenderState.StereoPass;
+        // Resource requests made outside a render scope must not inherit whichever camera
+        // happened to render most recently. The effective frame profile is an explicit snapshot;
+        // otherwise only the requested viewport's camera may influence this key.
+        bool outputHdr = EffectiveOutputHDRThisFrame
+            ?? viewportCamera?.OutputHDROverride
+            ?? RuntimeRenderingHostServices.Current.DefaultOutputHDR;
+        EAntiAliasingMode antiAliasingMode = EffectiveAntiAliasingModeThisFrame
+            ?? viewportCamera?.AntiAliasingModeOverride
+            ?? RuntimeRenderingHostServices.Current.DefaultAntiAliasingMode;
+        uint msaaSamples = Math.Max(1u,
+            EffectiveMsaaSampleCountThisFrame
+                ?? viewportCamera?.MsaaSampleCountOverride
+                ?? RuntimeRenderingHostServices.Current.DefaultMsaaSampleCount);
+        ulong featureMask = pipeline?.BuildResourceFeatureMaskForGenerationKey(this, viewport) ?? 0UL;
+        RenderPipelineExternalTargetKind externalTargetKind = viewport?.RendersToExternalSwapchainTarget == true
+            ? RenderPipelineExternalTargetKind.ExternalSwapchain
+            : RenderState.OutputFBO is not null
+                ? RenderPipelineExternalTargetKind.CallerProvidedFrameBuffer
+                : RenderPipelineExternalTargetKind.Window;
+
+        ResourceGenerationSettingsSnapshot candidate = new(
             outputHdr,
             antiAliasingMode,
             msaaSamples,
             stereo,
             featureMask,
-            reservedViewCount,
-            reservedEyeIndex,
-            externalTargetKind);
+            stereo ? 2u : 1u,
+            0u,
+            externalTargetKind,
+            0UL);
+
+        lock (_resourceSettingsSnapshotLock)
+        {
+            if (_lastResourceSettingsSnapshotByOutput.TryGetValue(externalTargetKind, out ResourceGenerationSettingsSnapshot previous) &&
+                (previous with { Revision = 0UL }) == candidate)
+            {
+                return previous;
+            }
+
+            ResourceGenerationSettingsSnapshot published = candidate with
+            {
+                Revision = ++_nextResourceSettingsRevision
+            };
+            _lastResourceSettingsSnapshotByOutput[externalTargetKind] = published;
+            return published;
+        }
     }
 
     /// <summary>
@@ -1486,7 +1649,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         DrainRetiredGenerations();
         if (_retiredGenerations.Count > MaxRetiredResourceGenerations)
         {
-            WaitForGpuBeforePhysicalResourceDestruction("RetiredRenderResourceGenerationCap");
+            PrepareForPhysicalResourceDestruction("RetiredRenderResourceGenerationCap");
             DrainRetiredGenerations(force: true);
         }
     }
@@ -1591,7 +1754,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return;
 
         NotifyPipelineResourcesDestroyed("DestroyCache");
-        WaitForGpuBeforePhysicalResourceDestruction("DestroyCache");
+        PrepareForPhysicalResourceDestruction("DestroyCache");
         PendingGeneration?.Dispose();
         PendingGeneration = null;
         ActiveGeneration?.Dispose();
@@ -1632,7 +1795,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         }
 
         NotifyPipelineResourcesDestroyed($"InvalidatePhysicalResources (generation {ResourceGeneration} -> {ResourceGeneration + 1})");
-        WaitForGpuBeforePhysicalResourceDestruction("InvalidatePhysicalResources");
+        PrepareForPhysicalResourceDestruction("InvalidatePhysicalResources");
         Resources.DestroyAllPhysicalResources(retainDescriptors: true);
         ResourceGeneration++;
     }
@@ -1663,7 +1826,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (Resources.TryGetTexture(name, out XRTexture? texture) && texture is not null)
             _pipeline?.OnTextureDestroyed(this, name, texture, reason);
 
-        WaitForGpuBeforePhysicalResourceDestruction($"RemoveTextureResource[{name}]");
+        PrepareForPhysicalResourceDestruction($"RemoveTextureResource[{name}]");
         Resources.RemoveTexture(name);
     }
 
@@ -1680,42 +1843,44 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (Resources.TryGetFrameBuffer(name, out XRFrameBuffer? frameBuffer) && frameBuffer is not null)
             _pipeline?.OnFrameBufferDestroyed(this, name, frameBuffer, reason);
 
-        WaitForGpuBeforePhysicalResourceDestruction($"RemoveFrameBufferResource[{name}]");
+        PrepareForPhysicalResourceDestruction($"RemoveFrameBufferResource[{name}]");
         Resources.RemoveFrameBuffer(name);
     }
 
     /// <summary>
-    /// Waits for the GPU to finish all work before destroying physical resources. 
-    /// This is necessary to avoid destroying resources that are still in use by the GPU, 
-    /// which can lead to undefined behavior or crashes. 
-    /// The reason parameter is used for logging purposes to indicate why the wait is being performed.
+    /// Prepares backend references before physical resources are retired. Vulkan
+    /// destruction is generation/timeline deferred, so invalidating descriptor and
+    /// command references is sufficient and must not drain unrelated output work.
+    /// Backends without completion-aware retirement retain their explicit idle wait.
     /// </summary>
-    /// <param name="reason">The reason for waiting for the GPU.</param>
-    private static void WaitForGpuBeforePhysicalResourceDestruction(string reason)
+    /// <param name="reason">The reason for retiring the physical resources.</param>
+    private static void PrepareForPhysicalResourceDestruction(string reason)
     {
         AbstractRenderer? renderer = AbstractRenderer.Current;
         if (renderer is null)
             return;
 
-        renderer.WaitForGpu();
         if (renderer is not VulkanRenderer vulkanRenderer)
+        {
+            renderer.WaitForGpu();
             return;
+        }
 
         if (vulkanRenderer.IsDeviceLost)
         {
             Debug.VulkanWarningEvery(
                 $"Vulkan.RenderPipeline.ResourceDestroy.DeviceLost.{reason}",
                 System.TimeSpan.FromSeconds(1),
-                "[Vulkan] Skipping descriptor-reference release after GPU wait reported device loss: {0}",
+                "[Vulkan] Skipping descriptor-reference release because the device is lost: {0}",
                 reason);
             return;
         }
 
         vulkanRenderer.ReleaseDescriptorReferencesForPhysicalResourceDestruction(reason);
         Debug.VulkanEvery(
-            $"Vulkan.RenderPipeline.ResourceDestroy.WaitIdle.{reason}",
+            $"Vulkan.RenderPipeline.ResourceDestroy.Deferred.{reason}",
             System.TimeSpan.FromSeconds(1),
-            "[Vulkan] GPU wait before render-pipeline physical resource destruction: {0}",
+            "[Vulkan] Prepared render-pipeline physical resources for completion-aware retirement without a device idle: {0}",
             reason);
     }
 

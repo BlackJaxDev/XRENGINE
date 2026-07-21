@@ -48,6 +48,8 @@ public enum EVulkanPipelineTelemetryEvent
     DrawNotReady,
     CompileRequired,
     CreationCompleted,
+    RequiredPipelineRecordDeferred,
+    RenderThreadShaderCompile,
 }
 
 public enum EVulkanDriverPipelineCacheOutcome

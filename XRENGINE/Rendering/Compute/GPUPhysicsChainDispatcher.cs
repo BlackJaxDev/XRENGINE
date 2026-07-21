@@ -56,7 +56,6 @@ public sealed class GPUPhysicsChainDispatcher
 {
     private static readonly bool VerboseLogging = false;
     private const uint LocalSizeX = 128u;
-    private const int MaxIterationsPerFrame = 3;
     private static readonly int ParticleStateSizeBytes = Unsafe.SizeOf<GPUParticleData>();
     private static readonly int ParticleStaticSizeBytes = Unsafe.SizeOf<GPUParticleStaticData>();
     private static readonly int PerTreeParamsSizeBytes = Unsafe.SizeOf<GPUPerTreeParams>();
@@ -93,10 +92,8 @@ public sealed class GPUPhysicsChainDispatcher
 
     // Shared GPU resources
     private XRShader? _mainPhysicsShader;
-    private XRShader? _skipUpdateShader;
     private XRShader? _gpuBonePaletteShader;
     private XRRenderProgram? _mainPhysicsProgram;
-    private XRRenderProgram? _skipUpdateProgram;
     private XRRenderProgram? _gpuBonePaletteProgram;
 
     // Combined buffers for all components
@@ -129,6 +126,7 @@ public sealed class GPUPhysicsChainDispatcher
     // Statistics
     public int RegisteredComponentCount => _registeredComponents.Count;
     public int TotalParticleCount { get; private set; }
+    public int TotalTreeCount { get; private set; }
     public int TotalColliderCount { get; private set; }
 
     public static GPUPhysicsChainBandwidthSnapshot GetBandwidthPressureSnapshot()
@@ -259,18 +257,19 @@ public sealed class GPUPhysicsChainDispatcher
         public Vector3 ObjectMove;
         public float _pad0;
         public Vector3 RestGravity;
-        public int UpdateMode;
+        public int ParticleOffset;
+        public int ParticleCount;
+        public int LoopCount;
         public int _pad1;
         public int _pad2;
-        public int _pad3;
-        public int _pad4; // std430 array stride rounds to 16-byte alignment (vec3 = 16); 92→96 bytes
     }
 
     [StructLayout(LayoutKind.Sequential)]
     public struct GPUParticleTreeData
     {
         public Vector3 RestGravity;
-        public float _pad0;
+        public int ParticleOffset;
+        public int ParticleCount;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -278,6 +277,7 @@ public sealed class GPUPhysicsChainDispatcher
     {
         public Vector4 Center;
         public Vector4 Params;
+        public Vector4 Orientation;
         public int Type;
         public int _pad0;
         public int _pad1;
@@ -343,6 +343,10 @@ public sealed class GPUPhysicsChainDispatcher
         request.ResidentStaticDataVersion = int.MinValue;
         request.ActiveTransformSignature = int.MinValue;
         request.ActiveColliderSignature = int.MinValue;
+        request.StaticDataVersion = int.MinValue;
+        request.ParticleStateVersion = int.MinValue;
+        request.TransformDataSignature = int.MinValue;
+        request.ColliderDataSignature = int.MinValue;
 
         if (_registeredComponents.TryAdd(component, request))
         {
@@ -452,11 +456,15 @@ public sealed class GPUPhysicsChainDispatcher
 
         // Snapshot into request-owned arrays so the render thread never iterates
         // the component's live mutable lists. Only allocates when element count changes.
-        request.Particles = SnapshotInto(particles, ref request._particlesBacking);
-        request.ParticleStaticData = SnapshotInto(particleStaticData, ref request._particleStaticBacking);
+        if (request.ParticleStateVersion != particleStateVersion || request._particlesBacking.Length != particles.Count)
+            request.Particles = SnapshotInto(particles, ref request._particlesBacking);
+        if (request.StaticDataVersion != staticDataVersion || request._particleStaticBacking.Length != particleStaticData.Count)
+            request.ParticleStaticData = SnapshotInto(particleStaticData, ref request._particleStaticBacking);
         request.Trees = SnapshotInto(trees, ref request._treesBacking);
-        request.Transforms = SnapshotInto(transforms, ref request._transformsBacking);
-        request.Colliders = SnapshotInto(colliders, ref request._collidersBacking);
+        if (request.TransformDataSignature != transformDataSignature || request._transformsBacking.Length != transforms.Count)
+            request.Transforms = SnapshotInto(transforms, ref request._transformsBacking);
+        if (request.ColliderDataSignature != colliderDataSignature || request._collidersBacking.Length != colliders.Count)
+            request.Colliders = SnapshotInto(colliders, ref request._collidersBacking);
 
         request.DeltaTime = deltaTime;
         request.ObjectScale = objectScale;
@@ -554,7 +562,8 @@ public sealed class GPUPhysicsChainDispatcher
             }
         }
 
-        _activeRequests.Sort(CompareRequestsByDispatchGroup);
+        if (RequiresDispatchSort(_activeRequests))
+            _activeRequests.Sort(CompareRequestsByDispatchGroup);
 
         if (_activeRequests.Count == 0)
             return;
@@ -572,13 +581,6 @@ public sealed class GPUPhysicsChainDispatcher
                 mainPgm.Link();
             return;
         }
-        if (_skipUpdateProgram is { IsLinked: false } skipPgm)
-        {
-            if (!skipPgm.LinkReady)
-                skipPgm.Link();
-            return;
-        }
-
         ProcessDispatchGroups(renderer);
 
         // Mark all requests as processed
@@ -630,10 +632,7 @@ public sealed class GPUPhysicsChainDispatcher
             return;
 
         _mainPhysicsShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain/PhysicsChain.comp", EShaderType.Compute);
-        _skipUpdateShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain/SkipUpdateParticles.comp", EShaderType.Compute);
-
         _mainPhysicsProgram = new XRRenderProgram(true, false, _mainPhysicsShader);
-        _skipUpdateProgram = new XRRenderProgram(true, false, _skipUpdateShader);
 
         _initialized = true;
     }
@@ -718,7 +717,9 @@ public sealed class GPUPhysicsChainDispatcher
                     ColliderOffset = colliderOffset,
                     ObjectMove = request.ObjectMove,
                     RestGravity = tree.RestGravity,
-                    UpdateMode = request.UpdateMode,
+                    ParticleOffset = particleOffset + tree.ParticleOffset,
+                    ParticleCount = tree.ParticleCount,
+                    LoopCount = request.LoopCount,
                 });
             }
 
@@ -740,6 +741,7 @@ public sealed class GPUPhysicsChainDispatcher
         }
 
         TotalParticleCount = particleOffset;
+        TotalTreeCount = treeOffset;
         TotalColliderCount = colliderOffset;
 
         // Resize/create buffers as needed
@@ -1373,22 +1375,12 @@ public sealed class GPUPhysicsChainDispatcher
             BuildCombinedBuffers(renderer, _dispatchGroup);
             Interlocked.Increment(ref s_dispatchGroupCount);
 
-            if (key.SkipUpdate)
-            {
-                DispatchSkipUpdate(_dispatchGroup[0]);
-                Interlocked.Increment(ref s_dispatchIterationCount);
-            }
-            else
-            {
-                int maxIterations = Math.Clamp(key.LoopCount, 1, MaxIterationsPerFrame);
-                for (int iteration = 0; iteration < maxIterations; ++iteration)
-                {
-                    DispatchMainPhysics(_dispatchGroup[0], iteration == 0);
-                    Interlocked.Increment(ref s_dispatchIterationCount);
-                    if (iteration < maxIterations - 1)
-                        renderer.RawGL.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
-                }
-            }
+            // Loop and skip policy live in each tree header. The dependency-
+            // correct kernel advances a complete tree in one invocation, so
+            // compatible chains need one dispatch and no inter-iteration
+            // global barriers.
+            DispatchMainPhysics(_dispatchGroup[0], applyObjectMove: true);
+            Interlocked.Increment(ref s_dispatchIterationCount);
 
             renderer.RawGL.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
             if (VerboseLogging)
@@ -1523,16 +1515,15 @@ public sealed class GPUPhysicsChainDispatcher
     }
 
     private static int CompareKeys(in GPUDispatchGroupKey left, in GPUDispatchGroupKey right)
+        => left.DispatchIsolationKey.CompareTo(right.DispatchIsolationKey);
+
+    private static bool RequiresDispatchSort(IReadOnlyList<GPUPhysicsChainRequest> requests)
     {
-        int compare = left.DispatchIsolationKey.CompareTo(right.DispatchIsolationKey);
-        if (compare != 0)
-            return compare;
+        for (int i = 0; i < requests.Count; ++i)
+            if (requests[i].DispatchIsolationKey != 0)
+                return true;
 
-        compare = left.SkipUpdate.CompareTo(right.SkipUpdate);
-        if (compare != 0)
-            return compare;
-
-        return left.LoopCount.CompareTo(right.LoopCount);
+        return false;
     }
 
     private void ReadbackSynchronously(OpenGLRenderer renderer, IReadOnlyList<GPUPhysicsChainRequest> requests)
@@ -1586,14 +1577,18 @@ public sealed class GPUPhysicsChainDispatcher
             return;
 
         int readbackRequestCount = 0;
+        int readbackParticleCount = 0;
         for (int i = 0; i < requests.Count; ++i)
             if (requests[i].Component.RequiresGpuReadback())
+            {
                 ++readbackRequestCount;
+                readbackParticleCount += requests[i].Particles.Count;
+            }
 
-        if (readbackRequestCount == 0)
+        if (readbackRequestCount == 0 || readbackParticleCount <= 0)
             return;
 
-        XRDataBuffer<GPUParticleData> readbackBuffer = AcquireReadbackBuffer((uint)TotalParticleCount);
+        XRDataBuffer<GPUParticleData> readbackBuffer = AcquireReadbackBuffer((uint)readbackParticleCount);
         if (!TryGetBufferIdForGpuCopy(renderer, _particlesBuffer, out uint sourceBufferId)
             || !TryGetBufferIdForGpuCopy(renderer, readbackBuffer, out uint destinationBufferId))
         {
@@ -1602,18 +1597,36 @@ public sealed class GPUPhysicsChainDispatcher
             return;
         }
 
-        nuint byteCount = (nuint)(Math.Max(TotalParticleCount, 0) * ParticleStateSizeBytes);
-        if (byteCount > 0)
+        var snapshots = new GPUReadbackRequestSnapshot[readbackRequestCount];
+        int snapshotIndex = 0;
+        int destinationParticleOffset = 0;
+        for (int i = 0; i < requests.Count; ++i)
         {
-            if (!ValidateGpuCopyRange(_particlesBuffer, 0, readbackBuffer, 0, byteCount, "combined->readback", 0))
+            GPUPhysicsChainRequest request = requests[i];
+            if (!request.Component.RequiresGpuReadback())
+                continue;
+
+            int particleCount = request.Particles.Count;
+            nint readOffset = request.ParticleOffset * ParticleStateSizeBytes;
+            nint writeOffset = destinationParticleOffset * ParticleStateSizeBytes;
+            nuint byteCount = (nuint)(particleCount * ParticleStateSizeBytes);
+            if (!ValidateGpuCopyRange(_particlesBuffer, readOffset, readbackBuffer, writeOffset, byteCount, "combined->selective-readback", request.RequestId))
             {
                 _readbackBufferPool.Push(readbackBuffer);
                 NotifyAsyncReadbackUnavailable(requests, "batched-readback-range");
                 return;
             }
 
-            renderer.RawGL.CopyNamedBufferSubData(sourceBufferId, destinationBufferId, 0, 0, byteCount);
+            renderer.RawGL.CopyNamedBufferSubData(sourceBufferId, destinationBufferId, readOffset, writeOffset, byteCount);
             RecordGpuCopyBytes((long)byteCount, isBatched: true);
+
+            snapshots[snapshotIndex++] = new GPUReadbackRequestSnapshot(
+                request.Component,
+                destinationParticleOffset,
+                particleCount,
+                request.ExecutionGeneration,
+                request.SubmissionId);
+            destinationParticleOffset += particleCount;
         }
 
         IntPtr fence = renderer.RawGL.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
@@ -1624,23 +1637,7 @@ public sealed class GPUPhysicsChainDispatcher
             return;
         }
 
-        var snapshots = new GPUReadbackRequestSnapshot[readbackRequestCount];
-        int snapshotIndex = 0;
-        for (int i = 0; i < requests.Count; ++i)
-        {
-            GPUPhysicsChainRequest request = requests[i];
-            if (!request.Component.RequiresGpuReadback())
-                continue;
-
-            snapshots[snapshotIndex++] = new GPUReadbackRequestSnapshot(
-                request.Component,
-                request.ParticleOffset,
-                request.Particles.Count,
-                request.ExecutionGeneration,
-                request.SubmissionId);
-        }
-
-        _inFlight.Add(new InFlightDispatch(readbackBuffer, fence, TotalParticleCount, snapshots));
+        _inFlight.Add(new InFlightDispatch(readbackBuffer, fence, readbackParticleCount, snapshots));
     }
 
     private static void NotifyAsyncReadbackUnavailable(IReadOnlyList<GPUPhysicsChainRequest> requests, string reason)
@@ -1662,6 +1659,7 @@ public sealed class GPUPhysicsChainDispatcher
 
         _mainPhysicsProgram.Uniform("ApplyObjectMove", applyObjectMove ? 1 : 0);
         _mainPhysicsProgram.Uniform("ParticleCount", TotalParticleCount);
+        _mainPhysicsProgram.Uniform("TreeCount", TotalTreeCount);
 
         _mainPhysicsProgram.BindBuffer(_particlesBuffer, 0);
         _mainPhysicsProgram.BindBuffer(_particleStaticBuffer!, 1);
@@ -1669,25 +1667,8 @@ public sealed class GPUPhysicsChainDispatcher
         _mainPhysicsProgram.BindBuffer(_collidersBuffer!, 4);
         _mainPhysicsProgram.BindBuffer(_perTreeParamsBuffer!, 5);
 
-        uint threadGroupsX = ((uint)TotalParticleCount + LocalSizeX - 1) / LocalSizeX;
+        uint threadGroupsX = ((uint)TotalTreeCount + LocalSizeX - 1) / LocalSizeX;
         _mainPhysicsProgram.DispatchCompute(threadGroupsX, 1, 1);
-    }
-
-    private void DispatchSkipUpdate(GPUPhysicsChainRequest request)
-    {
-        if (_skipUpdateProgram is null || _particlesBuffer is null)
-            return;
-        if (TotalParticleCount <= 0)
-            return;
-
-        _skipUpdateProgram.Uniform("ParticleCount", TotalParticleCount);
-        _skipUpdateProgram.BindBuffer(_particlesBuffer, 0);
-        _skipUpdateProgram.BindBuffer(_particleStaticBuffer!, 1);
-        _skipUpdateProgram.BindBuffer(_transformMatricesBuffer!, 3);
-        _skipUpdateProgram.BindBuffer(_perTreeParamsBuffer!, 5);
-
-        uint threadGroupsX = ((uint)TotalParticleCount + LocalSizeX - 1) / LocalSizeX;
-        _skipUpdateProgram.DispatchCompute(threadGroupsX, 1, 1);
     }
 
     #endregion
@@ -1812,14 +1793,11 @@ public sealed class GPUPhysicsChainDispatcher
             _readbackBufferPool.Pop().Dispose();
 
         _mainPhysicsProgram?.Destroy();
-        _skipUpdateProgram?.Destroy();
         _gpuBonePaletteProgram?.Destroy();
         _gpuBonePaletteShader?.Destroy();
         _mainPhysicsProgram = null;
-        _skipUpdateProgram = null;
         _gpuBonePaletteProgram = null;
         _mainPhysicsShader = null;
-        _skipUpdateShader = null;
         _gpuBonePaletteShader = null;
 
         lock (_registeredComponentsSync)
@@ -1947,16 +1925,10 @@ public class GPUPhysicsChainRequest(PhysicsChainComponent component)
     public int ResidentStaticDataVersion = int.MinValue;
 }
 
-internal readonly record struct GPUDispatchGroupKey(
-    int DispatchIsolationKey,
-    bool SkipUpdate,
-    int LoopCount)
+internal readonly record struct GPUDispatchGroupKey(int DispatchIsolationKey)
 {
     public static GPUDispatchGroupKey From(GPUPhysicsChainRequest request)
-        => new(
-            request.DispatchIsolationKey,
-            request.SkipUpdate,
-            request.LoopCount);
+        => new(request.DispatchIsolationKey);
 }
 
 internal readonly record struct GPUReadbackRequestSnapshot(

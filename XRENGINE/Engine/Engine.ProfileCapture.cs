@@ -564,6 +564,12 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "frame_output_visibility_build_count", frameOutputs.Work.VisibilityBuildCount, ref first);
             AppendNumberField(s_lineBuilder, "frame_output_compiled_plan_cache_hits", frameOutputs.Work.CompiledPlanCacheHits, ref first);
             AppendNumberField(s_lineBuilder, "frame_output_compiled_plan_cache_misses", frameOutputs.Work.CompiledPlanCacheMisses, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_physical_plan_cache_hits", frameOutputs.Work.PhysicalPlanCacheHits, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_physical_plan_cache_misses", frameOutputs.Work.PhysicalPlanCacheMisses, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_physical_plan_generations", frameOutputs.Work.PhysicalPlanGenerations, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_physical_plan_alias_reuses", frameOutputs.Work.PhysicalPlanAliasReuses, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_planner_arena_high_water", frameOutputs.Work.PlannerArenaHighWater, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_render_graph_plan_generation", frameOutputs.Work.RenderGraphPlanGeneration, ref first);
             AppendNumberField(s_lineBuilder, "frame_output_shared_pass_reuse_count", frameOutputs.Work.SharedPassReuseCount, ref first);
             AppendNumberField(s_lineBuilder, "frame_output_recorded_work_item_count", frameOutputs.Work.RecordedWorkItemCount, ref first);
             AppendNumberField(s_lineBuilder, "frame_output_reused_work_item_count", frameOutputs.Work.ReusedWorkItemCount, ref first);
@@ -575,6 +581,7 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "frame_output_unapproved_policy_event_count", frameOutputs.Work.UnapprovedPolicyEventCount, ref first);
             AppendNumberField(s_lineBuilder, "frame_output_submission_rejection_count", frameOutputs.Work.SubmissionRejectionCount, ref first);
             AppendNumberField(s_lineBuilder, "frame_output_planner_prune_count", frameOutputs.Work.PlannerPruneCount, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_planner_eviction_deferral_count", frameOutputs.Work.PlannerEvictionDeferralCount, ref first);
             AppendNumberField(s_lineBuilder, "frame_output_global_in_flight_wait_count", frameOutputs.Work.GlobalInFlightWaitCount, ref first);
             AppendNumberField(s_lineBuilder, "frame_output_force_flush_count", frameOutputs.Work.ForceFlushCount, ref first);
             AppendRawJsonField(s_lineBuilder, "frame_outputs", JsonSerializer.Serialize(CreateFrameOutputCaptureManifest(frameOutputs)), ref first);
@@ -872,9 +879,42 @@ public static partial class Engine
             AppendStringField(s_lineBuilder, "vulkan_first_command_chain_structural_dirty_reason", Engine.Rendering.Stats.Vulkan.VulkanFirstCommandChainStructuralDirtyReason, ref first);
             AppendStringField(s_lineBuilder, "vulkan_first_command_chain_descriptor_generation_mismatch", Engine.Rendering.Stats.Vulkan.VulkanFirstCommandChainDescriptorGenerationMismatch, ref first);
             AppendStringField(s_lineBuilder, "vulkan_first_command_chain_resource_plan_revision_mismatch", Engine.Rendering.Stats.Vulkan.VulkanFirstCommandChainResourcePlanRevisionMismatch, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_pipeline_cache_lookup_hits", Engine.Rendering.Stats.Vulkan.VulkanPipelineCacheLookupHits, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_pipeline_cache_lookup_misses", Engine.Rendering.Stats.Vulkan.VulkanPipelineCacheLookupMisses, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_driver_pipeline_cache_persisted_hits", Engine.Rendering.Stats.Vulkan.VulkanDriverPipelineCachePersistedHits, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_driver_pipeline_cache_runtime_hits", Engine.Rendering.Stats.Vulkan.VulkanDriverPipelineCacheRuntimeHits, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_driver_pipeline_cache_misses", Engine.Rendering.Stats.Vulkan.VulkanDriverPipelineCacheMisses, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_driver_pipeline_cache_unknown", Engine.Rendering.Stats.Vulkan.VulkanDriverPipelineCacheUnknown, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_pipeline_compile_required_count", Engine.Rendering.Stats.Vulkan.VulkanPipelineCompileRequiredCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_pipeline_compile_completed_count", Engine.Rendering.Stats.Vulkan.VulkanPipelineCompileCompletedCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_pipeline_background_compile_completed_count", Engine.Rendering.Stats.Vulkan.VulkanPipelineBackgroundCompileCompletedCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_required_pipeline_pending_count", Engine.Rendering.Stats.Vulkan.VulkanRequiredPipelinePendingCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_pipeline_record_deferred_count", Engine.Rendering.Stats.Vulkan.VulkanPipelineRecordDeferredCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_render_thread_shader_compile_count", Engine.Rendering.Stats.Vulkan.VulkanRenderThreadShaderCompileCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_pipeline_compile_total_ms", Engine.Rendering.Stats.Vulkan.VulkanPipelineCompileTotalMs, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_pipeline_compile_max_ms", Engine.Rendering.Stats.Vulkan.VulkanPipelineCompileMaxMs, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_pipeline_async_queued_count", Engine.Rendering.Stats.Vulkan.VulkanPipelineAsyncQueuedCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_pipeline_queue_rejected_count", Engine.Rendering.Stats.Vulkan.VulkanPipelineQueueRejectedCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_pipeline_draw_not_ready_count", Engine.Rendering.Stats.Vulkan.VulkanPipelineDrawNotReadyCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_pipeline_queue_depth_high_water", Engine.Rendering.Stats.Vulkan.VulkanPipelineQueueDepthHighWater, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_pipeline_queue_capacity", Engine.Rendering.Stats.Vulkan.VulkanPipelineQueueCapacity, ref first);
+            AppendStringField(s_lineBuilder, "vulkan_pipeline_cache_miss_summary", Engine.Rendering.Stats.Vulkan.VulkanPipelineCacheMissSummary, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_present_attempt_count", Engine.Rendering.Stats.Vulkan.VulkanPresentAttemptCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_present_accepted_count", Engine.Rendering.Stats.Vulkan.VulkanPresentAcceptedCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_last_present_result", Engine.Rendering.Stats.Vulkan.VulkanLastPresentResult, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_validation_layers_enabled", Engine.Rendering.Stats.Vulkan.VulkanValidationLayersEnabled, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_synchronization_validation_enabled", Engine.Rendering.Stats.Vulkan.VulkanSynchronizationValidationEnabled, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_validation_message_count", Engine.Rendering.Stats.Vulkan.VulkanValidationMessageCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_validation_error_count", Engine.Rendering.Stats.Vulkan.VulkanValidationErrorCount, ref first);
+            AppendStringField(s_lineBuilder, "vulkan_last_validation_message", Engine.Rendering.Stats.Vulkan.VulkanLastValidationMessage, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_retired_resource_plan_replacements", Engine.Rendering.Stats.Vulkan.VulkanRetiredResourcePlanReplacements, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_retired_resource_plan_images", Engine.Rendering.Stats.Vulkan.VulkanRetiredResourcePlanImages, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_retired_resource_plan_buffers", Engine.Rendering.Stats.Vulkan.VulkanRetiredResourcePlanBuffers, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_swapchain_retirement_queued_count", Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementQueuedCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_swapchain_retirement_drained_count", Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementDrainedCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_swapchain_retirement_pending_count", Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementPendingCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_swapchain_retirement_pending_high_water", Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementPendingHighWater, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_swapchain_retirement_deferred_count", Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementDeferredCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_retired_descriptor_pool_count", Engine.Rendering.Stats.Vulkan.VulkanRetiredDescriptorPoolCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_retired_descriptor_set_count", Engine.Rendering.Stats.Vulkan.VulkanRetiredDescriptorSetCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_retired_command_buffer_count", Engine.Rendering.Stats.Vulkan.VulkanRetiredCommandBufferCount, ref first);
@@ -1139,6 +1179,12 @@ public static partial class Engine
                 visibility_build_count = snapshot.Work.VisibilityBuildCount,
                 compiled_plan_cache_hits = snapshot.Work.CompiledPlanCacheHits,
                 compiled_plan_cache_misses = snapshot.Work.CompiledPlanCacheMisses,
+                physical_plan_cache_hits = snapshot.Work.PhysicalPlanCacheHits,
+                physical_plan_cache_misses = snapshot.Work.PhysicalPlanCacheMisses,
+                physical_plan_generations = snapshot.Work.PhysicalPlanGenerations,
+                physical_plan_alias_reuses = snapshot.Work.PhysicalPlanAliasReuses,
+                planner_arena_high_water = snapshot.Work.PlannerArenaHighWater,
+                render_graph_plan_generation = snapshot.Work.RenderGraphPlanGeneration,
                 shared_pass_reuse_count = snapshot.Work.SharedPassReuseCount,
                 recorded_work_item_count = snapshot.Work.RecordedWorkItemCount,
                 reused_work_item_count = snapshot.Work.ReusedWorkItemCount,
@@ -1150,6 +1196,7 @@ public static partial class Engine
                 unapproved_policy_event_count = snapshot.Work.UnapprovedPolicyEventCount,
                 submission_rejection_count = snapshot.Work.SubmissionRejectionCount,
                 planner_prune_count = snapshot.Work.PlannerPruneCount,
+                planner_eviction_deferral_count = snapshot.Work.PlannerEvictionDeferralCount,
                 global_in_flight_wait_count = snapshot.Work.GlobalInFlightWaitCount,
                 force_flush_count = snapshot.Work.ForceFlushCount,
                 outputs = rows,

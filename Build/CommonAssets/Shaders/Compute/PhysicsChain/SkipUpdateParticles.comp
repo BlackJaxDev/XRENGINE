@@ -50,11 +50,11 @@ struct PerTreeParams
     vec3 ObjectMove;
     float _pad0;
     vec3 RestGravity;
-    int UpdateMode;
+    int ParticleOffset;
+    int ParticleCount;
+    int LoopCount;
     int _pad1;
     int _pad2;
-    int _pad3;
-    int _pad4; // std430 array stride = 96 bytes (vec3 alignment = 16)
 };
 
 // --- Buffers ---
@@ -80,66 +80,63 @@ layout(std430, binding = 5) readonly buffer PerTreeParamsBuffer
 };
 
 uniform int ParticleCount;
+uniform int TreeCount;
 
 // --- Main ---
 
 void main()
 {
-    uint pid = gl_GlobalInvocationID.x;
-    if (ParticleCount <= 0 || pid >= uint(ParticleCount))
+    uint treeId = gl_GlobalInvocationID.x;
+    if (ParticleCount <= 0 || TreeCount <= 0 || treeId >= uint(TreeCount))
         return;
 
-    ParticleStatic particleStatic = ParticleStatics[pid];
-    int treeIndex = particleStatic.TreeIndex;
-
-    if (treeIndex < 0 || treeIndex >= int(TreeParams.length()))
+    PerTreeParams tp = TreeParams[treeId];
+    int particleStart = tp.ParticleOffset;
+    int particleEnd = particleStart + tp.ParticleCount;
+    if (particleStart < 0 || tp.ParticleCount <= 0 || particleEnd > ParticleCount)
         return;
 
-    PerTreeParams tp = TreeParams[treeIndex];
-    ParticleState p = Particles[pid];
-    vec3 transformPosition = TransformMatrices[pid][3].xyz;
-
-    if (particleStatic.ParentIndex < 0)
+    for (int pid = particleStart; pid < particleEnd; ++pid)
     {
-        // root stays anchored
-        p.PrevPosition = p.Position;
-        p.Position     = transformPosition;
-    }
-    else
-    {
-        // apply object move
-        p.PrevPosition += tp.ObjectMove;
-        p.Position     += tp.ObjectMove;
+        ParticleStatic particleStatic = ParticleStatics[pid];
+        ParticleState p = Particles[pid];
+        vec3 transformPosition = TransformMatrices[pid][3].xyz;
+        int parentIndex = particleStatic.ParentIndex;
 
-        // only stiffness constraint
-        float stiff = mix(1.0, particleStatic.Stiffness, tp.Weight);
-
-        if (stiff > 0.0)
+        if (parentIndex < particleStart || parentIndex >= pid)
         {
-            ParticleState parent = Particles[particleStatic.ParentIndex];
-            mat4 m = TransformMatrices[particleStatic.ParentIndex];
-            m[3].xyz = parent.Position;
-            vec3 restPos = (m * vec4(particleStatic.TransformLocalPosition, 1.0)).xyz;
-            vec3 d = restPos - p.Position;
-            float len = length(d);
-            float baseLen = length(TransformMatrices[particleStatic.ParentIndex][3].xyz - transformPosition);
-            float maxLen  = baseLen * (1.0 - stiff) * 2.0;
-            if (len > maxLen)
+            p.PrevPosition = p.Position;
+            p.Position = transformPosition;
+        }
+        else
+        {
+            p.PrevPosition += tp.ObjectMove;
+            p.Position += tp.ObjectMove;
+
+            ParticleState parent = Particles[parentIndex];
+            float stiffness = mix(1.0, particleStatic.Stiffness, tp.Weight);
+            if (stiffness > 0.0)
             {
-                p.Position += d * ((len - maxLen) / len);
+                mat4 parentMatrix = TransformMatrices[parentIndex];
+                parentMatrix[3].xyz = parent.Position;
+                vec3 restPosition = (parentMatrix * vec4(particleStatic.TransformLocalPosition, 1.0)).xyz;
+                vec3 displacement = restPosition - p.Position;
+                float displacementLength = length(displacement);
+                float maxLength = particleStatic.BoneLength * (1.0 - stiffness) * 2.0;
+                if (displacementLength > maxLength && displacementLength > 1e-6)
+                    p.Position += displacement * ((displacementLength - maxLength) / displacementLength);
+            }
+
+            vec3 difference = parent.Position - p.Position;
+            float lengthSquared = dot(difference, difference);
+            if (lengthSquared > 1e-8)
+            {
+                float inverseLength = inversesqrt(lengthSquared);
+                float currentLength = lengthSquared * inverseLength;
+                p.Position += difference * ((currentLength - particleStatic.BoneLength) * inverseLength);
             }
         }
 
-        // always maintain rest length
-        ParticleState parent2 = Particles[particleStatic.ParentIndex];
-        vec3 diff = parent2.Position - p.Position;
-        float L = length(diff);
-        if (L > 1e-4)
-        {
-            float restLen = length(TransformMatrices[particleStatic.ParentIndex][3].xyz - transformPosition);
-            p.Position += diff * ((L - restLen) / L);
-        }
+        Particles[pid] = p;
     }
-
-    Particles[pid] = p;
 }

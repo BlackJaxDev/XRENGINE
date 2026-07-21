@@ -579,10 +579,12 @@ namespace XREngine.Rendering.Vulkan
                 if (enableDeviceAddress)
                     usage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
+                ulong requiredByteSize = Data.Length;
+                bool useCapacityBackedAllocation = Data.Resizable && !Data.HasGpuCompressedPayload;
                 bool needsRecreate =
                     _vkBuffer is null ||
                     _vkMemory is null ||
-                    _bufferSize != Data.Length ||
+                    requiredByteSize > _bufferSize ||
                     _lastUsageFlags != usage ||
                     _lastMemProps != memProps ||
                     _lastDeviceAddressEnabled != enableDeviceAddress ||
@@ -591,7 +593,9 @@ namespace XREngine.Rendering.Vulkan
                 if (needsRecreate)
                 {
                     bool replacesExistingBacking = _vkBuffer.HasValue || _vkMemory.HasValue;
-                    ulong requestedAllocationBytes = Math.Max((ulong)Data.Length, 1UL);
+                    ulong requestedAllocationBytes = useCapacityBackedAllocation
+                        ? ResolveResizableBufferCapacity(_bufferSize, requiredByteSize)
+                        : Math.Max(requiredByteSize, 1UL);
                     if (!CanAllocateBufferVram(requestedAllocationBytes))
                         return;
 
@@ -627,8 +631,8 @@ namespace XREngine.Rendering.Vulkan
                         _allocatedVRAMBytes = 0;
                     }
 
-                    _bufferSize = Data.Length;
-                    bool uploadedContent = _bufferSize == 0;
+                    _bufferSize = requestedAllocationBytes;
+                    bool uploadedContent = requiredByteSize == 0;
                     _lastUsageFlags = usage;
                     _lastMemProps = memProps;
                     _lastDeviceAddressEnabled = enableDeviceAddress;
@@ -666,7 +670,7 @@ namespace XREngine.Rendering.Vulkan
                             uploadedContent = true;
                         }
                         // If CPU-side data exists, upload through a transient staging buffer.
-                        else if (_bufferSize > 0 && TryGetUploadSlice(0, (uint)_bufferSize, out VoidPtr sourceSlice))
+                        else if (requiredByteSize > 0 && TryGetUploadSlice(0, (uint)requiredByteSize, out VoidPtr sourceSlice))
                         {
                             BufferUsageFlags stagingUsage = BufferUsageFlags.TransferSrcBit;
                             if (preferIndirectCopy)
@@ -674,14 +678,14 @@ namespace XREngine.Rendering.Vulkan
 
                             MemoryPropertyFlags stagingProps = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
                             var (stagingBuffer, stagingMemory) = Renderer.CreateBuffer(
-                                _bufferSize,
+                                requiredByteSize,
                                 stagingUsage,
                                 stagingProps,
                                 sourceSlice,
                                 preferIndirectCopy);
                             try
                             {
-                                uploadedContent = Renderer.CopyBuffer(stagingBuffer, deviceBuffer, _bufferSize);
+                                uploadedContent = Renderer.CopyBuffer(stagingBuffer, deviceBuffer, requiredByteSize);
                             }
                             finally
                             {
@@ -706,18 +710,22 @@ namespace XREngine.Rendering.Vulkan
                     {
                         // Host-visible buffer for dynamic/stream
                         _lastUploadRoute = ResolveHostVisibleUploadRoute(memProps);
-                        VoidPtr initialData = Data.TryGetAddress(out var address) ? address : VoidPtr.Zero;
+                        VoidPtr initialData = _bufferSize == requiredByteSize && Data.TryGetAddress(out var address)
+                            ? address
+                            : VoidPtr.Zero;
                         (_vkBuffer, _vkMemory) = Renderer.CreateBuffer(
                             _bufferSize,
                             usage,
                             memProps,
                             initialData,
                             enableDeviceAddress);
-                        uploadedContent = _bufferSize == 0 || initialData != VoidPtr.Zero;
+                        if (requiredByteSize > 0 && initialData == VoidPtr.Zero)
+                            PushSubData(0, checked((uint)requiredByteSize));
+                        uploadedContent = requiredByteSize == 0 || initialData != VoidPtr.Zero || _uploadedByteCount >= requiredByteSize;
                     }
 
                     RefreshDeviceAddress();
-                    _uploadedByteCount = uploadedContent ? _bufferSize : 0ul;
+                    _uploadedByteCount = uploadedContent ? requiredByteSize : 0ul;
                     _hasPendingUpload = false;
                     ReportBackendState();
 
@@ -748,6 +756,24 @@ namespace XREngine.Rendering.Vulkan
 
                 if (ShouldDisposeAfterUpload())
                     Data.Dispose();
+            }
+
+            internal static ulong ResolveResizableBufferCapacity(ulong currentCapacity, ulong requiredBytes)
+            {
+                const ulong MinimumCapacity = 256UL;
+                ulong capacity = Math.Max(currentCapacity, MinimumCapacity);
+                ulong required = Math.Max(requiredBytes, 1UL);
+                while (capacity < required)
+                {
+                    ulong next = capacity <= ulong.MaxValue / 2UL
+                        ? capacity * 2UL
+                        : ulong.MaxValue;
+                    if (next <= capacity)
+                        return required;
+                    capacity = next;
+                }
+
+                return capacity;
             }
 
             private void TrackCurrentBufferVramAllocation()
@@ -1846,38 +1872,13 @@ namespace XREngine.Rendering.Vulkan
                 transferFamily,
                 dedicatedTransferFamily);
 
-            if (dedicatedTransferFamily && WaitForQueueIdleTracked(graphicsQueue) != Result.Success)
-                return false;
-
-            using (var transferScope = NewTransferCommandScope())
+            // Synchronous uploads are deliberately submitted on the graphics queue.
+            // Queue order then protects an existing buffer from earlier graphics uses
+            // without a global queue-idle wait. A dedicated transfer queue requires an
+            // asynchronous upload plan with semaphore-backed ownership transfers; using
+            // it here would otherwise race prior graphics submissions or force a drain.
+            using (var uploadScope = NewCommandScope())
             {
-                if (dedicatedTransferFamily)
-                {
-                    BufferMemoryBarrier acquireBarrier = new()
-                    {
-                        SType = StructureType.BufferMemoryBarrier,
-                        SrcAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
-                        DstAccessMask = AccessFlags.TransferWriteBit,
-                        SrcQueueFamilyIndex = graphicsFamily,
-                        DstQueueFamilyIndex = transferFamily,
-                        Buffer = deviceBuffer,
-                        Offset = destinationOffset,
-                        Size = copySize
-                    };
-
-                    CmdPipelineBarrierTracked(
-                        transferScope.CommandBuffer,
-                        PipelineStageFlags.BottomOfPipeBit,
-                        PipelineStageFlags.TransferBit,
-                        DependencyFlags.None,
-                        0,
-                        null,
-                        1,
-                        &acquireBarrier,
-                        0,
-                        null);
-                }
-
                 BufferCopy copyRegion = new()
                 {
                     SrcOffset = sourceOffset,
@@ -1885,62 +1886,7 @@ namespace XREngine.Rendering.Vulkan
                     Size = copySize
                 };
 
-                CmdCopyBufferTracked(transferScope.CommandBuffer, stagingBuffer, deviceBuffer, 1, &copyRegion);
-
-                if (dedicatedTransferFamily)
-                {
-                    BufferMemoryBarrier releaseBarrier = new()
-                    {
-                        SType = StructureType.BufferMemoryBarrier,
-                        SrcAccessMask = AccessFlags.TransferWriteBit,
-                        DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
-                        SrcQueueFamilyIndex = transferFamily,
-                        DstQueueFamilyIndex = graphicsFamily,
-                        Buffer = deviceBuffer,
-                        Offset = destinationOffset,
-                        Size = copySize
-                    };
-
-                    CmdPipelineBarrierTracked(
-                        transferScope.CommandBuffer,
-                        PipelineStageFlags.TransferBit,
-                        PipelineStageFlags.BottomOfPipeBit,
-                        DependencyFlags.None,
-                        0,
-                        null,
-                        1,
-                        &releaseBarrier,
-                        0,
-                        null);
-                }
-            }
-
-            if (dedicatedTransferFamily)
-            {
-                using var graphicsScope = NewCommandScope();
-                BufferMemoryBarrier acquireOnGraphics = new()
-                {
-                    SType = StructureType.BufferMemoryBarrier,
-                    SrcAccessMask = AccessFlags.TransferWriteBit,
-                    DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
-                    SrcQueueFamilyIndex = transferFamily,
-                    DstQueueFamilyIndex = graphicsFamily,
-                    Buffer = deviceBuffer,
-                    Offset = destinationOffset,
-                    Size = copySize
-                };
-
-                CmdPipelineBarrierTracked(
-                    graphicsScope.CommandBuffer,
-                    PipelineStageFlags.TransferBit,
-                    PipelineStageFlags.VertexInputBit | PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
-                    DependencyFlags.None,
-                    0,
-                    null,
-                    1,
-                    &acquireOnGraphics,
-                    0,
-                    null);
+                CmdCopyBufferTracked(uploadScope.CommandBuffer, stagingBuffer, deviceBuffer, 1, &copyRegion);
             }
 
             return !_deviceLost;
@@ -2781,8 +2727,10 @@ namespace XREngine.Rendering.Vulkan
                 copySize,
                 graphicsFamily,
                 transferFamily,
-                dedicatedTransferFamily ? "DedicatedTransferQueue" : "GraphicsQueue",
-                dedicatedTransferFamily ? "dedicated-transfer-family-available" : "no-dedicated-transfer-family");
+                "GraphicsQueue",
+                dedicatedTransferFamily
+                    ? "synchronous-upload-requires-queue-order"
+                    : "no-dedicated-transfer-family");
         }
     }
 } 

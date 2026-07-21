@@ -72,11 +72,10 @@ namespace XREngine.Rendering.Vulkan
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanPrimaryReuse), "1", StringComparison.Ordinal);
         private static readonly bool? VulkanPrimaryCommandBufferReuseOverride =
             ReadOptionalBooleanEnvironmentOverride(XREngineEnvironmentVariables.VulkanPrimaryCommandBufferReuse);
-        // Cached primaries can outlive mutable descriptor and GPU-publication
-        // generations that are not yet represented in the variant key. Keep the
-        // public setting and override intact for diagnostics, but do not execute a
-        // cached primary until those generations participate in reuse validation.
-        internal const bool VulkanPrimaryCommandBufferReuseSafe = false;
+        // Every cached primary is checked against an immutable dependency
+        // signature before reuse. Value-only publication generations are refreshed
+        // through completed frame slots; structural and binding changes rerecord.
+        internal const bool VulkanPrimaryCommandBufferReuseSafe = true;
         private bool VulkanPrimaryCommandBufferReuseEnabled =>
             VulkanPrimaryCommandBufferReuseSafe &&
             (VulkanPrimaryCommandBufferReuseOverride ??

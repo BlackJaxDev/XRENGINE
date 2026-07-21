@@ -239,7 +239,6 @@ public unsafe partial class VulkanRenderer
 
         acquireBridgeSemaphores = new Semaphore[MAX_FRAMES_IN_FLIGHT];
         int presentSemaphoreCount = swapChainImages?.Length ?? MAX_FRAMES_IN_FLIGHT;
-        presentBridgeSemaphores = new Semaphore[presentSemaphoreCount];
         _frameSlotTimelineValues = new ulong[MAX_FRAMES_IN_FLIGHT];
         EnsureSwapchainTimelineState();
 
@@ -282,14 +281,29 @@ public unsafe partial class VulkanRenderer
             SetDebugObjectName(ObjectType.Semaphore, acquireBridgeSemaphores[i].Handle, $"AcquireBridge[{i}]");
         }
 
-        for (var i = 0; i < presentSemaphoreCount; i++)
+        presentBridgeSemaphores = CreatePresentBridgeSemaphores(presentSemaphoreCount);
+    }
+
+    private Semaphore[] CreatePresentBridgeSemaphores(int count)
+    {
+        Semaphore[] semaphores = new Semaphore[Math.Max(1, count)];
+        SemaphoreCreateInfo semaphoreInfo = new()
         {
-            if (Api!.CreateSemaphore(device, ref semaphoreInfo, null, out presentBridgeSemaphores[i]) != Result.Success)
+            SType = StructureType.SemaphoreCreateInfo,
+        };
+
+        for (int i = 0; i < semaphores.Length; i++)
+        {
+            if (Api!.CreateSemaphore(device, ref semaphoreInfo, null, out semaphores[i]) != Result.Success)
             {
+                for (int createdIndex = 0; createdIndex < i; createdIndex++)
+                    Api.DestroySemaphore(device, semaphores[createdIndex], null);
                 throw new Exception("failed to create frame bridge synchronization semaphores.");
             }
 
-            SetDebugObjectName(ObjectType.Semaphore, presentBridgeSemaphores[i].Handle, $"PresentBridge[{i}]");
+            SetDebugObjectName(ObjectType.Semaphore, semaphores[i].Handle, $"PresentBridge[{i}]");
         }
+
+        return semaphores;
     }
 }

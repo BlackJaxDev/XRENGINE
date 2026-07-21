@@ -115,6 +115,14 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     private bool _gpuSyncToBones = false;
     private volatile bool _hasPendingGpuBoneSync;
     private bool _debugDrawChains = true;
+    private PhysicsChainQualityTier _qualityTier = PhysicsChainQualityTier.Strict;
+    private PhysicsChainQualityTier _effectiveQualityTier = PhysicsChainQualityTier.Strict;
+    private bool _enableAutomaticSleep = true;
+    private float _sleepVelocityThreshold = 0.0005f;
+    private int _sleepQuietFrameCount = 30;
+    private int _quietSimulationFrames;
+    private bool _isRuntimeSleeping;
+    private Vector3 _sleepRootPosition;
 
     private TransformBase? _rootBone = null;
     private float _rootInertia = 0.0f;
@@ -147,28 +155,24 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
     // Thread-safe snapshots populated in Prepare() before jobs are scheduled.
     // Jobs read from these arrays instead of the mutable lists to avoid races.
-    private PhysicsChainColliderBase[]? _collidersForJob;
-    private int _collidersForJobCount;
+    private PhysicsChainColliderSnapshot[]? _colliderSnapshotsForJob;
+    private int _colliderSnapshotsForJobCount;
+    private PhysicsChainColliderBase[]? _fallbackCollidersForJob;
+    private int _fallbackCollidersForJobCount;
     private ParticleTree[]? _particleTreesForJob;
     private int _particleTreesForJobCount;
 
-    private static readonly ConcurrentQueue<PhysicsChainComponent> _pendingWorks = [];
-    private static readonly List<PhysicsChainComponent> _effectiveWorks = [];
-    private static readonly HashSet<PhysicsChainComponent> _effectiveWorkSet = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
-    private static PhysicsChainBatchWorkItem[] _parallelWorkItems = [];
-    private static readonly object _executeWorksSync = new();
-
-    private static int _updateCount;
     private static int _prepareFrame;
+    private PhysicsChainRuntimeHandle _runtimeHandle = PhysicsChainRuntimeHandle.Invalid;
+
+    [Browsable(false)]
+    public PhysicsChainRuntimeHandle RuntimeHandle => _runtimeHandle;
 
     public PhysicsChainComponent()
     {
-        _gpuWorkRenderCommand = new RenderCommandMethod3D((int)EDefaultRenderPass.PreRender, ExecutePendingGpuWork);
-        _gpuWorkRenderInfo = RenderInfo3D.New(this, _gpuWorkRenderCommand);
         RenderedObjects =
         [
-            RenderInfo3D.New(this, new RenderCommandMethod3D((int)EDefaultRenderPass.OpaqueForward, Render)),
-            _gpuWorkRenderInfo
+            RenderInfo3D.New(this, new RenderCommandMethod3D((int)EDefaultRenderPass.OpaqueForward, Render))
         ];
     }
 
@@ -335,7 +339,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
     [Category("Execution")]
     [DisplayName("Use Batched Dispatcher")]
-    [Description("When GPU mode is enabled, batch this chain with other GPU chains for one shared compute dispatch.")]
+    [Description("When GPU mode is enabled, share compute dispatches with compatible chains. Disabling this isolates the chain while retaining world-level render submission.")]
     [EditorBrowsableIf("UseGPU")]
     public bool UseBatchedDispatcher
     {
@@ -351,6 +355,42 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         get => _debugDrawChains;
         set => SetField(ref _debugDrawChains, value);
     }
+
+    [Category("Execution")]
+    [DisplayName("Quality Tier")]
+    [Description("Selects strict authored cadence, an explicit reduced cadence, sleep, or world-budgeted automatic cadence. Quality changes are never implicit when Strict is selected.")]
+    public PhysicsChainQualityTier QualityTier
+    {
+        get => _qualityTier;
+        set => SetField(ref _qualityTier, value);
+    }
+
+    [Browsable(false)]
+    public PhysicsChainQualityTier EffectiveQualityTier => _effectiveQualityTier;
+
+    [Category("Execution")]
+    public bool EnableAutomaticSleep
+    {
+        get => _enableAutomaticSleep;
+        set => SetField(ref _enableAutomaticSleep, value);
+    }
+
+    [Category("Execution")]
+    public float SleepVelocityThreshold
+    {
+        get => _sleepVelocityThreshold;
+        set => SetField(ref _sleepVelocityThreshold, MathF.Max(value, 0.0f));
+    }
+
+    [Category("Execution")]
+    public int SleepQuietFrameCount
+    {
+        get => _sleepQuietFrameCount;
+        set => SetField(ref _sleepQuietFrameCount, Math.Max(value, 1));
+    }
+
+    [Browsable(false)]
+    public bool IsRuntimeSleeping => _isRuntimeSleeping || _effectiveQualityTier == PhysicsChainQualityTier.Sleep;
 
     /// <summary>
     /// Optional root bone transform for character locomotion.

@@ -2,7 +2,7 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 
 public sealed class OpenXrSmokeSummary
 {
-    public const int CurrentSchemaVersion = 8;
+    public const int CurrentSchemaVersion = 9;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public DateTimeOffset CapturedAtUtc { get; set; } = DateTimeOffset.UtcNow;
@@ -74,6 +74,13 @@ public sealed class OpenXrSmokeSummary
     public long[] PerEyePublishCounts { get; set; } = [];
     public long[] PerEyeReleaseCounts { get; set; } = [];
     public long PerFrameAllocationsBytes { get; set; }
+    public long Phase525FrameWindowGlobalInFlightWaitCount { get; set; }
+    public long Phase525FrameWindowForceFlushCount { get; set; }
+    public long Phase525SwapchainRetirementQueuedCount { get; set; }
+    public long Phase525SwapchainRetirementDrainedCount { get; set; }
+    public long Phase525SwapchainRetirementDeferredCount { get; set; }
+    public int Phase525SwapchainRetirementPendingHighWater { get; set; }
+    public int Phase525SwapchainRetirementFinalPendingCount { get; set; }
     public int WarmupFrameCount { get; set; }
     public int RetainedFrameCount { get; set; }
     public DateTimeOffset? RetainedCohortStartedAtUtc { get; set; }

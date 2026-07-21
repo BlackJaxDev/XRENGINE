@@ -29,7 +29,8 @@ namespace XREngine.Rendering.Vulkan
                 ulong Serial,
                 ulong CommandBufferHandle,
                 uint QueryCount,
-                bool ForceVisible)
+                bool ForceVisible,
+                VulkanLifetimeSubmission Submission)
             {
                 public bool IsValid => Serial != 0ul;
             }
@@ -303,8 +304,10 @@ namespace XREngine.Rendering.Vulkan
 
                     // Waiting on the query alone is insufficient: availability from the
                     // previous pool use remains observable until the queued reset executes.
-                    // An explicit wait therefore establishes submission completion first.
-                    Renderer.DeviceWaitIdle();
+                    // Wait only for the exact submission which produced this epoch; a
+                    // device-wide idle would stall unrelated frame, eye, and probe work.
+                    if (!Renderer.WaitForVulkanSubmissionCompletion(epoch.Submission, "query-result-epoch"))
+                        return false;
                     if (!Renderer.IsVulkanResourceUseCompleted(ObjectType.QueryPool, _queryPool.Handle))
                         return false;
                 }
@@ -628,7 +631,9 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            internal void MarkResultEpochSubmitted(ulong commandBufferHandle)
+            private void MarkResultEpochSubmitted(
+                ulong commandBufferHandle,
+                in VulkanLifetimeSubmission submission)
             {
                 lock (_resultEpochLock)
                 {
@@ -648,7 +653,8 @@ namespace XREngine.Rendering.Vulkan
                         serial,
                         commandBufferHandle,
                         Math.Clamp(recordedEpoch.QueryCount, 1u, Math.Max(_queryPoolCapacity, 1u)),
-                        recordedEpoch.ForceVisible || overlappingEpoch);
+                        recordedEpoch.ForceVisible || overlappingEpoch,
+                        submission);
                 }
             }
 

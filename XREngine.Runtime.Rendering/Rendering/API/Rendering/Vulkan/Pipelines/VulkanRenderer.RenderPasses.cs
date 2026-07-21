@@ -13,6 +13,14 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     private RenderPass _renderPassLoad;
 
+    private (RenderPass Clear, RenderPass Load) DetachSwapchainRenderPassesForRetirement()
+    {
+        (RenderPass Clear, RenderPass Load) detached = (_renderPass, _renderPassLoad);
+        _renderPass = default;
+        _renderPassLoad = default;
+        return detached;
+    }
+
     private void DestroyRenderPasses()
     {
         if (_renderPass.Handle != 0)

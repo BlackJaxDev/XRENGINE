@@ -261,18 +261,18 @@ An unsupported hardware lane reports `unsupported`; an unfinished lane reports
 
 ### 5.2.5 - Make Render Plans And Resource Arenas Versioned And Nonblocking
 
-- [ ] Make resource-generation key construction deterministic before versioning
+- [x] Make resource-generation key construction deterministic before versioning
   plans. `BuildResourceFeatureMaskForGenerationKey` must derive every
   feature-affecting setting from the explicit `XRRenderPipelineInstance` and
   `XRViewport` (or an immutable settings snapshot owned by them), never from
   ambient `RuntimeEngine.Rendering.State.CurrentRenderingPipeline` state.
   Refactor AO resolution accordingly so resize, internal-resolution, explicit
   invalidation, and per-frame checks observe the same enabled state and AO type.
-- [ ] Route all resource-generation requests through the same feature snapshot
+- [x] Route all resource-generation requests through the same feature snapshot
   and revision. Add a diagnostic assertion/counter when two requests for the
   same pipeline, output kind, extent, and settings revision produce different
   feature masks or structurally different layouts.
-- [ ] Break the desktop resize failure loop observed in
+- [x] Break the desktop resize failure loop observed in
   `xrengine_2026-07-16_09-14-14_pid17808`: the resize path resolved no camera and
   requested `features=0x20CE101`, while frame preparation resolved GTAO and
   requested `features=0x220CE101`. The alternating `ViewportResized` and
@@ -280,133 +280,193 @@ An unsupported hardware lane reports `unsupported`; an unfinished lane reports
   left the active desktop generation at `1920x1080` after the window reached
   `2560x1369`, and skipped desktop command execution while the independent
   OpenXR eye generation continued submitting with `deviceLost=False`.
-- [ ] Decouple swapchain convergence from managed render-resource catch-up. Once
+- [x] Decouple swapchain convergence from managed render-resource catch-up. Once
   the live and swapchain extents agree, a pending pipeline generation must not
   repeatedly recreate the same swapchain or grow retired external-image state;
   keep presentation fail-closed until the new generation commits, with bounded
   last-completed-content reuse and explicit progress telemetry.
-- [ ] Redefine planner/cache identity around physical compatibility: output kind,
+- [x] Redefine planner/cache identity around physical compatibility: output kind,
   view-family/pipeline identity, extent, pass graph, attachment signature,
   resource-plan generation, and queue family. Do not key the compiled plan on a
   rotating external swapchain/OpenXR image handle.
-- [ ] Bind the current external target slot as a bounded plan/command variant;
+- [x] Bind the current external target slot as a bounded plan/command variant;
   keep plan identity stable across acquisition rotation.
-- [ ] Store immutable compiled plan generations. A replacement publishes a new
+- [x] Store immutable compiled plan generations. A replacement publishes a new
   generation while old plans, allocators, descriptors, and resources remain
   alive behind their last submitted timeline/retirement ticket.
-- [ ] Remove `WaitForAllInFlightWork` and force-flush calls from command
+- [x] Remove `WaitForAllInFlightWork` and force-flush calls from command
   recording, planner-state prune, physical-plan replacement, imported-texture
   replacement, and normal cache eviction.
-- [ ] Evict planner states incrementally only after their last-use timeline is
+- [x] Evict planner states incrementally only after their last-use timeline is
   complete. Cache capacity pressure must defer/retire work, not globally drain
   the device.
-- [ ] Give each concurrently active output family a bounded persistent resource
+- [x] Give each concurrently active output family a bounded persistent resource
   arena and candidate transient-lifetime plan. Reuse compatible allocations
   across frames, but keep physical aliasing disabled until scheduled lifetimes
   and semaphore-constrained execution prove non-overlap.
-- [ ] Separate runtime-owned external images from engine-owned allocation and
+- [x] Separate runtime-owned external images from engine-owned allocation and
   retirement. External image rotation must not churn engine resource plans.
-- [ ] Add plan-cache hit/miss, plan-generation, arena high-water, alias reuse,
+- [x] Add plan-cache hit/miss, plan-generation, arena high-water, alias reuse,
   pending-retirement bytes, and eviction-defer telemetry by output family.
 
 Command-recording dependency and reuse requirements:
 
-- [ ] Define one immutable command-recording dependency signature used by
+- [x] Define one immutable command-recording dependency signature used by
   primary variants, secondary ranges, and command-chain schedules. Include the
   output/pass and attachment signature, render area, view mask, queue family,
   dynamic-rendering inheritance, pipeline/layout generation, mesh/index/vertex
   binding identity, buffer/image/view/sampler allocation generation,
   descriptor-layout/set/publication generation, resource-plan generation, and
   bounded external-target/frame-slot variant.
-- [ ] Build the signature from the prepared immutable plan/recording snapshot,
+- [x] Build the signature from the prepared immutable plan/recording snapshot,
   never by rereading mutable renderer or descriptor state during reuse choice.
-- [ ] Classify invalidation as `Structural`, `BindingIdentity`, or `DataOnly`.
+- [x] Classify invalidation as `Structural`, `BindingIdentity`, or `DataOnly`.
   Structural changes rebuild the relevant plan and recorded ranges;
   binding-identity changes invalidate only ranges that consume the binding;
   data-only publication into a completed frame slot preserves compatible
   command recordings.
-- [ ] Move the minimum descriptor/resource/publication-generation fingerprint
+- [x] Move the minimum descriptor/resource/publication-generation fingerprint
   required for safe command reuse into Phase 5.2.5. Phase 6 expands descriptor
   coverage and diagnostics; it must not be a prerequisite hidden behind Phase
   5.2A's reuse acceptance gate.
-- [ ] Replace `VulkanPrimaryCommandBufferReuseSafe = false` with validated
+- [x] Replace `VulkanPrimaryCommandBufferReuseSafe = false` with validated
   capability derived from the complete dependency contract. Remove permanent
   hard-off behavior; settings and environment overrides may select a diagnostic
   policy but must not substitute for correctness validation.
-- [ ] Replace global command-buffer dirtiness for local resource mutations with
+- [x] Replace global command-buffer dirtiness for local resource mutations with
   dependency-indexed invalidation. Every miss reports the first incompatible
   signature field and affected range/family.
-- [ ] Keep static primary/secondary topology separate from volatile overlays,
+- [x] Keep static primary/secondary topology separate from volatile overlays,
   uploads, queries, and presentation. A volatile suffix must not force static
   opaque, skybox, shadow, or fixed post-process ranges to rerecord.
 
 Vulkan `CpuDirect` dynamic-data requirements:
 
-- [ ] Define a stable per-object/per-material/per-view/per-pass data layout for
+- [x] Define a stable per-object/per-material/per-view/per-pass data layout for
   transforms, previous transforms, material IDs, skinning/blendshape IDs,
   editor IDs, flags, and pass masks. Update dirty ranges instead of rebuilding
   or uploading all visible-object data.
-- [ ] Route ordinary dynamic data through bounded frame-indexed, persistently
+- [x] Route ordinary dynamic data through bounded frame-indexed, persistently
   mapped host-visible upload arenas and safe device-local copies or direct
   bindings as appropriate. Use timeline/frame-slot completion to prevent range
   overwrite without blocking the render thread.
-- [ ] Use stable descriptor bindings plus dynamic/frame-slot offsets where
+- [x] Use stable descriptor bindings plus dynamic/frame-slot offsets where
   practical. Camera motion, animation, and value-only material changes must
   update bytes without changing the recorded binding topology.
-- [ ] Make resizable Vulkan buffers capacity-based. Grow only when capacity is
+- [x] Make resizable Vulkan buffers capacity-based. Grow only when capacity is
   exceeded, publish the replacement as a new safe generation, and update used
   subranges thereafter. Exact logical element-count changes must not recreate
   backing storage every frame.
-- [ ] Apply the capacity contract to editor/debug geometry, including
+- [x] Apply the capacity contract to editor/debug geometry, including
   `LinesBuffer`, so mesh bounds and other variable debug primitives do not emit
   steady `VkDataBufferRecreated` invalidation.
-- [ ] Sort/bucket opaque CPU-direct packets by compatible pass, pipeline/state
+- [x] Sort/bucket opaque CPU-direct packets by compatible pass, pipeline/state
   class, material binding layout, and mesh binding where semantics permit.
   Preserve transparent, UI, editor-overlay, and explicitly ordered diagnostic
   behavior.
 
 Pipeline and shader readiness requirements:
 
-- [ ] Derive required graphics/compute pipeline variants from the compiled
+- [x] Derive required graphics/compute pipeline variants from the compiled
   structural plan and prewarm them before a cohort enters steady-state
   measurement. Include CPU-direct, GPU-indirect, meshlet, shadow, velocity,
   editor-ID, override, stereo/multiview, and dynamic/legacy target variants that
   the workload can reach.
-- [ ] Keep pipeline creation, shader compilation, texture residency, and asset
+- [x] Keep pipeline creation, shader compilation, texture residency, and asset
   streaming outside command recording. Separate startup, warmup, streaming, and
   steady-state profiler phases.
-- [ ] If optional asynchronous compilation is still pending, defer only the
+- [x] If optional asynchronous compilation is still pending, defer only the
   dependent optional node with an explicit reason. A required production pass
   must be ready before submission; it must not reject or defer the entire frame
   after declared warmup.
-- [ ] Version pipeline-cache entries and retire replaced pipelines behind their
+- [x] Version pipeline-cache entries and retire replaced pipelines behind their
   last submitted timeline without globally invalidating unrelated recordings.
 
 Render-graph dataflow requirements:
 
-- [ ] Represent every resource use with resource identity, subresource range,
+- [x] Represent every resource use with resource identity, subresource range,
   stage, access, layout, and read/write intent; version each logical resource
   after every write.
-- [ ] Derive producer-to-consumer dependencies from resource versions instead
+- [x] Derive producer-to-consumer dependencies from resource versions instead
   of declaration order alone. Reject cycles with the dependency chain and
   reject reads of uninitialized internal resources unless they are explicitly
   imported with a valid initial state.
-- [ ] Calculate transient lifetimes from the scheduled graph and real queue
+- [x] Calculate transient lifetimes from the scheduled graph and real queue
   waits. Preserve synchronization2 barriers, queue-family transfers, timeline
   waits/signals, and binary WSI synchronization in the same plan.
-- [ ] Batch adjacent same-queue passes when it keeps submission count bounded
+- [x] Batch adjacent same-queue passes when it keeps submission count bounded
   without sacrificing useful overlap or deadline boundaries.
-- [ ] Publish an immutable, versioned `VulkanRenderGraphPlan` whose cache
+- [x] Publish an immutable, versioned `VulkanRenderGraphPlan` whose cache
   identity includes the structural pass graph, resource versions, attachment
   signature, queue plan, and output contract, but excludes rotating external
   image handles and transient matrices.
-- [ ] Emit a graph dump containing pass order, resource versions, derived and
+- [x] Emit a graph dump containing pass order, resource versions, derived and
   explicit edges, barriers, queue assignments, submissions, output deadlines,
   lifetimes, and predicted/measured durations.
-- [ ] Keep physical-image aliasing disabled until tests prove candidate
+- [x] Keep physical-image aliasing disabled until tests prove candidate
   lifetimes cannot overlap across actual asynchronous execution intervals.
 
 Acceptance criteria:
+
+> **Wrap-up status (2026-07-20): implementation is present; live acceptance is
+> not yet closed.** All Phase 5.2.5 implementation items above have code and
+> deterministic coverage. Before the final nonblocking-wait audit, the focused
+> acceptance slice passed 68/68 tests, the direct Phase 5.2.5 suite passed 41/41,
+> and the editor built with zero errors. The final audit then added bounded
+> fence-retired desktop swapchain generations, removed remaining normal-path
+> queue/device-wide waits from synchronous uploads, query completion, pipeline
+> resource eviction, and upscale frame-slot recreation, and strengthened the
+> OpenXR resize/steady-state telemetry. Those last audit changes have **not**
+> received a complete post-edit build/test run because validation was stopped at
+> the requested wrap-up point. Keep every acceptance box below unchecked until
+> the remaining validation list is completed. Detailed context is in the
+> [implementation ledger](../../progress/rendering/vulkan-core-hardening-phase525-2026-07-20.md)
+> and [live acceptance investigation](../../investigations/rendering/vulkan-phase525-live-acceptance-2026-07-20.md).
+>
+> **Completed implementation:** deterministic immutable resource-setting
+> snapshots; resize convergence; physical-plan identity independent of rotating
+> external handles; timeline-retired plans/resources; complete command-recording
+> dependency signatures and production primary reuse; capacity-backed CPU-direct
+> dynamic data; pipeline manifests/readiness telemetry; versioned resource-derived
+> render-graph scheduling/validation; bounded nonblocking swapchain-generation
+> retirement; and Phase 5.2.5 smoke counters/resize controls.
+>
+> **Still required before checking acceptance:**
+>
+> 1. Rebuild `XREngine.Runtime.Rendering` and `XREngine.Editor` from the final
+>    source, rerun the 68-test focused acceptance slice, and rerun the 110-test
+>    `Test-VulkanPhase3-Regression` slice. Five stale Phase 3 test expectations
+>    were corrected, but their final rerun was interrupted. Also update the stale
+>    `VulkanCpuDirectOcclusionTests` query-wait markers and
+>    `RenderPipelineResourceLifecycleTests.RetirementBackpressure_WaitsForEveryRendererBackend`
+>    expectation exposed by the final no-global-wait audit.
+> 2. Finish the smoke-runner exit contract. It currently writes an exact native
+>    resize ledger but does not fail for missing/unsuccessful/mismatched targets
+>    and does not enforce at least two distinct extents and two cycles when Phase
+>    5.2.5 validation is enabled. Add focused source/behavioral tests for the
+>    max-eight retirement cap, shared/distinct queue markers, `OldSwapchain`
+>    propagation, dependency-aware destruction, teardown-only forced drain, and
+>    whole-window counters; include `VulkanRenderer.Swapchain.cs` in the static
+>    no-global-drain contract.
+> 3. Run two SyncValidation Monado/OpenXR cohorts with GTAO and repeated desktop
+>    resizing between at least two extents: production primary reuse enabled and
+>    forced recording. Require successful resize ledgers, uninterrupted eyes,
+>    zero validation/device-loss/rejection/global-wait/force-flush events, bounded
+>    planner/command/swapchain-retirement state, and zero post-warmup resource or
+>    pipeline churn.
+> 4. Compare reuse/forced-record captures for visual equivalence and inspect MCP
+>    viewport screenshots from at least two camera positions. Review the copied
+>    Vulkan/rendering logs for one committed desktop generation and one stable
+>    GTAO feature mask per settled extent, with no supersession or repeated
+>    same-extent swapchain recreation.
+> 5. Run and record validation-clean mono and actual async-compute lanes in
+>    addition to the multiview/OpenXR resize cohorts, then summarize the evidence
+>    in the linked investigation and check the criteria below individually.
+>
+> Three explicit opt-in synchronous skinned-mesh-bounds readbacks still call
+> `WaitForGpu`. They are not part of normal frame scheduling, but should be
+> converted to exact asynchronous completion in a follow-up before treating the
+> global-wait helper as removable engine-wide.
 
 - [ ] With GTAO enabled and OpenXR eyes active, repeatedly resize the desktop
   between at least two extents. Each settled extent produces one stable feature

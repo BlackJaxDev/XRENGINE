@@ -186,6 +186,8 @@ namespace XREngine.Rendering.Vulkan
         private long _lastFrameCompletedTimestamp;
         private long _lastInteractiveSwapchainRecreateTimestamp;
         private int _consecutiveNotReadyCount;
+        private long _resourceCatchUpStartedAt;
+        private ulong _resourceCatchUpBlockedFrames;
         private const int MaxConsecutiveNotReadyBeforeRecreate = 3;
 
         private void MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker marker)
@@ -338,6 +340,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             DrainInvalidatedCommandBufferRecordings();
+            DrainRetiredSwapchainGenerations();
             DrainRetiredDescriptorPools();
             DrainRetiredPipelines();
             DrainRetiredPipelineLayouts();
@@ -362,6 +365,7 @@ namespace XREngine.Rendering.Vulkan
                 if (instance.SkippedResizeCatchUpThisFrame)
                 {
                     reason = $"VP[{viewport.Index}] skipped command-chain execution this frame while resize resources catch up";
+                    RecordResourceCatchUpProgress(viewport, instance.ActiveGeneration, instance.PendingGeneration, reason);
                     return true;
                 }
 
@@ -375,6 +379,7 @@ namespace XREngine.Rendering.Vulkan
                 if (activeGeneration is null)
                 {
                     reason = $"VP[{viewport.Index}] has no active resource generation; pending={pendingGeneration?.Key.ToString() ?? "<none>"}";
+                    RecordResourceCatchUpProgress(viewport, activeGeneration, pendingGeneration, reason);
                     return true;
                 }
 
@@ -432,36 +437,52 @@ namespace XREngine.Rendering.Vulkan
                         pendingGeneration.Key.InternalHeight == internalHeight;
                 }
 
-                if (pendingMatchesCurrent && internalMatches)
-                {
-                    RenderResourceGeneration pending = pendingGeneration!;
-                    Debug.VulkanEvery(
-                        $"Vulkan.Frame.{GetHashCode()}.PendingResizeResourceCatchUp.{viewport.Index}",
-                        TimeSpan.FromMilliseconds(500),
-                        "[Vulkan] Allowing active presentation-size mismatch while pending generation catches up. VP[{0}] active={1}x{2}/{3}x{4} pending={5} current={6}x{7}/{8}x{9}",
-                        viewport.Index,
-                        key.DisplayWidth,
-                        key.DisplayHeight,
-                        key.InternalWidth,
-                        key.InternalHeight,
-                        pending.Key,
-                        displayWidth,
-                        displayHeight,
-                        internalWidth,
-                        internalHeight);
-                    continue;
-                }
-
                 if (pendingMatchesCurrent)
-                    continue;
+                {
+                    reason =
+                        $"VP[{viewport.Index}] swapchain extent converged; presentation remains paused while generation catches up. " +
+                        $"Active={key} Pending={pendingGeneration!.Key}";
+                    RecordResourceCatchUpProgress(viewport, activeGeneration, pendingGeneration, reason);
+                    return true;
+                }
 
                 reason =
                     $"VP[{viewport.Index}] active={key.DisplayWidth}x{key.DisplayHeight}/{key.InternalWidth}x{key.InternalHeight} " +
                     $"current={displayWidth}x{displayHeight}/{internalWidth}x{internalHeight} pending={pendingGeneration?.Key.ToString() ?? "<none>"}";
+                RecordResourceCatchUpProgress(viewport, activeGeneration, pendingGeneration, reason);
                 return true;
             }
 
+            _resourceCatchUpStartedAt = 0;
+            _resourceCatchUpBlockedFrames = 0;
             return false;
+        }
+
+        private void RecordResourceCatchUpProgress(
+            XRViewport viewport,
+            RenderResourceGeneration? activeGeneration,
+            RenderResourceGeneration? pendingGeneration,
+            string reason)
+        {
+            long now = Stopwatch.GetTimestamp();
+            if (_resourceCatchUpStartedAt == 0)
+                _resourceCatchUpStartedAt = now;
+
+            ulong blockedFrames = ++_resourceCatchUpBlockedFrames;
+            TimeSpan elapsed = Stopwatch.GetElapsedTime(_resourceCatchUpStartedAt, now);
+            Debug.VulkanEvery(
+                $"Vulkan.Frame.{GetHashCode()}.ResourceCatchUpProgress.{viewport.Index}",
+                TimeSpan.FromMilliseconds(250),
+                "[Vulkan][ResizeConvergence] Managed resources catching up after swapchain convergence. VP={0} BlockedFrames={1} ElapsedMs={2:F1} Swapchain={3}x{4} Active={5} Pending={6} PendingStatus={7} Reason={8}",
+                viewport.Index,
+                blockedFrames,
+                elapsed.TotalMilliseconds,
+                swapChainExtent.Width,
+                swapChainExtent.Height,
+                activeGeneration?.Key.ToString() ?? "<none>",
+                pendingGeneration?.Key.ToString() ?? "<none>",
+                pendingGeneration?.Status.ToString() ?? "<none>",
+                reason);
         }
 
         private void ScheduleSwapchainRecreate(string reason)
@@ -825,6 +846,7 @@ namespace XREngine.Rendering.Vulkan
                     using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.DrainRetiredResources"))
                     {
                         DrainInvalidatedCommandBufferRecordings();
+                        DrainRetiredSwapchainGenerations();
                         DrainRetiredCommandBuffers(currentFrame);
                         DrainRetiredDescriptorSets(currentFrame);
                         DrainRetiredDescriptorPools();

@@ -10,34 +10,50 @@ public sealed class PhysicsChainShaderContractTests
 {
     [TestCase("PhysicsChain.comp")]
     [TestCase("SkipUpdateParticles.comp")]
-    public void PhysicsChainDispatchShaders_GuardPaddedInvocationsBeforeBufferReads(string shaderFileName)
+    public void PhysicsChainDispatchShaders_GuardTreeInvocationsBeforeBufferReads(string shaderFileName)
     {
         string source = ReadPhysicsChainShader(shaderFileName).Replace("\r\n", "\n");
 
         source.ShouldContain("uniform int ParticleCount;");
-        int pidIndex = source.IndexOf("uint pid = gl_GlobalInvocationID.x;", StringComparison.Ordinal);
-        int guardIndex = source.IndexOf("if (ParticleCount <= 0 || pid >= uint(ParticleCount))", StringComparison.Ordinal);
+        source.ShouldContain("uniform int TreeCount;");
+        int treeIndex = source.IndexOf("uint treeId = gl_GlobalInvocationID.x;", StringComparison.Ordinal);
+        int guardIndex = source.IndexOf("if (ParticleCount <= 0 || TreeCount <= 0 || treeId >= uint(TreeCount))", StringComparison.Ordinal);
+        int firstTreeRead = source.IndexOf("TreeParams[treeId]", StringComparison.Ordinal);
         int firstParticleStaticRead = source.IndexOf("ParticleStatics[pid]", StringComparison.Ordinal);
         int firstParticleRead = source.IndexOf("Particles[pid]", StringComparison.Ordinal);
         int firstTransformRead = source.IndexOf("TransformMatrices[pid]", StringComparison.Ordinal);
 
-        pidIndex.ShouldBeGreaterThanOrEqualTo(0);
-        guardIndex.ShouldBeGreaterThan(pidIndex);
+        treeIndex.ShouldBeGreaterThanOrEqualTo(0);
+        guardIndex.ShouldBeGreaterThan(treeIndex);
+        firstTreeRead.ShouldBeGreaterThan(guardIndex);
         firstParticleStaticRead.ShouldBeGreaterThan(guardIndex);
         firstParticleRead.ShouldBeGreaterThan(guardIndex);
         firstTransformRead.ShouldBeGreaterThan(guardIndex);
     }
 
     [Test]
-    public void PhysicsChainDispatchers_SetParticleCountUniformBeforeDispatch()
+    public void PhysicsChainDispatchers_SetParticleAndTreeCountUniformsBeforeDispatch()
     {
         string componentSource = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent.GPU.cs");
         string dispatcherSource = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
 
         componentSource.ShouldContain("_mainPhysicsProgram.Uniform(\"ParticleCount\", _totalParticleCount);");
         componentSource.ShouldContain("_skipUpdateParticlesProgram.Uniform(\"ParticleCount\", _totalParticleCount);");
+        componentSource.ShouldContain("_mainPhysicsProgram.Uniform(\"TreeCount\", _particleTreesData.Count);");
+        componentSource.ShouldContain("_skipUpdateParticlesProgram.Uniform(\"TreeCount\", _particleTreesData.Count);");
         dispatcherSource.ShouldContain("_mainPhysicsProgram.Uniform(\"ParticleCount\", TotalParticleCount);");
-        dispatcherSource.ShouldContain("_skipUpdateProgram.Uniform(\"ParticleCount\", TotalParticleCount);");
+        dispatcherSource.ShouldContain("_mainPhysicsProgram.Uniform(\"TreeCount\", TotalTreeCount);");
+    }
+
+    [Test]
+    public void MainPhysicsShader_OwnsEachTreeInOneInvocation()
+    {
+        string source = ReadPhysicsChainShader("PhysicsChain.comp").Replace("\r\n", "\n");
+
+        source.ShouldContain("for (int pid = particleStart; pid < particleEnd; ++pid)");
+        source.ShouldContain("parents precede children");
+        source.ShouldContain("parentIndex >= particleStart && parentIndex < pid");
+        source.ShouldNotContain("ParticleState parentStatic");
     }
 
     [Test]

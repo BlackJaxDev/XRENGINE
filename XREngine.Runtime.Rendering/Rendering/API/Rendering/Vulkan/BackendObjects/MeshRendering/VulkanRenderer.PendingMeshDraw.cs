@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -81,5 +82,38 @@ public unsafe partial class VulkanRenderer
         LayeredShadowUniformState ShadowUniformState,
         VkRenderProgram? PreparedProgram,
         string? PreparedProgramIdentity,
-        ComputeDispatchSnapshot? ProgramBindingSnapshot);
+        ComputeDispatchSnapshot? ProgramBindingSnapshot)
+    {
+        /// <summary>
+        /// Captures the stable CPU-direct dynamic record written into the completed frame slot.
+        /// Binding identity remains in the immutable recording snapshot; these values may change
+        /// every frame without invalidating compatible recorded ranges.
+        /// </summary>
+        public VulkanCpuDirectDynamicData CaptureDynamicData(
+            uint viewId,
+            uint passMask,
+            uint skinningId = 0u,
+            uint blendshapeId = 0u,
+            uint editorId = 0u)
+        {
+            XRMaterial? material = MaterialOverride ?? Renderer.MeshRenderer.Material;
+            uint flags = (uint)BillboardMode & 0xFFu;
+            if (IsStereoPass)
+                flags |= 1u << 8;
+            if (UseUnjitteredProjection)
+                flags |= 1u << 9;
+
+            return new VulkanCpuDirectDynamicData(
+                ModelMatrix,
+                PreviousModelMatrix,
+                material is null ? 0u : unchecked((uint)material.GetHashCode()),
+                skinningId,
+                blendshapeId,
+                editorId,
+                flags,
+                passMask,
+                viewId,
+                TransformId);
+        }
+    }
 }

@@ -370,6 +370,7 @@ internal sealed class CommandChain(CommandChainKey key)
     public ulong FramebufferSignature { get; set; }
     public ulong DescriptorGeneration { get; set; }
     public ulong PipelineGeneration { get; set; }
+    public CommandRecordingDependencySignature DependencySignature { get; set; }
     public int DrawCount { get; set; }
     public int DispatchCount { get; set; }
     public ulong InstanceCountSignature { get; set; }
@@ -461,6 +462,7 @@ internal sealed class CommandChainSchedule
 
     public ulong StructuralSignature { get; private set; }
     public ulong ResourcePlanRevision { get; private set; }
+    public CommandRecordingDependencySignature DependencySignature { get; private set; }
     public ReadOnlyMemory<RenderPassChainGroup> Groups => _groups.AsMemory(0, _groupCount);
 
     public RenderPassChainGroup RentGroup(int index)
@@ -480,6 +482,9 @@ internal sealed class CommandChainSchedule
         StructuralSignature = structuralSignature;
         ResourcePlanRevision = resourcePlanRevision;
     }
+
+    public void PublishDependencySignature(in CommandRecordingDependencySignature signature)
+        => DependencySignature = signature;
 
     private void EnsureGroupCapacity(int required)
     {

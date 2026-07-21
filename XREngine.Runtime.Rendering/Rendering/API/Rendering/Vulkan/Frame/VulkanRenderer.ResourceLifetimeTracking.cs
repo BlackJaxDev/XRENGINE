@@ -2205,7 +2205,7 @@ public unsafe partial class VulkanRenderer
                     if (key.Type == ObjectType.QueryPool &&
                         _vulkanRenderQueriesByPool.TryGetValue(key.Handle, out VkRenderQuery? query))
                     {
-                        query.MarkResultEpochSubmitted(commandBufferHandle);
+                        query.MarkResultEpochSubmitted(commandBufferHandle, in submission);
                     }
                 }
             }
@@ -2320,6 +2320,78 @@ public unsafe partial class VulkanRenderer
             }
         }
         AdvanceCompletedImageLayouts();
+    }
+
+    /// <summary>
+    /// Waits for one tracked submission without draining its queue or the device.
+    /// Explicit blocking query reads use this to distinguish the current queued
+    /// reset/query epoch from stale host-visible availability.
+    /// </summary>
+    private bool WaitForVulkanSubmissionCompletion(
+        in VulkanLifetimeSubmission submission,
+        string reason)
+    {
+        if (_deviceLost)
+            return false;
+
+        if (submission.TimelineSemaphoreHandle != 0 && submission.TimelineValue != 0)
+        {
+            Semaphore semaphore = new(submission.TimelineSemaphoreHandle);
+            WaitForTimelineValue(semaphore, submission.TimelineValue);
+            return !_deviceLost;
+        }
+
+        if (submission.FenceHandle == 0)
+        {
+            Debug.VulkanWarning(
+                "[Vulkan] Cannot wait for tracked submission {0}/{1} ({2}): no timeline or fence completion primitive was published.",
+                submission.QueueDomain,
+                submission.QueueSequence,
+                reason);
+            return false;
+        }
+
+        Fence fence = new(submission.FenceHandle);
+        long waitStart = Stopwatch.GetTimestamp();
+        while (true)
+        {
+            Result waitResult = Api!.WaitForFences(
+                device,
+                1,
+                &fence,
+                true,
+                TimelineWaitPollTimeoutNanoseconds);
+            if (waitResult == Result.Success)
+            {
+                NotifyVulkanFenceCompleted(fence);
+                return true;
+            }
+
+            if (waitResult == Result.Timeout)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.SubmissionFenceWait.{GetHashCode()}.{submission.FenceHandle:X}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Still waiting for tracked submission {0}/{1} ({2}). WaitedMs={3:F1}",
+                    submission.QueueDomain,
+                    submission.QueueSequence,
+                    reason,
+                    Stopwatch.GetElapsedTime(waitStart).TotalMilliseconds);
+                continue;
+            }
+
+            RecordFirstFailingVulkanApi($"vkWaitForFences:{reason}:{waitResult}");
+            if (waitResult == Result.ErrorDeviceLost)
+                MarkDeviceLost($"WaitForFences for tracked submission ({reason}) returned ErrorDeviceLost");
+            else
+                Debug.VulkanWarning(
+                    "[Vulkan] Waiting for tracked submission {0}/{1} ({2}) failed: {3}.",
+                    submission.QueueDomain,
+                    submission.QueueSequence,
+                    reason,
+                    waitResult);
+            return false;
+        }
     }
 
     private void NotifyVulkanTimelineCompleted(Semaphore semaphore, ulong value)

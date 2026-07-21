@@ -353,6 +353,10 @@ public unsafe partial class VulkanRenderer
 		/// </summary>
 		private void UpdateEngineUniformBuffersForDraw(int frameIndex, int drawUniformSlot, in PendingMeshDraw draw)
 		{
+			// Capture value-only CPU-direct state in the same bounded frame/timeline slot as
+			// the UBOs. A later pass-aware capture refines the conservative pass bit.
+			Renderer.TryCaptureCpuDirectDynamicData(this, frameIndex, drawUniformSlot, draw, passMask: 1u);
+
 			if (_engineUniformBuffers.Count == 0)
 				return;
 

@@ -655,6 +655,7 @@ public unsafe partial class VulkanRenderer
             Batches = batches;
             Synchronization = synchronization;
             ScreenSpaceUiPassOrder = screenSpaceUiPassOrder;
+            Plan = new VulkanRenderGraphPlan(orderedPasses, batches, synchronization);
         }
 
         /// <summary>Topologically sorted passes from the source graph.</summary>
@@ -671,6 +672,9 @@ public unsafe partial class VulkanRenderer
 
         /// <summary>Derived synchronization plan for barriers/dependencies.</summary>
         public RenderGraphSynchronizationInfo Synchronization { get; }
+
+        /// <summary>Immutable structural plan generation used for cache and recording identity.</summary>
+        public VulkanRenderGraphPlan Plan { get; }
     }
 
     /// <summary>

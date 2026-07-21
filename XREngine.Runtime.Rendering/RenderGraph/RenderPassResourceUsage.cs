@@ -15,6 +15,25 @@ public readonly record struct RenderGraphSubresourceRange(
            MipLevelCount == Remaining &&
            BaseArrayLayer == 0u &&
            ArrayLayerCount == Remaining;
+
+    public bool IsValid
+        => IsCountValid(BaseMipLevel, MipLevelCount) &&
+           IsCountValid(BaseArrayLayer, ArrayLayerCount);
+
+    public bool Overlaps(in RenderGraphSubresourceRange other)
+        => IntervalsOverlap(BaseMipLevel, MipLevelCount, other.BaseMipLevel, other.MipLevelCount) &&
+           IntervalsOverlap(BaseArrayLayer, ArrayLayerCount, other.BaseArrayLayer, other.ArrayLayerCount);
+
+    private static bool IsCountValid(uint start, uint count)
+        => count != 0u &&
+           (count == Remaining || start <= uint.MaxValue - count);
+
+    private static bool IntervalsOverlap(uint firstStart, uint firstCount, uint secondStart, uint secondCount)
+    {
+        ulong firstEnd = firstCount == Remaining ? ulong.MaxValue : (ulong)firstStart + firstCount;
+        ulong secondEnd = secondCount == Remaining ? ulong.MaxValue : (ulong)secondStart + secondCount;
+        return firstStart < secondEnd && secondStart < firstEnd;
+    }
 }
 
 /// <summary>
@@ -29,7 +48,10 @@ public sealed class RenderPassResourceUsage
         ERenderPassLoadOp loadOp = ERenderPassLoadOp.Load,
         ERenderPassStoreOp storeOp = ERenderPassStoreOp.Store,
         RenderGraphSubresourceRange? subresourceRange = null,
-        uint? resolveSourceColorIndex = null)
+        uint? resolveSourceColorIndex = null,
+        int logicalVersion = -1,
+        bool imported = false,
+        RenderGraphSyncState? importedInitialState = null)
     {
         ResourceName = resourceName;
         ResourceType = resourceType;
@@ -38,6 +60,9 @@ public sealed class RenderPassResourceUsage
         StoreOp = storeOp;
         SubresourceRange = Normalize(subresourceRange ?? RenderGraphSubresourceRange.Full);
         ResolveSourceColorIndex = resolveSourceColorIndex;
+        LogicalVersion = logicalVersion;
+        IsImported = imported;
+        ImportedInitialState = importedInitialState;
     }
 
     public string ResourceName { get; }
@@ -47,6 +72,15 @@ public sealed class RenderPassResourceUsage
     public ERenderPassStoreOp StoreOp { get; }
     public RenderGraphSubresourceRange SubresourceRange { get; }
     public uint? ResolveSourceColorIndex { get; }
+    /// <summary>
+    /// Gets the explicit logical resource version consumed or produced by this use.
+    /// A negative value opts into legacy declaration-ordered hazard tracking.
+    /// </summary>
+    public int LogicalVersion { get; }
+    /// <summary>Gets whether this use imports an externally initialized version.</summary>
+    public bool IsImported { get; }
+    /// <summary>Gets the synchronization state supplied by the external owner.</summary>
+    public RenderGraphSyncState? ImportedInitialState { get; }
 
     public bool IsAttachment => ResourceType
         is ERenderPassResourceType.ColorAttachment

@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using System.Runtime.CompilerServices;
 using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
@@ -21,12 +22,14 @@ public unsafe partial class VulkanRenderer
         private ulong _currentOffset;
         private void* _mappedPtr;
         private bool _destroyed;
+        private VulkanDynamicDataDirtyRange _dirtyRange;
 
         internal Buffer VkBuffer => _buffer;
         internal DeviceMemory Memory => _memory;
         internal ulong Capacity => _capacity;
         internal ulong CurrentOffset => _currentOffset;
         internal uint Alignment => _alignment;
+        internal VulkanDynamicDataDirtyRange DirtyRange => _dirtyRange;
 
         /// <summary>
         /// Creates a ring buffer backed by a persistently mapped host-visible coherent Vulkan buffer.
@@ -90,6 +93,22 @@ public unsafe partial class VulkanRenderer
             *(T*)((byte*)_mappedPtr + offset) = value;
         }
 
+        internal bool WriteIfChanged<T>(ulong offset, in T value) where T : unmanaged
+        {
+            uint size = checked((uint)sizeof(T));
+            if (!TryGetMappedRange(offset, size, out void* destination))
+                return false;
+
+            ReadOnlySpan<byte> source = new(Unsafe.AsPointer(ref Unsafe.AsRef(in value)), checked((int)size));
+            Span<byte> current = new(destination, checked((int)size));
+            if (source.SequenceEqual(current))
+                return true;
+
+            source.CopyTo(current);
+            _dirtyRange.Include(offset, size);
+            return true;
+        }
+
         internal bool TryGetMappedRange(ulong offset, uint size, out void* mappedPtr)
         {
             if (_destroyed || _mappedPtr == null || offset > _capacity || size > _capacity - offset)
@@ -103,7 +122,11 @@ public unsafe partial class VulkanRenderer
         }
 
         /// <summary>Resets the allocation cursor. Call at the start of each frame.</summary>
-        internal void ResetForFrame() => _currentOffset = 0;
+        internal void ResetForFrame()
+        {
+            _currentOffset = 0;
+            _dirtyRange.Clear();
+        }
 
         internal void Destroy()
         {
@@ -142,6 +165,7 @@ public unsafe partial class VulkanRenderer
         int DrawSlot);
 
     private readonly record struct MeshFrameDataReservation(ulong Offset, uint Size, ulong Generation);
+    private const string CpuDirectDynamicDataReservationName = "$CpuDirectDynamicData";
 
     /// <summary>
     /// Fixed capacity of each persistently mapped frame-data arena. Reservations use the
@@ -239,6 +263,54 @@ public unsafe partial class VulkanRenderer
         buffer = arena.VkBuffer;
         memory = arena.Memory;
         return buffer.Handle != 0;
+    }
+
+    internal bool TryCaptureCpuDirectDynamicData(
+        VkMeshRenderer owner,
+        int frameIndex,
+        int drawSlot,
+        in PendingMeshDraw draw,
+        uint passMask,
+        uint viewId = 0u)
+    {
+        if (!MeshFrameDataArenaEnabled || (uint)frameIndex >= (uint)_dynamicUniformRingBuffers.Length)
+            return false;
+
+        uint size = checked((uint)VulkanCpuDirectDynamicData.Stride);
+        if (!TryReserveMeshFrameDataRange(
+                owner,
+                CpuDirectDynamicDataReservationName,
+                isAutoUniform: false,
+                drawSlot,
+                size,
+                out ulong offset))
+        {
+            return false;
+        }
+
+        uint stableRendererId = unchecked((uint)owner.BindingId);
+        VulkanCpuDirectDynamicData dynamicData = draw.CaptureDynamicData(
+            viewId,
+            passMask,
+            owner.Mesh?.HasSkinning == true ? stableRendererId : 0u,
+            owner.Mesh?.HasBlendshapes == true ? stableRendererId : 0u,
+            draw.TransformId);
+        return _dynamicUniformRingBuffers[frameIndex]!.WriteIfChanged(offset, dynamicData);
+    }
+
+    internal bool TryGetCpuDirectDynamicDataDirtyRange(
+        int frameIndex,
+        out VulkanDynamicDataDirtyRange dirtyRange)
+    {
+        if ((uint)frameIndex >= (uint)_dynamicUniformRingBuffers.Length ||
+            _dynamicUniformRingBuffers[frameIndex] is not { } arena)
+        {
+            dirtyRange = default;
+            return false;
+        }
+
+        dirtyRange = arena.DirtyRange;
+        return true;
     }
 
     internal void ReleaseMeshFrameDataReservations(VkMeshRenderer owner)

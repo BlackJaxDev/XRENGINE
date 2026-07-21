@@ -233,7 +233,7 @@ public class GpuRenderingBacklogTests
 
         classicCull.ShouldContain("FrustumAabbVisible(bounds.AabbMin.xyz, bounds.AabbMax.xyz)");
         soaCull.ShouldContain("FrustumAabbVisible(bounds.AabbMin.xyz, bounds.AabbMax.xyz)");
-        bvhCull.ShouldContain("AabbVisible(bounds.AabbMin.xyz, bounds.AabbMax.xyz)");
+        bvhCull.ShouldContain("AabbVisibleMasked(bounds.AabbMin.xyz, bounds.AabbMax.xyz");
     }
 
     [Test]
@@ -258,8 +258,9 @@ public class GpuRenderingBacklogTests
         };
 
         SetPrivateField(pass, "_bvhFrustumCullProgram", new XRRenderProgram());
+        pass.GpuBvhCullingCalibration = new GpuBvhSelectorCalibration(fallbackCommandThreshold: 1u);
 
-        var shouldUseBvh = (bool)InvokeNonPublic(pass, "ShouldUseBvhCulling", scene)!;
+        var shouldUseBvh = (bool)InvokeNonPublic(pass, "ShouldUseBvhCulling", scene, 1u)!;
         shouldUseBvh.ShouldBeTrue();
     }
 
@@ -729,10 +730,10 @@ public class GpuRenderingBacklogTests
     [Test]
     public void VR_Vulkan_ParallelSecondaryCommands_NoRenderThreadBlock()
     {
-        string recording = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
-        string secondary = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.SecondaryCommandBuffers.cs");
-        string workers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandChainWorkers.cs");
-        string commandPools = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandPool.cs");
+        string recording = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string secondary = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
+        string workers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
+        string commandPools = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandPool.cs");
 
         secondary.ShouldContain("ExecuteSecondaryCommandBufferBatchParallel");
         secondary.ShouldContain("Task.Run");
@@ -744,7 +745,7 @@ public class GpuRenderingBacklogTests
     [Test]
     public void Vulkan_GpuPipelineProfilerToggle_DoesNotInstrumentMainRenderCommandBuffers()
     {
-        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs")
+        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs")
             .Replace("\r\n", "\n");
         string frameTiming = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameTiming.cs")
             .Replace("\r\n", "\n");
@@ -803,11 +804,11 @@ public class GpuRenderingBacklogTests
     {
         string drawingCore = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs")
             .Replace("\r\n", "\n");
-        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs")
+        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs")
             .Replace("\r\n", "\n");
-        string commandBufferState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferState.cs")
+        string commandBufferState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs")
             .Replace("\r\n", "\n");
-        string commandBufferAllocation = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferAllocation.cs")
+        string commandBufferAllocation = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs")
             .Replace("\r\n", "\n");
         string imgui = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs")
             .Replace("\r\n", "\n");

@@ -515,6 +515,7 @@ public unsafe partial class VulkanRenderer
             chain.FramebufferSignature = packet.ResourcePlanSnapshot.FramebufferSignature;
             chain.DescriptorGeneration = packet.DescriptorSnapshot.DescriptorGeneration;
             chain.PipelineGeneration = packet.ResourcePlanSnapshot.PipelineGeneration;
+            chain.DependencySignature = BuildCommandChainDependencySignature(packet, key);
             chain.DrawCount = packet.DrawCount;
             chain.DispatchCount = packet.DispatchCount;
             chain.InstanceCountSignature = ComputePacketInstanceCountSignature(packet);
@@ -537,6 +538,21 @@ public unsafe partial class VulkanRenderer
         int visibilityPacketCount = CountDistinctViewKeys(packets);
         TimeSpan workerRecordTime = Stopwatch.GetElapsedTime(start);
         RenderPacket lastPacket = packets[^1];
+        CommandRecordingDependencySignature scheduleDependencySignature =
+            BuildCommandChainDependencySignature(
+                lastPacket,
+                new CommandChainKey(
+                    unchecked((int)Math.Min(imageIndex, int.MaxValue)),
+                    lastPacket.ViewKey,
+                    lastPacket.PassIndex,
+                    lastPacket.TargetIdentity,
+                    lastPacket.DynamicOverlay,
+                    0)) with
+            {
+                OutputPassAttachment = scheduleSignature,
+                ResourcePlanGeneration = resourcePlanRevision,
+            };
+        schedule.PublishDependencySignature(scheduleDependencySignature);
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
             reusedClean: false,
             recorded: false,
@@ -1191,7 +1207,7 @@ public unsafe partial class VulkanRenderer
 
     private void InvalidateCommandChainScheduleForResourceChange(RenderResourceChangeKind kind, string reason)
     {
-        if (kind == RenderResourceChangeKind.FrameData)
+        if (kind is RenderResourceChangeKind.FrameData or RenderResourceChangeKind.CompatibleContentPublication)
             return;
 
         bool commandChainsAvailable =
@@ -1200,11 +1216,9 @@ public unsafe partial class VulkanRenderer
             CommandChainsEnabledForCurrentRecording;
         if (!commandChainsAvailable)
         {
-            // Compatible publication updates the contents of stable per-frame
-            // descriptor sets after that frame slot completes. The recorded bind
-            // command and descriptor layout identity do not change.
-            if (kind is RenderResourceChangeKind.BindingIdentity or RenderResourceChangeKind.StructuralLayout)
-                MarkCommandBuffersDirty(reason);
+            // Primary variants validate immutable dependency signatures at
+            // selection time. Do not turn a local resource mutation into a
+            // renderer-wide dirty generation; only incompatible variants rerecord.
             return;
         }
 
@@ -1584,6 +1598,12 @@ public unsafe partial class VulkanRenderer
             return CommandChainDirtyReason.Structure;
 
         CommandChainDirtyReason reason = CommandChainDirtyReason.None;
+        CommandRecordingDependencyMismatch dependencyMismatch = chain.DependencySignature.Compare(
+            BuildCommandChainDependencySignature(packet, chain.Key));
+        if (dependencyMismatch.InvalidationClass == CommandRecordingInvalidationClass.Structural)
+            reason |= CommandChainDirtyReason.Structure;
+        else if (dependencyMismatch.InvalidationClass == CommandRecordingInvalidationClass.BindingIdentity)
+            reason |= CommandChainDirtyReason.ResourcePlan;
         if (chain.State == CommandChainState.NotReady)
             reason |= CommandChainDirtyReason.PipelineGeneration;
         if (chain.StructuralSignature != packet.StructuralSignature)
@@ -1609,6 +1629,45 @@ public unsafe partial class VulkanRenderer
         if (chain.PipelineGeneration != packet.ResourcePlanSnapshot.PipelineGeneration)
             reason |= CommandChainDirtyReason.PipelineGeneration;
         return reason;
+    }
+
+    private static CommandRecordingDependencySignature BuildCommandChainDependencySignature(
+        RenderPacket packet,
+        in CommandChainKey key)
+    {
+        FrameOpSignatureHasher inheritanceHash = new();
+        inheritanceHash.Add(key.PassIndex);
+        inheritanceHash.Add(key.ViewKey.PipelineIdentity);
+        inheritanceHash.Add(key.ViewKey.ViewportIdentity);
+        inheritanceHash.Add(key.ViewKey.ViewIndex);
+        inheritanceHash.Add((int)key.ViewKey.Kind);
+
+        ulong meshBinding = MixSignature(packet.StructuralSignature, 0x4D455348UL);
+        ulong indexBinding = MixSignature(packet.StructuralSignature, 0x494E4458UL);
+        ulong vertexBinding = MixSignature(packet.StructuralSignature, 0x56455254UL);
+        return new CommandRecordingDependencySignature(
+            OutputPassAttachment: packet.ResourcePlanSnapshot.FramebufferSignature,
+            RenderArea: 0UL,
+            ViewMask: key.ViewKey.Kind == RenderViewKind.VREye ? 0x3u : 0x1u,
+            QueueFamily: 0u,
+            DynamicRenderingInheritance: inheritanceHash.ToHash(),
+            PipelineGeneration: packet.ResourcePlanSnapshot.PipelineGeneration,
+            PipelineLayoutGeneration: MixSignature(packet.StructuralSignature, 0x504C4159UL),
+            MeshBindingIdentity: meshBinding,
+            IndexBufferBindingIdentity: indexBinding,
+            VertexBufferBindingIdentity: vertexBinding,
+            BufferAllocationGeneration: packet.ResourcePlanSnapshot.Revision,
+            ImageAllocationGeneration: packet.ResourcePlanSnapshot.PhysicalImageSignature,
+            ImageViewGeneration: packet.ResourcePlanSnapshot.FramebufferSignature,
+            SamplerAllocationGeneration: packet.DescriptorSnapshot.DescriptorGeneration,
+            DescriptorLayoutGeneration: MixSignature(packet.StructuralSignature, 0x444C4159UL),
+            DescriptorSetGeneration: packet.DescriptorSnapshot.DescriptorSetSignature,
+            ResourcePlanGeneration: packet.ResourcePlanSnapshot.Revision,
+            ExternalTargetVariant: unchecked((uint)key.TargetIdentity),
+            FrameSlotVariant: key.FrameSlot,
+            DescriptorPublicationGeneration: packet.DescriptorSnapshot.DescriptorGeneration,
+            DataPublicationGeneration: packet.FrameDataSignature,
+            VolatileSuffixGeneration: packet.DynamicOverlay ? packet.FrameDataSignature : 0UL);
     }
 
     internal static void ValidateReusableCommandChainReferences(CommandChain chain, RenderPacket packet)
@@ -1647,6 +1706,10 @@ public unsafe partial class VulkanRenderer
 
         chain.FrameDataSignature = packet.FrameDataSignature;
         chain.DescriptorGeneration = packet.DescriptorSnapshot.DescriptorGeneration;
+        // A completed frame-slot publication is data-only. Advance the comparison
+        // baseline after refreshing its bytes so the same publication is not reported
+        // as a permanent dependency mismatch on every subsequent reuse attempt.
+        chain.DependencySignature = BuildCommandChainDependencySignature(packet, chain.Key);
         chain.FrameDataRefreshTouchedDescriptors = false;
         return true;
     }
@@ -2019,6 +2082,15 @@ public unsafe partial class VulkanRenderer
         AppendIfChanged(details, "physical-image-signature", chain.PhysicalImageSignature, packet.ResourcePlanSnapshot.PhysicalImageSignature);
         AppendIfChanged(details, "framebuffer-signature", chain.FramebufferSignature, packet.ResourcePlanSnapshot.FramebufferSignature);
         AppendIfChanged(details, "pipeline-generation", chain.PipelineGeneration, packet.ResourcePlanSnapshot.PipelineGeneration);
+        CommandRecordingDependencyMismatch dependencyMismatch = chain.DependencySignature.Compare(
+            BuildCommandChainDependencySignature(packet, chain.Key));
+        if (dependencyMismatch.Field != CommandRecordingDependencyField.None)
+        {
+            AppendDetail(details, "dependency-field", dependencyMismatch.Field.ToString());
+            AppendDetail(details, "dependency-class", dependencyMismatch.InvalidationClass.ToString());
+            AppendDetail(details, "affected-family", chain.Key.ViewKey.ToString());
+            AppendDetail(details, "affected-range", $"{chain.SourceStartIndex}+{chain.SourceCount}");
+        }
         if ((chain.DirtyReason & CommandChainDirtyReason.SecondaryCommandBufferInvalid) != 0)
         {
             AppendDetail(details, "secondary-handle", $"0x{chain.SecondaryCommandBuffer.Handle:X}");

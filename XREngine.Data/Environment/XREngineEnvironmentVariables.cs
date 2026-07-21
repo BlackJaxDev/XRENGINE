@@ -277,6 +277,7 @@ public static class XREngineEnvironmentVariables
     public const string VulkanPhase524bValidation = "XRE_VULKAN_PHASE524B_VALIDATION";
     public const string VulkanPhase524bInjectDesktopRejection = "XRE_VULKAN_PHASE524B_INJECT_DESKTOP_REJECTION";
     public const string VulkanPhase524bTsrResolutionScale = "XRE_VULKAN_PHASE524B_TSR_RESOLUTION_SCALE";
+    public const string VulkanPhase525Validation = "XRE_VULKAN_PHASE525_VALIDATION";
     public const string VulkanDirectionalCascades = "XRE_VULKAN_DIRECTIONAL_CASCADES";
     /// <summary>Forces scene-BVH traversal for explicit diagnostics/capture runs.</summary>
     public const string ForceGpuBvhCulling = "XRE_FORCE_GPU_BVH_CULLING";

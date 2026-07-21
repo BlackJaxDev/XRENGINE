@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Threading;
 using Silk.NET.Maths;
 using Silk.NET.Vulkan;
@@ -6,6 +7,7 @@ using Silk.NET.Vulkan.Extensions.KHR;
 using XREngine.Rendering.DLSS;
 using Image = Silk.NET.Vulkan.Image;
 using Format = Silk.NET.Vulkan.Format;
+using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
@@ -135,16 +137,56 @@ public unsafe partial class VulkanRenderer
             }
 
             DisableStreamlineFrameGenerationBeforeSwapchainMutation("swapchain recreation");
-            WaitForAllInFlightWork();
-            if (WaitForQueueIdleTracked(presentQueue) != Result.Success)
-            {
-                Debug.VulkanWarning("[Vulkan] Swapchain recreation aborted because the presentation queue did not become idle.");
+            if (!TryPrepareSwapchainRetirementMarkers(
+                    out Fence graphicsMarkerFence,
+                    out Fence presentMarkerFence))
                 return false;
-            }
+
+            SwapchainKHR oldSwapchain = swapChain;
+            Image[] oldImages = swapChainImages ?? [];
+            ImageView[] oldImageViews = swapChainImageViews ?? [];
+            Framebuffer[] oldFramebuffers = swapChainFramebuffers ?? [];
+            Semaphore[] oldPresentBridgeSemaphores = presentBridgeSemaphores ?? [];
+            bool oldStreamlineProxy = _streamlineFrameGenerationSwapchainActive;
+            uint oldWidth = swapChainExtent.Width;
+            uint oldHeight = swapChainExtent.Height;
+
+            DestroySwapchainImGuiResources();
+            DestroyStreamlineUiResources();
+            DestroyDepth();
+            DestroySwapchainCommandBuffers();
+            DestroyFrameBuffers();
+            (RenderPass oldClearRenderPass, RenderPass oldLoadRenderPass) =
+                DetachSwapchainRenderPassesForRetirement();
+            DestroyImageViews();
+            DestroyDescriptorPool();
+
+            swapChain = default;
+            swapChainImages = null;
+            _swapchainImageEverPresented = null;
+            _swapchainImageHasValidPresentedContent = null;
+            presentBridgeSemaphores = null;
+            _streamlineFrameGenerationSwapchainActive = false;
+            _streamlineFrameGenerationSwapchainIncludesDlss = false;
+
+            RetiredSwapchainGeneration retiredGeneration = new(
+                oldSwapchain,
+                oldImages,
+                oldImageViews,
+                oldFramebuffers,
+                oldPresentBridgeSemaphores,
+                oldClearRenderPass,
+                oldLoadRenderPass,
+                graphicsMarkerFence,
+                presentMarkerFence,
+                oldStreamlineProxy,
+                oldWidth,
+                oldHeight,
+                Stopwatch.GetTimestamp());
             try
             {
-                DestroyAllSwapChainObjects();
-                CreateAllSwapChainObjects();
+                CreateAllSwapChainObjects(oldSwapchain);
+                presentBridgeSemaphores = CreatePresentBridgeSemaphores(swapChainImages?.Length ?? MAX_FRAMES_IN_FLIGHT);
                 ReserveOpenXrFrameDataSlotsIfRequired("swapchain recreation");
                 EnsureSwapchainTimelineState();
                 return true;
@@ -158,6 +200,10 @@ public unsafe partial class VulkanRenderer
                     ex.Message);
                 DestroyAllSwapChainObjects();
                 return false;
+            }
+            finally
+            {
+                QueueRetiredSwapchainGeneration(retiredGeneration);
             }
         }
         finally
@@ -234,9 +280,9 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private void CreateAllSwapChainObjects()
+    private void CreateAllSwapChainObjects(SwapchainKHR oldSwapchain = default)
     {
-        CreateSwapChain();
+        CreateSwapChain(oldSwapchain);
         CreateImageViews();
         CreateStreamlineUiResources();
 
@@ -384,7 +430,7 @@ public unsafe partial class VulkanRenderer
         _streamlineFrameGenerationSwapchainIncludesDlss = false;
     }
 
-    private void CreateSwapChain()
+    private void CreateSwapChain(SwapchainKHR oldSwapchain = default)
     {
         var swapChainSupport = QuerySwapChainSupport(_physicalDevice);
         var surfaceFormat = ChooseSwapSurfaceFormat(swapChainSupport.Formats);
@@ -431,7 +477,7 @@ public unsafe partial class VulkanRenderer
             PresentMode = presentMode,
             Clipped = true,
 
-            OldSwapchain = default
+            OldSwapchain = oldSwapchain
         };
 
         if (!Api!.TryGetDeviceExtension(instance, device, out khrSwapChain))

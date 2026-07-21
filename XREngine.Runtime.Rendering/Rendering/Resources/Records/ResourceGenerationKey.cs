@@ -15,6 +15,7 @@ namespace XREngine.Rendering.Resources;
 /// <param name="FeatureMask">The feature mask for the render pipeline.</param>
 /// <param name="ReservedViewCount">The number of reserved views.</param>
 /// <param name="ReservedEyeIndex">The index of the reserved eye.</param>
+/// <param name="SettingsRevision">The immutable structural-settings revision used to build this key.</param>
 public readonly record struct ResourceGenerationKey(
     string PipelineName,
     uint DisplayWidth,
@@ -28,7 +29,8 @@ public readonly record struct ResourceGenerationKey(
     ulong FeatureMask = 0,
     uint ReservedViewCount = 1,
     uint ReservedEyeIndex = 0,
-    RenderPipelineExternalTargetKind ExternalTargetKind = RenderPipelineExternalTargetKind.None)
+    RenderPipelineExternalTargetKind ExternalTargetKind = RenderPipelineExternalTargetKind.None,
+    ulong SettingsRevision = 0)
 {
     /// <summary>
     /// Converts this resource generation key into a render pipeline resource profile that can be used to configure the render pipeline.
@@ -54,5 +56,5 @@ public readonly record struct ResourceGenerationKey(
     /// </summary>
     /// <returns>A string representation of the resource generation key.</returns>
     public override string ToString()
-        => $"{PipelineName} display={DisplayWidth}x{DisplayHeight} internal={InternalWidth}x{InternalHeight} hdr={OutputHDR} aa={AntiAliasingMode} msaa={MsaaSampleCount} stereo={Stereo} features=0x{FeatureMask:X} external={ExternalTargetKind} views={ReservedViewCount} eye={ReservedEyeIndex}";
+        => $"{PipelineName} display={DisplayWidth}x{DisplayHeight} internal={InternalWidth}x{InternalHeight} hdr={OutputHDR} aa={AntiAliasingMode} msaa={MsaaSampleCount} stereo={Stereo} features=0x{FeatureMask:X} settingsRev={SettingsRevision} external={ExternalTargetKind} views={ReservedViewCount} eye={ReservedEyeIndex}";
 }

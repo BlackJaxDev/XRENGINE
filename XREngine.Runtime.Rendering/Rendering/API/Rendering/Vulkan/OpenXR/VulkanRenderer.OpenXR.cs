@@ -1089,9 +1089,6 @@ public unsafe partial class VulkanRenderer
                     if (!TryRefreshReusableCommandBufferFrameData(recordImageIndex, ops))
                         return false;
                 }
-                if (HasQueryFrameOps(ops) &&
-                    !PrepareQueryFrameOpsForCommandBufferReuse(variant.PrimaryCommandBuffer, ops))
-                    return false;
 
                 variant.GpuProfilerActive = gpuPipelineProfilingActive;
                 variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
@@ -2409,9 +2406,6 @@ public unsafe partial class VulkanRenderer
                     if (!TryRefreshReusableCommandBufferFrameData(recordImageIndex, ops))
                         return false;
                 }
-                if (HasQueryFrameOps(ops) &&
-                    !PrepareQueryFrameOpsForCommandBufferReuse(variant.PrimaryCommandBuffer, ops))
-                    return false;
 
                 variant.GpuProfilerActive = gpuPipelineProfilingActive;
                 variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
@@ -6088,7 +6082,6 @@ public unsafe partial class VulkanRenderer
         }
 
         ResourcePlannerRuntimeState previousState = CaptureResourcePlannerRuntimeState();
-        WaitForAllInFlightWork();
         HashSet<VulkanResourceAllocator> retiredAllocators = new(ReferenceEqualityComparer.Instance);
         foreach (KeyValuePair<OpenXrViewResourcePlannerContextKey, ResourcePlannerRuntimeState> pair in states)
         {

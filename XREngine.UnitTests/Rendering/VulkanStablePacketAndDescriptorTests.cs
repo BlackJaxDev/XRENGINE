@@ -113,13 +113,14 @@ public sealed class VulkanStablePacketAndDescriptorTests
     }
 
     [Test]
-    public void VulkanPrimaryReuse_RemainsQuarantinedUntilPublicationGenerationsAreKeyed()
+    public void VulkanPrimaryReuse_IsEnabledAfterPublicationGenerationsAreKeyed()
     {
-        VulkanRenderer.VulkanPrimaryCommandBufferReuseSafe.ShouldBeFalse();
+        VulkanRenderer.VulkanPrimaryCommandBufferReuseSafe.ShouldBeTrue();
 
         string state = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
         state.ShouldContain("VulkanPrimaryCommandBufferReuseSafe &&");
+        state.ShouldContain("immutable dependency");
         state.ShouldContain("RuntimeRenderingHostServices.Current.EnableVulkanPrimaryCommandBufferReuse");
     }
 
