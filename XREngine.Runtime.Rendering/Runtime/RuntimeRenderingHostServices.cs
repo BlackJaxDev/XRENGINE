@@ -1058,6 +1058,10 @@ public static class RuntimeRenderingHostServices
         {
         }
 
+        public void RecordRenderVulkanSwapchainRetirement(int queued, int drained, int pending, int deferred)
+        {
+        }
+
         public void RecordRenderVulkanRetiredResourceDrain(
             int descriptorPools,
             int descriptorSets,

@@ -25,6 +25,8 @@ const uint STATS_MATERIAL_SCATTER_MAX_DRAW_ID = 30u;
 const uint STATS_MATERIAL_SCATTER_METADATA_LENGTH = 31u;
 const uint STATS_MATERIAL_SCATTER_CULLED_COUNT = 32u;
 const uint STATS_MATERIAL_SCATTER_KEY_COUNT = 33u;
+const uint METADATA_UINTS = 4u;
+const uint DOMAIN_EXACT = 3u;
 
 struct DrawMetadata
 {
@@ -61,6 +63,7 @@ layout(std430, binding = 6) buffer DrawCountBuffer { uint drawCounts[]; };
 layout(std430, binding = 7) buffer OverflowFlagBuffer { uint overflowFlag; };
 layout(std430, binding = 8) readonly buffer LODTransitionBuffer { uint lodTransitions[]; };
 layout(std430, binding = 9) buffer StatsBuffer { uint stats[]; };
+layout(std430, binding = 10) readonly buffer TransparencyMetadataBuffer { uint transparencyMetadata[]; };
 
 uniform int CurrentRenderPass;
 uniform int MaxMaterialSlotLookup;
@@ -69,6 +72,7 @@ uniform int MaxIndirectDrawsPerBucket;
 uniform uvec3 AtlasIndexCounts;
 uniform uvec3 AtlasVertexCounts;
 uniform uint StatsEnabled;
+uniform uint RejectExactTransparentMultiview;
 
 uvec4 LoadKey(uint index)
 {
@@ -233,6 +237,17 @@ void main()
     {
         atomicAdd(stats[STATS_MATERIAL_SCATTER_REJECTED_DRAW_ID], 1u);
         return;
+    }
+
+    if (RejectExactTransparentMultiview != 0u)
+    {
+        uint metadataBase = drawID * METADATA_UINTS;
+        if (metadataBase + METADATA_UINTS > uint(transparencyMetadata.length()))
+            return;
+
+        uint domain = (transparencyMetadata[metadataBase] >> 16u) & 0xFFFFu;
+        if (domain == DOMAIN_EXACT)
+            return;
     }
 
     DrawMetadata meta = Draws[drawID];

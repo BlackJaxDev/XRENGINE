@@ -1166,8 +1166,6 @@ public partial class PhysicsChainComponent
         for (int i = 0; i < _gpuDrivenRenderers.Count; ++i)
         {
             GpuDrivenRendererState state = _gpuDrivenRenderers[i];
-            if (!state.DrivesCompleteBonePalette)
-                continue;
 
             if (state.Renderer.SkinPaletteBuffer is null || state.Renderer.BoneInvBindMatricesBuffer is null)
                 continue;
@@ -1178,7 +1176,9 @@ public partial class PhysicsChainComponent
                 state.MappingData,
                 particleBaseOffset,
                 state.BoneMatrixElementCount,
-                _gpuDrivenRendererBindingGeneration));
+                state.DrivesCompleteBonePalette,
+                _gpuDrivenRendererBindingGeneration,
+                _particleStateVersion));
         }
     }
 
@@ -1407,6 +1407,12 @@ public partial class PhysicsChainComponent
     }
 
     private void RenderGpuDebug()
+        => GPUPhysicsChainDispatcher.Instance.RenderSelectedGpuDebug();
+
+    internal float GetGpuDebugInterpolationAlpha()
+        => ComputeRenderAlpha();
+
+    private void RenderGpuDebugLegacy()
     {
         if (!DebugDrawChains)
             return;
@@ -1465,14 +1471,8 @@ public partial class PhysicsChainComponent
             return false;
         }
 
-        if (UseBatchedDispatcher)
-            return GPUPhysicsChainDispatcher.Instance.TryGetRenderParticleBuffers(this, out particleBuffer, out particleStaticBuffer, out particleOffset, out particleCount);
-
-        particleBuffer = _particlesBuffer;
-        particleStaticBuffer = _particleStaticBuffer;
-        particleOffset = 0;
-        particleCount = _totalParticleCount;
-        return particleBuffer is not null && particleStaticBuffer is not null && particleCount > 0;
+        return GPUPhysicsChainDispatcher.Instance.TryGetRenderParticleBuffers(
+            this, out particleBuffer, out particleStaticBuffer, out particleOffset, out particleCount);
     }
 
     private void EnsureGpuDebugResources(uint particleCount)
@@ -1516,7 +1516,7 @@ public partial class PhysicsChainComponent
             _gpuDebugLinesRenderer.Buffers.Add(_gpuDebugLinesBuffer.AttributeName, _gpuDebugLinesBuffer);
     }
 
-    private XRMaterial? CreateGpuDebugPointMaterial()
+    internal static XRMaterial? CreateGpuDebugPointMaterial()
     {
         XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
         XRShader[] vertexShaders = [vertShader];
@@ -1537,7 +1537,7 @@ public partial class PhysicsChainComponent
         return mat;
     }
 
-    private XRMaterial? CreateGpuDebugLineMaterial()
+    internal static XRMaterial? CreateGpuDebugLineMaterial()
     {
         XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
         XRShader[] vertexShaders = [vertShader];

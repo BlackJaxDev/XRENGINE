@@ -631,7 +631,7 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            private void MarkResultEpochSubmitted(
+            internal void MarkResultEpochSubmitted(
                 ulong commandBufferHandle,
                 in VulkanLifetimeSubmission submission)
             {

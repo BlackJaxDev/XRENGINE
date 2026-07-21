@@ -1,0 +1,102 @@
+#version 450
+
+// One workgroup reduces one chain's current and previous particle positions
+// into a conservative world-space AABB. Including both positions keeps
+// interpolation, fast motion, and sleeping/held presentation inside the slot.
+layout(local_size_x = 256) in;
+
+struct Particle
+{
+    vec3 Position;
+    float _pad0;
+    vec3 PrevPosition;
+    float _pad1;
+    int IsColliding;
+    vec3 _pad2;
+    vec3 PreviousPhysicsPosition;
+    float _pad3;
+};
+
+struct BoundsWorkItem
+{
+    uint ParticleOffset;
+    uint ParticleCount;
+    float InfluenceRadius;
+    uint BoundsSlot;
+};
+
+layout(std430, binding = 0) readonly buffer ParticleBuffer
+{
+    Particle Particles[];
+};
+
+layout(std430, binding = 1) readonly buffer BoundsWorkItemBuffer
+{
+    BoundsWorkItem WorkItems[];
+};
+
+// Two uvec4 values per slot: minimum then maximum.
+layout(std430, binding = 2) buffer BoundsBuffer
+{
+    uvec4 BoundsBits[];
+};
+
+uniform uint WorkItemCount;
+
+shared vec3 SharedMinimum[gl_WorkGroupSize.x];
+shared vec3 SharedMaximum[gl_WorkGroupSize.x];
+
+bool IsFinite(vec3 value)
+{
+    return !any(isnan(value)) && !any(isinf(value));
+}
+
+void main()
+{
+    uint workItemIndex = gl_WorkGroupID.x;
+    if (workItemIndex >= WorkItemCount)
+        return;
+
+    BoundsWorkItem item = WorkItems[workItemIndex];
+    uint localIndex = gl_LocalInvocationID.x;
+    const float MaximumFloat = 3.402823466e+38;
+    vec3 minimum = vec3(MaximumFloat);
+    vec3 maximum = vec3(-MaximumFloat);
+    vec3 expansion = vec3(max(item.InfluenceRadius, 0.0));
+
+    for (uint particleIndex = localIndex; particleIndex < item.ParticleCount; particleIndex += gl_WorkGroupSize.x)
+    {
+        Particle particle = Particles[item.ParticleOffset + particleIndex];
+        if (IsFinite(particle.Position))
+        {
+            minimum = min(minimum, particle.Position - expansion);
+            maximum = max(maximum, particle.Position + expansion);
+        }
+        if (IsFinite(particle.PrevPosition))
+        {
+            minimum = min(minimum, particle.PrevPosition - expansion);
+            maximum = max(maximum, particle.PrevPosition + expansion);
+        }
+    }
+
+    SharedMinimum[localIndex] = minimum;
+    SharedMaximum[localIndex] = maximum;
+    barrier();
+
+    for (uint stride = gl_WorkGroupSize.x / 2u; stride > 0u; stride >>= 1u)
+    {
+        if (localIndex < stride)
+        {
+            SharedMinimum[localIndex] = min(SharedMinimum[localIndex], SharedMinimum[localIndex + stride]);
+            SharedMaximum[localIndex] = max(SharedMaximum[localIndex], SharedMaximum[localIndex + stride]);
+        }
+        barrier();
+    }
+
+    if (localIndex != 0u)
+        return;
+
+    uint minimumIndex = item.BoundsSlot * 2u;
+    BoundsBits[minimumIndex] = uvec4(floatBitsToUint(SharedMinimum[0]), 0u);
+    BoundsBits[minimumIndex + 1u] = uvec4(floatBitsToUint(SharedMaximum[0]), 0u);
+}

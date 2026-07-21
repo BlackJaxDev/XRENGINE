@@ -1,7 +1,9 @@
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Rendering.Compute;
 
 namespace XREngine.UnitTests.Physics;
 
@@ -16,8 +18,8 @@ public sealed class PhysicsChainShaderContractTests
 
         source.ShouldContain("uniform int ParticleCount;");
         source.ShouldContain("uniform int TreeCount;");
-        int treeIndex = source.IndexOf("uint treeId = gl_GlobalInvocationID.x;", StringComparison.Ordinal);
-        int guardIndex = source.IndexOf("if (ParticleCount <= 0 || TreeCount <= 0 || treeId >= uint(TreeCount))", StringComparison.Ordinal);
+        int treeIndex = source.IndexOf("uint dispatchIndex = gl_GlobalInvocationID.x;", StringComparison.Ordinal);
+        int guardIndex = source.IndexOf("if (ParticleCount <= 0 || TreeCount <= 0)", StringComparison.Ordinal);
         int firstTreeRead = source.IndexOf("TreeParams[treeId]", StringComparison.Ordinal);
         int firstParticleStaticRead = source.IndexOf("ParticleStatics[pid]", StringComparison.Ordinal);
         int firstParticleRead = source.IndexOf("Particles[pid]", StringComparison.Ordinal);
@@ -50,10 +52,131 @@ public sealed class PhysicsChainShaderContractTests
     {
         string source = ReadPhysicsChainShader("PhysicsChain.comp").Replace("\r\n", "\n");
 
+        source.ShouldContain("uint dispatchIndex = gl_GlobalInvocationID.x;");
+        source.ShouldContain("ActiveTreeIds[ActiveTreeIdBase + dispatchIndex]");
+        source.ShouldContain("PerTreeParams tp = TreeParams[treeId];");
         source.ShouldContain("for (int pid = particleStart; pid < particleEnd; ++pid)");
         source.ShouldContain("parents precede children");
-        source.ShouldContain("parentIndex >= particleStart && parentIndex < pid");
+        source.ShouldContain("if (parentIndex < particleStart || parentIndex >= pid)");
+        source.ShouldContain("if (parentIndex >= particleStart && parentIndex < pid)");
+        source.ShouldNotContain("uint pid = gl_GlobalInvocationID.x;");
         source.ShouldNotContain("ParticleState parentStatic");
+    }
+
+    [Test]
+    public void MainPhysicsShader_UsesCurrentBufferBindings()
+    {
+        string source = ReadPhysicsChainShader("PhysicsChain.comp").Replace("\r\n", "\n");
+
+        source.ShouldContain("layout(std430, binding = 0) buffer ParticlesBuffer");
+        source.ShouldContain("layout(std430, binding = 1) readonly buffer ParticleStaticBuffer");
+        source.ShouldContain("layout(std430, binding = 3) buffer TransformMatricesBuffer");
+        source.ShouldContain("layout(std430, binding = 4) buffer CollidersBuffer");
+        source.ShouldContain("layout(std430, binding = 5) readonly buffer PerTreeParamsBuffer");
+        source.ShouldNotContain("binding = 2");
+    }
+
+    [Test]
+    public void PhysicsChainGpuRecords_MatchStd430Layout()
+    {
+        Marshal.SizeOf<GPUPhysicsChainDispatcher.GPUParticleData>().ShouldBe(64);
+        OffsetOf<GPUPhysicsChainDispatcher.GPUParticleData>(nameof(GPUPhysicsChainDispatcher.GPUParticleData.Position)).ShouldBe(0);
+        OffsetOf<GPUPhysicsChainDispatcher.GPUParticleData>(nameof(GPUPhysicsChainDispatcher.GPUParticleData.PrevPosition)).ShouldBe(16);
+        OffsetOf<GPUPhysicsChainDispatcher.GPUParticleData>(nameof(GPUPhysicsChainDispatcher.GPUParticleData.IsColliding)).ShouldBe(32);
+        OffsetOf<GPUPhysicsChainDispatcher.GPUParticleData>(nameof(GPUPhysicsChainDispatcher.GPUParticleData.PreviousPhysicsPosition)).ShouldBe(48);
+
+        Marshal.SizeOf<GPUPhysicsChainDispatcher.GPUParticleStaticData>().ShouldBe(64);
+        OffsetOf<GPUPhysicsChainDispatcher.GPUParticleStaticData>(nameof(GPUPhysicsChainDispatcher.GPUParticleStaticData.ParentIndex)).ShouldBe(16);
+        OffsetOf<GPUPhysicsChainDispatcher.GPUParticleStaticData>(nameof(GPUPhysicsChainDispatcher.GPUParticleStaticData.Inert)).ShouldBe(32);
+        OffsetOf<GPUPhysicsChainDispatcher.GPUParticleStaticData>(nameof(GPUPhysicsChainDispatcher.GPUParticleStaticData.TreeIndex)).ShouldBe(48);
+
+        Marshal.SizeOf<GPUPhysicsChainDispatcher.GPUColliderData>().ShouldBe(64);
+        OffsetOf<GPUPhysicsChainDispatcher.GPUColliderData>(nameof(GPUPhysicsChainDispatcher.GPUColliderData.Params)).ShouldBe(16);
+        OffsetOf<GPUPhysicsChainDispatcher.GPUColliderData>(nameof(GPUPhysicsChainDispatcher.GPUColliderData.Orientation)).ShouldBe(32);
+        OffsetOf<GPUPhysicsChainDispatcher.GPUColliderData>(nameof(GPUPhysicsChainDispatcher.GPUColliderData.Type)).ShouldBe(48);
+
+        Marshal.SizeOf<GPUPhysicsChainDispatcher.GPUPerTreeParams>().ShouldBe(96);
+        OffsetOf<GPUPhysicsChainDispatcher.GPUPerTreeParams>(nameof(GPUPhysicsChainDispatcher.GPUPerTreeParams.Force)).ShouldBe(16);
+        OffsetOf<GPUPhysicsChainDispatcher.GPUPerTreeParams>(nameof(GPUPhysicsChainDispatcher.GPUPerTreeParams.Gravity)).ShouldBe(32);
+        OffsetOf<GPUPhysicsChainDispatcher.GPUPerTreeParams>(nameof(GPUPhysicsChainDispatcher.GPUPerTreeParams.ObjectMove)).ShouldBe(48);
+        OffsetOf<GPUPhysicsChainDispatcher.GPUPerTreeParams>(nameof(GPUPhysicsChainDispatcher.GPUPerTreeParams.RestGravity)).ShouldBe(64);
+        OffsetOf<GPUPhysicsChainDispatcher.GPUPerTreeParams>(nameof(GPUPhysicsChainDispatcher.GPUPerTreeParams.ParticleCount)).ShouldBe(80);
+        OffsetOf<GPUPhysicsChainDispatcher.GPUPerTreeParams>(nameof(GPUPhysicsChainDispatcher.GPUPerTreeParams.LoopCount)).ShouldBe(84);
+    }
+
+    [Test]
+    public void Dispatcher_PublishesUnsupportedBackendStatusBeforeReturning()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
+
+        int evaluateIndex = source.IndexOf("IPhysicsChainComputeBackend? backend = ResolveComputeBackend(", StringComparison.Ordinal);
+        int gateIndex = source.IndexOf("if (backend is null)", evaluateIndex, StringComparison.Ordinal);
+        int returnIndex = source.IndexOf("return;", gateIndex, StringComparison.Ordinal);
+
+        evaluateIndex.ShouldBeGreaterThanOrEqualTo(0);
+        gateIndex.ShouldBeGreaterThan(evaluateIndex);
+        returnIndex.ShouldBeGreaterThan(gateIndex);
+        source.ShouldContain("PublishBackendStatus(EvaluateBackendCapability(");
+        source.ShouldContain("CpuFallbackUsed: false");
+        source.ShouldContain("no CPU fallback was used");
+    }
+
+    [Test]
+    public void Dispatcher_ConfinesOpenGlOperationsToBackendAdapter()
+    {
+        string dispatcher = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
+        string adapter = ReadWorkspaceFile("XRENGINE/Rendering/Compute/OpenGLPhysicsChainComputeBackend.cs");
+
+        dispatcher.ShouldNotContain("OpenGLRenderer");
+        dispatcher.ShouldNotContain("RawGL");
+        dispatcher.ShouldNotContain("Silk.NET.OpenGL");
+        dispatcher.ShouldContain("IPhysicsChainComputeBackend");
+        dispatcher.ShouldContain("PhysicsChainComputeBufferCopy");
+
+        adapter.ShouldContain("OpenGLRenderer");
+        adapter.ShouldContain("CopyNamedBufferSubData");
+        adapter.ShouldContain("GetBufferSubData");
+        adapter.ShouldContain("_renderer.InsertGpuFence()");
+    }
+
+    [Test]
+    public void Dispatcher_PingPongsCurrentAndPreviousGlobalPaletteAtlases()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs").Replace("\r\n", "\n");
+
+        source.ShouldContain("_gpuDrivenPreviousSkinPaletteBuffer");
+        int swapIndex = source.IndexOf(
+            "(_gpuDrivenSkinPaletteBuffer, _gpuDrivenPreviousSkinPaletteBuffer) =",
+            StringComparison.Ordinal);
+        int outputBindIndex = source.IndexOf(
+            "_gpuBonePaletteProgram.BindBuffer(_gpuDrivenSkinPaletteBuffer, 3);",
+            StringComparison.Ordinal);
+
+        swapIndex.ShouldBeGreaterThanOrEqualTo(0);
+        outputBindIndex.ShouldBeGreaterThan(swapIndex);
+        source.ShouldContain(
+            "SetGpuDrivenSkinPaletteSource(\n                binding.Component,\n                _gpuDrivenSkinPaletteBuffer!,\n                _gpuDrivenPreviousSkinPaletteBuffer,");
+        source.ShouldContain("_gpuDrivenPreviousSkinPaletteBuffer?.Dispose();");
+        source.ShouldContain("_gpuDrivenPreviousSkinPaletteBuffer = null;");
+    }
+    [Test]
+    public void Dispatcher_BatchesPartialPalettesIntoGlobalAtlasWithoutPerRendererDispatches()
+    {
+        string component = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent.GPU.cs")
+            .Replace("\r\n", "\n");
+        string dispatcher = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs")
+            .Replace("\r\n", "\n");
+        string palette = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.Palette.cs")
+            .Replace("\r\n", "\n");
+
+        component.ShouldNotContain("if (!state.DrivesCompleteBonePalette)\n                continue;");
+        component.ShouldContain("state.DrivesCompleteBonePalette,");
+        palette.ShouldContain("if (!binding.DrivesCompleteBonePalette)");
+        palette.ShouldContain("backend.TryCopyBuffer(copy)");
+        palette.ShouldContain("PartialPaletteSeedCompletionPass");
+        dispatcher.ShouldContain("PublishBatchedGpuDrivenBoneMatrices(backend, _dispatchGroup)");
+        dispatcher.ShouldContain("HasGpuDrivenRenderers && !batchedBonePalettePublished");
+        dispatcher.ShouldNotContain("includeCompletePalettes: !batchedBonePalettePublished");
     }
 
     [Test]
@@ -63,6 +186,9 @@ public sealed class PhysicsChainShaderContractTests
 
         source.ShouldContain("Renderer.GetOrCreateAPIRenderObject(buffer, generateNow: true)");
     }
+
+    private static int OffsetOf<T>(string fieldName)
+        => Marshal.OffsetOf<T>(fieldName).ToInt32();
 
     private static string ReadPhysicsChainShader(string fileName)
         => ReadWorkspaceFile($"Build/CommonAssets/Shaders/Compute/PhysicsChain/{fileName}");

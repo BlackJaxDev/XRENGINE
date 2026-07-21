@@ -521,6 +521,7 @@ namespace XREngine.Rendering.Commands
         {
             using var timing = BeginTiming("GPURenderPassCollection.Cull");
             Stopwatch cullStopwatch = Stopwatch.StartNew();
+            InvalidateExactCommandViewMasks();
 
             void RecordCullTiming()
             {
@@ -943,7 +944,7 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private static bool ShouldUseExternalVrSharedVisibilityPassFilter(XRCamera? camera)
+        private bool ShouldUseExternalVrSharedVisibilityPassFilter(XRCamera? camera)
         {
             if (camera?.StereoEyeLeft.HasValue != true)
                 return false;
@@ -953,8 +954,10 @@ namespace XREngine.Rendering.Commands
             if (renderState?.StereoPass == true || RuntimeEngine.Rendering.State.IsStereoPass)
                 return false;
 
-            return renderState?.WindowViewport is XRViewport { RendersToExternalSwapchainTarget: true } &&
-                   host.IsOpenXrRuntimeRequested;
+            bool externalOpenXr =
+                renderState?.WindowViewport is XRViewport { RendersToExternalSwapchainTarget: true } &&
+                host.IsOpenXrRuntimeRequested;
+            return externalOpenXr && RetainExternalOpenXrSharedVisibilityException();
         }
 
         private void LogExternalVrSharedVisibilityCullMode()
@@ -1192,6 +1195,7 @@ namespace XREngine.Rendering.Commands
                 _bvhFrustumCullProgram.DispatchCompute(traversalWorkgroups, 1u, 1u, bvhPostCullBarrier);
             }
 
+            PublishExactCommandViewMasks();
             _culledHotCommandsValid = useHotCommands;
 
             // Check for overflow

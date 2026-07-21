@@ -40,6 +40,11 @@ namespace XREngine.Rendering.Commands
         public const int BuildKeysInputCommands = 0;
         public const int BuildKeysCulledCount = 1;
         public const int BuildKeysSortKeys = 2;
+        public const int BuildKeysClassification = 3;
+        public const int BuildKeysTransparencyMetadata = 4;
+        public const int IndirectViewBatchClassification = 17;
+        public const int IndirectTransparencyMetadata = 18;
+        public const int BuildKeysExactViewMasks = GPUViewSetBindings.CulledCommandViewMaskBuffer;
 
         // Compute GPURenderBuildBatches.comp bindings
         public const int BuildBatchesInputCommands = 0;
@@ -80,6 +85,7 @@ namespace XREngine.Rendering.Commands
     public static class GPUBatchingLayout
     {
         public const uint SortKeyUIntCount = 4;
+        public const uint ClassificationUIntCount = GPUViewBatchClassificationLayout.UIntCount;
         public const uint BatchRangeUIntCount = 4;
         public const uint InstanceTransformFloatCount = 16;
         public const uint MaterialSlotEntryUIntCount = 1;
@@ -97,6 +103,7 @@ namespace XREngine.Rendering.Commands
         public const int ClassifyApproximateVisibleIndices = 4;
         public const int ClassifyExactVisibleIndices = 5;
         public const int ClassifyDomainCounts = 6;
+        public const int MaterialScatterTransparencyMetadata = 10;
     }
 
     public static class GPUTransparencyLayout

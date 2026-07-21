@@ -1,0 +1,165 @@
+#version 450
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+const uint KernelBucketCount = 2u;
+const uint PassReset = 0u;
+const uint PassCompact = 1u;
+const uint PassFinalize = 2u;
+
+struct InstanceMetadata
+{
+    uint Enabled;
+    uint Relevant;
+    uint SleepState;
+    uint QualityTier;
+    uint Cadence;
+    uint Phase;
+    uint LoopCount;
+    uint FeatureMask;
+};
+
+struct TreeWorkItem
+{
+    uint InstanceIndex;
+    uint TreeParamIndex;
+    uint KernelBucket;
+    uint TopologyDepth;
+};
+
+layout(std430, binding = 0) readonly buffer InstanceMetadataBuffer
+{
+    InstanceMetadata Instances[];
+};
+
+layout(std430, binding = 1) readonly buffer TreeWorkBuffer
+{
+    TreeWorkItem TreeWork[];
+};
+
+layout(std430, binding = 2) writeonly buffer ActiveTreeIdBuffer
+{
+    uint ActiveTreeIds[];
+};
+
+// [0..1] are unclamped reservations; [2..3] are overflow counters.
+layout(std430, binding = 3) buffer ActiveWorkCounterBuffer
+{
+    uint WorkCounters[];
+};
+
+// Two tightly packed uvec3 commands. A scalar array avoids std430 padding.
+layout(std430, binding = 4) writeonly buffer IndirectArgumentBuffer
+{
+    uint IndirectArguments[];
+};
+
+uniform uint PassPhase;
+uniform uint CandidateCount;
+uniform uint InstanceCount;
+uniform uint CapacityPerBucket;
+uniform uint FrameIndex;
+
+shared uint Prefix[128];
+shared uint GroupBase;
+
+bool instanceIsActive(InstanceMetadata metadata)
+{
+    if (metadata.Enabled == 0u || metadata.Relevant == 0u || metadata.SleepState != 0u || metadata.LoopCount == 0u)
+        return false;
+
+    uint cadence = max(metadata.Cadence, 1u);
+    return ((FrameIndex + metadata.Phase) % cadence) == 0u;
+}
+
+void resetWork()
+{
+    uint lane = gl_LocalInvocationIndex;
+    if (lane < KernelBucketCount)
+    {
+        WorkCounters[lane] = 0u;
+        WorkCounters[KernelBucketCount + lane] = 0u;
+        uint argumentBase = lane * 3u;
+        IndirectArguments[argumentBase] = 0u;
+        IndirectArguments[argumentBase + 1u] = 1u;
+        IndirectArguments[argumentBase + 2u] = 1u;
+    }
+}
+
+void compactBucket(uint bucket)
+{
+    uint lane = gl_LocalInvocationIndex;
+    uint candidateIndex = gl_GlobalInvocationID.x;
+    uint selected = 0u;
+    TreeWorkItem item;
+
+    if (candidateIndex < CandidateCount)
+    {
+        item = TreeWork[candidateIndex];
+        if (item.InstanceIndex < InstanceCount
+            && item.KernelBucket == bucket
+            && instanceIsActive(Instances[item.InstanceIndex]))
+            selected = 1u;
+    }
+
+    Prefix[lane] = selected;
+    barrier();
+
+    // Portable inclusive workgroup scan. Backends with subgroup arithmetic use
+    // a separately selected shader variant; this path remains entirely GPU-owned.
+    for (uint offset = 1u; offset < gl_WorkGroupSize.x; offset <<= 1u)
+    {
+        uint addend = lane >= offset ? Prefix[lane - offset] : 0u;
+        barrier();
+        Prefix[lane] += addend;
+        barrier();
+    }
+
+    uint groupCount = Prefix[gl_WorkGroupSize.x - 1u];
+    if (lane == 0u)
+        GroupBase = atomicAdd(WorkCounters[bucket], groupCount);
+    barrier();
+
+    if (selected == 0u)
+        return;
+
+    uint outputIndex = GroupBase + Prefix[lane] - 1u;
+    if (outputIndex < CapacityPerBucket)
+        ActiveTreeIds[bucket * CapacityPerBucket + outputIndex] = item.TreeParamIndex;
+    else
+        atomicAdd(WorkCounters[KernelBucketCount + bucket], 1u);
+}
+
+void finalizeArguments()
+{
+    uint bucket = gl_GlobalInvocationID.x;
+    if (bucket >= KernelBucketCount)
+        return;
+
+    uint clampedCount = min(WorkCounters[bucket], CapacityPerBucket);
+    uint argumentBase = bucket * 3u;
+    // Short-linear work maps one lane to one tree. Long/branched work maps one
+    // complete workgroup to one tree so dependency depths can synchronize.
+    IndirectArguments[argumentBase] = bucket == 0u
+        ? (clampedCount + gl_WorkGroupSize.x - 1u) / gl_WorkGroupSize.x
+        : clampedCount;
+    IndirectArguments[argumentBase + 1u] = 1u;
+    IndirectArguments[argumentBase + 2u] = 1u;
+}
+
+void main()
+{
+    if (PassPhase == PassReset)
+    {
+        resetWork();
+        return;
+    }
+    if (PassPhase == PassFinalize)
+    {
+        finalizeArguments();
+        return;
+    }
+
+    compactBucket(0u);
+    compactBucket(1u);
+}

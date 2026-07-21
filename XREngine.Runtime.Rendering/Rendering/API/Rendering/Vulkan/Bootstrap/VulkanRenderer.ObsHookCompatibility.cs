@@ -1,7 +1,5 @@
-using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 using System;
-using System.Runtime.InteropServices;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -26,6 +24,7 @@ public unsafe partial class VulkanRenderer
     private bool _obsHookDisabledByLoader;
     private bool _obsHookDeviceCaptureReady;
     private string? _obsHookDeviceCaptureFailure;
+    private string? _obsHookLayerManifestPath;
 
     private bool ObsHookLayerLikelyEnabled
         => _obsHookLayerAvailable && !_obsHookDisabledForProcess && !_obsHookDisabledByLoader;
@@ -39,7 +38,9 @@ public unsafe partial class VulkanRenderer
 
         _obsHookDisabledForProcess = IsEnvironmentFlagEnabled(ObsHookDisableEnvVar);
         _obsHookDisabledByLoader = LoaderDisableEnvMentionsObsHook();
-        _obsHookLayerAvailable = IsInstanceLayerAvailable(ObsHookLayerName);
+        _obsHookLayerAvailable = VulkanImplicitLayerDiscovery.TryFindRegisteredLayer(
+            ObsHookLayerName,
+            out _obsHookLayerManifestPath);
 
         if (_obsHookPolicy == EVulkanObsHookPolicy.Require)
         {
@@ -58,7 +59,7 @@ public unsafe partial class VulkanRenderer
             if (!_obsHookLayerAvailable)
             {
                 throw new InvalidOperationException(
-                    $"{ObsHookPolicyEnvVar}=Require was requested, but {ObsHookLayerName} is not reported by the Vulkan loader. Install OBS Studio with Vulkan game capture support or use {ObsHookPolicyEnvVar}=Auto.");
+                    $"{ObsHookPolicyEnvVar}=Require was requested, but no enabled Windows Vulkan implicit-layer manifest registers {ObsHookLayerName}. Install OBS Studio with Vulkan game capture support or use {ObsHookPolicyEnvVar}=Auto.");
             }
         }
 
@@ -75,8 +76,9 @@ public unsafe partial class VulkanRenderer
         if (_obsHookLayerAvailable)
         {
             Debug.Vulkan(
-                "[Vulkan][OBS] {0} reported by the Vulkan loader (policy={1}, disabledByObsEnv={2}, disabledByLoaderEnv={3}). The engine leaves the implicit OBS layer enabled and will report device capture readiness after GPU selection.",
+                "[Vulkan][OBS] {0} registered by implicit-layer manifest '{1}' (policy={2}, disabledByObsEnv={3}, disabledByLoaderEnv={4}). The engine leaves the implicit OBS layer enabled and will report device capture readiness after GPU selection.",
                 ObsHookLayerName,
+                _obsHookLayerManifestPath ?? "<unknown>",
                 _obsHookPolicy,
                 _obsHookDisabledForProcess,
                 _obsHookDisabledByLoader);
@@ -84,7 +86,7 @@ public unsafe partial class VulkanRenderer
         else
         {
             Debug.Vulkan(
-                "[Vulkan][OBS] {0} is not reported by the Vulkan loader (policy={1}). OBS Game Capture for Vulkan requires the OBS implicit layer to be installed.",
+                "[Vulkan][OBS] No enabled Windows Vulkan implicit-layer manifest registers {0} (policy={1}). OBS Game Capture for Vulkan requires the OBS implicit layer to be installed.",
                 ObsHookLayerName,
                 _obsHookPolicy);
         }
@@ -213,47 +215,6 @@ public unsafe partial class VulkanRenderer
         }
 
         return $"{ObsHookLayerName} is not likely active for this process.";
-    }
-
-    private bool IsInstanceLayerAvailable(string layerName)
-    {
-        uint layerCount = 0;
-        Result result = Api!.EnumerateInstanceLayerProperties(ref layerCount, null);
-        if (result != Result.Success)
-        {
-            Debug.VulkanWarning(
-                "[Vulkan][OBS] vkEnumerateInstanceLayerProperties failed while checking {0}: {1}",
-                layerName,
-                result);
-            return false;
-        }
-
-        if (layerCount == 0)
-            return false;
-
-        var availableLayers = new LayerProperties[layerCount];
-        fixed (LayerProperties* availableLayersPtr = availableLayers)
-        {
-            result = Api.EnumerateInstanceLayerProperties(ref layerCount, availableLayersPtr);
-
-            if (result != Result.Success)
-            {
-                Debug.VulkanWarning(
-                    "[Vulkan][OBS] vkEnumerateInstanceLayerProperties list query failed while checking {0}: {1}",
-                    layerName,
-                    result);
-                return false;
-            }
-
-            for (uint i = 0; i < layerCount; i++)
-            {
-                string? availableLayerName = Marshal.PtrToStringAnsi((IntPtr)availableLayersPtr[i].LayerName);
-                if (string.Equals(availableLayerName, layerName, StringComparison.Ordinal))
-                    return true;
-            }
-        }
-
-        return false;
     }
 
     private static EVulkanObsHookPolicy ResolveObsHookPolicy()

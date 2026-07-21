@@ -21,7 +21,7 @@ namespace XREngine.Scene
     /// <summary>
     /// Represents a scene with special optimizations for rendering in 3D.
     /// </summary>
-    public class VisualScene3D : VisualScene
+    public partial class VisualScene3D : VisualScene
     {
         internal static Action<VisualScene3D>? SwapBuffersHook { get; set; }
 

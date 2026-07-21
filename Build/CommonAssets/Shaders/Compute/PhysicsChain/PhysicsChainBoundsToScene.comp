@@ -1,0 +1,39 @@
+#version 450
+
+layout(local_size_x = 128) in;
+
+struct BoundsCopyItem
+{
+    uint SourceSlot;
+    uint TargetCommandSlot;
+};
+
+layout(std430, binding = 0) readonly buffer ChainBoundsBuffer
+{
+    uvec4 ChainBoundsBits[];
+};
+
+layout(std430, binding = 1) buffer SceneBoundsBuffer
+{
+    uvec4 SceneBoundsBits[];
+};
+
+layout(std430, binding = 2) readonly buffer BoundsCopyItemBuffer
+{
+    BoundsCopyItem CopyItems[];
+};
+
+uniform uint CopyItemCount;
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= CopyItemCount)
+        return;
+
+    BoundsCopyItem item = CopyItems[index];
+    uint source = item.SourceSlot * 2u;
+    uint target = item.TargetCommandSlot * 2u;
+    SceneBoundsBits[target] = ChainBoundsBits[source];
+    SceneBoundsBits[target + 1u] = ChainBoundsBits[source + 1u];
+}

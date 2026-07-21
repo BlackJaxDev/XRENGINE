@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Numerics;
+using XREngine.Editor.Benchmarks.PhysicsChain;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data;
@@ -44,6 +45,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     private SceneNode? _benchmarkRoot;
     private MathIntersectionsWorldTestEntry? _benchmarkEntry;
     private Stopwatch? _benchmarkStopwatch;
+    private PhysicsChainBenchmarkRunController? _benchmarkRunController;
     private long _benchmarkLastTimestamp;
     private bool _benchmarkRunning;
     private bool _benchmarkRunToggle;
@@ -229,10 +231,14 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         _benchmarkEntry = activeEntries[0];
         _benchmarkFrameCount = 0;
         _benchmarkFrameTimesMs.Clear();
-        _benchmarkBandwidthStart = GPUPhysicsChainDispatcher.GetBandwidthPressureSnapshot();
 
         int copyCount = GetBenchmarkCopyCount();
         float durationSeconds = Math.Clamp(_benchmarkDurationSeconds, 0.5f, MaxBenchmarkDurationSeconds);
+        var benchmarkConfiguration = new PhysicsChainBenchmarkConfiguration
+        {
+            MinimumDurationSeconds = durationSeconds,
+        };
+        _benchmarkRunController = new PhysicsChainBenchmarkRunController(benchmarkConfiguration);
 
         var benchmarkRoot = SceneNode.NewChild($"{_benchmarkEntry.DisplayName} Benchmark Instances");
         benchmarkRoot.SetTransform<Transform>();
@@ -250,17 +256,35 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         _benchmarkSpawnMilliseconds = spawnStopwatch.Elapsed.TotalMilliseconds;
         _benchmarkActiveCopyCount = copyCount;
         _benchmarkActiveDurationSeconds = durationSeconds;
-        _benchmarkStopwatch = Stopwatch.StartNew();
-        _benchmarkLastTimestamp = Stopwatch.GetTimestamp();
+        _benchmarkStopwatch = null;
+        _benchmarkLastTimestamp = 0;
         _benchmarkRunning = true;
-        _benchmarkStatus = $"Running {_benchmarkEntry.DisplayName}: {copyCount} copies for {durationSeconds:0.0}s (debug displays {(includeDebugDisplays ? "enabled" : "disabled")}).";
+        _benchmarkStatus = $"Settling {_benchmarkEntry.DisplayName}: {copyCount} copies; timing begins after resources remain stable.";
     }
 
     private void UpdateBenchmark()
     {
         ProcessPendingBenchmarkTeardown();
 
-        if (!_benchmarkRunning || _benchmarkStopwatch is null)
+        if (!_benchmarkRunning || _benchmarkRunController is null)
+            return;
+
+        if (_benchmarkRunController.State == PhysicsChainBenchmarkRunState.Settling)
+        {
+            PhysicsChainBenchmarkRunState state = _benchmarkRunController.ObserveSettleFrame(CaptureBenchmarkSettleSnapshot());
+            if (state == PhysicsChainBenchmarkRunState.SettleTimedOut)
+            {
+                _benchmarkStatus = $"Benchmark failed to settle after {_benchmarkRunController.SettleFrameCount} frames.";
+                StopBenchmark(destroyInstances: true, updateStatus: false, cancelled: true);
+            }
+            else if (state == PhysicsChainBenchmarkRunState.Measuring)
+                BeginBenchmarkMeasurement();
+            else
+                _benchmarkStatus = $"Settling benchmark resources: stable {_benchmarkRunController.StableFrameCount}/{PhysicsChainBenchmarkConfiguration.DefaultStableFrameCount} frames.";
+            return;
+        }
+
+        if (_benchmarkStopwatch is null)
             return;
 
         long nowTimestamp = Stopwatch.GetTimestamp();
@@ -272,8 +296,41 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         }
 
         _benchmarkLastTimestamp = nowTimestamp;
-        if (_benchmarkStopwatch.Elapsed.TotalSeconds >= _benchmarkActiveDurationSeconds)
+        if (_benchmarkRunController.ObserveMeasurement(_benchmarkStopwatch.Elapsed.TotalSeconds, _benchmarkFrameCount)
+            == PhysicsChainBenchmarkRunState.Complete)
             StopBenchmark(destroyInstances: true, updateStatus: true, cancelled: false);
+    }
+
+    private void BeginBenchmarkMeasurement()
+    {
+        _benchmarkFrameTimesMs.Clear();
+        _benchmarkFrameCount = 0;
+        _benchmarkBandwidthStart = GPUPhysicsChainDispatcher.GetBandwidthPressureSnapshot();
+        _benchmarkStopwatch = Stopwatch.StartNew();
+        _benchmarkLastTimestamp = Stopwatch.GetTimestamp();
+        _benchmarkStatus =
+            $"Measuring {_benchmarkEntry?.DisplayName}: at least {_benchmarkActiveDurationSeconds:0.0}s and " +
+            $"{PhysicsChainBenchmarkConfiguration.DefaultMinimumSampleFrameCount} steady-state frames.";
+    }
+
+    private PhysicsChainBenchmarkSettleSnapshot CaptureBenchmarkSettleSnapshot()
+    {
+        GPUPhysicsChainBandwidthSnapshot bandwidth = GPUPhysicsChainDispatcher.GetBandwidthPressureSnapshot();
+        int pendingUploads = AbstractRenderer.Current is OpenGLRenderer glRenderer
+            ? glRenderer.MeshGenerationQueue.PendingCount
+            : 0;
+        int rendererCount = Engine.Rendering.Stats.SceneAssets.VisibleRendererCount;
+
+        // There is not yet a backend-neutral pipeline compilation queue. GPU
+        // capacity and dispatch readiness are represented by the stable
+        // resident allocation signature; future backends can supply their
+        // pending compilation count without changing the settle contract.
+        return new PhysicsChainBenchmarkSettleSnapshot(
+            _benchmarkActiveCopyCount,
+            bandwidth.ResidentParticleBytes,
+            PendingPipelineCompilationCount: 0,
+            pendingUploads,
+            rendererCount);
     }
 
     private void ProcessPendingBenchmarkTeardown()
@@ -362,6 +419,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         Stopwatch? stopwatch = _benchmarkStopwatch;
         MathIntersectionsWorldTestEntry? entry = _benchmarkEntry;
         int copyCount = _benchmarkActiveCopyCount;
+        int settleFrameCount = _benchmarkRunController?.SettleFrameCount ?? 0;
         double elapsedSeconds = stopwatch?.Elapsed.TotalSeconds ?? 0.0;
         bool includeDebugDisplays = _benchmarkIncludeDebugDisplays;
         bool sourceRigWasActive = _benchmarkSourceWasActive;
@@ -378,6 +436,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         _benchmarkRoot = null;
         _benchmarkEntry = null;
         _benchmarkStopwatch = null;
+        _benchmarkRunController = null;
         _benchmarkRunning = false;
         _benchmarkRunToggle = false;
         _benchmarkRunWithDebugDisplaysToggle = false;
@@ -410,18 +469,11 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
             return;
         }
 
-        _benchmarkFrameTimesMs.Sort();
-        double minMs = _benchmarkFrameTimesMs[0];
-        double maxMs = _benchmarkFrameTimesMs[^1];
-        double avgMs = 0.0;
-        foreach (double sample in _benchmarkFrameTimesMs)
-            avgMs += sample;
-        avgMs /= _benchmarkFrameTimesMs.Count;
-
-        int p95Index = Math.Clamp((int)Math.Ceiling(_benchmarkFrameTimesMs.Count * 0.95) - 1, 0, _benchmarkFrameTimesMs.Count - 1);
-        double p95Ms = _benchmarkFrameTimesMs[p95Index];
+        PhysicsChainBenchmarkFrameStatistics frameStatistics =
+            PhysicsChainBenchmarkFrameStatistics.Calculate(_benchmarkFrameTimesMs);
         double destroyMilliseconds = destroyStopwatch?.Elapsed.TotalMilliseconds ?? 0.0;
-        GPUPhysicsChainBandwidthSnapshot bandwidthDelta = GPUPhysicsChainDispatcher.GetBandwidthPressureSnapshot().Delta(_benchmarkBandwidthStart);
+        GPUPhysicsChainBandwidthSnapshot bandwidthCurrent = GPUPhysicsChainDispatcher.GetBandwidthPressureSnapshot();
+        GPUPhysicsChainBandwidthSnapshot bandwidthDelta = bandwidthCurrent.Delta(_benchmarkBandwidthStart);
         double uploadMiB = bandwidthDelta.CpuUploadBytes / (1024.0 * 1024.0);
         double gpuCopyMiB = bandwidthDelta.GpuCopyBytes / (1024.0 * 1024.0);
         double readbackMiB = bandwidthDelta.CpuReadbackBytes / (1024.0 * 1024.0);
@@ -437,7 +489,9 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         string name = entry?.DisplayName ?? "Benchmark";
         _benchmarkStatus =
             $"{name}: {copyCount} copies, {elapsedSeconds:0.00}s, spawn {_benchmarkSpawnMilliseconds:0.00}ms, destroy {destroyMilliseconds:0.00}ms, " +
-            $"frames {_benchmarkFrameCount}, avg {avgMs:0.###}ms, p95 {p95Ms:0.###}ms, min {minMs:0.###}ms, max {maxMs:0.###}ms, " +
+            $"settle {settleFrameCount} frames, samples {frameStatistics.SampleCount}, avg {frameStatistics.MeanMilliseconds:0.###}ms, " +
+            $"p50 {frameStatistics.P50Milliseconds:0.###}ms, p95 {frameStatistics.P95Milliseconds:0.###}ms, " +
+            $"p99 {frameStatistics.P99Milliseconds:0.###}ms, min {frameStatistics.MinimumMilliseconds:0.###}ms, max {frameStatistics.MaximumMilliseconds:0.###}ms, " +
             $"debug displays {(includeDebugDisplays ? "on" : "off")}, " +
             $"{bvhSummary}" +
             $"bandwidth up {uploadMiB:0.###} MiB, gpu-copy {gpuCopyMiB:0.###} MiB, readback {readbackMiB:0.###} MiB, total {totalMiB:0.###} MiB ({transferMiBPerSecond:0.###} MiB/s), " +
@@ -446,7 +500,33 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         string logDirectory = XREngine.Debug.EnsureLogRunDirectory();
         XREngine.Debug.WriteAuxiliaryLog(
             "math-intersections-benchmarks.log",
-            $"[{DateTimeOffset.Now:O}] Benchmark='{name}' Copies={copyCount} DurationSeconds={elapsedSeconds:0.000} SpawnMs={_benchmarkSpawnMilliseconds:0.###} DestroyMs={destroyMilliseconds:0.###} Frames={_benchmarkFrameCount} AvgFrameMs={avgMs:0.###} P95FrameMs={p95Ms:0.###} MinFrameMs={minMs:0.###} MaxFrameMs={maxMs:0.###} DebugDisplays={includeDebugDisplays} SourceRigDisabled={sourceRigWasActive} BvhSummary='{bvhSummary.Trim()}' CpuUploadBytes={bandwidthDelta.CpuUploadBytes} GpuCopyBytes={bandwidthDelta.GpuCopyBytes} CpuReadbackBytes={bandwidthDelta.CpuReadbackBytes} StandaloneCpuUploadBytes={bandwidthDelta.StandaloneCpuUploadBytes} StandaloneCpuReadbackBytes={bandwidthDelta.StandaloneCpuReadbackBytes} BatchedCpuUploadBytes={bandwidthDelta.BatchedCpuUploadBytes} BatchedGpuCopyBytes={bandwidthDelta.BatchedGpuCopyBytes} BatchedCpuReadbackBytes={bandwidthDelta.BatchedCpuReadbackBytes} HierarchyRecalcMs={hierarchyRecalcMs:0.###} TotalTransferBytes={bandwidthDelta.TotalTransferBytes} DispatchGroups={bandwidthDelta.DispatchGroupCount} DispatchIterations={bandwidthDelta.DispatchIterationCount} ResidentParticleBytes={bandwidthDelta.ResidentParticleBytes} LogDirectory='{logDirectory}'");
+            $"[{DateTimeOffset.Now:O}] Benchmark='{name}' Copies={copyCount} DurationSeconds={elapsedSeconds:0.000} SpawnMs={_benchmarkSpawnMilliseconds:0.###} DestroyMs={destroyMilliseconds:0.###} SettleFrames={settleFrameCount} Samples={frameStatistics.SampleCount} AvgFrameMs={frameStatistics.MeanMilliseconds:0.###} P50FrameMs={frameStatistics.P50Milliseconds:0.###} P95FrameMs={frameStatistics.P95Milliseconds:0.###} P99FrameMs={frameStatistics.P99Milliseconds:0.###} MinFrameMs={frameStatistics.MinimumMilliseconds:0.###} MaxFrameMs={frameStatistics.MaximumMilliseconds:0.###} DebugDisplays={includeDebugDisplays} SourceRigDisabled={sourceRigWasActive} BvhSummary='{bvhSummary.Trim()}' CpuUploadBytes={bandwidthDelta.CpuUploadBytes} GpuCopyBytes={bandwidthDelta.GpuCopyBytes} CpuReadbackBytes={bandwidthDelta.CpuReadbackBytes} StandaloneCpuUploadBytes={bandwidthDelta.StandaloneCpuUploadBytes} StandaloneCpuReadbackBytes={bandwidthDelta.StandaloneCpuReadbackBytes} BatchedCpuUploadBytes={bandwidthDelta.BatchedCpuUploadBytes} BatchedGpuCopyBytes={bandwidthDelta.BatchedGpuCopyBytes} BatchedCpuReadbackBytes={bandwidthDelta.BatchedCpuReadbackBytes} HierarchyRecalcMs={hierarchyRecalcMs:0.###} TotalTransferBytes={bandwidthDelta.TotalTransferBytes} DispatchGroups={bandwidthDelta.DispatchGroupCount} DispatchIterations={bandwidthDelta.DispatchIterationCount} ResidentParticleBytes={bandwidthCurrent.ResidentParticleBytes} LogDirectory='{logDirectory}'");
+
+        var result = new PhysicsChainBenchmarkResult
+        {
+            CompletedAt = DateTimeOffset.Now,
+            ScenarioName = name,
+            CopyCount = copyCount,
+            DeterministicSeed = PhysicsChainBenchmarkConfiguration.DefaultDeterministicSeed,
+            DebugDisplaysEnabled = includeDebugDisplays,
+            SettleFrameCount = settleFrameCount,
+            MeasurementDurationSeconds = elapsedSeconds,
+            SpawnMilliseconds = _benchmarkSpawnMilliseconds,
+            DestroyMilliseconds = destroyMilliseconds,
+            FrameStatistics = frameStatistics,
+            FrameTimesMilliseconds = [.. _benchmarkFrameTimesMs],
+            CpuUploadBytes = bandwidthDelta.CpuUploadBytes,
+            GpuCopyBytes = bandwidthDelta.GpuCopyBytes,
+            CpuReadbackBytes = bandwidthDelta.CpuReadbackBytes,
+            DispatchGroupCount = bandwidthDelta.DispatchGroupCount,
+            DispatchIterationCount = bandwidthDelta.DispatchIterationCount,
+            ResidentParticleBytes = bandwidthCurrent.ResidentParticleBytes,
+        };
+        if (!PhysicsChainBenchmarkResultWriter.TryWriteConfiguredResult(result, out string? resultPath, out string? resultError)
+            && resultError is not null)
+            XREngine.Debug.LogWarning($"Physics-chain benchmark result was not written: {resultError}");
+        else if (resultPath is not null)
+            _benchmarkStatus += $" Raw result: {resultPath}";
     }
 
     private static string BuildMathBvhBenchmarkSummary(SceneNode? benchmarkRoot)
@@ -707,6 +787,10 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
             target.FreezeAxis = source.FreezeAxis;
             target.DistantDisable = source.DistantDisable;
             target.DistanceToObject = source.DistanceToObject;
+            target.QualityTier = source.QualityTier;
+            target.EnableAutomaticSleep = source.EnableAutomaticSleep;
+            target.SleepVelocityThreshold = source.SleepVelocityThreshold;
+            target.SleepQuietFrameCount = source.SleepQuietFrameCount;
             target.GpuSyncToBones = source.GpuSyncToBones;
             target.Multithread = source.Multithread;
             target.UseGPU = source.UseGPU;

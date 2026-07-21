@@ -3,6 +3,7 @@ using JoltPhysicsSharp;
 using System;
 using System.Diagnostics;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using XREngine;
 using XREngine.Data;
 using XREngine.Data.Colors;
@@ -93,24 +94,36 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     }
 
     internal void SetRuntimeHandle(PhysicsChainRuntimeHandle handle)
-        => _runtimeHandle = handle;
+    {
+        _runtimeHandle = handle;
+        if (!handle.IsValid)
+        {
+            _qualityPhaseInitialized = false;
+            return;
+        }
+        _qualityCadencePhase = ComputeDeterministicQualityPhase(handle.Slot, handle.Generation);
+        _qualityCadenceProgress = _qualityCadencePhase;
+        _qualityPhaseInitialized = true;
+        float rate = ResolveEffectiveUpdateRate();
+        _time = rate > 0.0f ? _qualityCadenceProgress / rate : 0.0f;
+    }
 
     internal void SetEffectiveQualityTier(PhysicsChainQualityTier tier)
     {
-        if (_effectiveQualityTier == tier)
+        float previousRate = ResolveEffectiveUpdateRate();
+        float progress = ComputeCadenceProgress(
+            _time, previousRate, _qualityPhaseInitialized ? _qualityCadenceProgress : 0.0f);
+        if (!SetField(ref _effectiveQualityTier, tier, nameof(EffectiveQualityTier)))
             return;
+        _qualityCadenceProgress = progress;
+        float nextRate = ResolveEffectiveUpdateRate();
+        _time = nextRate > 0.0f ? progress / nextRate : 0.0f;
+        ApplyCpuQualityPolicy();
 
-        _effectiveQualityTier = tier;
-        float rate = ResolveEffectiveUpdateRate();
-        if (rate > 0.0f && _runtimeHandle.IsValid)
-        {
-            uint phaseHash = unchecked((uint)_runtimeHandle.Slot * 2654435761u);
-            float phase = (phaseHash & 1023u) / 1024.0f;
-            _time = phase / rate;
-        }
-
-        if (tier != PhysicsChainQualityTier.Sleep)
-            Wake();
+        if (tier == PhysicsChainQualityTier.Sleep)
+            HoldSleepingOutputHistory();
+        else
+            Wake(PhysicsChainWakeReason.QualityPolicyChanged);
     }
 
     /// <summary>
@@ -118,9 +131,51 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     /// or authoring input changes.
     /// </summary>
     public void Wake()
+        => Wake(PhysicsChainWakeReason.ExplicitRequest);
+
+    /// <summary>Wakes the chain for a gameplay force, impulse, or collision event.</summary>
+    public void NotifyExternalEvent()
+        => Wake(PhysicsChainWakeReason.ForceOrEventInput);
+
+    /// <summary>
+    /// Marks the chain as visible or otherwise consumed. Repeated calls keep
+    /// it active for the configured grace period without allocating state.
+    /// </summary>
+    public void NotifyVisibleOrUsed()
     {
+        _recentUseFramesRemaining = Math.Max(_recentUseFramesRemaining, _sleepRecentUseFrameCount);
+        _recentInteractionQualityFramesRemaining = Math.Max(
+            _recentInteractionQualityFramesRemaining,
+            _recentInteractionQualityFrameCount);
+        Wake(PhysicsChainWakeReason.VisibilityOrUse);
+    }
+
+    /// <summary>Updates renderer visibility used by automatic offscreen policy.</summary>
+    public void SetRuntimeVisibility(bool visible)
+    {
+        if (!SetField(ref _runtimeVisible, visible, nameof(RuntimeVisible)))
+            return;
+        _offscreenQualityFrames = 0;
+        if (visible)
+        {
+            _recentInteractionQualityFramesRemaining = Math.Max(
+                _recentInteractionQualityFramesRemaining,
+                _recentInteractionQualityFrameCount);
+            Wake(PhysicsChainWakeReason.RelevanceChanged);
+        }
+    }
+
+    /// <summary>
+    /// Wakes an automatically sleeping chain and records the observable cause.
+    /// </summary>
+    public void Wake(PhysicsChainWakeReason reason)
+    {
+        if (_isRuntimeSleeping)
+            ++_wakeCount;
+
         _isRuntimeSleeping = false;
         _quietSimulationFrames = 0;
+        _lastWakeReason = reason;
     }
 
     internal int EstimatedWorldWork
@@ -178,6 +233,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             if (IsNeedUpdate())
             {
                 Prepare();
+                FinalizeWorldLateTickParallelPreparation();
                 return true;
             }
         }
@@ -197,18 +253,82 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         return false;
     }
 
+    internal bool CanPrepareWorldLateTickInputsInParallel
+        => _preUpdateCount != 0 && !UseGPU && Multithread;
+
+    internal bool BeginWorldLateTickParallelPreparation()
+    {
+        _isSimulating = true;
+        SetWeight(BlendWeight);
+        if (ShouldRemainSleeping())
+        {
+            CompleteWorldLateTick();
+            return false;
+        }
+
+        CheckDistance();
+        if (!IsNeedUpdate())
+        {
+            CompleteWorldLateTick();
+            return false;
+        }
+
+        Prepare();
+        return true;
+    }
+
+    internal void FinalizeWorldLateTickParallelPreparation()
+        => _usePreparedCpuBackend = TryPrepareDataOrientedCpuSolve();
+
+    internal void PrepareWorldCollidersForParallelInputGather()
+    {
+        List<PhysicsChainColliderBase>? colliders = Colliders;
+        if (colliders is null)
+            return;
+
+        for (int colliderIndex = 0; colliderIndex < colliders.Count; ++colliderIndex)
+        {
+            PhysicsChainColliderBase collider = colliders[colliderIndex];
+            if (collider is null || !collider.IsActiveInHierarchy || collider.PrepareFrame == _prepareFrame)
+                continue;
+
+            collider.Prepare();
+            collider.PrepareFrame = _prepareFrame;
+        }
+    }
+
     internal void SolveWorldLateTick()
-        => UpdateParticles();
+    {
+        if (ConsumeCpuBatchSolved())
+            return;
+
+        if (!_usePreparedCpuBackend || !SolvePreparedCpuBackend())
+        {
+            _usePreparedCpuBackend = false;
+            UpdateParticles();
+        }
+    }
 
     internal void PublishWorldLateTick()
     {
         EvaluateRuntimeSleep();
-        ApplyCurrentParticleTransforms(newSimulationResults: _lastSimulationProducedResults);
+        bool publishHierarchy = !_usePreparedCpuBackend;
+        if (_usePreparedCpuBackend)
+        {
+            if (!PublishPreparedCpuBackend())
+                _usePreparedCpuBackend = false;
+            else
+                publishHierarchy = ConsumeCpuTransformMirrorPublished();
+        }
+        if (publishHierarchy)
+            ApplyCurrentParticleTransforms(newSimulationResults: _lastSimulationProducedResults);
+        _usePreparedCpuBackend = false;
         CompleteWorldLateTick();
     }
 
     internal void AbortWorldLateTick()
     {
+        _usePreparedCpuBackend = false;
         _preUpdateCount = 0;
         _isSimulating = false;
     }
@@ -463,15 +583,88 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             return false;
 
         Vector3 rootPosition = Transform.WorldTranslation;
-        float wakeDistance = MathF.Max(_sleepVelocityThreshold * 4.0f, 1e-5f);
-        if (Vector3.DistanceSquared(rootPosition, _sleepRootPosition) > wakeDistance * wakeDistance
-            || Force.LengthSquared() > _sleepVelocityThreshold * _sleepVelocityThreshold)
+        float rootDisplacementSquared = Vector3.DistanceSquared(rootPosition, _sleepRootPosition);
+        Vector3 rootVelocity = rootPosition - _sleepLastRootPosition;
+        _sleepLastRootPosition = rootPosition;
+        Vector3 rootAcceleration = rootVelocity - _sleepRootStep;
+        _sleepRootStep = rootVelocity;
+        float rootAccelerationSquared = rootAcceleration.LengthSquared();
+        float externalForceSquared = Force.LengthSquared();
+        float teleportDistance = MathF.Max(_sleepTeleportDistance, 1e-5f);
+        if (rootDisplacementSquared > teleportDistance * teleportDistance)
         {
-            Wake();
+            Wake(PhysicsChainWakeReason.RootTeleport);
             return false;
         }
 
-        return true;
+        if (ComputeSleepConfiguredRootSignature() != _sleepConfiguredRootSignature)
+        {
+            Wake(PhysicsChainWakeReason.RootMovement);
+            return false;
+        }
+
+        if (ComputeSleepColliderShapeSignature() != _sleepColliderShapeSignature)
+        {
+            Wake(PhysicsChainWakeReason.ColliderShapeChanged);
+            return false;
+        }
+
+        if (ComputeSleepColliderPoseSignature() != _sleepColliderPoseSignature)
+        {
+            Wake(PhysicsChainWakeReason.ColliderPoseChanged);
+            return false;
+        }
+
+        PhysicsChainActivityThresholds thresholds = GetActivityThresholds();
+        var signals = new PhysicsChainActivitySignals(
+            _lastActivitySnapshot.MaximumParticleDisplacementSquared,
+            _lastActivitySnapshot.MaximumConstraintErrorSquared,
+            rootAccelerationSquared,
+            externalForceSquared,
+            ColliderChanged: false,
+            RecentlyVisibleOrUsed: _recentUseFramesRemaining > 0);
+        float normalizedErrorSquared = PhysicsChainActivityEvaluation.ComputeNormalizedErrorSquared(signals, thresholds);
+        _lastActivitySnapshot = new PhysicsChainActivitySnapshot(
+            signals.MaximumParticleVelocitySquared,
+            signals.MaximumConstraintErrorSquared,
+            rootDisplacementSquared,
+            rootAccelerationSquared,
+            externalForceSquared,
+            normalizedErrorSquared,
+            _quietSimulationFrames,
+            IsQuiet: PhysicsChainActivityEvaluation.IsQuiet(normalizedErrorSquared),
+            ColliderChanged: false,
+            RecentlyVisibleOrUsed: signals.RecentlyVisibleOrUsed);
+        if (!PhysicsChainActivityEvaluation.ShouldWake(normalizedErrorSquared, thresholds.WakeMultiplier))
+            return true;
+
+        PhysicsChainWakeReason reason = rootAccelerationSquared > 0.0f
+            ? PhysicsChainWakeReason.RootAcceleration
+            : externalForceSquared > 0.0f
+                ? PhysicsChainWakeReason.ExternalForceChanged
+                : PhysicsChainWakeReason.AccumulatedError;
+        Wake(reason);
+        return false;
+    }
+
+    private PhysicsChainActivityThresholds GetActivityThresholds()
+        => new(
+            _sleepVelocityThreshold,
+            _sleepConstraintErrorThreshold,
+            _sleepRootAccelerationThreshold,
+            _sleepExternalForceThreshold,
+            _sleepWakeThresholdMultiplier);
+
+    private void HoldSleepingOutputHistory()
+    {
+        for (int treeIndex = 0; treeIndex < _particleTrees.Count; ++treeIndex)
+        {
+            List<Particle> particles = _particleTrees[treeIndex].Particles;
+            for (int particleIndex = 0; particleIndex < particles.Count; ++particleIndex)
+                particles[particleIndex].PreviousPhysicsPosition = particles[particleIndex].Position;
+        }
+        HoldCpuOutputHistory();
+        _cpuBackendWorld?.HoldOutputHistory(_runtimeHandle);
     }
 
     private void EvaluateRuntimeSleep()
@@ -479,33 +672,211 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         if (UseGPU || !EnableAutomaticSleep || _effectiveQualityTier == PhysicsChainQualityTier.Sleep)
             return;
 
-        float thresholdSquared = _sleepVelocityThreshold * _sleepVelocityThreshold;
-        bool quiet = _objectMove.LengthSquared() <= thresholdSquared;
-        for (int treeIndex = 0; quiet && treeIndex < _particleTrees.Count; ++treeIndex)
+        float rootDisplacementSquared = _objectMove.LengthSquared();
+        Vector3 rootAcceleration = _objectMove - _previousActivityRootMove;
+        _previousActivityRootMove = _objectMove;
+        float rootAccelerationSquared = rootAcceleration.LengthSquared();
+        float externalForceSquared = Force.LengthSquared();
+        float maximumParticleDisplacementSquared = 0.0f;
+        float maximumConstraintErrorSquared = 0.0f;
+        for (int treeIndex = 0; treeIndex < _particleTrees.Count; ++treeIndex)
         {
             List<Particle> particles = _particleTrees[treeIndex].Particles;
             for (int particleIndex = 1; particleIndex < particles.Count; ++particleIndex)
             {
                 Particle particle = particles[particleIndex];
-                if (Vector3.DistanceSquared(particle.Position, particle.PrevPosition) > thresholdSquared)
-                {
-                    quiet = false;
-                    break;
-                }
+                float displacementSquared = Vector3.DistanceSquared(particle.Position, particle.PrevPosition);
+                maximumParticleDisplacementSquared = MathF.Max(maximumParticleDisplacementSquared, displacementSquared);
+                if ((uint)particle.ParentIndex >= (uint)particles.Count)
+                    continue;
+                float segmentLength = Vector3.Distance(particle.Position, particles[particle.ParentIndex].Position);
+                float constraintError = MathF.Abs(segmentLength - particle.SegmentLength);
+                maximumConstraintErrorSquared = MathF.Max(maximumConstraintErrorSquared, constraintError * constraintError);
             }
         }
 
+        int colliderShapeSignature = ComputeSleepColliderShapeSignature();
+        int colliderPoseSignature = ComputeSleepColliderPoseSignature();
+        bool colliderChanged = (_activityColliderShapeSignature != 0 && colliderShapeSignature != _activityColliderShapeSignature)
+            || (_activityColliderPoseSignature != 0 && colliderPoseSignature != _activityColliderPoseSignature);
+        _activityColliderShapeSignature = colliderShapeSignature;
+        _activityColliderPoseSignature = colliderPoseSignature;
+        bool recentlyVisibleOrUsed = _recentUseFramesRemaining > 0;
+        if (recentlyVisibleOrUsed)
+            --_recentUseFramesRemaining;
+
+        PhysicsChainActivityThresholds thresholds = GetActivityThresholds();
+        var signals = new PhysicsChainActivitySignals(
+            maximumParticleDisplacementSquared,
+            maximumConstraintErrorSquared,
+            rootAccelerationSquared,
+            externalForceSquared,
+            colliderChanged,
+            recentlyVisibleOrUsed);
+        float normalizedErrorSquared = PhysicsChainActivityEvaluation.ComputeNormalizedErrorSquared(signals, thresholds);
+        bool quiet = PhysicsChainActivityEvaluation.IsQuiet(normalizedErrorSquared);
+        int nextQuietFrameCount = quiet ? _quietSimulationFrames + 1 : 0;
+        _lastActivitySnapshot = new PhysicsChainActivitySnapshot(
+            maximumParticleDisplacementSquared,
+            maximumConstraintErrorSquared,
+            rootDisplacementSquared,
+            rootAccelerationSquared,
+            externalForceSquared,
+            normalizedErrorSquared,
+            nextQuietFrameCount,
+            quiet,
+            colliderChanged,
+            recentlyVisibleOrUsed);
+
         if (!quiet)
         {
-            Wake();
+            Wake(colliderChanged
+                ? PhysicsChainWakeReason.ColliderMovement
+                : recentlyVisibleOrUsed
+                    ? PhysicsChainWakeReason.VisibilityOrUse
+                    : PhysicsChainWakeReason.ActivityExceeded);
             return;
         }
 
-        if (++_quietSimulationFrames < _sleepQuietFrameCount)
+        _quietSimulationFrames = nextQuietFrameCount;
+        if (!ShouldEnterAutomaticSleep(_quietSimulationFrames, _sleepQuietFrameCount))
             return;
 
         _isRuntimeSleeping = true;
         _sleepRootPosition = Transform.WorldTranslation;
+        _sleepRootStep = Vector3.Zero;
+        _sleepLastRootPosition = _sleepRootPosition;
+        _sleepColliderSignature = ComputeSleepColliderSignature();
+        _sleepColliderShapeSignature = ComputeSleepColliderShapeSignature();
+        _sleepColliderPoseSignature = ComputeSleepColliderPoseSignature();
+        _sleepConfiguredRootSignature = ComputeSleepConfiguredRootSignature();
+        HoldSleepingOutputHistory();
+    }
+
+    internal static bool ShouldRetainSleep(float normalizedErrorSquared, float wakeMultiplier)
+        => !PhysicsChainActivityEvaluation.ShouldWake(normalizedErrorSquared, wakeMultiplier);
+
+    internal static bool ShouldEnterAutomaticSleep(int quietSimulationFrames, int requiredQuietSimulationFrames)
+        => quietSimulationFrames >= Math.Max(requiredQuietSimulationFrames, 1);
+
+    private int ComputeSleepConfiguredRootSignature()
+    {
+        HashCode hash = new();
+        hash.Add(Root is null ? 0 : RuntimeHelpers.GetHashCode(Root));
+        if (Root is not null)
+            hash.Add(Root.WorldMatrix);
+
+        int rootCount = Roots?.Count ?? 0;
+        hash.Add(rootCount);
+        for (int i = 0; i < rootCount; ++i)
+        {
+            Transform? root = Roots![i];
+            if (root is null)
+            {
+                hash.Add(0);
+                continue;
+            }
+
+            hash.Add(RuntimeHelpers.GetHashCode(root));
+            hash.Add(root.WorldMatrix);
+        }
+
+        hash.Add(RootBone is null ? 0 : RuntimeHelpers.GetHashCode(RootBone));
+        if (RootBone is not null)
+            hash.Add(RootBone.WorldMatrix);
+
+        return hash.ToHashCode();
+    }
+
+    private int ComputeSleepColliderSignature()
+    {
+        HashCode hash = new();
+        hash.Add(ComputeSleepColliderShapeSignature());
+        hash.Add(ComputeSleepColliderPoseSignature());
+        return hash.ToHashCode();
+    }
+
+    private int ComputeSleepColliderShapeSignature()
+    {
+        HashCode hash = new();
+        List<PhysicsChainColliderBase>? colliders = Colliders;
+        int colliderCount = colliders?.Count ?? 0;
+        hash.Add(colliderCount);
+
+        for (int i = 0; i < colliderCount; ++i)
+        {
+            PhysicsChainColliderBase? collider = colliders![i];
+            if (collider is null)
+            {
+                hash.Add(0);
+                continue;
+            }
+
+            hash.Add(RuntimeHelpers.GetHashCode(collider));
+            hash.Add(collider.IsActiveInHierarchy);
+            hash.Add(collider._direction);
+            hash.Add(collider._center);
+            hash.Add(collider._bound);
+
+            TransformBase? colliderTransform = collider switch
+            {
+                PhysicsChainSphereCollider sphere when sphere.ColliderTransform is not null => sphere.ColliderTransform,
+                PhysicsChainCapsuleCollider capsule when capsule.ColliderTransform is not null => capsule.ColliderTransform,
+                PhysicsChainBoxCollider box when box.ColliderTransform is not null => box.ColliderTransform,
+                _ => collider.Transform,
+            };
+            hash.Add(colliderTransform is null ? 0 : RuntimeHelpers.GetHashCode(colliderTransform));
+
+            switch (collider)
+            {
+                case PhysicsChainSphereCollider sphere:
+                    hash.Add(sphere.Radius);
+                    break;
+                case PhysicsChainCapsuleCollider capsule:
+                    hash.Add(capsule.Radius);
+                    hash.Add(capsule.Height);
+                    break;
+                case PhysicsChainBoxCollider box:
+                    hash.Add(box.Size);
+                    break;
+                case PhysicsChainCollider legacy:
+                    hash.Add(legacy._radius);
+                    hash.Add(legacy._height);
+                    hash.Add(legacy._radius2);
+                    break;
+            }
+        }
+
+        return hash.ToHashCode();
+    }
+
+    private int ComputeSleepColliderPoseSignature()
+    {
+        HashCode hash = new();
+        List<PhysicsChainColliderBase>? colliders = Colliders;
+        int colliderCount = colliders?.Count ?? 0;
+        hash.Add(colliderCount);
+        for (int i = 0; i < colliderCount; ++i)
+        {
+            PhysicsChainColliderBase? collider = colliders![i];
+            if (collider is null)
+            {
+                hash.Add(0);
+                continue;
+            }
+            TransformBase? colliderTransform = collider switch
+            {
+                PhysicsChainSphereCollider sphere when sphere.ColliderTransform is not null => sphere.ColliderTransform,
+                PhysicsChainCapsuleCollider capsule when capsule.ColliderTransform is not null => capsule.ColliderTransform,
+                PhysicsChainBoxCollider box when box.ColliderTransform is not null => box.ColliderTransform,
+                _ => collider.Transform,
+            };
+            if (colliderTransform is not null)
+                hash.Add(colliderTransform.WorldMatrix);
+            if (collider is PhysicsChainPlaneCollider plane)
+                hash.Add(plane._plane);
+        }
+        return hash.ToHashCode();
     }
 
     private void CheckDistance()
@@ -538,6 +909,17 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
         base.OnPropertyChanged(propName, prev, field);
+        if (!_isValidating)
+        {
+            PhysicsChainWakeReason wakeReason = GetAuthoredWakeReason(propName);
+            if (wakeReason != PhysicsChainWakeReason.None)
+                Wake(wakeReason);
+        }
+
+        if (IsIndependentQualityPolicyProperty(propName))
+            ApplyCpuQualityPolicy();
+        if (propName == nameof(RuntimeVisible))
+            return;
         if (HandleGpuExecutionModePropertyChanged(propName, prev, field))
             return;
 
@@ -546,6 +928,44 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         if (!_isSimulating)
             OnValidate();
     }
+
+    private static PhysicsChainWakeReason GetAuthoredWakeReason(string? propertyName)
+        => propertyName switch
+        {
+            nameof(Force) => PhysicsChainWakeReason.ExternalForceChanged,
+            nameof(Root) or nameof(Roots) or nameof(RootBone) => PhysicsChainWakeReason.RootConfigurationChanged,
+            nameof(Colliders) => PhysicsChainWakeReason.ColliderConfigurationChanged,
+            nameof(QualityTier) or nameof(SimulationPolicy)
+                or nameof(CollisionPolicy)
+                or nameof(PalettePolicy)
+                or nameof(BoundsPolicy)
+                or nameof(TransformMirrorPolicy)
+                => PhysicsChainWakeReason.QualityPolicyChanged,
+            nameof(EnableAutomaticSleep) or nameof(SleepVelocityThreshold)
+                or nameof(SleepConstraintErrorThreshold) or nameof(SleepRootAccelerationThreshold)
+                or nameof(SleepExternalForceThreshold) or nameof(SleepWakeThresholdMultiplier)
+                or nameof(SleepTeleportDistance) or nameof(SleepRecentUseFrameCount)
+                or nameof(SleepQuietFrameCount)
+                => PhysicsChainWakeReason.SleepPolicyChanged,
+            nameof(DistantDisable) or nameof(ReferenceObject) or nameof(DistanceToObject)
+                or nameof(AutomaticQualityRelevance) or nameof(AutomaticQualityImportance)
+                or nameof(OffscreenBehavior) or nameof(OffscreenDecayFrameCount)
+                or nameof(RecentInteractionQualityFrameCount)
+                => PhysicsChainWakeReason.RelevanceChanged,
+            nameof(UpdateRate) or nameof(Speed) or nameof(UpdateMode)
+                or nameof(Damping) or nameof(DampingDistrib)
+                or nameof(Elasticity) or nameof(ElasticityDistrib)
+                or nameof(Stiffness) or nameof(StiffnessDistrib)
+                or nameof(Inert) or nameof(InertDistrib)
+                or nameof(Friction) or nameof(FrictionDistrib)
+                or nameof(Radius) or nameof(RadiusDistrib)
+                or nameof(EndLength) or nameof(EndOffset)
+                or nameof(Gravity) or nameof(BlendWeight)
+                or nameof(Exclusions) or nameof(FreezeAxis)
+                or nameof(RootInertia) or nameof(VelocitySmoothing)
+                => PhysicsChainWakeReason.AuthoredParameterChanged,
+            _ => PhysicsChainWakeReason.None,
+        };
 
     private void OnValidate()
     {
@@ -745,7 +1165,14 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     {
         loop = 1;
         float stepDelta = dt;
-        float updateRate = ResolveEffectiveUpdateRate();
+        PhysicsChainQualityPolicy qualityPolicy = EffectiveQualityPolicy;
+        float updateRate = qualityPolicy.SimulationRateHz;
+        if (!qualityPolicy.SimulationEnabled)
+        {
+            loop = 0;
+            timeVar = 0.0f;
+            return;
+        }
 
         if ((UpdateMode != EUpdateMode.Default || _effectiveQualityTier != PhysicsChainQualityTier.Strict) && updateRate > 0.0f)
         {
@@ -756,7 +1183,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             while (_time >= frameTime)
             {
                 _time -= frameTime;
-                if (++loop >= 3)
+                if (++loop >= qualityPolicy.MaximumCatchUpSteps)
                 {
                     _time = 0.0f;
                     break;
@@ -770,14 +1197,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     }
 
     private float ResolveEffectiveUpdateRate()
-        => _effectiveQualityTier switch
-        {
-            PhysicsChainQualityTier.Hz30 => 30.0f,
-            PhysicsChainQualityTier.Hz15 => 15.0f,
-            PhysicsChainQualityTier.Hz7_5 => 7.5f,
-            PhysicsChainQualityTier.Sleep => 0.0f,
-            _ => UpdateRate,
-        };
+        => EffectiveQualityPolicy.SimulationRateHz;
 
     private void UpdateParticles()
     {
@@ -1025,8 +1445,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                 continue;
             }
 
-            p.Transform.Translation = p.InitLocalPosition;
-            p.Transform.Rotation = p.InitLocalRotation;
+            p.Transform.SetLocalTranslationRotation(p.InitLocalPosition, p.InitLocalRotation);
         }
     }
 
@@ -1251,6 +1670,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
         List<Particle> particles = pt.Particles;
         int particleCount = particles.Count;
+        bool collisionEnabled = EffectiveQualityPolicy.CollisionEnabled;
         for (int i = 1; i < particleCount; ++i)
         {
             Particle childPtcl = particles[i];
@@ -1290,7 +1710,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             // collide
             PhysicsChainColliderSnapshot[]? colliderSnapshots = _colliderSnapshotsForJob;
             int colliderSnapshotCount = _colliderSnapshotsForJobCount;
-            if (colliderSnapshots is not null && colliderSnapshotCount > 0)
+            if (collisionEnabled && colliderSnapshots is not null && colliderSnapshotCount > 0)
             {
                 float particleRadius = childPtcl.Radius * _objectScale;
                 for (int j = 0; j < colliderSnapshotCount; ++j)
@@ -1299,7 +1719,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
             PhysicsChainColliderBase[]? fallbackColliders = _fallbackCollidersForJob;
             int fallbackColliderCount = _fallbackCollidersForJobCount;
-            if (fallbackColliders is not null && fallbackColliderCount > 0)
+            if (collisionEnabled && fallbackColliders is not null && fallbackColliderCount > 0)
             {
                 float particleRadius = childPtcl.Radius * _objectScale;
                 for (int j = 0; j < fallbackColliderCount; ++j)
@@ -1421,6 +1841,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         }
 
         var particles = pt.Particles;
+        using TransformHierarchyMutationBatch hierarchyBatch = pt.Root.BeginHierarchyMutationBatch();
         int particleCount = particles.Count;
         for (int i = 1; i < particleCount; ++i)
         {
@@ -1449,15 +1870,16 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                 Vector3 v1 = childPosition - parentPosition;
                 Quaternion rot = Quaternion.Normalize(XRMath.RotationBetweenVectors(v0, v1));
 
-                pTfm.AddWorldRotationDelta(rot);
+                hierarchyBatch.AddWorldRotationDelta(pTfm, rot);
 
                 // Refresh the parent's world + inverse-world matrices so that the
                 // child's SetWorldTranslation (which uses ParentInverseWorldMatrix)
                 // computes the correct local translation.
-                pTfm.RecalculateMatrices(forceWorldRecalc: false);
+                hierarchyBatch.RecalculateMatrices(pTfm, forceWorldRecalc: false);
             }
 
-            cTfm?.SetWorldTranslation(childPosition);
+            if (cTfm is not null)
+                hierarchyBatch.SetWorldTranslation(cTfm, childPosition);
         }
     }
 

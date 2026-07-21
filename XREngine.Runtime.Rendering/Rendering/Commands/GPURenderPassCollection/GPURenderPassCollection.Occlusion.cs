@@ -139,6 +139,11 @@ namespace XREngine.Rendering.Commands
         private Vector3 _gpuHiZLastCameraPosition;
         private Matrix4x4 _gpuHiZLastProjection;
         private bool _gpuHiZHasCameraState;
+        private readonly StableViewHiZHistoryTracker _stableHiZHistory = new();
+        private readonly StableViewHiZDecision[] _stableHiZDecisions = new StableViewHiZDecision[RenderFrameViewSet.MaxViewCount];
+        private RenderFrameViewSet? _stableHiZViewSet;
+        private ulong _stableHiZSnapshotFrameId;
+        private int _stableHiZDecisionCount;
 
         private readonly Dictionary<uint, TemporalOcclusionState> _temporalOcclusion = [];
 
@@ -184,6 +189,101 @@ namespace XREngine.Rendering.Commands
         public uint OcclusionAccepted => _occlusionAccepted;
         public uint OcclusionFalsePositiveRecoveries => _occlusionFalsePositiveRecoveries;
         public uint OcclusionTemporalOverrides => _occlusionTemporalOverrides;
+        public ulong StableHiZSnapshotFrameId => _stableHiZSnapshotFrameId;
+        public ReadOnlySpan<StableViewHiZDecision> StableHiZDecisions
+            => _stableHiZDecisions.AsSpan(0, _stableHiZDecisionCount);
+
+        internal void ConfigureStableHiZViewSet(in RenderFrameViewSet viewSet, ulong snapshotFrameId)
+        {
+            _stableHiZViewSet = viewSet;
+            _stableHiZSnapshotFrameId = snapshotFrameId;
+            _stableHiZDecisionCount = 0;
+        }
+
+        private void PrepareStableHiZDecisions(GPUScene scene)
+        {
+            _stableHiZDecisionCount = 0;
+            if (_stableHiZViewSet is not RenderFrameViewSet viewSet)
+                return;
+
+            uint frameIndex = _stableHiZSnapshotFrameId > uint.MaxValue
+                ? uint.MaxValue
+                : (uint)_stableHiZSnapshotFrameId;
+            ulong sceneRevision = ComputeStableHiZSceneRevision(scene);
+            _stableHiZHistory.BeginFrame(frameIndex);
+            for (int i = 0; i < viewSet.ViewCount; i++)
+            {
+                RenderFrameViewDescriptor view = viewSet.GetView(i);
+                RenderFrameViewDescriptor outer = view.HasParent
+                    ? viewSet.GetView(checked((int)view.ParentViewId))
+                    : view;
+                bool isInset = view.IsInsetView;
+                bool sameEyeFamily =
+                    (view.IsLeftEyeFamily && outer.IsLeftEyeFamily) ||
+                    (view.IsRightEyeFamily && outer.IsRightEyeFamily);
+                bool depthConventionCompatible = view.DepthZeroToOne == outer.DepthZeroToOne;
+                bool relationshipCompatible = !isInset ||
+                    (outer.IsWideView &&
+                     sameEyeFamily &&
+                     view.ParentContainsView &&
+                     depthConventionCompatible);
+                EHiZHistoryMode requestedMode = EHiZHistoryMode.Temporal;
+                Matrix4x4 outerSamplingProjection = requestedMode == EHiZHistoryMode.CurrentFrame
+                    ? outer.ViewProjectionMatrix
+                    : outer.PreviousViewProjectionMatrix;
+                StableViewHiZRequest request = new(
+                    view.EffectiveHistoryKey,
+                    outer.EffectiveHistoryKey,
+                    view.ViewId,
+                    outer.ViewId,
+                    view.ViewProjectionMatrix,
+                    outerSamplingProjection,
+                    view.Target.ResourceGeneration,
+                    sceneRevision,
+                    requestedMode,
+                    isInset,
+                    view.ParentContainsView,
+                    relationshipCompatible,
+                    depthConventionCompatible,
+                    CameraCut: false,
+                    TrackingJump: false,
+                    ProjectionDiscontinuity: false,
+                    UnsafeSceneRevision: false);
+                _stableHiZDecisions[_stableHiZDecisionCount++] = _stableHiZHistory.Resolve(request);
+            }
+        }
+
+        private static ulong ComputeStableHiZSceneRevision(GPUScene scene)
+        {
+            const ulong offsetBasis = 14695981039346656037UL;
+            const ulong prime = 1099511628211UL;
+            ulong revision = offsetBasis;
+            revision = (revision ^ scene.TotalCommandCount) * prime;
+            revision = (revision ^ scene.BoundsBuffer.Revision) * prime;
+            revision = (revision ^ scene.TransformBuffer.Revision) * prime;
+            revision = (revision ^ scene.DrawMetadataBuffer.Revision) * prime;
+            revision = (revision ^ scene.MaterialStateBuffer.Revision) * prime;
+            return revision;
+        }
+
+        private void PublishStableHiZHistories(GPUScene scene)
+        {
+            if (_stableHiZViewSet is not RenderFrameViewSet viewSet)
+                return;
+
+            ulong sceneRevision = ComputeStableHiZSceneRevision(scene);
+            for (int i = 0; i < viewSet.ViewCount; i++)
+            {
+                RenderFrameViewDescriptor view = viewSet.GetView(i);
+                if (view.IsInsetView)
+                    continue;
+
+                _stableHiZHistory.Publish(
+                    view.EffectiveHistoryKey,
+                    view.Target.ResourceGeneration,
+                    sceneRevision);
+            }
+        }
 
         // CPU Hi-Z visibility snapshot machinery removed (C-CPU-2). The CPU path now
         // owns its own occlusion via CpuRenderOcclusionCoordinator hardware queries;
@@ -205,7 +305,8 @@ namespace XREngine.Rendering.Commands
             out Matrix4x4 viewProjection,
             out bool usesReversedZ)
         {
-            if (_hiZDepthPyramidReadyForMeshlets &&
+            if (_stableHiZDecisionCount <= 1 &&
+                _hiZDepthPyramidReadyForMeshlets &&
                 _hiZDepthPyramid is not null &&
                 _hiZDepthPyramid.Mipmaps.Length != 0)
             {
@@ -215,6 +316,9 @@ namespace XREngine.Rendering.Commands
                 usesReversedZ = _hiZDepthPyramidUsesReversedZ;
                 return true;
             }
+
+            if (_stableHiZDecisionCount > 1)
+                _ = IsMeshletMultiviewHiZPromoted();
 
             pyramid = null!;
             maxMip = 0;
@@ -345,6 +449,9 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
+            PrepareStableHiZDecisions(scene);
+
+            // Multiview meshlet Hi-Z remains disabled until layered depth sampling is validated.
             if (ShouldUseExternalVrSharedVisibilityPassFilter(camera))
             {
                 // External OpenXR eyes consume a combined stereo visibility set. A later
@@ -584,6 +691,7 @@ namespace XREngine.Rendering.Commands
             _hiZDepthPyramidReadyForMeshlets = _hiZDepthPyramid is not null;
             _hiZDepthPyramidViewProjection = depthInput.ViewProjection;
             _hiZDepthPyramidUsesReversedZ = isReverseZ;
+            PublishStableHiZHistories(scene);
 
             // C-GPU-3: when temporal state is dirty (scene mutated or camera jumped this
             // frame), the depth feeding the pyramid we just built does not contain newly
@@ -713,6 +821,7 @@ namespace XREngine.Rendering.Commands
                 EMemoryBarrierMask.Command |
                 EMemoryBarrierMask.ClientMappedBuffer);
 
+            InvalidateExactCommandViewMasks();
             uint writeIndex = 0u;
             uint visibleInstances = 0u;
             uint culled = 0u;
@@ -1102,6 +1211,9 @@ namespace XREngine.Rendering.Commands
             if (_occlusionCulledBuffer is null || _culledSceneToRenderBuffer is null)
                 return;
 
+            // Occlusion compacts commands without a paired view-mask ping-pong buffer.
+            InvalidateExactCommandViewMasks();
+
             // After occlusion, the refined buffer becomes the active culled buffer.
             (_culledSceneToRenderBuffer, _occlusionCulledBuffer) = (_occlusionCulledBuffer, _culledSceneToRenderBuffer);
 
@@ -1359,6 +1471,7 @@ namespace XREngine.Rendering.Commands
                 return 0u;
 
             ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            InvalidateExactCommandViewMasks();
             uint writeIndex = 0u;
             uint visibleInstances = 0u;
             uint occludedAccepted = 0u;

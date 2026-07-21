@@ -1,0 +1,77 @@
+// Requires GPUViewDescriptor, GPUViewConstants, ViewDescriptors,
+// ViewConstants, and ActiveViewCount from the including shader.
+
+const uint GPU_VIEW_FLAG_PARENT_CONTAINS_VIEW = 1u << 6u;
+const uint GPU_VIEW_FLAG_DEPTH_ZERO_TO_ONE = 1u << 7u;
+
+bool ExactViewMaskContains(uvec2 mask, uint viewId)
+{
+    return viewId < 32u
+        ? (mask.x & (1u << viewId)) != 0u
+        : (mask.y & (1u << (viewId - 32u))) != 0u;
+}
+
+void ExactViewMaskSet(inout uvec2 mask, uint viewId)
+{
+    if (viewId < 32u)
+        mask.x |= 1u << viewId;
+    else
+        mask.y |= 1u << (viewId - 32u);
+}
+
+bool AabbVisibleInLogicalView(vec3 minB, vec3 maxB, uint viewId)
+{
+    mat4 viewProjection = ViewConstants[viewId].ViewProjection;
+    bool depthZeroToOne = (ViewDescriptors[viewId].Flags & GPU_VIEW_FLAG_DEPTH_ZERO_TO_ONE) != 0u;
+    uint outsideAllCorners = 0x3Fu;
+    for (uint corner = 0u; corner < 8u; ++corner)
+    {
+        vec3 world = vec3(
+            (corner & 1u) == 0u ? minB.x : maxB.x,
+            (corner & 2u) == 0u ? minB.y : maxB.y,
+            (corner & 4u) == 0u ? minB.z : maxB.z);
+        vec4 clip = viewProjection * vec4(world, 1.0);
+        uint outside = 0u;
+        if (clip.x < -clip.w) outside |= 1u << 0u;
+        if (clip.x >  clip.w) outside |= 1u << 1u;
+        if (clip.y < -clip.w) outside |= 1u << 2u;
+        if (clip.y >  clip.w) outside |= 1u << 3u;
+        if (clip.z < (depthZeroToOne ? 0.0 : -clip.w)) outside |= 1u << 4u;
+        if (clip.z >  clip.w) outside |= 1u << 5u;
+        outsideAllCorners &= outside;
+    }
+    return outsideAllCorners == 0u;
+}
+
+uvec2 BuildExactViewMask(vec3 minB, vec3 maxB, uvec2 inputMask)
+{
+    uvec2 outputMask = uvec2(0u);
+    uint viewCount = min(uint(ActiveViewCount), min(uint(64), uint(ViewDescriptors.length())));
+    for (uint viewId = 0u; viewId < viewCount; ++viewId)
+    {
+        if (!ExactViewMaskContains(inputMask, viewId))
+            continue;
+
+        GPUViewDescriptor descriptor = ViewDescriptors[viewId];
+        bool parentContains = (descriptor.Flags & GPU_VIEW_FLAG_PARENT_CONTAINS_VIEW) != 0u;
+        if (parentContains && descriptor.ParentViewId < viewId &&
+            !ExactViewMaskContains(outputMask, descriptor.ParentViewId))
+        {
+            continue;
+        }
+
+        if (AabbVisibleInLogicalView(minB, maxB, viewId))
+            ExactViewMaskSet(outputMask, viewId);
+    }
+    return outputMask;
+}
+
+uvec2 ActiveLogicalViewMask()
+{
+    uint count = min(uint(ActiveViewCount), 64u);
+    uint loCount = min(count, 32u);
+    uint hiCount = count > 32u ? count - 32u : 0u;
+    return uvec2(
+        loCount == 32u ? 0xFFFFFFFFu : ((1u << loCount) - 1u),
+        hiCount == 0u ? 0u : hiCount == 32u ? 0xFFFFFFFFu : ((1u << hiCount) - 1u));
+}

@@ -51,6 +51,8 @@ public unsafe partial class OpenXRAPI
 
     private readonly long[] _vulkanOpenXrSwapchainFormats = new long[RenderFrameViewSet.MaxViewCount];
     private readonly SwapchainUsageFlags[] _vulkanOpenXrSwapchainUsages = new SwapchainUsageFlags[RenderFrameViewSet.MaxViewCount];
+    private readonly uint[] _vulkanOpenXrSwapchainSampleCounts = new uint[RenderFrameViewSet.MaxViewCount];
+    private readonly RenderFrameViewDescriptor[] _vulkanOpenXrBatchPlanViews = new RenderFrameViewDescriptor[RenderFrameViewSet.MaxViewCount];
     private readonly int[] _vulkanOpenXrStartupPrewarmFramesRemaining = CreateOpenXrStartupPrewarmFrameCounters();
     private readonly uint[] _vulkanOpenXrPrewarmWidths = new uint[RenderFrameViewSet.MaxViewCount];
     private readonly uint[] _vulkanOpenXrPrewarmHeights = new uint[RenderFrameViewSet.MaxViewCount];
@@ -344,6 +346,140 @@ public unsafe partial class OpenXRAPI
     public bool CanUseTrueSinglePassStereo
         => CanUseOpenXrTrueSinglePassStereo(out _);
 
+    private bool TryPlanVulkanOpenXrViewBatches(
+        EVrViewRenderMode renderMode,
+        bool supportsLayeredStereoPairs,
+        out RenderFrameViewBatchPlan plan,
+        out string reason)
+    {
+        plan = default;
+        reason = string.Empty;
+        int viewCount = checked((int)_viewCount);
+        if (viewCount < 1 || viewCount > RenderFrameViewSet.MaxViewCount)
+        {
+            reason = $"OpenXR view count {_viewCount} is outside the supported planner range";
+            return false;
+        }
+
+        for (int i = 0; i < viewCount; i++)
+        {
+            uint width = GetOpenXrSwapchainWidth((uint)i);
+            uint height = GetOpenXrSwapchainHeight((uint)i);
+            long format = _vulkanOpenXrSwapchainFormats[i];
+            uint samples = _vulkanOpenXrSwapchainSampleCounts[i];
+            SwapchainUsageFlags usage = _vulkanOpenXrSwapchainUsages[i];
+            if (width == 0 || height == 0 || format == 0 || samples == 0 || _swapchains[i].Handle == 0)
+            {
+                reason = $"OpenXR view {i} target metadata is incomplete";
+                return false;
+            }
+
+            EVrOutputViewKind kind = ResolveOpenXrRvcViewKind((uint)i);
+            uint parentViewId = kind switch
+            {
+                EVrOutputViewKind.LeftInset => 0u,
+                EVrOutputViewKind.RightInset => 1u,
+                _ => RenderFrameViewDescriptor.InvalidViewId,
+            };
+            ulong outputIdentity = (ulong)(i + 1);
+            ViewFoveationContext foveation = CreateOpenXrEyeFoveationContext((uint)i);
+            ulong attachmentSignature = BuildOpenXrViewAttachmentSignature(
+                width,
+                height,
+                format,
+                samples,
+                usage);
+            _vulkanOpenXrBatchPlanViews[i] = new RenderFrameViewDescriptor(
+                (uint)i,
+                kind,
+                parentViewId,
+                VisibilityGroupIndex: 0,
+                OpenXrViewIndex: i,
+                OutputLayer: 0u,
+                RenderFrameViewRect.FromSize(width, height),
+                System.Numerics.Matrix4x4.Identity,
+                System.Numerics.Matrix4x4.Identity,
+                System.Numerics.Matrix4x4.Identity,
+                CreateOpenXrEyeFoveationContext((uint)i),
+                $"OpenXR {kind}",
+Target:                 new RenderFrameViewTargetDescriptor(
+                    ERenderLibrary.Vulkan,
+                    outputIdentity,
+                    _swapchains[i].Handle,
+                    attachmentSignature,
+                    unchecked((ulong)format),
+                    samples,
+                    LayerCount: 1u,
+                    SupportsColorAttachmentLayout: (usage & SwapchainUsageFlags.ColorAttachmentBit) != 0,
+                    SupportsTransferDestinationLayout: (usage & SwapchainUsageFlags.TransferDstBit) != 0,
+                    ResourceGeneration: attachmentSignature,
+                    TemporalGeneration: GetOpenXrHistoryKey(kind)));
+        }
+
+        RenderFrameViewSet viewSet = RenderFrameViewSet.Create(
+            renderMode,
+            EVrVisibilityPolicy.SharedFrameViewSet,
+            visibilityGroupCount: 1,
+            _vulkanOpenXrBatchPlanViews.AsSpan(0, viewCount),
+            "OpenXR Vulkan runtime view family");
+        RenderFrameViewBatchCapabilities capabilities = new(
+            SupportsLayeredStereoPairs: supportsLayeredStereoPairs,
+            SupportsLayeredQuadView: false,
+            SupportsParallelCommandBufferRecording: true,
+            SupportsMixedLayerExtents: false,
+            MaxLayerCount: supportsLayeredStereoPairs ? 2 : 1);
+        try
+        {
+            plan = RenderFrameViewBatchPlanner.Plan(viewSet, capabilities);
+            return true;
+        }
+        catch (InvalidOperationException exception)
+        {
+            reason = exception.Message;
+            return false;
+        }
+    }
+
+    private static ulong BuildOpenXrViewAttachmentSignature(
+        uint width,
+        uint height,
+        long format,
+        uint samples,
+        SwapchainUsageFlags usage)
+    {
+        const ulong prime = 1099511628211UL;
+        ulong hash = 14695981039346656037UL;
+        hash = (hash ^ width) * prime;
+        hash = (hash ^ height) * prime;
+        hash = (hash ^ unchecked((ulong)format)) * prime;
+        hash = (hash ^ samples) * prime;
+        hash = (hash ^ (ulong)usage) * prime;
+        return hash == 0UL ? 1UL : hash;
+    }
+
+    private static bool TryGetProductionLayeredStereoBatch(
+        in RenderFrameViewBatchPlan plan,
+        out RenderFrameViewBatch batch,
+        out string reason)
+    {
+        batch = default;
+        if (plan.BatchCount != 1)
+        {
+            reason = $"planned {plan.BatchCount} render batches; the first production consumer requires one layered stereo batch";
+            return false;
+        }
+
+        batch = plan.GetBatch(0);
+        if (batch.Kind != ERenderFrameViewBatchKind.LayeredStereoPair || batch.ViewMask != 0x3UL)
+        {
+            reason = $"planned batch is {batch.Kind} with viewMask=0x{batch.ViewMask:X}; expected LayeredStereoPair mask 0x3";
+            return false;
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
     private bool CanUseOpenXrTrueSinglePassStereo(out string reason)
     {
         if (Window?.Renderer is not VulkanRenderer renderer)
@@ -364,40 +500,21 @@ public unsafe partial class OpenXRAPI
             return false;
         }
 
-        if (_viewCount != 2)
-        {
-            reason = $"view count is {_viewCount}, expected 2";
-            return false;
-        }
-
         if (!RuntimeEngine.Rendering.State.HasVulkanMultiView)
         {
             reason = "Vulkan multiview support is not available";
             return false;
         }
 
-        uint leftWidth = GetOpenXrSwapchainWidth(0);
-        uint leftHeight = GetOpenXrSwapchainHeight(0);
-        uint rightWidth = GetOpenXrSwapchainWidth(1);
-        uint rightHeight = GetOpenXrSwapchainHeight(1);
-        if (leftWidth == 0 || leftHeight == 0 || rightWidth == 0 || rightHeight == 0)
+        if (!TryPlanVulkanOpenXrViewBatches(
+                EVrViewRenderMode.SinglePassStereo,
+                supportsLayeredStereoPairs: true,
+                out RenderFrameViewBatchPlan plan,
+                out reason) ||
+            !TryGetProductionLayeredStereoBatch(plan, out _, out reason))
         {
-            reason = "OpenXR view dimensions are not initialized";
             return false;
         }
-
-        if (leftWidth != rightWidth || leftHeight != rightHeight)
-        {
-            reason = $"OpenXR eye dimensions differ ({leftWidth}x{leftHeight} vs {rightWidth}x{rightHeight})";
-            return false;
-        }
-
-        if (_vulkanOpenXrSwapchainFormats[0] == 0 || _vulkanOpenXrSwapchainFormats[1] == 0)
-        {
-            reason = "OpenXR Vulkan swapchain formats are not selected";
-            return false;
-        }
-
         if (!TryResolveVulkanStereoColorTextureFormat(
                 (VkFormat)_vulkanOpenXrSwapchainFormats[0],
                 (VkFormat)_vulkanOpenXrSwapchainFormats[1],
@@ -587,6 +704,7 @@ public unsafe partial class OpenXRAPI
                             Debug.Out($"OpenXR Vulkan swapchain[{i}] created. Format={FormatVulkanSwapchainFormatForLog(format)}, Samples={samples}, Usage={usage}, Size={width}x{height}");
                             createdFormat = format;
                             _vulkanOpenXrSwapchainUsages[i] = usage;
+                            _vulkanOpenXrSwapchainSampleCounts[i] = samples;
                             createdSamples = samples;
                             RecordOpenXrSwapchainExtent((uint)i, width, height);
                             created = true;
@@ -1113,18 +1231,6 @@ public unsafe partial class OpenXRAPI
             return false;
         if (Window?.Renderer is not VulkanRenderer renderer)
             return false;
-        if (_viewCount != 2)
-        {
-            if (strictSinglePassStereoRequested)
-            {
-                Debug.VulkanWarningEvery(
-                    $"OpenXR.Vulkan.StrictSps.InvalidViewCount.{GetHashCode()}",
-                    TimeSpan.FromSeconds(1),
-                    "[OpenXR] Strict SinglePassStereo cannot render viewCount={0}; expected exactly 2. Sequential fallback is forbidden; submitting no projection layer.",
-                    _viewCount);
-            }
-            return false;
-        }
         if (OpenXrDebugRenderRightThenLeft || OpenXrVulkanSerialEyeSubmit)
         {
             if (strictSinglePassStereoRequested)
@@ -1154,6 +1260,34 @@ public unsafe partial class OpenXRAPI
             return false;
         }
 
+        if (!TryPlanVulkanOpenXrViewBatches(
+                modeResolution.EffectiveMode,
+                supportsLayeredStereoPairs: RuntimeEngine.Rendering.State.HasVulkanMultiView,
+                out RenderFrameViewBatchPlan batchPlan,
+                out string batchPlanReason))
+        {
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.ViewBatchPlan.Invalid.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Vulkan view-batch planning failed: {0}",
+                batchPlanReason);
+            return false;
+        }
+
+        if (modeResolution.EffectiveImplementationPath == EVrViewRenderImplementationPath.TrueSinglePassStereo &&
+            !TryGetProductionLayeredStereoBatch(batchPlan, out _, out batchPlanReason))
+        {
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.StrictSps.InvalidPlannedBatch.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Strict SinglePassStereo planned-batch validation failed: {0}. Sequential fallback is forbidden; submitting no projection layer.",
+                batchPlanReason);
+            return false;
+        }
+
+        if (modeResolution.EffectiveImplementationPath != EVrViewRenderImplementationPath.TrueSinglePassStereo &&
+            batchPlan.BatchCount != 2)
+            return false;
         uint leftWidth = GetOpenXrSwapchainWidth(0);
         uint leftHeight = GetOpenXrSwapchainHeight(0);
         uint rightWidth = GetOpenXrSwapchainWidth(1);
@@ -1522,6 +1656,20 @@ public unsafe partial class OpenXRAPI
             return false;
         }
 
+        if (!TryPlanVulkanOpenXrViewBatches(
+                EVrViewRenderMode.SinglePassStereo,
+                supportsLayeredStereoPairs: true,
+                out RenderFrameViewBatchPlan batchPlan,
+                out string batchPlanReason) ||
+            !TryGetProductionLayeredStereoBatch(batchPlan, out RenderFrameViewBatch productionBatch, out batchPlanReason))
+        {
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.TrueSinglePassStereo.BatchPlanUnavailable.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] True SinglePassStereo planned batch became unavailable: {0}. Sequential fallback is forbidden.",
+                batchPlanReason);
+            return false;
+        }
         SwapchainImageVulkan2KHR* leftImages = _swapchainImagesVK[0];
         SwapchainImageVulkan2KHR* rightImages = _swapchainImagesVK[1];
         if (leftImages == null || rightImages == null)
@@ -1650,7 +1798,8 @@ public unsafe partial class OpenXRAPI
                         _openXrFrameWorld,
                         stereoPacing);
                 },
-                RendersExternalSwapchainTarget: false);
+                RendersExternalSwapchainTarget: false,
+                ViewBatchStructuralIdentity: productionBatch.StructuralIdentity);
 
             bool stereoRenderedAndPublished = renderer.TryRenderAndBlitTextureArrayLayersToOpenXrSwapchainImages(
                 in renderRequest,

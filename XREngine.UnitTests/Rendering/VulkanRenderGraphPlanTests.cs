@@ -37,6 +37,29 @@ public sealed class VulkanRenderGraphPlanTests
     }
 
     [Test]
+    public void LegacyResourceHazards_FollowExplicitOrderWithoutCreatingOrderingCycle()
+    {
+        RenderPassMetadataCollection metadata = new();
+        metadata.ForPass(2, "LateWriter")
+            .DependsOn(1)
+            .UseColorAttachment("SharedColor", ERenderGraphAccess.ReadWrite);
+        metadata.ForPass(1, "EarlyWriter")
+            .UseColorAttachment("SharedColor", ERenderGraphAccess.ReadWrite);
+
+        int[] order = RenderGraphSynchronizationPlanner.TopologicallySort(metadata.Build())
+            .Select(static pass => pass.PassIndex)
+            .ToArray();
+        RenderGraphSynchronizationInfo synchronization = RenderGraphSynchronizationPlanner.Build(metadata.Build());
+
+        order.ShouldBe([1, 2]);
+        synchronization.Edges.ShouldContain(edge =>
+            edge.ProducerPassIndex == 1 &&
+            edge.ConsumerPassIndex == 2 &&
+            edge.ResourceName == "SharedColor" &&
+            edge.ResourceVersion == 1);
+    }
+
+    [Test]
     public void VersionedResource_RejectsUninitializedRead()
     {
         RenderPassMetadataCollection metadata = new();

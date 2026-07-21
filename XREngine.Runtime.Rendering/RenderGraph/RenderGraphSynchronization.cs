@@ -238,7 +238,6 @@ public static class RenderGraphSynchronizationPlanner
         }
 
         AddVersionedResourceEdges(lookup, edges, inDegree);
-        AddLegacyResourceEdges(lookup, edges, inDegree);
 
         SortedSet<int> ready = new(
             inDegree.Where(kvp => kvp.Value == 0).Select(kvp => kvp.Key),
@@ -327,46 +326,6 @@ public static class RenderGraphSynchronizationPlanner
 
             if (!matchedProducer && (!usage.IsImported || usage.ImportedInitialState is null))
                 throw new InvalidOperationException($"Logical resource '{usage.ResourceName}' version {usage.LogicalVersion} is read before it is produced or imported with a valid initial state.");
-        }
-    }
-
-    private static void AddLegacyResourceEdges(
-        IReadOnlyDictionary<int, RenderPassMetadata> lookup,
-        Dictionary<int, List<int>> edges,
-        Dictionary<int, int> inDegree)
-    {
-        RenderPassMetadata[] declared = lookup.Values
-            .OrderBy(static pass => pass.DeclarationOrder)
-            .ThenBy(static pass => pass.PassIndex)
-            .ToArray();
-        var priorByResource = new Dictionary<string, List<(int PassIndex, RenderPassResourceUsage Usage)>>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (RenderPassMetadata pass in declared)
-        {
-            foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
-            {
-                if (usage.LogicalVersion >= 0 || string.IsNullOrWhiteSpace(usage.ResourceName))
-                    continue;
-
-                if (!priorByResource.TryGetValue(usage.ResourceName, out List<(int PassIndex, RenderPassResourceUsage Usage)>? prior))
-                {
-                    prior = [];
-                    priorByResource.Add(usage.ResourceName, prior);
-                }
-
-                bool currentWrites = Writes(usage.Access);
-                for (int priorIndex = 0; priorIndex < prior.Count; priorIndex++)
-                {
-                    (int producer, RenderPassResourceUsage producerUsage) = prior[priorIndex];
-                    if (producerUsage.SubresourceRange.Overlaps(usage.SubresourceRange) &&
-                        (Writes(producerUsage.Access) || currentWrites))
-                    {
-                        AddDependencyEdge(producer, pass.PassIndex, edges, inDegree);
-                    }
-                }
-
-                prior.Add((pass.PassIndex, usage));
-            }
         }
     }
 

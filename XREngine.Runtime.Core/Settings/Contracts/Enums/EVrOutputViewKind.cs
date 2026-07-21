@@ -10,5 +10,9 @@ public enum EVrOutputViewKind
     RightWide,
     LeftInset,
     RightInset,
+    /// <summary>
+    /// A published or secondary scene output with its own durable history owner.
+    /// </summary>
+    Secondary,
     Debug,
 }

@@ -30,6 +30,8 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     private const int MaxConsecutiveVrDesktopBudgetSkips = 2;
 
     private readonly object _vrDesktopPressureLock = new();
+    private readonly object _renderOutputGraphLock = new();
+    private readonly RenderOutputGraphPlanner _renderOutputGraphPlanner = new();
     private int _vrDesktopPressureHoldFramesRemaining;
     private int _vrDesktopPressureConsecutiveSkips;
     private ulong _vrDesktopPressureFrameId;
@@ -1302,6 +1304,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RecordRenderVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount)
         => Engine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourcePlanReplacement(imageCount, bufferCount);
 
+    public void RecordRenderVulkanSwapchainRetirement(int queued, int drained, int pending, int deferred)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanSwapchainRetirement(queued, drained, pending, deferred);
+
     public void RecordRenderVulkanRetiredResourceDrain(
         int descriptorPools,
         int descriptorSets,
@@ -1507,8 +1512,67 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         }
     }
 
+    public void PlanRenderOutput(in RenderOutputRequest request, bool isDue)
+    {
+        if (!request.IsDefined)
+            return;
+
+        lock (_renderOutputGraphLock)
+        {
+            bool independentDesktopScene =
+                Engine.Rendering.Settings.VrMirrorMode == EVrMirrorMode.FullIndependentRender;
+            EFrameOutputKind xrSourceKind = Engine.VRState.IsOpenXRActive
+                ? EFrameOutputKind.OpenXREyeSubmit
+                : EFrameOutputKind.OpenVRSubmit;
+            _renderOutputGraphPlanner.Plan(
+                request,
+                isDue,
+                independentDesktopScene,
+                xrSourceKind);
+        }
+    }
+
     public void RecordRenderFrameOutput(in FrameOutputTelemetry telemetry)
-        => Engine.Rendering.Stats.FrameOutputs.RecordOutput(telemetry);
+    {
+        RenderOutputRequest request = telemetry.Request.IsDefined
+            ? telemetry.Request
+            : telemetry.Pacing.Request;
+        FrameOutputTelemetry recorded = telemetry;
+        if (request.IsDefined)
+        {
+            lock (_renderOutputGraphLock)
+            {
+                bool independentDesktopScene =
+                    Engine.Rendering.Settings.VrMirrorMode == EVrMirrorMode.FullIndependentRender;
+                EFrameOutputKind xrSourceKind = Engine.VRState.IsOpenXRActive
+                    ? EFrameOutputKind.OpenXREyeSubmit
+                    : EFrameOutputKind.OpenVRSubmit;
+                _renderOutputGraphPlanner.Plan(
+                    request,
+                    telemetry.Pacing.IsDue,
+                    independentDesktopScene,
+                    xrSourceKind);
+                if (telemetry.Rendered)
+                    _renderOutputGraphPlanner.Complete(request);
+
+                if (_renderOutputGraphPlanner.TryGetStatus(request, out RenderOutputDagNodeStatus status))
+                {
+                    ERenderOutputWorkDisposition disposition = status.State == ERenderOutputNodeState.Reused
+                        ? ERenderOutputWorkDisposition.ReusedStale
+                        : telemetry.WorkDisposition;
+                    recorded = telemetry with
+                    {
+                        Request = request,
+                        WorkDisposition = disposition,
+                        ContentAgeFrames = status.ContentAgeFrames,
+                        PolicyAuthorized = status.State != ERenderOutputNodeState.Reused || status.AuthorizedReuse,
+                    };
+                }
+            }
+        }
+
+        Engine.Rendering.Stats.FrameOutputs.RecordOutput(recorded);
+    }
     public void RecordRenderFrameOutputWork(in FrameOutputWorkTelemetry telemetry)
         => Engine.Rendering.Stats.FrameOutputs.RecordWork(telemetry);
     public bool EnableVrFoveatedViewSet => Engine.Rendering.Settings.EnableVrFoveatedViewSet;

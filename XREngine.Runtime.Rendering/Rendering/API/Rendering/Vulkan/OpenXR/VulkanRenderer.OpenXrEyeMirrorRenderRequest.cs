@@ -11,5 +11,6 @@ public unsafe partial class VulkanRenderer
         uint OpenXrViewIndex,
         uint OpenXrImageIndex,
         Action EmitFrameOps,
-        bool RendersExternalSwapchainTarget = true);
+        bool RendersExternalSwapchainTarget = true,
+        ulong ViewBatchStructuralIdentity = 0UL);
 }

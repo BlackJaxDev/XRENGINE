@@ -1056,6 +1056,7 @@ public unsafe partial class OpenXRAPI
             float leftFrustumPadding = UpdateOpenXrEyeCameraFromView(_openXrLeftEyeCamera!, 0);
             float rightFrustumPadding = UpdateOpenXrEyeCameraFromView(_openXrRightEyeCamera!, 1);
             RuntimeEngine.Rendering.Stats.Vr.RecordVrXrCollectFrustumExpansionDegrees(Math.Max(leftFrustumPadding, rightFrustumPadding));
+            PublishLocatedOpenXrFrameViewSet();
 
             // NOTE: Do not call World.Lights.UpdateCameraLightIntersections() for the OpenXR eye cameras.
             // That data is stored on the light components (not scoped per camera), so updating it here can

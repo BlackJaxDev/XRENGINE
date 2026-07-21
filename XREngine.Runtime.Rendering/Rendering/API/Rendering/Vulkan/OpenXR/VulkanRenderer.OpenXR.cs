@@ -259,13 +259,15 @@ public unsafe partial class VulkanRenderer
     /// identity belong to command-buffer and submission variants, while the engine-owned intermediate
     /// resources remain compatible as the runtime rotates swapchain images.
     /// </summary>
-    internal static int BuildOpenXrExternalSwapchainPlannerTargetIdentity(uint openXrViewIndex)
+    internal static int BuildOpenXrExternalSwapchainPlannerTargetIdentity(uint openXrViewIndex, ulong viewBatchStructuralIdentity = 0UL)
     {
         unchecked
         {
             int hash = 0x4F585254;
             hash = (hash * 397) ^ (int)openXrViewIndex;
             hash = (hash * 397) ^ 0x53494E54;
+            hash = (hash * 397) ^ unchecked((int)viewBatchStructuralIdentity);
+            hash = (hash * 397) ^ unchecked((int)(viewBatchStructuralIdentity >> 32));
             return hash == 0 ? 1 : hash;
         }
     }
@@ -550,7 +552,8 @@ public unsafe partial class VulkanRenderer
 
         int desktopSwapchainImageCount = swapChainImages?.Length ?? 0;
         int externalTargetIdentity = BuildOpenXrExternalSwapchainPlannerTargetIdentity(
-            request.OpenXrViewIndex);
+            request.OpenXrViewIndex,
+            request.ViewBatchStructuralIdentity);
         using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(
             request.Extent.Width,
             request.Extent.Height,
@@ -1473,6 +1476,7 @@ public unsafe partial class VulkanRenderer
         hash.Add(request.Extent.Width);
         hash.Add(request.Extent.Height);
         hash.Add(request.OpenXrViewIndex);
+        hash.Add(request.ViewBatchStructuralIdentity);
         return unchecked((ulong)hash.ToHashCode());
     }
 
@@ -2144,7 +2148,8 @@ public unsafe partial class VulkanRenderer
                 request.Extent.Width,
                 request.Extent.Height,
                 BuildOpenXrExternalSwapchainPlannerTargetIdentity(
-                    request.OpenXrViewIndex),
+                    request.OpenXrViewIndex,
+                    request.ViewBatchStructuralIdentity),
                 ResolveOpenXrExternalSwapchainTargetName(request.OpenXrViewIndex),
                 EVulkanFrameOpContextKind.OpenXrMirror)
             : null;
