@@ -3313,124 +3313,19 @@ public unsafe partial class VulkanRenderer
                 return;
             }
 
-            // Determine whether a dedicated transfer queue family is available.
-            QueueFamilyIndices queueFamilies = Renderer.FamilyQueueIndices;
-            uint graphicsFamily = queueFamilies.GraphicsFamilyIndex ?? 0u;
-            uint transferFamily = queueFamilies.TransferFamilyIndex ?? graphicsFamily;
-            bool dedicatedTransferFamily = transferFamily != graphicsFamily;
-
-            if (dedicatedTransferFamily && Renderer.WaitForQueueIdleTracked(Renderer.GraphicsQueue) != Result.Success)
-                return;
-
-            using (var transferScope = Renderer.NewTransferCommandScope())
+            // Keep synchronous texture publication ordered with prior and future image
+            // uses on the graphics queue. A dedicated transfer queue is useful only when
+            // an asynchronous upload plan supplies cross-queue semaphores and ownership
+            // transfers; a queue-idle workaround would globally stall normal streaming.
+            using (var uploadScope = Renderer.NewCommandScope())
             {
-                if (dedicatedTransferFamily)
-                {
-                    ImageMemoryBarrier acquireBarrier = new()
-                    {
-                        SType = StructureType.ImageMemoryBarrier,
-                        SrcAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
-                        DstAccessMask = AccessFlags.TransferWriteBit,
-                        OldLayout = ImageLayout.TransferDstOptimal,
-                        NewLayout = ImageLayout.TransferDstOptimal,
-                        SrcQueueFamilyIndex = graphicsFamily,
-                        DstQueueFamilyIndex = transferFamily,
-                        Image = _image,
-                        SubresourceRange = new ImageSubresourceRange
-                        {
-                            AspectMask = AspectFlags,
-                            BaseMipLevel = mipLevel,
-                            LevelCount = 1,
-                            BaseArrayLayer = baseArrayLayer,
-                            LayerCount = layerCount,
-                        }
-                    };
-
-                    Renderer.CmdPipelineBarrierTracked(
-                        transferScope.CommandBuffer,
-                        PipelineStageFlags.BottomOfPipeBit,
-                        PipelineStageFlags.TransferBit,
-                        DependencyFlags.None,
-                        0,
-                        null,
-                        0,
-                        null,
-                        1,
-                        &acquireBarrier);
-                }
-
-                Renderer.CmdCopyBufferToImageTracked(transferScope.CommandBuffer, buffer, _image, ImageLayout.TransferDstOptimal, 1, &region);
-
-                if (dedicatedTransferFamily)
-                {
-                    ImageMemoryBarrier releaseBarrier = new()
-                    {
-                        SType = StructureType.ImageMemoryBarrier,
-                        SrcAccessMask = AccessFlags.TransferWriteBit,
-                        DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
-                        OldLayout = ImageLayout.TransferDstOptimal,
-                        NewLayout = ImageLayout.TransferDstOptimal,
-                        SrcQueueFamilyIndex = transferFamily,
-                        DstQueueFamilyIndex = graphicsFamily,
-                        Image = _image,
-                        SubresourceRange = new ImageSubresourceRange
-                        {
-                            AspectMask = AspectFlags,
-                            BaseMipLevel = mipLevel,
-                            LevelCount = 1,
-                            BaseArrayLayer = baseArrayLayer,
-                            LayerCount = layerCount,
-                        }
-                    };
-
-                    Renderer.CmdPipelineBarrierTracked(
-                        transferScope.CommandBuffer,
-                        PipelineStageFlags.TransferBit,
-                        PipelineStageFlags.BottomOfPipeBit,
-                        DependencyFlags.None,
-                        0,
-                        null,
-                        0,
-                        null,
-                        1,
-                        &releaseBarrier);
-                }
-            }
-
-            if (dedicatedTransferFamily)
-            {
-                using var graphicsScope = Renderer.NewCommandScope();
-                ImageMemoryBarrier acquireOnGraphics = new()
-                {
-                    SType = StructureType.ImageMemoryBarrier,
-                    SrcAccessMask = AccessFlags.TransferWriteBit,
-                    DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
-                    OldLayout = ImageLayout.TransferDstOptimal,
-                    NewLayout = ImageLayout.TransferDstOptimal,
-                    SrcQueueFamilyIndex = transferFamily,
-                    DstQueueFamilyIndex = graphicsFamily,
-                    Image = _image,
-                    SubresourceRange = new ImageSubresourceRange
-                    {
-                        AspectMask = AspectFlags,
-                        BaseMipLevel = mipLevel,
-                        LevelCount = 1,
-                        BaseArrayLayer = baseArrayLayer,
-                        LayerCount = layerCount,
-                    }
-                };
-
-                Renderer.CmdPipelineBarrierTracked(
-                    graphicsScope.CommandBuffer,
-                    PipelineStageFlags.TransferBit,
-                    PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
-                    DependencyFlags.None,
-                    0,
-                    null,
-                    0,
-                    null,
+                Renderer.CmdCopyBufferToImageTracked(
+                    uploadScope.CommandBuffer,
+                    buffer,
+                    _image,
+                    ImageLayout.TransferDstOptimal,
                     1,
-                    &acquireOnGraphics);
+                    &region);
             }
         }
 
@@ -3707,6 +3602,7 @@ public unsafe partial class VulkanRenderer
         /// </summary>
         protected void RecreateImageForFullTextureDataUpload(string reason)
         {
+            _ = reason;
             if (!IsActive || _image.Handle == 0 || Renderer.IsDeviceLost)
                 return;
 
@@ -3720,7 +3616,8 @@ public unsafe partial class VulkanRenderer
             if (canReuseDedicatedStorage)
                 return;
 
-            WaitForInFlightWorkBeforeImportedTextureReplacement(reason);
+            // Destruction is generation-safe and deferred by exact resource tickets;
+            // the replacement must not drain unrelated output families.
             Destroy();
         }
 
@@ -3900,42 +3797,13 @@ public unsafe partial class VulkanRenderer
             if (!IsActive)
                 return;
 
-            WaitForInFlightWorkBeforeImportedTextureReplacement("storage property changed");
+            // DeleteObjectInternal publishes every owned image/view/sampler handle to the
+            // renderer's frame-slot/timeline retirement queues.  Recreating a dedicated
+            // imported texture therefore does not require a device-wide drain: the new
+            // generation can be published immediately while the old generation remains
+            // alive until its exact last-use ticket completes.
             Destroy();
             Generate();
-        }
-
-        private void WaitForInFlightWorkBeforeImportedTextureReplacement(string reason)
-        {
-            if (!ShouldSynchronizeDedicatedImportedTextureReplacement())
-                return;
-
-            Debug.VulkanEvery(
-                $"Vulkan.ImportedTextureReplacementSync.{Data.GetHashCode()}",
-                TimeSpan.FromSeconds(2),
-                "[Vulkan] Waiting for in-flight frames before replacing imported texture '{0}' ({1}).",
-                Data.Name ?? Data.GetDescribingName(),
-                reason);
-            Renderer.WaitForAllInFlightWork();
-        }
-
-        private bool ShouldSynchronizeDedicatedImportedTextureReplacement()
-        {
-            if (Renderer.IsDeviceLost || _image.Handle == 0 || _physicalGroup is not null)
-                return false;
-
-            if (Data is not XRTexture2D texture)
-                return false;
-
-            if (texture.FrameBufferAttachment.HasValue
-                || texture.Resizable
-                || texture.RequiresStorageUsage
-                || string.IsNullOrWhiteSpace(texture.FilePath))
-            {
-                return false;
-            }
-
-            return texture.Mipmaps is { Length: > 0 };
         }
 
         private static bool IsSamplerDataProperty(string? propertyName)

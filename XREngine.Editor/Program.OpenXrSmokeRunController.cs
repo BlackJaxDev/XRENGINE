@@ -110,6 +110,13 @@ internal partial class Program
         private double _tsrResolutionScaleRequested = 1.0;
         private int _exitCode = ExitStartupFailure;
         private DateTimeOffset? _retainedCohortStartedAtUtc;
+        private long _phase525FrameWindowGlobalInFlightWaitCount;
+        private long _phase525FrameWindowForceFlushCount;
+        private long _phase525SwapchainRetirementQueuedCount;
+        private long _phase525SwapchainRetirementDrainedCount;
+        private long _phase525SwapchainRetirementDeferredCount;
+        private int _phase525SwapchainRetirementPendingHighWater;
+        private int _phase525SwapchainRetirementFinalPendingCount;
 
         private OpenXrSmokeRunController(int targetFrames, int warmupFrames, TimeSpan timeout, string? summaryPath)
         {
@@ -225,6 +232,13 @@ internal partial class Program
                 summary.WarmupFrameCount = _warmupFrames;
                 summary.RetainedFrameCount = _frameLedgerCount;
                 summary.RetainedCohortStartedAtUtc = _retainedCohortStartedAtUtc;
+                summary.Phase525FrameWindowGlobalInFlightWaitCount = _phase525FrameWindowGlobalInFlightWaitCount;
+                summary.Phase525FrameWindowForceFlushCount = _phase525FrameWindowForceFlushCount;
+                summary.Phase525SwapchainRetirementQueuedCount = _phase525SwapchainRetirementQueuedCount;
+                summary.Phase525SwapchainRetirementDrainedCount = _phase525SwapchainRetirementDrainedCount;
+                summary.Phase525SwapchainRetirementDeferredCount = _phase525SwapchainRetirementDeferredCount;
+                summary.Phase525SwapchainRetirementPendingHighWater = _phase525SwapchainRetirementPendingHighWater;
+                summary.Phase525SwapchainRetirementFinalPendingCount = _phase525SwapchainRetirementFinalPendingCount;
                 summary.FrameLedger = new OpenXrSmokeFrameLedgerEntry[_frameLedgerCount];
                 Array.Copy(_frameLedger, summary.FrameLedger, _frameLedgerCount);
                 summary.OcclusionViewLedger = new OpenXrSmokeOcclusionViewLedgerEntry[_occlusionViewLedgerCount];
@@ -505,6 +519,25 @@ internal partial class Program
             _lastRightReleaseCount = rightReleaseCount;
             _lastStrictSequentialFallbackAttemptCount = strictFallbackCount;
 
+            if (ReadBooleanEnvironmentVariable(XREngineEnvironmentVariables.VulkanPhase525Validation))
+            {
+                Engine.Rendering.Stats.FrameOutputWorkSnapshot frameWindowWork =
+                    Engine.Rendering.Stats.FrameOutputs.LastManifest.Work;
+                _phase525FrameWindowGlobalInFlightWaitCount += frameWindowWork.GlobalInFlightWaitCount;
+                _phase525FrameWindowForceFlushCount += frameWindowWork.ForceFlushCount;
+                _phase525SwapchainRetirementQueuedCount +=
+                    Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementQueuedCount;
+                _phase525SwapchainRetirementDrainedCount +=
+                    Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementDrainedCount;
+                _phase525SwapchainRetirementDeferredCount +=
+                    Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementDeferredCount;
+                _phase525SwapchainRetirementPendingHighWater = Math.Max(
+                    _phase525SwapchainRetirementPendingHighWater,
+                    Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementPendingHighWater);
+                _phase525SwapchainRetirementFinalPendingCount =
+                    Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementPendingCount;
+            }
+
             if (completedFrames <= _warmupFrames)
                 return;
 
@@ -657,11 +690,34 @@ internal partial class Program
                     DescriptorPoolCreateCount = Engine.Rendering.Stats.Vulkan.VulkanDescriptorPoolCreateCount,
                     DescriptorPoolDestroyCount = Engine.Rendering.Stats.Vulkan.VulkanDescriptorPoolDestroyCount,
                     DescriptorPoolResetCount = Engine.Rendering.Stats.Vulkan.VulkanDescriptorPoolResetCount,
+                    ResourceCreatedCount = Engine.Rendering.Stats.ResourceChurn.CreatedCount,
+                    ResourceRecreatedCount = Engine.Rendering.Stats.ResourceChurn.RecreatedCount,
+                    ResourceResizedCount = Engine.Rendering.Stats.ResourceChurn.ResizedCount,
+                    ResourceDestroyedCount = Engine.Rendering.Stats.ResourceChurn.DestroyedCount,
+                    PipelineCompileRequiredCount = Engine.Rendering.Stats.Vulkan.VulkanPipelineCompileRequiredCount,
+                    PipelineCompileCompletedCount = Engine.Rendering.Stats.Vulkan.VulkanPipelineCompileCompletedCount,
+                    PipelineBackgroundCompileCompletedCount = Engine.Rendering.Stats.Vulkan.VulkanPipelineBackgroundCompileCompletedCount,
+                    PipelineForegroundCompileCompletedCount = Math.Max(
+                        0,
+                        Engine.Rendering.Stats.Vulkan.VulkanPipelineCompileCompletedCount -
+                        Engine.Rendering.Stats.Vulkan.VulkanPipelineBackgroundCompileCompletedCount),
+                    PipelineAsyncQueuedCount = Engine.Rendering.Stats.Vulkan.VulkanPipelineAsyncQueuedCount,
+                    PipelineQueueRejectedCount = Engine.Rendering.Stats.Vulkan.VulkanPipelineQueueRejectedCount,
+                    PipelineDrawNotReadyCount = Engine.Rendering.Stats.Vulkan.VulkanPipelineDrawNotReadyCount,
+                    RequiredPipelinePendingCount = Engine.Rendering.Stats.Vulkan.VulkanRequiredPipelinePendingCount,
+                    PipelineRecordDeferredCount = Engine.Rendering.Stats.Vulkan.VulkanPipelineRecordDeferredCount,
+                    RenderThreadShaderCompileCount = Engine.Rendering.Stats.Vulkan.VulkanRenderThreadShaderCompileCount,
                     ResourcePlanReplacementCount = Engine.Rendering.Stats.Vulkan.VulkanRetiredResourcePlanReplacements,
+                    SwapchainRetirementQueuedCount = Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementQueuedCount,
+                    SwapchainRetirementDrainedCount = Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementDrainedCount,
+                    SwapchainRetirementPendingCount = Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementPendingCount,
+                    SwapchainRetirementPendingHighWater = Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementPendingHighWater,
+                    SwapchainRetirementDeferredCount = Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementDeferredCount,
                     CommandBufferCleanReuseCount = Engine.Rendering.Stats.Vulkan.VulkanCommandBufferCleanReuseCount,
                     CommandBufferRecordCount = Engine.Rendering.Stats.Vulkan.VulkanCommandBufferRecordCount,
                     PrimaryCommandBufferReuseCount = Engine.Rendering.Stats.Vulkan.VulkanPrimaryCommandBuffersReused,
                     PrimaryCommandBufferRecordCount = Engine.Rendering.Stats.Vulkan.VulkanPrimaryCommandBuffersRecorded,
+                    CommandBufferDecisionReasonMask = (int)Engine.Rendering.Stats.Vulkan.VulkanCommandBufferDecisionReasonMask,
                     GlobalFallbackInvalidationCount = Engine.Rendering.Stats.Vulkan.VulkanGlobalFallbackInvalidations,
                     RetiredResourceCount = retiredResourceCount,
                     LifetimeLiveResourceCount = Engine.Rendering.Stats.Vulkan.VulkanLifetimeLiveResourceCount,
@@ -705,6 +761,13 @@ internal partial class Program
                     ForceFlushCount = outputWork.ForceFlushCount,
                     UnapprovedPolicyEventCount = outputWork.UnapprovedPolicyEventCount,
                     PlannerPruneCount = outputWork.PlannerPruneCount,
+                    PhysicalPlanCacheHits = outputWork.PhysicalPlanCacheHits,
+                    PhysicalPlanCacheMisses = outputWork.PhysicalPlanCacheMisses,
+                    PhysicalPlanGenerations = outputWork.PhysicalPlanGenerations,
+                    PhysicalPlanAliasReuses = outputWork.PhysicalPlanAliasReuses,
+                    PlannerArenaHighWater = outputWork.PlannerArenaHighWater,
+                    RenderGraphPlanGeneration = outputWork.RenderGraphPlanGeneration,
+                    PlannerEvictionDeferralCount = outputWork.PlannerEvictionDeferralCount,
                     OutputMissedDeadlineCount = outputWork.MissedDeadlineCount,
                     OutputManifestFrameId = outputManifest.FrameId,
                     OutputWorkloadIdentityHash = outputManifest.WorkloadIdentityHash,
@@ -1613,6 +1676,45 @@ internal partial class Program
                 failures.Add($"Smoke output ledger exceeded {MaxOutputSnapshotsPerFrame} outputs per retained frame.");
             if (summary.StrictSinglePassStereoSequentialFallbackAttemptCount != 0)
                 failures.Add($"Strict SinglePassStereo attempted sequential fallback {summary.StrictSinglePassStereoSequentialFallbackAttemptCount} time(s).");
+            bool phase525Validation = ReadBooleanEnvironmentVariable(
+                XREngineEnvironmentVariables.VulkanPhase525Validation);
+            int phase525ValidationDisabledFrames = 0;
+            int phase525SynchronizationValidationDisabledFrames = 0;
+            int phase525InterruptedEyeFrames = 0;
+            int phase525DesktopFinalWriteFrames = 0;
+            int phase525DesktopPresentFrames = 0;
+            int phase525DesktopRejectedPresentFrames = 0;
+            long phase525ValidationErrors = 0;
+            long phase525SubmissionRejections = 0;
+            long phase525GlobalInFlightWaits = 0;
+            long phase525ForceFlushes = 0;
+            long phase525UnapprovedPolicyEvents = 0;
+            long phase525PlannerPrunes = 0;
+            long phase525PlannerEvictionDeferrals = 0;
+            long phase525PhysicalPlanCacheMisses = 0;
+            long phase525PhysicalPlanGenerations = 0;
+            long phase525ResourcePlanReplacements = 0;
+            long phase525PipelineCompileRequired = 0;
+            long phase525PipelineCompileCompleted = 0;
+            long phase525PipelineBackgroundCompileCompleted = 0;
+            long phase525PipelineForegroundCompileCompleted = 0;
+            long phase525PipelineAsyncQueued = 0;
+            long phase525PipelineQueueRejected = 0;
+            long phase525PipelineDrawNotReady = 0;
+            long phase525RequiredPipelinePending = 0;
+            long phase525PipelineRecordDeferred = 0;
+            long phase525RenderThreadShaderCompiles = 0;
+            long phase525ResourceCreated = 0;
+            long phase525ResourceRecreated = 0;
+            long phase525ResourceResized = 0;
+            long phase525ResourceDestroyed = 0;
+            long phase525PrimaryReuse = 0;
+            long phase525PrimaryRecord = 0;
+            int phase525PlannerArenaMaximum = 0;
+            int phase525PlannerStateMaximum = 0;
+            int phase525CommandVariantMaximum = 0;
+            HashSet<int> phase525LeftImageSlots = [];
+            HashSet<int> phase525RightImageSlots = [];
             for (int i = 0; i < summary.FrameLedger.Length; i++)
             {
                 OpenXrSmokeFrameLedgerEntry entry = summary.FrameLedger[i];
@@ -1620,6 +1722,155 @@ internal partial class Program
                     failures.Add($"Smoke frame ledger index mismatch at array index {i}: retainedIndex={entry.RetainedIndex}.");
                 if (entry.CompletedFrameCount <= _warmupFrames)
                     failures.Add($"Smoke frame ledger entry {i} belongs to warmup: completedFrameCount={entry.CompletedFrameCount} warmup={_warmupFrames}.");
+
+                if (!phase525Validation)
+                    continue;
+
+                if (!entry.ValidationLayersEnabled)
+                    phase525ValidationDisabledFrames++;
+                if (!entry.SynchronizationValidationEnabled)
+                    phase525SynchronizationValidationDisabledFrames++;
+                if (!entry.ProjectionLayerSubmitted ||
+                    !entry.SubmitCompleted ||
+                    !entry.VrActive ||
+                    entry.LeftAcquireDelta != 1 ||
+                    entry.RightAcquireDelta != 1 ||
+                    entry.LeftWaitDelta != 1 ||
+                    entry.RightWaitDelta != 1 ||
+                    entry.LeftPublishDelta != 1 ||
+                    entry.RightPublishDelta != 1 ||
+                    entry.LeftReleaseDelta != 1 ||
+                    entry.RightReleaseDelta != 1)
+                {
+                    phase525InterruptedEyeFrames++;
+                }
+                if (entry.DesktopFinalWriteObserved)
+                    phase525DesktopFinalWriteFrames++;
+                if (entry.DesktopPresentObserved)
+                    phase525DesktopPresentFrames++;
+                if (entry.DesktopPresentAttemptCount > 0 && !entry.DesktopPresentAccepted)
+                    phase525DesktopRejectedPresentFrames++;
+
+                phase525ValidationErrors += entry.ValidationErrorCount;
+                phase525SubmissionRejections += entry.SubmissionRejectionCount;
+                phase525GlobalInFlightWaits += entry.GlobalInFlightWaitCount;
+                phase525ForceFlushes += entry.ForceFlushCount;
+                phase525UnapprovedPolicyEvents += entry.UnapprovedPolicyEventCount;
+                phase525PlannerPrunes += entry.PlannerPruneCount;
+                phase525PlannerEvictionDeferrals += entry.PlannerEvictionDeferralCount;
+                phase525PhysicalPlanCacheMisses += entry.PhysicalPlanCacheMisses;
+                phase525PhysicalPlanGenerations += entry.PhysicalPlanGenerations;
+                phase525ResourcePlanReplacements += entry.ResourcePlanReplacementCount;
+                phase525PipelineCompileRequired += entry.PipelineCompileRequiredCount;
+                phase525PipelineCompileCompleted += entry.PipelineCompileCompletedCount;
+                phase525PipelineBackgroundCompileCompleted += entry.PipelineBackgroundCompileCompletedCount;
+                phase525PipelineForegroundCompileCompleted += entry.PipelineForegroundCompileCompletedCount;
+                phase525PipelineAsyncQueued += entry.PipelineAsyncQueuedCount;
+                phase525PipelineQueueRejected += entry.PipelineQueueRejectedCount;
+                phase525PipelineDrawNotReady += entry.PipelineDrawNotReadyCount;
+                phase525RequiredPipelinePending += entry.RequiredPipelinePendingCount;
+                phase525PipelineRecordDeferred += entry.PipelineRecordDeferredCount;
+                phase525RenderThreadShaderCompiles += entry.RenderThreadShaderCompileCount;
+                phase525ResourceCreated += entry.ResourceCreatedCount;
+                phase525ResourceRecreated += entry.ResourceRecreatedCount;
+                phase525ResourceResized += entry.ResourceResizedCount;
+                phase525ResourceDestroyed += entry.ResourceDestroyedCount;
+                phase525PrimaryReuse += entry.PrimaryCommandBufferReuseCount;
+                phase525PrimaryRecord += entry.PrimaryCommandBufferRecordCount;
+                phase525PlannerArenaMaximum = Math.Max(phase525PlannerArenaMaximum, entry.PlannerArenaHighWater);
+                phase525PlannerStateMaximum = Math.Max(phase525PlannerStateMaximum, entry.PlannerStateCount);
+                phase525CommandVariantMaximum = Math.Max(phase525CommandVariantMaximum, entry.CommandVariantCount);
+                if (entry.LeftExternalImageSlot >= 0)
+                    phase525LeftImageSlots.Add(entry.LeftExternalImageSlot);
+                if (entry.RightExternalImageSlot >= 0)
+                    phase525RightImageSlots.Add(entry.RightExternalImageSlot);
+            }
+            if (phase525Validation)
+            {
+                if (phase525ValidationDisabledFrames != 0)
+                    failures.Add($"Phase 5.2.5 retained {phase525ValidationDisabledFrames} frame(s) without Vulkan validation layers enabled.");
+                if (phase525SynchronizationValidationDisabledFrames != 0)
+                    failures.Add($"Phase 5.2.5 retained {phase525SynchronizationValidationDisabledFrames} frame(s) without synchronization validation enabled.");
+                if (phase525InterruptedEyeFrames != 0)
+                    failures.Add($"Phase 5.2.5 observed {phase525InterruptedEyeFrames} retained frame(s) with interrupted OpenXR eye acquire/wait/publish/release/submit flow.");
+                if (phase525DesktopFinalWriteFrames == 0 || phase525DesktopPresentFrames == 0)
+                    failures.Add($"Phase 5.2.5 did not observe resumed desktop output during the retained cohort: finalWriteFrames={phase525DesktopFinalWriteFrames}, presentFrames={phase525DesktopPresentFrames}.");
+                if (phase525DesktopRejectedPresentFrames != 0)
+                    failures.Add($"Phase 5.2.5 observed {phase525DesktopRejectedPresentFrames} retained desktop-present frame(s) with a rejected result.");
+
+                AddPhase525ZeroGateFailure(failures, "validation errors", phase525ValidationErrors);
+                AddPhase525ZeroGateFailure(failures, "whole-frame submission rejections", phase525SubmissionRejections);
+                AddPhase525ZeroGateFailure(failures, "global in-flight waits", phase525GlobalInFlightWaits);
+                AddPhase525ZeroGateFailure(failures, "force flushes", phase525ForceFlushes);
+                AddPhase525ZeroGateFailure(failures, "unapproved output policy events", phase525UnapprovedPolicyEvents);
+                AddPhase525ZeroGateFailure(failures, "planner prunes", phase525PlannerPrunes);
+                AddPhase525ZeroGateFailure(failures, "planner eviction deferrals", phase525PlannerEvictionDeferrals);
+                AddPhase525ZeroGateFailure(failures, "physical-plan cache misses", phase525PhysicalPlanCacheMisses);
+                AddPhase525ZeroGateFailure(failures, "physical-plan generations", phase525PhysicalPlanGenerations);
+                AddPhase525ZeroGateFailure(failures, "resource-plan replacements", phase525ResourcePlanReplacements);
+                AddPhase525ZeroGateFailure(failures, "pipeline compile-required events", phase525PipelineCompileRequired);
+                AddPhase525ZeroGateFailure(failures, "pipeline creations", phase525PipelineCompileCompleted);
+                AddPhase525ZeroGateFailure(failures, "background pipeline creations", phase525PipelineBackgroundCompileCompleted);
+                AddPhase525ZeroGateFailure(failures, "foreground pipeline creations", phase525PipelineForegroundCompileCompleted);
+                AddPhase525ZeroGateFailure(failures, "async pipeline jobs queued", phase525PipelineAsyncQueued);
+                AddPhase525ZeroGateFailure(failures, "rejected pipeline jobs", phase525PipelineQueueRejected);
+                AddPhase525ZeroGateFailure(failures, "pipeline-not-ready draws", phase525PipelineDrawNotReady);
+                AddPhase525ZeroGateFailure(failures, "required pipelines pending", phase525RequiredPipelinePending);
+                AddPhase525ZeroGateFailure(failures, "pipeline-caused RecordDeferred results", phase525PipelineRecordDeferred);
+                AddPhase525ZeroGateFailure(failures, "render-thread shader compilations", phase525RenderThreadShaderCompiles);
+                AddPhase525ZeroGateFailure(failures, "created render resources", phase525ResourceCreated);
+                AddPhase525ZeroGateFailure(failures, "recreated render resources", phase525ResourceRecreated);
+                AddPhase525ZeroGateFailure(failures, "resized render resources", phase525ResourceResized);
+                AddPhase525ZeroGateFailure(failures, "destroyed render resources", phase525ResourceDestroyed);
+                AddPhase525WholeWindowZeroGateFailure(
+                    failures,
+                    "global in-flight waits",
+                    summary.Phase525FrameWindowGlobalInFlightWaitCount);
+                AddPhase525WholeWindowZeroGateFailure(
+                    failures,
+                    "force flushes",
+                    summary.Phase525FrameWindowForceFlushCount);
+                AddPhase525WholeWindowZeroGateFailure(
+                    failures,
+                    "deferred swapchain recreations",
+                    summary.Phase525SwapchainRetirementDeferredCount);
+
+                const int maximumPendingSwapchainGenerations = 8;
+                if (summary.Phase525SwapchainRetirementPendingHighWater > maximumPendingSwapchainGenerations)
+                {
+                    failures.Add(
+                        $"Phase 5.2.5 whole-frame swapchain-retirement pending high-water was {summary.Phase525SwapchainRetirementPendingHighWater}, maximum {maximumPendingSwapchainGenerations}.");
+                }
+                if (summary.Phase525SwapchainRetirementFinalPendingCount != 0)
+                {
+                    failures.Add(
+                        $"Phase 5.2.5 whole-frame swapchain-retirement final pending count was {summary.Phase525SwapchainRetirementFinalPendingCount}, expected zero.");
+                }
+                if (summary.Phase525SwapchainRetirementQueuedCount != summary.Phase525SwapchainRetirementDrainedCount)
+                {
+                    failures.Add(
+                        $"Phase 5.2.5 whole-frame swapchain-retirement imbalance: queued={summary.Phase525SwapchainRetirementQueuedCount}, drained={summary.Phase525SwapchainRetirementDrainedCount}.");
+                }
+
+                const int maximumPhase525PlannerStates = 16;
+                const int maximumPhase525CommandVariants = 16;
+                if (phase525PlannerArenaMaximum > maximumPhase525PlannerStates)
+                    failures.Add($"Phase 5.2.5 planner arena high-water was {phase525PlannerArenaMaximum}, maximum {maximumPhase525PlannerStates}.");
+                if (phase525PlannerStateMaximum > maximumPhase525PlannerStates)
+                    failures.Add($"Phase 5.2.5 planner-state count high-water was {phase525PlannerStateMaximum}, maximum {maximumPhase525PlannerStates}.");
+                if (phase525CommandVariantMaximum > maximumPhase525CommandVariants)
+                    failures.Add($"Phase 5.2.5 command-variant count high-water was {phase525CommandVariantMaximum}, maximum {maximumPhase525CommandVariants}.");
+                if (phase525LeftImageSlots.Count < 2 || phase525RightImageSlots.Count < 2)
+                    failures.Add($"Phase 5.2.5 did not observe rotating OpenXR images in both eyes: leftSlots={phase525LeftImageSlots.Count}, rightSlots={phase525RightImageSlots.Count}.");
+
+                bool primaryReuseExpected = ReadBooleanEnvironmentVariable(
+                    XREngineEnvironmentVariables.VulkanPrimaryCommandBufferReuse);
+                if (primaryReuseExpected && phase525PrimaryReuse == 0)
+                    failures.Add("Phase 5.2.5 primary-reuse cohort did not reuse any primary command buffers.");
+                if (!primaryReuseExpected && phase525PrimaryReuse != 0)
+                    failures.Add($"Phase 5.2.5 forced-record cohort reused {phase525PrimaryReuse} primary command buffer(s).");
+                if (!primaryReuseExpected && phase525PrimaryRecord == 0)
+                    failures.Add("Phase 5.2.5 forced-record cohort did not record any primary command buffers.");
             }
             if (summary.EndFrameFailureCount > 0)
                 failures.Add($"xrEndFrame failure count was {summary.EndFrameFailureCount}.");
@@ -1681,6 +1932,21 @@ internal partial class Program
 
         private static bool HasTwoEyesAtLeast(long[] counts, int targetFrames)
             => counts.Length >= 2 && counts[0] >= targetFrames && counts[1] >= targetFrames;
+
+        private static void AddPhase525ZeroGateFailure(List<string> failures, string gateName, long observedCount)
+        {
+            if (observedCount != 0)
+                failures.Add($"Phase 5.2.5 retained {gateName} count was {observedCount}, expected zero after warmup.");
+        }
+
+        private static void AddPhase525WholeWindowZeroGateFailure(
+            List<string> failures,
+            string gateName,
+            long observedCount)
+        {
+            if (observedCount != 0)
+                failures.Add($"Phase 5.2.5 whole-frame {gateName} count was {observedCount}, expected zero across warmup and retained frames.");
+        }
 
         private void RequestShutdown(int exitCode, string reason)
         {

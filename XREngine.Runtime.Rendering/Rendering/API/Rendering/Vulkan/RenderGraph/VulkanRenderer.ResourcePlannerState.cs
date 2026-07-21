@@ -1177,11 +1177,9 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
-            new FrameOutputWorkTelemetry(PlannerPrunes: pruneCount));
         ResourcePlannerRuntimeState previousState = CaptureResourcePlannerRuntimeState();
-        WaitForAllInFlightWork();
         int prunedCount = 0;
+        int retirementDeferralCount = 0;
         for (int i = 0; i < pruneCount; i++)
         {
             if (!TryPopOldestFrameOpResourcePlannerStateKey(switchingState, staleKeys, out FrameOpPlannerStateKey key))
@@ -1194,7 +1192,8 @@ public unsafe partial class VulkanRenderer
             if (!IsAllocatorOwnedByFrameOpPlannerState(switchingState, state.ResourceAllocator))
             {
                 RestoreResourcePlannerRuntimeState(state);
-                _ = ResourceAllocator.TryRetirePhysicalResources(this);
+                if (ResourceAllocator.TryRetirePhysicalResources(this))
+                    retirementDeferralCount++;
             }
             prunedCount++;
         }
@@ -1202,8 +1201,14 @@ public unsafe partial class VulkanRenderer
         if (previousState.ResourceAllocator is not null && previousState.ResourceAllocator.IsRetired)
             previousState = ResourcePlannerRuntimeState.CreateEmpty();
         RestoreResourcePlannerRuntimeState(previousState);
-        if (prunedCount > 0 && !IsDeviceLost)
-            ForceFlushAllRetiredResourcesAfterWaiting("FrameOpResourcePlannerStatePrune");
+
+        if (prunedCount > 0)
+        {
+            RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
+                new FrameOutputWorkTelemetry(
+                    PlannerPrunes: prunedCount,
+                    PlannerEvictionDeferrals: retirementDeferralCount));
+        }
 
         staleKeys.Clear();
         if (prunedCount == 0)
@@ -1212,7 +1217,7 @@ public unsafe partial class VulkanRenderer
         Debug.VulkanEvery(
             $"Vulkan.ResourcePlanner.FrameOpContextStatePruned.{GetHashCode()}",
             TimeSpan.FromSeconds(1),
-            "[VulkanResourcePlanner] Pruned {0} cached frame-op planner state(s) to stay under capacity. Remaining={1} Cap={2}",
+            "[VulkanResourcePlanner] Pruned {0} cached frame-op planner state(s) to stay under capacity; physical resources remain timeline-retired. Remaining={1} Cap={2}",
             prunedCount,
             switchingState.States.Count,
             MaxFrameOpResourcePlannerSwitchingStates);
@@ -1501,7 +1506,6 @@ public unsafe partial class VulkanRenderer
             return;
 
         ResourcePlannerRuntimeState previousState = CaptureResourcePlannerRuntimeState();
-        WaitForAllInFlightWork();
         HashSet<VulkanResourceAllocator> retiredAllocators = new(ReferenceEqualityComparer.Instance);
         foreach (KeyValuePair<FrameOpPlannerStateKey, ResourcePlannerRuntimeState> pair in switchingState.States)
         {
@@ -1531,8 +1535,6 @@ public unsafe partial class VulkanRenderer
         if (previousState.ResourceAllocator is not null && previousState.ResourceAllocator.IsRetired)
             previousState = ResourcePlannerRuntimeState.CreateEmpty();
         RestoreResourcePlannerRuntimeState(previousState);
-        if (!IsDeviceLost)
-            ForceFlushAllRetiredResourcesAfterWaiting("FrameOpResourcePlannerStateDestroy");
     }
 
     private static bool IsAllocatorOwnedByFrameOpPlannerState(
@@ -2728,7 +2730,10 @@ public unsafe partial class VulkanRenderer
             constrainToActivePassSet);
 
         if (CanReuseResourcePlannerFastPath(planningInputs.FastPathKey))
+        {
+            RecordPhysicalPlanCacheTelemetry(hit: true, planningInputs.CompiledGraph.Plan.Generation);
             return;
+        }
 
         ulong plannerSignature = ComputeResourcePlannerSignature(
             context,
@@ -2737,9 +2742,12 @@ public unsafe partial class VulkanRenderer
             planningInputs.ActivePassMetadata);
         if (plannerSignature == ActiveResourcePlannerSignature)
         {
+            RecordPhysicalPlanCacheTelemetry(hit: true, planningInputs.CompiledGraph.Plan.Generation);
             RememberResourcePlannerFastPath(planningInputs.FastPathKey);
             return;
         }
+
+        RecordPhysicalPlanCacheTelemetry(hit: false, planningInputs.CompiledGraph.Plan.Generation);
 
         ResourcePlannerSignatureBreakdown signatureBreakdown = ComputeResourcePlannerSignatureBreakdown(
             context,
@@ -2749,7 +2757,7 @@ public unsafe partial class VulkanRenderer
         Debug.VulkanEvery(
             $"Vulkan.ResourcePlanner.SignatureChange.{context.ContextKind}.{context.PipelineIdentity}.{context.ViewportIdentity}.{context.OutputTargetIdentity}",
             TimeSpan.FromSeconds(1),
-            "[VulkanResourcePlanner] Signature changed for context kind={0} id={1} fingerprint=0x{2:X16}. Revision={3} Old=0x{4:X16} New=0x{5:X16} ChangedFields=[{6}] OldComponents=[{7}] NewComponents=[{8}]",
+            "[VulkanResourcePlanner] Signature changed for context kind={0} id={1} fingerprint=0x{2:X16}. Revision={3} Old=0x{4:X16} New=0x{5:X16} ChangedFields=[{6}] OldComponents=[{7}] NewComponents=[{8}] GraphPlanGeneration={9} GraphPlanIdentity=0x{10:X16}",
             context.ContextKind,
             context.ContextId,
             signatureBreakdown.CompatibilityFingerprint,
@@ -2758,7 +2766,9 @@ public unsafe partial class VulkanRenderer
             plannerSignature,
             signatureBreakdown.DescribeDelta(ActiveResourcePlannerSignatureBreakdown),
             ActiveResourcePlannerSignatureBreakdown,
-            signatureBreakdown);
+            signatureBreakdown,
+            planningInputs.CompiledGraph.Plan.Generation,
+            planningInputs.CompiledGraph.Plan.CompatibilityIdentity);
 
         VulkanResourcePlanner pendingPlanner = BuildResourceDescriptorPlan(context, planningInputs.ActivePassMetadata);
         PhysicalAllocationPlan allocationPlan = BuildPhysicalAllocationPlan(
@@ -2824,8 +2834,25 @@ public unsafe partial class VulkanRenderer
         ActiveResourceAllocationSignature = allocationPlan.Signature;
         ActiveResourcePlannerSignatureBreakdown = signatureBreakdown;
         ActiveResourcePlannerRevision++;
+        RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
+            new FrameOutputWorkTelemetry(
+                PhysicalPlanGenerations: 1,
+                PhysicalPlanAliasReuses: reusedImageGroups?.Count ?? 0,
+                PlannerArenaHighWater: ActiveFrameOpResourcePlannerSwitchingState.States.Count,
+                RenderGraphPlanGeneration: ClampGenerationToInt64(planningInputs.CompiledGraph.Plan.Generation)));
         RememberResourcePlannerFastPath(planningInputs.FastPathKey);
     }
+
+    private void RecordPhysicalPlanCacheTelemetry(bool hit, ulong renderGraphPlanGeneration)
+        => RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
+            new FrameOutputWorkTelemetry(
+                PhysicalPlanCacheHits: hit ? 1 : 0,
+                PhysicalPlanCacheMisses: hit ? 0 : 1,
+                PlannerArenaHighWater: ActiveFrameOpResourcePlannerSwitchingState.States.Count,
+                RenderGraphPlanGeneration: ClampGenerationToInt64(renderGraphPlanGeneration)));
+
+    private static long ClampGenerationToInt64(ulong generation)
+        => generation > long.MaxValue ? long.MaxValue : (long)generation;
 
     private ResourcePlanningInputs PrepareResourcePlanningInputs(
         in FrameOpContext context,
@@ -3977,6 +4004,7 @@ public unsafe partial class VulkanRenderer
     {
         HashCode hash = new();
         hash.Add(ComputeResourcePlanCompatibilityFingerprint(context));
+        hash.Add(compiledGraph.Plan.CompatibilityIdentity);
         hash.Add(ComputePassMetadataSignature(passMetadata));
 
         hash.Add(compiledGraph.Batches.Count);

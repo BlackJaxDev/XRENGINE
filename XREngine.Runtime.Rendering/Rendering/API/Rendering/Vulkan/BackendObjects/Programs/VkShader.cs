@@ -277,6 +277,12 @@ public unsafe partial class VulkanRenderer
                 return cachedArtifact;
             }
 
+            if (RuntimeEngine.IsRenderThread)
+            {
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
+                    EVulkanPipelineTelemetryEvent.RenderThreadShaderCompile);
+            }
+
             byte[] spirv = VulkanShaderCompiler.CompilePrepared(Data, prepared);
             IReadOnlyList<DescriptorBindingInfo> bindings = VulkanShaderReflection.ExtractBindings(spirv, stageFlags, prepared.RewrittenSource);
             Dictionary<string, uint> vertexInputLocations = ParseVertexInputLocations(prepared.RewrittenSource, stageFlags);

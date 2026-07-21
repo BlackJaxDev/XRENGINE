@@ -365,6 +365,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         double elapsedSeconds = stopwatch?.Elapsed.TotalSeconds ?? 0.0;
         bool includeDebugDisplays = _benchmarkIncludeDebugDisplays;
         bool sourceRigWasActive = _benchmarkSourceWasActive;
+        string bvhSummary = BuildMathBvhBenchmarkSummary(_benchmarkRoot);
 
         Stopwatch? destroyStopwatch = null;
         if (destroyInstances && _benchmarkRoot is not null)
@@ -438,13 +439,51 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
             $"{name}: {copyCount} copies, {elapsedSeconds:0.00}s, spawn {_benchmarkSpawnMilliseconds:0.00}ms, destroy {destroyMilliseconds:0.00}ms, " +
             $"frames {_benchmarkFrameCount}, avg {avgMs:0.###}ms, p95 {p95Ms:0.###}ms, min {minMs:0.###}ms, max {maxMs:0.###}ms, " +
             $"debug displays {(includeDebugDisplays ? "on" : "off")}, " +
+            $"{bvhSummary}" +
             $"bandwidth up {uploadMiB:0.###} MiB, gpu-copy {gpuCopyMiB:0.###} MiB, readback {readbackMiB:0.###} MiB, total {totalMiB:0.###} MiB ({transferMiBPerSecond:0.###} MiB/s), " +
             $"standalone up {standaloneUploadMiB:0.###} MiB, standalone readback {standaloneReadbackMiB:0.###} MiB, batched up {batchedUploadMiB:0.###} MiB, batched gpu-copy {batchedGpuCopyMiB:0.###} MiB, batched readback {batchedReadbackMiB:0.###} MiB, hierarchy recalc {hierarchyRecalcMs:0.###}ms.";
 
         string logDirectory = XREngine.Debug.EnsureLogRunDirectory();
         XREngine.Debug.WriteAuxiliaryLog(
             "math-intersections-benchmarks.log",
-            $"[{DateTimeOffset.Now:O}] Benchmark='{name}' Copies={copyCount} DurationSeconds={elapsedSeconds:0.000} SpawnMs={_benchmarkSpawnMilliseconds:0.###} DestroyMs={destroyMilliseconds:0.###} Frames={_benchmarkFrameCount} AvgFrameMs={avgMs:0.###} P95FrameMs={p95Ms:0.###} MinFrameMs={minMs:0.###} MaxFrameMs={maxMs:0.###} DebugDisplays={includeDebugDisplays} SourceRigDisabled={sourceRigWasActive} CpuUploadBytes={bandwidthDelta.CpuUploadBytes} GpuCopyBytes={bandwidthDelta.GpuCopyBytes} CpuReadbackBytes={bandwidthDelta.CpuReadbackBytes} StandaloneCpuUploadBytes={bandwidthDelta.StandaloneCpuUploadBytes} StandaloneCpuReadbackBytes={bandwidthDelta.StandaloneCpuReadbackBytes} BatchedCpuUploadBytes={bandwidthDelta.BatchedCpuUploadBytes} BatchedGpuCopyBytes={bandwidthDelta.BatchedGpuCopyBytes} BatchedCpuReadbackBytes={bandwidthDelta.BatchedCpuReadbackBytes} HierarchyRecalcMs={hierarchyRecalcMs:0.###} TotalTransferBytes={bandwidthDelta.TotalTransferBytes} DispatchGroups={bandwidthDelta.DispatchGroupCount} DispatchIterations={bandwidthDelta.DispatchIterationCount} ResidentParticleBytes={bandwidthDelta.ResidentParticleBytes} LogDirectory='{logDirectory}'");
+            $"[{DateTimeOffset.Now:O}] Benchmark='{name}' Copies={copyCount} DurationSeconds={elapsedSeconds:0.000} SpawnMs={_benchmarkSpawnMilliseconds:0.###} DestroyMs={destroyMilliseconds:0.###} Frames={_benchmarkFrameCount} AvgFrameMs={avgMs:0.###} P95FrameMs={p95Ms:0.###} MinFrameMs={minMs:0.###} MaxFrameMs={maxMs:0.###} DebugDisplays={includeDebugDisplays} SourceRigDisabled={sourceRigWasActive} BvhSummary='{bvhSummary.Trim()}' CpuUploadBytes={bandwidthDelta.CpuUploadBytes} GpuCopyBytes={bandwidthDelta.GpuCopyBytes} CpuReadbackBytes={bandwidthDelta.CpuReadbackBytes} StandaloneCpuUploadBytes={bandwidthDelta.StandaloneCpuUploadBytes} StandaloneCpuReadbackBytes={bandwidthDelta.StandaloneCpuReadbackBytes} BatchedCpuUploadBytes={bandwidthDelta.BatchedCpuUploadBytes} BatchedGpuCopyBytes={bandwidthDelta.BatchedGpuCopyBytes} BatchedCpuReadbackBytes={bandwidthDelta.BatchedCpuReadbackBytes} HierarchyRecalcMs={hierarchyRecalcMs:0.###} TotalTransferBytes={bandwidthDelta.TotalTransferBytes} DispatchGroups={bandwidthDelta.DispatchGroupCount} DispatchIterations={bandwidthDelta.DispatchIterationCount} ResidentParticleBytes={bandwidthDelta.ResidentParticleBytes} LogDirectory='{logDirectory}'");
+    }
+
+    private static string BuildMathBvhBenchmarkSummary(SceneNode? benchmarkRoot)
+    {
+        if (benchmarkRoot is null)
+            return string.Empty;
+
+        List<MathBvhTestComponent> components = CollectComponents<MathBvhTestComponent>(benchmarkRoot);
+        if (components.Count == 0)
+            return string.Empty;
+
+        int readyCount = 0;
+        int validationPassCount = 0;
+        long builds = 0;
+        long updates = 0;
+        long queries = 0;
+        long nodes = 0;
+        long primitives = 0;
+        long lastHits = 0;
+        for (int i = 0; i < components.Count; i++)
+        {
+            MathBvhTestComponent component = components[i];
+            if (component.WorkloadReady)
+                readyCount++;
+            if (component.ValidationPassed)
+                validationPassCount++;
+            builds += component.BuildOperationCount;
+            updates += component.UpdateOperationCount;
+            queries += component.QueryOperationCount;
+            nodes += component.NodeCount;
+            primitives += component.PrimitiveCount;
+            lastHits += component.LastHitCount;
+        }
+
+        return
+            $"BVH ready {readyCount}/{components.Count}, validation {validationPassCount}/{components.Count}, " +
+            $"builds {builds}, updates {updates}, queries {queries}, nodes {nodes}, primitives {primitives}, last hits {lastHits}; ";
     }
 
     private int GetBenchmarkCopyCount()
@@ -510,6 +549,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     {
         instanceRoot.IterateComponents<PhysicsChainComponent>(component => component.DebugDrawChains = false, true);
         instanceRoot.IterateComponents<DebugDrawComponent>(component => component.IsActive = false, true);
+        instanceRoot.IterateComponents<MathBvhTestComponent>(component => component.DebugRenderEnabled = false, true);
 
         // The factory registers a SceneNode tick (Late+Logic) that calls
         // RecalculateMatrixHierarchy.Wait() every frame for debug visualization.
@@ -531,6 +571,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     {
         SyncPhysicsChainComponents(sourceRoot, targetRoot, includeDebugDisplays);
         SyncDebugDrawComponents(sourceRoot, targetRoot, includeDebugDisplays);
+        SyncMathBvhTestComponents(sourceRoot, targetRoot, includeDebugDisplays);
         SyncSphereColliders(sourceRoot, targetRoot);
         SyncCapsuleColliders(sourceRoot, targetRoot);
         SyncBoxColliders(sourceRoot, targetRoot);
@@ -683,6 +724,15 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         int count = Math.Min(sourceComponents.Count, targetComponents.Count);
         for (int index = 0; index < count; index++)
             targetComponents[index].IsActive = includeDebugDisplays && sourceComponents[index].IsActive;
+    }
+
+    private static void SyncMathBvhTestComponents(SceneNode sourceRoot, SceneNode targetRoot, bool includeDebugDisplays)
+    {
+        List<MathBvhTestComponent> sourceComponents = CollectComponents<MathBvhTestComponent>(sourceRoot);
+        List<MathBvhTestComponent> targetComponents = CollectComponents<MathBvhTestComponent>(targetRoot);
+        int count = Math.Min(sourceComponents.Count, targetComponents.Count);
+        for (int index = 0; index < count; index++)
+            targetComponents[index].DebugRenderEnabled = includeDebugDisplays && sourceComponents[index].DebugRenderEnabled;
     }
 
     private static void SyncSphereColliders(SceneNode sourceRoot, SceneNode targetRoot)

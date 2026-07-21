@@ -269,6 +269,7 @@ namespace XREngine.Rendering.Vulkan
             evicted.RecordedFrameOpContextFingerprint = ulong.MaxValue;
             evicted.RecordedFrameOpContextId = 0;
             evicted.RecordedGenerations = default;
+            evicted.RecordedDependencySignature = default;
             evicted.RecordedSwapchainFinalLayout = ImageLayout.PresentSrcKhr;
             evicted.RecordedSwapchainWriteCount = 0;
             evicted.RecordedSwapchainRefreshFromLastPresentSource = false;

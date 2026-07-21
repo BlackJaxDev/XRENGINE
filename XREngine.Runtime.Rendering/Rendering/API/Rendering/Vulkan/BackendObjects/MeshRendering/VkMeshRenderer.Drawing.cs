@@ -192,7 +192,7 @@ public unsafe partial class VulkanRenderer
 
 				bool descriptorsBound;
 				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindDescriptors"))
-					descriptorsBound = BindDescriptorsIfAvailable(commandBuffer, material, drawCopy, drawUniformSlot, frameDataImageIndex);
+					descriptorsBound = BindDescriptorsIfAvailable(commandBuffer, material, drawCopy, drawUniformSlot, frameDataImageIndex, passIndex);
 				if (!descriptorsBound)
 				{
 					if (verboseTrace)
@@ -301,7 +301,7 @@ public unsafe partial class VulkanRenderer
 
 					bool descriptorsBound;
 					using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindDescriptors"))
-						descriptorsBound = BindDescriptorsIfAvailable(commandBuffer, material, drawCopy, drawUniformSlot, frameDataImageIndex);
+						descriptorsBound = BindDescriptorsIfAvailable(commandBuffer, material, drawCopy, drawUniformSlot, frameDataImageIndex, passIndex);
 					if (!descriptorsBound)
 						return false;
 
@@ -411,7 +411,7 @@ public unsafe partial class VulkanRenderer
 			if (frameIndex < 0)
 				frameIndex = 0;
 
-			if (!BindDescriptorsIfAvailable(commandBuffer, material, draw, drawUniformSlot, frameIndex))
+			if (!BindDescriptorsIfAvailable(commandBuffer, material, draw, drawUniformSlot, frameIndex, passIndex))
 				return false;
 
 			PushPerDrawConstants(commandBuffer, material, draw);
@@ -513,6 +513,7 @@ public unsafe partial class VulkanRenderer
 					int descriptorSlotIndex = ResolveDescriptorFrameIndex(frameIndex, _descriptorSets.Length);
 					UpdateEngineUniformBuffersForDraw(frameIndex, drawUniformSlot, draw);
 					UpdateAutoUniformBuffersForDraw(frameIndex, drawUniformSlot, material, draw);
+					Renderer.TryCaptureCpuDirectDynamicData(this, frameIndex, drawUniformSlot, draw, ResolvePassMask(passIndex));
 
 					descriptorSets = _descriptorSets[descriptorSlotIndex];
 					if (descriptorSets.Length == 0)
@@ -740,7 +741,7 @@ public unsafe partial class VulkanRenderer
 		/// renderer-owned descriptor path because it carries per-draw engine and auto
 		/// uniform buffers in addition to material resources.
 		/// </summary>
-		private bool BindDescriptorsIfAvailable(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw, int drawUniformSlot, int frameDataImageIndex)
+		private bool BindDescriptorsIfAvailable(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw, int drawUniformSlot, int frameDataImageIndex, int passIndex)
 		{
 			if (_program is null)
 				return true;
@@ -748,12 +749,12 @@ public unsafe partial class VulkanRenderer
 			string meshName = Mesh?.Name ?? "UnnamedMesh";
 			string programName = _program.Data?.Name ?? "UnnamedProgram";
 			string materialName = material.Name ?? "UnnamedMaterial";
+			int imageIndex = Math.Max(frameDataImageIndex, 0);
+			Renderer.TryCaptureCpuDirectDynamicData(this, imageIndex, drawUniformSlot, draw, ResolvePassMask(passIndex));
 
 			bool requiresDescriptors = _program.DescriptorSetLayouts.Count > 0 && _program.DescriptorBindings.Count > 0;
 			if (!requiresDescriptors)
 				return true;
-
-			int imageIndex = Math.Max(frameDataImageIndex, 0);
 
 			if (!EnsureDescriptorSets(material, drawUniformSlot, imageIndex))
 			{
@@ -804,6 +805,7 @@ public unsafe partial class VulkanRenderer
 
 			UpdateEngineUniformBuffersForDraw(imageIndex, drawUniformSlot, draw);
 			UpdateAutoUniformBuffersForDraw(imageIndex, drawUniformSlot, material, draw);
+			Renderer.TryCaptureCpuDirectDynamicData(this, imageIndex, drawUniformSlot, draw, ResolvePassMask(passIndex));
 
 			DescriptorSet[] sets = _descriptorSets[descriptorSlotIndex];
 			if (sets.Length == 0)
@@ -847,6 +849,9 @@ public unsafe partial class VulkanRenderer
 
 			return BindMeshDescriptorSets(commandBuffer, _program.PipelineLayout, sets, imageIndex, drawUniformSlot);
 		}
+
+		private static uint ResolvePassMask(int passIndex)
+			=> (uint)passIndex < 32u ? 1u << passIndex : 1u;
 
 		private bool BindMeshDescriptorSets(
 			CommandBuffer commandBuffer,

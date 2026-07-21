@@ -60,6 +60,85 @@ public sealed class VulkanDesktopPlanStabilityTests
             .ShouldNotBe(eyePlannerIdentity);
     }
 
+    [Test]
+    public void AlternatingExternalTargetsReachABoundedPlannerKeySet()
+    {
+        HashSet<VulkanRenderer.FrameOpPlannerStateKey> keys = [];
+        int leftEyeIdentity = VulkanRenderer.BuildOpenXrExternalSwapchainPlannerTargetIdentity(0u);
+        int rightEyeIdentity = VulkanRenderer.BuildOpenXrExternalSwapchainPlannerTargetIdentity(1u);
+
+        for (int cycle = 0; cycle < 32; cycle++)
+        {
+            for (int slot = 0; slot < 3; slot++)
+            {
+                VulkanRenderer.FrameOpContext desktop = CreateContext(
+                    VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+                    outputTargetIdentity: 1000 + slot,
+                    outputTargetName: $"SwapchainImage[{slot}]");
+                keys.Add(VulkanRenderer.BuildFrameOpPlannerStateKey(desktop));
+
+                VulkanRenderer.FrameOpContext leftEye = CreateContext(
+                    VulkanRenderer.EVulkanFrameOpContextKind.OpenXrEye,
+                    leftEyeIdentity,
+                    $"OpenXR.Left.Image[{slot}]",
+                    outputFrameBufferIdentity: 0);
+                keys.Add(VulkanRenderer.BuildFrameOpPlannerStateKey(leftEye));
+
+                VulkanRenderer.FrameOpContext mirror = CreateContext(
+                    VulkanRenderer.EVulkanFrameOpContextKind.OpenXrMirror,
+                    rightEyeIdentity,
+                    $"OpenXR.Mirror.Image[{slot}]",
+                    outputFrameBufferIdentity: 0);
+                keys.Add(VulkanRenderer.BuildFrameOpPlannerStateKey(mirror));
+            }
+
+            for (int face = 0; face < 6; face++)
+            {
+                VulkanRenderer.FrameOpContext probeFace = CreateContext(
+                    VulkanRenderer.EVulkanFrameOpContextKind.LightProbeCapture,
+                    outputTargetIdentity: 2000 + face,
+                    outputTargetName: $"ProbeFace[{face}]",
+                    outputFrameBufferIdentity: 3000 + face);
+                keys.Add(VulkanRenderer.BuildFrameOpPlannerStateKey(probeFace));
+            }
+        }
+
+        // One desktop family, one eye family, one mirror family, and six persistent probe faces.
+        keys.Count.ShouldBe(9);
+    }
+
+    [Test]
+    public void NormalSchedulingPathsContainNoGlobalDrainOrForceFlush()
+    {
+        string[] nonBlockingSources =
+        [
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs",
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs",
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs",
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs",
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs",
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs",
+        ];
+
+        foreach (string relativePath in nonBlockingSources)
+        {
+            string source = ReadWorkspaceFile(relativePath);
+            source.ShouldNotContain("WaitForAllInFlightWork();");
+            source.ShouldNotContain("ForceFlushAllRetiredResources");
+            source.ShouldNotContain("DeviceWaitIdle();");
+        }
+
+        string openXr = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string normalOpenXr = SliceBetween(
+            openXr,
+            "internal bool TryRenderOpenXrEyeSwapchain(",
+            "internal void ResetOpenXrRenderingResourcesForRuntimeRecreate");
+        normalOpenXr.ShouldNotContain("WaitForAllInFlightWork();");
+        normalOpenXr.ShouldNotContain("ForceFlushAllRetiredResources");
+        normalOpenXr.ShouldNotContain("DeviceWaitIdle();");
+    }
+
     [TestCase(false, false, true, true,
         (int)VulkanRenderer.ERejectedDesktopFrameDisposition.SkipPresent,
         (int)VulkanRenderer.ERejectedDesktopFramePolicyReason.AcquireUnavailable)]
@@ -159,7 +238,7 @@ public sealed class VulkanDesktopPlanStabilityTests
         string merge = SliceBetween(
             planner,
             "private RenderResourceRegistry? BuildMergedFrameOpRegistry",
-            "private static RenderResourceRegistry[] CollectUniqueFrameOpRegistries");
+            "private List<RenderResourceRegistry> CollectUniqueFrameOpRegistries");
         string lookup = SliceBetween(
             planner,
             "private bool TryGetCachedMergedFrameOpRegistry",
@@ -192,6 +271,59 @@ public sealed class VulkanDesktopPlanStabilityTests
         commit.ShouldNotContain("ForceFlush");
         planner.ShouldNotContain("ForceFlushAllRetiredResourcesAfterWaiting(\"ResourcePlanReplacement\")");
         planner.ShouldNotContain("TryPreReleaseActiveImagesForOpenXrMirrorTransition");
+    }
+
+    [Test]
+    public void PlannerCapacityEvictionUsesTimelineRetirementWithoutGlobalDrain()
+    {
+        string planner = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+        string prune = SliceBetween(
+            planner,
+            "private void PruneFrameOpResourcePlannerStatesToCapacity",
+            "private static ulong GetFrameOpResourcePlannerStateLastUsedSerial");
+
+        prune.ShouldContain("state.ResourceAllocator");
+        prune.ShouldContain("TryRetirePhysicalResources(this)");
+        prune.ShouldContain("PlannerEvictionDeferrals: retirementDeferralCount");
+        prune.ShouldNotContain("WaitForAllInFlightWork");
+        prune.ShouldNotContain("ForceFlush");
+        prune.ShouldNotContain("DeviceWaitIdle");
+    }
+
+    [Test]
+    public void PhysicalPlanCacheAndArenaTelemetryArePublished()
+    {
+        string planner = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+        string telemetry = ReadWorkspaceFile(
+            "XREngine.Runtime.Core/Settings/Contracts/Records/FrameOutputWorkTelemetry.cs");
+        string packet = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");
+
+        planner.ShouldContain("RecordPhysicalPlanCacheTelemetry(hit: true,");
+        planner.ShouldContain("RecordPhysicalPlanCacheTelemetry(hit: false,");
+        planner.ShouldContain("PhysicalPlanGenerations: 1");
+        planner.ShouldContain("PhysicalPlanAliasReuses: reusedImageGroups?.Count ?? 0");
+        planner.ShouldContain("PhysicalPlanCacheHits: hit ? 1 : 0");
+        planner.ShouldContain("PhysicalPlanCacheMisses: hit ? 0 : 1");
+        telemetry.ShouldContain("int PlannerArenaHighWater = 0");
+        packet.ShouldContain("public int PlannerEvictionDeferralCount { get; set; }");
+    }
+
+    [Test]
+    public void OpenXrPlannerStateRetirementDoesNotDrainOtherOutputFamilies()
+    {
+        string openXr = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string destroy = SliceBetween(
+            openXr,
+            "private void DestroyOpenXrResourcePlannerState()",
+            "private bool SubmitAndWaitOpenXrCommandBuffer");
+
+        destroy.ShouldContain("RetireResourcePlannerRuntimeStateAllocators(");
+        destroy.ShouldNotContain("WaitForAllInFlightWork");
+        destroy.ShouldNotContain("DeviceWaitIdle");
+        destroy.ShouldNotContain("ForceFlush");
     }
 
     [Test]
@@ -279,7 +411,7 @@ public sealed class VulkanDesktopPlanStabilityTests
             "internal bool TryRenderAndBlitTextureArrayLayersToOpenXrSwapchainImages",
             "private bool TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer");
 
-        reuse.ShouldContain("PrepareQueryFrameOpsForCommandBufferReuse(ops)");
+        reuse.ShouldContain("PrepareQueryFrameOpsForCommandBufferReuse(variant.PrimaryCommandBuffer, ops)");
         record.ShouldContain("transitionSwapchainToPresent: false");
         stereoPublish.ShouldContain("using IDisposable sourcePlannerScope = EnterOpenXrResourcePlannerThreadScope(");
         stereoPublish.ShouldContain("EOpenXrResourcePlannerPurpose.Mirror");

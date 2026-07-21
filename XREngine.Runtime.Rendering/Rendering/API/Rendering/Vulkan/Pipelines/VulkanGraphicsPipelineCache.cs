@@ -8,6 +8,16 @@ public unsafe partial class VulkanRenderer
 {
     private readonly Dictionary<VkMeshRenderer.PipelineKey, Pipeline> _sharedGraphicsPipelines = new();
     private readonly object _sharedGraphicsPipelineLock = new();
+    private ulong _sharedGraphicsPipelineGeneration;
+
+    internal ulong SharedGraphicsPipelineGeneration
+    {
+        get
+        {
+            lock (_sharedGraphicsPipelineLock)
+                return _sharedGraphicsPipelineGeneration;
+        }
+    }
 
     internal bool TryGetSharedGraphicsPipeline(
         in VkMeshRenderer.PipelineKey key,
@@ -33,6 +43,7 @@ public unsafe partial class VulkanRenderer
             }
 
             _sharedGraphicsPipelines[key] = pipeline;
+            _sharedGraphicsPipelineGeneration++;
             return pipeline;
         }
     }

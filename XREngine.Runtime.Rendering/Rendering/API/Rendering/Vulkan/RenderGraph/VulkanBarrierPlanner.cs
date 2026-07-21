@@ -83,6 +83,16 @@ internal sealed class VulkanBarrierPlanner
         uint? ComputeQueueFamilyIndex = null,
         uint? TransferQueueFamilyIndex = null)
     {
+        public void Validate()
+        {
+            if (GraphicsQueueFamilyIndex == Vk.QueueFamilyIgnored)
+                throw new InvalidOperationException("A render graph queue plan must name a valid graphics queue family.");
+            if (ComputeQueueFamilyIndex == Vk.QueueFamilyIgnored)
+                throw new InvalidOperationException("A render graph queue plan must not use VK_QUEUE_FAMILY_IGNORED as its compute owner.");
+            if (TransferQueueFamilyIndex == Vk.QueueFamilyIgnored)
+                throw new InvalidOperationException("A render graph queue plan must not use VK_QUEUE_FAMILY_IGNORED as its transfer owner.");
+        }
+
         public uint ResolveOwner(ERenderGraphPassStage passStage, ERenderPassResourceType resourceType)
         {
             if (resourceType is ERenderPassResourceType.TransferSource or ERenderPassResourceType.TransferDestination)
@@ -127,6 +137,7 @@ internal sealed class VulkanBarrierPlanner
 
         RenderGraphSynchronizationInfo syncInfo = synchronization ?? RenderGraphSynchronizationPlanner.Build(passMetadata);
         QueueOwnershipConfig ownership = queueOwnership ?? new QueueOwnershipConfig(0u);
+        ownership.Validate();
 
         foreach (RenderPassMetadata pass in RenderGraphSynchronizationPlanner.TopologicallySort(passMetadata))
         {
@@ -197,7 +208,7 @@ internal sealed class VulkanBarrierPlanner
             if (syncEdge is not null)
                 previousState = PlannedImageState.FromSwapchainSyncState(syncEdge.ProducerState, usage.ResourceType, pass.Stage);
 
-            if (!previousState.Equals(desiredState))
+            if (!previousState.Equals(desiredState) || srcQueueFamily != Vk.QueueFamilyIgnored)
             {
                 plannedBarrier = new PlannedSwapchainBarrier(
                     pass.PassIndex,
@@ -340,7 +351,7 @@ internal sealed class VulkanBarrierPlanner
                 if (syncEdge is not null)
                     previousState = PlannedBufferState.FromSyncState(syncEdge.ProducerState, usage.ResourceType, pass.Stage);
 
-                if (!previousState.Equals(desiredState))
+                if (!previousState.Equals(desiredState) || srcQueueFamily != Vk.QueueFamilyIgnored)
                     plannedBarrier = new PlannedBufferBarrier(pass.PassIndex, logicalResource, previousState, desiredState, srcQueueFamily, dstQueueFamily);
             }
             else

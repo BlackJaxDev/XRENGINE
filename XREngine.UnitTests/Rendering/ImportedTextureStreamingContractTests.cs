@@ -210,9 +210,9 @@ public sealed class ImportedTextureStreamingContractTests
         managerSource.ShouldContain("|| VulkanTextureUploadService.IsSynchronizedImportedTextureStreamingAvailable;");
         managerSource.ShouldNotContain("includeMipChain = normalizedTarget > minimumResidentSize;");
         managerSource.ShouldNotContain("includeMipChain = normalizedTarget > backend.PreviewMaxDimension;");
-        imageTextureSource.ShouldContain("WaitForInFlightWorkBeforeImportedTextureReplacement(");
-        imageTextureSource.ShouldContain("Renderer.WaitForAllInFlightWork();");
-        imageTextureSource.ShouldContain("ShouldSynchronizeDedicatedImportedTextureReplacement()");
+        imageTextureSource.ShouldNotContain("WaitForInFlightWorkBeforeImportedTextureReplacement(");
+        imageTextureSource.ShouldNotContain("Renderer.WaitForAllInFlightWork();");
+        imageTextureSource.ShouldContain("Renderer.RetireImageResources(new RetiredImageResources(");
 
         serviceSource.ShouldContain("internal sealed class VulkanTextureUploadService");
         serviceSource.ShouldContain("VulkanTextureUploadGenerationState");

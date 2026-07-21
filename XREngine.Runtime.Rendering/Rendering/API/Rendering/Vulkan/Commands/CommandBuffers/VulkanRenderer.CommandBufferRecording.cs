@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -269,6 +270,19 @@ namespace XREngine.Rendering.Vulkan
                 frameOpContextFingerprint,
                 gpuPipelineProfilingActive,
                 commandBufferImageSlot);
+            // Take the synchronized cache-publication generation once for this prepared frame.
+            // All primary/range signature construction below consumes this immutable snapshot.
+            ulong sharedGraphicsPipelineGeneration = SharedGraphicsPipelineGeneration;
+            CommandRecordingDependencySignature currentDependencySignature = CaptureCommandRecordingDependencySignature(
+                imageIndex,
+                commandBufferImageSlot,
+                plannerRevision,
+                frameOpsSignature,
+                dynamicUiBatchTextSignature,
+                commandBufferFallbackContext,
+                currentGenerations,
+                ops,
+                sharedGraphicsPipelineGeneration);
 
             BeginRecordedTextureUploadSubmitBatch();
             FrameOp[] textureUploadOps = DrainTextureUploadFrameOps();
@@ -330,6 +344,7 @@ namespace XREngine.Rendering.Vulkan
                     gpuPipelineProfilingActive,
                     commandBufferImageSlot,
                     currentGenerations,
+                    currentDependencySignature,
                     ops,
                     dynamicUiBatchTextOps,
                     delayDynamicUiBatchTextOverlayRecording,
@@ -422,6 +437,8 @@ namespace XREngine.Rendering.Vulkan
             bool hasTextureUploadFrameOps = hasStaticFrameOps && HasTextureUploadFrameOps(ops);
             bool frameOpsRequireFreshPrimary = hasStaticFrameOps &&
                 (!VulkanPrimaryCommandBufferReuseEnabled || hasMutableGpuDrivenFrameOps);
+            CommandRecordingDependencyMismatch dependencyMismatch =
+                variant.RecordedDependencySignature.Compare(currentDependencySignature);
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.DirtyEvaluation"))
             {
@@ -437,16 +454,13 @@ namespace XREngine.Rendering.Vulkan
                 if (gpuProfilerCommandBufferStateDirty)
                     profilerDirty = true;
 
-                if (!dirty &&
-                    !TryValidateCommandBufferVariantContext(
-                        imageIndex,
-                        variant,
-                        frameOpContextFingerprint,
-                        frameOpContextId,
-                        usingCommandChains ? "primary-command-chain" : "primary"))
+                if (!dirty && dependencyMismatch.RequiresRecording)
                 {
                     dirty = true;
-                    frameOpSignatureDirty = true;
+                    if (dependencyMismatch.InvalidationClass == CommandRecordingInvalidationClass.Structural)
+                        frameOpSignatureDirty = true;
+                    else
+                        plannerDirty = true;
                 }
 
                 if (!dirty && !usingCommandChains && hasFrameOps && variant.FrameOpsSignature != frameOpsSignature)
@@ -615,6 +629,9 @@ namespace XREngine.Rendering.Vulkan
                         }
                         variant.PreserveSwapchainForOverlay = preserveSwapchainForOverlay;
                         variant.RecordedGenerations = currentGenerations;
+                        variant.RecordedDependencySignature = currentDependencySignature;
+                        variant.RecordedFrameOpContextFingerprint = frameOpContextFingerprint;
+                        variant.RecordedFrameOpContextId = frameOpContextId;
                         variant.LastUsedFrameId = VulkanFrameCounter;
                         variant.DirtyReason = null;
                         SetActiveCommandBufferVariant(imageIndex, variant);
@@ -672,6 +689,7 @@ namespace XREngine.Rendering.Vulkan
                 ? DescribePrimaryReuseMiss(
                     variant,
                     currentGenerations,
+                    dependencyMismatch,
                     forcedDirty,
                     imageForcedDirty,
                     forcedVariantDirtyReason,
@@ -808,6 +826,7 @@ namespace XREngine.Rendering.Vulkan
             variant.RecordedResourceGeneration = commandBufferFallbackContext.ResourceGeneration;
             variant.RecordedDescriptorGeneration = commandBufferFallbackContext.DescriptorGeneration;
             variant.RecordedGenerations = currentGenerations;
+            variant.RecordedDependencySignature = currentDependencySignature;
             variant.RecordedSwapchainImageEverPresented = swapchainImageEverPresentedAtRecord;
             variant.RecordedSwapchainFinalLayout = swapchainLayoutAfterCommandBuffer;
             variant.RecordedSwapchainWriteCount = recordedSwapchainWriteCount;
@@ -969,6 +988,7 @@ namespace XREngine.Rendering.Vulkan
             variant.RecordedResourceGeneration = 0;
             variant.RecordedDescriptorGeneration = 0;
             variant.RecordedGenerations = default;
+            variant.RecordedDependencySignature = default;
             variant.RecordedSwapchainImageEverPresented = false;
             variant.RecordedSwapchainFinalLayout = ImageLayout.PresentSrcKhr;
             variant.RecordedSwapchainWriteCount = 0;
@@ -1015,6 +1035,112 @@ namespace XREngine.Rendering.Vulkan
                 Query: ComputeQueryGeneration(staticOps, volatileOps),
                 Overlay: overlaySignature,
                 Profiler: ((profilerActive ? 1UL : 0UL) << 32) | unchecked((uint)(profilerFrameSlot + 1)));
+
+        private static CommandRecordingDependencySignature CaptureCommandRecordingDependencySignature(
+            uint imageIndex,
+            int frameSlot,
+            ulong resourcePlanGeneration,
+            ulong staticStructuralSignature,
+            ulong volatileSuffixSignature,
+            in FrameOpContext context,
+            in CommandBufferGenerationDomains generations,
+            FrameOp[] preparedStaticOps,
+            ulong sharedGraphicsPipelineGeneration)
+        {
+            FrameOpSignatureHasher renderAreaHash = new();
+            renderAreaHash.Add(context.DisplayWidth);
+            renderAreaHash.Add(context.DisplayHeight);
+            renderAreaHash.Add(context.InternalWidth);
+            renderAreaHash.Add(context.InternalHeight);
+
+            uint viewMask = context.MultiviewEnabled
+                ? 0x3u
+                : 0x1u;
+            FrameOpSignatureHasher inheritanceHash = new();
+            inheritanceHash.Add((int)context.ContextKind);
+            inheritanceHash.Add(context.PipelineIdentity);
+            inheritanceHash.Add(context.ViewportIdentity);
+            inheritanceHash.Add(context.OutputFrameBufferIdentity);
+            inheritanceHash.Add(context.StereoEnabled);
+            inheritanceHash.Add(context.MultiviewEnabled);
+            inheritanceHash.Add(ComputePassMetadataSignature(context.PassMetadata));
+            ulong inheritanceSignature = inheritanceHash.ToHash();
+
+            FrameOpSignatureHasher descriptorBindingHash = new();
+            descriptorBindingHash.Add(ResolveFrameOpContextResourceRegistrySignature(context));
+            descriptorBindingHash.Add(ComputePassMetadataSignature(context.PassMetadata));
+            ulong descriptorBindingIdentity = descriptorBindingHash.ToHash();
+
+            CapturePreparedBindingIdentities(
+                preparedStaticOps,
+                out ulong meshBindingIdentity,
+                out ulong indexBufferBindingIdentity,
+                out ulong vertexBufferBindingIdentity,
+                out ulong preparedProgramIdentity);
+
+            return new CommandRecordingDependencySignature(
+                OutputPassAttachment: staticStructuralSignature,
+                RenderArea: renderAreaHash.ToHash(),
+                ViewMask: viewMask,
+                QueueFamily: context.SubmissionQueueFamily,
+                DynamicRenderingInheritance: inheritanceSignature,
+                PipelineGeneration: sharedGraphicsPipelineGeneration,
+                PipelineLayoutGeneration: preparedProgramIdentity,
+                MeshBindingIdentity: meshBindingIdentity,
+                IndexBufferBindingIdentity: indexBufferBindingIdentity,
+                VertexBufferBindingIdentity: vertexBufferBindingIdentity,
+                BufferAllocationGeneration: generations.ResourceAllocation,
+                ImageAllocationGeneration: unchecked((ulong)(uint)ResolveFrameOpContextResourceRegistrySignature(context)),
+                ImageViewGeneration: unchecked((ulong)(uint)context.OutputFrameBufferIdentity),
+                SamplerAllocationGeneration: generations.Descriptor,
+                DescriptorLayoutGeneration: unchecked((ulong)(uint)ComputePassMetadataSignature(context.PassMetadata)),
+                DescriptorSetGeneration: descriptorBindingIdentity,
+                ResourcePlanGeneration: resourcePlanGeneration,
+                ExternalTargetVariant: imageIndex,
+                FrameSlotVariant: frameSlot,
+                DescriptorPublicationGeneration: generations.Descriptor,
+                DataPublicationGeneration: generations.FrameData,
+                VolatileSuffixGeneration: volatileSuffixSignature);
+        }
+
+        private static void CapturePreparedBindingIdentities(
+            FrameOp[] ops,
+            out ulong meshIdentity,
+            out ulong indexIdentity,
+            out ulong vertexIdentity,
+            out ulong programIdentity)
+        {
+            FrameOpSignatureHasher meshHash = new();
+            FrameOpSignatureHasher indexHash = new();
+            FrameOpSignatureHasher vertexHash = new();
+            FrameOpSignatureHasher programHash = new();
+            for (int i = 0; i < ops.Length; i++)
+            {
+                PendingMeshDraw draw = ops[i] switch
+                {
+                    MeshDrawOp direct => direct.Draw,
+                    IndirectDrawOp indirect => indirect.Draw,
+                    _ => default,
+                };
+                if (draw.Renderer is not { } renderer)
+                    continue;
+
+                int rendererIdentity = RuntimeHelpers.GetHashCode(renderer);
+                int meshObjectIdentity = renderer.Mesh is null ? 0 : RuntimeHelpers.GetHashCode(renderer.Mesh);
+                meshHash.Add(rendererIdentity);
+                meshHash.Add(meshObjectIdentity);
+                indexHash.Add(meshObjectIdentity);
+                indexHash.Add((int)(renderer.Mesh?.Type ?? EPrimitiveType.Triangles));
+                vertexHash.Add(rendererIdentity);
+                vertexHash.Add(renderer.Mesh?.Buffers is null ? 0 : RuntimeHelpers.GetHashCode(renderer.Mesh.Buffers));
+                programHash.Add(draw.PreparedProgramIdentity);
+            }
+
+            meshIdentity = meshHash.ToHash();
+            indexIdentity = indexHash.ToHash();
+            vertexIdentity = vertexHash.ToHash();
+            programIdentity = programHash.ToHash();
+        }
 
         private ulong ResolveCameraPoseReplayGeneration(ulong contextFingerprint, ulong rawPoseGeneration)
         {
@@ -1158,6 +1284,7 @@ namespace XREngine.Rendering.Vulkan
         private string DescribePrimaryReuseMiss(
             CommandBufferCacheVariant variant,
             in CommandBufferGenerationDomains current,
+            in CommandRecordingDependencyMismatch dependencyMismatch,
             bool forcedDirty,
             bool imageForcedDirty,
             string? forcedVariantDirtyReason,
@@ -1179,6 +1306,8 @@ namespace XREngine.Rendering.Vulkan
             bool swapchainImageEverPresented)
         {
             CommandBufferGenerationDomains previous = variant.RecordedGenerations;
+            if (dependencyMismatch.RequiresRecording)
+                return $"dependency-signature field={dependencyMismatch.Field} class={dependencyMismatch.InvalidationClass}";
             if (forcedDirty)
             {
                 string reason = FormatForcedCommandBufferDirtyReason(
@@ -1365,6 +1494,7 @@ namespace XREngine.Rendering.Vulkan
             bool gpuPipelineProfilingActive,
             int commandBufferImageSlot,
             in CommandBufferGenerationDomains currentGenerations,
+            in CommandRecordingDependencySignature currentDependencySignature,
             FrameOp[] ops,
             FrameOp[] dynamicUiBatchTextOps,
             bool delayDynamicUiSecondaryRecording,
@@ -1414,7 +1544,20 @@ namespace XREngine.Rendering.Vulkan
             for (int i = 0; i < variants.Count; i++)
             {
                 CommandBufferCacheVariant variant = variants[i];
+                CommandRecordingDependencyMismatch dependencyMismatch =
+                    variant.RecordedDependencySignature.Compare(currentDependencySignature);
+                if (dependencyMismatch.RequiresRecording && VulkanFrameDiagnosticsTraceEnabled)
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.PrimaryReuse.DependencyMiss.{GetHashCode()}.{imageIndex}.{dependencyMismatch.Field}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Cached primary dependency mismatch. Image={0} Field={1} Class={2}",
+                        imageIndex,
+                        dependencyMismatch.Field,
+                        dependencyMismatch.InvalidationClass);
+                }
                 if (variant.Dirty ||
+                    dependencyMismatch.RequiresRecording ||
                     variant.CommandChainScheduleSignature != cachedSchedule.StructuralSignature ||
                     variant.CommandChainPrimaryGroupSignature != currentPrimaryGroupSignature ||
                     variant.CommandChainPrimaryGroupCount != currentPrimaryGroupCount ||
@@ -1423,12 +1566,6 @@ namespace XREngine.Rendering.Vulkan
                     // identity; otherwise a primary recorded for query A can be replayed
                     // while the current frame refreshes proxy data for query B.
                     variant.RecordedGenerations.Query != currentGenerations.Query ||
-                    !TryValidateCommandBufferVariantContext(
-                        imageIndex,
-                        variant,
-                        frameOpContextFingerprint,
-                        frameOpContextId,
-                        "command-chain-primary") ||
                     variant.PlannerRevision != plannerRevision ||
                     IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature) ||
                     variant.PreserveSwapchainForOverlay != preserveSwapchainForOverlay ||
@@ -1491,6 +1628,9 @@ namespace XREngine.Rendering.Vulkan
                 variant.GpuProfilerActive = gpuPipelineProfilingActive;
                 variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
                 variant.RecordedGenerations = currentGenerations;
+                variant.RecordedDependencySignature = currentDependencySignature;
+                variant.RecordedFrameOpContextFingerprint = frameOpContextFingerprint;
+                variant.RecordedFrameOpContextId = frameOpContextId;
                 variant.LastUsedFrameId = VulkanFrameCounter;
                 variant.DirtyReason = null;
                 StoreFrameOpSignatureDebugParts(variant, ops);
@@ -2568,28 +2708,44 @@ namespace XREngine.Rendering.Vulkan
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshFrameDataFamilyBases =
                 recordingScratch.PrimaryMeshFrameDataFamilyBases;
             meshDrawSlotsByRendererFamily.Clear();
+            HashSet<int> optionalPipelineDeferredOpIndices = recordingScratch.OptionalPipelineDeferredOpIndices;
+            optionalPipelineDeferredOpIndices.Clear();
+            EMeshSubmissionStrategy submissionStrategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
+            VulkanPipelineVariantManifest pipelineVariantManifest = GetOrBuildPipelineVariantManifest(
+                CompiledRenderGraph.Plan,
+                ops,
+                submissionStrategy,
+                UseDynamicRenderingRenderTargets,
+                ComputeFrameOpsSignature(ops));
+            bool warmupPreviouslyCompleted = pipelineVariantManifest.WarmupCompleted;
             bool graphicsPipelinesReady = true;
             string firstGraphicsPipelinePendingReason = string.Empty;
-            for (int opIndex = 0; opIndex < ops.Length; opIndex++)
+            foreach (VulkanPipelineVariantRequirement requirement in pipelineVariantManifest.Requirements)
             {
-                VkMeshRenderer? meshRenderer;
-                PendingMeshDraw pendingDraw;
-                XRFrameBuffer? target;
-                switch (ops[opIndex])
+                int opIndex = requirement.OpIndex;
+                PendingMeshDraw pendingDraw = ops[opIndex] switch
                 {
-                    case MeshDrawOp drawOp:
-                        meshRenderer = drawOp.Draw.Renderer;
-                        pendingDraw = drawOp.Draw;
-                        target = drawOp.Target;
-                        break;
-                    case IndirectDrawOp indirectDrawOp:
-                        meshRenderer = indirectDrawOp.MeshRenderer;
-                        pendingDraw = indirectDrawOp.Draw;
-                        target = indirectDrawOp.Target;
-                        break;
-                    default:
-                        continue;
+                    MeshDrawOp direct => direct.Draw,
+                    IndirectDrawOp indirect => indirect.Draw,
+                    _ => default,
+                };
+                VkMeshRenderer? meshRenderer = pendingDraw.Renderer;
+                if (meshRenderer is null)
+                {
+                    if (requirement.Required)
+                    {
+                        graphicsPipelinesReady = false;
+                        firstGraphicsPipelinePendingReason = firstGraphicsPipelinePendingReason.Length == 0
+                            ? $"op={opIndex} has no prepared mesh renderer"
+                            : firstGraphicsPipelinePendingReason;
+                    }
+                    else
+                    {
+                        optionalPipelineDeferredOpIndices.Add(opIndex);
+                    }
+                    continue;
                 }
+                XRFrameBuffer? target = ops[opIndex].Target;
 
                 int drawSlot = GetFrameWideMeshDrawUniformSlot(
                     meshDrawSlotsByRendererFamily,
@@ -2641,6 +2797,19 @@ namespace XREngine.Rendering.Vulkan
                         out bool depthStencilReadOnly,
                         out string targetReason))
                 {
+                    if (!requirement.Required)
+                    {
+                        optionalPipelineDeferredOpIndices.Add(opIndex);
+                        Debug.VulkanEvery(
+                            $"Vulkan.OptionalPipelineNodeDeferred.{GetHashCode()}.{requirement.PassIndex}",
+                            TimeSpan.FromSeconds(1),
+                            "[Vulkan] Optional pipeline node deferred without rejecting the frame. Pass={0} Variant={1} Reason={2}",
+                            requirement.PassName,
+                            requirement.SubmissionStrategy,
+                            targetReason);
+                        continue;
+                    }
+
                     graphicsPipelinesReady = false;
                     if (firstGraphicsPipelinePendingReason.Length == 0)
                     {
@@ -2664,6 +2833,22 @@ namespace XREngine.Rendering.Vulkan
                     continue;
                 }
 
+                if (!requirement.Required)
+                {
+                    optionalPipelineDeferredOpIndices.Add(opIndex);
+                    Debug.VulkanEvery(
+                        $"Vulkan.OptionalPipelineNodeDeferred.{GetHashCode()}.{requirement.PassIndex}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Optional pipeline node deferred without rejecting the frame. Pass={0} Variant={1} Dynamic={2} Stereo={3} Multiview={4} Reason={5}",
+                        requirement.PassName,
+                        requirement.SubmissionStrategy,
+                        requirement.DynamicRendering,
+                        requirement.Stereo,
+                        requirement.Multiview,
+                        pipelineReason);
+                    continue;
+                }
+
                 graphicsPipelinesReady = false;
                 if (firstGraphicsPipelinePendingReason.Length == 0)
                 {
@@ -2679,15 +2864,20 @@ namespace XREngine.Rendering.Vulkan
             if (!graphicsPipelinesReady)
             {
                 frameDataManifest.End();
-                recordingDeferredReason =
-                    $"Graphics pipeline prewarm deferred before vkBeginCommandBuffer: {firstGraphicsPipelinePendingReason}";
+                recordingDeferredReason = warmupPreviouslyCompleted
+                    ? $"Required graphics pipeline became pending after declared warmup: {firstGraphicsPipelinePendingReason}"
+                    : $"Graphics pipeline prewarm deferred before vkBeginCommandBuffer: {firstGraphicsPipelinePendingReason}";
                 Debug.VulkanWarningEvery(
                     $"Vulkan.Primary.PipelinePrewarmPending.{GetHashCode()}",
                     TimeSpan.FromSeconds(1),
                     "[Vulkan] Primary command recording deferred before vkBeginCommandBuffer because required graphics pipelines are pending. detail={0}",
                     firstGraphicsPipelinePendingReason);
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
+                    EVulkanPipelineTelemetryEvent.RequiredPipelineRecordDeferred);
                 return false;
             }
+
+            pipelineVariantManifest.MarkWarmupCompleted();
 
             if (!frameDataManifest.TrySeal(
                     MeshFrameDataReservationGeneration,
@@ -6008,6 +6198,9 @@ namespace XREngine.Rendering.Vulkan
                 {
                 for (int opIndex = 0; opIndex < ops.Length; opIndex++)
                 {
+                    if (optionalPipelineDeferredOpIndices.Contains(opIndex))
+                        continue;
+
                     var op = ops[opIndex];
                     try
                     {

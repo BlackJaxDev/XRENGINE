@@ -34,6 +34,12 @@ namespace XREngine
                     private static int _visibilityBuilds;
                     private static int _compiledPlanCacheHits;
                     private static int _compiledPlanCacheMisses;
+                    private static int _physicalPlanCacheHits;
+                    private static int _physicalPlanCacheMisses;
+                    private static int _physicalPlanGenerations;
+                    private static int _physicalPlanAliasReuses;
+                    private static int _plannerArenaHighWater;
+                    private static long _renderGraphPlanGeneration;
                     private static int _sharedPassReuses;
                     private static int _recordedWorkItems;
                     private static int _reusedWorkItems;
@@ -45,6 +51,7 @@ namespace XREngine
                     private static int _unapprovedPolicyEvents;
                     private static int _submissionRejections;
                     private static int _plannerPrunes;
+                    private static int _plannerEvictionDeferrals;
                     private static int _globalInFlightWaits;
                     private static int _forceFlushes;
 
@@ -250,6 +257,12 @@ namespace XREngine
                         AddNonNegative(ref _visibilityBuilds, telemetry.VisibilityBuilds);
                         AddNonNegative(ref _compiledPlanCacheHits, telemetry.CompiledPlanCacheHits);
                         AddNonNegative(ref _compiledPlanCacheMisses, telemetry.CompiledPlanCacheMisses);
+                        AddNonNegative(ref _physicalPlanCacheHits, telemetry.PhysicalPlanCacheHits);
+                        AddNonNegative(ref _physicalPlanCacheMisses, telemetry.PhysicalPlanCacheMisses);
+                        AddNonNegative(ref _physicalPlanGenerations, telemetry.PhysicalPlanGenerations);
+                        AddNonNegative(ref _physicalPlanAliasReuses, telemetry.PhysicalPlanAliasReuses);
+                        UpdateMaximum(ref _plannerArenaHighWater, telemetry.PlannerArenaHighWater);
+                        UpdateMaximum(ref _renderGraphPlanGeneration, telemetry.RenderGraphPlanGeneration);
                         AddNonNegative(ref _sharedPassReuses, telemetry.SharedPassReuses);
                         AddNonNegative(ref _recordedWorkItems, telemetry.RecordedWorkItems);
                         AddNonNegative(ref _reusedWorkItems, telemetry.ReusedWorkItems);
@@ -261,6 +274,7 @@ namespace XREngine
                         AddNonNegative(ref _unapprovedPolicyEvents, telemetry.UnapprovedPolicyEvents);
                         AddNonNegative(ref _submissionRejections, telemetry.SubmissionRejections);
                         AddNonNegative(ref _plannerPrunes, telemetry.PlannerPrunes);
+                        AddNonNegative(ref _plannerEvictionDeferrals, telemetry.PlannerEvictionDeferrals);
                         AddNonNegative(ref _globalInFlightWaits, telemetry.GlobalInFlightWaits);
                         AddNonNegative(ref _forceFlushes, telemetry.ForceFlushes);
                     }
@@ -654,6 +668,12 @@ namespace XREngine
                             VisibilityBuildCount: Interlocked.Exchange(ref _visibilityBuilds, 0),
                             CompiledPlanCacheHits: Interlocked.Exchange(ref _compiledPlanCacheHits, 0),
                             CompiledPlanCacheMisses: Interlocked.Exchange(ref _compiledPlanCacheMisses, 0),
+                            PhysicalPlanCacheHits: Interlocked.Exchange(ref _physicalPlanCacheHits, 0),
+                            PhysicalPlanCacheMisses: Interlocked.Exchange(ref _physicalPlanCacheMisses, 0),
+                            PhysicalPlanGenerations: Interlocked.Exchange(ref _physicalPlanGenerations, 0),
+                            PhysicalPlanAliasReuses: Interlocked.Exchange(ref _physicalPlanAliasReuses, 0),
+                            PlannerArenaHighWater: Interlocked.Exchange(ref _plannerArenaHighWater, 0),
+                            RenderGraphPlanGeneration: Interlocked.Exchange(ref _renderGraphPlanGeneration, 0L),
                             SharedPassReuseCount: Interlocked.Exchange(ref _sharedPassReuses, 0),
                             RecordedWorkItemCount: Interlocked.Exchange(ref _recordedWorkItems, 0),
                             ReusedWorkItemCount: Interlocked.Exchange(ref _reusedWorkItems, 0),
@@ -665,6 +685,7 @@ namespace XREngine
                             UnapprovedPolicyEventCount: unapprovedPolicyEvents,
                             SubmissionRejectionCount: Interlocked.Exchange(ref _submissionRejections, 0),
                             PlannerPruneCount: Interlocked.Exchange(ref _plannerPrunes, 0),
+                            PlannerEvictionDeferralCount: Interlocked.Exchange(ref _plannerEvictionDeferrals, 0),
                             GlobalInFlightWaitCount: Interlocked.Exchange(ref _globalInFlightWaits, 0),
                             ForceFlushCount: Interlocked.Exchange(ref _forceFlushes, 0));
                     }
@@ -690,6 +711,36 @@ namespace XREngine
                             }
                         }
                         return true;
+                    }
+
+                    private static void UpdateMaximum(ref int target, int candidate)
+                    {
+                        if (candidate <= 0)
+                            return;
+
+                        int current = Volatile.Read(ref target);
+                        while (candidate > current)
+                        {
+                            int observed = Interlocked.CompareExchange(ref target, candidate, current);
+                            if (observed == current)
+                                return;
+                            current = observed;
+                        }
+                    }
+
+                    private static void UpdateMaximum(ref long target, long candidate)
+                    {
+                        if (candidate <= 0L)
+                            return;
+
+                        long current = Volatile.Read(ref target);
+                        while (candidate > current)
+                        {
+                            long observed = Interlocked.CompareExchange(ref target, candidate, current);
+                            if (observed == current)
+                                return;
+                            current = observed;
+                        }
                     }
 
                     private static bool IsFirstViewFamily(FrameOutputEntrySnapshot[] outputs, int index)
@@ -1097,6 +1148,12 @@ namespace XREngine
                     int VisibilityBuildCount,
                     int CompiledPlanCacheHits,
                     int CompiledPlanCacheMisses,
+                    int PhysicalPlanCacheHits,
+                    int PhysicalPlanCacheMisses,
+                    int PhysicalPlanGenerations,
+                    int PhysicalPlanAliasReuses,
+                    int PlannerArenaHighWater,
+                    long RenderGraphPlanGeneration,
                     int SharedPassReuseCount,
                     int RecordedWorkItemCount,
                     int ReusedWorkItemCount,
@@ -1108,6 +1165,7 @@ namespace XREngine
                     int UnapprovedPolicyEventCount,
                     int SubmissionRejectionCount,
                     int PlannerPruneCount,
+                    int PlannerEvictionDeferralCount,
                     int GlobalInFlightWaitCount,
                     int ForceFlushCount);
 

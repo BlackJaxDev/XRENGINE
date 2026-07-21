@@ -52,6 +52,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     public const string SceneShaderPath = "Scene3D";
 
     private readonly NearToFarRenderCommandSorter _nearToFarSorter = new();
+    private readonly OpaqueStateBucketRenderCommandSorter _opaqueStateBucketSorter = new();
     private readonly FarToNearRenderCommandSorter _farToNearSorter = new();
 
     private readonly Lazy<XRMaterial> _voxelConeTracingVoxelizationMaterial;
@@ -1451,9 +1452,9 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         {
             { (int)EDefaultRenderPass.PreRender, null },
             { (int)EDefaultRenderPass.Background, null },
-            { (int)EDefaultRenderPass.OpaqueDeferred, _nearToFarSorter },
+            { (int)EDefaultRenderPass.OpaqueDeferred, _opaqueStateBucketSorter },
             { (int)EDefaultRenderPass.DeferredDecals, _farToNearSorter },
-            { (int)EDefaultRenderPass.OpaqueForward, _nearToFarSorter },
+            { (int)EDefaultRenderPass.OpaqueForward, _opaqueStateBucketSorter },
             { (int)EDefaultRenderPass.MaskedForward, _nearToFarSorter },
             { (int)EDefaultRenderPass.TransparentForward, _farToNearSorter },
             { (int)EDefaultRenderPass.WeightedBlendedOitForward, null },
@@ -2939,6 +2940,22 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
                 stage.Descriptor?.BackingType?.Name ?? "null");
             return null;
         }
+
+        return settings;
+    }
+
+    private AmbientOcclusionSettings? ResolveAmbientOcclusionSettings(
+        XRRenderPipelineInstance instance,
+        XRViewport? viewport)
+    {
+        XRCamera? camera = instance.RenderState.SceneCamera
+            ?? instance.RenderState.RenderingCamera
+            ?? instance.LastSceneCamera
+            ?? instance.LastRenderingCamera
+            ?? viewport?.ActiveCamera;
+        if (camera?.GetPostProcessStageState<AmbientOcclusionSettings>(this) is not { } stage ||
+            !stage.TryGetBacking(out AmbientOcclusionSettings? settings))
+            return null;
 
         return settings;
     }

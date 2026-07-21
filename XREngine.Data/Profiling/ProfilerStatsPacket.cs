@@ -401,6 +401,12 @@ public sealed partial class FrameOutputManifestData
     public int VisibilityBuildCount { get; set; }
     public int CompiledPlanCacheHits { get; set; }
     public int CompiledPlanCacheMisses { get; set; }
+    public int PhysicalPlanCacheHits { get; set; }
+    public int PhysicalPlanCacheMisses { get; set; }
+    public int PhysicalPlanGenerations { get; set; }
+    public int PhysicalPlanAliasReuses { get; set; }
+    public int PlannerArenaHighWater { get; set; }
+    public long RenderGraphPlanGeneration { get; set; }
     public int SharedPassReuseCount { get; set; }
     public int RecordedWorkItemCount { get; set; }
     public int ReusedWorkItemCount { get; set; }
@@ -412,6 +418,7 @@ public sealed partial class FrameOutputManifestData
     public int UnapprovedPolicyEventCount { get; set; }
     public int SubmissionRejectionCount { get; set; }
     public int PlannerPruneCount { get; set; }
+    public int PlannerEvictionDeferralCount { get; set; }
     public int GlobalInFlightWaitCount { get; set; }
     public int ForceFlushCount { get; set; }
     public FrameOutputEntryData[] Outputs { get; set; } = [];

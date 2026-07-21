@@ -143,6 +143,26 @@ public static partial class EditorUnitTests
                 s_smallMathTestBounds,
                 (parent, _) => AddGeoUtilThreePlanesRig(parent)),
             new(
+                "CPU Scene BVH Test",
+                "Builds and refits the flat CPU scene BVH; a moving AABB query is checked against brute force and visited nodes are drawn.",
+                AABB.FromCenterSize(new Vector3(0.0f, 3.2f, 0.0f), new Vector3(13.0f, 9.0f, 13.0f)),
+                (parent, controller) => AddMathBvhRig(parent, MathBvhTestMode.CpuScene, controller)),
+            new(
+                "GPU Scene BVH Test",
+                "Builds and refits the GPU scene BVH from animated AABBs and renders its node SSBO without CPU traversal or readback.",
+                AABB.FromCenterSize(new Vector3(0.0f, 3.2f, 0.0f), new Vector3(13.0f, 9.0f, 13.0f)),
+                (parent, controller) => AddMathBvhRig(parent, MathBvhTestMode.GpuScene, controller)),
+            new(
+                "Legacy CPU Mesh BVH Test",
+                "Builds the legacy triangle BVH over a wavy grid; an animated ray is checked against brute force and visited nodes are highlighted.",
+                AABB.FromCenterSize(new Vector3(0.0f, 3.2f, 0.0f), new Vector3(13.0f, 9.0f, 13.0f)),
+                (parent, controller) => AddMathBvhRig(parent, MathBvhTestMode.LegacyCpuMesh, controller)),
+            new(
+                "GPU Mesh BVH Test",
+                "Builds the renderable-owned GPU triangle BVH and renders its compact node buffer directly on the GPU.",
+                AABB.FromCenterSize(new Vector3(0.0f, 3.2f, 0.0f), new Vector3(13.0f, 9.0f, 13.0f)),
+                (parent, controller) => AddMathBvhRig(parent, MathBvhTestMode.GpuMesh, controller)),
+            new(
                 "Physics Chain CPU Test",
                 "Runs a single-threaded CPU physics chain.",
                 s_physicsChainTestBounds,

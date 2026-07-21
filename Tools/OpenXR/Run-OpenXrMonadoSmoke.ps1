@@ -51,7 +51,26 @@ param(
     [switch]$SkipLoaderPreflight,
 
     [Parameter()]
-    [switch]$SkipAllocationAudit
+    [switch]$SkipAllocationAudit,
+
+    [Parameter()]
+    [string[]]$DesktopResizeClientSizes = @(),
+
+    [Parameter()]
+    [int]$DesktopResizeCycles = 1,
+
+    [Parameter()]
+    [int]$DesktopResizeInitialDelayMilliseconds = 8000,
+
+    [Parameter()]
+    [int]$DesktopResizeIntervalMilliseconds = 2500,
+
+    [Parameter()]
+    [int]$DesktopResizeWindowTimeoutSeconds = 45,
+
+    [Parameter()]
+    [ValidateRange(1, 65535)]
+    [int]$McpPort = 5567
 )
 
 Set-StrictMode -Version Latest
@@ -63,6 +82,162 @@ $LASTEXITCODE = 0
 # to the editor child process instead.
 $editorFirstChanceExceptions = $env:XRE_FIRST_CHANCE_EXCEPTIONS
 Remove-Item Env:XRE_FIRST_CHANCE_EXCEPTIONS -ErrorAction SilentlyContinue
+
+if ($DesktopResizeCycles -lt 1) {
+    throw "DesktopResizeCycles must be at least 1."
+}
+if ($DesktopResizeInitialDelayMilliseconds -lt 0 -or $DesktopResizeIntervalMilliseconds -lt 250) {
+    throw "Desktop resize initial delay must be non-negative and interval must be at least 250 ms."
+}
+if ($DesktopResizeWindowTimeoutSeconds -lt 1) {
+    throw "DesktopResizeWindowTimeoutSeconds must be at least 1."
+}
+
+$desktopResizeBaseTargets = @($DesktopResizeClientSizes | ForEach-Object {
+    if ($_ -notmatch '^\s*(\d+)\s*[xX]\s*(\d+)\s*$') {
+        throw "Invalid desktop resize client extent '$_'. Expected WIDTHxHEIGHT."
+    }
+
+    $width = [int]$Matches[1]
+    $height = [int]$Matches[2]
+    if ($width -lt 320 -or $height -lt 240) {
+        throw "Desktop resize client extent '$_' is below the 320x240 validation minimum."
+    }
+
+    [pscustomobject]@{ Width = $width; Height = $height }
+})
+
+$desktopResizeTargets = [System.Collections.Generic.List[object]]::new()
+for ($cycle = 0; $cycle -lt $DesktopResizeCycles; $cycle++) {
+    foreach ($target in $desktopResizeBaseTargets) {
+        $desktopResizeTargets.Add([pscustomobject]@{
+            Cycle = $cycle
+            Width = [int]$target.Width
+            Height = [int]$target.Height
+        })
+    }
+}
+
+if ($desktopResizeTargets.Count -gt 0 -and -not ("XREnginePhase525NativeWindow" -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class XREnginePhase525NativeWindow
+{
+    private delegate bool EnumWindowsProc(IntPtr window, IntPtr state);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Rect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr state);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr window);
+
+    [DllImport("user32.dll")]
+    private static extern int GetWindowTextLength(IntPtr window);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool GetWindowRect(IntPtr window, out Rect rect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool GetClientRect(IntPtr window, out Rect rect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool MoveWindow(
+        IntPtr window,
+        int x,
+        int y,
+        int width,
+        int height,
+        bool repaint);
+
+    private static IntPtr FindLargestVisibleWindow(int processId)
+    {
+        IntPtr bestWindow = IntPtr.Zero;
+        long bestArea = 0;
+        EnumWindows((window, state) =>
+        {
+            uint ownerProcessId;
+            GetWindowThreadProcessId(window, out ownerProcessId);
+            if (ownerProcessId != (uint)processId || !IsWindowVisible(window) || GetWindowTextLength(window) <= 0)
+                return true;
+
+            Rect client;
+            if (!GetClientRect(window, out client))
+                return true;
+
+            long area = Math.Max(0, client.Right - client.Left) * (long)Math.Max(0, client.Bottom - client.Top);
+            if (area > bestArea)
+            {
+                bestArea = area;
+                bestWindow = window;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return bestWindow;
+    }
+
+    public static bool TryResizeClient(
+        int processId,
+        int targetWidth,
+        int targetHeight,
+        out long windowHandle,
+        out int beforeWidth,
+        out int beforeHeight,
+        out int afterWidth,
+        out int afterHeight)
+    {
+        windowHandle = 0;
+        beforeWidth = 0;
+        beforeHeight = 0;
+        afterWidth = 0;
+        afterHeight = 0;
+
+        IntPtr window = FindLargestVisibleWindow(processId);
+        if (window == IntPtr.Zero)
+            return false;
+
+        Rect windowRect;
+        Rect clientRect;
+        if (!GetWindowRect(window, out windowRect) || !GetClientRect(window, out clientRect))
+            return false;
+
+        beforeWidth = Math.Max(0, clientRect.Right - clientRect.Left);
+        beforeHeight = Math.Max(0, clientRect.Bottom - clientRect.Top);
+        int nonClientWidth = Math.Max(0, (windowRect.Right - windowRect.Left) - beforeWidth);
+        int nonClientHeight = Math.Max(0, (windowRect.Bottom - windowRect.Top) - beforeHeight);
+        if (!MoveWindow(
+                window,
+                windowRect.Left,
+                windowRect.Top,
+                checked(targetWidth + nonClientWidth),
+                checked(targetHeight + nonClientHeight),
+                true))
+            return false;
+
+        if (!GetClientRect(window, out clientRect))
+            return false;
+
+        windowHandle = window.ToInt64();
+        afterWidth = Math.Max(0, clientRect.Right - clientRect.Left);
+        afterHeight = Math.Max(0, clientRect.Bottom - clientRect.Top);
+        return true;
+    }
+}
+'@
+}
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $openXrToolRoot = Join-Path $repoRoot "Tools\OpenXR"
@@ -447,7 +622,8 @@ function Invoke-EditorSmoke {
         [Parameter(Mandatory)][string]$Summary,
         [Parameter(Mandatory)][string]$StdoutPath,
         [Parameter(Mandatory)][string]$StderrPath,
-        [Parameter(Mandatory)][hashtable]$Environment
+        [Parameter(Mandatory)][hashtable]$Environment,
+        [Parameter()][string]$DesktopResizeReportPath
     )
 
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
@@ -460,6 +636,10 @@ function Invoke-EditorSmoke {
     $psi.Arguments = Join-ProcessArguments -Arguments @(
         $EditorDll,
         "--unit-testing",
+        "--mcp",
+        "--mcp-allow-all",
+        "--mcp-port",
+        [string]$McpPort,
         "--smoke-frames",
         [string]$SmokeFrames,
         "--smoke-warmup-frames",
@@ -485,7 +665,51 @@ function Invoke-EditorSmoke {
     $deadlineUtc = [DateTime]::UtcNow.AddSeconds([Math]::Max(1, $TimeoutSeconds + 30))
     $summarySeenUtc = $null
     $terminatedAfterSummary = $false
+    $resizeLedger = [System.Collections.Generic.List[object]]::new()
+    $resizeStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $nextResizeIndex = 0
+    $nextResizeAtMilliseconds = [double]$DesktopResizeInitialDelayMilliseconds
+    $resizeWindowDeadlineMilliseconds = $nextResizeAtMilliseconds + ($DesktopResizeWindowTimeoutSeconds * 1000.0)
     while (-not $process.HasExited) {
+        if ($nextResizeIndex -lt $desktopResizeTargets.Count -and
+            $resizeStopwatch.Elapsed.TotalMilliseconds -ge $nextResizeAtMilliseconds) {
+            $target = $desktopResizeTargets[$nextResizeIndex]
+            [long]$windowHandle = 0
+            [int]$beforeWidth = 0
+            [int]$beforeHeight = 0
+            [int]$afterWidth = 0
+            [int]$afterHeight = 0
+            $resized = [XREnginePhase525NativeWindow]::TryResizeClient(
+                $process.Id,
+                [int]$target.Width,
+                [int]$target.Height,
+                [ref]$windowHandle,
+                [ref]$beforeWidth,
+                [ref]$beforeHeight,
+                [ref]$afterWidth,
+                [ref]$afterHeight)
+
+            if ($resized -or $resizeStopwatch.Elapsed.TotalMilliseconds -ge $resizeWindowDeadlineMilliseconds) {
+                $resizeLedger.Add([pscustomobject]@{
+                    index = $nextResizeIndex
+                    cycle = [int]$target.Cycle
+                    timestampUtc = [DateTimeOffset]::UtcNow
+                    elapsedMilliseconds = [Math]::Round($resizeStopwatch.Elapsed.TotalMilliseconds, 3)
+                    requestedClientWidth = [int]$target.Width
+                    requestedClientHeight = [int]$target.Height
+                    beforeClientWidth = $beforeWidth
+                    beforeClientHeight = $beforeHeight
+                    actualClientWidth = $afterWidth
+                    actualClientHeight = $afterHeight
+                    windowHandle = if ($windowHandle -eq 0) { "" } else { "0x$($windowHandle.ToString('X'))" }
+                    success = $resized
+                })
+                $nextResizeIndex++
+                $nextResizeAtMilliseconds = $resizeStopwatch.Elapsed.TotalMilliseconds + $DesktopResizeIntervalMilliseconds
+                $resizeWindowDeadlineMilliseconds = $nextResizeAtMilliseconds + ($DesktopResizeWindowTimeoutSeconds * 1000.0)
+            }
+        }
+
         if ((Test-Path -LiteralPath $Summary -PathType Leaf)) {
             if ($null -eq $summarySeenUtc) {
                 $summarySeenUtc = [DateTime]::UtcNow
@@ -556,6 +780,15 @@ function Invoke-EditorSmoke {
     }
     else {
         "stderr capture did not complete after process shutdown." | Set-Content -LiteralPath $StderrPath -Encoding UTF8
+    }
+    if (-not [string]::IsNullOrWhiteSpace($DesktopResizeReportPath)) {
+        [pscustomobject]@{
+            requestedTargetCount = $desktopResizeTargets.Count
+            completedTargetCount = $resizeLedger.Count
+            allSucceeded = $resizeLedger.Count -eq $desktopResizeTargets.Count -and
+                @($resizeLedger | Where-Object { -not $_.success }).Count -eq 0
+            entries = @($resizeLedger)
+        } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $DesktopResizeReportPath -Encoding UTF8
     }
     $exitCode = if ($process.HasExited) { $process.ExitCode } else { 0 }
     return [pscustomobject]@{
@@ -693,7 +926,8 @@ try {
         -Summary $summaryFullPath `
         -StdoutPath (Join-Path $logs "editor.stdout.log") `
         -StderrPath (Join-Path $logs "editor.stderr.log") `
-        -Environment $environment
+        -Environment $environment `
+        -DesktopResizeReportPath (Join-Path $reports "desktop-resize-ledger.json")
     $exitCode = [int]$smokeResult.ExitCode
 
     if (-not (Test-Path -LiteralPath $summaryFullPath -PathType Leaf)) {

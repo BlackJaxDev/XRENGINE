@@ -31,6 +31,7 @@ namespace XREngine.Rendering.Vulkan
             public ulong RecordedResourceGeneration { get; set; }
             public ulong RecordedDescriptorGeneration { get; set; }
             public CommandBufferGenerationDomains RecordedGenerations { get; set; }
+            public CommandRecordingDependencySignature RecordedDependencySignature { get; set; }
             public bool RecordedSwapchainImageEverPresented { get; set; }
             public ImageLayout RecordedSwapchainFinalLayout { get; set; } = ImageLayout.PresentSrcKhr;
             public int RecordedSwapchainWriteCount { get; set; }

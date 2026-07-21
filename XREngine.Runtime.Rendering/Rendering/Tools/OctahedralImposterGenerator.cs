@@ -649,17 +649,10 @@ public sealed class OctahedralImposterGenerator
         if (renderer is null)
             return;
 
-        if (renderer is OpenGLRenderer)
-        {
-            renderer.MemoryBarrier(
-                EMemoryBarrierMask.Framebuffer |
-                EMemoryBarrierMask.TextureFetch |
-                EMemoryBarrierMask.TextureUpdate);
-        }
-        else
-        {
-            renderer.WaitForGpu();
-        }
+        renderer.MemoryBarrier(
+            EMemoryBarrierMask.Framebuffer |
+            EMemoryBarrierMask.TextureFetch |
+            EMemoryBarrierMask.TextureUpdate);
     }
 
     private static void PopulateCpuMipmapsFromGpu(XRTexture2DArray colorArray)

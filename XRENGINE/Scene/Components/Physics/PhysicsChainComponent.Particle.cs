@@ -6,7 +6,12 @@ namespace XREngine.Components;
 
 public partial class PhysicsChainComponent
 {
-    private class Particle(Transform? transform, int parentIndex) : XRBase
+    /// <summary>
+    /// Runtime particle state. This deliberately does not derive from
+    /// <see cref="XRBase"/>: solver writes are internal state transitions, not
+    /// authored property changes, and must not enter notification machinery.
+    /// </summary>
+    private sealed class Particle(Transform? transform, int parentIndex)
     {
         public Transform? Transform { get; } = transform;
         public int ParentIndex { get; } = parentIndex;
@@ -19,6 +24,7 @@ public partial class PhysicsChainComponent
         private float _friction;
         private float _radius = 0.01f;
         private float _boneLength;
+        private float _segmentLength;
         private bool _isCollide;
 
         internal Vector3 _position;
@@ -36,97 +42,102 @@ public partial class PhysicsChainComponent
         public int ChildCount
         {
             get => _childCount;
-            set => SetFieldUnchecked(ref _childCount, value);
+            set => _childCount = value;
         }
         public float Damping
         {
             get => _damping;
-            set => SetFieldUnchecked(ref _damping, value);
+            set => _damping = value;
         }
         public float Elasticity
         {
             get => _elasticity;
-            set => SetFieldUnchecked(ref _elasticity, value);
+            set => _elasticity = value;
         }
         public float Stiffness
         {
             get => _stiffness;
-            set => SetFieldUnchecked(ref _stiffness, value);
+            set => _stiffness = value;
         }
         public float Inert
         {
             get => _inert;
-            set => SetFieldUnchecked(ref _inert, value);
+            set => _inert = value;
         }
         public float Friction
         {
             get => _friction;
-            set => SetFieldUnchecked(ref _friction, value);
+            set => _friction = value;
         }
         public float Radius
         {
             get => _radius;
-            set => SetFieldUnchecked(ref _radius, value);
+            set => _radius = value;
         }
         public float BoneLength
         {
             get => _boneLength;
-            set => SetFieldUnchecked(ref _boneLength, value);
+            set => _boneLength = value;
+        }
+        public float SegmentLength
+        {
+            get => _segmentLength;
+            set => _segmentLength = value;
         }
         public bool IsColliding
         {
             get => _isCollide;
-            set => SetFieldUnchecked(ref _isCollide, value);
+            set => _isCollide = value;
         }
         public Vector3 Position
         {
             get => _position;
-            set => SetFieldUnchecked(ref _position, value);
+            set => _position = value;
         }
         public Vector3 PrevPosition
         {
             get => _prevPosition;
-            set => SetFieldUnchecked(ref _prevPosition, value);
+            set => _prevPosition = value;
         }
         public Vector3 PreviousPhysicsPosition
         {
             get => _previousPhysicsPosition;
-            set => SetFieldUnchecked(ref _previousPhysicsPosition, value);
+            set => _previousPhysicsPosition = value;
         }
         public Vector3 EndOffset
         {
             get => _endOffset;
-            set => SetFieldUnchecked(ref _endOffset, value);
+            set => _endOffset = value;
         }
         public Vector3 InitLocalPosition
         {
             get => _initLocalPosition;
-            set => SetFieldUnchecked(ref _initLocalPosition, value);
+            set => _initLocalPosition = value;
         }
         public Quaternion InitLocalRotation
         {
             get => _initLocalRotation;
-            set => SetFieldUnchecked(ref _initLocalRotation, value);
+            set => _initLocalRotation = value;
         }
         public Vector3 TransformPosition
         {
             get => _transformPosition;
-            set => SetFieldUnchecked(ref _transformPosition, value);
+            set => _transformPosition = value;
         }
         public Vector3 TransformLocalPosition
         {
             get => _transformLocalPosition;
-            set => SetFieldUnchecked(ref _transformLocalPosition, value);
+            set => _transformLocalPosition = value;
         }
         public Matrix4x4 TransformLocalToWorldMatrix
         {
             get => _transformLocalToWorldMatrix;
-            set => SetFieldUnchecked(ref _transformLocalToWorldMatrix, value);
+            set => _transformLocalToWorldMatrix = value;
         }
         public bool PreparedWorldChanged
         {
             get => _preparedWorldChanged;
-            set => SetFieldUnchecked(ref _preparedWorldChanged, value);
+            set => _preparedWorldChanged = value;
         }
     }
 }

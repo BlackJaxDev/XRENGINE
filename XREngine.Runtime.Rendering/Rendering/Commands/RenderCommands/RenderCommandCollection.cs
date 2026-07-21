@@ -28,6 +28,57 @@ namespace XREngine.Rendering.Commands
     }
 
     /// <summary>
+    /// Buckets reorder-safe opaque draws by compatible material/mesh binding identity before
+    /// applying front-to-back ordering inside a bucket. Transparent, UI, overlay, and diagnostic
+    /// passes continue to use their existing order-preserving sorters.
+    /// </summary>
+    public sealed class OpaqueStateBucketRenderCommandSorter : IComparer<RenderCommand>
+    {
+        int IComparer<RenderCommand>.Compare(RenderCommand? x, RenderCommand? y)
+        {
+            int result = ResolveStateBucket(x).CompareTo(ResolveStateBucket(y));
+            return result != 0 ? result : x?.CompareTo(y) ?? 0;
+        }
+
+        internal static OpaqueStateBucketKey ResolveStateBucket(RenderCommand? command)
+        {
+            if (command is not IRenderCommandMesh meshCommand)
+                return default;
+
+            XRMaterial? material = meshCommand.MaterialOverride ?? meshCommand.Mesh?.Material;
+            return new OpaqueStateBucketKey(
+                command.RenderPass,
+                material is null ? 0 : RuntimeHelpers.GetHashCode(material.Shaders),
+                material is null ? 0 : RuntimeHelpers.GetHashCode(material),
+                meshCommand.RenderOptionsOverride is null ? 0 : RuntimeHelpers.GetHashCode(meshCommand.RenderOptionsOverride),
+                meshCommand.Mesh is null ? 0 : RuntimeHelpers.GetHashCode(meshCommand.Mesh));
+        }
+
+        /// <summary>
+        /// Captures the actual compatibility dimensions used to lower an opaque draw: pass,
+        /// shader-pipeline identity, material/descriptor-layout owner, fixed render state, and
+        /// mesh vertex/index binding owner. Keeping the dimensions separate avoids hash-combining
+        /// collisions silently grouping incompatible draws.
+        /// </summary>
+        internal readonly record struct OpaqueStateBucketKey(
+            int RenderPass,
+            int PipelineIdentity,
+            int LayoutIdentity,
+            int RenderStateIdentity,
+            int MeshBindingIdentity) : IComparable<OpaqueStateBucketKey>
+        {
+            public int CompareTo(OpaqueStateBucketKey other)
+            {
+                int result = RenderPass.CompareTo(other.RenderPass);
+                if (result == 0) result = PipelineIdentity.CompareTo(other.PipelineIdentity);
+                if (result == 0) result = LayoutIdentity.CompareTo(other.LayoutIdentity);
+                if (result == 0) result = RenderStateIdentity.CompareTo(other.RenderStateIdentity);
+                return result != 0 ? result : MeshBindingIdentity.CompareTo(other.MeshBindingIdentity);
+            }
+        }
+    }
+
+    /// <summary>
     /// Stores sorted render-pass membership using sort keys captured at collection time.
     /// The render command instances are shared by desktop, VR eye, shadow, and capture
     /// viewports; their live RenderDistance/SortOrderKey fields can be updated by another
@@ -39,10 +90,14 @@ namespace XREngine.Rendering.Commands
         private readonly List<Entry> _entries = [];
         private readonly HashSet<RenderCommand> _membership = new(ReferenceRenderCommandComparer.Instance);
         private readonly bool _farToNear;
+        private readonly bool _bucketOpaqueState;
         private bool _sortDirty;
 
         public SnapshotSortedRenderCommandCollection(IComparer<RenderCommand> sorter)
-            => _farToNear = sorter.GetType() == typeof(FarToNearRenderCommandSorter);
+        {
+            _farToNear = sorter.GetType() == typeof(FarToNearRenderCommandSorter);
+            _bucketOpaqueState = sorter.GetType() == typeof(OpaqueStateBucketRenderCommandSorter);
+        }
 
         public int Count => _entries.Count;
         public bool IsReadOnly => false;
@@ -120,6 +175,12 @@ namespace XREngine.Rendering.Commands
         private int CompareEntries(Entry x, Entry y)
         {
             int result = x.RenderDistance.CompareTo(y.RenderDistance);
+            if (_bucketOpaqueState)
+            {
+                result = x.StateBucket.CompareTo(y.StateBucket);
+                if (result == 0)
+                    result = x.RenderDistance.CompareTo(y.RenderDistance);
+            }
             if (result == 0)
                 result = x.SortOrderKey.CompareTo(y.SortOrderKey);
             if (result == 0)
@@ -132,14 +193,16 @@ namespace XREngine.Rendering.Commands
             RenderCommand Command,
             float RenderDistance,
             long SortOrderKey,
-            int IdentityHash)
+            int IdentityHash,
+            OpaqueStateBucketRenderCommandSorter.OpaqueStateBucketKey StateBucket)
         {
             public static Entry Capture(RenderCommand command, float renderDistance, long sortOrderKey)
                 => new(
                     command,
                     renderDistance,
                     sortOrderKey,
-                    RuntimeHelpers.GetHashCode(command));
+                    RuntimeHelpers.GetHashCode(command),
+                    OpaqueStateBucketRenderCommandSorter.ResolveStateBucket(command));
         }
 
         private sealed class ReferenceRenderCommandComparer : IEqualityComparer<RenderCommand>

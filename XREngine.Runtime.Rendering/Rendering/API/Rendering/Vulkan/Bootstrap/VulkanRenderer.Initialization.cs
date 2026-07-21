@@ -87,7 +87,12 @@ namespace XREngine.Rendering.Vulkan
         public override void CleanUp()
         {
             if (device.Handle != 0)
+            {
                 DeviceWaitIdle();
+                // Swapchain generations use nonblocking queue-marker fences during normal
+                // rendering. DeviceWaitIdle above is the only teardown-only force boundary.
+                DrainRetiredSwapchainGenerations(force: true);
+            }
 
             bool forceRetirementDrain = IsDeviceLost;
             if (forceRetirementDrain)

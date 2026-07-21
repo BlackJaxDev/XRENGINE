@@ -83,6 +83,7 @@ public partial class DefaultRenderPipeline
 
         bool useOpenXrVulkanSafePath = UseOpenXrVulkanDesktopStartupSafePathForViewport(viewport);
         bool usesStereoResources = UsesStereoResources(instance, viewport);
+        AmbientOcclusionSettings? generationAoSettings = ResolveAmbientOcclusionSettings(instance, viewport);
 
         if (EnableDeferredMsaa && !useOpenXrVulkanSafePath)
             mask |= DefaultPipelineResourceFeature.DeferredMsaaEnabled;
@@ -117,12 +118,13 @@ public partial class DefaultRenderPipeline
             // settings without rebuilding the command chain.
             mask |= DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled;
             // Encode effective AO type in bits 26-29 so mode changes rebuild the generation.
-            AmbientOcclusionSettings? aoSettingsForMode = ResolveAmbientOcclusionSettings();
-            if (aoSettingsForMode?.Enabled == true)
+            if (generationAoSettings?.Enabled == true)
             {
-                int encodedMode = (int)AmbientOcclusionSettings.NormalizeType(aoSettingsForMode.Type) + 1;
+                int encodedMode = (int)AmbientOcclusionSettings.NormalizeType(generationAoSettings.Type) + 1;
                 mask |= (DefaultPipelineResourceFeature)((ulong)encodedMode << AoModeFieldShift);
             }
+            else if (generationAoSettings is null && instance.TryGetLastResourceFeatureMask(viewport, out ulong previousFeatureMask))
+                mask |= (DefaultPipelineResourceFeature)(previousFeatureMask & AoModeFieldMask);
             mask |= DefaultPipelineResourceFeature.BloomResourcesEnabled;
             mask |= DefaultPipelineResourceFeature.TemporalResourcesEnabled;
             if (!usesStereoResources)
@@ -150,7 +152,11 @@ public partial class DefaultRenderPipeline
             _ => DefaultPipelineResourceFeature.None,
         };
 
-        mask |= ResolveGtaoResolutionForGenerationKey() switch
+        GroundTruthAmbientOcclusionSettings.EResolution gtaoResolution = generationAoSettings?.GroundTruth.Resolution
+            ?? (instance.TryGetLastResourceFeatureMask(viewport, out ulong previousMask)
+                ? ResolveGtaoResolutionFromFeatureMask(previousMask)
+                : GroundTruthAmbientOcclusionSettings.DefaultResolution);
+        mask |= gtaoResolution switch
         {
             GroundTruthAmbientOcclusionSettings.EResolution.Full => DefaultPipelineResourceFeature.GtaoFullResolution,
             GroundTruthAmbientOcclusionSettings.EResolution.Quarter => DefaultPipelineResourceFeature.GtaoQuarterResolution,

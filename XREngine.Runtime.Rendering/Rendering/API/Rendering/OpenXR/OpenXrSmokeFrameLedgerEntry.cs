@@ -49,11 +49,31 @@ public struct OpenXrSmokeFrameLedgerEntry
     public int DescriptorPoolCreateCount { get; set; }
     public int DescriptorPoolDestroyCount { get; set; }
     public int DescriptorPoolResetCount { get; set; }
+    public int ResourceCreatedCount { get; set; }
+    public int ResourceRecreatedCount { get; set; }
+    public int ResourceResizedCount { get; set; }
+    public int ResourceDestroyedCount { get; set; }
+    public int PipelineCompileRequiredCount { get; set; }
+    public int PipelineCompileCompletedCount { get; set; }
+    public int PipelineBackgroundCompileCompletedCount { get; set; }
+    public int PipelineForegroundCompileCompletedCount { get; set; }
+    public int PipelineAsyncQueuedCount { get; set; }
+    public int PipelineQueueRejectedCount { get; set; }
+    public int PipelineDrawNotReadyCount { get; set; }
+    public int RequiredPipelinePendingCount { get; set; }
+    public int PipelineRecordDeferredCount { get; set; }
+    public int RenderThreadShaderCompileCount { get; set; }
     public int ResourcePlanReplacementCount { get; set; }
+    public int SwapchainRetirementQueuedCount { get; set; }
+    public int SwapchainRetirementDrainedCount { get; set; }
+    public int SwapchainRetirementPendingCount { get; set; }
+    public int SwapchainRetirementPendingHighWater { get; set; }
+    public int SwapchainRetirementDeferredCount { get; set; }
     public int CommandBufferCleanReuseCount { get; set; }
     public int CommandBufferRecordCount { get; set; }
     public int PrimaryCommandBufferReuseCount { get; set; }
     public int PrimaryCommandBufferRecordCount { get; set; }
+    public int CommandBufferDecisionReasonMask { get; set; }
     public int GlobalFallbackInvalidationCount { get; set; }
     public int RetiredResourceCount { get; set; }
     public int LifetimeLiveResourceCount { get; set; }
@@ -95,6 +115,13 @@ public struct OpenXrSmokeFrameLedgerEntry
     public int ForceFlushCount { get; set; }
     public int UnapprovedPolicyEventCount { get; set; }
     public int PlannerPruneCount { get; set; }
+    public int PhysicalPlanCacheHits { get; set; }
+    public int PhysicalPlanCacheMisses { get; set; }
+    public int PhysicalPlanGenerations { get; set; }
+    public int PhysicalPlanAliasReuses { get; set; }
+    public int PlannerArenaHighWater { get; set; }
+    public long RenderGraphPlanGeneration { get; set; }
+    public int PlannerEvictionDeferralCount { get; set; }
     public int OutputMissedDeadlineCount { get; set; }
     public ulong OutputManifestFrameId { get; set; }
     public ulong OutputWorkloadIdentityHash { get; set; }

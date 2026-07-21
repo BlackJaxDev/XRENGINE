@@ -1284,6 +1284,7 @@ public sealed class RenderPipelineResourceLifecycleTests
             nameof(ResourceGenerationKey.FeatureMask),
             nameof(ResourceGenerationKey.ReservedViewCount),
             nameof(ResourceGenerationKey.ReservedEyeIndex),
+            nameof(ResourceGenerationKey.SettingsRevision),
         ];
 
         propertyNames.ShouldBe(expectedProperties.OrderBy(static name => name, StringComparer.Ordinal).ToArray());
@@ -1309,31 +1310,160 @@ public sealed class RenderPipelineResourceLifecycleTests
 
         SetEffectiveFrameProfile(instance, outputHdr: true, EAntiAliasingMode.None, msaaSamples: 1u);
         AssertOnlyKeyFieldsChanged(baseline, BuildGenerationKey(instance, 640, 360, 320, 180),
-            nameof(ResourceGenerationKey.OutputHDR));
+            nameof(ResourceGenerationKey.OutputHDR), nameof(ResourceGenerationKey.SettingsRevision));
 
         SetEffectiveFrameProfile(instance, outputHdr: false, EAntiAliasingMode.Taa, msaaSamples: 1u);
         AssertOnlyKeyFieldsChanged(baseline, BuildGenerationKey(instance, 640, 360, 320, 180),
-            nameof(ResourceGenerationKey.AntiAliasingMode));
+            nameof(ResourceGenerationKey.AntiAliasingMode), nameof(ResourceGenerationKey.SettingsRevision));
 
         SetEffectiveFrameProfile(instance, outputHdr: false, EAntiAliasingMode.None, msaaSamples: 4u);
         AssertOnlyKeyFieldsChanged(baseline, BuildGenerationKey(instance, 640, 360, 320, 180),
-            nameof(ResourceGenerationKey.MsaaSampleCount));
+            nameof(ResourceGenerationKey.MsaaSampleCount), nameof(ResourceGenerationKey.SettingsRevision));
 
         SetEffectiveFrameProfile(instance, outputHdr: false, EAntiAliasingMode.None, msaaSamples: 1u);
         pipeline.StereoResources = true;
         AssertOnlyKeyFieldsChanged(baseline, BuildGenerationKey(instance, 640, 360, 320, 180),
-            nameof(ResourceGenerationKey.Stereo), nameof(ResourceGenerationKey.ReservedViewCount));
+            nameof(ResourceGenerationKey.Stereo), nameof(ResourceGenerationKey.ReservedViewCount), nameof(ResourceGenerationKey.SettingsRevision));
         BuildGenerationKey(instance, 640, 360, 320, 180).ReservedEyeIndex.ShouldBe(0u);
         pipeline.StereoResources = false;
 
         pipeline.FeatureMask = 0x20UL;
         AssertOnlyKeyFieldsChanged(baseline, BuildGenerationKey(instance, 640, 360, 320, 180),
-            nameof(ResourceGenerationKey.FeatureMask));
+            nameof(ResourceGenerationKey.FeatureMask), nameof(ResourceGenerationKey.SettingsRevision));
 
         pipeline.FeatureMask = 0UL;
         XRViewport externalViewport = new(null) { RendersToExternalSwapchainTarget = true };
         AssertOnlyKeyFieldsChanged(baseline, BuildGenerationKey(instance, 640, 360, 320, 180, externalViewport),
-            nameof(ResourceGenerationKey.ExternalTargetKind));
+            nameof(ResourceGenerationKey.ExternalTargetKind), nameof(ResourceGenerationKey.SettingsRevision));
+    }
+
+    [Test]
+    public void EffectiveGenerationKey_ReusesImmutableSettingsRevisionAcrossExtentOnlyRequests()
+    {
+        GenerationFailureTestPipeline pipeline = new();
+        XRRenderPipelineInstance instance = new(pipeline);
+        SetEffectiveFrameProfile(instance, outputHdr: false, EAntiAliasingMode.Taa, msaaSamples: 1u);
+
+        ResourceGenerationKey first = BuildGenerationKey(instance, 640, 360, 320, 180);
+        ResourceGenerationKey resized = BuildGenerationKey(instance, 1280, 720, 640, 360);
+        ResourceGenerationKey repeated = BuildGenerationKey(instance, 1280, 720, 640, 360);
+
+        first.SettingsRevision.ShouldBeGreaterThan(0UL);
+        resized.SettingsRevision.ShouldBe(first.SettingsRevision);
+        repeated.ShouldBe(resized);
+    }
+
+    [Test]
+    public void ResourceGeneration_DetectsFeatureMaskDivergenceForSameSettingsRevision()
+    {
+        GenerationFailureTestPipeline pipeline = new();
+        XRRenderPipelineInstance instance = new(pipeline);
+        ResourceGenerationKey baseline = CreateKey() with { SettingsRevision = 7UL };
+        ResourceGenerationKey divergent = baseline with { FeatureMask = 0x20UL };
+
+        RequestGenerationKey(instance, baseline, "Baseline").ShouldBeTrue();
+        RequestGenerationKey(instance, divergent, "Divergent").ShouldBeTrue();
+
+        instance.ResourceGenerationDivergenceCount.ShouldBeGreaterThan(0L);
+    }
+
+    [Test]
+    public void ResourceGeneration_DetectsLayoutDivergenceBehindMatchingPendingKey()
+    {
+        GenerationFailureTestPipeline pipeline = new();
+        XRRenderPipelineInstance instance = new(pipeline);
+        ResourceGenerationKey key = CreateKey() with { SettingsRevision = 11UL };
+
+        RequestGenerationKey(instance, key, "Baseline", force: true).ShouldBeTrue();
+        pipeline.IncludeExternalTexture = true;
+        RequestGenerationKey(instance, key, "SameKeyDifferentLayout", force: true).ShouldBeTrue();
+
+        instance.ResourceGenerationDivergenceCount.ShouldBeGreaterThan(0L);
+    }
+
+    [Test]
+    public void ResourceGenerationSettings_CameraNullPathDoesNotReadAmbientOrLastCamera()
+    {
+        string source = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs");
+        string capture = Regex.Match(
+            source,
+            @"private ResourceGenerationSettingsSnapshot CaptureResourceGenerationSettingsSnapshot[\s\S]*?private bool TryPreparePendingGeneration").Value;
+
+        capture.ShouldNotContain("RenderState.SceneCamera");
+        capture.ShouldNotContain("RenderState.RenderingCamera");
+        capture.ShouldNotContain("LastSceneCamera");
+        capture.ShouldNotContain("LastRenderingCamera");
+        capture.ShouldContain("viewport?.ActiveCamera");
+    }
+
+    [TestCase(typeof(DefaultRenderPipeline))]
+    [TestCase(typeof(DefaultRenderPipeline2))]
+    [NonParallelizable]
+    public void DefaultPipeline_CameraUnavailableResizeThenFramePrepareKeepsOneFeatureSnapshot(Type pipelineType)
+    {
+        IRuntimeShaderServices? previousShaderServices = RuntimeShaderServices.Current;
+        XRRenderPipelineInstance? instance = null;
+        try
+        {
+            RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
+            RenderPipeline pipeline = (RenderPipeline)Activator.CreateInstance(pipelineType)!;
+            instance = new XRRenderPipelineInstance(pipeline);
+            XRCamera gtaoCamera = new();
+            _ = gtaoCamera.PostProcessStates.GetOrCreateState(pipeline);
+            XRViewport viewport = new(null) { SetRenderPipelineFromCamera = false };
+            viewport.Camera = gtaoCamera;
+
+            ResourceGenerationKey cameraAvailable = BuildGenerationKey(
+                instance,
+                1920,
+                1080,
+                1920,
+                1080,
+                viewport);
+            cameraAvailable.FeatureMask.ShouldNotBe(0UL);
+
+            // Model the window callback that temporarily cannot resolve its camera. The last
+            // immutable settings snapshot must carry GTAO mode/resolution through the callback.
+            viewport.Camera = null;
+            instance.ViewportResized(2560, 1369, viewport);
+            RenderResourceGeneration? resizePending = instance.PendingGeneration;
+            if (pipeline is DefaultRenderPipeline)
+            {
+                resizePending.ShouldNotBeNull();
+                resizePending.Key.FeatureMask.ShouldBe(cameraAvailable.FeatureMask);
+                resizePending.Key.SettingsRevision.ShouldBe(cameraAvailable.SettingsRevision);
+            }
+            else
+            {
+                // V2 invalidates its resize-sensitive resources here and deliberately waits
+                // for frame preparation to request the next managed generation.
+                resizePending.ShouldBeNull();
+            }
+
+            // The next frame resolves the camera again. It must recognize the resize request as
+            // the same generation instead of superseding it as a FrameProfileChanged request.
+            viewport.Camera = gtaoCamera;
+            instance.RequestResourceGeneration(
+                2560,
+                1369,
+                2560,
+                1369,
+                "FrameProfileChanged",
+                viewport: viewport).ShouldBeTrue();
+
+            RenderResourceGeneration framePending = instance.PendingGeneration.ShouldNotBeNull();
+            if (resizePending is not null)
+                framePending.ShouldBeSameAs(resizePending);
+            framePending.Key.FeatureMask.ShouldBe(cameraAvailable.FeatureMask);
+            framePending.Key.SettingsRevision.ShouldBe(cameraAvailable.SettingsRevision);
+            instance.ResourceGenerationDivergenceCount.ShouldBe(0L);
+        }
+        finally
+        {
+            instance?.DestroyCache();
+            RuntimeShaderServices.Current = previousShaderServices;
+        }
     }
 
     [Test]
@@ -2593,6 +2723,21 @@ public sealed class RenderPipelineResourceLifecycleTests
         return (ResourceGenerationKey)method.Invoke(
             instance,
             [displayWidth, displayHeight, internalWidth, internalHeight, viewport])!;
+    }
+
+    private static bool RequestGenerationKey(
+        XRRenderPipelineInstance instance,
+        ResourceGenerationKey key,
+        string reason,
+        bool force = false)
+    {
+        MethodInfo method = typeof(XRRenderPipelineInstance).GetMethod(
+            "RequestResourceGeneration",
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            types: [typeof(ResourceGenerationKey), typeof(string), typeof(bool)],
+            modifiers: null).ShouldNotBeNull();
+        return (bool)method.Invoke(instance, [key, reason, force])!;
     }
 
     private static void SetEffectiveFrameProfile(

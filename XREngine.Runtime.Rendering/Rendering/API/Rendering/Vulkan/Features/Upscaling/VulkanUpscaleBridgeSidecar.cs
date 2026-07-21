@@ -121,11 +121,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         if (!_deviceState.IsOperational)
             throw new InvalidOperationException($"The Vulkan upscale bridge device is {_deviceState.State}.");
 
-        Fence submitFence = slot.SubmitFence;
-        Result waitResult = _api.WaitForFences(_device, 1, in submitFence, true, ulong.MaxValue);
-        ObserveDeviceResult(waitResult);
-        if (waitResult != Result.Success)
-            throw new InvalidOperationException($"Failed to wait for bridge slot {slot.SlotIndex} availability ({waitResult}).");
+        WaitForFrameSlotCompletion(slot, "availability");
     }
 
     /// <summary>
@@ -262,10 +258,33 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         if (_device.Handle == 0)
             throw new InvalidOperationException("The Vulkan upscale bridge sidecar device is unavailable.");
 
-        _api.DeviceWaitIdle(_device);
+        using VulkanQueueOperationLease lease = VulkanQueueOperationLease.TryEnter(
+            _graphicsQueueOperationGate,
+            _deviceState);
+        if (!lease.Acquired)
+            throw new InvalidOperationException($"The Vulkan upscale bridge device is {_deviceState.State}.");
+
+        // Every sidecar queue submission is associated with exactly one frame-slot
+        // fence. Waiting those bounded owners is sufficient before their command
+        // buffers and shared images are replaced, and does not idle unrelated work.
+        for (int slotIndex = 0; slotIndex < _ownedSlots.Length; slotIndex++)
+            WaitForFrameSlotCompletion(_ownedSlots[slotIndex], "frame-resource recreate");
+
         ResetVendorSessionsForFrameResourceRecreate();
         DestroyOwnedFrameSlots();
         return CreateFrameSlots(renderer, frameResources, viewportTag);
+    }
+
+    private void WaitForFrameSlotCompletion(VulkanUpscaleBridgeFrameSlot slot, string reason)
+    {
+        Fence submitFence = slot.SubmitFence;
+        Result waitResult = _api.WaitForFences(_device, 1, in submitFence, true, ulong.MaxValue);
+        ObserveDeviceResult(waitResult);
+        if (waitResult != Result.Success)
+        {
+            throw new InvalidOperationException(
+                $"Failed to wait for bridge slot {slot.SlotIndex} {reason} ({waitResult}).");
+        }
     }
 
     /// <summary>

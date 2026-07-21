@@ -70,7 +70,8 @@ public sealed record RenderGraphSynchronizationEdge(
     RenderGraphSubresourceRange SubresourceRange,
     RenderGraphSyncState ProducerState,
     RenderGraphSyncState ConsumerState,
-    bool DependencyOnly);
+    bool DependencyOnly,
+    int ResourceVersion = -1);
 
 public sealed class RenderGraphSynchronizationInfo
 {
@@ -113,7 +114,8 @@ public static class RenderGraphSynchronizationPlanner
 
         IReadOnlyList<RenderPassMetadata> orderedPasses = TopologicallySort(passMetadata);
         var edges = new List<RenderGraphSynchronizationEdge>();
-        var lastUsageByResource = new Dictionary<string, (int PassIndex, ERenderPassResourceType Type, RenderGraphSyncState State)>(StringComparer.OrdinalIgnoreCase);
+        var priorUsagesByResource = new Dictionary<string, List<TrackedResourceUsage>>(StringComparer.OrdinalIgnoreCase);
+        var versionByResource = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
         foreach (RenderPassMetadata pass in orderedPasses)
         {
@@ -123,24 +125,41 @@ public static class RenderGraphSynchronizationPlanner
                     continue;
 
                 RenderGraphSyncState consumerState = ResolveState(usage, pass.Stage);
-                string usageKey = BuildUsageKey(usage);
-                if (lastUsageByResource.TryGetValue(usageKey, out var producer))
+                int resourceVersion = ResolveResourceVersion(usage, versionByResource);
+                if (!priorUsagesByResource.TryGetValue(usage.ResourceName, out List<TrackedResourceUsage>? priorUsages))
                 {
-                    if (producer.PassIndex != pass.PassIndex)
-                    {
-                        edges.Add(new RenderGraphSynchronizationEdge(
-                            producer.PassIndex,
-                            pass.PassIndex,
-                            usage.ResourceName,
-                            usage.ResourceType,
-                            usage.SubresourceRange,
-                            producer.State,
-                            consumerState,
-                            DependencyOnly: false));
-                    }
+                    priorUsages = [];
+                    priorUsagesByResource.Add(usage.ResourceName, priorUsages);
                 }
 
-                lastUsageByResource[usageKey] = (pass.PassIndex, usage.ResourceType, consumerState);
+                bool currentWrites = Writes(usage.Access);
+                for (int priorIndex = 0; priorIndex < priorUsages.Count; priorIndex++)
+                {
+                    TrackedResourceUsage prior = priorUsages[priorIndex];
+                    if (prior.PassIndex == pass.PassIndex ||
+                        !prior.SubresourceRange.Overlaps(usage.SubresourceRange) ||
+                        (!prior.Writes && !currentWrites))
+                    {
+                        continue;
+                    }
+
+                    edges.Add(new RenderGraphSynchronizationEdge(
+                        prior.PassIndex,
+                        pass.PassIndex,
+                        usage.ResourceName,
+                        usage.ResourceType,
+                        Intersect(prior.SubresourceRange, usage.SubresourceRange),
+                        prior.State,
+                        consumerState,
+                        DependencyOnly: false,
+                        resourceVersion));
+                }
+
+                priorUsages.Add(new TrackedResourceUsage(
+                    pass.PassIndex,
+                    usage.SubresourceRange,
+                    consumerState,
+                    currentWrites));
             }
         }
 
@@ -173,6 +192,28 @@ public static class RenderGraphSynchronizationPlanner
         return new RenderGraphSynchronizationInfo(edges);
     }
 
+    private static int ResolveResourceVersion(
+        RenderPassResourceUsage usage,
+        Dictionary<string, int> versionByResource)
+    {
+        if (usage.LogicalVersion >= 0)
+        {
+            versionByResource[usage.ResourceName] = Math.Max(
+                usage.LogicalVersion,
+                versionByResource.GetValueOrDefault(usage.ResourceName, -1));
+            return usage.LogicalVersion;
+        }
+
+        int current = versionByResource.GetValueOrDefault(usage.ResourceName, -1);
+        if (usage.Access is ERenderGraphAccess.Write or ERenderGraphAccess.ReadWrite)
+        {
+            current++;
+            versionByResource[usage.ResourceName] = current;
+        }
+
+        return current;
+    }
+
     public static IReadOnlyList<RenderPassMetadata> TopologicallySort(IReadOnlyCollection<RenderPassMetadata> passMetadata)
     {
         Dictionary<int, RenderPassMetadata> lookup = passMetadata.ToDictionary(p => p.PassIndex);
@@ -181,15 +222,23 @@ public static class RenderGraphSynchronizationPlanner
 
         foreach (RenderPassMetadata pass in lookup.Values)
         {
+            foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
+            {
+                if (!usage.SubresourceRange.IsValid)
+                    throw new InvalidOperationException($"Render graph pass {pass.PassIndex} ('{pass.Name}') declares an invalid subresource range for '{usage.ResourceName}': {usage.SubresourceRange}.");
+            }
+
             foreach (int dependency in pass.ExplicitDependencies)
             {
                 if (!lookup.ContainsKey(dependency))
-                    continue;
+                    throw new InvalidOperationException($"Render graph pass {pass.PassIndex} ('{pass.Name}') depends on missing pass {dependency}.");
 
-                edges[dependency].Add(pass.PassIndex);
-                inDegree[pass.PassIndex] = inDegree[pass.PassIndex] + 1;
+                AddDependencyEdge(dependency, pass.PassIndex, edges, inDegree);
             }
         }
+
+        AddVersionedResourceEdges(lookup, edges, inDegree);
+        AddLegacyResourceEdges(lookup, edges, inDegree);
 
         SortedSet<int> ready = new(
             inDegree.Where(kvp => kvp.Value == 0).Select(kvp => kvp.Key),
@@ -214,16 +263,150 @@ public static class RenderGraphSynchronizationPlanner
         if (ordered.Count == lookup.Count)
             return ordered;
 
-        HashSet<int> included = ordered.Select(p => p.PassIndex).ToHashSet();
-        foreach (RenderPassMetadata pass in lookup.Values
-            .OrderBy(static p => p.DeclarationOrder)
-            .ThenBy(static p => p.PassIndex))
+        string cycle = DescribeCycle(lookup, edges, inDegree);
+        throw new InvalidOperationException($"Render graph contains a dependency cycle: {cycle}.");
+    }
+
+    private static void AddVersionedResourceEdges(
+        IReadOnlyDictionary<int, RenderPassMetadata> lookup,
+        Dictionary<int, List<int>> edges,
+        Dictionary<int, int> inDegree)
+    {
+        var producersByVersion = new Dictionary<string, List<(int PassIndex, RenderPassResourceUsage Usage)>>(StringComparer.OrdinalIgnoreCase);
+        var consumers = new List<(int PassIndex, RenderPassResourceUsage Usage, string Key)>();
+
+        foreach (RenderPassMetadata pass in lookup.Values)
         {
-            if (!included.Contains(pass.PassIndex))
-                ordered.Add(pass);
+            foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
+            {
+                if (usage.LogicalVersion < 0 || string.IsNullOrWhiteSpace(usage.ResourceName))
+                    continue;
+
+                string key = $"{usage.ResourceName}@v{usage.LogicalVersion}";
+                bool writes = usage.Access is ERenderGraphAccess.Write or ERenderGraphAccess.ReadWrite;
+                bool reads = usage.Access is ERenderGraphAccess.Read or ERenderGraphAccess.ReadWrite;
+
+                if (writes)
+                {
+                    if (!producersByVersion.TryGetValue(key, out List<(int PassIndex, RenderPassResourceUsage Usage)>? producers))
+                    {
+                        producers = [];
+                        producersByVersion.Add(key, producers);
+                    }
+
+                    for (int producerIndex = 0; producerIndex < producers.Count; producerIndex++)
+                    {
+                        if (producers[producerIndex].Usage.SubresourceRange.Overlaps(usage.SubresourceRange))
+                            throw new InvalidOperationException($"Logical resource '{usage.ResourceName}' version {usage.LogicalVersion} has overlapping producers in passes {producers[producerIndex].PassIndex} and {pass.PassIndex}.");
+                    }
+
+                    producers.Add((pass.PassIndex, usage));
+                }
+
+                if (reads)
+                    consumers.Add((pass.PassIndex, usage, key));
+            }
         }
 
-        return ordered;
+        foreach ((int consumer, RenderPassResourceUsage usage, string key) in consumers)
+        {
+            bool matchedProducer = false;
+            if (producersByVersion.TryGetValue(key, out List<(int PassIndex, RenderPassResourceUsage Usage)>? producers))
+            {
+                for (int producerIndex = 0; producerIndex < producers.Count; producerIndex++)
+                {
+                    (int producer, RenderPassResourceUsage producerUsage) = producers[producerIndex];
+                    if (!producerUsage.SubresourceRange.Overlaps(usage.SubresourceRange))
+                        continue;
+
+                    matchedProducer = true;
+                    if (producer != consumer)
+                        AddDependencyEdge(producer, consumer, edges, inDegree);
+                }
+            }
+
+            if (!matchedProducer && (!usage.IsImported || usage.ImportedInitialState is null))
+                throw new InvalidOperationException($"Logical resource '{usage.ResourceName}' version {usage.LogicalVersion} is read before it is produced or imported with a valid initial state.");
+        }
+    }
+
+    private static void AddLegacyResourceEdges(
+        IReadOnlyDictionary<int, RenderPassMetadata> lookup,
+        Dictionary<int, List<int>> edges,
+        Dictionary<int, int> inDegree)
+    {
+        RenderPassMetadata[] declared = lookup.Values
+            .OrderBy(static pass => pass.DeclarationOrder)
+            .ThenBy(static pass => pass.PassIndex)
+            .ToArray();
+        var priorByResource = new Dictionary<string, List<(int PassIndex, RenderPassResourceUsage Usage)>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (RenderPassMetadata pass in declared)
+        {
+            foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
+            {
+                if (usage.LogicalVersion >= 0 || string.IsNullOrWhiteSpace(usage.ResourceName))
+                    continue;
+
+                if (!priorByResource.TryGetValue(usage.ResourceName, out List<(int PassIndex, RenderPassResourceUsage Usage)>? prior))
+                {
+                    prior = [];
+                    priorByResource.Add(usage.ResourceName, prior);
+                }
+
+                bool currentWrites = Writes(usage.Access);
+                for (int priorIndex = 0; priorIndex < prior.Count; priorIndex++)
+                {
+                    (int producer, RenderPassResourceUsage producerUsage) = prior[priorIndex];
+                    if (producerUsage.SubresourceRange.Overlaps(usage.SubresourceRange) &&
+                        (Writes(producerUsage.Access) || currentWrites))
+                    {
+                        AddDependencyEdge(producer, pass.PassIndex, edges, inDegree);
+                    }
+                }
+
+                prior.Add((pass.PassIndex, usage));
+            }
+        }
+    }
+
+    private static void AddDependencyEdge(
+        int producer,
+        int consumer,
+        Dictionary<int, List<int>> edges,
+        Dictionary<int, int> inDegree)
+    {
+        if (edges[producer].Contains(consumer))
+            return;
+
+        edges[producer].Add(consumer);
+        inDegree[consumer] = inDegree[consumer] + 1;
+    }
+
+    private static string DescribeCycle(
+        IReadOnlyDictionary<int, RenderPassMetadata> lookup,
+        IReadOnlyDictionary<int, List<int>> edges,
+        IReadOnlyDictionary<int, int> inDegree)
+    {
+        HashSet<int> remaining = inDegree.Where(static pair => pair.Value > 0).Select(static pair => pair.Key).ToHashSet();
+        int start = remaining.Min();
+        var path = new List<int>();
+        var pathIndex = new Dictionary<int, int>();
+        int current = start;
+
+        while (true)
+        {
+            if (pathIndex.TryGetValue(current, out int cycleStart))
+                return string.Join(" -> ", path.Skip(cycleStart).Append(current).Select(index => $"{index} ('{lookup[index].Name}')"));
+
+            pathIndex[current] = path.Count;
+            path.Add(current);
+            int next = edges[current].FirstOrDefault(remaining.Contains);
+            if (!remaining.Contains(next))
+                return string.Join(" -> ", remaining.OrderBy(static index => index).Select(index => $"{index} ('{lookup[index].Name}')"));
+
+            current = next;
+        }
     }
 
     private static int ComparePassDeclarationOrder(
@@ -249,7 +432,7 @@ public static class RenderGraphSynchronizationPlanner
         return new RenderGraphSyncState(ResolveStage(ERenderPassResourceType.TransferDestination, stage), RenderGraphAccessMask.MemoryRead | RenderGraphAccessMask.MemoryWrite, null);
     }
 
-    private static RenderGraphSyncState ResolveState(RenderPassResourceUsage usage, ERenderGraphPassStage passStage)
+    internal static RenderGraphSyncState ResolveState(RenderPassResourceUsage usage, ERenderGraphPassStage passStage)
         => new(
             ResolveStage(usage.ResourceType, passStage),
             ResolveAccess(usage.ResourceType, usage.Access),
@@ -360,12 +543,33 @@ public static class RenderGraphSynchronizationPlanner
         };
     }
 
-    private static string BuildUsageKey(RenderPassResourceUsage usage)
-    {
-        RenderGraphSubresourceRange range = usage.SubresourceRange;
-        if (range.IsWholeResource)
-            return usage.ResourceName;
+    private static bool Writes(ERenderGraphAccess access)
+        => access is ERenderGraphAccess.Write or ERenderGraphAccess.ReadWrite;
 
-        return $"{usage.ResourceName}|m{range.BaseMipLevel}:{range.MipLevelCount}|l{range.BaseArrayLayer}:{range.ArrayLayerCount}";
+    private static RenderGraphSubresourceRange Intersect(
+        in RenderGraphSubresourceRange left,
+        in RenderGraphSubresourceRange right)
+    {
+        uint mipStart = Math.Max(left.BaseMipLevel, right.BaseMipLevel);
+        uint layerStart = Math.Max(left.BaseArrayLayer, right.BaseArrayLayer);
+        ulong mipEnd = Math.Min(End(left.BaseMipLevel, left.MipLevelCount), End(right.BaseMipLevel, right.MipLevelCount));
+        ulong layerEnd = Math.Min(End(left.BaseArrayLayer, left.ArrayLayerCount), End(right.BaseArrayLayer, right.ArrayLayerCount));
+        return new RenderGraphSubresourceRange(
+            mipStart,
+            Count(mipStart, mipEnd),
+            layerStart,
+            Count(layerStart, layerEnd));
     }
+
+    private static ulong End(uint start, uint count)
+        => count == RenderGraphSubresourceRange.Remaining ? ulong.MaxValue : (ulong)start + count;
+
+    private static uint Count(uint start, ulong end)
+        => end == ulong.MaxValue ? RenderGraphSubresourceRange.Remaining : checked((uint)(end - start));
+
+    private readonly record struct TrackedResourceUsage(
+        int PassIndex,
+        RenderGraphSubresourceRange SubresourceRange,
+        RenderGraphSyncState State,
+        bool Writes);
 }

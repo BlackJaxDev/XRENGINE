@@ -241,6 +241,50 @@ public sealed class RenderPassBuilder
         => AddUsage(resourceName, ERenderPassResourceType.TransferDestination, ERenderGraphAccess.Write, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
 
     /// <summary>
+    /// Declares an explicitly versioned logical resource use. Writes publish the supplied
+    /// version and reads consume it, allowing the graph compiler to derive dependencies
+    /// independently of declaration order.
+    /// </summary>
+    public RenderPassBuilder UseVersionedResource(
+        string resourceName,
+        ERenderPassResourceType type,
+        ERenderGraphAccess access,
+        int logicalVersion,
+        RenderGraphSubresourceRange? subresourceRange = null,
+        bool imported = false,
+        RenderGraphSyncState? importedInitialState = null)
+    {
+        if (logicalVersion < 0)
+            throw new ArgumentOutOfRangeException(nameof(logicalVersion));
+
+        if (!string.IsNullOrWhiteSpace(resourceName))
+        {
+            _metadata.AddUsage(new RenderPassResourceUsage(
+                resourceName,
+                type,
+                access,
+                ERenderPassLoadOp.Load,
+                ERenderPassStoreOp.Store,
+                subresourceRange,
+                logicalVersion: logicalVersion,
+                imported: imported,
+                importedInitialState: importedInitialState));
+        }
+
+        return this;
+    }
+
+    /// <summary>
+    /// Allows this pass alone to be deferred while its asynchronous pipeline compilation is pending.
+    /// All passes are submission-blocking by default.
+    /// </summary>
+    public RenderPassBuilder AllowPipelineDeferral()
+    {
+        _metadata.UpdatePipelineReadiness(required: false);
+        return this;
+    }
+
+    /// <summary>
     /// Configures the render pass to use a transfer source and destination, which provides read and write access to the resource for transfer operations.
     /// </summary>
     /// <param name="resourceName">The name of the resource.</param>

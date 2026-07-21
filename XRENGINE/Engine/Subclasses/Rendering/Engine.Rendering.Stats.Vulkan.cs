@@ -51,6 +51,9 @@ namespace XREngine
                     private static int _vulkanPipelineCompileRequiredCount;
                     private static int _vulkanPipelineCompileCompletedCount;
                     private static int _vulkanPipelineBackgroundCompileCompletedCount;
+                    private static int _vulkanRequiredPipelinePendingCount;
+                    private static int _vulkanPipelineRecordDeferredCount;
+                    private static int _vulkanRenderThreadShaderCompileCount;
                     private static long _vulkanPipelineCompileTicks;
                     private static long _vulkanPipelineCompileMaxTicks;
                     private static int _vulkanPipelineAsyncQueuedCount;
@@ -137,6 +140,9 @@ namespace XREngine
                     private static int _lastFrameVulkanPipelineCompileRequiredCount;
                     private static int _lastFrameVulkanPipelineCompileCompletedCount;
                     private static int _lastFrameVulkanPipelineBackgroundCompileCompletedCount;
+                    private static int _lastFrameVulkanRequiredPipelinePendingCount;
+                    private static int _lastFrameVulkanPipelineRecordDeferredCount;
+                    private static int _lastFrameVulkanRenderThreadShaderCompileCount;
                     private static long _lastFrameVulkanPipelineCompileTicks;
                     private static long _lastFrameVulkanPipelineCompileMaxTicks;
                     private static int _lastFrameVulkanPipelineAsyncQueuedCount;
@@ -318,9 +324,19 @@ namespace XREngine
                     private static int _vulkanRetiredResourcePlanReplacements;
                     private static int _vulkanRetiredResourcePlanImages;
                     private static int _vulkanRetiredResourcePlanBuffers;
+                    private static int _vulkanSwapchainRetirementQueuedCount;
+                    private static int _vulkanSwapchainRetirementDrainedCount;
+                    private static int _vulkanSwapchainRetirementPendingCount;
+                    private static int _vulkanSwapchainRetirementPendingHighWater;
+                    private static int _vulkanSwapchainRetirementDeferredCount;
                     private static int _lastFrameVulkanRetiredResourcePlanReplacements;
                     private static int _lastFrameVulkanRetiredResourcePlanImages;
                     private static int _lastFrameVulkanRetiredResourcePlanBuffers;
+                    private static int _lastFrameVulkanSwapchainRetirementQueuedCount;
+                    private static int _lastFrameVulkanSwapchainRetirementDrainedCount;
+                    private static int _lastFrameVulkanSwapchainRetirementPendingCount;
+                    private static int _lastFrameVulkanSwapchainRetirementPendingHighWater;
+                    private static int _lastFrameVulkanSwapchainRetirementDeferredCount;
                     private static int _vulkanFrameOpTotalCount;
                     private static int _vulkanFrameOpClearCount;
                     private static int _vulkanFrameOpMeshDrawCount;
@@ -482,6 +498,9 @@ namespace XREngine
                     public static int VulkanPipelineCompileRequiredCount => _lastFrameVulkanPipelineCompileRequiredCount;
                     public static int VulkanPipelineCompileCompletedCount => _lastFrameVulkanPipelineCompileCompletedCount;
                     public static int VulkanPipelineBackgroundCompileCompletedCount => _lastFrameVulkanPipelineBackgroundCompileCompletedCount;
+                    public static int VulkanRequiredPipelinePendingCount => _lastFrameVulkanRequiredPipelinePendingCount;
+                    public static int VulkanPipelineRecordDeferredCount => _lastFrameVulkanPipelineRecordDeferredCount;
+                    public static int VulkanRenderThreadShaderCompileCount => _lastFrameVulkanRenderThreadShaderCompileCount;
                     public static double VulkanPipelineCompileTotalMs => TimeSpan.FromTicks(_lastFrameVulkanPipelineCompileTicks).TotalMilliseconds;
                     public static double VulkanPipelineCompileMaxMs => TimeSpan.FromTicks(_lastFrameVulkanPipelineCompileMaxTicks).TotalMilliseconds;
                     public static int VulkanPipelineAsyncQueuedCount => _lastFrameVulkanPipelineAsyncQueuedCount;
@@ -630,6 +649,11 @@ namespace XREngine
                     public static int VulkanRetiredResourcePlanReplacements => _lastFrameVulkanRetiredResourcePlanReplacements;
                     public static int VulkanRetiredResourcePlanImages => _lastFrameVulkanRetiredResourcePlanImages;
                     public static int VulkanRetiredResourcePlanBuffers => _lastFrameVulkanRetiredResourcePlanBuffers;
+                    public static int VulkanSwapchainRetirementQueuedCount => _lastFrameVulkanSwapchainRetirementQueuedCount;
+                    public static int VulkanSwapchainRetirementDrainedCount => _lastFrameVulkanSwapchainRetirementDrainedCount;
+                    public static int VulkanSwapchainRetirementPendingCount => _lastFrameVulkanSwapchainRetirementPendingCount;
+                    public static int VulkanSwapchainRetirementPendingHighWater => _lastFrameVulkanSwapchainRetirementPendingHighWater;
+                    public static int VulkanSwapchainRetirementDeferredCount => _lastFrameVulkanSwapchainRetirementDeferredCount;
                     public static int VulkanFrameOpTotalCount => _lastFrameVulkanFrameOpTotalCount;
                     public static int VulkanFrameOpClearCount => _lastFrameVulkanFrameOpClearCount;
                     public static int VulkanFrameOpMeshDrawCount => _lastFrameVulkanFrameOpMeshDrawCount;
@@ -1078,6 +1102,23 @@ namespace XREngine
                         Interlocked.Increment(ref _vulkanRetiredResourcePlanReplacements);
                         AddNonNegative(ref _vulkanRetiredResourcePlanImages, imageCount);
                         AddNonNegative(ref _vulkanRetiredResourcePlanBuffers, bufferCount);
+                    }
+
+                    public static void RecordVulkanSwapchainRetirement(
+                        int queued = 0,
+                        int drained = 0,
+                        int pending = 0,
+                        int deferred = 0)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        AddNonNegative(ref _vulkanSwapchainRetirementQueuedCount, queued);
+                        AddNonNegative(ref _vulkanSwapchainRetirementDrainedCount, drained);
+                        int normalizedPending = Math.Max(0, pending);
+                        Interlocked.Exchange(ref _vulkanSwapchainRetirementPendingCount, normalizedPending);
+                        UpdateHighWater(ref _vulkanSwapchainRetirementPendingHighWater, normalizedPending);
+                        AddNonNegative(ref _vulkanSwapchainRetirementDeferredCount, deferred);
                     }
 
                     public static void RecordVulkanFrameOpCensus(
@@ -1597,6 +1638,13 @@ namespace XREngine
                                 Interlocked.Add(ref _vulkanPipelineCompileTicks, compileTicks);
                                 UpdateHighWater(ref _vulkanPipelineCompileMaxTicks, compileTicks);
                                 break;
+                            case EVulkanPipelineTelemetryEvent.RequiredPipelineRecordDeferred:
+                                Interlocked.Increment(ref _vulkanRequiredPipelinePendingCount);
+                                Interlocked.Increment(ref _vulkanPipelineRecordDeferredCount);
+                                break;
+                            case EVulkanPipelineTelemetryEvent.RenderThreadShaderCompile:
+                                Interlocked.Increment(ref _vulkanRenderThreadShaderCompileCount);
+                                break;
                         }
 
                         switch (cacheOutcome)
@@ -1721,6 +1769,9 @@ namespace XREngine
                         _lastFrameVulkanPipelineCompileRequiredCount = _vulkanPipelineCompileRequiredCount;
                         _lastFrameVulkanPipelineCompileCompletedCount = _vulkanPipelineCompileCompletedCount;
                         _lastFrameVulkanPipelineBackgroundCompileCompletedCount = _vulkanPipelineBackgroundCompileCompletedCount;
+                        _lastFrameVulkanRequiredPipelinePendingCount = _vulkanRequiredPipelinePendingCount;
+                        _lastFrameVulkanPipelineRecordDeferredCount = _vulkanPipelineRecordDeferredCount;
+                        _lastFrameVulkanRenderThreadShaderCompileCount = _vulkanRenderThreadShaderCompileCount;
                         _lastFrameVulkanPipelineCompileTicks = _vulkanPipelineCompileTicks;
                         _lastFrameVulkanPipelineCompileMaxTicks = _vulkanPipelineCompileMaxTicks;
                         _lastFrameVulkanPipelineAsyncQueuedCount = _vulkanPipelineAsyncQueuedCount;
@@ -1809,6 +1860,11 @@ namespace XREngine
                         _lastFrameVulkanRetiredResourcePlanReplacements = _vulkanRetiredResourcePlanReplacements;
                         _lastFrameVulkanRetiredResourcePlanImages = _vulkanRetiredResourcePlanImages;
                         _lastFrameVulkanRetiredResourcePlanBuffers = _vulkanRetiredResourcePlanBuffers;
+                        _lastFrameVulkanSwapchainRetirementQueuedCount = _vulkanSwapchainRetirementQueuedCount;
+                        _lastFrameVulkanSwapchainRetirementDrainedCount = _vulkanSwapchainRetirementDrainedCount;
+                        _lastFrameVulkanSwapchainRetirementPendingCount = _vulkanSwapchainRetirementPendingCount;
+                        _lastFrameVulkanSwapchainRetirementPendingHighWater = _vulkanSwapchainRetirementPendingHighWater;
+                        _lastFrameVulkanSwapchainRetirementDeferredCount = _vulkanSwapchainRetirementDeferredCount;
                         _lastFrameVulkanFrameOpTotalCount = _vulkanFrameOpTotalCount;
                         _lastFrameVulkanFrameOpClearCount = _vulkanFrameOpClearCount;
                         _lastFrameVulkanFrameOpMeshDrawCount = _vulkanFrameOpMeshDrawCount;
@@ -1923,6 +1979,9 @@ namespace XREngine
                         _vulkanPipelineCompileRequiredCount = 0;
                         _vulkanPipelineCompileCompletedCount = 0;
                         _vulkanPipelineBackgroundCompileCompletedCount = 0;
+                        _vulkanRequiredPipelinePendingCount = 0;
+                        _vulkanPipelineRecordDeferredCount = 0;
+                        _vulkanRenderThreadShaderCompileCount = 0;
                         _vulkanPipelineCompileTicks = 0;
                         _vulkanPipelineCompileMaxTicks = 0;
                         _vulkanPipelineAsyncQueuedCount = 0;
@@ -2000,6 +2059,11 @@ namespace XREngine
                         _vulkanRetiredResourcePlanReplacements = 0;
                         _vulkanRetiredResourcePlanImages = 0;
                         _vulkanRetiredResourcePlanBuffers = 0;
+                        _vulkanSwapchainRetirementQueuedCount = 0;
+                        _vulkanSwapchainRetirementDrainedCount = 0;
+                        _vulkanSwapchainRetirementPendingCount = 0;
+                        _vulkanSwapchainRetirementPendingHighWater = 0;
+                        _vulkanSwapchainRetirementDeferredCount = 0;
                         _vulkanFrameOpTotalCount = 0;
                         _vulkanFrameOpClearCount = 0;
                         _vulkanFrameOpMeshDrawCount = 0;
