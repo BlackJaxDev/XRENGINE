@@ -30,12 +30,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                 {
                     GpuBvhDebugLineRenderer.RenderQueued(
                         instance.RenderState,
-                        GpuBvhDebugOverlayLayer.Base);
+                        BvhDebugOverlayLayer.Base);
                     RenderEnabledSpatialTreeDebug(instance, camera);
                     RuntimeEngine.Rendering.Debug.RenderShapes();
                     GpuBvhDebugLineRenderer.RenderQueued(
                         instance.RenderState,
-                        GpuBvhDebugOverlayLayer.Highlight);
+                        BvhDebugOverlayLayer.Highlight);
                 }
             }
             finally

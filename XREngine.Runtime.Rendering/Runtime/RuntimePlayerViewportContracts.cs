@@ -4,7 +4,7 @@ namespace XREngine.Rendering;
 
 public interface IRuntimeLocalPlayerViewport
 {
-    WindowInputSnapshot InputSnapshot { get; }
+    WindowInputSnapshot ConsumeInputSnapshot();
     void RequestMouseCapture(bool captured);
     void RefreshControlledPawnCamera(XRComponent? controlledPawnComponent);
 }

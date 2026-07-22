@@ -288,9 +288,12 @@ namespace XREngine.Rendering.Commands
                 _renderingPasses = [];
                 _renderingPassCommandCounts.Clear();
                 _renderingPassCommandCounts.EnsureCapacity(_renderingPasses.Count);
+                _renderingPassMeshCommandCounts.Clear();
+                _renderingPassMeshCommandCounts.EnsureCapacity(_renderingPasses.Count);
                 _renderingPassCommandSetSignatures.Clear();
                 _renderingShadowCasterCommandSetSignature = 0u;
                 _renderingCommandCount = 0;
+                _renderingMeshCommandCount = 0;
                 _gpuPasses = [];
 
                 _passMetadata = incomingPassMetadata;
@@ -426,9 +429,11 @@ namespace XREngine.Rendering.Commands
         private Dictionary<int, ICollection<RenderCommand>> _updatingPasses = [];
         private Dictionary<int, ICollection<RenderCommand>> _renderingPasses = [];
         private readonly Dictionary<int, int> _renderingPassCommandCounts = [];
+        private readonly Dictionary<int, int> _renderingPassMeshCommandCounts = [];
         private readonly Dictionary<int, ulong> _renderingPassCommandSetSignatures = [];
         private ulong _renderingShadowCasterCommandSetSignature;
         private int _renderingCommandCount = 0;
+        private int _renderingMeshCommandCount = 0;
         private Dictionary<int, GPURenderPassCollection> _gpuPasses = [];
         private Dictionary<int, RenderPassMetadata> _passMetadata = [];
         private IRuntimeRenderPipelineDebugContext? _ownerPipeline;
@@ -571,10 +576,21 @@ namespace XREngine.Rendering.Commands
         public int GetRenderingCommandCount()
             => Volatile.Read(ref _renderingCommandCount);
 
+        public int GetRenderingMeshCommandCount()
+            => Volatile.Read(ref _renderingMeshCommandCount);
+
         public int GetRenderingPassCommandCount(int renderPass)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
             return _renderingPassCommandCounts.TryGetValue(renderPass, out int count)
+                ? count
+                : 0;
+        }
+
+        public int GetRenderingPassMeshCommandCount(int renderPass)
+        {
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+            return _renderingPassMeshCommandCounts.TryGetValue(renderPass, out int count)
                 ? count
                 : 0;
         }
@@ -1773,6 +1789,43 @@ namespace XREngine.Rendering.Commands
             return _renderingPassCommandCounts.TryGetValue(renderPass, out int count) && count > 0;
         }
 
+        public bool HasAnyRenderingCommands(ReadOnlySpan<int> renderPasses)
+        {
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+            for (int i = 0; i < renderPasses.Length; i++)
+            {
+                if (_renderingPassCommandCounts.TryGetValue(renderPasses[i], out int count) && count > 0)
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Returns whether the published render-side snapshot contains a mesh command in the requested pass.
+        /// Method/callback commands deliberately do not count as geometry workload.
+        /// </summary>
+        public bool HasRenderingMeshCommands(int renderPass)
+        {
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+            return _renderingPassMeshCommandCounts.TryGetValue(renderPass, out int count) && count > 0;
+        }
+
+        /// <summary>
+        /// Returns whether any requested pass contains a mesh command while acquiring the render-buffer lock once.
+        /// </summary>
+        public bool HasAnyRenderingMeshCommands(ReadOnlySpan<int> renderPasses)
+        {
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+            for (int i = 0; i < renderPasses.Length; i++)
+            {
+                if (_renderingPassMeshCommandCounts.TryGetValue(renderPasses[i], out int count) && count > 0)
+                    return true;
+            }
+
+            return false;
+        }
+
         public bool HasGpuEligibleMeshCommands(int renderPass)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
@@ -1981,19 +2034,26 @@ namespace XREngine.Rendering.Commands
         {
             _renderingPassCommandCounts.Clear();
             _renderingPassCommandCounts.EnsureCapacity(_renderingPasses.Count);
+            _renderingPassMeshCommandCounts.Clear();
+            _renderingPassMeshCommandCounts.EnsureCapacity(_renderingPasses.Count);
             _renderingPassCommandSetSignatures.Clear();
             int total = 0;
+            int meshTotal = 0;
             foreach ((int passIndex, ICollection<RenderCommand> pass) in _renderingPasses)
             {
                 int count = pass.Count;
+                ulong commandSetSignature = ComputeOcclusionCommandSetSignature(pass, out int meshCount);
                 _renderingPassCommandCounts[passIndex] = count;
-                _renderingPassCommandSetSignatures[passIndex] = ComputeOcclusionCommandSetSignature(pass);
+                _renderingPassMeshCommandCounts[passIndex] = meshCount;
+                _renderingPassCommandSetSignatures[passIndex] = commandSetSignature;
                 total += count;
+                meshTotal += meshCount;
             }
 
             _renderingShadowCasterCommandSetSignature = ComputeShadowCasterCommandSetSignature();
 
             Volatile.Write(ref _renderingCommandCount, total);
+            Volatile.Write(ref _renderingMeshCommandCount, meshTotal);
         }
 
         internal ulong ShadowCasterCommandSetSignature
@@ -2099,17 +2159,25 @@ namespace XREngine.Rendering.Commands
         }
 
         private static ulong ComputeOcclusionCommandSetSignature(ICollection<RenderCommand> commands)
+            => ComputeOcclusionCommandSetSignature(commands, out _);
+
+        private static ulong ComputeOcclusionCommandSetSignature(
+            ICollection<RenderCommand> commands,
+            out int meshCommandCount)
         {
             // Membership is what invalidates keyed query history. Sort order is
             // intentionally ignored because normal camera motion can reorder an
             // otherwise identical set without changing StableQueryKey ownership.
             ulong xor = 0UL;
             ulong sum = 0x9E3779B97F4A7C15UL;
+            meshCommandCount = 0;
             foreach (RenderCommand command in commands)
             {
                 ulong mixed = MixOcclusionCommandKey(command.StableQueryKey);
                 xor ^= mixed;
                 sum += mixed;
+                if (command is IRenderCommandMesh)
+                    meshCommandCount++;
             }
 
             return MixOcclusionCommandKey(xor ^ BitOperations.RotateLeft(sum, 23) ^ (uint)commands.Count);

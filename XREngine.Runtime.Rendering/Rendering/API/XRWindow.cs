@@ -161,7 +161,7 @@ namespace XREngine.Rendering
 
         /// <summary>
         /// Thread-affined Silk.NET input context. Gameplay and editor code should
-        /// consume <see cref="LatestWindowInputSnapshot"/>.
+        /// use the update-side snapshot consumer instead of accessing this context.
         /// </summary>
         [EditorBrowsable(EditorBrowsableState.Never)]
         public IInputContext? Input { get; private set; }
@@ -221,6 +221,12 @@ namespace XREngine.Rendering
                 return _inputSnapshotAccumulator.Latest;
             }
         }
+
+        /// <summary>
+        /// Returns and acknowledges all transient input published for the update-side consumer.
+        /// </summary>
+        internal WindowInputSnapshot ConsumeLatestWindowInputSnapshot()
+            => _inputSnapshotAccumulator.ConsumeLatest();
 
         public WindowResizeExtents ResizeExtents => _resizeController.Extents;
 

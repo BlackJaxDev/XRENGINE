@@ -228,8 +228,8 @@ namespace XREngine.Rendering
         /// </summary>
         internal ulong SceneRenderSequenceId => _sceneRenderSequenceId;
 
-        WindowInputSnapshot IRuntimeLocalPlayerViewport.InputSnapshot
-            => Window?.LatestWindowInputSnapshot ?? default;
+        WindowInputSnapshot IRuntimeLocalPlayerViewport.ConsumeInputSnapshot()
+            => Window?.ConsumeLatestWindowInputSnapshot() ?? default;
 
         void IRuntimeLocalPlayerViewport.RequestMouseCapture(bool captured)
             => Window?.RequestMouseCapture(captured);

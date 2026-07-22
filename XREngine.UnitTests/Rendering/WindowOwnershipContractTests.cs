@@ -259,12 +259,12 @@ public sealed class WindowOwnershipContractTests
         xrWindow.ShouldContain("[EditorBrowsable(EditorBrowsableState.Never)]");
         xrWindow.ShouldContain("public IWindow Window => ThreadAffinedNativeWindow;");
         xrWindow.ShouldContain("public IInputContext? Input { get; private set; }");
-        contract.ShouldContain("WindowInputSnapshot InputSnapshot { get; }");
+        contract.ShouldContain("WindowInputSnapshot ConsumeInputSnapshot();");
         contract.ShouldContain("void RequestMouseCapture(bool captured);");
         contract.ShouldNotContain("GetThreadAffinedDeviceSourceForBinding");
         contract.ShouldNotContain("InputContext { get; }");
-        viewport.ShouldContain("IRuntimeLocalPlayerViewport.InputSnapshot");
-        viewport.ShouldContain("Window?.LatestWindowInputSnapshot ?? default");
+        viewport.ShouldContain("IRuntimeLocalPlayerViewport.ConsumeInputSnapshot()");
+        viewport.ShouldContain("Window?.ConsumeLatestWindowInputSnapshot() ?? default");
         viewport.ShouldContain("Window?.RequestMouseCapture(captured);");
         viewport.ShouldNotContain("GetThreadAffinedDeviceSourceForBinding");
         viewport.ShouldNotContain("IRuntimeLocalPlayerViewport.InputContext");
@@ -276,7 +276,7 @@ public sealed class WindowOwnershipContractTests
         snapshotInputDevices.ShouldContain("WindowSnapshotMouse");
         snapshotInputDevices.ShouldContain("SetCaptureRequest(Action<bool>? captureRequest)");
         localPlayerController.ShouldContain("RefreshViewportInputBinding();");
-        localPlayerController.ShouldContain("WindowInputSnapshot snapshot = _viewport.InputSnapshot;");
+        localPlayerController.ShouldContain("WindowInputSnapshot snapshot = _viewport.ConsumeInputSnapshot();");
         localPlayerController.ShouldContain("_viewport?.RequestMouseCapture(captured)");
         localPlayerController.ShouldNotContain("Silk.NET.Input");
         localPlayerController.ShouldNotContain("GetThreadAffinedDeviceSourceForBinding");

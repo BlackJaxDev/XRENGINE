@@ -236,3 +236,25 @@ buffer/topology state instead of treating black captures as visual evidence.
 - Final Vulkan log:
   `Build/Logs/XREngine.Editor_debug/windows_x64/xrengine_2026-07-22_12-38-45_pid48516/log_vulkan.log`.
   It contains no validation errors, device loss, or exceptions.
+
+## 2026-07-22 mesh-material and CPU-overlay validation
+
+- Both mesh rigs use the same neutral deferred-lit material, analytic wave
+  normals, and rig-local shadowless point-light settings. The material-only
+  Vulkan capture shows visible surface shading without the former unlit glow.
+- CPU Scene and CPU Mesh base/visited nodes now use the shared base/highlight
+  overlay contract and the same configurable world-space widths as the GPU
+  rigs. The paired capture shows CPU and GPU yellow visited boxes drawn clearly
+  over query/source geometry.
+- Inspected captures under
+  `Build/_AgentValidation/20260722-102900-gpu-bvh-query-parity/cpu-overlay-live/mcp-captures/`:
+  `Screenshot_20260722_150626_345_56c36b2b065d4a81b0dcfd3cb4402b22.png`
+  (material isolated) and
+  `Screenshot_20260722_150659_647_1b8242d438244e07a778d5a3ab48c971.png`
+  (full paired overlays).
+- Final editor build: zero warnings and zero errors. Focused
+  `GpuMeshBvhPreviewContractTests`: 20 passed, 0 failed.
+- Vulkan session
+  `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-22_15-03-52_pid21748/`
+  contains no shader compilation/link failures, validation errors, VUIDs,
+  exceptions, or device loss.

@@ -280,7 +280,7 @@ public sealed class WindowResizeControllerTests
     }
 
     [Test]
-    public void WindowInputSnapshotAccumulator_PublishesOrderedTransitionsAndResetsDeltas()
+    public void WindowInputSnapshotAccumulator_PublishesOrderedTransitionsAndResetsDeltasAfterConsumption()
     {
         WindowInputSnapshotAccumulator accumulator = new();
 
@@ -330,6 +330,7 @@ public sealed class WindowResizeControllerTests
         });
         first.PressedMouseButtons.ShouldBeEmpty();
         accumulator.Latest.ShouldBe(first);
+        accumulator.ConsumeLatest().ShouldBe(first);
 
         WindowInputSnapshot second = accumulator.Publish(
             keyboardCount: 1,
@@ -355,6 +356,71 @@ public sealed class WindowResizeControllerTests
         second.TextInputCharacters.ShouldBeEmpty();
         second.MouseButtonTransitions.ShouldBeEmpty();
         second.PressedMouseButtons.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void WindowInputSnapshotAccumulator_RetainsScrollAcrossPublicationsAndConsumesItExactlyOnce()
+    {
+        WindowInputSnapshotAccumulator accumulator = new();
+        WindowSnapshotMouse mouse = new(0);
+        int scrollEventCount = 0;
+        float totalScroll = 0.0f;
+        mouse.RegisterScroll(delta =>
+        {
+            scrollEventCount++;
+            totalScroll += delta;
+        }, unregister: false);
+
+        accumulator.RecordScroll(0.0f, -1.0f);
+        _ = accumulator.Publish(
+            keyboardCount: 0,
+            mouseCount: 1,
+            gamepadCount: 0,
+            isFocused: true,
+            isMouseCaptured: false);
+
+        accumulator.RecordScroll(0.0f, -2.0f);
+        _ = accumulator.Publish(
+            keyboardCount: 0,
+            mouseCount: 1,
+            gamepadCount: 0,
+            isFocused: true,
+            isMouseCaptured: false);
+
+        WindowInputSnapshot latest = accumulator.Publish(
+            keyboardCount: 0,
+            mouseCount: 1,
+            gamepadCount: 0,
+            isFocused: true,
+            isMouseCaptured: false);
+
+        latest.Sequence.ShouldBe(3UL);
+        latest.ScrollDeltaY.ShouldBe(-3.0f);
+
+        WindowInputSnapshot consumed = accumulator.ConsumeLatest();
+        consumed.ShouldBe(latest);
+        mouse.ApplySnapshot(consumed);
+        mouse.TickStates(1.0f / 60.0f);
+        scrollEventCount.ShouldBe(1);
+        totalScroll.ShouldBe(-3.0f);
+
+        WindowInputSnapshot alreadyConsumed = accumulator.ConsumeLatest();
+        alreadyConsumed.Sequence.ShouldBe(3UL);
+        alreadyConsumed.ScrollDeltaY.ShouldBe(0.0f);
+        mouse.ApplySnapshot(alreadyConsumed);
+        mouse.TickStates(1.0f / 60.0f);
+        scrollEventCount.ShouldBe(1);
+
+        WindowInputSnapshot next = accumulator.Publish(
+            keyboardCount: 0,
+            mouseCount: 1,
+            gamepadCount: 0,
+            isFocused: true,
+            isMouseCaptured: false);
+        next.ScrollDeltaY.ShouldBe(0.0f);
+        mouse.ApplySnapshot(accumulator.ConsumeLatest());
+        mouse.TickStates(1.0f / 60.0f);
+        scrollEventCount.ShouldBe(1);
     }
 
     [Test]

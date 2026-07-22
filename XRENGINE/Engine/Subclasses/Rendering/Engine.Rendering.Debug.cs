@@ -8,6 +8,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Rendering;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
@@ -50,6 +51,141 @@ namespace XREngine
                     Scene2D,
                 }
 
+                /// <summary>
+                /// Owns one debug-line draw batch for a specific world-space line width.
+                /// Keeping widths in separate batches lets BVH overlays preserve their per-rig
+                /// settings without changing the generic debug-line buffer layout.
+                /// </summary>
+                private sealed class DebugLineOverlayBatch(float lineWidth)
+                {
+                    public readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, ColorF4 color)> Lines = [];
+                    public readonly ConcurrentQueue<(Vector3 pos0, Vector3 pos1, ColorF4 color)> LineQueue = [];
+                    public readonly InstancedDebugVisualizer Visualizer = new(0.005f, lineWidth);
+
+                    public void AddLine(Vector3 start, Vector3 end, ColorF4 color, bool isRenderThread)
+                    {
+                        if (isRenderThread)
+                            Lines.Add((start, end, color));
+                        else
+                            LineQueue.Enqueue((start, end, color));
+                    }
+
+                    public void DequeueLines()
+                    {
+                        while (LineQueue.TryDequeue(out var line))
+                            Lines.Add(line);
+                    }
+
+                    public void Populate()
+                    {
+                        uint lineCount = (uint)Lines.Count;
+                        Visualizer.LineCount = lineCount;
+
+                        int index = 0;
+                        foreach (var (start, end, color) in Lines)
+                        {
+                            if ((uint)index >= lineCount)
+                                break;
+                            Visualizer.SetLineAt(index++, start, end, color);
+                        }
+
+                        Lines.Clear();
+                    }
+
+                    public void Render()
+                    {
+                        if (Visualizer.LineCount > 0)
+                            Visualizer.Render();
+                    }
+
+                    public void ClearQueues()
+                        => LineQueue.Clear();
+
+                    public void ClearBags()
+                        => Lines.Clear();
+
+                    public void ClearVisuals()
+                        => Visualizer.Clear();
+                }
+
+                /// <summary>
+                /// Groups CPU-authored overlay lines by configured width. Widths are quantized
+                /// to the same 0.0001 precision exposed by the editor controls so dragging a
+                /// setting cannot create an unbounded number of persistent renderer batches.
+                /// </summary>
+                private sealed class DebugLineOverlayState
+                {
+                    private const float LineWidthStep = 0.0001f;
+                    private const float MinimumLineWidth = 0.0001f;
+                    private const float MaximumLineWidth = 0.05f;
+                    private readonly ConcurrentDictionary<int, DebugLineOverlayBatch> _batches = [];
+
+                    public void AddBox(ReadOnlySpan<Vector3> points, ColorF4 color, float lineWidth)
+                    {
+                        DebugLineOverlayBatch batch = GetBatch(lineWidth);
+                        bool isRenderThread = Engine.IsRenderThread;
+                        batch.AddLine(points[0], points[1], color, isRenderThread);
+                        batch.AddLine(points[1], points[2], color, isRenderThread);
+                        batch.AddLine(points[2], points[3], color, isRenderThread);
+                        batch.AddLine(points[3], points[0], color, isRenderThread);
+                        batch.AddLine(points[4], points[5], color, isRenderThread);
+                        batch.AddLine(points[5], points[6], color, isRenderThread);
+                        batch.AddLine(points[6], points[7], color, isRenderThread);
+                        batch.AddLine(points[7], points[4], color, isRenderThread);
+                        batch.AddLine(points[0], points[4], color, isRenderThread);
+                        batch.AddLine(points[1], points[5], color, isRenderThread);
+                        batch.AddLine(points[2], points[6], color, isRenderThread);
+                        batch.AddLine(points[3], points[7], color, isRenderThread);
+                    }
+
+                    public void DequeueLines()
+                    {
+                        foreach (var pair in _batches)
+                            pair.Value.DequeueLines();
+                    }
+
+                    public void Populate()
+                    {
+                        foreach (var pair in _batches)
+                            pair.Value.Populate();
+                    }
+
+                    public void Render()
+                    {
+                        foreach (var pair in _batches)
+                            pair.Value.Render();
+                    }
+
+                    public void ClearQueues()
+                    {
+                        foreach (var pair in _batches)
+                            pair.Value.ClearQueues();
+                    }
+
+                    public void ClearBags()
+                    {
+                        foreach (var pair in _batches)
+                            pair.Value.ClearBags();
+                    }
+
+                    public void ClearVisuals()
+                    {
+                        foreach (var pair in _batches)
+                            pair.Value.ClearVisuals();
+                    }
+
+                    private DebugLineOverlayBatch GetBatch(float lineWidth)
+                    {
+                        float normalizedWidth = Math.Clamp(lineWidth, MinimumLineWidth, MaximumLineWidth);
+                        normalizedWidth = MathF.Round(normalizedWidth / LineWidthStep) * LineWidthStep;
+                        int key = BitConverter.SingleToInt32Bits(normalizedWidth);
+                        return _batches.GetOrAdd(
+                            key,
+                            static (_, width) => new DebugLineOverlayBatch(width),
+                            normalizedWidth);
+                    }
+                }
+
                 private sealed class DebugPrimitiveSceneState
                 {
                     public readonly ConcurrentBag<(Vector3 pos, ColorF4 color)> Points = [];
@@ -64,6 +200,8 @@ namespace XREngine
                     public readonly ConcurrentQueue<(Vector3 pos, string text, ColorF4 color, float scale)> TextUpdateQueue = [];
 
                     public readonly InstancedDebugVisualizer Visualizer = new();
+                    public readonly DebugLineOverlayState BaseOverlayLines = new();
+                    public readonly DebugLineOverlayState HighlightOverlayLines = new();
 
                     public void ClearQueues()
                     {
@@ -71,6 +209,8 @@ namespace XREngine
                         PointQueue.Clear();
                         LineQueue.Clear();
                         TriangleQueue.Clear();
+                        BaseOverlayLines.ClearQueues();
+                        HighlightOverlayLines.ClearQueues();
                     }
 
                     public void ClearBags()
@@ -78,10 +218,16 @@ namespace XREngine
                         Points.Clear();
                         Lines.Clear();
                         Triangles.Clear();
+                        BaseOverlayLines.ClearBags();
+                        HighlightOverlayLines.ClearBags();
                     }
 
                     public void ClearVisuals()
-                        => Visualizer.Clear();
+                    {
+                        Visualizer.Clear();
+                        BaseOverlayLines.ClearVisuals();
+                        HighlightOverlayLines.ClearVisuals();
+                    }
                 }
 
                 private static readonly DebugPrimitiveSceneState _debug3D = new();
@@ -132,6 +278,9 @@ namespace XREngine
                                 PopulateDebugScene(_debug2D);
                                 break;
                         }
+
+                        PopulateOverlayLines(_debug3D);
+                        PopulateOverlayLines(_debug2D);
                     }
                     catch (OperationCanceledException) when (Engine.ShuttingDown)
                     {
@@ -197,6 +346,12 @@ namespace XREngine
                     PopulatePoints(scene);
                     PopulateLines(scene);
                     PopulateTriangles(scene);
+                }
+
+                private static void PopulateOverlayLines(DebugPrimitiveSceneState scene)
+                {
+                    scene.BaseOverlayLines.Populate();
+                    scene.HighlightOverlayLines.Populate();
                 }
 
                 private static void PopulateTriangles(DebugPrimitiveSceneState scene)
@@ -290,7 +445,11 @@ namespace XREngine
                     }
 
                     if (Engine.Rendering.State.DebugInstanceRenderingAvailable)
+                    {
+                        scene.BaseOverlayLines.Render();
                         scene.Visualizer.Render();
+                        scene.HighlightOverlayLines.Render();
+                    }
                 }
 
                 private static DebugPrimitiveSceneState ResolveDebugPrimitiveSceneState()
@@ -324,6 +483,8 @@ namespace XREngine
                         scene.Lines.Add(line);
                     while (scene.TriangleQueue.TryDequeue(out var triangle))
                         scene.Triangles.Add(triangle);
+                    scene.BaseOverlayLines.DequeueLines();
+                    scene.HighlightOverlayLines.DequeueLines();
                 }
 
                 private static Matrix4x4 CalculateLineMatrix(Vector3 pos0, Vector3 pos1, float lineWidth, Vector3 camForward, Vector3 camUp, Vector3 camRight)
@@ -607,6 +768,28 @@ namespace XREngine
                         solid,
                         color);
 
+                /// <summary>
+                /// Renders a wireframe box in the dedicated BVH base or highlight layer.
+                /// Base overlays are drawn before ordinary debug geometry; highlights are drawn after it.
+                /// </summary>
+                public static void RenderOverlayBox(
+                    Vector3 halfExtents,
+                    Vector3 center,
+                    Matrix4x4 transform,
+                    ColorF4 color,
+                    float lineWidth,
+                    BvhDebugOverlayLayer overlayLayer)
+                {
+                    Span<Vector3> boxPoints = stackalloc Vector3[8];
+                    FillBoxPoints(boxPoints, halfExtents, center, transform);
+
+                    DebugPrimitiveSceneState scene = ResolveDebugPrimitiveSceneState();
+                    DebugLineOverlayState overlay = overlayLayer == BvhDebugOverlayLayer.Highlight
+                        ? scene.HighlightOverlayLines
+                        : scene.BaseOverlayLines;
+                    overlay.AddBox(boxPoints, color, lineWidth);
+                }
+
                 public static void RenderBox(
                     Vector3 halfExtents,
                     Vector3 center,
@@ -614,20 +797,8 @@ namespace XREngine
                     bool solid,
                     ColorF4 color)
                 {
-                    Vector3[] boxPoints =
-                    {
-                        new(-halfExtents.X, -halfExtents.Y, -halfExtents.Z),
-                        new(halfExtents.X, -halfExtents.Y, -halfExtents.Z),
-                        new(halfExtents.X, -halfExtents.Y, halfExtents.Z),
-                        new(-halfExtents.X, -halfExtents.Y, halfExtents.Z),
-                        new(-halfExtents.X, halfExtents.Y, -halfExtents.Z),
-                        new(halfExtents.X, halfExtents.Y, -halfExtents.Z),
-                        new(halfExtents.X, halfExtents.Y, halfExtents.Z),
-                        new(-halfExtents.X, halfExtents.Y, halfExtents.Z),
-                    };
-
-                    for (int i = 0; i < 8; i++)
-                        boxPoints[i] = Vector3.Transform(boxPoints[i], transform) + center;
+                    Span<Vector3> boxPoints = stackalloc Vector3[8];
+                    FillBoxPoints(boxPoints, halfExtents, center, transform);
 
                     if (solid)
                     {
@@ -659,6 +830,25 @@ namespace XREngine
                         RenderLine(boxPoints[2], boxPoints[6], color);
                         RenderLine(boxPoints[3], boxPoints[7], color);
                     }
+                }
+
+                private static void FillBoxPoints(
+                    Span<Vector3> points,
+                    Vector3 halfExtents,
+                    Vector3 center,
+                    Matrix4x4 transform)
+                {
+                    points[0] = new(-halfExtents.X, -halfExtents.Y, -halfExtents.Z);
+                    points[1] = new(halfExtents.X, -halfExtents.Y, -halfExtents.Z);
+                    points[2] = new(halfExtents.X, -halfExtents.Y, halfExtents.Z);
+                    points[3] = new(-halfExtents.X, -halfExtents.Y, halfExtents.Z);
+                    points[4] = new(-halfExtents.X, halfExtents.Y, -halfExtents.Z);
+                    points[5] = new(halfExtents.X, halfExtents.Y, -halfExtents.Z);
+                    points[6] = new(halfExtents.X, halfExtents.Y, halfExtents.Z);
+                    points[7] = new(-halfExtents.X, halfExtents.Y, halfExtents.Z);
+
+                    for (int i = 0; i < points.Length; i++)
+                        points[i] = Vector3.Transform(points[i], transform) + center;
                 }
 
                 public static void RenderCapsule(

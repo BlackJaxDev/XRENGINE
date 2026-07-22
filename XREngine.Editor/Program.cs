@@ -173,9 +173,6 @@ internal partial class Program
             // Unsubscribe self to ensure this only runs once, before the first window creation during engine startup
             Engine.BeforeCreateWindows -= BeforeWindowsCreated;
 
-            // Unit test initialization that must run after editor preferences are loaded 
-            // but before windows are created (e.g., that may affect render pipeline selection).
-            TraceBootstrapStep("BeforeCreateWindows.UnitTest_Init", UnitTest_Init);
             TraceBootstrapStep("BeforeCreateWindows.ApplyStartupProfilerPreferences", ApplyStartupProfilerPreferences);
 
             // LoadSandboxSettings() replaces Engine.UserSettings with persisted values.
@@ -200,6 +197,10 @@ internal partial class Program
             targetWorldStopwatch.Stop();
             WriteBootstrapTrace($"Target world created in {targetWorldStopwatch.Elapsed.TotalMilliseconds:F0} ms.");
             WriteBootstrapTrace($"BeforeCreateWindows configured target world '{settings.StartupWindows[0].TargetWorld?.Name ?? "<null>"}'.");
+
+            // MCP and profiler startup may persist editor preferences, which recomputes the effective preference
+            // object. Apply unit-test-only choices last so pipeline selection observes them during window creation.
+            TraceBootstrapStep("BeforeCreateWindows.UnitTest_Init", UnitTest_Init);
         }
         Engine.BeforeCreateWindows += BeforeWindowsCreated;
         try
@@ -602,8 +603,12 @@ internal partial class Program
     {
         UnitTest_VerifyPlayModeStart();
 
-        Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = ResolveDebugOpaquePipelineSetting();
+        UnitTestingWorldSettings settings = RuntimeBootstrapState.Settings;
+        Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = ResolveDebugOpaquePipelineSetting(settings);
         EngineDebug.Rendering($"[DebugPipeline] Re-applied before window creation: {Engine.EditorPreferences.Debug.UseDebugOpaquePipeline}");
+        WriteBootstrapTrace(
+            $"UnitTest_Init: WorldKind={settings.WorldKind}, ForceDebugOpaquePipeline={settings.ForceDebugOpaquePipeline}, " +
+            $"UseDebugOpaquePipeline={Engine.EditorPreferences.Debug.UseDebugOpaquePipeline}.");
 
         GPURenderPassCollection.ConfigureIndirectDebug(opts =>
         {
@@ -1136,37 +1141,48 @@ internal partial class Program
         return !string.IsNullOrWhiteSpace(raw) && int.TryParse(raw, out value);
     }
 
-    private static bool ResolveDebugOpaquePipelineSetting()
+    private static bool ResolveDebugOpaquePipelineSetting(UnitTestingWorldSettings settings)
     {
         string? forceDebugEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ForceDebugOpaquePipeline);
         if (!string.IsNullOrWhiteSpace(forceDebugEnv))
         {
-            bool forceDebug =
-                string.Equals(forceDebugEnv, "1", StringComparison.Ordinal) ||
-                string.Equals(forceDebugEnv, "true", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(forceDebugEnv, "yes", StringComparison.OrdinalIgnoreCase);
+            if (TryParseBooleanArgument(forceDebugEnv, out bool forceDebug))
+            {
+                EngineDebug.Rendering($"[DebugPipeline] XRE_FORCE_DEBUG_OPAQUE_PIPELINE={forceDebugEnv} => UseDebugOpaquePipeline={forceDebug}");
+                return forceDebug;
+            }
 
-            EngineDebug.Rendering($"[DebugPipeline] XRE_FORCE_DEBUG_OPAQUE_PIPELINE={forceDebugEnv} => UseDebugOpaquePipeline={forceDebug}");
-            if (forceDebug)
-                return true;
+            EngineDebug.LogWarning(
+                $"Ignoring invalid {XREngineEnvironmentVariables.ForceDebugOpaquePipeline} value '{forceDebugEnv}'. " +
+                "Expected true/false, yes/no, on/off, or 1/0.");
         }
 
-        bool useDebug = EditorUnitTests.Toggles.ForceDebugOpaquePipeline;
-        bool hasModelsRequiringDefaultPipeline = EditorUnitTests.Toggles.ModelsToImport?.Any(model =>
-            model is not null &&
-            model.Enabled &&
-            (model.MaterialMode == EditorUnitTests.ModelImportMaterialMode.Deferred ||
-               model.MaterialMode == EditorUnitTests.ModelImportMaterialMode.Forward ||
-               model.MaterialMode == EditorUnitTests.ModelImportMaterialMode.Uber)) ?? false;
-        EngineDebug.Rendering($"[DebugPipeline] ForceDebugOpaquePipeline={useDebug}, HasStaticModels={EditorUnitTests.Toggles.HasStaticModelsToImport}, HasModelsRequiringDefaultPipeline={hasModelsRequiringDefaultPipeline}");
+        bool worldPrefersDebugPipeline = settings.WorldKind == UnitTestWorldKind.MathIntersections;
+        bool useDebug = settings.ForceDebugOpaquePipeline || worldPrefersDebugPipeline;
+        bool activeWorldImportsConfiguredModels =
+            settings.WorldKind == UnitTestWorldKind.Default;
+        bool hasModelsRequiringDefaultPipeline = activeWorldImportsConfiguredModels &&
+            (settings.ModelsToImport?.Any(model =>
+                model is not null &&
+                model.Enabled &&
+                (model.MaterialMode == ModelImportMaterialMode.Deferred ||
+                 model.MaterialMode == ModelImportMaterialMode.Forward ||
+                 model.MaterialMode == ModelImportMaterialMode.Uber)) ?? false);
+        EngineDebug.Rendering(
+            $"[DebugPipeline] ConfiguredForceDebugOpaquePipeline={settings.ForceDebugOpaquePipeline}, " +
+            $"UseDebugOpaquePipeline={useDebug}, WorldKind={settings.WorldKind}, " +
+            $"WorldPrefersDebugPipeline={worldPrefersDebugPipeline}, " +
+            $"ActiveWorldImportsConfiguredModels={activeWorldImportsConfiguredModels}, " +
+            $"HasStaticModels={settings.HasStaticModelsToImport}, " +
+            $"HasModelsRequiringDefaultPipeline={hasModelsRequiringDefaultPipeline}");
 
         // The debug opaque pipeline is forward-only and does not execute the default deferred/forward+ pass chain.
-        // If the unit test is requesting static model material modes that rely on DefaultRenderPipeline passes,
-        // force the default pipeline so results are visible and comparable.
+        // Only the Default world imports ModelsToImport. Keep its material-dependent safeguard without allowing
+        // unrelated shared model settings to disable lightweight pipelines in specialized worlds.
         if (hasModelsRequiringDefaultPipeline)
         {
             if (useDebug)
-                EngineDebug.Out("[UnitTestingWorld] ForceDebugOpaquePipeline disabled because one or more imported models require DefaultRenderPipeline.");
+                EngineDebug.Out("[UnitTestingWorld] ForceDebugOpaquePipeline disabled because the active world imports one or more models that require DefaultRenderPipeline.");
             useDebug = false;
         }
 

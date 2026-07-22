@@ -59,7 +59,7 @@ public sealed class GpuMeshBvhPreviewContractTests
         meshQueryShader.ShouldContain("PrimitiveClasses[sourceFace] = packedClasses;");
 
         debugSource.ShouldContain("GpuBvhDebugNodeClassMode.ClassifiedOnly");
-        debugSource.ShouldContain("GpuBvhDebugOverlayLayer.Highlight");
+        debugSource.ShouldContain("BvhDebugOverlayLayer.Highlight");
         debugSource.ShouldContain("_cpuSceneTree.DebugRenderNodes(null, _sceneTreeBaseDebugRenderer);");
         debugSource.ShouldContain("_cpuSceneTree.DebugRenderNodes(_queryVolume, _sceneTreeQueryDebugRenderer);");
         debugSource.ShouldContain("RenderQueryVolume(");
@@ -93,6 +93,8 @@ public sealed class GpuMeshBvhPreviewContractTests
         settingsSource.ShouldContain("public ColorF4 IntersectedGeometryColor");
         settingsSource.ShouldContain("public ColorF4 ContainedGeometryColor");
         settingsSource.ShouldContain("public int MaxDebugNodes");
+        settingsSource.ShouldContain("World-space width of CPU and GPU base-node lines.");
+        settingsSource.ShouldContain("World-space width of CPU and GPU visited-node highlight lines.");
         settingsSource.ShouldContain("customUi.AddEnumField(");
 
         debugSource.ShouldContain("uint showFilter = GetGpuNodeShowFilter();");
@@ -102,6 +104,14 @@ public sealed class GpuMeshBvhPreviewContractTests
         debugSource.ShouldContain("ToVector4(InternalNodeColor)");
         debugSource.ShouldContain("ToVector4(VisitedNodeColor),\n                    0b11u)");
         debugSource.ShouldContain("TryGetGeometryColor(");
+        debugSource.ShouldContain("RenderLocalOverlayBox(");
+        debugSource.ShouldContain("BvhDebugOverlayLayer.Base");
+        debugSource.ShouldContain("BvhDebugOverlayLayer.Highlight");
+        rigSource.ShouldContain("XRMaterial.CreateLitColorMaterial(");
+        rigSource.ShouldNotContain("XRMaterial.CreateUnlitColorMaterialForward(");
+        rigSource.ShouldContain("new Vertex(a, GridNormal(a.X, a.Z))");
+        rigSource.ShouldContain("AddMathBvhMeshLight(rigNode);");
+        rigSource.ShouldContain("light.CastsShadows = false;");
         rigSource.ShouldContain("if (controller?.IsSpawningBenchmarkInstances != true)");
         rigSource.ShouldContain("test.RegisterDebugControls(debugControls);");
         customUiSource.ShouldContain("public CustomUIEnumField AddEnumField<TEnum>(");
@@ -270,6 +280,7 @@ public sealed class GpuMeshBvhPreviewContractTests
         string rendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuBvhDebugLineRenderer.cs");
         string queueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuBvhDebugOverlayQueue.cs");
         string overlaySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderDebugShapes.cs");
+        string engineDebugSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Debug.cs");
         string modelPreviewSource = ReadWorkspaceFile("XRENGINE/Scene/Components/Debug/Visualize/ModelBvhPreviewComponent.cs");
 
         componentSource.ShouldContain("=> Interlocked.Exchange(ref _gpuWorkQueued, 1);");
@@ -292,14 +303,27 @@ public sealed class GpuMeshBvhPreviewContractTests
         rendererSource.ShouldContain("HighlightQueues = new();");
         rendererSource.ShouldContain("internal static void RenderQueued(");
         rendererSource.ShouldNotContain("PushRenderGraphPassIndex(");
-        int baseOverlay = overlaySource.IndexOf("GpuBvhDebugOverlayLayer.Base", StringComparison.Ordinal);
+        int baseOverlay = overlaySource.IndexOf("BvhDebugOverlayLayer.Base", StringComparison.Ordinal);
         int debugShapes = overlaySource.IndexOf("RuntimeEngine.Rendering.Debug.RenderShapes();", StringComparison.Ordinal);
-        int highlightOverlay = overlaySource.IndexOf("GpuBvhDebugOverlayLayer.Highlight", StringComparison.Ordinal);
+        int highlightOverlay = overlaySource.IndexOf("BvhDebugOverlayLayer.Highlight", StringComparison.Ordinal);
         baseOverlay.ShouldBeGreaterThanOrEqualTo(0);
         debugShapes.ShouldBeGreaterThan(baseOverlay);
         highlightOverlay.ShouldBeGreaterThan(debugShapes);
         queueSource.ShouldContain("(_pending, _rendering) = (_rendering, _pending);");
         queueSource.ShouldContain("ReferenceEquals(_pending[i].Renderer, request.Renderer)");
+
+        engineDebugSource.ShouldContain("public static void RenderOverlayBox(");
+        string cpuOverlayDraw = Slice(
+            engineDebugSource,
+            "public static void RenderShapes()",
+            "private static DebugPrimitiveSceneState ResolveDebugPrimitiveSceneState",
+            StringComparison.Ordinal);
+        int cpuBaseOverlay = cpuOverlayDraw.IndexOf("scene.BaseOverlayLines.Render();", StringComparison.Ordinal);
+        int ordinaryDebugShapes = cpuOverlayDraw.IndexOf("scene.Visualizer.Render();", StringComparison.Ordinal);
+        int cpuHighlightOverlay = cpuOverlayDraw.IndexOf("scene.HighlightOverlayLines.Render();", StringComparison.Ordinal);
+        cpuBaseOverlay.ShouldBeGreaterThanOrEqualTo(0);
+        ordinaryDebugShapes.ShouldBeGreaterThan(cpuBaseOverlay);
+        cpuHighlightOverlay.ShouldBeGreaterThan(ordinaryDebugShapes);
 
         string immediate = Slice(
             rendererSource,

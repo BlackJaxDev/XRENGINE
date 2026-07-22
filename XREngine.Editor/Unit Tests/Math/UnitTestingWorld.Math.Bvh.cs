@@ -1,8 +1,10 @@
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
@@ -24,7 +26,10 @@ public static partial class EditorUnitTests
         ModelComponent? targetModel = null;
         List<Triangle>? triangles = null;
         if (mode is MathBvhTestMode.LegacyCpuMesh or MathBvhTestMode.GpuMesh)
+        {
             targetModel = AddMathBvhMesh(rigNode, mode, out triangles);
+            AddMathBvhMeshLight(rigNode);
+        }
 
         MathBvhTestComponent test = rigNode.AddComponent<MathBvhTestComponent>()!;
         test.Configure(mode, targetModel, triangles);
@@ -55,8 +60,9 @@ public static partial class EditorUnitTests
         out List<Triangle> triangles)
     {
         XRMesh mesh = CreateMathBvhGridMesh(out triangles);
-        XRMaterial material = XRMaterial.CreateUnlitColorMaterialForward(
-            new ColorF4(0.12f, 0.31f, 0.46f, 1.0f));
+        XRMaterial material = XRMaterial.CreateLitColorMaterial(
+            new ColorF4(0.34f, 0.38f, 0.42f, 1.0f),
+            deferred: true);
         var subMesh = new SubMesh(mesh, material)
         {
             Name = mode == MathBvhTestMode.LegacyCpuMesh ? "LegacyCpuMeshBvhGrid" : "GpuMeshBvhGrid",
@@ -70,12 +76,27 @@ public static partial class EditorUnitTests
         return model;
     }
 
+    private static void AddMathBvhMeshLight(SceneNode rigNode)
+    {
+        SceneNode lightNode = rigNode.NewChild("BVH Test Mesh Light");
+        Transform lightTransform = lightNode.SetTransform<Transform>();
+        lightTransform.Translation = new Vector3(0.0f, 5.0f, 2.0f);
+
+        PointLightComponent light = lightNode.AddComponent<PointLightComponent>()!;
+        light.Name = "BVH Test Mesh Light";
+        light.Color = new ColorF3(1.0f, 0.97f, 0.92f);
+        light.DiffuseIntensity = 1.0f;
+        light.Brightness = 24.0f;
+        light.Radius = 14.0f;
+        light.CastsShadows = false;
+    }
+
     private static XRMesh CreateMathBvhGridMesh(out List<Triangle> triangles)
     {
         const int cellsPerAxis = 10;
         const float spacing = 0.8f;
         float halfExtent = cellsPerAxis * spacing * 0.5f;
-        var positions = new List<Vector3>(cellsPerAxis * cellsPerAxis * 6);
+        var meshTriangles = new List<VertexTriangle>(cellsPerAxis * cellsPerAxis * 2);
         var triangleList = new List<Triangle>(cellsPerAxis * cellsPerAxis * 2);
 
         for (int z = 0; z < cellsPerAxis; z++)
@@ -90,7 +111,7 @@ public static partial class EditorUnitTests
         }
 
         triangles = triangleList;
-        return XRMesh.CreateTriangles([.. positions]);
+        return new XRMesh(meshTriangles);
 
         Vector3 GridPoint(int x, int z)
         {
@@ -102,10 +123,18 @@ public static partial class EditorUnitTests
 
         void AddTriangle(Vector3 a, Vector3 b, Vector3 c)
         {
-            positions.Add(a);
-            positions.Add(b);
-            positions.Add(c);
             triangleList.Add(new Triangle(a, b, c));
+            meshTriangles.Add(new VertexTriangle(
+                new Vertex(a, GridNormal(a.X, a.Z)),
+                new Vertex(b, GridNormal(b.X, b.Z)),
+                new Vertex(c, GridNormal(c.X, c.Z))));
+        }
+
+        static Vector3 GridNormal(float x, float z)
+        {
+            float slopeX = 0.48f * 0.82f * MathF.Cos(x * 0.82f) * MathF.Cos(z * 0.67f);
+            float slopeZ = -0.48f * 0.67f * MathF.Sin(x * 0.82f) * MathF.Sin(z * 0.67f);
+            return Vector3.Normalize(new Vector3(-slopeX, 1.0f, -slopeZ));
         }
     }
 }

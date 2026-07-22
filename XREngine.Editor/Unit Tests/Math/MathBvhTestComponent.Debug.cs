@@ -86,10 +86,12 @@ public sealed partial class MathBvhTestComponent
         bool isLeaf)
     {
         if (ShouldRenderNode(isLeaf))
-            RenderLocalBox(
+            RenderLocalOverlayBox(
                 AABB.FromCenterSize(center, halfExtents * 2.0f),
                 Transform.RenderMatrix,
-                isLeaf ? LeafNodeColor : InternalNodeColor);
+                isLeaf ? LeafNodeColor : InternalNodeColor,
+                BaseNodeLineWidth,
+                BvhDebugOverlayLayer.Base);
     }
 
     private void RenderCpuSceneTreeQueryNode(
@@ -101,10 +103,12 @@ public sealed partial class MathBvhTestComponent
         if (!ShouldRenderNode(isLeaf))
             return;
 
-        RenderLocalBox(
+        RenderLocalOverlayBox(
             AABB.FromCenterSize(center, halfExtents * 2.0f),
             Transform.RenderMatrix,
-            VisitedNodeColor);
+            VisitedNodeColor,
+            VisitedNodeLineWidth,
+            BvhDebugOverlayLayer.Highlight);
     }
 
     private void RenderGpuSceneDebug()
@@ -161,7 +165,7 @@ public sealed partial class MathBvhTestComponent
                     ToVector4(VisitedNodeColor),
                     ToVector4(VisitedNodeColor),
                     0b11u),
-                GpuBvhDebugOverlayLayer.Highlight);
+                BvhDebugOverlayLayer.Highlight);
         }
     }
 
@@ -179,7 +183,12 @@ public sealed partial class MathBvhTestComponent
             {
                 BVHNode<Triangle> node = _cpuMeshNodes[i];
                 if (ShouldRenderNode(node.IsLeaf))
-                    RenderLocalBox(node.box, localToWorld, node.IsLeaf ? LeafNodeColor : InternalNodeColor);
+                    RenderLocalOverlayBox(
+                        node.box,
+                        localToWorld,
+                        node.IsLeaf ? LeafNodeColor : InternalNodeColor,
+                        BaseNodeLineWidth,
+                        BvhDebugOverlayLayer.Base);
             }
         }
 
@@ -192,7 +201,12 @@ public sealed partial class MathBvhTestComponent
                 if (!visited || !ShouldRenderNode(node.IsLeaf))
                     continue;
 
-                RenderLocalBox(node.box, localToWorld, VisitedNodeColor);
+                RenderLocalOverlayBox(
+                    node.box,
+                    localToWorld,
+                    VisitedNodeColor,
+                    VisitedNodeLineWidth,
+                    BvhDebugOverlayLayer.Highlight);
             }
         }
 
@@ -256,7 +270,7 @@ public sealed partial class MathBvhTestComponent
                     ToVector4(VisitedNodeColor),
                     ToVector4(VisitedNodeColor),
                     0b11u),
-                GpuBvhDebugOverlayLayer.Highlight);
+                BvhDebugOverlayLayer.Highlight);
         }
 
         if (RenderQuery && QueryShape == MathBvhQueryShape.Raycast)
@@ -440,6 +454,27 @@ public sealed partial class MathBvhTestComponent
         orientation.M43 = 0.0f;
         Vector3 worldCenter = Vector3.Transform(bounds.Center, localToWorld);
         Engine.Rendering.Debug.RenderBox(bounds.HalfExtents, worldCenter, orientation, solid: false, color);
+    }
+
+    private static void RenderLocalOverlayBox(
+        in AABB bounds,
+        in Matrix4x4 localToWorld,
+        ColorF4 color,
+        float lineWidth,
+        BvhDebugOverlayLayer overlayLayer)
+    {
+        Matrix4x4 orientation = localToWorld;
+        orientation.M41 = 0.0f;
+        orientation.M42 = 0.0f;
+        orientation.M43 = 0.0f;
+        Vector3 worldCenter = Vector3.Transform(bounds.Center, localToWorld);
+        Engine.Rendering.Debug.RenderOverlayBox(
+            bounds.HalfExtents,
+            worldCenter,
+            orientation,
+            color,
+            lineWidth,
+            overlayLayer);
     }
 
     private static void RenderLocalLine(Vector3 localStart, Vector3 localEnd, in Matrix4x4 localToWorld, ColorF4 color)

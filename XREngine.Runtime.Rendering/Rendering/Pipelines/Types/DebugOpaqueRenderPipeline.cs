@@ -8,15 +8,21 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
-using static XREngine.RuntimeEngine.Rendering.State;
+using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering;
 
 /// <summary>
-/// Minimal render pipeline for debugging opaque geometry. Renders background, deferred opaque, and forward opaque passes only.
+/// Lightweight render pipeline for diagnostic worlds. Renders the ordinary scene passes and globally batched debug
+/// primitives without the default pipeline's lighting, ambient occlusion, bloom, temporal upscaling, or post-processing.
 /// </summary>
 public sealed class DebugOpaqueRenderPipeline : RenderPipeline
 {
+    private const string SceneColorTextureName = "DebugOpaqueSceneColor";
+    private const string DepthStencilTextureName = "DebugOpaqueDepthStencil";
+    private const string SceneFBOName = "DebugOpaqueSceneFBO";
+    private const string DebugOverlayPassName = "DebugOpaqueOverlay";
+
     private readonly NearToFarRenderCommandSorter _nearToFarSorter = new();
 
     private EMeshSubmissionStrategy _meshSubmissionStrategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
@@ -48,14 +54,47 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
         InitializeCommandChain();
     }
 
+    protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        RenderResourceSizePolicy size = RenderResourceSizePolicy.Internal();
+
+        builder.Texture(SceneColorTextureName)
+            .Size(size)
+            .Usage(RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment)
+            .Format(EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat)
+            .SizedFormat(ESizedInternalFormat.Rgba16f)
+            .Factory(CreateSceneColorTexture)
+            .Add();
+
+        builder.Texture(DepthStencilTextureName)
+            .Size(size)
+            .Usage(RenderPipelineResourceUsage.DepthStencilAttachment)
+            .Format(EPixelInternalFormat.Depth24Stencil8, EPixelFormat.DepthStencil, EPixelType.UnsignedInt248)
+            .SizedFormat(ESizedInternalFormat.Depth24Stencil8)
+            .Factory(CreateDepthStencilTexture)
+            .Add();
+
+        builder.FrameBuffer(SceneFBOName)
+            .Size(size)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
+            .Color(0, SceneColorTextureName)
+            .DepthStencil(DepthStencilTextureName)
+            .Factory(CreateSceneFBO)
+            .Add();
+    }
+
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
         ViewportRenderCommandContainer container = new(this);
-        var ifElse = container.Add<VPRC_IfElse>();
-        ifElse.ConditionEvaluator = () => State.WindowViewport is not null
-            && RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null;
-        ifElse.TrueCommands = CreateViewportTargetCommands();
-        ifElse.FalseCommands = CreateFBOTargetCommands();
+
+        AppendSceneCommands(container);
+
+        var present = container.Add<VPRC_RenderToWindow>();
+        present.SourceFBOName = SceneFBOName;
+        present.FlipSourceYOnVulkan = true;
+
+        container.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
+        container.Add<VPRC_RenderScreenSpaceUI>();
         return container;
     }
 
@@ -78,16 +117,14 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
     private static XRMaterial MakeInvalidMaterial()
         => XRMaterial.CreateColorMaterialDeferred();
 
-    private ViewportRenderCommandContainer CreateViewportTargetCommands()
+    private void AppendSceneCommands(ViewportRenderCommandContainer commands)
     {
-        ViewportRenderCommandContainer commands = new(this);
-
         commands.Add<VPRC_SetClears>().Set(ColorF4.Black, 1.0f, 0);
         commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
 
         using (commands.AddUsing<VPRC_PushViewportRenderArea>(options => options.UseInternalResolution = true))
         {
-            using (commands.AddUsing<VPRC_BindOutputFBO>())
+            using (commands.AddUsing<VPRC_BindFBOByName>(options => options.SetOptions(SceneFBOName)))
             {
                 commands.Add<VPRC_StencilMask>().Set(~0u);
                 commands.Add<VPRC_ClearByBoundFBO>();
@@ -112,57 +149,61 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
                 commands.Add<VPRC_DepthWrite>().Allow = true;
 
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, false);
-                commands.Add<VPRC_RenderDebugShapes>();
-                commands.Add<VPRC_RenderDebugPhysics>();
+                commands.Add<VPRC_RenderDebugShapes>().RenderGraphPassName = DebugOverlayPassName;
+                commands.Add<VPRC_RenderDebugPhysics>().RenderGraphPassName = DebugOverlayPassName;
             }
         }
-
-        commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
-        commands.Add<VPRC_RenderScreenSpaceUI>();
-        return commands;
     }
 
-    private ViewportRenderCommandContainer CreateFBOTargetCommands()
+    private XRTexture CreateSceneColorTexture()
     {
-        ViewportRenderCommandContainer commands = new(this);
+        var texture = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth,
+            InternalHeight,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Name = SceneColorTextureName;
+        texture.SamplerName = "HDRSceneTex";
+        texture.Resizable = true;
+        texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        return texture;
+    }
 
-        commands.Add<VPRC_SetClears>().Set(ColorF4.Black, 1.0f, 0);
-        commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
+    private XRTexture CreateDepthStencilTexture()
+    {
+        var texture = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth,
+            InternalHeight,
+            EPixelInternalFormat.Depth24Stencil8,
+            EPixelFormat.DepthStencil,
+            EPixelType.UnsignedInt248,
+            EFrameBufferAttachment.DepthStencilAttachment);
+        texture.Name = DepthStencilTextureName;
+        texture.Resizable = true;
+        texture.SizedInternalFormat = ESizedInternalFormat.Depth24Stencil8;
+        texture.MinFilter = ETexMinFilter.Nearest;
+        texture.MagFilter = ETexMagFilter.Nearest;
+        return texture;
+    }
 
-        using (commands.AddUsing<VPRC_PushOutputFBORenderArea>())
+    private XRFrameBuffer CreateSceneFBO()
+    {
+        if (GetTexture<XRTexture>(SceneColorTextureName) is not IFrameBufferAttachement colorAttachment)
+            throw new InvalidOperationException("Debug scene color texture must be FBO-attachable.");
+
+        if (GetTexture<XRTexture>(DepthStencilTextureName) is not IFrameBufferAttachement depthAttachment)
+            throw new InvalidOperationException("Debug depth/stencil texture must be FBO-attachable.");
+
+        return new XRFrameBuffer(
+            (colorAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (depthAttachment, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
-            using (commands.AddUsing<VPRC_BindOutputFBO>())
-            {
-                commands.Add<VPRC_StencilMask>().Set(~0u);
-                commands.Add<VPRC_ClearByBoundFBO>();
-
-                commands.Add<VPRC_DepthTest>().Enable = true;
-                commands.Add<VPRC_DepthWrite>().Allow = false;
-                // Same Lequal fix for FBO target path.
-                commands.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
-                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, MeshSubmissionStrategy);
-
-                commands.Add<VPRC_DepthFunc>().Comp = EComparison.Less;
-                commands.Add<VPRC_DepthWrite>().Allow = true;
-                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, MeshSubmissionStrategy);
-                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, MeshSubmissionStrategy);
-                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, MeshSubmissionStrategy);
-
-                // Transparent pass for world-space UI canvas quads and other alpha-blended geometry.
-                commands.Add<VPRC_DepthWrite>().Allow = false;
-                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, false);
-                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, false);
-                commands.Add<VPRC_DepthWrite>().Allow = true;
-
-                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, false);
-                commands.Add<VPRC_RenderDebugShapes>();
-                commands.Add<VPRC_RenderDebugPhysics>();
-            }
-        }
-
-        commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
-        commands.Add<VPRC_RenderScreenSpaceUI>();
-        return commands;
+            Name = SceneFBOName,
+        };
     }
 
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)

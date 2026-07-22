@@ -236,14 +236,16 @@ public sealed partial class MathBvhTestComponent
         set => SetField(ref _maxDebugNodes, Math.Clamp(value, 1, MaxConfigurableDebugNodes));
     }
 
-    [Category("BVH GPU Debug Display")]
+    [Category("BVH Debug Display")]
+    [Description("World-space width of CPU and GPU base-node lines.")]
     public float BaseNodeLineWidth
     {
         get => _baseNodeLineWidth;
         set => SetField(ref _baseNodeLineWidth, Math.Clamp(value, 0.0001f, 0.02f));
     }
 
-    [Category("BVH GPU Debug Display")]
+    [Category("BVH Debug Display")]
+    [Description("World-space width of CPU and GPU visited-node highlight lines.")]
     public float VisitedNodeLineWidth
     {
         get => _visitedNodeLineWidth;
