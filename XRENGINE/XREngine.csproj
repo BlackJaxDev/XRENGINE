@@ -7,10 +7,12 @@
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <PublishAot>false</PublishAot>
     <Platforms>AnyCPU;x64</Platforms>
-    <BaseOutputPath>$(SolutionDir)Build\Engine\$(Configuration)\$(Platform)</BaseOutputPath>
+    <BaseOutputPath Condition="'$(UseArtifactsOutput)' != 'true'">$(SolutionDir)Build\Engine\$(Configuration)\$(Platform)</BaseOutputPath>
     <AotFactoryRegistrationGenerator>$(MSBuildProjectDirectory)\..\Tools\Generate-AotFactoryRegistrations.ps1</AotFactoryRegistrationGenerator>
-    <GeneratedAotFactoryRegistrations>$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.g.cs</GeneratedAotFactoryRegistrations>
-    <AotFactoryRegistrationStamp>$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.stamp</AotFactoryRegistrationStamp>
+    <GeneratedAotFactoryRegistrations Condition="'$(UseArtifactsOutput)' != 'true'">$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.g.cs</GeneratedAotFactoryRegistrations>
+    <GeneratedAotFactoryRegistrations Condition="'$(UseArtifactsOutput)' == 'true'">$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.g.cs</GeneratedAotFactoryRegistrations>
+    <AotFactoryRegistrationStamp Condition="'$(UseArtifactsOutput)' != 'true'">$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.stamp</AotFactoryRegistrationStamp>
+    <AotFactoryRegistrationStamp Condition="'$(UseArtifactsOutput)' == 'true'">$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.stamp</AotFactoryRegistrationStamp>
     <AotFactoryRegistrationCoreRoot>$(MSBuildProjectDirectory)\..\XREngine.Runtime.Core</AotFactoryRegistrationCoreRoot>
     <AotFactoryRegistrationInputIntegrationRoot>$(MSBuildProjectDirectory)\..\XREngine.Runtime.InputIntegration</AotFactoryRegistrationInputIntegrationRoot>
     <AotFactoryRegistrationRenderingRoot>$(MSBuildProjectDirectory)\..\XREngine.Runtime.Rendering</AotFactoryRegistrationRenderingRoot>

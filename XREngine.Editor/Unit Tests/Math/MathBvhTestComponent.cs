@@ -20,8 +20,7 @@ namespace XREngine.Editor;
 public sealed partial class MathBvhTestComponent : XRComponent, IRenderable
 {
     private const uint SceneLeafCapacity = 2u;
-    private const uint MaxDebugNodeCount = 4096u;
-
+    private const int SceneMovesPerUpdate = 3;
     private readonly GpuBvhDebugLineRenderer _gpuDebugRenderer = new();
 
     private MathBvhTestMode _mode;
@@ -32,6 +31,12 @@ public sealed partial class MathBvhTestComponent : XRComponent, IRenderable
     private bool _workloadReady;
     private bool _validationPassed;
     private int _lastHitCount;
+    private int _lastPointHitCount;
+    private int _lastLineHitCount;
+    private int _lastTriangleHitCount;
+    private int _lastExpectedPointHitCount;
+    private int _lastExpectedLineHitCount;
+    private int _lastExpectedTriangleHitCount;
     private long _buildOperationCount;
     private long _updateOperationCount;
     private long _queryOperationCount;
@@ -72,6 +77,24 @@ public sealed partial class MathBvhTestComponent : XRComponent, IRenderable
     public int LastHitCount => Volatile.Read(ref _lastHitCount);
 
     [Browsable(false)]
+    public int LastPointHitCount => Volatile.Read(ref _lastPointHitCount);
+
+    [Browsable(false)]
+    public int LastLineHitCount => Volatile.Read(ref _lastLineHitCount);
+
+    [Browsable(false)]
+    public int LastTriangleHitCount => Volatile.Read(ref _lastTriangleHitCount);
+
+    [Browsable(false)]
+    public int LastExpectedPointHitCount => Volatile.Read(ref _lastExpectedPointHitCount);
+
+    [Browsable(false)]
+    public int LastExpectedLineHitCount => Volatile.Read(ref _lastExpectedLineHitCount);
+
+    [Browsable(false)]
+    public int LastExpectedTriangleHitCount => Volatile.Read(ref _lastExpectedTriangleHitCount);
+
+    [Browsable(false)]
     public long BuildOperationCount => Interlocked.Read(ref _buildOperationCount);
 
     [Browsable(false)]
@@ -101,6 +124,7 @@ public sealed partial class MathBvhTestComponent : XRComponent, IRenderable
             throw new InvalidOperationException("A Math BVH test component can only be configured once.");
 
         Mode = mode;
+        ApplyModeDebugDefaults(mode);
         _targetModel = targetModel;
         _sourceTriangles = sourceTriangles is null ? null : [.. sourceTriangles];
         _configured = true;
@@ -177,6 +201,48 @@ public sealed partial class MathBvhTestComponent : XRComponent, IRenderable
         return bounds;
     }
 
+    private static AABB AnimateSceneBounds(in AABB baseBounds, float time, int index)
+    {
+        Vector3 offset = new(
+            MathF.Sin(time * 0.73f + index * 0.31f) * 0.28f,
+            MathF.Cos(time * 0.91f + index * 0.17f) * 0.18f,
+            MathF.Sin(time * 0.57f + index * 0.23f) * 0.24f);
+        return AABB.FromCenterSize(baseBounds.Center + offset, baseBounds.Size);
+    }
+
+    private static void CalculateMeshBruteForce(
+        IReadOnlyList<Triangle> triangles,
+        in Segment query,
+        out int hitCount,
+        out float closestDistance)
+    {
+        Vector3 direction = query.End - query.Start;
+        float length = direction.Length();
+        if (length > 1e-6f)
+            direction /= length;
+
+        hitCount = 0;
+        closestDistance = float.PositiveInfinity;
+        for (int i = 0; i < triangles.Count; i++)
+        {
+            Triangle triangle = triangles[i];
+            if (!GeoUtil.Intersect.RayWithTriangle(
+                    query.Start,
+                    direction,
+                    triangle.A,
+                    triangle.B,
+                    triangle.C,
+                    out float distance) ||
+                distance < 0.0f || distance > length)
+            {
+                continue;
+            }
+
+            hitCount++;
+            closestDistance = MathF.Min(closestDistance, distance);
+        }
+    }
+
     private static uint CalculateBinaryBvhNodeCount(uint primitiveCount, uint leafCapacity)
     {
         if (primitiveCount == 0u)
@@ -206,11 +272,27 @@ public sealed partial class MathBvhTestComponent : XRComponent, IRenderable
             _ => 0,
         };
 
-    private void SetValidationState(bool ready, bool passed, int hitCount = 0)
+    private void SetValidationState(
+        bool ready,
+        bool passed,
+        int hitCount = 0,
+        int pointHitCount = 0,
+        int lineHitCount = 0,
+        int triangleHitCount = 0)
     {
         Volatile.Write(ref _workloadReady, ready);
         Volatile.Write(ref _validationPassed, passed);
         Volatile.Write(ref _lastHitCount, hitCount);
+        Volatile.Write(ref _lastPointHitCount, pointHitCount);
+        Volatile.Write(ref _lastLineHitCount, lineHitCount);
+        Volatile.Write(ref _lastTriangleHitCount, triangleHitCount);
+    }
+
+    private void SetExpectedHitCounts(int pointHitCount, int lineHitCount, int triangleHitCount)
+    {
+        Volatile.Write(ref _lastExpectedPointHitCount, pointHitCount);
+        Volatile.Write(ref _lastExpectedLineHitCount, lineHitCount);
+        Volatile.Write(ref _lastExpectedTriangleHitCount, triangleHitCount);
     }
 
     protected override void OnDestroying()

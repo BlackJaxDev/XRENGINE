@@ -8,7 +8,7 @@ layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
 layout(std430, binding = 0) readonly buffer PositionsInBuffer
 {
-    vec4 PositionsIn[];
+    uint PositionScalars[];
 };
 
 layout(std430, binding = 1) readonly buffer InterleavedPositionsBuffer
@@ -43,6 +43,7 @@ uniform uint TriangleCount;
 uniform uint UseInterleaved;
 uniform uint InterleavedStrideBytes;
 uniform uint PositionOffsetBytes;
+uniform uint PositionStrideScalars;
 uniform int ApplyTransform;
 uniform mat4 TransformMatrix;
 
@@ -58,9 +59,14 @@ vec3 loadInterleavedPosition(uint vertexIndex)
 
 vec3 loadPosition(uint vertexIndex)
 {
-    return UseInterleaved != 0u
-        ? loadInterleavedPosition(vertexIndex)
-        : PositionsIn[vertexIndex].xyz;
+    if (UseInterleaved != 0u)
+        return loadInterleavedPosition(vertexIndex);
+
+    uint word = vertexIndex * max(PositionStrideScalars, 3u);
+    return vec3(
+        uintBitsToFloat(PositionScalars[word + 0u]),
+        uintBitsToFloat(PositionScalars[word + 1u]),
+        uintBitsToFloat(PositionScalars[word + 2u]));
 }
 
 vec3 maybeTransform(vec3 value)

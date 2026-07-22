@@ -31,6 +31,8 @@ namespace XREngine
         private const string ImportOptionsFileExtension = "import.yaml";
         private const string EngineAssetsPathEnvVar = XREngineEnvironmentVariables.EngineAssetsPath;
         private const string GameAssetsPathEnvVar = XREngineEnvironmentVariables.GameAssetsPath;
+        private const string GameCachePathEnvVar = XREngineEnvironmentVariables.GameCachePath;
+        private const string GameMetadataPathEnvVar = XREngineEnvironmentVariables.GameMetadataPath;
         private static string? _publishedConfigArchivePath;
         private static string? _publishedGameContentArchivePath;
         private static string? _publishedEngineContentArchivePath;
@@ -136,7 +138,16 @@ namespace XREngine
             VerifyDirectoryExists(GameAssetsPath);
             Debug.Out($"Asset IO backend: {(DirectStorageIO.IsEnabled ? "DirectStorage-ready" : "Standard")} ({DirectStorageIO.Status})");
 
-            // Best-effort defaults for sandbox mode. Project load will overwrite these.
+            // Best-effort defaults for sandbox mode. Project load keeps explicit environment
+            // overrides for session-local writable state and replaces inferred paths otherwise.
+            string? gameMetadataOverridePath = Environment.GetEnvironmentVariable(GameMetadataPathEnvVar);
+            if (!string.IsNullOrWhiteSpace(gameMetadataOverridePath))
+                GameMetadataPath = gameMetadataOverridePath;
+
+            string? gameCacheOverridePath = Environment.GetEnvironmentVariable(GameCachePathEnvVar);
+            if (!string.IsNullOrWhiteSpace(gameCacheOverridePath))
+                GameCachePath = gameCacheOverridePath;
+
             EnsureGameMetadataPathInitialized();
             EnsureGameCachePathInitialized();
             if (!Directory.Exists(EngineAssetsPath))

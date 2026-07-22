@@ -235,6 +235,8 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             string[] relativePaths =
             [
                 Path.Combine("Scene3D", "RenderPipeline", "bvh_frustum_cull.comp"),
+                Path.Combine("Scene3D", "RenderPipeline", "math_bvh_scene_query.comp"),
+                Path.Combine("Scene3D", "RenderPipeline", "math_bvh_mesh_query.comp"),
                 Path.Combine("Scene3D", "RenderPipeline", "OctreeGeneration", "radix_morton_histogram.comp"),
                 Path.Combine("Scene3D", "RenderPipeline", "OctreeGeneration", "radix_morton_prefix.comp"),
                 Path.Combine("Scene3D", "RenderPipeline", "OctreeGeneration", "radix_morton_scatter.comp"),

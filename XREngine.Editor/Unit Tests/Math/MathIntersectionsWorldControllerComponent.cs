@@ -816,7 +816,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         List<MathBvhTestComponent> targetComponents = CollectComponents<MathBvhTestComponent>(targetRoot);
         int count = Math.Min(sourceComponents.Count, targetComponents.Count);
         for (int index = 0; index < count; index++)
-            targetComponents[index].DebugRenderEnabled = includeDebugDisplays && sourceComponents[index].DebugRenderEnabled;
+            targetComponents[index].CopySettingsFrom(sourceComponents[index], includeDebugDisplays);
     }
 
     private static void SyncSphereColliders(SceneNode sourceRoot, SceneNode targetRoot)

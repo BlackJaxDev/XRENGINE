@@ -8,8 +8,8 @@
     <Platforms>AnyCPU;x64</Platforms>
     <VmaBridgeProject>$(MSBuildProjectDirectory)\..\Build\Native\VulkanMemoryAllocatorBridge\VulkanMemoryAllocatorBridge.vcxproj</VmaBridgeProject>
     <VmaBridgeNativeDll>$(MSBuildProjectDirectory)\runtimes\win-x64\native\VulkanMemoryAllocatorBridge.Native.dll</VmaBridgeNativeDll>
-    <VmaBridgeBuildStateFile>$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)vma-active-native-configuration.txt</VmaBridgeBuildStateFile>
-    <VmaBridgeBuildStampFile>$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)vma-native-build.stamp</VmaBridgeBuildStampFile>
+    <VmaBridgeBuildStateFile>$(BaseIntermediateOutputPath)vma-active-native-configuration.txt</VmaBridgeBuildStateFile>
+    <VmaBridgeBuildStampFile>$(BaseIntermediateOutputPath)vma-native-build.stamp</VmaBridgeBuildStampFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -154,7 +154,7 @@
 
   <Target Name="PrepareVulkanMemoryAllocatorBridgeBuildState"
           BeforeTargets="BuildVulkanMemoryAllocatorBridge"
-          Condition="'$(OS)' == 'Windows_NT' and Exists('$(VmaBridgeProject)')">
+          Condition="'$(XREngineUseExistingNativeBridges)' != 'true' and '$(OS)' == 'Windows_NT' and Exists('$(VmaBridgeProject)')">
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(VmaBridgeBuildStateFile)'))" />
     <PropertyGroup>
       <VmaBridgeCurrentBuildState>$(Configuration)|x64|$(VULKAN_SDK)</VmaBridgeCurrentBuildState>
@@ -166,7 +166,7 @@
           BeforeTargets="PrepareForBuild"
           Inputs="@(VmaBridgeBuildInput);$(VmaBridgeBuildStateFile)"
           Outputs="$(VmaBridgeNativeDll);$(VmaBridgeBuildStampFile)"
-          Condition="'$(OS)' == 'Windows_NT' and Exists('$(VmaBridgeProject)')">
+          Condition="'$(XREngineUseExistingNativeBridges)' != 'true' and '$(OS)' == 'Windows_NT' and Exists('$(VmaBridgeProject)')">
     <PropertyGroup>
       <VsWhereExe>$(MSBuildProgramFiles32)\Microsoft Visual Studio\Installer\vswhere.exe</VsWhereExe>
       <VmaBridgeMsBuildPathFile>$(BaseIntermediateOutputPath)vma-bridge-msbuild-path.txt</VmaBridgeMsBuildPathFile>
@@ -194,6 +194,12 @@
 
     <Exec Condition="'$(VmaBridgeMsBuildPath)' != '' and '$(VULKAN_SDK)' != ''" Command="&quot;$(VmaBridgeMsBuildPath)&quot; &quot;$(VmaBridgeProject)&quot; /m /nologo /p:Configuration=$(Configuration);Platform=x64" />
     <WriteLinesToFile File="$(VmaBridgeBuildStampFile)" Lines="$(VmaBridgeCurrentBuildState)" Overwrite="true" />
+  </Target>
+
+  <Target Name="ValidateExistingVulkanMemoryAllocatorBridge"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(XREngineUseExistingNativeBridges)' == 'true' and !Exists('$(VmaBridgeNativeDll)')">
+    <Error Text="Isolated editor builds reuse the repository-managed VulkanMemoryAllocatorBridge native binary, but $(VmaBridgeNativeDll) is missing. Build the native bridge once before starting an isolated editor session." />
   </Target>
 
 </Project>

@@ -1,4 +1,3 @@
-using System.Drawing;
 using System.Numerics;
 using SimpleScene.Util.ssBVH;
 using XREngine.Data.Colors;
@@ -41,60 +40,129 @@ public sealed partial class MathBvhTestComponent
                 break;
         }
 
-        RenderValidationMarker();
+        if (ShowValidationMarker)
+            RenderValidationMarker();
     }
 
     private void RenderCpuSceneDebug()
     {
-        if (_cpuSceneItems is null || _cpuSceneTree is null || _sceneTreeDebugRenderer is null)
-            return;
-
-        Matrix4x4 localToWorld = Transform.RenderMatrix;
-        for (int i = 0; i < _cpuSceneItems.Length; i++)
+        if (_cpuSceneItems is null ||
+            _cpuSceneTree is null ||
+            _sceneTreeBaseDebugRenderer is null ||
+            _sceneTreeQueryDebugRenderer is null)
         {
-            SceneBvhItem item = _cpuSceneItems[i];
-            if (item.LocalCullingVolume is not { } bounds)
-                continue;
-
-            ColorF4 color = item.QueryHit
-                ? new ColorF4(0.15f, 1.0f, 0.35f, 0.95f)
-                : new ColorF4(0.35f, 0.42f, 0.50f, 0.45f);
-            RenderLocalBox(bounds, localToWorld, color);
+            return;
         }
 
-        _cpuSceneTree.DebugRender(_sceneQueryBounds, _sceneTreeDebugRenderer);
-        RenderLocalBox(_sceneQueryBounds, localToWorld, new ColorF4(1.0f, 0.82f, 0.12f, 1.0f));
+        Matrix4x4 localToWorld = Transform.RenderMatrix;
+        // Keep the complete tree visible. The second pass below is query-filtered, so only
+        // its highlight changes as the animated query crosses node bounds.
+        if (RenderBaseNodes)
+            _cpuSceneTree.DebugRenderNodes(null, _sceneTreeBaseDebugRenderer);
+
+        if (RenderSourceGeometry)
+        {
+            for (int i = 0; i < _cpuSceneItems.Length; i++)
+            {
+                SceneBvhItem item = _cpuSceneItems[i];
+                if (item.LocalCullingVolume is not { } bounds)
+                    continue;
+
+                if (TryGetGeometryColor(item.QueryContainment, out ColorF4 color))
+                    RenderLocalBox(bounds, localToWorld, color);
+            }
+        }
+
+        if (RenderVisitedNodes)
+            _cpuSceneTree.DebugRenderNodes(_queryVolume, _sceneTreeQueryDebugRenderer);
+        if (RenderQuery)
+            RenderQueryVolume(localToWorld);
     }
 
-    private void RenderCpuSceneTreeNode(Vector3 halfExtents, Vector3 center, Color color)
+    private void RenderCpuSceneTreeBaseNode(
+        Vector3 halfExtents,
+        Vector3 center,
+        EContainment _,
+        bool isLeaf)
     {
-        ColorF4 nodeColor = color == Color.Green
-            ? new ColorF4(0.18f, 0.82f, 1.0f, 0.9f)
-            : new ColorF4(0.48f, 0.65f, 1.0f, 0.55f);
-        RenderLocalBox(AABB.FromCenterSize(center, halfExtents * 2.0f), Transform.RenderMatrix, nodeColor);
+        if (ShouldRenderNode(isLeaf))
+            RenderLocalBox(
+                AABB.FromCenterSize(center, halfExtents * 2.0f),
+                Transform.RenderMatrix,
+                isLeaf ? LeafNodeColor : InternalNodeColor);
+    }
+
+    private void RenderCpuSceneTreeQueryNode(
+        Vector3 halfExtents,
+        Vector3 center,
+        EContainment _,
+        bool isLeaf)
+    {
+        if (!ShouldRenderNode(isLeaf))
+            return;
+
+        RenderLocalBox(
+            AABB.FromCenterSize(center, halfExtents * 2.0f),
+            Transform.RenderMatrix,
+            VisitedNodeColor);
     }
 
     private void RenderGpuSceneDebug()
     {
-        if (_gpuSceneCurrentBounds is not null)
+        if (_gpuSceneCurrentBounds is not null && RenderSourceGeometry)
         {
             Matrix4x4 localToWorld = Transform.RenderMatrix;
             for (int i = 0; i < _gpuSceneCurrentBounds.Length; i++)
-                RenderLocalBox(_gpuSceneCurrentBounds[i], localToWorld, new ColorF4(0.32f, 0.39f, 0.48f, 0.35f));
+            {
+                EContainment containment = _gpuSceneQueryContainments is not null &&
+                    (uint)i < (uint)_gpuSceneQueryContainments.Length
+                        ? _gpuSceneQueryContainments[i]
+                        : EContainment.Disjoint;
+                if (TryGetGeometryColor(containment, out ColorF4 color))
+                    RenderLocalBox(_gpuSceneCurrentBounds[i], localToWorld, color);
+            }
         }
+        if (RenderQuery)
+            RenderQueryVolume(Transform.RenderMatrix);
 
         if (_gpuSceneTree?.NodeBuffer is not { } nodeBuffer || !WorkloadReady)
+        {
             return;
+        }
 
-        _gpuDebugRenderer.Queue(
-            nodeBuffer,
-            _gpuSceneTree.NodeCount,
-            Transform.RenderMatrix,
-            MaxDebugNodeCount,
-            0.0015f,
-            new Vector4(0.16f, 1.0f, 0.38f, 0.95f),
-            new Vector4(1.0f, 0.56f, 0.08f, 0.62f),
-            0u);
+        uint showFilter = GetGpuNodeShowFilter();
+        uint maxNodes = (uint)MaxDebugNodes;
+        if (RenderBaseNodes)
+        {
+            _gpuDebugRenderer.Queue(
+                nodeBuffer,
+                _gpuSceneTree.NodeCount,
+                Transform.RenderMatrix,
+                maxNodes,
+                BaseNodeLineWidth,
+                ToVector4(LeafNodeColor),
+                ToVector4(InternalNodeColor),
+                showFilter);
+        }
+        if (RenderVisitedNodes && _gpuSceneNodeClassesBuffer is not null)
+        {
+            _gpuDebugRenderer.Queue(
+                nodeBuffer,
+                _gpuSceneTree.NodeCount,
+                Transform.RenderMatrix,
+                maxNodes,
+                VisitedNodeLineWidth,
+                Vector4.Zero,
+                Vector4.Zero,
+                showFilter,
+                new GpuBvhDebugNodeClassOptions(
+                    _gpuSceneNodeClassesBuffer,
+                    GpuBvhDebugNodeClassMode.ClassifiedOnly,
+                    ToVector4(VisitedNodeColor),
+                    ToVector4(VisitedNodeColor),
+                    0b11u),
+                GpuBvhDebugOverlayLayer.Highlight);
+        }
     }
 
     private void RenderCpuMeshDebug()
@@ -103,43 +171,107 @@ public sealed partial class MathBvhTestComponent
             return;
 
         Matrix4x4 localToWorld = _targetModel?.Transform.RenderMatrix ?? Transform.RenderMatrix;
-        RenderSourceMeshWireframe(localToWorld, new ColorF4(0.25f, 0.48f, 0.62f, 0.38f));
-        for (int i = 0; i < _cpuMeshNodes.Count; i++)
+        if (RenderSourceGeometry)
+            RenderSourceMeshWireframe(localToWorld, DisjointGeometryColor);
+        if (RenderBaseNodes)
         {
-            BVHNode<Triangle> node = _cpuMeshNodes[i];
-            bool visited = (uint)node.nodeNumber < (uint)_cpuMeshVisitedNodes.Length && _cpuMeshVisitedNodes[node.nodeNumber];
-            ColorF4 color = visited
-                ? new ColorF4(1.0f, 0.78f, 0.08f, 0.95f)
-                : node.IsLeaf
-                    ? new ColorF4(0.20f, 1.0f, 0.42f, 0.65f)
-                    : new ColorF4(0.20f, 0.68f, 1.0f, 0.42f);
-            RenderLocalBox(node.box, localToWorld, color);
+            for (int i = 0; i < _cpuMeshNodes.Count; i++)
+            {
+                BVHNode<Triangle> node = _cpuMeshNodes[i];
+                if (ShouldRenderNode(node.IsLeaf))
+                    RenderLocalBox(node.box, localToWorld, node.IsLeaf ? LeafNodeColor : InternalNodeColor);
+            }
         }
 
-        ColorF4 rayColor = ValidationPassed ? ColorF4.LightGreen : ColorF4.Red;
-        RenderLocalLine(_meshQuerySegment.Start, _meshQuerySegment.End, localToWorld, rayColor);
-        if (_lastMeshHitPoint is { } hitPoint)
-            RenderLocalPoint(hitPoint, localToWorld, ColorF4.Yellow);
+        if (RenderVisitedNodes)
+        {
+            for (int i = 0; i < _cpuMeshNodes.Count; i++)
+            {
+                BVHNode<Triangle> node = _cpuMeshNodes[i];
+                bool visited = (uint)node.nodeNumber < (uint)_cpuMeshVisitedNodes.Length && _cpuMeshVisitedNodes[node.nodeNumber];
+                if (!visited || !ShouldRenderNode(node.IsLeaf))
+                    continue;
+
+                RenderLocalBox(node.box, localToWorld, VisitedNodeColor);
+            }
+        }
+
+        if (RenderQuery && QueryShape == MathBvhQueryShape.Raycast)
+        {
+            ColorF4 rayColor = ValidationPassed ? QueryColor : QueryFailureColor;
+            RenderLocalLine(_meshQuerySegment.Start, _meshQuerySegment.End, localToWorld, rayColor);
+        }
+        else if (RenderQuery)
+        {
+            RenderQueryVolume(localToWorld);
+        }
+        if (RenderQueryResults)
+            RenderMeshQueryResults(localToWorld);
+        if (RenderHitMarker && QueryShape == MathBvhQueryShape.Raycast && _lastMeshHitPoint is { } hitPoint)
+            RenderLocalPoint(hitPoint, localToWorld, HitMarkerColor);
     }
 
     private void RenderGpuMeshDebug()
     {
         GpuMeshBvh? bvh = _gpuMesh?.GpuMeshBvh;
         Matrix4x4 localToWorld = bvh?.LocalToWorldMatrix ?? (_targetModel?.Transform.RenderMatrix ?? Transform.RenderMatrix);
-        RenderSourceMeshWireframe(localToWorld, new ColorF4(0.46f, 0.24f, 0.60f, 0.38f));
+        if (RenderSourceGeometry)
+            RenderSourceMeshWireframe(localToWorld, DisjointGeometryColor);
 
-        if (bvh?.BvhNodeBuffer is not { } nodeBuffer || !WorkloadReady || !bvh.IsBvhReady)
+        if (bvh?.BvhNodeBuffer is not { } nodeBuffer ||
+            !WorkloadReady ||
+            !bvh.IsBvhReady)
+        {
             return;
+        }
 
-        _gpuDebugRenderer.Queue(
-            nodeBuffer,
-            bvh.BvhNodeCount,
-            bvh.LocalToWorldMatrix,
-            MaxDebugNodeCount,
-            0.0015f,
-            new Vector4(0.12f, 1.0f, 0.62f, 0.95f),
-            new Vector4(0.90f, 0.18f, 1.0f, 0.58f),
-            0u);
+        uint showFilter = GetGpuNodeShowFilter();
+        uint maxNodes = (uint)MaxDebugNodes;
+        if (RenderBaseNodes)
+        {
+            _gpuDebugRenderer.Queue(
+                nodeBuffer,
+                bvh.BvhNodeCount,
+                bvh.LocalToWorldMatrix,
+                maxNodes,
+                BaseNodeLineWidth,
+                ToVector4(LeafNodeColor),
+                ToVector4(InternalNodeColor),
+                showFilter);
+        }
+        if (RenderVisitedNodes && _gpuMeshNodeClassesBuffer is not null)
+        {
+            _gpuDebugRenderer.Queue(
+                nodeBuffer,
+                bvh.BvhNodeCount,
+                bvh.LocalToWorldMatrix,
+                maxNodes,
+                VisitedNodeLineWidth,
+                Vector4.Zero,
+                Vector4.Zero,
+                showFilter,
+                new GpuBvhDebugNodeClassOptions(
+                    _gpuMeshNodeClassesBuffer,
+                    GpuBvhDebugNodeClassMode.ClassifiedOnly,
+                    ToVector4(VisitedNodeColor),
+                    ToVector4(VisitedNodeColor),
+                    0b11u),
+                GpuBvhDebugOverlayLayer.Highlight);
+        }
+
+        if (RenderQuery && QueryShape == MathBvhQueryShape.Raycast)
+        {
+            ColorF4 rayColor = ValidationPassed ? QueryColor : QueryFailureColor;
+            RenderLocalLine(_meshQuerySegment.Start, _meshQuerySegment.End, localToWorld, rayColor);
+        }
+        else if (RenderQuery)
+        {
+            RenderQueryVolume(localToWorld);
+        }
+        if (RenderQueryResults)
+            RenderMeshQueryResults(localToWorld);
+        if (RenderHitMarker && QueryShape == MathBvhQueryShape.Raycast && _lastMeshHitPoint is { } hitPoint)
+            RenderLocalPoint(hitPoint, localToWorld, HitMarkerColor);
     }
 
     private void RenderSourceMeshWireframe(in Matrix4x4 localToWorld, ColorF4 color)
@@ -156,11 +288,146 @@ public sealed partial class MathBvhTestComponent
         }
     }
 
+    private void RenderQueryVolume(in Matrix4x4 localToWorld)
+    {
+        switch (_queryVolume.Shape)
+        {
+            case MathBvhQueryShape.Sphere:
+                RenderLocalSphere(_queryVolume.Sphere, localToWorld, QueryColor);
+                break;
+            case MathBvhQueryShape.Frustum:
+                RenderLocalFrustum(_queryVolume.Frustum, localToWorld, QueryColor);
+                break;
+            case MathBvhQueryShape.Raycast:
+                RenderLocalLine(_queryVolume.Raycast.Start, _queryVolume.Raycast.End, localToWorld, QueryColor);
+                break;
+            default:
+                RenderLocalBox(_queryVolume.Box, localToWorld, QueryColor);
+                break;
+        }
+    }
+
+    private void RenderMeshQueryResults(in Matrix4x4 localToWorld)
+    {
+        if (_sourceTriangles is null)
+            return;
+
+        uint primitiveMask = GetMeshQueryPrimitiveMask();
+        for (int triangleIndex = 0; triangleIndex < _sourceTriangles.Count; triangleIndex++)
+        {
+            Triangle triangle = _sourceTriangles[triangleIndex];
+            if ((primitiveMask & 0b100u) != 0u && _meshTriangleQueryContainments is not null)
+            {
+                RenderClassifiedLine(
+                    triangle.A,
+                    triangle.B,
+                    _meshTriangleQueryContainments[triangleIndex],
+                    localToWorld);
+                RenderClassifiedLine(
+                    triangle.B,
+                    triangle.C,
+                    _meshTriangleQueryContainments[triangleIndex],
+                    localToWorld);
+                RenderClassifiedLine(
+                    triangle.C,
+                    triangle.A,
+                    _meshTriangleQueryContainments[triangleIndex],
+                    localToWorld);
+            }
+
+            int elementOffset = triangleIndex * 3;
+            if ((primitiveMask & 0b010u) != 0u && _meshLineQueryContainments is not null)
+            {
+                RenderClassifiedLine(
+                    triangle.A,
+                    triangle.B,
+                    _meshLineQueryContainments[elementOffset],
+                    localToWorld);
+                RenderClassifiedLine(
+                    triangle.B,
+                    triangle.C,
+                    _meshLineQueryContainments[elementOffset + 1],
+                    localToWorld);
+                RenderClassifiedLine(
+                    triangle.C,
+                    triangle.A,
+                    _meshLineQueryContainments[elementOffset + 2],
+                    localToWorld);
+            }
+
+            if ((primitiveMask & 0b001u) == 0u || _meshPointQueryContainments is null)
+                continue;
+            RenderClassifiedPoint(triangle.A, _meshPointQueryContainments[elementOffset], localToWorld);
+            RenderClassifiedPoint(triangle.B, _meshPointQueryContainments[elementOffset + 1], localToWorld);
+            RenderClassifiedPoint(triangle.C, _meshPointQueryContainments[elementOffset + 2], localToWorld);
+        }
+    }
+
+    private void RenderClassifiedLine(
+        Vector3 start,
+        Vector3 end,
+        EContainment containment,
+        in Matrix4x4 localToWorld)
+    {
+        if (TryGetGeometryColor(containment, out ColorF4 color))
+            RenderLocalLine(start, end, localToWorld, color);
+    }
+
+    private void RenderClassifiedPoint(
+        Vector3 point,
+        EContainment containment,
+        in Matrix4x4 localToWorld)
+    {
+        if (TryGetGeometryColor(containment, out ColorF4 color))
+            RenderLocalPoint(point, localToWorld, color);
+    }
+
+    private bool TryGetGeometryColor(EContainment containment, out ColorF4 color)
+    {
+        color = containment switch
+        {
+            EContainment.Contains => ContainedGeometryColor,
+            EContainment.Intersects => IntersectedGeometryColor,
+            _ => DisjointGeometryColor,
+        };
+        return containment != EContainment.Intersects || RenderIntersectedGeometry;
+    }
+
+    private static void RenderLocalSphere(in Sphere sphere, in Matrix4x4 localToWorld, ColorF4 color)
+    {
+        float scale = MathF.Max(
+            new Vector3(localToWorld.M11, localToWorld.M12, localToWorld.M13).Length(),
+            MathF.Max(
+                new Vector3(localToWorld.M21, localToWorld.M22, localToWorld.M23).Length(),
+                new Vector3(localToWorld.M31, localToWorld.M32, localToWorld.M33).Length()));
+        Engine.Rendering.Debug.RenderSphere(
+            Vector3.Transform(sphere.Center, localToWorld),
+            sphere.Radius * scale,
+            solid: false,
+            color);
+    }
+
+    private static void RenderLocalFrustum(in Frustum frustum, in Matrix4x4 localToWorld, ColorF4 color)
+    {
+        RenderLocalLine(frustum.LeftBottomNear, frustum.RightBottomNear, localToWorld, color);
+        RenderLocalLine(frustum.RightBottomNear, frustum.RightTopNear, localToWorld, color);
+        RenderLocalLine(frustum.RightTopNear, frustum.LeftTopNear, localToWorld, color);
+        RenderLocalLine(frustum.LeftTopNear, frustum.LeftBottomNear, localToWorld, color);
+        RenderLocalLine(frustum.LeftBottomFar, frustum.RightBottomFar, localToWorld, color);
+        RenderLocalLine(frustum.RightBottomFar, frustum.RightTopFar, localToWorld, color);
+        RenderLocalLine(frustum.RightTopFar, frustum.LeftTopFar, localToWorld, color);
+        RenderLocalLine(frustum.LeftTopFar, frustum.LeftBottomFar, localToWorld, color);
+        RenderLocalLine(frustum.LeftBottomNear, frustum.LeftBottomFar, localToWorld, color);
+        RenderLocalLine(frustum.RightBottomNear, frustum.RightBottomFar, localToWorld, color);
+        RenderLocalLine(frustum.LeftTopNear, frustum.LeftTopFar, localToWorld, color);
+        RenderLocalLine(frustum.RightTopNear, frustum.RightTopFar, localToWorld, color);
+    }
+
     private void RenderValidationMarker()
     {
         ColorF4 color = WorkloadReady
-            ? ValidationPassed ? ColorF4.LightGreen : ColorF4.Red
-            : ColorF4.Orange;
+            ? ValidationPassed ? ValidationPassedColor : ValidationFailedColor
+            : ValidationPendingColor;
         Vector3 worldPosition = Vector3.Transform(new Vector3(0.0f, 6.3f, 0.0f), Transform.RenderMatrix);
         Engine.Rendering.Debug.RenderSphere(worldPosition, 0.18f, solid: true, color);
     }
@@ -183,4 +450,7 @@ public sealed partial class MathBvhTestComponent
 
     private static void RenderLocalPoint(Vector3 localPoint, in Matrix4x4 localToWorld, ColorF4 color)
         => Engine.Rendering.Debug.RenderPoint(Vector3.Transform(localPoint, localToWorld), color);
+
+    private static Vector4 ToVector4(ColorF4 color)
+        => new(color.R, color.G, color.B, color.A);
 }

@@ -1,0 +1,405 @@
+// Shared finite-ray, box, sphere, and frustum query helpers for Math BVH tests.
+
+uniform vec3 QueryMin;
+uniform vec3 QueryMax;
+uniform vec3 QuerySphereCenter;
+uniform float QuerySphereRadius;
+uniform vec3 QueryRayStart;
+uniform vec3 QueryRayEnd;
+uniform vec4 QueryFrustumPlane0;
+uniform vec4 QueryFrustumPlane1;
+uniform vec4 QueryFrustumPlane2;
+uniform vec4 QueryFrustumPlane3;
+uniform vec4 QueryFrustumPlane4;
+uniform vec4 QueryFrustumPlane5;
+uniform vec3 QueryFrustumCorner0;
+uniform vec3 QueryFrustumCorner1;
+uniform vec3 QueryFrustumCorner2;
+uniform vec3 QueryFrustumCorner3;
+uniform vec3 QueryFrustumCorner4;
+uniform vec3 QueryFrustumCorner5;
+uniform vec3 QueryFrustumCorner6;
+uniform vec3 QueryFrustumCorner7;
+// 0 = box, 1 = sphere, 2 = frustum, 3 = finite raycast.
+uniform uint QueryShape;
+
+vec4 GetQueryFrustumPlane(uint index)
+{
+    if (index == 0u) return QueryFrustumPlane0;
+    if (index == 1u) return QueryFrustumPlane1;
+    if (index == 2u) return QueryFrustumPlane2;
+    if (index == 3u) return QueryFrustumPlane3;
+    if (index == 4u) return QueryFrustumPlane4;
+    return QueryFrustumPlane5;
+}
+
+vec3 GetQueryFrustumCorner(uint index)
+{
+    if (index == 0u) return QueryFrustumCorner0;
+    if (index == 1u) return QueryFrustumCorner1;
+    if (index == 2u) return QueryFrustumCorner2;
+    if (index == 3u) return QueryFrustumCorner3;
+    if (index == 4u) return QueryFrustumCorner4;
+    if (index == 5u) return QueryFrustumCorner5;
+    if (index == 6u) return QueryFrustumCorner6;
+    return QueryFrustumCorner7;
+}
+
+uint ClassifyBoxQueryAabb(vec3 minBounds, vec3 maxBounds)
+{
+    const float tolerance = 1e-5;
+    bool intersects = all(lessThanEqual(minBounds, QueryMax + vec3(tolerance))) &&
+                      all(greaterThanEqual(maxBounds, QueryMin - vec3(tolerance)));
+    if (!intersects)
+        return 0u;
+    bool contained = all(greaterThanEqual(minBounds, QueryMin - vec3(tolerance))) &&
+                     all(lessThanEqual(maxBounds, QueryMax + vec3(tolerance)));
+    return contained ? 1u : 2u;
+}
+
+uint ClassifySphereQueryAabb(vec3 minBounds, vec3 maxBounds)
+{
+    const float tolerance = 1e-5;
+    float radius = QuerySphereRadius + tolerance;
+    float radiusSquared = radius * radius;
+    vec3 closestDelta = clamp(QuerySphereCenter, minBounds, maxBounds) - QuerySphereCenter;
+    if (dot(closestDelta, closestDelta) > radiusSquared)
+        return 0u;
+    vec3 farthestDelta = max(abs(minBounds - QuerySphereCenter), abs(maxBounds - QuerySphereCenter));
+    return dot(farthestDelta, farthestDelta) <= radiusSquared ? 1u : 2u;
+}
+
+uint ClassifyRayQueryAabb(vec3 minBounds, vec3 maxBounds)
+{
+    vec3 delta = QueryRayEnd - QueryRayStart;
+    float tMin = 0.0;
+    float tMax = 1.0;
+    for (uint axis = 0u; axis < 3u; ++axis)
+    {
+        float start = QueryRayStart[axis];
+        float direction = delta[axis];
+        if (abs(direction) <= 1e-12)
+        {
+            if (start < minBounds[axis] || start > maxBounds[axis])
+                return 0u;
+            continue;
+        }
+        float inverseDirection = 1.0 / direction;
+        float t1 = (minBounds[axis] - start) * inverseDirection;
+        float t2 = (maxBounds[axis] - start) * inverseDirection;
+        if (t1 > t2)
+        {
+            float swapValue = t1;
+            t1 = t2;
+            t2 = swapValue;
+        }
+        tMin = max(tMin, t1);
+        tMax = min(tMax, t2);
+        if (tMin > tMax)
+            return 0u;
+    }
+    // A finite ray intersects an AABB; it cannot contain a volume.
+    return 2u;
+}
+
+bool QueryFrustumSeparatedOnAxis(vec3 axis, vec3 minBounds, vec3 maxBounds)
+{
+    if (dot(axis, axis) <= 1e-12)
+        return false;
+    vec3 center = (minBounds + maxBounds) * 0.5;
+    vec3 extents = (maxBounds - minBounds) * 0.5;
+    float boxCenter = dot(center, axis);
+    float boxRadius = dot(extents, abs(axis));
+    float frustumMin = dot(GetQueryFrustumCorner(0u), axis);
+    float frustumMax = frustumMin;
+    for (uint cornerIndex = 1u; cornerIndex < 8u; ++cornerIndex)
+    {
+        float projection = dot(GetQueryFrustumCorner(cornerIndex), axis);
+        frustumMin = min(frustumMin, projection);
+        frustumMax = max(frustumMax, projection);
+    }
+    const float tolerance = 1e-5;
+    return frustumMax < boxCenter - boxRadius - tolerance ||
+           frustumMin > boxCenter + boxRadius + tolerance;
+}
+
+void GetQueryFrustumEdge(uint edgeIndex, out vec3 start, out vec3 end)
+{
+    if (edgeIndex == 0u) { start = QueryFrustumCorner0; end = QueryFrustumCorner1; return; }
+    if (edgeIndex == 1u) { start = QueryFrustumCorner1; end = QueryFrustumCorner3; return; }
+    if (edgeIndex == 2u) { start = QueryFrustumCorner3; end = QueryFrustumCorner2; return; }
+    if (edgeIndex == 3u) { start = QueryFrustumCorner2; end = QueryFrustumCorner0; return; }
+    if (edgeIndex == 4u) { start = QueryFrustumCorner4; end = QueryFrustumCorner5; return; }
+    if (edgeIndex == 5u) { start = QueryFrustumCorner5; end = QueryFrustumCorner7; return; }
+    if (edgeIndex == 6u) { start = QueryFrustumCorner7; end = QueryFrustumCorner6; return; }
+    if (edgeIndex == 7u) { start = QueryFrustumCorner6; end = QueryFrustumCorner4; return; }
+    if (edgeIndex == 8u) { start = QueryFrustumCorner0; end = QueryFrustumCorner4; return; }
+    if (edgeIndex == 9u) { start = QueryFrustumCorner1; end = QueryFrustumCorner5; return; }
+    if (edgeIndex == 10u) { start = QueryFrustumCorner2; end = QueryFrustumCorner6; return; }
+    start = QueryFrustumCorner3;
+    end = QueryFrustumCorner7;
+}
+
+uint ClassifyFrustumQueryAabb(vec3 minBounds, vec3 maxBounds)
+{
+    const float tolerance = 1e-5;
+    bool contained = true;
+    for (uint planeIndex = 0u; planeIndex < 6u; ++planeIndex)
+    {
+        vec4 plane = GetQueryFrustumPlane(planeIndex);
+        vec3 positiveVertex = mix(minBounds, maxBounds, greaterThanEqual(plane.xyz, vec3(0.0)));
+        vec3 negativeVertex = mix(maxBounds, minBounds, greaterThanEqual(plane.xyz, vec3(0.0)));
+        if (dot(plane.xyz, positiveVertex) + plane.w < -tolerance)
+            return 0u;
+        if (dot(plane.xyz, negativeVertex) + plane.w < -tolerance)
+            contained = false;
+    }
+
+    if (QueryFrustumSeparatedOnAxis(vec3(1.0, 0.0, 0.0), minBounds, maxBounds) ||
+        QueryFrustumSeparatedOnAxis(vec3(0.0, 1.0, 0.0), minBounds, maxBounds) ||
+        QueryFrustumSeparatedOnAxis(vec3(0.0, 0.0, 1.0), minBounds, maxBounds))
+        return 0u;
+
+    for (uint edgeIndex = 0u; edgeIndex < 12u; ++edgeIndex)
+    {
+        vec3 edgeStart;
+        vec3 edgeEnd;
+        GetQueryFrustumEdge(edgeIndex, edgeStart, edgeEnd);
+        vec3 edge = edgeEnd - edgeStart;
+        if (QueryFrustumSeparatedOnAxis(cross(edge, vec3(1.0, 0.0, 0.0)), minBounds, maxBounds) ||
+            QueryFrustumSeparatedOnAxis(cross(edge, vec3(0.0, 1.0, 0.0)), minBounds, maxBounds) ||
+            QueryFrustumSeparatedOnAxis(cross(edge, vec3(0.0, 0.0, 1.0)), minBounds, maxBounds))
+            return 0u;
+    }
+    return contained ? 1u : 2u;
+}
+
+uint ClassifyQueryAabb(vec3 minBounds, vec3 maxBounds)
+{
+    if (QueryShape == 1u) return ClassifySphereQueryAabb(minBounds, maxBounds);
+    if (QueryShape == 2u) return ClassifyFrustumQueryAabb(minBounds, maxBounds);
+    if (QueryShape == 3u) return ClassifyRayQueryAabb(minBounds, maxBounds);
+    return ClassifyBoxQueryAabb(minBounds, maxBounds);
+}
+
+bool QueryContainsPoint(vec3 point)
+{
+    const float tolerance = 1e-5;
+    if (QueryShape == 1u)
+    {
+        vec3 delta = point - QuerySphereCenter;
+        float radius = QuerySphereRadius + tolerance;
+        return dot(delta, delta) <= radius * radius;
+    }
+    if (QueryShape == 2u)
+    {
+        for (uint planeIndex = 0u; planeIndex < 6u; ++planeIndex)
+        {
+            vec4 plane = GetQueryFrustumPlane(planeIndex);
+            if (dot(plane.xyz, point) + plane.w < -tolerance)
+                return false;
+        }
+        return true;
+    }
+    if (QueryShape == 3u)
+        return false;
+    return all(greaterThanEqual(point, QueryMin - vec3(tolerance))) &&
+           all(lessThanEqual(point, QueryMax + vec3(tolerance)));
+}
+
+bool SegmentIntersectsQueryAabb(vec3 start, vec3 end)
+{
+    vec3 delta = end - start;
+    float tMin = 0.0;
+    float tMax = 1.0;
+    for (uint axis = 0u; axis < 3u; ++axis)
+    {
+        if (abs(delta[axis]) <= 1e-12)
+        {
+            if (start[axis] < QueryMin[axis] || start[axis] > QueryMax[axis])
+                return false;
+            continue;
+        }
+        float inverseDirection = 1.0 / delta[axis];
+        float t1 = (QueryMin[axis] - start[axis]) * inverseDirection;
+        float t2 = (QueryMax[axis] - start[axis]) * inverseDirection;
+        if (t1 > t2) { float swapValue = t1; t1 = t2; t2 = swapValue; }
+        tMin = max(tMin, t1);
+        tMax = min(tMax, t2);
+        if (tMin > tMax)
+            return false;
+    }
+    return true;
+}
+
+bool QueryIntersectsSegment(vec3 start, vec3 end)
+{
+    if (QueryShape == 1u)
+    {
+        vec3 delta = end - start;
+        float lengthSquared = dot(delta, delta);
+        float t = lengthSquared > 1e-12
+            ? clamp(dot(QuerySphereCenter - start, delta) / lengthSquared, 0.0, 1.0)
+            : 0.0;
+        vec3 difference = start + delta * t - QuerySphereCenter;
+        return dot(difference, difference) <= QuerySphereRadius * QuerySphereRadius;
+    }
+    if (QueryShape == 2u)
+    {
+        float tMin = 0.0;
+        float tMax = 1.0;
+        for (uint planeIndex = 0u; planeIndex < 6u; ++planeIndex)
+        {
+            vec4 plane = GetQueryFrustumPlane(planeIndex);
+            float startDistance = dot(plane.xyz, start) + plane.w;
+            float endDistance = dot(plane.xyz, end) + plane.w;
+            if (startDistance < 0.0 && endDistance < 0.0)
+                return false;
+            if ((startDistance < 0.0) != (endDistance < 0.0))
+            {
+                float t = startDistance / (startDistance - endDistance);
+                if (startDistance < 0.0) tMin = max(tMin, t);
+                else tMax = min(tMax, t);
+                if (tMin > tMax)
+                    return false;
+            }
+        }
+        return true;
+    }
+    if (QueryShape == 3u)
+        return false;
+    return SegmentIntersectsQueryAabb(start, end);
+}
+
+bool SegmentIntersectsTriangle(
+    vec3 start,
+    vec3 end,
+    vec3 a,
+    vec3 b,
+    vec3 c,
+    out float distance)
+{
+    vec3 rayDelta = end - start;
+    float rayLength = length(rayDelta);
+    vec3 direction = rayLength > 1e-6 ? rayDelta / rayLength : vec3(0.0, -1.0, 0.0);
+    vec3 edge1 = b - a;
+    vec3 edge2 = c - a;
+    vec3 p = cross(direction, edge2);
+    float determinant = dot(edge1, p);
+    if (abs(determinant) < 1e-6) { distance = 0.0; return false; }
+    float inverseDeterminant = 1.0 / determinant;
+    vec3 t = start - a;
+    float u = dot(t, p) * inverseDeterminant;
+    if (u < 0.0 || u > 1.0) { distance = 0.0; return false; }
+    vec3 q = cross(t, edge1);
+    float v = dot(direction, q) * inverseDeterminant;
+    if (v < 0.0 || u + v > 1.0) { distance = 0.0; return false; }
+    distance = dot(edge2, q) * inverseDeterminant;
+    return distance >= 0.0 && distance <= rayLength;
+}
+
+vec3 ClosestPointOnTriangle(vec3 point, vec3 a, vec3 b, vec3 c)
+{
+    vec3 ab = b - a;
+    vec3 ac = c - a;
+    vec3 ap = point - a;
+    float d1 = dot(ab, ap);
+    float d2 = dot(ac, ap);
+    if (d1 <= 0.0 && d2 <= 0.0) return a;
+    vec3 bp = point - b;
+    float d3 = dot(ab, bp);
+    float d4 = dot(ac, bp);
+    if (d3 >= 0.0 && d4 <= d3) return b;
+    float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0) return a + ab * (d1 / (d1 - d3));
+    vec3 cp = point - c;
+    float d5 = dot(ab, cp);
+    float d6 = dot(ac, cp);
+    if (d6 >= 0.0 && d5 <= d6) return c;
+    float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0) return a + ac * (d2 / (d2 - d6));
+    float va = d3 * d6 - d5 * d4;
+    if (va <= 0.0 && d4 - d3 >= 0.0 && d5 - d6 >= 0.0)
+        return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    float inverseDenominator = 1.0 / (va + vb + vc);
+    return a + ab * (vb * inverseDenominator) + ac * (vc * inverseDenominator);
+}
+
+vec3 GetBoxQueryCorner(uint index)
+{
+    return vec3(
+        (index & 1u) != 0u ? QueryMax.x : QueryMin.x,
+        (index & 2u) != 0u ? QueryMax.y : QueryMin.y,
+        (index & 4u) != 0u ? QueryMax.z : QueryMin.z);
+}
+
+void GetShapeQueryEdge(uint edgeIndex, out vec3 start, out vec3 end)
+{
+    if (QueryShape == 2u)
+    {
+        GetQueryFrustumEdge(edgeIndex, start, end);
+        return;
+    }
+    const uint edgeStarts[12] = uint[](0u, 1u, 3u, 2u, 4u, 5u, 7u, 6u, 0u, 1u, 2u, 3u);
+    const uint edgeEnds[12] = uint[](1u, 3u, 2u, 0u, 5u, 7u, 6u, 4u, 4u, 5u, 6u, 7u);
+    start = GetBoxQueryCorner(edgeStarts[edgeIndex]);
+    end = GetBoxQueryCorner(edgeEnds[edgeIndex]);
+}
+
+bool QueryIntersectsTriangle(vec3 a, vec3 b, vec3 c)
+{
+    if (QueryShape == 3u)
+    {
+        float distance;
+        return SegmentIntersectsTriangle(QueryRayStart, QueryRayEnd, a, b, c, distance);
+    }
+    if (QueryShape == 1u)
+    {
+        vec3 closest = ClosestPointOnTriangle(QuerySphereCenter, a, b, c);
+        vec3 delta = closest - QuerySphereCenter;
+        return dot(delta, delta) <= QuerySphereRadius * QuerySphereRadius;
+    }
+    if (QueryContainsPoint(a) || QueryContainsPoint(b) || QueryContainsPoint(c) ||
+        QueryIntersectsSegment(a, b) || QueryIntersectsSegment(b, c) || QueryIntersectsSegment(c, a))
+        return true;
+
+    for (uint edgeIndex = 0u; edgeIndex < 12u; ++edgeIndex)
+    {
+        vec3 edgeStart;
+        vec3 edgeEnd;
+        float distance;
+        GetShapeQueryEdge(edgeIndex, edgeStart, edgeEnd);
+        if (SegmentIntersectsTriangle(edgeStart, edgeEnd, a, b, c, distance))
+            return true;
+    }
+    return false;
+}
+
+// Geometry-result classifications use the same values as BVH node classes:
+// 0 = disjoint, 1 = fully contained, 2 = intersected but not contained.
+uint ClassifyQueryPoint(vec3 point)
+{
+    return QueryContainsPoint(point) ? 1u : 0u;
+}
+
+uint ClassifyQuerySegment(vec3 start, vec3 end)
+{
+    if (QueryShape == 3u)
+        return 0u;
+    if (QueryContainsPoint(start) && QueryContainsPoint(end))
+        return 1u;
+    return QueryIntersectsSegment(start, end) ? 2u : 0u;
+}
+
+uint ClassifyQueryTriangle(vec3 a, vec3 b, vec3 c)
+{
+    if (QueryShape != 3u &&
+        QueryContainsPoint(a) &&
+        QueryContainsPoint(b) &&
+        QueryContainsPoint(c))
+    {
+        return 1u;
+    }
+
+    return QueryIntersectsTriangle(a, b, c) ? 2u : 0u;
+}

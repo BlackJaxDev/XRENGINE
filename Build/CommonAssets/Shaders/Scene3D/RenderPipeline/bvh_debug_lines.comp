@@ -28,12 +28,25 @@ layout(std430, binding = 1) writeonly buffer DebugLines
     vec4 Lines[];
 };
 
+// Optional per-node query classification. The host always binds this descriptor;
+// NodeClassMode == 0 leaves the original leaf/internal rendering unchanged.
+layout(std430, binding = 2) readonly buffer QueryNodeClasses
+{
+    uint NodeClasses[];
+};
+
 uniform uint MaxNodes;
 uniform vec4 LeafColor;
 uniform vec4 InternalColor;
 uniform mat4 NodeToWorld;
 // 0 = all nodes, 1 = leaves only, 2 = internal nodes only.
 uniform uint ShowFilter;
+// 0 = ignore classes, 1 = highlight classified nodes, 2 = draw classified nodes only.
+uniform uint NodeClassMode;
+uniform vec4 ClassOneColor;
+uniform vec4 ClassTwoColor;
+// Bit zero controls class one, bit one controls class two, and so on.
+uniform uint VisibleClassMask;
 
 const uint LINES_PER_BOX = 12u;
 const uint VEC4_PER_LINE = 3u;
@@ -63,11 +76,19 @@ void main()
 
     BvhNode n = nodes[i];
     bool isLeaf = (n.flags & BVH_FLAG_LEAF) != 0u;
+    uint nodeClass = NodeClassMode != 0u && i < uint(NodeClasses.length())
+        ? NodeClasses[i]
+        : 0u;
 
     bool keep =
         (ShowFilter == 0u) ||
         (ShowFilter == 1u && isLeaf) ||
         (ShowFilter == 2u && !isLeaf);
+    keep = keep && (NodeClassMode != 2u || nodeClass != 0u);
+    bool classVisible = true;
+    if (nodeClass > 0u && nodeClass <= 32u)
+        classVisible = (VisibleClassMask & (1u << (nodeClass - 1u))) != 0u;
+    keep = keep && classVisible;
 
     if (!keep)
     {
@@ -76,7 +97,11 @@ void main()
         return;
     }
 
-    vec4 color = isLeaf ? LeafColor : InternalColor;
+    vec4 color = nodeClass == 1u
+        ? ClassOneColor
+        : nodeClass == 2u
+            ? ClassTwoColor
+            : isLeaf ? LeafColor : InternalColor;
     vec3 mn = n.minBounds;
     vec3 mx = n.maxBounds;
 

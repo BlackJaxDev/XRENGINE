@@ -14,4 +14,5 @@ internal readonly record struct GpuBvhDebugRenderRequest(
     float LineWidth,
     Vector4 LeafColor,
     Vector4 InternalColor,
-    uint ShowFilter);
+    uint ShowFilter,
+    GpuBvhDebugNodeClassOptions? NodeClasses);

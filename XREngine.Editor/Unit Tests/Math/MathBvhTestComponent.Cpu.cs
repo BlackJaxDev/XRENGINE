@@ -18,8 +18,9 @@ public sealed partial class MathBvhTestComponent
     private CpuBvhRenderTree<SceneBvhItem>? _cpuSceneTree;
     private SceneBvhItem[]? _cpuSceneItems;
     private Action<SceneBvhItem>? _sceneHitCollector;
-    private DelRenderAABB? _sceneTreeDebugRenderer;
-    private AABB _sceneQueryBounds;
+    private DelRenderBvhNodeAABB? _sceneTreeBaseDebugRenderer;
+    private DelRenderBvhNodeAABB? _sceneTreeQueryDebugRenderer;
+    private readonly MathBvhQueryVolume _queryVolume = new();
     private int _sceneQueryHitCount;
     private int _sceneMoveCursor;
 
@@ -27,6 +28,10 @@ public sealed partial class MathBvhTestComponent
     private List<BVHNode<Triangle>>? _cpuMeshNodes;
     private bool[]? _cpuMeshVisitedNodes;
     private BVH<Triangle>.NodeTest? _cpuMeshNodeTest;
+    private Dictionary<Triangle, int>? _cpuMeshTriangleIndices;
+    private EContainment[]? _meshPointQueryContainments;
+    private EContainment[]? _meshLineQueryContainments;
+    private EContainment[]? _meshTriangleQueryContainments;
     private Segment _meshQuerySegment;
     private Vector3? _lastMeshHitPoint;
 
@@ -58,7 +63,8 @@ public sealed partial class MathBvhTestComponent
             items,
             new CpuBvhOptions { LeafCapacity = (int)SceneLeafCapacity });
         _sceneHitCollector = MarkSceneQueryHit;
-        _sceneTreeDebugRenderer = RenderCpuSceneTreeNode;
+        _sceneTreeBaseDebugRenderer = RenderCpuSceneTreeBaseNode;
+        _sceneTreeQueryDebugRenderer = RenderCpuSceneTreeQueryNode;
         Interlocked.Increment(ref _buildOperationCount);
         ValidateCpuSceneQuery((float)Engine.ElapsedTime);
     }
@@ -75,8 +81,12 @@ public sealed partial class MathBvhTestComponent
         _cpuMeshNodes = _cpuMeshTree.Traverse(static _ => true);
         _cpuMeshVisitedNodes = new bool[_cpuMeshTree._nodeCount];
         _cpuMeshNodeTest = CpuMeshNodeIntersectsQuery;
+        _cpuMeshTriangleIndices = new Dictionary<Triangle, int>(triangles.Count);
+        for (int triangleIndex = 0; triangleIndex < triangles.Count; triangleIndex++)
+            _cpuMeshTriangleIndices.TryAdd(triangles[triangleIndex], triangleIndex);
+        EnsureMeshQueryResultStorage();
         Interlocked.Increment(ref _buildOperationCount);
-        ValidateCpuMeshRay((float)Engine.ElapsedTime);
+        ValidateCpuMeshQuery((float)Engine.ElapsedTime);
     }
 
     private void UpdateCpuSceneWorkload()
@@ -85,17 +95,11 @@ public sealed partial class MathBvhTestComponent
             return;
 
         float time = (float)Engine.ElapsedTime;
-        const int movesPerTick = 3;
-        for (int move = 0; move < movesPerTick; move++)
+        for (int move = 0; move < SceneMovesPerUpdate; move++)
         {
             int index = _sceneMoveCursor++ % _cpuSceneItems.Length;
             SceneBvhItem item = _cpuSceneItems[index];
-            AABB baseBounds = item.BaseBounds;
-            Vector3 offset = new(
-                MathF.Sin(time * 0.73f + index * 0.31f) * 0.28f,
-                MathF.Cos(time * 0.91f + index * 0.17f) * 0.18f,
-                MathF.Sin(time * 0.57f + index * 0.23f) * 0.24f);
-            item.LocalCullingVolume = AABB.FromCenterSize(baseBounds.Center + offset, baseBounds.Size);
+            item.LocalCullingVolume = AnimateSceneBounds(item.BaseBounds, time, index);
             item.OctreeNode?.QueueItemMoved(item);
         }
 
@@ -109,24 +113,23 @@ public sealed partial class MathBvhTestComponent
         if (_cpuSceneTree is null || _cpuSceneItems is null || _sceneHitCollector is null)
             return;
 
-        Vector3 center = new(
-            MathF.Sin(time * 0.52f) * 3.4f,
-            2.5f + MathF.Sin(time * 0.37f) * 0.55f,
-            MathF.Cos(time * 0.41f) * 3.4f);
-        _sceneQueryBounds = AABB.FromCenterSize(center, new Vector3(3.0f, 2.6f, 3.0f));
+        _queryVolume.Update(QueryShape, time);
 
         int bruteForceCount = 0;
         for (int i = 0; i < _cpuSceneItems.Length; i++)
         {
             SceneBvhItem item = _cpuSceneItems[i];
-            item.QueryHit = false;
-            if (item.LocalCullingVolume is { } itemBounds && _sceneQueryBounds.Intersects(itemBounds))
+            item.QueryContainment = EContainment.Disjoint;
+            if (item.LocalCullingVolume is { } itemBounds &&
+                _queryVolume.ContainsAABB(itemBounds) != EContainment.Disjoint)
+            {
                 bruteForceCount++;
+            }
         }
 
         _sceneQueryHitCount = 0;
         _cpuSceneTree.CollectVisible(
-            _sceneQueryBounds,
+            _queryVolume,
             onlyContainingItems: false,
             _sceneHitCollector,
             s_sceneIntersectionTest);
@@ -139,7 +142,8 @@ public sealed partial class MathBvhTestComponent
 
     private void MarkSceneQueryHit(SceneBvhItem item)
     {
-        item.QueryHit = true;
+        if (item.LocalCullingVolume is { } bounds)
+            item.QueryContainment = _queryVolume.ContainsAABB(bounds);
         _sceneQueryHitCount++;
     }
 
@@ -148,10 +152,10 @@ public sealed partial class MathBvhTestComponent
         if (item.LocalCullingVolume is not { } itemBounds || volume is null)
             return true;
 
-        EContainment containment = volume.ContainsBox(itemBounds.ToBox(Matrix4x4.Identity));
+        EContainment containment = volume.ContainsAABB(itemBounds);
         return containsOnly
             ? containment == EContainment.Contains
-            : containment != EContainment.Disjoint || volume is AABB query && query.Intersects(itemBounds);
+            : containment != EContainment.Disjoint;
     }
 
     private void UpdateCpuMeshWorkload()
@@ -159,31 +163,49 @@ public sealed partial class MathBvhTestComponent
         if (_cpuMeshTree is null)
             return;
 
-        ValidateCpuMeshRay((float)Engine.ElapsedTime);
+        ValidateCpuMeshQuery((float)Engine.ElapsedTime);
         Interlocked.Increment(ref _updateOperationCount);
     }
 
-    private void ValidateCpuMeshRay(float time)
+    private void ValidateCpuMeshQuery(float time)
     {
         if (_cpuMeshTree is null ||
             _cpuMeshVisitedNodes is null ||
             _cpuMeshNodeTest is null ||
+            _cpuMeshTriangleIndices is null ||
             _sourceTriangles is not { Count: > 0 } triangles)
         {
             return;
         }
 
-        Vector3 start = new(
-            MathF.Sin(time * 0.47f) * 3.7f,
-            6.0f,
-            MathF.Cos(time * 0.39f) * 3.7f);
-        Vector3 end = new(start.X + MathF.Sin(time * 0.23f) * 0.7f, -2.0f, start.Z);
-        _meshQuerySegment = new Segment(start, end);
+        _queryVolume.Update(QueryShape, time);
+        _meshQuerySegment = _queryVolume.Raycast;
+        EnsureMeshQueryResultStorage();
+        ClearMeshQueryResultStorage();
         Array.Clear(_cpuMeshVisitedNodes);
 
         // The legacy API owns and returns this list. Retaining that allocation is intentional:
-        // the benchmark should measure the traversal contract that production callers still use.
+        // the benchmark measures the traversal contract that production callers still use.
         List<BVHNode<Triangle>> candidates = _cpuMeshTree.Traverse(_cpuMeshNodeTest);
+        for (int nodeIndex = 0; nodeIndex < candidates.Count; nodeIndex++)
+        {
+            BVHNode<Triangle> node = candidates[nodeIndex];
+            if ((uint)node.nodeNumber < (uint)_cpuMeshVisitedNodes.Length)
+                _cpuMeshVisitedNodes[node.nodeNumber] = true;
+        }
+
+        if (QueryShape == MathBvhQueryShape.Raycast)
+            ValidateCpuMeshRay(candidates, triangles);
+        else
+            ValidateCpuMeshShape(candidates, triangles);
+    }
+
+    private void ValidateCpuMeshRay(
+        IReadOnlyList<BVHNode<Triangle>> candidates,
+        IReadOnlyList<Triangle> triangles)
+    {
+        Vector3 start = _meshQuerySegment.Start;
+        Vector3 end = _meshQuerySegment.End;
         float acceleratedDistance = float.PositiveInfinity;
         int acceleratedHitCount = 0;
         Vector3 direction = end - start;
@@ -194,9 +216,6 @@ public sealed partial class MathBvhTestComponent
         for (int nodeIndex = 0; nodeIndex < candidates.Count; nodeIndex++)
         {
             BVHNode<Triangle> node = candidates[nodeIndex];
-            if ((uint)node.nodeNumber < (uint)_cpuMeshVisitedNodes.Length)
-                _cpuMeshVisitedNodes[node.nodeNumber] = true;
-
             if (node.gobjects is not { Count: > 0 } nodeTriangles)
                 continue;
 
@@ -211,23 +230,15 @@ public sealed partial class MathBvhTestComponent
 
                 acceleratedHitCount++;
                 acceleratedDistance = MathF.Min(acceleratedDistance, distance);
+                if (_cpuMeshTriangleIndices?.TryGetValue(triangle, out int sourceIndex) == true &&
+                    _meshTriangleQueryContainments is not null)
+                {
+                    _meshTriangleQueryContainments[sourceIndex] = EContainment.Intersects;
+                }
             }
         }
 
-        float bruteForceDistance = float.PositiveInfinity;
-        int bruteForceHitCount = 0;
-        for (int i = 0; i < triangles.Count; i++)
-        {
-            Triangle triangle = triangles[i];
-            if (!GeoUtil.Intersect.RayWithTriangle(start, direction, triangle.A, triangle.B, triangle.C, out float distance) ||
-                distance < 0.0f || distance > length)
-            {
-                continue;
-            }
-
-            bruteForceHitCount++;
-            bruteForceDistance = MathF.Min(bruteForceDistance, distance);
-        }
+        CalculateMeshBruteForce(triangles, _meshQuerySegment, out int bruteForceHitCount, out float bruteForceDistance);
 
         bool bothMiss = float.IsPositiveInfinity(acceleratedDistance) && float.IsPositiveInfinity(bruteForceDistance);
         bool sameClosestHit = bothMiss || MathF.Abs(acceleratedDistance - bruteForceDistance) <= 1e-4f;
@@ -237,34 +248,170 @@ public sealed partial class MathBvhTestComponent
             : start + direction * acceleratedDistance;
 
         Interlocked.Increment(ref _queryOperationCount);
-        SetValidationState(ready: true, passed: passed, hitCount: acceleratedHitCount);
+        SetExpectedHitCounts(0, 0, bruteForceHitCount);
+        SetValidationState(
+            ready: true,
+            passed: passed,
+            hitCount: acceleratedHitCount,
+            triangleHitCount: acceleratedHitCount);
+    }
+
+    private void ValidateCpuMeshShape(
+        IReadOnlyList<BVHNode<Triangle>> candidates,
+        IReadOnlyList<Triangle> triangles)
+    {
+        int acceleratedPointCount = 0;
+        int acceleratedLineCount = 0;
+        int acceleratedTriangleCount = 0;
+        for (int nodeIndex = 0; nodeIndex < candidates.Count; nodeIndex++)
+        {
+            if (candidates[nodeIndex].gobjects is not { Count: > 0 } nodeTriangles)
+                continue;
+
+            for (int triangleIndex = 0; triangleIndex < nodeTriangles.Count; triangleIndex++)
+            {
+                Triangle triangle = nodeTriangles[triangleIndex];
+                if (_cpuMeshTriangleIndices?.TryGetValue(triangle, out int sourceIndex) != true)
+                    continue;
+
+                AccumulateMeshShapeHits(
+                    triangle,
+                    sourceIndex,
+                    writeResults: true,
+                    ref acceleratedPointCount,
+                    ref acceleratedLineCount,
+                    ref acceleratedTriangleCount);
+            }
+        }
+
+        int expectedPointCount = 0;
+        int expectedLineCount = 0;
+        int expectedTriangleCount = 0;
+        for (int triangleIndex = 0; triangleIndex < triangles.Count; triangleIndex++)
+        {
+            AccumulateMeshShapeHits(
+                triangles[triangleIndex],
+                triangleIndex,
+                writeResults: false,
+                ref expectedPointCount,
+                ref expectedLineCount,
+                ref expectedTriangleCount);
+        }
+
+        int totalHitCount = acceleratedPointCount + acceleratedLineCount + acceleratedTriangleCount;
+        bool passed =
+            acceleratedPointCount == expectedPointCount &&
+            acceleratedLineCount == expectedLineCount &&
+            acceleratedTriangleCount == expectedTriangleCount;
+        _lastMeshHitPoint = null;
+        Interlocked.Increment(ref _queryOperationCount);
+        SetExpectedHitCounts(expectedPointCount, expectedLineCount, expectedTriangleCount);
+        SetValidationState(
+            ready: true,
+            passed,
+            totalHitCount,
+            acceleratedPointCount,
+            acceleratedLineCount,
+            acceleratedTriangleCount);
+    }
+
+    private void AccumulateMeshShapeHits(
+        in Triangle triangle,
+        int triangleIndex,
+        bool writeResults,
+        ref int pointCount,
+        ref int lineCount,
+        ref int triangleCount)
+    {
+        int elementOffset = triangleIndex * 3;
+        if (QueryPoints)
+        {
+            AccumulateMeshPointHit(triangle.A, elementOffset, writeResults, ref pointCount);
+            AccumulateMeshPointHit(triangle.B, elementOffset + 1, writeResults, ref pointCount);
+            AccumulateMeshPointHit(triangle.C, elementOffset + 2, writeResults, ref pointCount);
+        }
+
+        if (QueryLines)
+        {
+            AccumulateMeshLineHit(new Segment(triangle.A, triangle.B), elementOffset, writeResults, ref lineCount);
+            AccumulateMeshLineHit(new Segment(triangle.B, triangle.C), elementOffset + 1, writeResults, ref lineCount);
+            AccumulateMeshLineHit(new Segment(triangle.C, triangle.A), elementOffset + 2, writeResults, ref lineCount);
+        }
+
+        if (QueryTriangles)
+        {
+            EContainment containment = _queryVolume.ClassifyTriangle(triangle);
+            if (containment != EContainment.Disjoint)
+                triangleCount++;
+            if (writeResults && _meshTriangleQueryContainments is not null)
+                _meshTriangleQueryContainments[triangleIndex] = containment;
+        }
+    }
+
+    private void AccumulateMeshPointHit(Vector3 point, int resultIndex, bool writeResult, ref int pointCount)
+    {
+        EContainment containment = _queryVolume.ClassifyPoint(point);
+        if (containment != EContainment.Disjoint)
+            pointCount++;
+        if (writeResult && _meshPointQueryContainments is not null)
+            _meshPointQueryContainments[resultIndex] = containment;
+    }
+
+    private void AccumulateMeshLineHit(in Segment line, int resultIndex, bool writeResult, ref int lineCount)
+    {
+        EContainment containment = _queryVolume.ClassifySegment(line);
+        if (containment != EContainment.Disjoint)
+            lineCount++;
+        if (writeResult && _meshLineQueryContainments is not null)
+            _meshLineQueryContainments[resultIndex] = containment;
     }
 
     private bool CpuMeshNodeIntersectsQuery(AABB bounds)
-        => GeoUtil.Intersect.SegmentWithAABB(
-            _meshQuerySegment.Start,
-            _meshQuerySegment.End,
-            bounds.Min,
-            bounds.Max,
-            out _,
-            out _);
+        => _queryVolume.ContainsAABB(bounds) != EContainment.Disjoint;
+
+    private void EnsureMeshQueryResultStorage()
+    {
+        int triangleCount = _sourceTriangles?.Count ?? 0;
+        int elementCount = triangleCount * 3;
+        if (_meshPointQueryContainments?.Length != elementCount)
+            _meshPointQueryContainments = new EContainment[elementCount];
+        if (_meshLineQueryContainments?.Length != elementCount)
+            _meshLineQueryContainments = new EContainment[elementCount];
+        if (_meshTriangleQueryContainments?.Length != triangleCount)
+            _meshTriangleQueryContainments = new EContainment[triangleCount];
+    }
+
+    private void ClearMeshQueryResultStorage()
+    {
+        if (_meshPointQueryContainments is not null)
+            Array.Fill(_meshPointQueryContainments, EContainment.Disjoint);
+        if (_meshLineQueryContainments is not null)
+            Array.Fill(_meshLineQueryContainments, EContainment.Disjoint);
+        if (_meshTriangleQueryContainments is not null)
+            Array.Fill(_meshTriangleQueryContainments, EContainment.Disjoint);
+    }
 
     private void ReleaseCpuWorkload()
     {
         _cpuSceneTree = null;
         _cpuSceneItems = null;
         _sceneHitCollector = null;
-        _sceneTreeDebugRenderer = null;
+        _sceneTreeBaseDebugRenderer = null;
+        _sceneTreeQueryDebugRenderer = null;
         _cpuMeshTree = null;
         _cpuMeshNodes = null;
         _cpuMeshVisitedNodes = null;
         _cpuMeshNodeTest = null;
+        _cpuMeshTriangleIndices = null;
+        _meshPointQueryContainments = null;
+        _meshLineQueryContainments = null;
+        _meshTriangleQueryContainments = null;
     }
 
     private sealed class SceneBvhItem(AABB bounds) : IOctreeItem
     {
         public AABB BaseBounds { get; } = bounds;
-        public bool QueryHit { get; set; }
+        public EContainment QueryContainment { get; set; } = EContainment.Disjoint;
         public bool ShouldRender => true;
         public IRenderableBase? Owner => null;
         public AABB? LocalCullingVolume { get; set; } = bounds;

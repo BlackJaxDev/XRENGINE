@@ -135,11 +135,16 @@ void main()
         }
     }
 
-    mat4 boneWorld = mat4(
+    // TransformMatrices uses GLSL's default column-major storage, so the
+    // System.Numerics row-vector matrix arrives here transposed. Keep that
+    // column-vector form while solving the basis, then transpose it back before
+    // composing with the explicitly row-major inverse bind matrix.
+    mat4 boneWorldColumn = mat4(
         vec4(basis[0], 0.0),
         vec4(basis[1], 0.0),
         vec4(basis[2], 0.0),
         vec4(particlePosition, 1.0));
-    mat4 skinMatrix = BoneInvBindMatrices[mapping.BoneMatrixIndex] * boneWorld;
+    mat4 boneWorldRow = transpose(boneWorldColumn);
+    mat4 skinMatrix = BoneInvBindMatrices[mapping.BoneMatrixIndex] * boneWorldRow;
     writeSkinPalette(uint(mapping.BoneMatrixIndex), skinMatrix);
 }

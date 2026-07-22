@@ -969,6 +969,12 @@ namespace XREngine.Editor.Mcp
                 uptimeMs = _startedUtc == default ? 0 : (long)(DateTimeOffset.UtcNow - _startedUtc).TotalMilliseconds,
                 endpoint = Prefix,
                 methods = s_supportedMethods,
+                editorSession = new
+                {
+                    name = NormalizeEditorSessionName(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EditorSessionName)),
+                    isolated = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EditorSessionRoot)),
+                    processId = Environment.ProcessId
+                },
                 security = new
                 {
                     requireAuth = prefs.McpServerRequireAuth,
@@ -1003,6 +1009,9 @@ namespace XREngine.Editor.Mcp
                 }
             };
         }
+
+        private static string? NormalizeEditorSessionName(string? name)
+            => string.IsNullOrWhiteSpace(name) ? null : name.Trim();
 
         private static int GetActiveSessionCount()
         {

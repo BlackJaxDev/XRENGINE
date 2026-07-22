@@ -10,6 +10,7 @@ REM    ExecTool <number>     (run tool by number directly)
 REM    ExecTool --list       (print tool list and exit)
 REM    ExecTool --help       (show help)
 REM    ExecTool --bootstrap --with-agent-tools
+REM    Named MCP editor sessions: Tools\Manage-McpEditorSession.ps1
 REM ============================================================================
 
 cd /d "%~dp0"

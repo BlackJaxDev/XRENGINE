@@ -1297,8 +1297,10 @@ namespace XREngine
             if (_logsRootDirectory is not null)
                 return _logsRootDirectory;
 
-            string baseDirectory = FindRepositoryRoot() ?? AppContext.BaseDirectory;
-            string preferred = Path.Combine(baseDirectory, "Build", "Logs");
+            string? editorSessionRoot = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EditorSessionRoot);
+            string preferred = string.IsNullOrWhiteSpace(editorSessionRoot)
+                ? Path.Combine(FindRepositoryRoot() ?? AppContext.BaseDirectory, "Build", "Logs")
+                : Path.Combine(Path.GetFullPath(editorSessionRoot), "logs");
 
             if (!TryCreateDirectory(preferred))
             {

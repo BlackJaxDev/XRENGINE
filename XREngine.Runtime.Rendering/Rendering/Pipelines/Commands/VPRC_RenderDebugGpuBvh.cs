@@ -3,6 +3,7 @@ using System.IO;
 using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
 
@@ -112,11 +113,17 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
             // Compute pass: write per-node AABB edges into the debug line SSBO.
             _computeProgram!.BindBuffer(nodeBuffer, 0);
             _computeProgram.BindBuffer(_linesBuffer!, 1);
+            // The shared shader supports optional per-node classifications. This command
+            // does not classify nodes, but Vulkan still requires every declared SSBO bound.
+            _computeProgram.BindBuffer(nodeBuffer, 2);
             _computeProgram.Uniform("MaxNodes", visualizedNodes);
             _computeProgram.Uniform("LeafColor", leafColor);
             _computeProgram.Uniform("InternalColor", internalColor);
             _computeProgram.Uniform("NodeToWorld", Matrix4x4.Identity);
             _computeProgram.Uniform("ShowFilter", showFilter);
+            _computeProgram.Uniform("NodeClassMode", (uint)GpuBvhDebugNodeClassMode.Ignore);
+            _computeProgram.Uniform("ClassOneColor", Vector4.Zero);
+            _computeProgram.Uniform("ClassTwoColor", Vector4.Zero);
 
             uint groups = (visualizedNodes + ComputeGroupSize - 1u) / ComputeGroupSize;
             _computeProgram.DispatchCompute(

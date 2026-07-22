@@ -81,6 +81,16 @@ dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj -- --unit-testing
 
 `XRE_WORLD_MODE=UnitTesting` also boots the Unit Testing World.
 
+For agent-driven MCP work, always use a named isolated editor session:
+
+```powershell
+pwsh Tools/Manage-McpEditorSession.ps1 Start -Name <unique-agent-session>
+pwsh Tools/Invoke-Mcp.ps1 -Session <unique-agent-session> -Method ping
+pwsh Tools/Manage-McpEditorSession.ps1 Stop -Name <unique-agent-session>
+```
+
+The session build and running editor live under `Build/_AgentValidation/mcp-sessions/<name>/`, so they do not lock `Build/Editor` or normal solution-build outputs. Never stop editor processes by name or shut down an editor you did not start. Use the session manager, which validates PID ownership and only stops the named session.
+
 Preferred VS Code tasks:
 
 - Build: `Build-Editor`, `Build-Server`, `Build-VRClient`.
@@ -153,20 +163,24 @@ When iterating on the editor to debug one or more issues, create or update an in
 
 The loop:
 
-1. Build the editor (`Build-Editor` task or `dotnet build .\XREngine.Editor\XREngine.Editor.csproj`) so the running process reflects current source.
-2. Launch the editor with the Unit Testing World and MCP enabled:
+1. Choose a unique session name for the investigation and start an isolated editor build with the Unit Testing World and MCP enabled:
 
    ```powershell
-   dotnet .\Build\Editor\Debug\AnyCPU\Debug\net10.0-windows7.0\XREngine.Editor.dll --unit-testing --mcp --mcp-allow-all --mcp-port 5467
+   pwsh Tools/Manage-McpEditorSession.ps1 Start -Name <unique-agent-session>
    ```
 
-   Run it as a background/async process so the loop can keep working while it stays open. Confirm the relevant scene content is configured in `Assets/UnitTestingWorldSettings.jsonc` (for example `RenderAPI`, lights, and the model to import) before launching.
-3. Position the view with MCP: `set_editor_camera_view` (or `focus_node_in_view` after locating the subject with `find_nodes_by_name`/`select_node_by_name`). Use `duration: 0` for an immediate cut.
-4. Capture the result with MCP `capture_viewport_screenshot` and actually view the saved PNG. Pass `output_dir` under the current run root, for example `Build/_AgentValidation/<run>/mcp-captures/`; do not rely on the default `McpCaptures/` location. Re-capture from more than one camera position — an artifact that does not change with the camera is sampling stale/uninitialized data rather than rendering the scene.
-5. Determine what the issue looks like and whether it still exists by inspecting the image(s), not by trusting tool return values.
-6. Close the editor (kill the launch terminal).
-7. Review the last run's logs under `Build/Logs/<configuration>_<tfm>/<platform>/<session>/` — for rendering work this is primarily `log_vulkan.log`, `log_opengl.log`, and `log_rendering.log`. Distinguish steady-state messages from shutdown-only teardown noise (for example `VUID-vkDestroyDevice-device-05137` is teardown, not a render bug). Group/filter validation errors, warnings, and the render-pass (`BeginRendering FBO=...`) sequence.
-8. Form or refine a hypothesis, change exactly one variable (a setting, a toggle, or a targeted code fix), and repeat from step 1 until the issue is understood or resolved.
+   The command builds into the session's own .NET artifacts root, selects an unused MCP port, starts the editor asynchronously, and waits for MCP readiness. Confirm the relevant scene content is configured in `Assets/UnitTestingWorldSettings.jsonc` (for example `RenderAPI`, lights, and the model to import) before launching.
+2. Position the view with MCP: `set_editor_camera_view` (or `focus_node_in_view` after locating the subject with `find_nodes_by_name`/`select_node_by_name`). Use `duration: 0` for an immediate cut.
+3. Capture the result with MCP `capture_viewport_screenshot` and actually view the saved PNG. Pass `output_dir` under the current run root, for example `Build/_AgentValidation/<run>/mcp-captures/`; do not rely on the default `McpCaptures/` location. Re-capture from more than one camera position — an artifact that does not change with the camera is sampling stale/uninitialized data rather than rendering the scene.
+4. Determine what the issue looks like and whether it still exists by inspecting the image(s), not by trusting tool return values.
+5. Stop only the named editor session:
+
+   ```powershell
+   pwsh Tools/Manage-McpEditorSession.ps1 Stop -Name <unique-agent-session>
+   ```
+
+6. Review that session's logs under `Build/_AgentValidation/mcp-sessions/<name>/logs/` — for rendering work this is primarily `log_vulkan.log`, `log_opengl.log`, and `log_rendering.log`. Distinguish steady-state messages from shutdown-only teardown noise (for example `VUID-vkDestroyDevice-device-05137` is teardown, not a render bug). Group/filter validation errors, warnings, and the render-pass (`BeginRendering FBO=...`) sequence.
+7. Form or refine a hypothesis, change exactly one variable (a setting, a toggle, or a targeted code fix), and repeat from step 1 until the issue is understood or resolved. Use `Start -NoBuild` only when the stopped session's existing binaries already contain the source change being tested.
 
 Notes:
 - Record durable findings (symptoms, ruled-out causes, render-pass order, next isolation step) so later iterations build on earlier ones instead of repeating them.

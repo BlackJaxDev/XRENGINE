@@ -1,0 +1,352 @@
+#version 460 core
+
+// Math Intersections World parity query for the scene GPU BVH. The CPU and GPU
+// rigs share the same animated AABBs and selectable query volume; only this traversal path
+// differs from the CpuBvhRenderTree test.
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+#include "bvh_nodes.glslinc"
+
+layout(std430, binding = 0) readonly buffer BvhNodes
+{
+    uint NodeCount;
+    uint RootIndex;
+    uint NodeStrideScalars;
+    uint MaxLeafPrimitives;
+    BvhNode Nodes[];
+};
+
+layout(std430, binding = 1) readonly buffer MortonEntries
+{
+    uint MortonData[];
+};
+
+struct SceneAabb
+{
+    vec4 Min;
+    vec4 Max;
+};
+
+layout(std430, binding = 2) readonly buffer SceneAabbs
+{
+    SceneAabb Aabbs[];
+};
+
+// 0 = rejected/not visited, 1 = fully contained, 2 = intersecting.
+layout(std430, binding = 3) writeonly buffer QueryNodeClasses
+{
+    uint NodeClasses[];
+};
+
+// Query id, hit count, visited node count, traversal flags, reserved...
+layout(std430, binding = 4) writeonly buffer QueryResult
+{
+    uint Result[];
+};
+
+// Per-source-AABB classification: 0 = disjoint, 1 = contained, 2 = intersected.
+layout(std430, binding = 5) writeonly buffer QueryPrimitiveClasses
+{
+    uint PrimitiveClasses[];
+};
+
+uniform vec3 QueryMin;
+uniform vec3 QueryMax;
+uniform vec3 QuerySphereCenter;
+uniform float QuerySphereRadius;
+uniform vec3 QueryRayStart;
+uniform vec3 QueryRayEnd;
+uniform vec4 QueryFrustumPlane0;
+uniform vec4 QueryFrustumPlane1;
+uniform vec4 QueryFrustumPlane2;
+uniform vec4 QueryFrustumPlane3;
+uniform vec4 QueryFrustumPlane4;
+uniform vec4 QueryFrustumPlane5;
+uniform vec3 QueryFrustumCorner0;
+uniform vec3 QueryFrustumCorner1;
+uniform vec3 QueryFrustumCorner2;
+uniform vec3 QueryFrustumCorner3;
+uniform vec3 QueryFrustumCorner4;
+uniform vec3 QueryFrustumCorner5;
+uniform vec3 QueryFrustumCorner6;
+uniform vec3 QueryFrustumCorner7;
+// 0 = box, 1 = sphere, 2 = frustum, 3 = finite raycast.
+uniform uint QueryShape;
+uniform uint LogicalNodeCount;
+uniform uint QueryId;
+
+const uint INVALID_INDEX = 0xFFFFFFFFu;
+const uint STACK_CAPACITY = 64u;
+const uint FLAG_STACK_OVERFLOW = 1u;
+const uint FLAG_INVALID_RANGE = 2u;
+
+vec4 GetFrustumPlane(uint index)
+{
+    if (index == 0u) return QueryFrustumPlane0;
+    if (index == 1u) return QueryFrustumPlane1;
+    if (index == 2u) return QueryFrustumPlane2;
+    if (index == 3u) return QueryFrustumPlane3;
+    if (index == 4u) return QueryFrustumPlane4;
+    return QueryFrustumPlane5;
+}
+
+vec3 GetFrustumCorner(uint index)
+{
+    if (index == 0u) return QueryFrustumCorner0;
+    if (index == 1u) return QueryFrustumCorner1;
+    if (index == 2u) return QueryFrustumCorner2;
+    if (index == 3u) return QueryFrustumCorner3;
+    if (index == 4u) return QueryFrustumCorner4;
+    if (index == 5u) return QueryFrustumCorner5;
+    if (index == 6u) return QueryFrustumCorner6;
+    return QueryFrustumCorner7;
+}
+
+uint ClassifyBoxAabb(vec3 minBounds, vec3 maxBounds)
+{
+    const float tolerance = 1e-5;
+    bool intersects = all(lessThanEqual(minBounds, QueryMax + vec3(tolerance))) &&
+                      all(greaterThanEqual(maxBounds, QueryMin - vec3(tolerance)));
+    if (!intersects)
+        return 0u;
+
+    bool contained = all(greaterThanEqual(minBounds, QueryMin - vec3(tolerance))) &&
+                     all(lessThanEqual(maxBounds, QueryMax + vec3(tolerance)));
+    return contained ? 1u : 2u;
+}
+
+uint ClassifySphereAabb(vec3 minBounds, vec3 maxBounds)
+{
+    const float tolerance = 1e-5;
+    float radius = QuerySphereRadius + tolerance;
+    float radiusSquared = radius * radius;
+    vec3 closest = clamp(QuerySphereCenter, minBounds, maxBounds);
+    vec3 closestDelta = closest - QuerySphereCenter;
+    if (dot(closestDelta, closestDelta) > radiusSquared)
+        return 0u;
+
+    vec3 farthestDelta = max(abs(minBounds - QuerySphereCenter), abs(maxBounds - QuerySphereCenter));
+    bool contained = dot(farthestDelta, farthestDelta) <= radiusSquared;
+    return contained ? 1u : 2u;
+}
+
+uint ClassifyRayAabb(vec3 minBounds, vec3 maxBounds)
+{
+    vec3 delta = QueryRayEnd - QueryRayStart;
+    float tMin = 0.0;
+    float tMax = 1.0;
+    for (uint axis = 0u; axis < 3u; ++axis)
+    {
+        float start = QueryRayStart[axis];
+        float direction = delta[axis];
+        if (abs(direction) <= 1e-12)
+        {
+            if (start < minBounds[axis] || start > maxBounds[axis])
+                return 0u;
+            continue;
+        }
+
+        float inverseDirection = 1.0 / direction;
+        float t1 = (minBounds[axis] - start) * inverseDirection;
+        float t2 = (maxBounds[axis] - start) * inverseDirection;
+        if (t1 > t2)
+        {
+            float swapValue = t1;
+            t1 = t2;
+            t2 = swapValue;
+        }
+
+        tMin = max(tMin, t1);
+        tMax = min(tMax, t2);
+        if (tMin > tMax)
+            return 0u;
+    }
+    // A finite ray intersects an AABB; it cannot contain a volume.
+    return 2u;
+}
+
+bool FrustumSeparatedOnAxis(vec3 axis, vec3 minBounds, vec3 maxBounds)
+{
+    float axisLengthSquared = dot(axis, axis);
+    if (axisLengthSquared <= 1e-12)
+        return false;
+
+    vec3 center = (minBounds + maxBounds) * 0.5;
+    vec3 extents = (maxBounds - minBounds) * 0.5;
+    float boxCenter = dot(center, axis);
+    float boxRadius = dot(extents, abs(axis));
+    float frustumMin = dot(GetFrustumCorner(0u), axis);
+    float frustumMax = frustumMin;
+    for (uint cornerIndex = 1u; cornerIndex < 8u; ++cornerIndex)
+    {
+        float projection = dot(GetFrustumCorner(cornerIndex), axis);
+        frustumMin = min(frustumMin, projection);
+        frustumMax = max(frustumMax, projection);
+    }
+
+    const float tolerance = 1e-5;
+    return frustumMax < boxCenter - boxRadius - tolerance ||
+           frustumMin > boxCenter + boxRadius + tolerance;
+}
+
+void GetFrustumEdge(uint edgeIndex, out vec3 start, out vec3 end)
+{
+    if (edgeIndex == 0u) { start = QueryFrustumCorner0; end = QueryFrustumCorner1; return; }
+    if (edgeIndex == 1u) { start = QueryFrustumCorner1; end = QueryFrustumCorner3; return; }
+    if (edgeIndex == 2u) { start = QueryFrustumCorner3; end = QueryFrustumCorner2; return; }
+    if (edgeIndex == 3u) { start = QueryFrustumCorner2; end = QueryFrustumCorner0; return; }
+    if (edgeIndex == 4u) { start = QueryFrustumCorner4; end = QueryFrustumCorner5; return; }
+    if (edgeIndex == 5u) { start = QueryFrustumCorner5; end = QueryFrustumCorner7; return; }
+    if (edgeIndex == 6u) { start = QueryFrustumCorner7; end = QueryFrustumCorner6; return; }
+    if (edgeIndex == 7u) { start = QueryFrustumCorner6; end = QueryFrustumCorner4; return; }
+    if (edgeIndex == 8u) { start = QueryFrustumCorner0; end = QueryFrustumCorner4; return; }
+    if (edgeIndex == 9u) { start = QueryFrustumCorner1; end = QueryFrustumCorner5; return; }
+    if (edgeIndex == 10u) { start = QueryFrustumCorner2; end = QueryFrustumCorner6; return; }
+    start = QueryFrustumCorner3;
+    end = QueryFrustumCorner7;
+}
+
+uint ClassifyFrustumAabb(vec3 minBounds, vec3 maxBounds)
+{
+    const float tolerance = 1e-5;
+    bool contained = true;
+    for (uint planeIndex = 0u; planeIndex < 6u; ++planeIndex)
+    {
+        vec4 plane = GetFrustumPlane(planeIndex);
+        vec3 positiveVertex = mix(minBounds, maxBounds, greaterThanEqual(plane.xyz, vec3(0.0)));
+        vec3 negativeVertex = mix(maxBounds, minBounds, greaterThanEqual(plane.xyz, vec3(0.0)));
+        if (dot(plane.xyz, positiveVertex) + plane.w < -tolerance)
+            return 0u;
+        if (dot(plane.xyz, negativeVertex) + plane.w < -tolerance)
+            contained = false;
+    }
+
+    // Complete the convex SAT test with the AABB face axes and all
+    // frustum-edge/AABB-edge cross axes. This matches the CPU frustum query
+    // instead of accepting the frustum's enclosing AABB as an approximation.
+    if (FrustumSeparatedOnAxis(vec3(1.0, 0.0, 0.0), minBounds, maxBounds) ||
+        FrustumSeparatedOnAxis(vec3(0.0, 1.0, 0.0), minBounds, maxBounds) ||
+        FrustumSeparatedOnAxis(vec3(0.0, 0.0, 1.0), minBounds, maxBounds))
+    {
+        return 0u;
+    }
+
+    for (uint edgeIndex = 0u; edgeIndex < 12u; ++edgeIndex)
+    {
+        vec3 edgeStart;
+        vec3 edgeEnd;
+        GetFrustumEdge(edgeIndex, edgeStart, edgeEnd);
+        vec3 edge = edgeEnd - edgeStart;
+        if (FrustumSeparatedOnAxis(cross(edge, vec3(1.0, 0.0, 0.0)), minBounds, maxBounds) ||
+            FrustumSeparatedOnAxis(cross(edge, vec3(0.0, 1.0, 0.0)), minBounds, maxBounds) ||
+            FrustumSeparatedOnAxis(cross(edge, vec3(0.0, 0.0, 1.0)), minBounds, maxBounds))
+        {
+            return 0u;
+        }
+    }
+
+    return contained ? 1u : 2u;
+}
+
+uint ClassifyAabb(vec3 minBounds, vec3 maxBounds)
+{
+    if (QueryShape == 1u)
+        return ClassifySphereAabb(minBounds, maxBounds);
+    if (QueryShape == 2u)
+        return ClassifyFrustumAabb(minBounds, maxBounds);
+    if (QueryShape == 3u)
+        return ClassifyRayAabb(minBounds, maxBounds);
+    return ClassifyBoxAabb(minBounds, maxBounds);
+}
+
+void main()
+{
+    for (uint i = 0u; i < uint(NodeClasses.length()); ++i)
+        NodeClasses[i] = 0u;
+    for (uint i = 0u; i < uint(Result.length()); ++i)
+        Result[i] = 0u;
+    for (uint i = 0u; i < uint(PrimitiveClasses.length()); ++i)
+        PrimitiveClasses[i] = 0u;
+
+    uint safeNodeCount = min(LogicalNodeCount, uint(Nodes.length()));
+    uint root = RootIndex;
+    uint hitCount = 0u;
+    uint visitedNodeCount = 0u;
+    uint flags = 0u;
+
+    if (safeNodeCount > 0u && root != INVALID_INDEX && root < safeNodeCount)
+    {
+        uint stack[STACK_CAPACITY];
+        uint stackCount = 1u;
+        stack[0] = root;
+
+        while (stackCount > 0u)
+        {
+            uint nodeIndex = stack[--stackCount];
+            if (nodeIndex >= safeNodeCount)
+                continue;
+
+            BvhNode node = Nodes[nodeIndex];
+            uint nodeClass = ClassifyAabb(node.minBounds, node.maxBounds);
+            if (nodeClass == 0u)
+                continue;
+
+            NodeClasses[nodeIndex] = nodeClass;
+            ++visitedNodeCount;
+
+            bool isLeaf = (node.flags & BVH_FLAG_LEAF) != 0u;
+            if (isLeaf)
+            {
+                uint first = node.primitiveRange.x;
+                uint count = node.primitiveRange.y;
+                uint mortonCount = uint(MortonData.length()) / 2u;
+                if (first >= mortonCount || count > mortonCount - first)
+                {
+                    flags |= FLAG_INVALID_RANGE;
+                    continue;
+                }
+
+                for (uint primitiveOffset = 0u; primitiveOffset < count; ++primitiveOffset)
+                {
+                    uint sortedIndex = first + primitiveOffset;
+                    uint objectId = MortonData[sortedIndex * 2u + 1u];
+                    if (objectId >= uint(Aabbs.length()) || objectId >= uint(PrimitiveClasses.length()))
+                    {
+                        flags |= FLAG_INVALID_RANGE;
+                        continue;
+                    }
+
+                    SceneAabb primitive = Aabbs[objectId];
+                    uint primitiveClass = ClassifyAabb(primitive.Min.xyz, primitive.Max.xyz);
+                    PrimitiveClasses[objectId] = primitiveClass;
+                    if (primitiveClass != 0u)
+                        ++hitCount;
+                }
+                continue;
+            }
+
+            uint childCount = uint(node.leftChild != INVALID_INDEX && node.leftChild < safeNodeCount) +
+                              uint(node.rightChild != INVALID_INDEX && node.rightChild < safeNodeCount);
+            if (stackCount + childCount > STACK_CAPACITY)
+            {
+                flags |= FLAG_STACK_OVERFLOW;
+                break;
+            }
+
+            if (node.rightChild != INVALID_INDEX && node.rightChild < safeNodeCount)
+                stack[stackCount++] = node.rightChild;
+            if (node.leftChild != INVALID_INDEX && node.leftChild < safeNodeCount)
+                stack[stackCount++] = node.leftChild;
+        }
+    }
+
+    Result[0] = QueryId;
+    Result[1] = hitCount;
+    Result[2] = visitedNodeCount;
+    Result[3] = flags;
+    Result[4] = NodeCount;
+    Result[5] = RootIndex;
+    Result[6] = uint(Aabbs.length());
+    Result[7] = uint(MortonData.length());
+}

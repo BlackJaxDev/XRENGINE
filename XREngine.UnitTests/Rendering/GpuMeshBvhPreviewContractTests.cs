@@ -1,13 +1,267 @@
 using System;
 using System.IO;
+using System.Numerics;
 using NUnit.Framework;
+using SimpleScene.Util.ssBVH;
 using Shouldly;
+using XREngine.Components;
+using XREngine.Data.Geometry;
+using XREngine.Editor;
 
 namespace XREngine.UnitTests.Rendering;
 
 [TestFixture]
 public sealed class GpuMeshBvhPreviewContractTests
 {
+    [Test]
+    public void MathBvhGpuTests_ReuseCpuInputsAndDispatchGpuQueries()
+    {
+        string sharedSource = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Math/MathBvhTestComponent.cs");
+        string queryVolumeSource = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Math/MathBvhQueryVolume.cs");
+        string cpuSource = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Math/MathBvhTestComponent.Cpu.cs");
+        string gpuSource = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Math/MathBvhTestComponent.Gpu.cs");
+        string debugSource = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Math/MathBvhTestComponent.Debug.cs");
+        string sceneQueryShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/math_bvh_scene_query.comp");
+        string meshQueryShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/math_bvh_mesh_query.comp");
+
+        sharedSource.ShouldContain("private const int SceneMovesPerUpdate = 3;");
+        sharedSource.ShouldContain("private static AABB AnimateSceneBounds(");
+        sharedSource.ShouldContain("private static void CalculateMeshBruteForce(");
+        queryVolumeSource.ShouldContain("public void Update(MathBvhQueryShape shape, float time)");
+        queryVolumeSource.ShouldContain("MathBvhQueryShape.Sphere => Sphere.ContainsAABB(box, tolerance)");
+        queryVolumeSource.ShouldContain("MathBvhQueryShape.Frustum => ClassifyFrustumAabb(_frustum, box, tolerance)");
+        queryVolumeSource.ShouldContain("Mirrors the GPU frustum/AABB SAT classifier operation-for-operation");
+        queryVolumeSource.ShouldContain("MathBvhQueryShape.Raycast => SegmentIntersectsAabb(");
+
+        cpuSource.ShouldContain("for (int move = 0; move < SceneMovesPerUpdate; move++)");
+        cpuSource.ShouldContain("AnimateSceneBounds(item.BaseBounds, time, index)");
+        cpuSource.ShouldContain("_queryVolume.Update(QueryShape, time);");
+        cpuSource.ShouldContain("_meshQuerySegment = _queryVolume.Raycast;");
+        cpuSource.ShouldContain("CalculateMeshBruteForce(triangles, _meshQuerySegment");
+
+        gpuSource.ShouldContain("for (int move = 0; move < SceneMovesPerUpdate; move++)");
+        gpuSource.ShouldContain("AnimateSceneBounds(_gpuSceneBaseBounds[movedIndex], time, movedIndex)");
+        gpuSource.ShouldContain("_queryVolume.Update(QueryShape, time);");
+        gpuSource.ShouldContain("_meshQuerySegment = _queryVolume.Raycast;");
+        gpuSource.ShouldContain("DispatchGpuSceneQuery(queryId)");
+        gpuSource.ShouldContain("DispatchGpuMeshQuery(bvh, queryId)");
+        gpuSource.ShouldContain("Interlocked.Increment(ref _queryOperationCount);");
+        gpuSource.ShouldContain("SetValidationState(ready: true, passed, hitCount);");
+
+        sceneQueryShader.ShouldContain("SceneAabb primitive = Aabbs[objectId];");
+        sceneQueryShader.ShouldContain("uint nodeClass = ClassifyAabb(");
+        sceneQueryShader.ShouldContain("NodeClasses[nodeIndex] = nodeClass;");
+        sceneQueryShader.ShouldContain("uint ClassifySphereAabb(");
+        sceneQueryShader.ShouldContain("uint ClassifyFrustumAabb(");
+        sceneQueryShader.ShouldContain("PrimitiveClasses[objectId] = primitiveClass;");
+        meshQueryShader.ShouldContain("uint nodeClass = ClassifyQueryAabb(");
+        meshQueryShader.ShouldContain("ClassifyQueryTriangle(");
+        meshQueryShader.ShouldContain("PrimitiveClasses[sourceFace] = packedClasses;");
+
+        debugSource.ShouldContain("GpuBvhDebugNodeClassMode.ClassifiedOnly");
+        debugSource.ShouldContain("GpuBvhDebugOverlayLayer.Highlight");
+        debugSource.ShouldContain("_cpuSceneTree.DebugRenderNodes(null, _sceneTreeBaseDebugRenderer);");
+        debugSource.ShouldContain("_cpuSceneTree.DebugRenderNodes(_queryVolume, _sceneTreeQueryDebugRenderer);");
+        debugSource.ShouldContain("RenderQueryVolume(");
+        debugSource.ShouldContain("RenderLocalLine(_meshQuerySegment.Start, _meshQuerySegment.End");
+    }
+
+    [Test]
+    public void MathBvhDebugControls_ExposeSharedVisibilityPaletteAndGpuLimits()
+    {
+        string settingsSource = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Math/MathBvhTestComponent.DebugSettings.cs");
+        string debugSource = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Math/MathBvhTestComponent.Debug.cs");
+        string rigSource = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Math/UnitTestingWorld.Math.Bvh.cs");
+        string customUiSource = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Debug/CustomUIComponent.cs");
+        string customUiEditorSource = ReadWorkspaceFile("XREngine.Editor/ComponentEditors/CustomUIComponentEditor.cs");
+
+        settingsSource.ShouldContain("public MathBvhDebugNodeVisibility NodeVisibility");
+        settingsSource.ShouldContain("public MathBvhQueryShape QueryShape");
+        settingsSource.ShouldContain("public bool QueryPoints");
+        settingsSource.ShouldContain("public bool QueryLines");
+        settingsSource.ShouldContain("public bool QueryTriangles");
+        settingsSource.ShouldContain("MathBvhDebugNodeVisibility.LeavesOnly => isLeaf");
+        settingsSource.ShouldContain("MathBvhDebugNodeVisibility.InternalOnly => !isLeaf");
+        settingsSource.ShouldContain("public bool RenderBaseNodes");
+        settingsSource.ShouldContain("public bool RenderVisitedNodes");
+        settingsSource.ShouldContain("public bool RenderIntersectedGeometry");
+        settingsSource.ShouldContain("public bool RenderSourceGeometry");
+        settingsSource.ShouldContain("public ColorF4 LeafNodeColor");
+        settingsSource.ShouldContain("public ColorF4 InternalNodeColor");
+        settingsSource.ShouldContain("public ColorF4 VisitedNodeColor");
+        settingsSource.ShouldContain("public ColorF4 DisjointGeometryColor");
+        settingsSource.ShouldContain("public ColorF4 IntersectedGeometryColor");
+        settingsSource.ShouldContain("public ColorF4 ContainedGeometryColor");
+        settingsSource.ShouldContain("public int MaxDebugNodes");
+        settingsSource.ShouldContain("customUi.AddEnumField(");
+
+        debugSource.ShouldContain("uint showFilter = GetGpuNodeShowFilter();");
+        debugSource.ShouldContain("if (RenderBaseNodes)");
+        debugSource.ShouldContain("if (RenderVisitedNodes");
+        debugSource.ShouldContain("ToVector4(LeafNodeColor)");
+        debugSource.ShouldContain("ToVector4(InternalNodeColor)");
+        debugSource.ShouldContain("ToVector4(VisitedNodeColor),\n                    0b11u)");
+        debugSource.ShouldContain("TryGetGeometryColor(");
+        rigSource.ShouldContain("if (controller?.IsSpawningBenchmarkInstances != true)");
+        rigSource.ShouldContain("test.RegisterDebugControls(debugControls);");
+        customUiSource.ShouldContain("public CustomUIEnumField AddEnumField<TEnum>(");
+        customUiEditorSource.ShouldContain("case CustomUIEnumField enumField:");
+    }
+
+    [Test]
+    public void CustomUiEnumField_RoundTripsSelectedValue()
+    {
+        CustomUiEnumTestValue value = CustomUiEnumTestValue.All;
+        var customUi = new CustomUIComponent();
+        CustomUIEnumField field = customUi.AddEnumField(
+            "Node Visibility",
+            () => value,
+            selected => value = selected);
+
+        field.Options.ShouldBe(["All", "LeavesOnly", "InternalOnly"]);
+        field.GetSelectedIndex().ShouldBe(0);
+
+        field.SetSelectedIndex(2);
+
+        value.ShouldBe(CustomUiEnumTestValue.InternalOnly);
+        field.GetSelectedIndex().ShouldBe(2);
+    }
+
+    [TestCase(MathBvhQueryShape.Box)]
+    [TestCase(MathBvhQueryShape.Sphere)]
+    [TestCase(MathBvhQueryShape.Frustum)]
+    public void MathBvhQueryVolume_ClassifiesContainedPartialAndDisjointBounds(
+        MathBvhQueryShape shape)
+    {
+        var query = new MathBvhQueryVolume();
+        query.Update(shape, 0.0f);
+
+        Vector3 insideCenter = shape switch
+        {
+            MathBvhQueryShape.Sphere => query.Sphere.Center,
+            MathBvhQueryShape.Frustum =>
+                (query.Frustum.LeftBottomNear + query.Frustum.RightTopNear +
+                 query.Frustum.LeftBottomFar + query.Frustum.RightTopFar) * 0.25f,
+            _ => query.Box.Center,
+        };
+        Vector3 partialCenter = shape switch
+        {
+            MathBvhQueryShape.Sphere => query.Sphere.Center + Vector3.UnitX * query.Sphere.Radius,
+            MathBvhQueryShape.Frustum => query.Frustum.LeftBottomNear,
+            _ => query.Box.Max,
+        };
+        AABB queryBounds = query.GetAABB(transformed: false);
+        AABB contained = AABB.FromCenterSize(insideCenter, new Vector3(0.05f));
+        AABB partial = AABB.FromCenterSize(partialCenter, new Vector3(0.2f));
+        AABB disjoint = AABB.FromCenterSize(queryBounds.Max + new Vector3(10.0f), Vector3.One);
+
+        query.ContainsAABB(contained).ShouldBe(EContainment.Contains);
+        query.ContainsAABB(partial).ShouldBe(EContainment.Intersects);
+        query.ContainsAABB(disjoint).ShouldBe(EContainment.Disjoint);
+    }
+
+    [Test]
+    public void MathBvhQueryVolume_ClassifiesSourceGeometryByContainment()
+    {
+        var query = new MathBvhQueryVolume();
+        query.Update(MathBvhQueryShape.Box, 0.0f);
+        Vector3 center = query.Box.Center;
+        Vector3 outside = query.Box.Max + Vector3.One;
+
+        query.ClassifyPoint(center).ShouldBe(EContainment.Contains);
+        query.ClassifyPoint(outside).ShouldBe(EContainment.Disjoint);
+        query.ClassifySegment(new Segment(center - Vector3.UnitX, center + Vector3.UnitX))
+            .ShouldBe(EContainment.Contains);
+        query.ClassifySegment(new Segment(center, outside))
+            .ShouldBe(EContainment.Intersects);
+
+        var containedTriangle = new Triangle(
+            center + Vector3.UnitX * 0.1f,
+            center + Vector3.UnitY * 0.1f,
+            center + Vector3.UnitZ * 0.1f);
+        var partialTriangle = new Triangle(
+            center,
+            outside,
+            center + Vector3.UnitZ * 0.1f);
+        var disjointTriangle = new Triangle(
+            outside,
+            outside + Vector3.UnitX,
+            outside + Vector3.UnitY);
+
+        query.ClassifyTriangle(containedTriangle).ShouldBe(EContainment.Contains);
+        query.ClassifyTriangle(partialTriangle).ShouldBe(EContainment.Intersects);
+        query.ClassifyTriangle(disjointTriangle).ShouldBe(EContainment.Disjoint);
+    }
+
+    [Test]
+    public void MathBvhRayQuery_ClassifiesHitsAsIntersectionsNotContainment()
+    {
+        var query = new MathBvhQueryVolume();
+        query.Update(MathBvhQueryShape.Raycast, 0.0f);
+        Triangle hit = CreateIntersectingTriangle(query, MathBvhQueryShape.Raycast);
+        AABB hitBounds = AABB.FromCenterSize(
+            (query.Raycast.Start + query.Raycast.End) * 0.5f,
+            Vector3.One);
+
+        query.ClassifyTriangle(hit).ShouldBe(EContainment.Intersects);
+        query.ContainsAABB(hitBounds).ShouldBe(EContainment.Intersects);
+    }
+
+    [TestCase(MathBvhQueryShape.Box)]
+    [TestCase(MathBvhQueryShape.Sphere)]
+    [TestCase(MathBvhQueryShape.Frustum)]
+    [TestCase(MathBvhQueryShape.Raycast)]
+    public void MathBvhMeshQuery_BvhCandidatesMatchBruteForceTriangleResults(
+        MathBvhQueryShape shape)
+    {
+        var query = new MathBvhQueryVolume();
+        query.Update(shape, 0.0f);
+
+        Triangle intersecting = CreateIntersectingTriangle(query, shape);
+        AABB queryBounds = query.GetAABB(transformed: true);
+        Vector3 distantCenter = queryBounds.Max + new Vector3(10.0f);
+        var distant = new Triangle(
+            distantCenter + Vector3.UnitX,
+            distantCenter + Vector3.UnitY,
+            distantCenter + Vector3.UnitZ);
+        var triangles = new List<Triangle> { intersecting, distant };
+        var tree = new BVH<Triangle>(new XREngine.Rendering.TriangleAdapter(), triangles);
+
+        List<BVHNode<Triangle>> candidates = tree.Traverse(
+            bounds => query.ContainsAABB(bounds) != EContainment.Disjoint);
+        int acceleratedHits = 0;
+        for (int nodeIndex = 0; nodeIndex < candidates.Count; nodeIndex++)
+        {
+            if (candidates[nodeIndex].gobjects is not { } nodeTriangles)
+                continue;
+
+            for (int triangleIndex = 0; triangleIndex < nodeTriangles.Count; triangleIndex++)
+                if (query.IntersectsTriangle(nodeTriangles[triangleIndex]))
+                    acceleratedHits++;
+        }
+
+        int bruteForceHits = 0;
+        for (int triangleIndex = 0; triangleIndex < triangles.Count; triangleIndex++)
+            if (query.IntersectsTriangle(triangles[triangleIndex]))
+                bruteForceHits++;
+
+        bruteForceHits.ShouldBe(1);
+        acceleratedHits.ShouldBe(bruteForceHits);
+    }
+
+    [Test]
+    public void MathBvhSphereQuery_RejectsAnInfiniteLineHitOutsideTheFiniteSegment()
+    {
+        var query = new MathBvhQueryVolume();
+        query.Update(MathBvhQueryShape.Sphere, 0.0f);
+        Vector3 direction = Vector3.UnitX;
+        var outsideSegment = new Segment(
+            query.Sphere.Center + direction * (query.Sphere.Radius + 2.0f),
+            query.Sphere.Center + direction * (query.Sphere.Radius + 4.0f));
+
+        query.IntersectsSegment(outsideSegment).ShouldBeFalse();
+    }
+
     [Test]
     public void MathBvhGpuPreview_QueuesWorkloadAndDrawsInLateDebugOverlay()
     {
@@ -34,9 +288,16 @@ public sealed class GpuMeshBvhPreviewContractTests
         modelPreviewSource.ShouldNotContain("_gpuRenderer.Render(");
 
         rendererSource.ShouldContain("ConditionalWeakTable<XRRenderPipelineInstance.RenderingState, GpuBvhDebugOverlayQueue>");
+        rendererSource.ShouldContain("BaseQueues = new();");
+        rendererSource.ShouldContain("HighlightQueues = new();");
         rendererSource.ShouldContain("internal static void RenderQueued(");
         rendererSource.ShouldNotContain("PushRenderGraphPassIndex(");
-        overlaySource.ShouldContain("GpuBvhDebugLineRenderer.RenderQueued(instance.RenderState);");
+        int baseOverlay = overlaySource.IndexOf("GpuBvhDebugOverlayLayer.Base", StringComparison.Ordinal);
+        int debugShapes = overlaySource.IndexOf("RuntimeEngine.Rendering.Debug.RenderShapes();", StringComparison.Ordinal);
+        int highlightOverlay = overlaySource.IndexOf("GpuBvhDebugOverlayLayer.Highlight", StringComparison.Ordinal);
+        baseOverlay.ShouldBeGreaterThanOrEqualTo(0);
+        debugShapes.ShouldBeGreaterThan(baseOverlay);
+        highlightOverlay.ShouldBeGreaterThan(debugShapes);
         queueSource.ShouldContain("(_pending, _rendering) = (_rendering, _pending);");
         queueSource.ShouldContain("ReferenceEquals(_pending[i].Renderer, request.Renderer)");
 
@@ -137,6 +398,11 @@ public sealed class GpuMeshBvhPreviewContractTests
     public void GpuMeshBvhStaticTriangles_ArePackedOnlyWhenInvalidated()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuMeshBvh.cs");
+        string markDirty = Slice(
+            source,
+            "public void MarkDirty()",
+            "public bool Prepare(",
+            StringComparison.Ordinal);
         string staticPack = Slice(
             source,
             "private bool PackStaticTriangles(XRMesh mesh, uint triangleCount)",
@@ -150,6 +416,24 @@ public sealed class GpuMeshBvhPreviewContractTests
         source.ShouldContain("ulong revision = source?.Revision ?? 0u;");
         source.ShouldContain("_packedTrianglesUploaded = false;");
         source.ShouldContain("_packedTrianglesUploaded = true;");
+        markDirty.ShouldNotContain("ReleaseStaticStorageViews();");
+    }
+
+    [Test]
+    public void GpuMeshBvhPositionInputs_UseTheirActualScalarStride()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuMeshBvh.cs");
+        string aabbShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/mesh_triangle_aabbs.comp");
+        string packShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/mesh_bvh_pack_triangles.comp");
+
+        source.ShouldContain("program.Uniform(\"PositionStrideScalars\", positions?.ComponentCount ?? 0u);");
+        foreach (string shader in new[] { aabbShader, packShader })
+        {
+            shader.ShouldContain("uint PositionScalars[];");
+            shader.ShouldContain("uniform uint PositionStrideScalars;");
+            shader.ShouldContain("uint word = vertexIndex * max(PositionStrideScalars, 3u);");
+            shader.ShouldNotContain("vec4 PositionsIn[];");
+        }
     }
 
     [Test]
@@ -225,6 +509,43 @@ public sealed class GpuMeshBvhPreviewContractTests
 
         editorSource.ShouldContain("RegisterPendingGpuSelection(gpuCandidate)");
         editorSource.ShouldContain("data is GpuMeshBvhPickCandidate gpuCandidate");
+    }
+
+    private enum CustomUiEnumTestValue
+    {
+        All,
+        LeavesOnly,
+        InternalOnly,
+    }
+
+    private static Triangle CreateIntersectingTriangle(
+        MathBvhQueryVolume query,
+        MathBvhQueryShape shape)
+    {
+        if (shape != MathBvhQueryShape.Raycast)
+        {
+            Vector3 center = shape switch
+            {
+                MathBvhQueryShape.Sphere => query.Sphere.Center,
+                MathBvhQueryShape.Frustum =>
+                    (query.Frustum.LeftBottomNear + query.Frustum.RightTopNear +
+                     query.Frustum.LeftBottomFar + query.Frustum.RightTopFar) * 0.25f,
+                _ => query.Box.Center,
+            };
+            return new Triangle(
+                center + Vector3.UnitX * 0.05f,
+                center + Vector3.UnitZ * 0.05f,
+                center - (Vector3.UnitX + Vector3.UnitZ) * 0.05f);
+        }
+
+        Vector3 direction = Vector3.Normalize(query.Raycast.End - query.Raycast.Start);
+        Vector3 tangent = Vector3.Normalize(Vector3.Cross(direction, Vector3.UnitX));
+        Vector3 bitangent = Vector3.Normalize(Vector3.Cross(direction, tangent));
+        Vector3 rayCenter = (query.Raycast.Start + query.Raycast.End) * 0.5f;
+        return new Triangle(
+            rayCenter + tangent * 0.4f,
+            rayCenter - tangent * 0.4f,
+            rayCenter + bitangent * 0.4f);
     }
 
     private static string Slice(string source, string startToken, string endToken, StringComparison comparison)

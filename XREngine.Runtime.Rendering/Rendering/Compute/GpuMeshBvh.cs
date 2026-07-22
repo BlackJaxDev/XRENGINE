@@ -75,7 +75,6 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
         _built = false;
         _staticAabbsUploaded = false;
         _packedTrianglesUploaded = false;
-        ReleaseStaticStorageViews();
         _tree.MarkDirty();
     }
 
@@ -291,6 +290,7 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
         program.Uniform("UseInterleaved", interleaved is not null ? 1u : 0u);
         program.Uniform("InterleavedStrideBytes", mesh.InterleavedStride);
         program.Uniform("PositionOffsetBytes", mesh.PositionOffset);
+        program.Uniform("PositionStrideScalars", positions?.ComponentCount ?? 0u);
         program.Uniform("ApplyTransform", 1);
         program.Uniform("TransformMatrix", renderable.SkinnedBvhWorldToLocalMatrix);
         program.DispatchCompute(
@@ -398,6 +398,7 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
         program.Uniform("UseInterleaved", interleaved is not null ? 1u : 0u);
         program.Uniform("InterleavedStrideBytes", mesh.InterleavedStride);
         program.Uniform("PositionOffsetBytes", mesh.PositionOffset);
+        program.Uniform("PositionStrideScalars", positions?.ComponentCount ?? 0u);
         program.Uniform("ApplyTransform", applyTransform ? 1 : 0);
         program.Uniform("TransformMatrix", transformMatrix);
         program.DispatchCompute(

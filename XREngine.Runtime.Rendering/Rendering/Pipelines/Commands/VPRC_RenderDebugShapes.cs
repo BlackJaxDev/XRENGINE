@@ -28,9 +28,14 @@ namespace XREngine.Rendering.Pipelines.Commands
                 using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(ResolveRenderGraphPassIndex()))
                 using (instance.RenderState.PushRenderingCamera(camera))
                 {
-                    GpuBvhDebugLineRenderer.RenderQueued(instance.RenderState);
+                    GpuBvhDebugLineRenderer.RenderQueued(
+                        instance.RenderState,
+                        GpuBvhDebugOverlayLayer.Base);
                     RenderEnabledSpatialTreeDebug(instance, camera);
                     RuntimeEngine.Rendering.Debug.RenderShapes();
+                    GpuBvhDebugLineRenderer.RenderQueued(
+                        instance.RenderState,
+                        GpuBvhDebugOverlayLayer.Highlight);
                 }
             }
             finally

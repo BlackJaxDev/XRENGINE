@@ -39,6 +39,8 @@ public static class XREngineEnvironmentVariables
     public const string NetMode = "XRE_NET_MODE";
     public const string WindowTitle = "XRE_WINDOW_TITLE";
     public const string WindowPumpHost = "XRE_WINDOW_PUMP_HOST";
+    public const string EditorSessionName = "XRE_EDITOR_SESSION_NAME";
+    public const string EditorSessionRoot = "XRE_EDITOR_SESSION_ROOT";
     public const string VrClientGameName = "XRE_VRCLIENT_GAMENAME";
     public const string NetworkingPoseRole = "XRE_NETWORKING_POSE_ROLE";
 
@@ -132,6 +134,8 @@ public static class XREngineEnvironmentVariables
 
     public const string EngineAssetsPath = "XRE_ENGINE_ASSETS_PATH";
     public const string GameAssetsPath = "XRE_GAME_ASSETS_PATH";
+    public const string GameCachePath = "XRE_GAME_CACHE_PATH";
+    public const string GameMetadataPath = "XRE_GAME_METADATA_PATH";
     public const string StreamUrl = "XRE_STREAM_URL";
     public const string FbxLog = "XRE_FBX_LOG";
     public const string CoacdMaxConcurrentRuns = "XRE_COACD_MAX_CONCURRENT_RUNS";

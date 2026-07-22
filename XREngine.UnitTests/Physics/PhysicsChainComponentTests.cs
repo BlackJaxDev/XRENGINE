@@ -496,12 +496,13 @@ public sealed class PhysicsChainComponentTests
     }
 
     [Test]
-    public void TryAddGpuDrivenRendererState_RegistersGpuDrivenBonesWhenCpuSyncIsDisabled()
+    public void TryAddGpuDrivenRendererState_HonorsGpuDrivenSkinningSelection()
     {
         var (node, rootBone, childBones) = CreateBoneHierarchy(3);
         var component = CreateComponent(node, rootBone);
         component.UseGPU = true;
-        component.GpuSyncToBones = false;
+        component.GpuSyncToBones = true;
+        component.UseGpuDrivenSkinning = true;
 
         XRMesh mesh = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
         mesh.UtilizedBones =
@@ -529,7 +530,11 @@ public sealed class PhysicsChainComponentTests
 
         renderer.HasGpuDrivenBoneSource.ShouldBeTrue();
 
-        ClearGpuDrivenRendererBindingsMethod(component);
+        component.UseGpuDrivenSkinning = false;
+
+        renderer.HasGpuDrivenBoneSource.ShouldBeFalse();
+
+        TryAddGpuDrivenRendererStateMethod(component, renderer, particleIndexByTransform, firstChildIndexByParticle, restDirectionByParticle);
 
         renderer.HasGpuDrivenBoneSource.ShouldBeFalse();
     }

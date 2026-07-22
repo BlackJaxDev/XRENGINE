@@ -55,6 +55,31 @@ public sealed class CpuSpatialRenderTreeTests
     }
 
     [Test]
+    public void CpuBvhDetailedDebugTraversalReportsLeafAndInternalNodes()
+    {
+        var tree = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(Vector3.Zero, new Vector3(100.0f)));
+        List<TestRenderItem> items = CreateOriginCrossingItems(32);
+        tree.AddRange(items);
+        SwapSeveral(tree);
+
+        int leafCount = 0;
+        int internalCount = 0;
+        tree.DebugRenderNodes(
+            null,
+            (_, _, _, isLeaf) =>
+            {
+                if (isLeaf)
+                    leafCount++;
+                else
+                    internalCount++;
+            });
+
+        leafCount.ShouldBeGreaterThan(0);
+        internalCount.ShouldBeGreaterThan(0);
+        (leafCount + internalCount).ShouldBe(tree.GetOccupancyStats().NodeCount);
+    }
+
+    [Test]
     public void CpuBvhFrustumCullMatchesOctreeForEdgeIntersectingItems()
     {
         var bounds = AABB.FromCenterSize(new Vector3(0.0f, 0.0f, -40.0f), new Vector3(180.0f, 120.0f, 120.0f));
