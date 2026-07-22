@@ -607,6 +607,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         return Engine.WindowCloseRequested.Invoke(xrWindow) == Engine.WindowCloseRequestResult.Allow;
     }
 
+    public bool QuiesceForWindowRendererTeardown(IRuntimeRenderWindowHost window)
+        => window is not XRWindow xrWindow || Engine.QuiesceForWindowRendererTeardown(xrWindow);
+
     public void RemoveWindow(IRuntimeRenderWindowHost window)
     {
         if (window is XRWindow xrWindow)

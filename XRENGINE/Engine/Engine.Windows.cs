@@ -216,6 +216,9 @@ namespace XREngine
         /// <param name="window">The window to remove.</param>
         public static void RemoveWindow(XRWindow window)
         {
+            if (window.Renderer.ShouldSkipNativeWindowDisposeForShutdown)
+                Interlocked.Exchange(ref _abandonProcessExitCleanup, 1);
+
             WindowPumpHost.UnregisterWindow(window);
             _windows.Remove(window);
             if (_windows.Count != 0)
@@ -228,6 +231,27 @@ namespace XREngine
             }
 
             Cleanup();
+        }
+
+        /// <summary>
+        /// Stops frame-producing engine loops before the final window destroys renderer-owned resources.
+        /// </summary>
+        internal static bool QuiesceForWindowRendererTeardown(XRWindow window)
+        {
+            bool isFinalWindow = _windows.Count == 1 && ReferenceEquals(_windows[0], window);
+            bool cleanupSuppressed = Volatile.Read(ref _suppressedCleanupRequests) > 0;
+            if (!isFinalWindow || cleanupSuppressed)
+                return true;
+
+            bool quiesced = Time.Timer.StopAndWait(TimeSpan.FromSeconds(2));
+            if (quiesced)
+                return true;
+
+            Interlocked.Exchange(ref _abandonProcessExitCleanup, 1);
+            Debug.RenderingWarning(
+                "[Shutdown] Core engine loops did not quiesce within 2 seconds. " +
+                "Renderer and process-exit resource teardown will be abandoned to avoid destroying live resources.");
+            return false;
         }
 
         /// <summary>

@@ -1108,6 +1108,15 @@ public interface IRuntimeRenderingHostServices
     bool AllowWindowClose(IRuntimeRenderWindowHost window);
 
     /// <summary>
+    /// Stops host work that can produce or mutate render resources before the supplied window tears its renderer down.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when renderer teardown can proceed safely; otherwise <see langword="false"/>
+    /// and the window will abandon process-exit cleanup rather than race active host work.
+    /// </returns>
+    bool QuiesceForWindowRendererTeardown(IRuntimeRenderWindowHost window) => true;
+
+    /// <summary>
     /// Removes the supplied render window from the host window collection.
     /// </summary>
     void RemoveWindow(IRuntimeRenderWindowHost window);

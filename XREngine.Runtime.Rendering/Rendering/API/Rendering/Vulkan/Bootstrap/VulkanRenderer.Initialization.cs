@@ -3,6 +3,7 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 using System;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -26,6 +27,7 @@ namespace XREngine.Rendering.Vulkan
             SetupDebugMessenger();
             CreateSurface();
             PickPhysicalDevice();
+            ValidateStreamlineSelectedPhysicalDevice();
             CreateLogicalDevice();
             InitializeMemoryAllocator();
             InitializeCanonicalImmutableSamplers();
@@ -84,13 +86,19 @@ namespace XREngine.Rendering.Vulkan
             Debug.Vulkan($"[Vulkan] Memory allocator initialized: {backend} (lazyAlloc={SupportsLazyAllocation})");
         }
 
-        public override void CleanUp()
+        public override void CleanUp() => CleanUp(waitForGpu: true);
+
+        public override void CleanUpAfterGpuIdle() => CleanUp(waitForGpu: false);
+
+        private void CleanUp(bool waitForGpu)
         {
             if (device.Handle != 0)
             {
-                DeviceWaitIdle();
+                if (waitForGpu)
+                    DeviceWaitIdle();
+
                 // Swapchain generations use nonblocking queue-marker fences during normal
-                // rendering. DeviceWaitIdle above is the only teardown-only force boundary.
+                // rendering. The caller establishes the teardown-only GPU-idle boundary.
                 DrainRetiredSwapchainGenerations(force: true);
             }
 
@@ -824,6 +832,38 @@ namespace XREngine.Rendering.Vulkan
         public override void WaitForGpu()
         {
             DeviceWaitIdle();
+        }
+
+        public override bool TryWaitForGpu(TimeSpan timeout)
+        {
+            if (timeout < TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(timeout), timeout, "The shutdown timeout must be non-negative.");
+            if (device.Handle == 0)
+                return true;
+
+            Exception? waitFailure = null;
+            var waitThread = new Thread(() =>
+            {
+                try
+                {
+                    DeviceWaitIdle();
+                }
+                catch (Exception ex)
+                {
+                    waitFailure = ex;
+                }
+            })
+            {
+                Name = "XRE-VulkanShutdownWait",
+                IsBackground = true,
+            };
+
+            waitThread.Start();
+            TimeSpan maximumJoinTimeout = TimeSpan.FromMilliseconds(int.MaxValue);
+            bool completed = waitThread.Join(timeout > maximumJoinTimeout ? maximumJoinTimeout : timeout);
+            if (waitFailure is not null)
+                throw new InvalidOperationException("Vulkan device-idle wait failed during shutdown.", waitFailure);
+            return completed;
         }
         public override void SetReadBuffer(EReadBufferMode mode)
         {

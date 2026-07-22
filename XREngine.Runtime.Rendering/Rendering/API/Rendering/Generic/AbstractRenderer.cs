@@ -7,6 +7,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Threading;
 using XREngine.Components;
 using XREngine.Data;
 using XREngine.Data.Colors;
@@ -138,7 +139,29 @@ namespace XREngine.Rendering
 
         public abstract void Initialize();
         public abstract void CleanUp();
-        public virtual bool ShouldSkipNativeWindowDisposeForShutdown => false;
+
+        /// <summary>
+        /// Cleans up after the caller has already established a GPU-idle boundary.
+        /// </summary>
+        public virtual void CleanUpAfterGpuIdle() => CleanUp();
+
+        private int _shutdownTeardownAbandoned;
+
+        /// <summary>
+        /// Gets whether shutdown deliberately abandoned resource destruction because doing so could race live work.
+        /// </summary>
+        public bool IsShutdownTeardownAbandoned => Volatile.Read(ref _shutdownTeardownAbandoned) != 0;
+
+        /// <summary>
+        /// Prevents later shutdown stages from destroying renderer-adjacent resources after a failed safety boundary.
+        /// </summary>
+        internal void AbandonShutdownTeardown()
+            => Interlocked.Exchange(ref _shutdownTeardownAbandoned, 1);
+
+        /// <summary>
+        /// Gets whether process-exit window/resource cleanup should be skipped for safety.
+        /// </summary>
+        public virtual bool ShouldSkipNativeWindowDisposeForShutdown => IsShutdownTeardownAbandoned;
         public virtual bool IsDeviceLost => false;
         public virtual string? DeviceLostReason => null;
 
@@ -1323,6 +1346,16 @@ namespace XREngine.Rendering
         /// Blocks the CPU until all GPU commands have completed.
         /// </summary>
         public abstract void WaitForGpu();
+
+        /// <summary>
+        /// Attempts to establish a GPU-idle boundary within the supplied shutdown timeout.
+        /// Backends with thread-safe, non-thread-affine wait APIs should override this with a bounded implementation.
+        /// </summary>
+        public virtual bool TryWaitForGpu(TimeSpan timeout)
+        {
+            WaitForGpu();
+            return true;
+        }
 
         #endregion
     }

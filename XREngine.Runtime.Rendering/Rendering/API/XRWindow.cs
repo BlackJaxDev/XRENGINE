@@ -26,6 +26,8 @@ namespace XREngine.Rendering
     [RuntimeOnly]
     public sealed class XRWindow : XRBase, IRuntimeRenderWindowHost, IDisposable
     {
+        private static readonly TimeSpan RendererShutdownGpuWaitTimeout = TimeSpan.FromSeconds(5);
+
         #region Nested Types
 
         private class NodeRepresentation
@@ -1516,10 +1518,39 @@ namespace XREngine.Rendering
                 waitForGpu,
                 reason);
 
+            if (renderer.ShouldSkipNativeWindowDisposeForShutdown)
+            {
+                Debug.RenderingWarning(
+                    "[XRWindow] Renderer teardown skipped after shutdown abandonment. Window={0} RendererType={1} Reason={2}",
+                    GetHashCode(),
+                    renderer.GetType().Name,
+                    reason);
+                return;
+            }
+
             TryPrepareOpenXrForRendererTeardown(renderer, reason);
 
             if (waitForGpu)
-                TryRendererCleanupStep(renderer, reason, "WaitForGpu", renderer.WaitForGpu);
+            {
+                bool waitCompleted = false;
+                bool waitSucceeded = TryRendererCleanupStep(
+                    renderer,
+                    reason,
+                    "WaitForGpu",
+                    () => waitCompleted = renderer.TryWaitForGpu(RendererShutdownGpuWaitTimeout));
+                if (!waitSucceeded || !waitCompleted)
+                {
+                    renderer.AbandonShutdownTeardown();
+                    Debug.RenderingWarning(
+                        "[XRWindow] Abandoning renderer teardown because the GPU-idle boundary failed or exceeded {0:F0} ms. " +
+                        "Window={1} RendererType={2} Reason={3}",
+                        RendererShutdownGpuWaitTimeout.TotalMilliseconds,
+                        GetHashCode(),
+                        renderer.GetType().Name,
+                        reason);
+                    return;
+                }
+            }
 
             TryRendererCleanupStep(renderer, reason, "DestroyCachedAPIRenderObjects", renderer.DestroyCachedAPIRenderObjects);
             TryRendererCleanupStep(
@@ -1527,7 +1558,11 @@ namespace XREngine.Rendering
                 reason,
                 "DestroyObjectsForRenderer",
                 () => RuntimeRenderingHostServices.Current.DestroyObjectsForRenderer(renderer));
-            TryRendererCleanupStep(renderer, reason, "CleanUp", renderer.CleanUp);
+            TryRendererCleanupStep(
+                renderer,
+                reason,
+                "CleanUp",
+                waitForGpu ? renderer.CleanUpAfterGpuIdle : renderer.CleanUp);
         }
 
         private void TryPrepareOpenXrForRendererTeardown(AbstractRenderer renderer, string reason)
@@ -1547,12 +1582,13 @@ namespace XREngine.Rendering
             }
         }
 
-        private void TryRendererCleanupStep(AbstractRenderer renderer, string reason, string step, Action action)
+        private bool TryRendererCleanupStep(AbstractRenderer renderer, string reason, string step, Action action)
         {
             try
             {
                 using var sample = RuntimeRenderingHostServices.Current.StartProfileScope($"XRWindow.RendererCleanup.{step}");
                 action();
+                return true;
             }
             catch (Exception ex)
             {
@@ -1563,6 +1599,7 @@ namespace XREngine.Rendering
                     step,
                     reason,
                     ex);
+                return false;
             }
         }
 
@@ -1985,6 +2022,14 @@ namespace XREngine.Rendering
             }
 
             PublishWindowEventSnapshot(closeRequested: true, closeApproved: true);
+            if (!RuntimeRenderingHostServices.Current.QuiesceForWindowRendererTeardown(this))
+            {
+                _renderer.AbandonShutdownTeardown();
+                Debug.RenderingWarning(
+                    "[XRWindow] Host work did not quiesce; abandoning renderer-adjacent teardown. hash={0}",
+                    GetHashCode());
+            }
+
             if (IsNativeEventPumpExternallyOwned)
             {
                 _approvedNativeCloseInProgress = true;
@@ -3440,7 +3485,7 @@ namespace XREngine.Rendering
                 if (skipScenePanelDispose)
                 {
                     Debug.Rendering(
-                        "[XRWindow] Fast shutdown skipping scene-panel/native window dispose because renderer abandoned async shutdown work. hash={0}",
+                        "[XRWindow] Fast shutdown skipping renderer-adjacent resource disposal after teardown abandonment. hash={0}",
                         GetHashCode());
                 }
                 else
@@ -3448,6 +3493,14 @@ namespace XREngine.Rendering
                     try
                     {
                         _scenePanelAdapter.Dispose();
+                    }
+                    catch
+                    {
+                    }
+
+                    try
+                    {
+                        Viewports.Clear();
                     }
                     catch
                     {
@@ -3465,13 +3518,6 @@ namespace XREngine.Rendering
                     }
                 }
 
-                try
-                {
-                    Viewports.Clear();
-                }
-                catch
-                {
-                }
             }
             finally
             {
@@ -3591,13 +3637,20 @@ namespace XREngine.Rendering
                 if (skipScenePanelDispose)
                 {
                     Debug.Rendering(
-                        "[XRWindow] Fast shutdown skipping scene-panel/native window dispose because renderer abandoned async shutdown work. hash={0}",
+                        "[XRWindow] Fast shutdown skipping renderer-adjacent resource disposal after teardown abandonment. hash={0}",
                         GetHashCode());
                 }
                 else
                 {
                     // Free dockable scene-panel GPU resources.
                     _scenePanelAdapter.Dispose();
+                    try
+                    {
+                        Viewports.Clear();
+                    }
+                    catch
+                    {
+                    }
                 }
 
                 if (_interactiveResizeStrategy.IsInstalled)
@@ -3634,15 +3687,8 @@ namespace XREngine.Rendering
                     Input = null;
                 }
 
-                // Unhook window events and release viewports.
+                // Unhook window events. Viewports were released only when renderer teardown was safe.
                 UnlinkWindow();
-                try
-                {
-                    Viewports.Clear();
-                }
-                catch
-                {
-                }
 
                 bool skipNativeWindowDispose = _approvedNativeCloseInProgress;
                 if (skipNativeWindowDispose)

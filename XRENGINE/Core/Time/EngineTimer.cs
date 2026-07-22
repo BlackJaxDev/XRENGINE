@@ -216,6 +216,12 @@ namespace XREngine.Timers
             if (IsRunning)
                 return;
 
+            if (UpdateThreadHandle is { IsAlive: true } ||
+                CollectVisibleThreadHandle is { IsAlive: true } ||
+                FixedUpdateThreadHandle is { IsAlive: true })
+                throw new InvalidOperationException(
+                    "The previous engine loop is still stopping. Call StopAndWait before restarting it.");
+
             _watch.Start();
             _renderDone = new ManualResetEventSlim(false);
             _visibilityGenerationGate.Reset();
@@ -224,7 +230,7 @@ namespace XREngine.Timers
 
             // Critical engine loops must NOT run on the shared ThreadPool; bursts of mesh/asset
             // import jobs were observed to starve them (see fps-drop diagnostics). Use dedicated
-            // foreground threads at AboveNormal priority so they are scheduled independently
+            // background threads at AboveNormal priority so they are scheduled independently
             // of ThreadPool saturation.
             UpdateThreadHandle = StartEngineLoopThread(UpdateThread, "XRE-Update");
             CollectVisibleThreadHandle = StartEngineLoopThread(CollectVisibleThread, "XRE-CollectVisible");
@@ -243,7 +249,7 @@ namespace XREngine.Timers
         }
 
         /// <summary>
-        /// Creates and starts a dedicated foreground thread at <see cref="ThreadPriority.AboveNormal"/>
+        /// Creates and starts a dedicated background thread at <see cref="ThreadPriority.AboveNormal"/>
         /// for one of the core engine loops (Update / CollectVisible / FixedUpdate).
         /// These loops must not share the ThreadPool with asset-import / job work, since import
         /// bursts can saturate the pool and starve the loop of scheduling opportunities.
@@ -253,7 +259,9 @@ namespace XREngine.Timers
             var t = new Thread(loop)
             {
                 Name = name,
-                IsBackground = false,
+                // StopAndWait performs the orderly join. Background ownership is the final
+                // guarantee that a wedged callback cannot strand the process during shutdown.
+                IsBackground = true,
                 Priority = ThreadPriority.AboveNormal,
             };
             t.Start();
@@ -608,16 +616,71 @@ namespace XREngine.Timers
 
             _visibilityGenerationGate.Terminate();
             _renderDone?.Set();
-            //_updatingDone?.Set();
+        }
 
-            //UpdateThreadHandle?.Join();
-            UpdateThreadHandle = null;
+        /// <summary>
+        /// Requests all core loops to stop and waits up to a single shared timeout for them to exit.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="Stop"/> remains nonblocking because loop error paths call it from the loop thread itself.
+        /// This method skips joining the current thread, so it cannot self-deadlock.
+        /// </remarks>
+        public bool StopAndWait(TimeSpan timeout)
+        {
+            if (timeout < TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(timeout), timeout, "The shutdown timeout must be non-negative.");
 
-            //CollectVisibleThreadHandle?.Join();
-            CollectVisibleThreadHandle = null;
+            Stop();
 
-            //FixedUpdateThreadHandle?.Join();
-            FixedUpdateThreadHandle = null;
+            Thread? updateThread = UpdateThreadHandle;
+            Thread? collectVisibleThread = CollectVisibleThreadHandle;
+            Thread? fixedUpdateThread = FixedUpdateThreadHandle;
+            long waitStarted = Stopwatch.GetTimestamp();
+
+            bool updateStopped = JoinWithinShutdownTimeout(updateThread, waitStarted, timeout);
+            bool collectVisibleStopped = JoinWithinShutdownTimeout(collectVisibleThread, waitStarted, timeout);
+            bool fixedUpdateStopped = JoinWithinShutdownTimeout(fixedUpdateThread, waitStarted, timeout);
+
+            if (updateStopped)
+                Interlocked.CompareExchange(ref UpdateThreadHandle, null, updateThread);
+            if (collectVisibleStopped)
+                Interlocked.CompareExchange(ref CollectVisibleThreadHandle, null, collectVisibleThread);
+            if (fixedUpdateStopped)
+                Interlocked.CompareExchange(ref FixedUpdateThreadHandle, null, fixedUpdateThread);
+
+            if (updateStopped && collectVisibleStopped && fixedUpdateStopped)
+                return true;
+
+            var lingeringThreads = new List<string>(3);
+            if (!updateStopped)
+                lingeringThreads.Add(updateThread?.Name ?? "XRE-Update");
+            if (!collectVisibleStopped)
+                lingeringThreads.Add(collectVisibleThread?.Name ?? "XRE-CollectVisible");
+            if (!fixedUpdateStopped)
+                lingeringThreads.Add(fixedUpdateThread?.Name ?? "XRE-FixedUpdate");
+
+            Debug.LogWarning(
+                $"[EngineTimer] Timed out after {timeout.TotalMilliseconds:F0} ms waiting for core loops: " +
+                string.Join(", ", lingeringThreads));
+            return false;
+        }
+
+        private static bool JoinWithinShutdownTimeout(Thread? thread, long waitStarted, TimeSpan timeout)
+        {
+            if (thread is null || !thread.IsAlive)
+                return true;
+            if (thread.ManagedThreadId == Environment.CurrentManagedThreadId)
+                return false;
+
+            TimeSpan remaining = timeout - Stopwatch.GetElapsedTime(waitStarted);
+            if (remaining <= TimeSpan.Zero)
+                return !thread.IsAlive;
+
+            TimeSpan maximumJoinTimeout = TimeSpan.FromMilliseconds(int.MaxValue);
+            if (remaining > maximumJoinTimeout)
+                remaining = maximumJoinTimeout;
+
+            return thread.Join(remaining);
         }
 
         /// <summary>

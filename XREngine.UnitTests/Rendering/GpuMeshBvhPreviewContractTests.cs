@@ -9,6 +9,54 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class GpuMeshBvhPreviewContractTests
 {
     [Test]
+    public void MathBvhGpuPreview_QueuesWorkloadAndDrawsInLateDebugOverlay()
+    {
+        string componentSource = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Math/MathBvhTestComponent.cs");
+        string debugSource = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Math/MathBvhTestComponent.Debug.cs");
+        string rendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuBvhDebugLineRenderer.cs");
+        string queueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuBvhDebugOverlayQueue.cs");
+        string overlaySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderDebugShapes.cs");
+        string modelPreviewSource = ReadWorkspaceFile("XRENGINE/Scene/Components/Debug/Visualize/ModelBvhPreviewComponent.cs");
+
+        componentSource.ShouldContain("=> Interlocked.Exchange(ref _gpuWorkQueued, 1);");
+        componentSource.ShouldNotContain("Engine.EnqueueRenderThreadTask(");
+        componentSource.ShouldNotContain("RenderedObjects[0].IsVisible = value;");
+
+        int passScope = debugSource.IndexOf("PushRenderGraphPassIndex(", StringComparison.Ordinal);
+        int workload = debugSource.IndexOf("ExecuteQueuedGpuWorkload();", StringComparison.Ordinal);
+        int debugGate = debugSource.IndexOf("if (!DebugRenderEnabled)", StringComparison.Ordinal);
+        passScope.ShouldBeGreaterThanOrEqualTo(0);
+        workload.ShouldBeGreaterThan(passScope);
+        debugGate.ShouldBeGreaterThan(workload);
+        debugSource.ShouldContain("_gpuDebugRenderer.Queue(");
+        debugSource.ShouldNotContain("_gpuDebugRenderer.Render(");
+        modelPreviewSource.ShouldContain("_gpuRenderer.Queue(");
+        modelPreviewSource.ShouldNotContain("_gpuRenderer.Render(");
+
+        rendererSource.ShouldContain("ConditionalWeakTable<XRRenderPipelineInstance.RenderingState, GpuBvhDebugOverlayQueue>");
+        rendererSource.ShouldContain("internal static void RenderQueued(");
+        rendererSource.ShouldNotContain("PushRenderGraphPassIndex(");
+        overlaySource.ShouldContain("GpuBvhDebugLineRenderer.RenderQueued(instance.RenderState);");
+        queueSource.ShouldContain("(_pending, _rendering) = (_rendering, _pending);");
+        queueSource.ShouldContain("ReferenceEquals(_pending[i].Renderer, request.Renderer)");
+
+        string immediate = Slice(
+            rendererSource,
+            "private bool RenderImmediate(",
+            "private static void ResetStencilState",
+            StringComparison.Ordinal);
+        int ensureResources = immediate.IndexOf("EnsureResources(visualizedLines)", StringComparison.Ordinal);
+        int prepareRenderer = immediate.IndexOf("_linesRenderer!.TryPrepareForRendering(forceNoStereo: true)", StringComparison.Ordinal);
+        int dispatch = immediate.IndexOf("_computeProgram.DispatchCompute(", StringComparison.Ordinal);
+        int draw = immediate.IndexOf("_linesRenderer.Render(", StringComparison.Ordinal);
+        ensureResources.ShouldBeGreaterThanOrEqualTo(0);
+        prepareRenderer.ShouldBeGreaterThan(ensureResources);
+        dispatch.ShouldBeGreaterThan(prepareRenderer);
+        draw.ShouldBeGreaterThan(dispatch);
+        rendererSource.ShouldContain("Name = \"GpuBvhDebugLines\"");
+    }
+
+    [Test]
     public void MeshBvhPreview_AccuracyInputControlsMaxLeafPrimitives()
     {
         string editorSource = ReadWorkspaceFile("XREngine.Editor/ComponentEditors/ModelComponentEditor.cs");
@@ -20,6 +68,8 @@ public sealed class GpuMeshBvhPreviewContractTests
         editorSource.ShouldContain("uint maxLeafPrimitives = GetBvhMaxLeafPrimitives(state.MeshAccuracy);");
         editorSource.ShouldContain("mesh.HasCurrentGpuMeshBvhForMaxLeafPrimitives(maxLeafPrimitives)");
         editorSource.ShouldContain("mesh.PrepareGpuMeshBvh(realtimeSkinned, maxLeafPrimitives: maxLeafPrimitives)");
+        editorSource.ShouldContain("return state.GpuRenderer.Queue(");
+        editorSource.ShouldNotContain("return state.GpuRenderer.Render(");
 
         gpuMeshBvhSource.ShouldContain("public const uint DefaultMaxLeafPrimitives = 1u;");
         gpuMeshBvhSource.ShouldContain("public uint MaxLeafPrimitives => _tree.MaxLeafPrimitives;");

@@ -111,7 +111,7 @@ public sealed class ModelBvhPreviewComponent : DebugVisualize3DComponent
             if (!MeshIsVisible(mesh, frustum))
                 continue;
 
-            RenderMeshTree(mesh, camera as XRCamera);
+            RenderMeshTree(mesh);
         }
     }
 
@@ -158,7 +158,7 @@ public sealed class ModelBvhPreviewComponent : DebugVisualize3DComponent
         return mesh.CurrentLODRenderer?.Mesh is not null;
     }
 
-    private void RenderMeshTree(RenderableMesh mesh, XRCamera? camera)
+    private void RenderMeshTree(RenderableMesh mesh)
     {
         bool requestActive = RequestGpuMeshBvhRefreshIfCursorIntersects(mesh);
         if (mesh.IsSkinned && OnlyRenderBvhOnRequest && !requestActive)
@@ -185,11 +185,10 @@ public sealed class ModelBvhPreviewComponent : DebugVisualize3DComponent
             ? ToVector4(LeafNodeColor)
             : internalColor;
 
-        _gpuRenderer.Render(
+        _gpuRenderer.Queue(
             nodeBuffer,
             gpuBvh.BvhNodeCount,
             gpuBvh.LocalToWorldMatrix,
-            camera,
             (uint)Math.Max(1, MaxGpuNodes),
             LineWidth,
             leafColor,

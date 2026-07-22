@@ -25,6 +25,7 @@ public class NativeInteropSmokeTests
         {
             Assert.That(TryGetExport(handle, "slInit", out _), Is.True, "sl.interposer.dll is missing slInit; update to a newer Streamline build.");
             Assert.That(TryGetExport(handle, "slShutdown", out _), Is.True, "sl.interposer.dll is missing slShutdown; update to a newer Streamline build.");
+            Assert.That(TryGetExport(handle, "slIsFeatureSupported", out _), Is.True, "sl.interposer.dll is missing slIsFeatureSupported; adapter-level DLSS-G capability checks cannot run.");
             Assert.That(TryGetExport(handle, "slGetFeatureRequirements", out _), Is.True, "sl.interposer.dll is missing slGetFeatureRequirements; Vulkan bridge init cannot query DLSS requirements before creating the sidecar device.");
             Assert.That(TryGetExport(handle, "slSetVulkanInfo", out _), Is.True, "sl.interposer.dll is missing slSetVulkanInfo; Vulkan bridge DLSS cannot initialize.");
             Assert.That(TryGetExport(handle, "slEvaluateFeature", out _), Is.True, "sl.interposer.dll is missing slEvaluateFeature; DLSS dispatch cannot execute.");

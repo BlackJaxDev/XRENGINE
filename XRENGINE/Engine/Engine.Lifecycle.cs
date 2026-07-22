@@ -1,3 +1,4 @@
+using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Data.Profiling;
 using XREngine.Rendering;
@@ -69,6 +70,7 @@ namespace XREngine
             {
                 StartingUp = true;
                 ShuttingDown = false;
+                Interlocked.Exchange(ref _abandonProcessExitCleanup, 0);
                 int startupThreadId = Environment.CurrentManagedThreadId;
                 SetWindowThreadId(startupThreadId);
                 SetRenderThreadId(startupThreadId);
@@ -185,6 +187,21 @@ namespace XREngine
 
             ShuttingDown = true;
 
+            // Stop producers before disposing anything they can still reference. A timeout means
+            // the closing window has selected process-exit abandonment instead of unsafe teardown.
+            bool coreLoopsStopped = Time.Timer.StopAndWait(TimeSpan.FromSeconds(2));
+            if (!coreLoopsStopped)
+                Interlocked.Exchange(ref _abandonProcessExitCleanup, 1);
+
+            if (Volatile.Read(ref _abandonProcessExitCleanup) != 0)
+            {
+                Debug.RenderingWarning(
+                    "[Shutdown] Skipping process-exit resource cleanup because a bounded quiesce/GPU wait failed. " +
+                    "The operating system will reclaim resources after foreground engine hosts exit.");
+                WindowPumpHost.Stop();
+                return;
+            }
+
             // Finalize profiler output before tearing down subsystems it reads from.
 #if !XRE_PUBLISHED
             ProfileCapture.Shutdown();
@@ -195,7 +212,6 @@ namespace XREngine
 
             // TODO: Implement clean shutdown where each window disposes of its own allocated assets
             Rendering.SecondaryContext.Dispose();
-            Time.Timer.Stop();
             WindowPumpHost.Stop();
             Jobs.Shutdown(waitForWorkers: false);
             Assets.Dispose();

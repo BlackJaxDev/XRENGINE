@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
@@ -25,42 +27,91 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
     private const uint Vec4PerLine = 3u;
     private const uint FloatsPerVec4 = 4u;
 
+    private static readonly ConditionalWeakTable<XRRenderPipelineInstance.RenderingState, GpuBvhDebugOverlayQueue> Queues = new();
+
     private XRShader? _computeShader;
     private XRRenderProgram? _computeProgram;
     private XRDataBuffer? _linesBuffer;
     private XRMeshRenderer? _linesRenderer;
     private uint _allocatedLineCapacity;
+    private bool _disposed;
 
-    public bool Render(
+    /// <summary>
+    /// Queues a BVH overlay for the pipeline's next late-debug pass.
+    /// </summary>
+    public bool Queue(
         XRDataBuffer nodeBuffer,
         uint nodeCount,
         Matrix4x4 nodeToWorld,
-        XRCamera? camera,
         uint maxNodes,
         float lineWidth,
         Vector4 leafColor,
         Vector4 internalColor,
         uint showFilter)
     {
-        if (RuntimeEngine.Rendering.State.IsLightProbePass || RuntimeEngine.Rendering.State.IsShadowPass)
+        if (_disposed || nodeBuffer.IsDestroyed || nodeCount == 0)
             return false;
-        if (!RuntimeEngine.Rendering.State.DebugInstanceRenderingAvailable || nodeCount == 0)
+        if (RuntimeEngine.Rendering.State.RenderingPipelineState is not { } pipelineState)
             return false;
 
-        uint visualizedNodes = Math.Min(nodeCount, Math.Max(maxNodes, 1u));
+        var request = new GpuBvhDebugRenderRequest(
+            this,
+            nodeBuffer,
+            nodeCount,
+            nodeToWorld,
+            maxNodes,
+            lineWidth,
+            leafColor,
+            internalColor,
+            showFilter);
+        Queues.GetValue(pipelineState, static _ => new GpuBvhDebugOverlayQueue()).Enqueue(in request);
+        return true;
+    }
+
+    /// <summary>
+    /// Renders the requests queued for a pipeline inside its active late-debug pass.
+    /// </summary>
+    internal static void RenderQueued(XRRenderPipelineInstance.RenderingState pipelineState)
+    {
+        if (!Queues.TryGetValue(pipelineState, out GpuBvhDebugOverlayQueue? queue))
+            return;
+
+        List<GpuBvhDebugRenderRequest> batch = queue.TakeBatch();
+        try
+        {
+            for (int i = 0; i < batch.Count; i++)
+            {
+                GpuBvhDebugRenderRequest request = batch[i];
+                request.Renderer.RenderImmediate(in request);
+            }
+        }
+        finally
+        {
+            GpuBvhDebugOverlayQueue.CompleteBatch(batch);
+        }
+    }
+
+    private bool RenderImmediate(in GpuBvhDebugRenderRequest request)
+    {
+        if (_disposed || request.NodeBuffer.IsDestroyed || request.NodeCount == 0)
+            return false;
+
+        uint visualizedNodes = Math.Min(request.NodeCount, Math.Max(request.MaxNodes, 1u));
         uint visualizedLines = visualizedNodes * LinesPerBox;
         if (!EnsureResources(visualizedLines))
+            return false;
+        if (!_linesRenderer!.TryPrepareForRendering(forceNoStereo: true))
             return false;
 
         try
         {
-            _computeProgram!.BindBuffer(nodeBuffer, 0);
+            _computeProgram!.BindBuffer(request.NodeBuffer, 0);
             _computeProgram.BindBuffer(_linesBuffer!, 1);
             _computeProgram.Uniform("MaxNodes", visualizedNodes);
-            _computeProgram.Uniform("LeafColor", leafColor);
-            _computeProgram.Uniform("InternalColor", internalColor);
-            _computeProgram.Uniform("NodeToWorld", nodeToWorld);
-            _computeProgram.Uniform("ShowFilter", showFilter);
+            _computeProgram.Uniform("LeafColor", request.LeafColor);
+            _computeProgram.Uniform("InternalColor", request.InternalColor);
+            _computeProgram.Uniform("NodeToWorld", request.NodeToWorld);
+            _computeProgram.Uniform("ShowFilter", request.ShowFilter);
 
             uint groups = (visualizedNodes + ComputeGroupSize - 1u) / ComputeGroupSize;
             _computeProgram.DispatchCompute(
@@ -70,12 +121,10 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
                 EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray | EMemoryBarrierMask.Command);
 
             var material = _linesRenderer!.Material;
-            material?.SetFloat(0, lineWidth);
+            material?.SetFloat(0, request.LineWidth);
             material?.SetInt(1, (int)visualizedLines);
 
-            using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex((int)EDefaultRenderPass.OnTopForward))
-            using (PushRenderingCamera(camera))
-                _linesRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, visualizedLines, forceNoStereo: true);
+            _linesRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, visualizedLines, forceNoStereo: true);
 
             return true;
         }
@@ -84,11 +133,6 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
             ResetStencilState();
         }
     }
-
-    private static IDisposable? PushRenderingCamera(XRCamera? camera)
-        => camera is not null
-            ? RuntimeEngine.Rendering.State.RenderingPipelineState?.PushRenderingCamera(camera)
-            : null;
 
     private static void ResetStencilState()
     {
@@ -105,7 +149,10 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
             _computeShader = ShaderHelper.LoadEngineShader(
                 Path.Combine("Scene3D", "RenderPipeline", "bvh_debug_lines.comp"),
                 EShaderType.Compute);
-            _computeProgram = new XRRenderProgram(true, false, _computeShader);
+            _computeProgram = new XRRenderProgram(true, false, _computeShader)
+            {
+                Name = "GpuBvhDebugLines"
+            };
         }
 
         if (!_computeProgram.IsLinked)
@@ -195,6 +242,7 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         _computeProgram?.Destroy();
         _computeShader?.Destroy();
         _linesRenderer?.Destroy();

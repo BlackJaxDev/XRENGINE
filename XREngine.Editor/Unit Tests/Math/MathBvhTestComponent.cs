@@ -23,7 +23,6 @@ public sealed partial class MathBvhTestComponent : XRComponent, IRenderable
     private const uint MaxDebugNodeCount = 4096u;
 
     private readonly GpuBvhDebugLineRenderer _gpuDebugRenderer = new();
-    private readonly Action _gpuWorkAction;
 
     private MathBvhTestMode _mode;
     private ModelComponent? _targetModel;
@@ -40,7 +39,6 @@ public sealed partial class MathBvhTestComponent : XRComponent, IRenderable
 
     public MathBvhTestComponent()
     {
-        _gpuWorkAction = ExecuteQueuedGpuWorkload;
         RenderInfo3D debugRenderInfo = RenderInfo3D.New(
             this,
             new RenderCommandMethod3D((int)EDefaultRenderPass.OnTopForward, RenderDebug));
@@ -61,13 +59,7 @@ public sealed partial class MathBvhTestComponent : XRComponent, IRenderable
     public bool DebugRenderEnabled
     {
         get => _debugRenderEnabled;
-        set
-        {
-            if (!SetField(ref _debugRenderEnabled, value))
-                return;
-
-            RenderedObjects[0].IsVisible = value;
-        }
+        set => SetField(ref _debugRenderEnabled, value);
     }
 
     [Browsable(false)]
@@ -148,32 +140,18 @@ public sealed partial class MathBvhTestComponent : XRComponent, IRenderable
     }
 
     private void QueueGpuWorkload()
-    {
-        if (Interlocked.CompareExchange(ref _gpuWorkQueued, 1, 0) != 0)
-            return;
-
-        Engine.EnqueueRenderThreadTask(
-            _gpuWorkAction,
-            "MathIntersections.BvhGpuWorkload",
-            RenderThreadJobKind.RequiresGraphicsContext);
-    }
+        => Interlocked.Exchange(ref _gpuWorkQueued, 1);
 
     private void ExecuteQueuedGpuWorkload()
     {
-        try
-        {
-            if (IsDestroyed || !_configured || !IsActiveInHierarchy)
-                return;
+        if (Interlocked.Exchange(ref _gpuWorkQueued, 0) == 0 ||
+            IsDestroyed || !_configured || !IsActiveInHierarchy)
+            return;
 
-            if (Mode == MathBvhTestMode.GpuScene)
-                PrepareGpuSceneWorkload();
-            else if (Mode == MathBvhTestMode.GpuMesh)
-                PrepareGpuMeshWorkload();
-        }
-        finally
-        {
-            Volatile.Write(ref _gpuWorkQueued, 0);
-        }
+        if (Mode == MathBvhTestMode.GpuScene)
+            PrepareGpuSceneWorkload();
+        else if (Mode == MathBvhTestMode.GpuMesh)
+            PrepareGpuMeshWorkload();
     }
 
     private static AABB[] CreateScenePrimitiveBounds()

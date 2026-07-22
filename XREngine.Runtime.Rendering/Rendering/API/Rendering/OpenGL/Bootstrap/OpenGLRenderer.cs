@@ -34,7 +34,8 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>
     public GL RawGL => Api; // public accessor for underlying GL instance
     private bool _shutdownAbandonedAsyncShaderWork;
     private int _asyncShaderProgramShutdownDisposeRequested;
-    public override bool ShouldSkipNativeWindowDisposeForShutdown => _shutdownAbandonedAsyncShaderWork;
+    public override bool ShouldSkipNativeWindowDisposeForShutdown
+        => base.ShouldSkipNativeWindowDisposeForShutdown || _shutdownAbandonedAsyncShaderWork;
     internal bool ShouldOrphanGLHandlesForShutdown => _shutdownAbandonedAsyncShaderWork;
 
     public OvrMultiview? OVRMultiView { get; }
