@@ -517,20 +517,11 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         if (Engine.Rendering.State.IsShadowPass)
             return;
 
-        XRCamera? camera = ResolveCurrentPreviewCamera();
-        TryRenderGpuMeshTree(mesh, camera, state);
+        TryRenderGpuMeshTree(mesh, state);
     }
 
-    private static XRCamera? ResolveCurrentPreviewCamera()
-    {
-        var pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
-        return Engine.Rendering.State.RenderingCamera
-            ?? Engine.Rendering.State.RenderingPipelineState?.SceneCamera
-            ?? pipeline?.LastSceneCamera
-            ?? pipeline?.LastRenderingCamera;
-    }
 
-    private static bool TryRenderGpuMeshTree(RenderableMesh mesh, XRCamera? camera, BvhPreviewState state)
+    private static bool TryRenderGpuMeshTree(RenderableMesh mesh, BvhPreviewState state)
     {
         bool requestActive = RequestGpuMeshBvhRefreshIfMouseIntersects(mesh, state);
         if (mesh.IsSkinned && state.OnlyRenderBvhOnRequest && !requestActive)
@@ -560,11 +551,10 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             ? ToVector4(state.LeafNodeColor)
             : internalColor;
 
-        return state.GpuRenderer.Render(
+        return state.GpuRenderer.Queue(
             nodeBuffer,
             gpuBvh.BvhNodeCount,
             gpuBvh.LocalToWorldMatrix,
-            camera,
             (uint)Math.Max(1, state.MaxGpuNodes),
             state.LineWidth,
             leafColor,

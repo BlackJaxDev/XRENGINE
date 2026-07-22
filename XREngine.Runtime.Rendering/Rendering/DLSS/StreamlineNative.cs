@@ -70,6 +70,7 @@ namespace XREngine.Rendering.DLSS
 
             private static SlInitDelegate? _init;
             private static SlShutdownDelegate? _shutdown;
+            private static SlIsFeatureSupportedDelegate? _isFeatureSupported;
             private static SlGetFeatureRequirementsDelegate? _getFeatureRequirements;
             private static SlSetVulkanInfoDelegate? _setVulkanInfo;
             private static SlEvaluateFeatureDelegate? _evaluateFeature;
@@ -393,31 +394,18 @@ namespace XREngine.Rendering.DLSS
             {
                 error = null;
 
-                bool includeDlss = ShouldLoadDlssFeatureForFrameGenerationRuntime;
-                if (includeDlss && !NvidiaDlssManager.RequiredRuntimeDllsAvailable)
-                {
-                    error = NvidiaDlssManager.RequiredRuntimeDllsUnavailableReason;
-                    _lastError = error;
-                    return false;
-                }
+                nint physicalDevice;
+                lock (Sync)
+                    physicalDevice = _boundPhysicalDeviceHandle;
 
-                if (!NvidiaDlssManager.FrameGenerationRuntimeDllsAvailable)
+                if (!TryCheckFrameGenerationSupport(physicalDevice, out string failureReason))
                 {
-                    error = NvidiaDlssManager.FrameGenerationRuntimeDllsUnavailableReason;
-                    _lastError = error;
+                    error = failureReason;
                     return false;
                 }
 
                 lock (Sync)
                 {
-                    if (!EnsureRuntimeInitialized(includeFrameGeneration: true, out string failureReason, includeDlss)
-                        || !EnsureFrameGenerationRequirements(out failureReason))
-                    {
-                        error = failureReason;
-                        _lastError = error;
-                        return false;
-                    }
-
                     // Feature exports are unavailable until the renderer supplies its device and queues through
                     // slSetVulkanInfo. Requirement probing is sufficient during startup; the swapchain/session path
                     // resolves the functions immediately after binding the Vulkan device.
@@ -430,10 +418,60 @@ namespace XREngine.Rendering.DLSS
                         _lastError = error;
                         return false;
                     }
-
                 }
 
                 return true;
+            }
+
+            /// <summary>
+            /// Checks Streamline's adapter-level DLSS-G support. A zero Vulkan handle asks whether any
+            /// adapter is supported; a non-zero handle checks the selected Vulkan physical device.
+            /// </summary>
+            internal static bool TryCheckFrameGenerationSupport(nint vulkanPhysicalDevice, out string failureReason)
+            {
+                failureReason = string.Empty;
+
+                bool includeDlss = ShouldLoadDlssFeatureForFrameGenerationRuntime;
+                if (includeDlss && !NvidiaDlssManager.RequiredRuntimeDllsAvailable)
+                {
+                    failureReason = NvidiaDlssManager.RequiredRuntimeDllsUnavailableReason;
+                    _lastError = failureReason;
+                    return false;
+                }
+
+                if (!NvidiaDlssManager.FrameGenerationRuntimeDllsAvailable)
+                {
+                    failureReason = NvidiaDlssManager.FrameGenerationRuntimeDllsUnavailableReason;
+                    _lastError = failureReason;
+                    return false;
+                }
+
+                lock (Sync)
+                {
+                    if (!EnsureRuntimeInitialized(includeFrameGeneration: true, out failureReason, includeDlss)
+                        || !EnsureFrameGenerationRequirements(out failureReason))
+                    {
+                        _lastError = failureReason;
+                        return false;
+                    }
+
+                    StreamlineAdapterInfo adapterInfo = new()
+                    {
+                        Base = CreateBase(AdapterInfoStructType, 1),
+                        VkPhysicalDevice = (IntPtr)vulkanPhysicalDevice,
+                    };
+                    StreamlineResult supportResult = _isFeatureSupported!(FeatureDlssG, ref adapterInfo);
+                    if (supportResult == StreamlineResult.Ok)
+                        return true;
+
+                    string adapterScope = vulkanPhysicalDevice == 0
+                        ? "all detected adapters"
+                        : $"Vulkan physical device 0x{unchecked((nuint)vulkanPhysicalDevice):X}";
+                    failureReason = $"slIsFeatureSupported(DLSS-G) reported {supportResult} for {adapterScope}.";
+                    AppendLastStreamlineMessage(ref failureReason);
+                    _lastError = failureReason;
+                    return false;
+                }
             }
 
             internal static bool TryDispatchFrameGeneration(
@@ -1196,6 +1234,7 @@ namespace XREngine.Rendering.DLSS
 
                     if (!TryLoadExport("slInit", out _init)
                         || !TryLoadExport("slShutdown", out _shutdown)
+                        || !TryLoadExport("slIsFeatureSupported", out _isFeatureSupported)
                         || !TryLoadExport("slGetFeatureRequirements", out _getFeatureRequirements)
                         || !TryLoadExport("slSetVulkanInfo", out _setVulkanInfo)
                         || !TryLoadExport("slEvaluateFeature", out _evaluateFeature)
@@ -1734,6 +1773,7 @@ namespace XREngine.Rendering.DLSS
 
                 _init = null;
                 _shutdown = null;
+                _isFeatureSupported = null;
                 _setVulkanInfo = null;
                 _evaluateFeature = null;
                 _allocateResources = null;
@@ -1896,6 +1936,7 @@ namespace XREngine.Rendering.DLSS
                 };
 
             private static readonly StreamlineStructType PreferencesStructType = CreateStructType(0x1CA10965, 0xBF8E, 0x432B, 0x8D, 0xA1, 0x67, 0x16, 0xD8, 0x79, 0xFB, 0x14);
+            private static readonly StreamlineStructType AdapterInfoStructType = CreateStructType(0x0677315F, 0xA746, 0x4492, 0x9F, 0x42, 0xCB, 0x61, 0x42, 0xC9, 0xC3, 0xD4);
             private static readonly StreamlineStructType ViewportStructType = CreateStructType(0x171B6435, 0x9B3C, 0x4FC8, 0x99, 0x94, 0xFB, 0xE5, 0x25, 0x69, 0xAA, 0xA4);
             private static readonly StreamlineStructType ResourceStructType = CreateStructType(0x3A9D70CF, 0x2418, 0x4B72, 0x83, 0x91, 0x13, 0xF8, 0x72, 0x1C, 0x72, 0x61);
             private static readonly StreamlineStructType ResourceTagStructType = CreateStructType(0x4C6A5AAD, 0xB445, 0x496C, 0x87, 0xFF, 0x1A, 0xF3, 0x84, 0x5B, 0xE6, 0x53);
@@ -2931,6 +2972,9 @@ namespace XREngine.Rendering.DLSS
             private delegate StreamlineResult SlShutdownDelegate();
 
             [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+            private delegate StreamlineResult SlIsFeatureSupportedDelegate(uint feature, ref StreamlineAdapterInfo adapterInfo);
+
+            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
             private delegate StreamlineResult SlGetFeatureRequirementsDelegate(uint feature, ref StreamlineFeatureRequirements requirements);
 
             [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -3246,6 +3290,15 @@ namespace XREngine.Rendering.DLSS
                 public IntPtr EngineVersion;
                 public IntPtr ProjectId;
                 public StreamlineRenderApi RenderApi;
+            }
+
+            [StructLayout(LayoutKind.Sequential)]
+            private struct StreamlineAdapterInfo
+            {
+                public StreamlineBaseStructure Base;
+                public IntPtr DeviceLuid;
+                public uint DeviceLuidSizeInBytes;
+                public IntPtr VkPhysicalDevice;
             }
 
             [StructLayout(LayoutKind.Sequential)]

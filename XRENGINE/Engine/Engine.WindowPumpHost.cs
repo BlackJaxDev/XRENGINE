@@ -292,7 +292,9 @@ internal sealed class EngineWindowPumpHost : IDisposable
         _thread = new Thread(ThreadMain)
         {
             Name = "XRE-WindowPump",
-            IsBackground = false,
+            // Stop() performs a bounded join. Background ownership ensures a wedged native
+            // event callback cannot keep the process alive after shutdown has been abandoned.
+            IsBackground = true,
             Priority = ThreadPriority.AboveNormal,
         };
 

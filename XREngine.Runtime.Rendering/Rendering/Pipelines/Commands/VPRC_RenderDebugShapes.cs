@@ -1,5 +1,6 @@
 using System;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Scene;
@@ -27,6 +28,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(ResolveRenderGraphPassIndex()))
                 using (instance.RenderState.PushRenderingCamera(camera))
                 {
+                    GpuBvhDebugLineRenderer.RenderQueued(instance.RenderState);
                     RenderEnabledSpatialTreeDebug(instance, camera);
                     RuntimeEngine.Rendering.Debug.RenderShapes();
                 }

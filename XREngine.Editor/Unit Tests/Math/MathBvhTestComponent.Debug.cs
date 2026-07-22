@@ -12,7 +12,17 @@ public sealed partial class MathBvhTestComponent
 {
     private void RenderDebug()
     {
-        if (!DebugRenderEnabled || Engine.Rendering.State.IsShadowPass || Engine.Rendering.State.IsLightProbePass)
+        if (Engine.Rendering.State.IsShadowPass || Engine.Rendering.State.IsLightProbePass)
+            return;
+
+        // Vulkan accepts compute work only while a render-graph pass identity is active.
+        // Keep this render callback visible even when debug drawing is disabled so benchmark
+        // copies continue exercising their GPU BVH without a separate out-of-pass render job.
+        using IDisposable passScope = Engine.Rendering.State.PushRenderGraphPassIndex(
+            (int)XREngine.Data.Rendering.EDefaultRenderPass.OnTopForward);
+        ExecuteQueuedGpuWorkload();
+
+        if (!DebugRenderEnabled)
             return;
 
         switch (Mode)
@@ -76,11 +86,10 @@ public sealed partial class MathBvhTestComponent
         if (_gpuSceneTree?.NodeBuffer is not { } nodeBuffer || !WorkloadReady)
             return;
 
-        _gpuDebugRenderer.Render(
+        _gpuDebugRenderer.Queue(
             nodeBuffer,
             _gpuSceneTree.NodeCount,
             Transform.RenderMatrix,
-            Engine.Rendering.State.RenderingCamera as XRCamera,
             MaxDebugNodeCount,
             0.0015f,
             new Vector4(0.16f, 1.0f, 0.38f, 0.95f),
@@ -122,11 +131,10 @@ public sealed partial class MathBvhTestComponent
         if (bvh?.BvhNodeBuffer is not { } nodeBuffer || !WorkloadReady || !bvh.IsBvhReady)
             return;
 
-        _gpuDebugRenderer.Render(
+        _gpuDebugRenderer.Queue(
             nodeBuffer,
             bvh.BvhNodeCount,
             bvh.LocalToWorldMatrix,
-            Engine.Rendering.State.RenderingCamera as XRCamera,
             MaxDebugNodeCount,
             0.0015f,
             new Vector4(0.12f, 1.0f, 0.62f, 0.95f),

@@ -65,21 +65,96 @@ public unsafe partial class VulkanRenderer
             Debug.Rendering(
                 "[Vulkan] RenderDoc-friendly diagnostics skipped optional Streamline runtime-toggle provisioning. Explicit DLSS/DLSS-G requests remain strict.");
         }
+
+        bool frameGenerationRuntimeAvailable = NvidiaDlssManager.FrameGenerationRuntimeDllsAvailable;
+        if (frameGenerationRequested && !frameGenerationRuntimeAvailable)
+            throw new InvalidOperationException(NvidiaDlssManager.FrameGenerationRuntimeDllsUnavailableReason);
+
+        bool frameGenerationSupported = false;
+        string frameGenerationUnavailableReason = string.Empty;
+        if ((frameGenerationRequested || provisionRuntimeToggles) && frameGenerationRuntimeAvailable)
+        {
+            frameGenerationSupported = NvidiaDlssManager.Native.TryCheckFrameGenerationSupport(
+                vulkanPhysicalDevice: 0,
+                out frameGenerationUnavailableReason);
+        }
+
+        if (frameGenerationRequested && !frameGenerationSupported)
+        {
+            throw new InvalidOperationException(
+                $"Requested NVIDIA DLSS frame generation is unsupported before Vulkan instance creation: {frameGenerationUnavailableReason}");
+        }
+
+        if (!frameGenerationRequested
+            && provisionRuntimeToggles
+            && frameGenerationRuntimeAvailable
+            && !frameGenerationSupported)
+        {
+            Debug.RenderingWarning(
+                "[Vulkan] Optional DLSS-G runtime-toggle provisioning skipped because no supported adapter was found. Reason={0}",
+                frameGenerationUnavailableReason);
+        }
+
         bool includeDlss = dlssRequested
             || (provisionRuntimeToggles && NvidiaDlssManager.RequiredRuntimeDllsAvailable);
         bool includeFrameGeneration = frameGenerationRequested
-            || (provisionRuntimeToggles && NvidiaDlssManager.FrameGenerationRuntimeDllsAvailable);
+            || ShouldProvisionOptionalStreamlineFrameGeneration(
+                provisionRuntimeToggles,
+                frameGenerationRuntimeAvailable,
+                frameGenerationSupported);
         if (!includeDlss && !includeFrameGeneration)
             return;
-
-        _streamlineDlssProvisioned = includeDlss;
-        _streamlineFrameGenerationProvisioned = includeFrameGeneration;
 
         if (dlssRequested && !NvidiaDlssManager.RequiredRuntimeDllsAvailable)
             throw new InvalidOperationException(NvidiaDlssManager.RequiredRuntimeDllsUnavailableReason);
 
-        if (frameGenerationRequested && !NvidiaDlssManager.FrameGenerationRuntimeDllsAvailable)
-            throw new InvalidOperationException(NvidiaDlssManager.FrameGenerationRuntimeDllsUnavailableReason);
+        ResolveStreamlineVulkanRequirements(includeDlss, includeFrameGeneration);
+    }
+
+    /// <summary>
+    /// Rechecks DLSS-G against the physical device selected by Vulkan. General support can
+    /// shrink after adapter selection, so optional editor-toggle provisioning must be removed
+    /// rather than turning an unrequested feature into a startup failure.
+    /// </summary>
+    private void ValidateStreamlineSelectedPhysicalDevice()
+    {
+        if (!_streamlineFrameGenerationProvisioned)
+            return;
+
+        if (NvidiaDlssManager.Native.TryCheckFrameGenerationSupport(
+                _physicalDevice.Handle,
+                out string failureReason))
+        {
+            return;
+        }
+
+        if (NvidiaDlssManager.IsFrameGenerationRequested)
+        {
+            throw new InvalidOperationException(
+                $"Requested NVIDIA DLSS frame generation is unsupported on the selected Vulkan physical device: {failureReason}");
+        }
+
+        Debug.RenderingWarning(
+            "[Vulkan] Optional DLSS-G runtime-toggle provisioning disabled for the selected physical device. Reason={0}",
+            failureReason);
+        ResolveStreamlineVulkanRequirements(_streamlineDlssProvisioned, includeFrameGeneration: false);
+    }
+
+    private void ResolveStreamlineVulkanRequirements(bool includeDlss, bool includeFrameGeneration)
+    {
+        _streamlineDlssProvisioned = includeDlss;
+        _streamlineFrameGenerationProvisioned = includeFrameGeneration;
+
+        if (!includeDlss && !includeFrameGeneration)
+        {
+            _streamlineRequiredInstanceExtensions = [];
+            _streamlineRequiredDeviceExtensions = [];
+            _streamlineRequiredFeatures12 = [];
+            _streamlineRequiredFeatures13 = [];
+            _streamlineQueueRequirements = default;
+            _streamlineMinimumApiVersion = Vk.Version11;
+            return;
+        }
 
         if (!NvidiaDlssManager.Native.TryGetRequiredVulkanRequirements(
                 includeDlss,
@@ -113,6 +188,14 @@ public unsafe partial class VulkanRenderer
             _streamlineQueueRequirements.ComputeQueues,
             _streamlineQueueRequirements.OpticalFlowQueues);
     }
+
+    internal static bool ShouldProvisionOptionalStreamlineFrameGeneration(
+        bool provisionRuntimeToggles,
+        bool runtimeDllsAvailable,
+        bool featureSupported)
+        => provisionRuntimeToggles
+            && runtimeDllsAvailable
+            && featureSupported;
 
     /// <summary>
     /// Streamline's Vulkan extensions, features, and queues cannot be added after device creation.

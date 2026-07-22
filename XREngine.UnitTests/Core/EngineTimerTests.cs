@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Threading;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Timers;
@@ -143,6 +144,41 @@ public sealed class EngineTimerTests
         {
             update.DeltaTicks = previousDeltaTicks;
             update.Dilation = previousDilation;
+        }
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void StopAndWait_IsBoundedWhenAnUpdateCallbackIsBlocked()
+    {
+        using var updateEntered = new ManualResetEventSlim(false);
+        using var releaseUpdate = new ManualResetEventSlim(false);
+        var timer = new EngineTimer
+        {
+            TargetUpdateFrequency = 120.0f,
+        };
+
+        void BlockUpdate()
+        {
+            updateEntered.Set();
+            releaseUpdate.Wait();
+        }
+
+        timer.UpdateFrame += BlockUpdate;
+        timer.RunGameLoop();
+        try
+        {
+            updateEntered.Wait(TimeSpan.FromSeconds(2)).ShouldBeTrue();
+
+            var waitDuration = Stopwatch.StartNew();
+            timer.StopAndWait(TimeSpan.FromMilliseconds(50)).ShouldBeFalse();
+            waitDuration.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1));
+        }
+        finally
+        {
+            releaseUpdate.Set();
+            timer.StopAndWait(TimeSpan.FromSeconds(2)).ShouldBeTrue();
+            timer.UpdateFrame -= BlockUpdate;
         }
     }
 }

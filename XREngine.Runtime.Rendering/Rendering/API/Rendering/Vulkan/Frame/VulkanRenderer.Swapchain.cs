@@ -494,7 +494,21 @@ public unsafe partial class VulkanRenderer
         if (requestStreamlineFrameGeneration)
         {
             if (!NvidiaDlssManager.Native.TryCreateProxySwapchain(this, ref createInfo, requestStreamlineFrameGenerationDlss, out swapChain, out createResult, out string failureReason))
-                throw new InvalidOperationException($"Requested NVIDIA DLSS frame generation could not create a Streamline proxy swapchain: {failureReason}");
+            {
+                if (NvidiaDlssManager.IsFrameGenerationRequested)
+                {
+                    throw new InvalidOperationException(
+                        $"Requested NVIDIA DLSS frame generation could not create a Streamline proxy swapchain: {failureReason}");
+                }
+
+                Debug.RenderingWarning(
+                    "[Vulkan] Optional DLSS-G proxy-swapchain provisioning failed; creating a direct Vulkan swapchain and disabling the live DLSS-G toggle. Reason={0}",
+                    failureReason);
+                _streamlineFrameGenerationProvisioned = false;
+                requestStreamlineFrameGeneration = false;
+                requestStreamlineFrameGenerationDlss = false;
+                createResult = khrSwapChain!.CreateSwapchain(device, ref createInfo, null, out swapChain);
+            }
         }
         else
         {

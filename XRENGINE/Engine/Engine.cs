@@ -83,6 +83,12 @@ namespace XREngine
         /// </summary>
         private static int _suppressedCleanupRequests;
 
+        /// <summary>
+        /// Set when bounded shutdown cannot establish a safe resource-destruction boundary.
+        /// The process then exits without racing GPU/asset cleanup against live engine work.
+        /// </summary>
+        private static int _abandonProcessExitCleanup;
+
         // ═══════════════════════════════════════════════════════════════════════════════════════════
         // THREADING AND TASK QUEUES
         // ═══════════════════════════════════════════════════════════════════════════════════════════
