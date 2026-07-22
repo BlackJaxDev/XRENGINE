@@ -187,6 +187,33 @@ public sealed class RenderCommandCollectionOrderingTests
     }
 
     [Test]
+    public void PublishedWorkloadCounts_DistinguishMeshesFromCallbacks()
+    {
+        const int callbackOnlyPass = (int)EDefaultRenderPass.OpaqueForward;
+        const int mixedPass = (int)EDefaultRenderPass.OnTopForward;
+        RenderCommandCollection commands = new(new Dictionary<int, IComparer<RenderCommand>?>
+        {
+            [callbackOnlyPass] = new NearToFarRenderCommandSorter(),
+            [mixedPass] = new NearToFarRenderCommandSorter(),
+        });
+
+        commands.AddCPU(new RenderCommandMethod3D(callbackOnlyPass, static () => { }));
+        commands.AddCPU(new RenderCommandMethod3D(mixedPass, static () => { }));
+        commands.AddCPU(new RenderCommandMesh3D(mixedPass));
+        commands.SwapBuffers();
+
+        commands.GetRenderingCommandCount().ShouldBe(3);
+        commands.GetRenderingMeshCommandCount().ShouldBe(1);
+        commands.GetRenderingPassCommandCount(callbackOnlyPass).ShouldBe(1);
+        commands.GetRenderingPassMeshCommandCount(callbackOnlyPass).ShouldBe(0);
+        commands.GetRenderingPassCommandCount(mixedPass).ShouldBe(2);
+        commands.GetRenderingPassMeshCommandCount(mixedPass).ShouldBe(1);
+        commands.HasAnyRenderingCommands([callbackOnlyPass]).ShouldBeTrue();
+        commands.HasAnyRenderingMeshCommands([callbackOnlyPass]).ShouldBeFalse();
+        commands.HasAnyRenderingMeshCommands([callbackOnlyPass, mixedPass]).ShouldBeTrue();
+    }
+
+    [Test]
     public void AddCpu_LooksUpUpdatingPassAfterCollectionLockIsHeld()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs");

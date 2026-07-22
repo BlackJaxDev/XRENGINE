@@ -152,10 +152,16 @@ public sealed class WindowInputSnapshotAccumulator
     private long _sequence;
     private WindowInputSnapshot _latest;
     private readonly List<WindowKeyTransition> _keyTransitions = new(32);
+    private readonly List<WindowKeyTransition> _unconsumedKeyTransitions = new(32);
+    private WindowKeyTransition[] _unconsumedKeyTransitionSnapshot = [];
     private readonly HashSet<EKey> _pressedKeys = [];
     private readonly List<WindowMouseButtonTransition> _mouseButtonTransitions = new(16);
+    private readonly List<WindowMouseButtonTransition> _unconsumedMouseButtonTransitions = new(16);
+    private WindowMouseButtonTransition[] _unconsumedMouseButtonTransitionSnapshot = [];
     private readonly HashSet<EMouseButton> _pressedMouseButtons = [];
     private readonly List<char> _textInputCharacters = new(16);
+    private readonly List<char> _unconsumedTextInputCharacters = new(16);
+    private char[] _unconsumedTextInputCharacterSnapshot = [];
     private int _keyDownTransitionCount;
     private int _keyUpTransitionCount;
     private int _mouseDownTransitionCount;
@@ -168,13 +174,59 @@ public sealed class WindowInputSnapshotAccumulator
     private float _pointerDeltaY;
     private float _scrollDeltaX;
     private float _scrollDeltaY;
+    private float _unconsumedPointerDeltaX;
+    private float _unconsumedPointerDeltaY;
+    private float _unconsumedScrollDeltaX;
+    private float _unconsumedScrollDeltaY;
 
+    /// <summary>
+    /// Returns the latest published snapshot without acknowledging its transient input.
+    /// Use <see cref="ConsumeLatest"/> for the update-side input path.
+    /// </summary>
     public WindowInputSnapshot Latest
     {
         get
         {
             lock (_sync)
                 return _latest;
+        }
+    }
+
+    /// <summary>
+    /// Atomically returns and acknowledges all transient input published since the previous
+    /// consumption. Events recorded concurrently but not yet published remain pending.
+    /// </summary>
+    public WindowInputSnapshot ConsumeLatest()
+    {
+        lock (_sync)
+        {
+            WindowInputSnapshot snapshot = _latest;
+            if (snapshot.Sequence == 0)
+                return snapshot;
+
+            _unconsumedKeyTransitions.Clear();
+            _unconsumedKeyTransitionSnapshot = [];
+            _unconsumedMouseButtonTransitions.Clear();
+            _unconsumedMouseButtonTransitionSnapshot = [];
+            _unconsumedTextInputCharacters.Clear();
+            _unconsumedTextInputCharacterSnapshot = [];
+            _unconsumedPointerDeltaX = 0.0f;
+            _unconsumedPointerDeltaY = 0.0f;
+            _unconsumedScrollDeltaX = 0.0f;
+            _unconsumedScrollDeltaY = 0.0f;
+
+            _latest = snapshot with
+            {
+                PointerDeltaX = 0.0f,
+                PointerDeltaY = 0.0f,
+                ScrollDeltaX = 0.0f,
+                ScrollDeltaY = 0.0f,
+                KeyTransitions = [],
+                MouseButtonTransitions = [],
+                TextInputCharacters = [],
+            };
+
+            return snapshot;
         }
     }
 
@@ -297,6 +349,36 @@ public sealed class WindowInputSnapshotAccumulator
 
         lock (_sync)
         {
+            if (_keyTransitions.Count > 0)
+            {
+                _unconsumedKeyTransitions.AddRange(_keyTransitions);
+                _keyTransitions.Clear();
+                _unconsumedKeyTransitionSnapshot = [.. _unconsumedKeyTransitions];
+            }
+
+            if (_mouseButtonTransitions.Count > 0)
+            {
+                _unconsumedMouseButtonTransitions.AddRange(_mouseButtonTransitions);
+                _mouseButtonTransitions.Clear();
+                _unconsumedMouseButtonTransitionSnapshot = [.. _unconsumedMouseButtonTransitions];
+            }
+
+            if (_textInputCharacters.Count > 0)
+            {
+                _unconsumedTextInputCharacters.AddRange(_textInputCharacters);
+                _textInputCharacters.Clear();
+                _unconsumedTextInputCharacterSnapshot = [.. _unconsumedTextInputCharacters];
+            }
+
+            _unconsumedPointerDeltaX += _pointerDeltaX;
+            _unconsumedPointerDeltaY += _pointerDeltaY;
+            _unconsumedScrollDeltaX += _scrollDeltaX;
+            _unconsumedScrollDeltaY += _scrollDeltaY;
+            _pointerDeltaX = 0.0f;
+            _pointerDeltaY = 0.0f;
+            _scrollDeltaX = 0.0f;
+            _scrollDeltaY = 0.0f;
+
             snapshot = new WindowInputSnapshot(
                 sequence,
                 keyboardCount,
@@ -306,30 +388,23 @@ public sealed class WindowInputSnapshotAccumulator
                 isMouseCaptured,
                 _lastPointerX,
                 _lastPointerY,
-                _pointerDeltaX,
-                _pointerDeltaY,
-                _scrollDeltaX,
-                _scrollDeltaY,
+                _unconsumedPointerDeltaX,
+                _unconsumedPointerDeltaY,
+                _unconsumedScrollDeltaX,
+                _unconsumedScrollDeltaY,
                 (uint)Math.Max(0, Volatile.Read(ref _keyDownTransitionCount)),
                 (uint)Math.Max(0, Volatile.Read(ref _keyUpTransitionCount)),
                 (uint)Math.Max(0, Volatile.Read(ref _mouseDownTransitionCount)),
                 (uint)Math.Max(0, Volatile.Read(ref _mouseUpTransitionCount)),
                 (uint)Math.Max(0, Volatile.Read(ref _textInputCount)),
-                _keyTransitions.Count == 0 ? [] : [.. _keyTransitions],
+                _unconsumedKeyTransitionSnapshot,
                 _pressedKeys.Count == 0 ? [] : [.. _pressedKeys],
-                _mouseButtonTransitions.Count == 0 ? [] : [.. _mouseButtonTransitions],
+                _unconsumedMouseButtonTransitionSnapshot,
                 _pressedMouseButtons.Count == 0 ? [] : [.. _pressedMouseButtons],
-                _textInputCharacters.Count == 0 ? [] : [.. _textInputCharacters],
+                _unconsumedTextInputCharacterSnapshot,
                 System.Diagnostics.Stopwatch.GetTimestamp(),
                 Environment.CurrentManagedThreadId);
 
-            _keyTransitions.Clear();
-            _mouseButtonTransitions.Clear();
-            _textInputCharacters.Clear();
-            _pointerDeltaX = 0.0f;
-            _pointerDeltaY = 0.0f;
-            _scrollDeltaX = 0.0f;
-            _scrollDeltaY = 0.0f;
             _latest = snapshot;
         }
 

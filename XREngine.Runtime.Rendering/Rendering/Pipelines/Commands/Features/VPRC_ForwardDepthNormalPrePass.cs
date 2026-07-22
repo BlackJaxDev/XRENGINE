@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Pipelines.Commands;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -46,7 +47,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (commands is null)
                 return;
 
-            var camera = rs.SceneCamera;
             // Resolve the active mesh submission strategy once per execution so the prepass
             // uses the same culling/draw path the lit pass will use later this frame. The
             // legacy _gpuDispatch flag is only the user's requested dispatch preference; a
@@ -65,7 +65,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             //
             // Materials that cannot live in the GPU indirect path (transient editor gizmos,
             // dynamically-created materials without bindless registration) MUST set
-            // RenderOptions.ExcludeFromGpuIndirect = true so RenderCPUNonMeshAndExcluded picks
+            // RenderOptions.ExcludeFromGpuIndirect = true so the filtered CPU fallback picks
             // them up; otherwise they will fault the GPU side of this dispatch.
             EMeshSubmissionStrategy strategy = _gpuDispatch
                 ? RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(true)
@@ -76,18 +76,24 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 if (useGpuRenderPath)
                 {
-                    // Mirror VPRC_RenderMeshesPassTraditional.RenderGPU exactly: CPU first for
-                    // commands the GPU path cannot own, then GPU dispatch for mesh commands.
-                    // The override/variant material tickets above keep those CPU fallback draws
-                    // in the depth-normal material path as well.
-                    commands.RenderCPUNonMeshAndExcluded(pass);
+                    // Auxiliary geometry passes must not execute callback commands: debug callbacks
+                    // populate the late overlay and otherwise run once per auxiliary replay.
+                    commands.RenderCPUFiltered(
+                        pass,
+                        static command => command is IRenderCommandMesh mesh && IsGpuPathCpuFallbackMesh(mesh));
                     commands.RenderGPU(pass, prepassStrategy);
                 }
                 else
                 {
-                    commands.RenderCPU(pass, false, camera, suppressCpuOcclusionForPass: true);
+                    commands.RenderCPUMeshOnly(pass);
                 }
             }
+        }
+
+        private static bool IsGpuPathCpuFallbackMesh(IRenderCommandMesh meshCommand)
+        {
+            var material = meshCommand.MaterialOverride ?? meshCommand.Mesh?.Material;
+            return meshCommand.ForceCpuRendering || material?.RenderOptions?.ExcludeFromGpuIndirect == true;
         }
 
         private static EMeshSubmissionStrategy ResolveDepthNormalSubmissionStrategy(EMeshSubmissionStrategy strategy)

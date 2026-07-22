@@ -137,41 +137,48 @@ public partial class DefaultRenderPipeline
         c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
         c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
 
-        using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
-        {
-            AppendAmbientOcclusionSwitch(c, enableComputePasses);
-            AppendDeferredGBufferPass(c);
-            AppendForwardDepthPrePass(c);
-            c.Add<VPRC_DepthTest>().Enable = false;
-            AppendAmbientOcclusionResolve(c);
-            AppendForwardDepthPrePassGBufferRestore(c);
-            AppendLightingPass(c);
-            AppendForwardPass(c, enableComputePasses);
-            AppendTransparencyPasses(c);
+        var sceneWorkload = c.Add<VPRC_IfElse>();
+        sceneWorkload.Label = "FullSceneMeshWorkload";
+        sceneWorkload.ConditionEvaluator = ShouldRunFullScenePipeline;
 
-            c.Add<VPRC_DepthTest>().Enable = false;
-            AppendVelocityPassSwitch(c);
-            c.Add<VPRC_DepthTest>().Enable = false;
-            AppendBloomPass(c);
-            AppendMotionBlurAndDoF(c);
-            AppendTemporalAccumulation(c);
+        var fullSceneCommands = new ViewportRenderCommandContainer(this);
+        using (fullSceneCommands.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
+        {
+            AppendAmbientOcclusionSwitch(fullSceneCommands, enableComputePasses);
+            AppendDeferredGBufferPass(fullSceneCommands);
+            AppendForwardDepthPrePass(fullSceneCommands);
+            fullSceneCommands.Add<VPRC_DepthTest>().Enable = false;
+            AppendAmbientOcclusionResolve(fullSceneCommands);
+            AppendForwardDepthPrePassGBufferRestore(fullSceneCommands);
+            AppendLightingPass(fullSceneCommands);
+            AppendForwardPass(fullSceneCommands, enableComputePasses);
+            AppendTransparencyPasses(fullSceneCommands);
+
+            fullSceneCommands.Add<VPRC_DepthTest>().Enable = false;
+            AppendVelocityPassSwitch(fullSceneCommands);
+            fullSceneCommands.Add<VPRC_DepthTest>().Enable = false;
+            AppendBloomPass(fullSceneCommands);
+            AppendMotionBlurAndDoF(fullSceneCommands);
+            AppendTemporalAccumulation(fullSceneCommands);
             // Build the GPU BVH so debug overlays (and any zero-readback consumers)
             // have an up-to-date acceleration structure published into pipeline
             // variables before the on-top forward passes run.
-            c.Add<VPRC_BuildAccelerationStructure>();
-            AppendPostTemporalForwardPasses(c);
+            fullSceneCommands.Add<VPRC_BuildAccelerationStructure>();
+            AppendPostTemporalForwardPasses(fullSceneCommands);
             // Fog must composite after the late forward batches; its passes upload
             // the temporal pass' stored current projection so depth reconstruction
             // still matches the jittered depth buffer after PopJitter.
             if (!Stereo)
             {
-                AppendPostProcessCompositeInputDefaults(c);
-                AppendAtmosphericScattering(c);
-                AppendVolumetricFog(c);
+                AppendPostProcessCompositeInputDefaults(fullSceneCommands);
+                AppendAtmosphericScattering(fullSceneCommands);
+                AppendVolumetricFog(fullSceneCommands);
             }
-            c.Add<VPRC_DepthTest>().Enable = false;
-            AppendFullOverdrawCountingPass(c);
+            fullSceneCommands.Add<VPRC_DepthTest>().Enable = false;
+            AppendFullOverdrawCountingPass(fullSceneCommands);
         }
+        sceneWorkload.TrueCommands = fullSceneCommands;
+        sceneWorkload.FalseCommands = CreateCallbackOnlySceneCommands();
 
         AppendExposureUpdate(c);
         AppendLateDebugOverlay(c);
@@ -185,14 +192,56 @@ public partial class DefaultRenderPipeline
         return c;
     }
 
+    private ViewportRenderCommandContainer CreateCallbackOnlySceneCommands()
+    {
+        ViewportRenderCommandContainer c = new(this);
+        using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
+        {
+            c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
+            using (c.AddUsing<VPRC_BindFBOByName>(x =>
+                x.SetOptions(ForwardPassFBOName, write: true, clearColor: true, clearDepth: true, clearStencil: true)))
+            {
+                c.Add<VPRC_ColorMask>().Set(true, true, true, true);
+                c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
+                c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = true;
+                // This path is selected only when no mesh commands exist. CPU-direct execution
+                // preserves callback side effects without entering empty indirect dispatches.
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, false);
+            }
+
+            c.Add<VPRC_DepthTest>().Enable = false;
+            AppendTemporalAccumulation(c);
+            c.Add<VPRC_BuildAccelerationStructure>();
+
+            using (c.AddUsing<VPRC_BindFBOByName>(x =>
+                x.SetOptions(ForwardPassFBOName, write: true, clearColor: false, clearDepth: false, clearStencil: false)))
+            {
+                c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = false;
+                c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, false);
+                c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
+                c.Add<VPRC_DepthWrite>().Allow = true;
+            }
+
+            c.Add<VPRC_DepthTest>().Enable = false;
+        }
+
+        return c;
+    }
+
     private static bool HasRenderPassCommands(int renderPass)
         => CurrentRenderingPipeline?.ActiveMeshRenderCommands.HasRenderingCommands(renderPass) == true;
+
+    private static bool HasRenderPassMeshCommands(int renderPass)
+        => CurrentRenderingPipeline?.ActiveMeshRenderCommands.HasRenderingMeshCommands(renderPass) == true;
 
     private bool ShouldRunForwardDepthPrePass()
         => !UseOpenXrVulkanDesktopStartupSafePath
         && ForwardDepthPrePassEnabled
-        && (HasRenderPassCommands((int)EDefaultRenderPass.OpaqueForward)
-            || HasRenderPassCommands((int)EDefaultRenderPass.MaskedForward));
+        && (HasRenderPassMeshCommands((int)EDefaultRenderPass.OpaqueForward)
+            || HasRenderPassMeshCommands((int)EDefaultRenderPass.MaskedForward));
 
     private bool ShouldRunTransparencyPasses()
         => ShouldRunWeightedBlendedOitPasses()
@@ -705,7 +754,7 @@ public partial class DefaultRenderPipeline
     {
         var velocityChoice = c.Add<VPRC_IfElse>();
         velocityChoice.Label = "Velocity Buffer";
-        velocityChoice.ConditionEvaluator = ShouldGenerateVelocityBuffer;
+        velocityChoice.ConditionEvaluator = ShouldGenerateVelocityBufferForWorkload;
 
         ViewportRenderCommandContainer velocityCommands = new(this);
         AppendVelocityPass(velocityCommands);

@@ -52,7 +52,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             for (int i = 0; i < RenderPasses.Length; i++)
             {
-                if (activeInstance.ActiveMeshRenderCommands.HasRenderingCommands(RenderPasses[i]))
+                if (activeInstance.ActiveMeshRenderCommands.HasRenderingMeshCommands(RenderPasses[i]))
                     return true;
             }
 
@@ -132,7 +132,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     // result for the same command and camera ownership.
                     commands.RenderCPUFiltered(
                         pass,
-                        static _ => true,
+                        static command => command is IRenderCommandMesh,
                         respectCpuQueryOcclusion: true);
             }
 

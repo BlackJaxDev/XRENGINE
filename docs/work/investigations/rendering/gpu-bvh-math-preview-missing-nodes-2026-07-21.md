@@ -289,3 +289,37 @@ The final Vulkan session log is under
 `Build/_AgentValidation/20260722-102900-gpu-bvh-query-parity/live-session/logs/XREngine.Editor_debug/windows_x64/xrengine_2026-07-22_14-23-41_pid27952/`
 and contains no shader compilation errors, validation errors, device loss, or
 unhandled exceptions.
+
+## 2026-07-22 Mesh shading and CPU highlight parity
+
+The mesh surface looked emissive because both mesh rigs used an unlit forward
+material; editor hover/selection outlines and bloom made that flat color appear
+to glow. The CPU mesh's yellow visited nodes were also submitted through the
+ordinary shared debug-line batch. That batch used a fixed thinner line width
+and rendered before later query/source lines, while GPU visited nodes used a
+dedicated wider highlight overlay rendered last.
+
+The two mesh rigs now use the same neutral deferred-lit material, analytic
+normals for the procedural wave, and an identical shadowless point light scoped
+under each rig. The light activates and moves with its owning test and does not
+override the Math world's global directional-light toggle.
+
+The generic CPU debug renderer now supports the same `Base` and `Highlight`
+overlay layers as the GPU BVH renderer, grouped by quantized world-space line
+width without per-frame allocations. CPU Scene and CPU Mesh base nodes use the
+base layer; their visited nodes use the final highlight layer and the same
+configurable widths as GPU Scene and GPU Mesh. The resulting order is base BVH
+lines, ordinary debug/query geometry, then visited-node highlights.
+
+The paired Vulkan capture
+`Build/_AgentValidation/20260722-102900-gpu-bvh-query-parity/cpu-overlay-live/mcp-captures/Screenshot_20260722_150659_647_1b8242d438244e07a778d5a3ab48c971.png`
+shows comparable opaque yellow visited boxes on CPU and GPU over the same
+neutral shaded mesh. A material-isolation capture at
+`Screenshot_20260722_150626_345_56c36b2b065d4a81b0dcfd3cb4402b22.png`
+shows the non-emissive shaded surface with query/result lines hidden.
+
+The final editor build succeeded with zero warnings and errors, and all 20
+focused BVH contracts passed. Vulkan session
+`Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-22_15-03-52_pid21748/`
+contained no shader compilation/link failures, validation errors, VUIDs,
+exceptions, or device loss.

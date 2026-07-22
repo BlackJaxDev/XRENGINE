@@ -221,14 +221,19 @@ Use `false` only for known CPU-only passes such as `PreRender` and `PostRender`.
 
 ## 12. Empty-Scene Pass Gates
 
-**Rule:** Expensive pass groups that only prepare resources around optional scene work must be gated by the current frame's render-command/state presence.
+**Rule:** Expensive pass groups that only prepare resources around optional scene work must be gated by the current frame's mesh-command and feature-state presence. A method/callback command is not proof that geometry exists.
 
 The active `DefaultRenderPipeline` path currently skips these groups when they would otherwise be no-op setup:
 
-- Forward depth prepass and GBuffer restore run only when the debug preference is enabled and the current frame has `OpaqueForward` or `MaskedForward` render commands.
+- `RenderCommandCollection` publishes total and per-pass mesh-command counts with the render-side snapshot. The count is collected during the existing membership-signature scan; do not rescan the command lists from each pipeline gate.
+- A callback-only frame with no mesh commands can use the lightweight scene branch, which preserves the `OpaqueForward` and `OnTopForward` callbacks needed by debug producers while skipping GBuffer, AO, deferred lighting, Forward+, velocity, bloom, fog, and overdraw setup.
+- The full branch remains mandatory for shadow/stereo/capture/light-probe/mirror/MSAA/voxel-cone work, atmospheric or fog work, relevant debug visualizations, Forward+ diagnostics, any scene mesh, or callbacks in passes the lightweight branch does not explicitly preserve.
+- Forward depth prepass and GBuffer restore run only when the debug preference is enabled and the current frame has `OpaqueForward` or `MaskedForward` mesh commands.
 - Weighted/exact transparency resource work runs only when the current frame has transparent render commands, or when transparency/depth-peeling debug visualizations need those buffers.
 - Mono atmospheric aerial perspective runs only when the stage is enabled, requests aerial/debug output, and the current camera has an active atmosphere with aerial perspective enabled.
 - Mono volumetric fog runs only when the stage is enabled and at least one active renderable fog volume exists.
+
+Auxiliary geometry passes must replay `IRenderCommandMesh` commands only. Do not invoke method callbacks from velocity, overdraw, depth/normal, shadow, or similar mesh replays; callback side effects belong to their primary scene pass.
 
 When adding a new optional pass group, prefer a named `VPRC_IfElse` gate so GPU pipeline dumps explain why the group is absent or active. Keep debug visualization modes in the condition if the visualization depends on otherwise-empty resources.
 

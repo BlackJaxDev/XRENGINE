@@ -137,7 +137,7 @@ namespace XREngine.Runtime.InputIntegration
                 return;
             }
 
-            ApplyLatestInputSnapshot();
+            ConsumeLatestInputSnapshot();
             bool keyboardAndMousePlayer = _index == ELocalPlayerIndex.One;
             _snapshotMouse.SetCaptureRequest(captured => _viewport?.RequestMouseCapture(captured));
 
@@ -153,12 +153,12 @@ namespace XREngine.Runtime.InputIntegration
                 RuntimeVrInputServices.Actions);
         }
 
-        private void ApplyLatestInputSnapshot()
+        private void ConsumeLatestInputSnapshot()
         {
             if (_viewport is null || _index != ELocalPlayerIndex.One)
                 return;
 
-            WindowInputSnapshot snapshot = _viewport.InputSnapshot;
+            WindowInputSnapshot snapshot = _viewport.ConsumeInputSnapshot();
             _snapshotKeyboard.ApplySnapshot(snapshot);
             _snapshotMouse.ApplySnapshot(snapshot);
         }
@@ -179,7 +179,7 @@ namespace XREngine.Runtime.InputIntegration
             if (Input is not LocalInputInterface localInput)
                 return;
 
-            ApplyLatestInputSnapshot();
+            ConsumeLatestInputSnapshot();
 
             if (isUIInputCaptured)
             {

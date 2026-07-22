@@ -50,7 +50,7 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
         Vector4 internalColor,
         uint showFilter,
         GpuBvhDebugNodeClassOptions? nodeClasses = null,
-        GpuBvhDebugOverlayLayer overlayLayer = GpuBvhDebugOverlayLayer.Base)
+        BvhDebugOverlayLayer overlayLayer = BvhDebugOverlayLayer.Base)
     {
         if (_disposed || nodeBuffer.IsDestroyed || nodeCount == 0)
             return false;
@@ -79,7 +79,7 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
     /// </summary>
     internal static void RenderQueued(
         XRRenderPipelineInstance.RenderingState pipelineState,
-        GpuBvhDebugOverlayLayer overlayLayer)
+        BvhDebugOverlayLayer overlayLayer)
     {
         if (!GetQueues(overlayLayer).TryGetValue(pipelineState, out GpuBvhDebugOverlayQueue? queue))
             return;
@@ -100,8 +100,8 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
     }
 
     private static ConditionalWeakTable<XRRenderPipelineInstance.RenderingState, GpuBvhDebugOverlayQueue> GetQueues(
-        GpuBvhDebugOverlayLayer overlayLayer)
-        => overlayLayer == GpuBvhDebugOverlayLayer.Highlight ? HighlightQueues : BaseQueues;
+        BvhDebugOverlayLayer overlayLayer)
+        => overlayLayer == BvhDebugOverlayLayer.Highlight ? HighlightQueues : BaseQueues;
 
     private bool RenderImmediate(in GpuBvhDebugRenderRequest request)
     {
