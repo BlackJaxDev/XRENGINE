@@ -2,6 +2,7 @@
 
 Reference design: [runtime-modularization-plan.md](../design/runtime-modularization-plan.md)
 Core prerequisite work: [runtime-modularization-phase3-todo.md](runtime-modularization-phase3-todo.md)
+Backend reload consumer: [rendering-backend-hot-reload-todo.md](rendering/rendering-backend-hot-reload-todo.md)
 
 Created: 2026-07-14
 
@@ -9,7 +10,7 @@ This file contains only unfinished design Phase 4 work. Rendering backends, pipe
 
 ## Goal
 
-Complete the rendering move into `XREngine.Runtime.Rendering`, remove concrete rendering ownership from the legacy `Engine` and world host, split the transitional rendering-host facade into coherent capabilities, and make the rendering assembly obey the target one-way dependency graph.
+Complete the backend-neutral rendering move into `XREngine.Runtime.Rendering`, remove concrete rendering ownership from the legacy `Engine` and world host, split the transitional rendering-host facade into coherent capabilities, extract OpenGL and Vulkan into separate leaf backend DLLs, and make every rendering assembly obey the target one-way dependency graph.
 
 `XRENGINE` remains a temporary forwarding/composition facade until the design Phase 6 removal. Phase 4 must not move Runtime.Core ownership upward or create a `Runtime.Core -> Runtime.Rendering` reference.
 
@@ -37,6 +38,8 @@ The current `Runtime.Rendering` project also references `XREngine.Animation`, `X
 - Do not add `Runtime.Rendering -> XRENGINE` or `Runtime.Rendering -> Editor` references.
 - Keep feature libraries below runtime layers. Feature-specific scene bindings belong in integration/bridge projects, not in the rendering kernel.
 - Keep optional telemetry/debug capabilities allocation-free no-ops when uninstalled; required rendering capabilities must fail fast with actionable diagnostics.
+- Keep `Runtime.Rendering` independent of the concrete OpenGL/Vulkan backend projects. Applications may package backend DLLs, but runtime creation must use stable module/factory contracts rather than direct construction.
+- Keep backend types, callbacks, workers, and native handles from escaping into stable long-lived state so editor builds can later load backend generations in collectible `AssemblyLoadContext` instances.
 - Change namespaces at move time and update serializers, reflection/AOT registration, type redirects, editor metadata, and asset compatibility in the same slice.
 - Use `SetField(...)` for mutation paths on `XRBase` descendants and avoid new allocations in render/update/present hot paths.
 - Build and test every coherent slice before starting the next dependency tier.
@@ -46,6 +49,7 @@ The current `Runtime.Rendering` project also references `XREngine.Animation`, `X
 - [ ] Create a dedicated branch for the Phase 4 todo list.
 - [ ] Recount all rendering-owned source, generated code, packages, native assets, content files, application references, and reflection/AOT registrations still owned by `XRENGINE`.
 - [ ] Record every direct project and source-level dependency from `Runtime.Rendering` to Animation, Audio, Input, Modeling, Fbx, `XRENGINE`, Editor, and application code.
+- [ ] Record every stable-kernel/editor/application reference to concrete OpenGL/Vulkan types, nested API wrappers, Silk API types, backend packages, native assets, callbacks, workers, AOT registrations, and content-copy rules needed for the backend DLL split.
 - [ ] Capture the current targeted rendering-test and Editor/Server/VRClient build baseline, distinguishing unrelated pre-existing failures from Phase 4 regressions.
 - [ ] Agree the Phase 3 handoff contracts for world ownership, physics/GPU dispatch data, assets/settings, transforms, scheduling, and lifecycle; do not duplicate their implementation in Rendering.
 
@@ -91,10 +95,12 @@ The current `Runtime.Rendering` project also references `XREngine.Animation`, `X
 
 - [ ] Inventory every member and call site of `IRuntimeRenderingHostServices`; group responsibilities by required lifecycle, installation owner, thread affinity, and optionality before changing the API.
 - [ ] Extract capability-focused contracts for render settings, frame timing, render-thread scheduling, diagnostics/logging, render statistics, debug drawing, profiling, asset/texture IO, renderer/window/panel factories, VR/OpenXR presentation, and backend interop.
+- [ ] Add the stable renderer-module metadata, capability, factory, lifecycle, reload-limitation, and registration contracts required by separate OpenGL/Vulkan leaf DLLs.
 - [ ] Separate frequently read hot-path state from cold configuration/diagnostic services so capability resolution does not add per-frame allocation, boxing, lookup, or delegate-capture overhead.
 - [ ] Keep `RuntimeRenderingHostServices.Current` only as a temporary composite/installation facade while call sites migrate to focused capabilities.
 - [ ] Provide explicit allocation-free no-op implementations only for optional telemetry/debug capabilities.
 - [ ] Make required renderer, scheduling, presentation, asset IO, and backend capabilities fail fast with actionable diagnostics when no host implementation is installed.
+- [ ] Replace direct `new OpenGLRenderer(...)`, `new VulkanRenderer(...)`, concrete renderer type tests, and stable-layer casts with the installed backend-module catalog and capabilities.
 - [ ] Move concrete capability implementations to `Runtime.Rendering` when they are runtime rendering behavior and to Editor/Server/VRClient composition roots when they are application policy.
 - [ ] Add source-contract and behavioral tests for capability ownership, defaults, installation, replacement, teardown, and missing-required-service failures.
 - [ ] Validate representative OpenGL, Vulkan, desktop-window, headless/server, and OpenXR call paths after each capability slice.
@@ -119,12 +125,39 @@ The legacy `Engine` implementation is a partial type, and partial declarations c
 - [ ] Verify `Runtime.Core` has no project or source dependency on `Runtime.Rendering` and consumes only approved lower render contracts.
 - [ ] Verify `Runtime.Rendering` has no dependency on `XRENGINE`, Editor, applications, or feature implementations outside the final approved graph.
 
-## P4.8 - Final Validation And Closeout
+## P4.8 - Extract OpenGL And Vulkan Leaf Backend DLLs
 
-- [ ] Build `Runtime.Core`, `Runtime.Rendering`, all integration/bridge projects, Bootstrap, Editor, Server, VRClient, UnitTests, and the full solution.
+This phase establishes the assembly boundary consumed by the
+[OpenGL And Vulkan Rendering Hot Reload TODO](rendering/rendering-backend-hot-reload-todo.md).
+Collectible loading and editor reload orchestration belong to that focused TODO;
+the DLL split and stable dependency direction belong to runtime modularization.
+
+- [ ] Create `XREngine.Runtime.Rendering.OpenGL` and move `OpenGLRenderer`, every GL API wrapper, GL resource/program/pipeline implementation, GL ImGui/platform-window integration, shared-context workers, and OpenGL-specific OpenXR/UI/video/native code into it.
+- [ ] Create `XREngine.Runtime.Rendering.Vulkan` and move `VulkanRenderer`, every Vulkan API wrapper, device/swapchain/frame/command/resource/descriptor/pipeline/render-graph implementation, Vulkan ImGui integration, and Vulkan-specific OpenXR/VMA/Streamline/video/native code into it.
+- [ ] Keep backend-neutral assets, render pipelines, logical resource generations, windows/viewports, `AbstractRenderer`, renderer lifecycle, backend module catalog, and replacement contracts in `Runtime.Rendering`.
+- [ ] Move Silk.NET.OpenGL/WGL, Silk.NET.Vulkan/extensions, VMA, generated bindings, native binaries, embedded resources, and content-copy ownership to the final concrete consumer wherever the stable kernel has no remaining use.
+- [ ] Replace concrete construction and type tests in Runtime.Rendering, `XRENGINE`, Editor, Server, VRClient, Bootstrap, tests, and tools with stable backend IDs, capabilities, factories, or module metadata.
+- [ ] Ensure backend wrapper types, backend exceptions, callback delegates, tasks, worker threads, `Type` objects, and native handles are not retained by non-backend static or long-lived state after renderer teardown.
+- [ ] Define editor collectible registration and production/AOT static registration through the same factory contract; dynamic loading must not become a production/AOT requirement.
+- [ ] Add project/source-contract tests forbidding `Runtime.Rendering -> Runtime.Rendering.OpenGL`, `Runtime.Rendering -> Runtime.Rendering.Vulkan`, backend-to-backend, backend-to-Editor, and backend-to-application dependencies.
+- [ ] Update AOT factory generation, reflection discovery, serializers/type redirects, test discovery, application output packaging, and build orchestration for both modules.
+- [ ] Coordinate Vulkan source movement with the Vulkan Runtime Code Organization TODO so the backend split does not make the partial-class monolith permanent.
+- [ ] Statically load and validate each extracted backend before enabling collectible reload.
+- [ ] Run dependency/license generation after final package/native ownership moves and review the results.
+
+Acceptance criteria:
+
+- [ ] `XREngine.Runtime.Rendering.dll`, `XREngine.Runtime.Rendering.OpenGL.dll`, and `XREngine.Runtime.Rendering.Vulkan.dll` are distinct assemblies with the documented one-way graph.
+- [ ] The stable rendering kernel contains no concrete OpenGL/Vulkan renderer construction or type dependency.
+- [ ] Editor, Server, VRClient, tests, and published/AOT registration can select/package the intended backend without referencing concrete implementation APIs.
+- [ ] Both backends render correctly through the stable factory contract and can completely tear down their wrappers, workers, callbacks, and native resources.
+
+## P4.9 - Final Validation And Closeout
+
+- [ ] Build `Runtime.Core`, `Runtime.Rendering`, `Runtime.Rendering.OpenGL`, `Runtime.Rendering.Vulkan`, all integration/bridge projects, Bootstrap, Editor, Server, VRClient, UnitTests, and the full solution.
 - [ ] Run targeted UI, shader/function graph, model import/serialization, world/render registration, compute/physics-chain, rendering-host capability, window, OpenGL, Vulkan, OpenXR, and project-graph tests.
 - [ ] Launch and smoke-test Editor, Server, and VRClient through their canonical tasks/profiles, including at least one desktop render path and the available XR path.
 - [ ] Verify no new compiler warning, forbidden dependency, duplicate public type identity, stale serialized/AOT type, hot-path allocation, silent required-capability fallback, or resource-lifetime regression remains.
 - [ ] Regenerate `docs/DEPENDENCIES.md` and license outputs after final project/package/native ownership changes, then review the resulting dependency graph and licenses.
-- [ ] Update the reference design and Phase 3 handoff notes with the final Runtime.Rendering boundary and identify the remaining design Phase 5 adapter cleanup.
+- [ ] Update the reference design, renderer hot-reload TODO, and Phase 3 handoff notes with the final stable-kernel/backend boundaries and identify the remaining design Phase 5 adapter cleanup.
 - [ ] Merge the dedicated Phase 4 branch back into `main` after all Phase 4 validation passes.

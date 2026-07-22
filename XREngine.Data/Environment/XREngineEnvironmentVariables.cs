@@ -244,6 +244,11 @@ public static class XREngineEnvironmentVariables
     public const string VulkanCommandChainStabilityGuard = "XRE_VULKAN_COMMAND_CHAIN_STABILITY_GUARD";
     public const string VulkanCommandChainMeshSecondaryNoop = "XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP";
     public const string VulkanPrimaryCommandBufferReuse = "XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE";
+    /// <summary>
+    /// Overrides the Vulkan dynamic-uniform arena independently of the persisted robustness setting.
+    /// Intended for explicit capture and regression isolation runs; accepts 0/1 and false/true forms.
+    /// </summary>
+    public const string VulkanDynamicUniformBuffer = "XRE_VULKAN_DYNAMIC_UNIFORM_BUFFER";
     public const string VulkanValidation = "XRE_VULKAN_VALIDATION";
     public const string VulkanDiagnosticPreset = "XRE_VULKAN_DIAGNOSTIC_PRESET";
     public const string VulkanDiagnosticFlags = "XRE_VULKAN_DIAGNOSTIC_FLAGS";

@@ -161,12 +161,66 @@ namespace XREngine.Rendering.Occlusion
         private const int StaleEvictionFrames = 120;
         private const int HierarchyGroupShift = 5;
         private const int HierarchyMinChildren = 4;
+		// Exact visible queries bracket real mesh draws and therefore fragment reusable
+		// Vulkan command chains. Skipping one remains fail-visible, so bound this costly
+		// path independently while leaving the larger proxy-recovery budget intact.
+		private const int MaxExactVisibleDrawQueriesPerFrame = 4;
         private const ulong VulkanQueryResolveMinLatencyFrames = 2UL;
 
         private static int GetOccludedRetestPeriodFrames()
         {
             int period = RuntimeEngine.EffectiveSettings.CpuQueryOcclusionRetestPeriodFrames;
             return period > 0 ? period : DefaultOccludedRetestPeriodFrames;
+        }
+
+        /// <summary>
+        /// Resolves the Vulkan query cadence used to concentrate query brackets onto
+        /// shared probe frames. This leaves intervening frames free to reuse their
+        /// primary command buffers while increasing the cadence during camera motion.
+        /// </summary>
+        internal static int ResolveVulkanHardwareQueryBatchCadence(
+            ECpuOcclusionMotionTier motionTier,
+            int retestPeriodFrames)
+        {
+            int period = Math.Max(1, retestPeriodFrames);
+            return motionTier switch
+            {
+                ECpuOcclusionMotionTier.Stable => Math.Max(2, period),
+                ECpuOcclusionMotionTier.SmallMotion => Math.Max(2, period / 2),
+                ECpuOcclusionMotionTier.MediumMotion => 2,
+                ECpuOcclusionMotionTier.LargeMotion => 2,
+                ECpuOcclusionMotionTier.VrHeadPoseMotion => 2,
+                ECpuOcclusionMotionTier.CameraCut => Math.Max(2, period),
+                _ => Math.Max(2, period),
+            };
+        }
+
+        internal static bool IsVulkanHardwareQueryBatchFrame(
+            ulong renderFrameId,
+            ECpuOcclusionMotionTier motionTier,
+            int retestPeriodFrames,
+            int frameOffset = 0)
+        {
+            int cadence = ResolveVulkanHardwareQueryBatchCadence(motionTier, retestPeriodFrames);
+            int normalizedOffset = frameOffset % cadence;
+            if (normalizedOffset < 0)
+                normalizedOffset += cadence;
+
+            ulong cadenceValue = (ulong)cadence;
+            ulong phase = renderFrameId % cadenceValue;
+            return (phase + (ulong)normalizedOffset) % cadenceValue == 0UL;
+        }
+
+        private static bool ShouldScheduleHardwareQueries(PassState state, int frameOffset = 0)
+        {
+            if (RuntimeRenderingHostServices.Current.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan)
+                return true;
+
+            return IsVulkanHardwareQueryBatchFrame(
+                RuntimeEngine.Rendering.State.RenderFrameId,
+                state.MotionTier,
+                GetOccludedRetestPeriodFrames(),
+                frameOffset);
         }
 
         public bool BeginPass(
@@ -656,6 +710,13 @@ namespace XREngine.Rendering.Occlusion
                     return;
                 }
 
+                if (!ShouldScheduleHardwareQueries(state))
+                {
+                    OcclusionTelemetry.RecordCpuBudgetSkipped(ECpuOcclusionQueryReason.StaleStateRefresh, candidates.Count);
+                    state.Telemetry.RecordBudgetSkipped(candidates.Count);
+                    return;
+                }
+
                 RefreshBudgets(state);
                 int maxQueries = RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMaxQueriesPerFrame;
                 if (maxQueries <= 0)
@@ -716,11 +777,17 @@ namespace XREngine.Rendering.Occlusion
                 if (state.ForceVisibleThisFrame || candidates.Count == 0)
                     return;
 
+                // Selection is consumed by the next pass. Prime it only when that
+                // future Vulkan frame is a shared query batch frame.
+                if (!ShouldScheduleHardwareQueries(state, frameOffset: 1))
+                    return;
+
                 int maxQueries = RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMaxQueriesPerFrame;
                 if (maxQueries <= 0)
                     return;
 
                 ComputeBudgets(state.MotionTier, maxQueries, out int visibleBudget, out _);
+                visibleBudget = Math.Min(visibleBudget, MaxExactVisibleDrawQueriesPerFrame);
                 if (visibleBudget <= 0)
                     return;
 
@@ -768,6 +835,13 @@ namespace XREngine.Rendering.Occlusion
                     return false;
                 }
 
+                if (!ShouldScheduleHardwareQueries(state))
+                {
+                    OcclusionTelemetry.RecordCpuBudgetSkipped(request.Reason);
+                    state.Telemetry.RecordBudgetSkipped(1);
+                    return false;
+                }
+
                 // Once the end-of-pass selector has been primed, only its globally
                 // ranked keys may consume visible-query capacity. Without this gate,
                 // the first commands in render order repeatedly take every slot and
@@ -794,6 +868,7 @@ namespace XREngine.Rendering.Occlusion
                 }
 
                 ComputeBudgets(state.MotionTier, maxQueries, out int visibleBudget, out _);
+                visibleBudget = Math.Min(visibleBudget, MaxExactVisibleDrawQueriesPerFrame);
                 if (state.VisibleBudgetUsed >= visibleBudget)
                 {
                     OcclusionTelemetry.RecordCpuBudgetSkipped(request.Reason);
@@ -1600,7 +1675,9 @@ namespace XREngine.Rendering.Occlusion
                 return false;
 
             int stagger = Math.Max(1, cadence);
-            return ((frameId + sourceCommandIndex) % (ulong)stagger) == 0UL || motionTier != ECpuOcclusionMotionTier.Stable;
+            bool bypassStagger = motionTier != ECpuOcclusionMotionTier.Stable &&
+                motionTier != ECpuOcclusionMotionTier.SmallMotion;
+            return ((frameId + sourceCommandIndex) % (ulong)stagger) == 0UL || bypassStagger;
         }
 
         private static ECpuOcclusionForceVisibleReason GetNegativeResultInvalidReason(

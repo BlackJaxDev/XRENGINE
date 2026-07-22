@@ -7,6 +7,7 @@ public unsafe partial class VulkanRenderer
         internal readonly record struct DescriptorAllocationKey(
             ulong LayoutFingerprint,
             ulong SchemaFingerprint,
+            uint ProgramBindingId,
             int DescriptorFrameSlotCount,
             int SetCount,
             int MaterialIdentity,

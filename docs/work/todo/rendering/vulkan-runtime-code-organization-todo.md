@@ -16,6 +16,7 @@ Related documentation and work:
 - [Vulkan Primary Command Recording Fast Path TODO](optimization/vulkan-primary-command-recording-fast-path-todo.md)
 - [Vulkan Dynamic Rendering Migration TODO](vulkan-dynamic-rendering-migration-todo.md)
 - [Render Pipeline Resource Lifecycle TODO](render-pipeline-resource-lifecycle-todo.md)
+- [OpenGL And Vulkan Rendering Hot Reload TODO](rendering-backend-hot-reload-todo.md)
 - [OpenXR Runtime Code Organization TODO](vr/openxr-runtime-code-organization-todo.md)
 - [Backend Renderer Folder Organization TODO](../COMPLETED/backend-renderer-folder-organization-todo.md)
 
@@ -38,6 +39,16 @@ The steady-state render paths must remain allocation-free. New ownership
 boundaries must use explicit stack-only contexts, immutable plans, and reused
 workspaces rather than per-frame dependency-injection objects, delegate
 pipelines, LINQ, or interface dispatch inside per-operation loops.
+
+This work must also preserve the module boundary required by the
+[OpenGL And Vulkan Rendering Hot Reload TODO](rendering-backend-hot-reload-todo.md):
+the complete Vulkan implementation will ultimately compile from
+`XREngine.Runtime.Rendering.Vulkan.dll`, below the stable backend-neutral
+`XREngine.Runtime.Rendering.dll`. Extracted Vulkan subsystem owners must not
+leak their concrete types, callbacks, workers, or native handles into the stable
+kernel. Folder/type reorganization and DLL extraction should be coordinated so
+that neither workstream repeats the same move or treats the current partial
+class as the final module API.
 
 ## Relationship To The Desktop Frame-Loop Decomposition
 

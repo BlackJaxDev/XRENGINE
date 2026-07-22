@@ -29,13 +29,25 @@ namespace XREngine.Rendering.Vulkan
                 new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
             public Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> OpenXrMeshDrawSlotsByRendererFamily { get; } =
                 new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+            public int OpenXrMeshDrawSlotCapacityHint { get; set; } = 1;
             public Dictionary<VulkanMeshFrameDataFamilyKey, int> MeshFrameDataFamilyStrides { get; } = [];
             public Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> ReusableMeshFrameDataFamilyBases { get; } =
                 new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+            // Reuse refresh may run concurrently for separate outputs. Keep its ordinal
+            // allocation state on the recorder thread so one output cannot redirect
+            // another output's dynamic UBO slot assignments.
+            public Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> ReusableMeshDrawSlotsByRendererFamily { get; } =
+                new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+            public int ReusableMeshDrawSlotCapacityHint { get; set; } = 1;
             public Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> PrimaryMeshFrameDataFamilyBases { get; } =
                 new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
             public Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> DynamicUiMeshFrameDataFamilyBases { get; } =
                 new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+            public Dictionary<VkMeshRenderer, int> DynamicUiMeshDrawSlotsByRenderer { get; } =
+                new(ReferenceEqualityComparer.Instance);
+            public Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> DynamicUiMeshDrawSlotsByRendererFamily { get; } =
+                new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+            public int DynamicUiMeshDrawSlotCapacityHint { get; set; } = 1;
             public Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> OpenXrMeshFrameDataFamilyBases { get; } =
                 new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
             public VulkanMeshFrameDataReservationManifest MeshFrameDataManifest { get; } = new();

@@ -151,10 +151,10 @@ namespace XREngine.Rendering.Vulkan
                 PInheritanceInfo = &inheritanceInfo,
             };
 
-            Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = _dynamicUiMeshDrawSlotsByRendererScratch;
-            meshDrawSlotsByRenderer.Clear();
-            meshDrawSlotsByRenderer.EnsureCapacity(_dynamicUiMeshDrawSlotCapacityHint);
             CommandBufferRecordingScratch recordingScratch = _commandBufferRecordingScratch.Value!;
+            Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = recordingScratch.DynamicUiMeshDrawSlotsByRenderer;
+            meshDrawSlotsByRenderer.Clear();
+            meshDrawSlotsByRenderer.EnsureCapacity(recordingScratch.DynamicUiMeshDrawSlotCapacityHint);
             if (!TryRegisterFrameWideMeshFrameDataRequirements(
                     Array.Empty<FrameOp>(),
                     dynamicUiBatchTextOps,
@@ -172,7 +172,7 @@ namespace XREngine.Rendering.Vulkan
 
             VulkanMeshFrameDataReservationManifest frameDataManifest =
                 recordingScratch.MeshFrameDataManifest;
-            frameDataManifest.Begin(MeshFrameDataReservationGeneration, _dynamicUiMeshDrawSlotCapacityHint);
+            frameDataManifest.Begin(MeshFrameDataReservationGeneration, recordingScratch.DynamicUiMeshDrawSlotCapacityHint);
             foreach (KeyValuePair<VkMeshRenderer, int> reservation in meshDrawSlotsByRenderer)
             {
                 if (frameDataManifest.TryReserve(reservation.Key, reservation.Value))
@@ -183,7 +183,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshDrawSlotsByRendererFamily =
-                _dynamicUiMeshDrawSlotsByRendererFamilyScratch;
+                recordingScratch.DynamicUiMeshDrawSlotsByRendererFamily;
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshFrameDataFamilyBases =
                 recordingScratch.DynamicUiMeshFrameDataFamilyBases;
             meshDrawSlotsByRendererFamily.Clear();
@@ -381,7 +381,7 @@ namespace XREngine.Rendering.Vulkan
             if (CommandChainsEnabledForCurrentRecording)
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(secondaryCommandBuffers: 1);
 
-            _dynamicUiMeshDrawSlotCapacityHint = Math.Max(1, meshDrawSlotsByRenderer.Count);
+            recordingScratch.DynamicUiMeshDrawSlotCapacityHint = Math.Max(1, meshDrawSlotsByRenderer.Count);
             return true;
         }
 
@@ -569,6 +569,18 @@ namespace XREngine.Rendering.Vulkan
             MarkStreamlineUiImageInitialized(imageIndex);
         }
 
+        private static ulong ComputeCommandChainUniformSlotSignature(
+            int[] uniformSlots,
+            int startIndex,
+            int count)
+        {
+            FrameOpSignatureHasher hash = new();
+            hash.Add(count);
+            for (int i = 0; i < count; i++)
+                hash.Add(uniformSlots[startIndex + i]);
+            return hash.ToHash();
+        }
+
         private void RecordScheduledMeshCommandChainWorker(
             CommandChainRecordingBatch batch,
             int chainIndex)
@@ -706,6 +718,11 @@ namespace XREngine.Rendering.Vulkan
 
                 if (EndCommandBufferTracked(secondary) != Result.Success)
                     throw new InvalidOperationException("Failed to end Vulkan worker mesh command-chain secondary command buffer.");
+
+                chain.RecordedUniformSlotSignature = ComputeCommandChainUniformSlotSignature(
+                    batch.UniformSlots,
+                    chain.SourceStartIndex - batch.StartIndex,
+                    chain.SourceCount);
             }
 
             chain.State = CommandChainState.Recorded;

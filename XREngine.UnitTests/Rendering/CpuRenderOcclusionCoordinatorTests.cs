@@ -1000,6 +1000,84 @@ public sealed class CpuRenderOcclusionCoordinatorTests
     }
 
     [Test]
+    public void TryScheduleVisibleDrawQuery_CapsExactDrawQueriesIndependentlyOfProxyBudget()
+    {
+        _host.CpuQueryOcclusionMaxQueriesPerFrame = 64;
+        _host.CpuQueryOcclusionVisibleDemotionBudgetFraction = 1.0f;
+
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        OcclusionViewOwnership ownership = OcclusionViewOwnership.Independent(508);
+        BeginPassForPolicyTest(coordinator, camera, ownership, sceneCommandCount: 5u);
+        CpuOcclusionProbeRequest request = new(
+            requested: true,
+            ECpuOcclusionQueryReason.VisibleDemotion,
+            recoveryProbe: false);
+
+        for (uint sourceCommandIndex = 64u; sourceCommandIndex < 68u; sourceCommandIndex++)
+        {
+            coordinator.TryScheduleVisibleDrawQuery(
+                RenderPass,
+                camera,
+                sourceCommandIndex,
+                request,
+                ownership).ShouldBeTrue();
+        }
+
+        coordinator.TryScheduleVisibleDrawQuery(
+            RenderPass,
+            camera,
+            sourceCommandIndex: 68u,
+            request: request,
+            ownership: ownership).ShouldBeFalse();
+    }
+
+    [Test]
+    public void SelectVisibleDrawCandidates_CapsExactDrawSelectionByGlobalPriority()
+    {
+        _host.CpuQueryOcclusionMaxQueriesPerFrame = 64;
+        _host.CpuQueryOcclusionVisibleDemotionBudgetFraction = 1.0f;
+
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        OcclusionViewOwnership ownership = OcclusionViewOwnership.Independent(511);
+        BeginPassForPolicyTest(coordinator, camera, ownership, sceneCommandCount: 8u);
+        CpuOcclusionProbeRequest[] requests = new CpuOcclusionProbeRequest[8];
+        List<CpuOcclusionProbeCandidate> candidates = new(8);
+
+        for (int index = 0; index < requests.Length; index++)
+        {
+            uint sourceCommandIndex = 64u + (uint)index;
+            coordinator.ShouldRender(
+                RenderPass,
+                camera,
+                sourceCommandIndex,
+                out requests[index],
+                ownership);
+            candidates.Add(new CpuOcclusionProbeCandidate(
+                sourceCommandIndex,
+                UnitBounds(),
+                requests[index],
+                screenPriority: index + 1.0f,
+                distanceMeters: 1.0f));
+        }
+
+        coordinator.SelectVisibleDrawCandidates(RenderPass, camera, candidates, ownership);
+
+        for (int index = 0; index < requests.Length; index++)
+        {
+            uint sourceCommandIndex = 64u + (uint)index;
+            bool scheduled = coordinator.TryScheduleVisibleDrawQuery(
+                RenderPass,
+                camera,
+                sourceCommandIndex,
+                requests[index],
+                ownership);
+            scheduled.ShouldBe(index >= 4);
+        }
+    }
+
+    [Test]
     public void SelectProbeCandidates_DoesNotSchedulePendingQuery()
     {
         CpuRenderOcclusionCoordinator coordinator = new();
@@ -1231,6 +1309,38 @@ public sealed class CpuRenderOcclusionCoordinatorTests
 
         decision.ShouldBe(ECpuOcclusionDecision.Visible);
         request.Requested.ShouldBeFalse();
+    }
+
+    [TestCase(ECpuOcclusionMotionTier.Stable, 6, 6)]
+    [TestCase(ECpuOcclusionMotionTier.SmallMotion, 6, 3)]
+    [TestCase(ECpuOcclusionMotionTier.MediumMotion, 6, 2)]
+    [TestCase(ECpuOcclusionMotionTier.LargeMotion, 6, 2)]
+    [TestCase(ECpuOcclusionMotionTier.VrHeadPoseMotion, 6, 2)]
+    [TestCase(ECpuOcclusionMotionTier.CameraCut, 6, 6)]
+    public void VulkanHardwareQueryBatchCadence_TracksMotionTier(
+        ECpuOcclusionMotionTier motionTier,
+        int retestPeriodFrames,
+        int expectedCadence)
+        => CpuRenderOcclusionCoordinator.ResolveVulkanHardwareQueryBatchCadence(
+            motionTier,
+            retestPeriodFrames).ShouldBe(expectedCadence);
+
+    [Test]
+    public void VulkanHardwareQueryBatchFrame_AlignsCurrentAndNextFrameSelections()
+    {
+        CpuRenderOcclusionCoordinator.IsVulkanHardwareQueryBatchFrame(
+            renderFrameId: 12UL,
+            ECpuOcclusionMotionTier.Stable,
+            retestPeriodFrames: 6).ShouldBeTrue();
+        CpuRenderOcclusionCoordinator.IsVulkanHardwareQueryBatchFrame(
+            renderFrameId: 13UL,
+            ECpuOcclusionMotionTier.Stable,
+            retestPeriodFrames: 6).ShouldBeFalse();
+        CpuRenderOcclusionCoordinator.IsVulkanHardwareQueryBatchFrame(
+            renderFrameId: 11UL,
+            ECpuOcclusionMotionTier.Stable,
+            retestPeriodFrames: 6,
+            frameOffset: 1).ShouldBeTrue();
     }
 
     private static void BeginPassForPolicyTest(

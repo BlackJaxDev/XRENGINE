@@ -109,7 +109,8 @@ public sealed class VulkanStablePacketAndDescriptorTests
         recording.ShouldContain("bool hasMutableGpuDrivenFrameOps = hasStaticFrameOps && HasMutableGpuDrivenFrameOps(ops);");
         recording.ShouldContain("!hasMutableGpuDrivenFrameOps &&");
         recording.ShouldContain("\"mutable-gpu-driven-frame-ops\"");
-        diagnostics.ShouldContain("ComputeDispatchOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp");
+        diagnostics.ShouldContain("IndirectDrawOp or MeshTaskDispatchIndirectCountOp");
+        diagnostics.ShouldNotContain("ComputeDispatchOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp");
     }
 
     [Test]
@@ -353,6 +354,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         VulkanRenderer.VkMeshRenderer.DescriptorAllocationKey immutableIdentity = new(
             LayoutFingerprint: 11,
             SchemaFingerprint: 12,
+            ProgramBindingId: 13,
             DescriptorFrameSlotCount: 3,
             SetCount: 4,
             MaterialIdentity: 5,
@@ -369,6 +371,10 @@ public sealed class VulkanStablePacketAndDescriptorTests
         {
             BindingIdentityFingerprint = 10,
         };
+        VulkanRenderer.VkMeshRenderer.DescriptorAllocationKey changedProgram = immutableIdentity with
+        {
+            ProgramBindingId = 14,
+        };
         VulkanRenderer.VkMeshRenderer.DescriptorAllocationKey updateAfterBindIdentity = immutableIdentity with
         {
             ImmutableResourceFingerprint = 0,
@@ -377,7 +383,30 @@ public sealed class VulkanStablePacketAndDescriptorTests
 
         changedContent.ShouldNotBe(immutableIdentity);
         changedBinding.ShouldNotBe(immutableIdentity);
+        changedProgram.ShouldNotBe(immutableIdentity);
         sameUpdateAfterBindIdentity.ShouldBe(updateAfterBindIdentity);
+    }
+
+    [Test]
+    public void CapturedDescriptorReuse_RefreshesNonUpdateAfterBindSetsOnlyAfterTheirSlotCompletes()
+    {
+        string descriptors = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
+        string state = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
+
+        descriptors.ShouldContain(
+            "bool allowCompletedDescriptorSlotRefresh = refreshFrameIndex is { } completedFrameIndex &&");
+        descriptors.ShouldContain("Renderer.CanUpdateCompletedDescriptorFrameSlot(completedFrameIndex)");
+        descriptors.ShouldContain("!Renderer.CanUpdateCompletedDescriptorFrameSlot(frameIndex)");
+        descriptors.ShouldContain("captured descriptor frame slot {frameIndex} is still in flight");
+        descriptors.ShouldContain("recordDescriptorTableGeneration: false");
+        descriptors.ShouldContain("if (recordDescriptorTableGeneration)");
+        descriptors.ShouldNotContain("captured descriptor allocation is immutable and requires a new resource snapshot");
+        state.ShouldContain("internal bool CanUpdateCompletedDescriptorFrameSlot(int frameDataSlot)");
+        state.ShouldContain("_swapchainImageTimelineValues");
+        state.ShouldContain("_frameSlotTimelineValues");
+        state.ShouldContain("HasTimelineValueCompleted(_graphicsTimelineSemaphore, completionValue)");
     }
 
     [Test]

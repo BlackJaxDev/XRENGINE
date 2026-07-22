@@ -483,11 +483,10 @@ namespace XREngine.Rendering.Vulkan
                     plannerDirty = true;
                 }
 
-                // Inline desktop primaries need a fresh swapchain writer when the camera pose moves.
-                // The broader frame-data generation includes temporal jitter and refreshed constants,
-                // which are safe to publish through frame-slot buffers and must not defeat steady reuse.
-                // Command-chain primaries retain their refresh path because stable scene work lives in
-                // independently reusable secondary ranges.
+                // An inline desktop primary owns the swapchain writer and must be re-recorded
+                // for the output viewport's camera transitions. Command-chain primaries only
+                // contain their thin scheduling/volatile ranges; their per-draw camera data is
+                // refreshed through the reusable secondary ranges instead.
                 if (!dirty &&
                     !usingCommandChains &&
                     variant.RecordedGenerations.CameraPose != currentGenerations.CameraPose)
@@ -976,35 +975,12 @@ namespace XREngine.Rendering.Vulkan
 
         private static void MarkCommandBufferVariantTransient(CommandBufferCacheVariant variant, string reason)
         {
+            // The command buffer recorded immediately before this call is still the current
+            // submit candidate. Transient means "record again next time"; erasing its recorded
+            // context/dependency metadata here makes the current pre-submit guard reject a
+            // command buffer that was just recorded successfully.
             variant.Dirty = true;
             variant.DirtyReason = reason;
-            variant.FrameOpsSignature = ulong.MaxValue;
-            variant.DynamicUiSignature = ulong.MaxValue;
-            variant.DynamicUiOpCount = -1;
-            variant.DynamicUiSecondaryRecorded = false;
-            variant.PreserveSwapchainForOverlay = false;
-            variant.RecordedFrameOpContextFingerprint = ulong.MaxValue;
-            variant.RecordedFrameOpContextId = 0;
-            variant.RecordedResourceGeneration = 0;
-            variant.RecordedDescriptorGeneration = 0;
-            variant.RecordedGenerations = default;
-            variant.RecordedDependencySignature = default;
-            variant.RecordedSwapchainImageEverPresented = false;
-            variant.RecordedSwapchainFinalLayout = ImageLayout.PresentSrcKhr;
-            variant.RecordedSwapchainWriteCount = 0;
-            variant.RecordedSwapchainRefreshFromLastPresentSource = false;
-            variant.RecordedImageLayoutStartSignature = ulong.MaxValue;
-            variant.RecordedImageLayoutEndSignature = ulong.MaxValue;
-            variant.RecordedImageLayoutEndState = null;
-            variant.CommandChainScheduleSignature = ulong.MaxValue;
-            variant.CommandChainPrimaryGroupSignature = ulong.MaxValue;
-            variant.CommandChainPrimaryGroupCount = -1;
-            variant.PlannerRevision = ulong.MaxValue;
-            variant.GpuProfilerActive = false;
-            variant.GpuProfilerFrameSlot = -1;
-            variant.GpuProfilerScopes = null;
-            variant.GpuProfilerQueryCount = 0;
-            variant.SignatureDebugParts = null;
         }
 
         private static void MarkCommandBufferVariantDirtyAfterConcurrentInvalidation(CommandBufferCacheVariant variant)
@@ -1028,7 +1004,7 @@ namespace XREngine.Rendering.Vulkan
                 FrameData: ComputeFrameDataGeneration(staticOps, volatileOps),
                 CameraPose: ResolveCameraPoseReplayGeneration(
                     frameOpContextFingerprint,
-                    ComputeCameraPoseGeneration(staticOps, volatileOps)),
+                    ComputeCameraPoseGeneration(staticOps, volatileOps, context)),
                 TargetSlot: imageIndex + 1UL,
                 Descriptor: context.DescriptorGeneration,
                 ResourceAllocation: context.ResourceGeneration,
@@ -1092,7 +1068,10 @@ namespace XREngine.Rendering.Vulkan
                 BufferAllocationGeneration: generations.ResourceAllocation,
                 ImageAllocationGeneration: unchecked((ulong)(uint)ResolveFrameOpContextResourceRegistrySignature(context)),
                 ImageViewGeneration: unchecked((ulong)(uint)context.OutputFrameBufferIdentity),
-                SamplerAllocationGeneration: generations.Descriptor,
+                // Descriptor publication is data-only. Reusing it as the sampler
+                // allocation identity turns every compatible descriptor rewrite into
+                // a binding mismatch and forces the primary to be re-recorded.
+                SamplerAllocationGeneration: descriptorBindingIdentity,
                 DescriptorLayoutGeneration: unchecked((ulong)(uint)ComputePassMetadataSignature(context.PassMetadata)),
                 DescriptorSetGeneration: descriptorBindingIdentity,
                 ResourcePlanGeneration: resourcePlanGeneration,
@@ -1134,6 +1113,7 @@ namespace XREngine.Rendering.Vulkan
                 vertexHash.Add(rendererIdentity);
                 vertexHash.Add(renderer.Mesh?.Buffers is null ? 0 : RuntimeHelpers.GetHashCode(renderer.Mesh.Buffers));
                 programHash.Add(draw.PreparedProgramIdentity);
+                programHash.Add(draw.PreparedProgram?.BindingId ?? 0u);
             }
 
             meshIdentity = meshHash.ToHash();
@@ -1191,30 +1171,209 @@ namespace XREngine.Rendering.Vulkan
             return hash.ToHash();
         }
 
-        private static ulong ComputeCameraPoseGeneration(FrameOp[] staticOps, FrameOp[] volatileOps)
+        private static ulong ComputeCameraPoseGeneration(
+            FrameOp[] staticOps,
+            FrameOp[] volatileOps,
+            in FrameOpContext outputContext)
         {
+            // A primary-cache camera transition only concerns the camera that owns the output
+            // viewport. Shadow/capture cameras can legitimately move while the desktop view is
+            // stationary; including them makes the swapchain primary re-record every frame.
+            // Visibility and query-probe work can also change draw order/count without moving
+            // that camera, so preserve only a deduplicated, order-independent pose set.
+            Span<ulong> uniqueCameraPoseSignatures = stackalloc ulong[128];
+            int uniqueCameraPoseCount = 0;
+            bool exceededInlineCapacity = false;
+            AddCameraPoseGenerationParts(
+                staticOps,
+                outputContext.ViewportIdentity,
+                uniqueCameraPoseSignatures,
+                ref uniqueCameraPoseCount,
+                ref exceededInlineCapacity);
+            AddCameraPoseGenerationParts(
+                volatileOps,
+                outputContext.ViewportIdentity,
+                uniqueCameraPoseSignatures,
+                ref uniqueCameraPoseCount,
+                ref exceededInlineCapacity);
+
+            if (uniqueCameraPoseCount == 0)
+                return 0UL;
+
+            if (exceededInlineCapacity)
+            {
+                return ComputeCameraPoseGenerationConservatively(
+                    staticOps,
+                    volatileOps,
+                    outputContext.ViewportIdentity);
+            }
+
+            SortCameraPoseSignatures(uniqueCameraPoseSignatures, uniqueCameraPoseCount);
             FrameOpSignatureHasher hash = new();
-            int cameraDrawCount = 0;
-            AddCameraPoseGenerationParts(ref hash, staticOps, ref cameraDrawCount);
-            AddCameraPoseGenerationParts(ref hash, volatileOps, ref cameraDrawCount);
-            return cameraDrawCount == 0 ? 0UL : hash.ToHash();
+            hash.Add(uniqueCameraPoseCount);
+            for (int i = 0; i < uniqueCameraPoseCount; i++)
+                hash.Add(uniqueCameraPoseSignatures[i]);
+            return hash.ToHash();
         }
 
         private static void AddCameraPoseGenerationParts(
+            FrameOp[] ops,
+            int outputViewportIdentity,
+            Span<ulong> uniqueCameraPoseSignatures,
+            ref int uniqueCameraPoseCount,
+            ref bool exceededInlineCapacity)
+        {
+            for (int i = 0; i < ops.Length; i++)
+            {
+                if (!TryGetPrimaryViewportCameraPoseDraw(
+                        ops[i],
+                        outputViewportIdentity,
+                        out PendingMeshDraw draw))
+                {
+                    continue;
+                }
+
+                ulong signature = ComputeCameraPoseSignature(draw);
+                bool alreadyCaptured = false;
+                for (int poseIndex = 0; poseIndex < uniqueCameraPoseCount; poseIndex++)
+                {
+                    if (uniqueCameraPoseSignatures[poseIndex] != signature)
+                        continue;
+
+                    alreadyCaptured = true;
+                    break;
+                }
+
+                if (alreadyCaptured)
+                    continue;
+
+                if (uniqueCameraPoseCount >= uniqueCameraPoseSignatures.Length)
+                {
+                    exceededInlineCapacity = true;
+                    continue;
+                }
+
+                uniqueCameraPoseSignatures[uniqueCameraPoseCount++] = signature;
+            }
+        }
+
+        private static ulong ComputeCameraPoseGenerationConservatively(
+            FrameOp[] staticOps,
+            FrameOp[] volatileOps,
+            int outputViewportIdentity)
+        {
+            FrameOpSignatureHasher hash = new();
+            int cameraDrawCount = 0;
+            AddCameraPoseGenerationPartsConservatively(
+                ref hash,
+                staticOps,
+                outputViewportIdentity,
+                ref cameraDrawCount);
+            AddCameraPoseGenerationPartsConservatively(
+                ref hash,
+                volatileOps,
+                outputViewportIdentity,
+                ref cameraDrawCount);
+            return cameraDrawCount == 0 ? 0UL : hash.ToHash();
+        }
+
+        private static void AddCameraPoseGenerationPartsConservatively(
             ref FrameOpSignatureHasher hash,
             FrameOp[] ops,
+            int outputViewportIdentity,
             ref int cameraDrawCount)
         {
             for (int i = 0; i < ops.Length; i++)
             {
-                if (ops[i] is not MeshDrawOp draw)
+                if (!TryGetPrimaryViewportCameraPoseDraw(
+                        ops[i],
+                        outputViewportIdentity,
+                        out PendingMeshDraw draw))
+                {
                     continue;
+                }
 
                 cameraDrawCount++;
-                AddVector3Signature(ref hash, draw.Draw.CameraPosition);
-                AddVector3Signature(ref hash, draw.Draw.CameraForward);
-                AddVector3Signature(ref hash, draw.Draw.CameraUp);
-                AddVector3Signature(ref hash, draw.Draw.CameraRight);
+                hash.Add(ComputeCameraPoseSignature(draw));
+            }
+        }
+
+        private static bool TryGetPrimaryViewportCameraPoseDraw(
+            FrameOp op,
+            int outputViewportIdentity,
+            out PendingMeshDraw draw)
+        {
+            switch (op)
+            {
+                case MeshDrawOp meshDraw when IsCameraAttachedToOutputViewport(
+                    meshDraw.Draw.Camera,
+                    outputViewportIdentity):
+                    draw = meshDraw.Draw;
+                    return true;
+                case IndirectDrawOp indirectDraw when IsCameraAttachedToOutputViewport(
+                    indirectDraw.Draw.Camera,
+                    outputViewportIdentity):
+                    draw = indirectDraw.Draw;
+                    return true;
+                default:
+                    draw = default;
+                    return false;
+            }
+        }
+
+        private static bool IsCameraAttachedToOutputViewport(
+            XRCamera? camera,
+            int outputViewportIdentity)
+        {
+            if (camera is null)
+                return false;
+
+            if (outputViewportIdentity == 0)
+                return true;
+
+            int viewportCount = camera.Viewports.Count;
+            if (viewportCount == 0)
+                return true;
+
+            for (int i = 0; i < viewportCount; i++)
+            {
+                XRViewport viewport = camera.Viewports[i];
+                if (RuntimeHelpers.GetHashCode(viewport) != outputViewportIdentity)
+                    continue;
+
+                return viewport.RenderPipeline?.IsShadowPass != true;
+            }
+
+            return false;
+        }
+
+        private static ulong ComputeCameraPoseSignature(in PendingMeshDraw draw)
+        {
+            FrameOpSignatureHasher hash = new();
+            hash.Add(draw.Camera is null ? 0 : RuntimeHelpers.GetHashCode(draw.Camera));
+            hash.Add(draw.StereoRightEyeCamera is null ? 0 : RuntimeHelpers.GetHashCode(draw.StereoRightEyeCamera));
+            hash.Add(draw.IsStereoPass);
+            hash.Add(draw.UseUnjitteredProjection);
+            AddVector3Signature(ref hash, draw.CameraPosition);
+            AddVector3Signature(ref hash, draw.CameraForward);
+            AddVector3Signature(ref hash, draw.CameraUp);
+            AddVector3Signature(ref hash, draw.CameraRight);
+            return hash.ToHash();
+        }
+
+        private static void SortCameraPoseSignatures(Span<ulong> signatures, int count)
+        {
+            for (int i = 1; i < count; i++)
+            {
+                ulong value = signatures[i];
+                int insertionIndex = i - 1;
+                while (insertionIndex >= 0 && signatures[insertionIndex] > value)
+                {
+                    signatures[insertionIndex + 1] = signatures[insertionIndex];
+                    insertionIndex--;
+                }
+
+                signatures[insertionIndex + 1] = value;
             }
         }
 
@@ -1684,12 +1843,13 @@ namespace XREngine.Rendering.Vulkan
             if (ops.Length == 0)
                 return true;
 
+            CommandBufferRecordingScratch recordingScratch = _commandBufferRecordingScratch.Value!;
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshDrawSlotsByRendererFamily =
-                _refreshMeshDrawSlotsByRendererFamilyScratch;
+                recordingScratch.ReusableMeshDrawSlotsByRendererFamily;
             meshDrawSlotsByRendererFamily.Clear();
-            meshDrawSlotsByRendererFamily.EnsureCapacity(_refreshMeshDrawSlotCapacityHint);
+            meshDrawSlotsByRendererFamily.EnsureCapacity(recordingScratch.ReusableMeshDrawSlotCapacityHint);
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> familyBases =
-                _commandBufferRecordingScratch.Value!.ReusableMeshFrameDataFamilyBases;
+                recordingScratch.ReusableMeshFrameDataFamilyBases;
             int frameDataSlot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
 
             int packetStart = 0;
@@ -1800,7 +1960,7 @@ namespace XREngine.Rendering.Vulkan
                 packetStart = packetEnd;
             }
 
-            _refreshMeshDrawSlotCapacityHint = Math.Max(1, meshDrawSlotsByRendererFamily.Count);
+            recordingScratch.ReusableMeshDrawSlotCapacityHint = Math.Max(1, meshDrawSlotsByRendererFamily.Count);
             return true;
         }
 
@@ -1960,9 +2120,52 @@ namespace XREngine.Rendering.Vulkan
                 resolvedFamilyBases,
                 sealAfterRegister,
                 out manifestGeneration,
+                out bool manifestLayoutChanged,
                 out reason);
+            if (registered && manifestLayoutChanged)
+                ObserveMeshFrameDataManifestGeneration(manifestGeneration);
             PublishFrameWideMeshFrameDataManifestGauges();
             return registered;
+        }
+
+        /// <summary>
+        /// Invalidates command buffers whose baked dynamic offsets predate a frame-data
+        /// family relocation. Append-only publications preserve existing offsets, so this
+        /// runs only when an existing family base actually moves.
+        /// </summary>
+        private void ObserveMeshFrameDataManifestGeneration(ulong generation)
+        {
+            if (generation == 0)
+                return;
+
+            long generationValue = unchecked((long)generation);
+            long previous;
+            while (true)
+            {
+                previous = Volatile.Read(ref _observedMeshFrameDataManifestGeneration);
+                if (unchecked((ulong)previous) >= generation)
+                    return;
+                if (Interlocked.CompareExchange(
+                        ref _observedMeshFrameDataManifestGeneration,
+                        generationValue,
+                        previous) == previous)
+                {
+                    break;
+                }
+            }
+
+            // The first publication has no older offsets to invalidate.
+            if (previous == 0)
+                return;
+
+            int secondaryCount = InvalidateCommandChainSecondaryCommandBuffersForFrameDataLayoutChange();
+            MarkOpenXrPrimaryCommandBufferVariantsDirty();
+            MarkCommandBuffersDirty("mesh frame-data layout generation changed");
+            Debug.Vulkan(
+                "[Vulkan] Mesh frame-data layout generation advanced from {0} to {1}; invalidated {2} cached command-chain secondaries with baked dynamic offsets.",
+                unchecked((ulong)previous),
+                generation,
+                secondaryCount);
         }
 
         private void PublishFrameWideMeshFrameDataManifestGauges()
@@ -2991,11 +3194,7 @@ namespace XREngine.Rendering.Vulkan
             _ = TryActivateFrameOpResourcePlannerState(initialContext);
 
             if (commandChainSchedule is not null)
-            {
                 _lastReusableFrameDataRefreshFailureReason = null;
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.RefreshScheduledSecondaryFrameData"))
-                    _ = TryRefreshReusableCommandBufferFrameData(frameDataImageIndex, ops);
-            }
 
             int swapchainPresentTransitions = 0;
             bool usedSwapchainDynamicRendering = false;
@@ -5438,7 +5637,24 @@ namespace XREngine.Rendering.Vulkan
 
                         secondaryChains[secondaryCount] = chain;
 
-                        bool needsRecording = ScheduledCommandChainSecondaryNeedsRecording(chain);
+                        ulong currentUniformSlotSignature = ComputeCommandChainUniformSlotSignature(
+                            uniformSlots,
+                            chain.SourceStartIndex - startIndex,
+                            chain.SourceCount);
+                        bool uniformSlotMappingChanged =
+                            chain.RecordedUniformSlotSignature != currentUniformSlotSignature;
+                        bool needsRecording =
+                            ScheduledCommandChainSecondaryNeedsRecording(chain) ||
+                            uniformSlotMappingChanged;
+                        if (uniformSlotMappingChanged && chain.SecondaryCommandBuffer.Handle != 0)
+                        {
+                            // Dynamic UBO offsets are baked into the secondary.
+                            // Refreshing bytes at a newly assigned occurrence slot
+                            // cannot make an old offset valid; re-record the chain.
+                            chain.State = CommandChainState.Recorded;
+                            chain.DirtyReason |= CommandChainDirtyReason.FrameDataRefreshFailed;
+                        }
+
                         if (!needsRecording)
                         {
                             for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
@@ -5449,8 +5665,24 @@ namespace XREngine.Rendering.Vulkan
                                         frameDataImageIndex,
                                         refreshDraw.Draw,
                                         refreshUniformSlot,
+                                        out string refreshReason,
                                         refreshMaterialUniforms: true))
                                 {
+									_lastReusableFrameDataRefreshFailureReason =
+										$"scheduled chain op={chain.SourceStartIndex + drawIndex}/{ops.Length} mesh='{refreshDraw.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' slot={refreshUniformSlot}: {refreshReason}";
+									if (FrameDataReuseDiagnosticsEnabled)
+									{
+										Debug.VulkanEvery(
+											$"Vulkan.FrameDataReuse.ScheduledChain.{GetHashCode()}",
+											TimeSpan.FromSeconds(1),
+											"[Vulkan] Scheduled command-chain frame-data refresh failed image={0} op={1}/{2} mesh='{3}' drawSlot={4}: {5}",
+											frameDataImageIndex,
+											chain.SourceStartIndex + drawIndex,
+											ops.Length,
+											refreshDraw.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>",
+											refreshUniformSlot,
+											refreshReason);
+									}
                                     needsRecording = true;
                                     break;
                                 }

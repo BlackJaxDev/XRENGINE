@@ -113,18 +113,13 @@ namespace XREngine.Rendering.Vulkan
         private readonly ThreadLocal<CommandBufferRecordingScratch> _commandBufferRecordingScratch =
             new(static () => new CommandBufferRecordingScratch());
         private readonly VulkanFrameWideMeshFrameDataReservationManifest _frameWideMeshFrameDataManifest = new();
+        private long _observedMeshFrameDataManifestGeneration;
         public ulong MeshFrameDataManifestGeneration => _frameWideMeshFrameDataManifest.Generation;
         public long MeshFrameDataManifestPublicationCount => _frameWideMeshFrameDataManifest.PublicationCount;
         public long MeshFrameDataManifestLateRegistrationCount => _frameWideMeshFrameDataManifest.LateRegistrationCount;
         public int MeshFrameDataManifestRendererCount => _frameWideMeshFrameDataManifest.PublishedRendererCount;
         public int MeshFrameDataManifestFamilyCount => _frameWideMeshFrameDataManifest.PublishedFamilyCount;
         public bool MeshFrameDataManifestIsSealed => _frameWideMeshFrameDataManifest.IsSealed;
-        private readonly Dictionary<VkMeshRenderer, int> _refreshMeshDrawSlotsByRendererScratch = new(ReferenceEqualityComparer.Instance);
-        private readonly Dictionary<VkMeshRenderer, int> _dynamicUiMeshDrawSlotsByRendererScratch = new(ReferenceEqualityComparer.Instance);
-        private readonly Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> _refreshMeshDrawSlotsByRendererFamilyScratch =
-            new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
-        private readonly Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> _dynamicUiMeshDrawSlotsByRendererFamilyScratch =
-            new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
         private bool _lastEnsureCommandBufferRecordedPrimary;
         private int _descriptorFrameSlotFrameCountOverride;
         internal int DescriptorFrameSlotFrameCount
@@ -137,6 +132,46 @@ namespace XREngine.Rendering.Vulkan
 
                 return Math.Max(swapChainImages?.Length ?? 0, MAX_FRAMES_IN_FLIGHT);
             }
+        }
+
+        /// <summary>
+        /// Determines whether descriptor contents for a frame-data slot can be rewritten without
+        /// <c>UPDATE_AFTER_BIND</c>. Desktop slots are serialized by their acquired swapchain
+        /// image timeline value; OpenXR reserves distinct frame-data slots and serializes them
+        /// through the corresponding frame-slot timeline value.
+        /// </summary>
+        /// <remarks>
+        /// Callers must use the exact frame-data slot that their recorded command buffer binds.
+        /// This is intentionally stricter than descriptor-pool ownership: Vulkan permits an
+        /// ordinary descriptor update only after every submission that can reference that slot
+        /// has completed.
+        /// </remarks>
+        internal bool CanUpdateCompletedDescriptorFrameSlot(int frameDataSlot)
+        {
+            if (frameDataSlot < 0 || frameDataSlot >= DescriptorFrameSlotFrameCount ||
+                _graphicsTimelineSemaphore.Handle == 0)
+            {
+                return false;
+            }
+
+            ulong completionValue;
+            if (_swapchainImageTimelineValues is { } swapchainImageValues &&
+                (uint)frameDataSlot < (uint)swapchainImageValues.Length)
+            {
+                completionValue = swapchainImageValues[frameDataSlot];
+            }
+            else if (_frameSlotTimelineValues is { } frameSlotValues &&
+                (uint)frameDataSlot < (uint)frameSlotValues.Length)
+            {
+                completionValue = frameSlotValues[frameDataSlot];
+            }
+            else
+            {
+                return false;
+            }
+
+            return completionValue == 0 ||
+                HasTimelineValueCompleted(_graphicsTimelineSemaphore, completionValue);
         }
 
         private bool EnsureDescriptorFrameSlotFrameCountFloor(int frameSlotCount)
@@ -158,8 +193,6 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
         }
-        private int _refreshMeshDrawSlotCapacityHint = 1;
-        private int _dynamicUiMeshDrawSlotCapacityHint = 1;
         private string? _lastReusableFrameDataRefreshFailureReason;
         private static readonly bool BloomVulkanDiagnosticsEnabled =
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.BloomDiag), "1", StringComparison.Ordinal);

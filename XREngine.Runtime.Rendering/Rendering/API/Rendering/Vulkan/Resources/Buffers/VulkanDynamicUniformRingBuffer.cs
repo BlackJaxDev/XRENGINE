@@ -173,9 +173,15 @@ public unsafe partial class VulkanRenderer
     /// while draw-specific data is selected with a dynamic offset.
     /// </summary>
     private const ulong DynamicUniformRingBufferCapacity = 32 * 1024 * 1024;
+    private static readonly bool? DynamicUniformBufferEnabledOverride =
+        ReadOptionalBooleanEnvironmentOverride(XREngineEnvironmentVariables.VulkanDynamicUniformBuffer);
+
+    private bool DynamicUniformBufferEnabled =>
+        DynamicUniformBufferEnabledOverride ??
+        RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.DynamicUniformBufferEnabled;
 
     internal bool MeshFrameDataArenaEnabled =>
-        RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.DynamicUniformBufferEnabled &&
+        DynamicUniformBufferEnabled &&
         !IsDescriptorHeapDrawBindingActive &&
         _dynamicUniformRingBuffers.Length > 0;
 
@@ -412,8 +418,16 @@ public unsafe partial class VulkanRenderer
 
     private void InitializeDynamicUniformRingBuffers()
     {
-        if (!RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.DynamicUniformBufferEnabled)
+        if (!DynamicUniformBufferEnabled)
+        {
+            if (DynamicUniformBufferEnabledOverride is false)
+            {
+                Debug.Vulkan(
+                    "[Vulkan] Dynamic uniform arena disabled by {0}=0 for this process.",
+                    XREngineEnvironmentVariables.VulkanDynamicUniformBuffer);
+            }
             return;
+        }
 
         int count = swapChainImages?.Length ?? 0;
         if (count == 0) return;
@@ -429,7 +443,7 @@ public unsafe partial class VulkanRenderer
 
     private void EnsureDynamicUniformRingBufferCapacity(int count)
     {
-        if (!RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.DynamicUniformBufferEnabled ||
+        if (!DynamicUniformBufferEnabled ||
             count <= _dynamicUniformRingBuffers.Length)
         {
             return;
@@ -460,6 +474,7 @@ public unsafe partial class VulkanRenderer
             Interlocked.Exchange(ref _meshFrameDataReservationGeneration, 0);
         }
         _frameWideMeshFrameDataManifest.Reset();
+        Volatile.Write(ref _observedMeshFrameDataManifestGeneration, 0);
         PublishFrameWideMeshFrameDataManifestGauges();
         PublishMeshFrameDataArenaGauges();
     }

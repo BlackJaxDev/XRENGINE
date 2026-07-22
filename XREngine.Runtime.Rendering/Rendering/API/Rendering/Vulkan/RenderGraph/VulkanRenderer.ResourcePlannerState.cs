@@ -596,8 +596,13 @@ public unsafe partial class VulkanRenderer
 
     private ulong ResolveFrameOpContextDescriptorGeneration(RenderResourceRegistry? registry)
     {
-        ulong descriptorTableGeneration = unchecked((ulong)Math.Max(Volatile.Read(ref _vulkanDescriptorTableGeneration), 0L));
-        return MixSignature(descriptorTableGeneration, unchecked((uint)ComputeResourceRegistrySignature(registry)));
+        // _vulkanDescriptorTableGeneration is a crash-breadcrumb counter. It advances for
+        // descriptor content writes while the same frame is being prepared, so treating it
+        // as a recording dependency makes otherwise identical frame ops acquire a different
+        // primary-command-buffer key every frame. Descriptor-set identity and legal
+        // completed-slot content refresh are validated per draw before a cached primary is
+        // reused; the frame context only needs the immutable registry contract here.
+        return unchecked((ulong)(uint)ComputeResourceRegistrySignature(registry));
     }
 
     internal static ulong ComputeFrameOpContextRecordingFingerprint(in FrameOpContext context)
@@ -4193,11 +4198,42 @@ public unsafe partial class VulkanRenderer
         return hash.ToHashCode();
     }
 
+    private sealed class PassMetadataSignatureCacheEntry
+    {
+        public int RevisionStamp = int.MinValue;
+        public int Signature;
+    }
+
+    // Frame-op contexts are copied into every draw packet, but the pipeline pass metadata
+    // behind them is immutable until a pass revision changes. Without this cache the planner
+    // walks every pass, usage, dependency, and schema once per draw while constructing planner
+    // keys; a clean command-chain replay can consequently spend more CPU hashing than drawing.
+    private static readonly ConditionalWeakTable<IReadOnlyCollection<RenderPassMetadata>, PassMetadataSignatureCacheEntry>
+        PassMetadataSignatureCache = new();
+
     private static int ComputePassMetadataSignature(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
         if (passMetadata is null || passMetadata.Count == 0)
             return 0;
 
+        int revisionStamp = ComputePassMetadataRevisionStamp(passMetadata);
+        PassMetadataSignatureCacheEntry cacheEntry = PassMetadataSignatureCache.GetValue(
+            passMetadata,
+            static _ => new PassMetadataSignatureCacheEntry());
+        lock (cacheEntry)
+        {
+            if (cacheEntry.RevisionStamp == revisionStamp)
+                return cacheEntry.Signature;
+
+            int signature = ComputePassMetadataSignatureUncached(passMetadata);
+            cacheEntry.RevisionStamp = revisionStamp;
+            cacheEntry.Signature = signature;
+            return signature;
+        }
+    }
+
+    private static int ComputePassMetadataSignatureUncached(IReadOnlyCollection<RenderPassMetadata> passMetadata)
+    {
         HashCode hash = new();
         hash.Add(passMetadata.Count);
 

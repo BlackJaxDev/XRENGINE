@@ -150,7 +150,8 @@ public sealed partial class XRRenderPipelineInstance
             bool stereoPass,
             XRMaterial? globalMaterialOverride,
             IRuntimeScreenSpaceUserInterface? screenSpaceUI,
-            RenderCommandCollection? meshRenderCommands)
+            RenderCommandCollection? meshRenderCommands,
+            bool applyRenderArea = true)
         {
             WindowViewport = viewport;
             Scene = scene;
@@ -194,7 +195,11 @@ public sealed partial class XRRenderPipelineInstance
             if (SceneCamera is not null)
                 _renderingCameras.Push(SceneCamera);
 
-            _mainAttributeRenderAreaPushed.Push(PushInitialMainRenderArea(viewport, target));
+            // Visibility collection must capture logical view state without touching the
+            // renderer's global viewport/scissor tracker. Deferred Vulkan recording can
+            // run while collection is building the next frame, so mutating that tracker
+            // here would let a collection viewport leak into an unrelated mesh draw.
+            _mainAttributeRenderAreaPushed.Push(applyRenderArea && PushInitialMainRenderArea(viewport, target));
 
             return StateObject.New(PopMainAttributes);
         }
@@ -232,6 +237,10 @@ public sealed partial class XRRenderPipelineInstance
             ScreenSpaceUserInterface = null;
             MeshRenderCommands = null;
             CapturePolicy = RenderCapturePolicy.None;
+            FrameViewSet = null;
+            WorldSnapshot = null;
+            LastVisibilityBatchDecision = null;
+            LastVisibilityContentPolicy = ViewBatchContentPolicy.Exact;
         }
 
         private readonly Stack<bool> _mainAttributeRenderAreaPushed = new();

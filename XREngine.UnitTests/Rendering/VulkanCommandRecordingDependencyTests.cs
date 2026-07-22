@@ -102,8 +102,102 @@ public sealed class VulkanCommandRecordingDependencyTests
     }
 
     [Test]
+    public void DescriptorPublication_DoesNotMasqueradeAsSamplerAllocation()
+    {
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string primaryDependency = Slice(
+            recording,
+            "private static CommandRecordingDependencySignature CaptureCommandRecordingDependencySignature(",
+            "private static void CapturePreparedBindingIdentities(");
+        primaryDependency.ShouldContain("SamplerAllocationGeneration: descriptorBindingIdentity");
+        primaryDependency.ShouldNotContain("SamplerAllocationGeneration: generations.Descriptor");
+
+        string lowering = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string chainDependency = Slice(
+            lowering,
+            "internal static CommandRecordingDependencySignature BuildCommandChainDependencySignature(",
+            "internal static void ValidateReusableCommandChainReferences(");
+        chainDependency.ShouldContain("SamplerAllocationGeneration: packet.DescriptorSnapshot.DescriptorSetSignature");
+        chainDependency.ShouldNotContain("SamplerAllocationGeneration: packet.DescriptorSnapshot.DescriptorGeneration");
+        chainDependency.ShouldContain("DescriptorPublicationGeneration: packet.DescriptorSnapshot.DescriptorGeneration");
+    }
+
+    [Test]
+    public void ProgramBindingIdentity_ScopesPrimaryAndCommandChainReuse()
+    {
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string lowering = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string frameOps = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
+        string manifest = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineVariantManifest.cs");
+
+        recording.ShouldContain("programHash.Add(draw.PreparedProgram?.BindingId ?? 0u);");
+        lowering.ShouldContain("hash.Add(draw.Draw.PreparedProgram?.BindingId ?? 0u);");
+        lowering.ShouldContain("MixSignature(descriptorSetSignature, preparedProgram.BindingId)");
+        lowering.ShouldContain("? unchecked((int)preparedProgram.BindingId)");
+        frameOps.ShouldContain("hash.Add(meshDraw.Draw.PreparedProgram?.BindingId ?? 0u);");
+        manifest.ShouldContain("hash.Add(draw.PreparedProgram?.BindingId ?? 0u);");
+    }
+
+    [Test]
     public void PrimaryReuseCapability_IsEnabledByDependencyValidation()
         => VulkanRenderer.VulkanPrimaryCommandBufferReuseSafe.ShouldBeTrue();
+
+    [Test]
+    public void InlinePrimaryReuse_ReRecordsOnlyForOutputViewportCameraChanges()
+    {
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string fastReuse = Slice(
+            recording,
+            "private bool TryReuseCleanCommandChainPrimaryVariant(",
+            "private bool TryRefreshReusableCommandBufferFrameData(");
+        string cameraPoseDirtyCheck = Slice(
+            recording,
+            "// An inline desktop primary owns the swapchain writer and must be re-recorded",
+            "if (!dirty && IsCommandBufferVariantImageLayoutStateDirty");
+
+        fastReuse.ShouldNotContain("variant.RecordedGenerations.CameraPose != currentGenerations.CameraPose");
+        cameraPoseDirtyCheck.ShouldContain("variant.RecordedGenerations.CameraPose != currentGenerations.CameraPose");
+        cameraPoseDirtyCheck.ShouldContain("!usingCommandChains");
+    }
+
+    [Test]
+    public void CameraPoseReuseKey_IsIndependentOfVisibilityDrawOrdering()
+    {
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string cameraGeneration = Slice(
+            recording,
+            "private static ulong ComputeCameraPoseGeneration(",
+            "private static ulong ComputeFrameDataGeneration(");
+
+        cameraGeneration.ShouldContain("Span<ulong> uniqueCameraPoseSignatures = stackalloc ulong[128]");
+        cameraGeneration.ShouldContain("TryGetPrimaryViewportCameraPoseDraw");
+        cameraGeneration.ShouldContain("IsCameraAttachedToOutputViewport");
+        cameraGeneration.ShouldContain("case IndirectDrawOp indirectDraw");
+        cameraGeneration.ShouldContain("SortCameraPoseSignatures(uniqueCameraPoseSignatures, uniqueCameraPoseCount)");
+        cameraGeneration.ShouldContain("ComputeCameraPoseGenerationConservatively");
+    }
+
+    [Test]
+    public void DescriptorWriteBreadcrumbs_DoNotSplitFrameOpRecordingContexts()
+    {
+        string plannerState = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+        string descriptorGeneration = Slice(
+            plannerState,
+            "private ulong ResolveFrameOpContextDescriptorGeneration(",
+            "internal static ulong ComputeFrameOpContextRecordingFingerprint(");
+
+        descriptorGeneration.ShouldContain("ComputeResourceRegistrySignature(registry)");
+        descriptorGeneration.ShouldContain("return unchecked((ulong)(uint)ComputeResourceRegistrySignature(registry));");
+    }
 
     [Test]
     public void CommandChainsAndSchedules_StoreTheSharedDependencySignature()
@@ -118,6 +212,38 @@ public sealed class VulkanCommandRecordingDependencyTests
         lowering.ShouldContain("schedule.PublishDependencySignature(scheduleDependencySignature)");
         lowering.ShouldContain("affected-family");
         lowering.ShouldContain("affected-range");
+    }
+
+    [Test]
+    public void TransientPrimary_PreservesCurrentSubmitMetadataUntilSubmissionCompletes()
+    {
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string transientMarker = Slice(
+            recording,
+            "private static void MarkCommandBufferVariantTransient(",
+            "private static void MarkCommandBufferVariantDirtyAfterConcurrentInvalidation(");
+
+        transientMarker.ShouldContain("variant.Dirty = true");
+        transientMarker.ShouldContain("variant.DirtyReason = reason");
+        transientMarker.ShouldNotContain("RecordedFrameOpContextFingerprint =");
+        transientMarker.ShouldNotContain("RecordedDependencySignature =");
+        transientMarker.ShouldNotContain("RecordedGenerations =");
+    }
+
+    [Test]
+    public void InvalidatedCommandBufferDrain_UsesCanonicalResetPredicate()
+    {
+        string allocation = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs");
+        string drain = Slice(
+            allocation,
+            "private void DrainInvalidatedCommandBufferRecordings(",
+            "private void AllocateCommandBufferDirtyFlags(");
+
+        drain.ShouldContain("if (!CanResetVulkanCommandBuffer(commandBuffer, out _))");
+        drain.ShouldNotContain("lifetime.QueuedSubmissionCount != 0");
+        drain.ShouldNotContain("UpdateVulkanResourceCompletionState_NoLock(commandResource)");
     }
 
     [TestCase(0UL, 1UL, 256UL)]
@@ -163,6 +289,15 @@ public sealed class VulkanCommandRecordingDependencyTests
             relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{relativePath}'.");
         return File.ReadAllText(path).Replace("\r\n", "\n");
+    }
+
+    private static string Slice(string source, string startMarker, string endMarker)
+    {
+        int start = source.IndexOf(startMarker, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, $"Expected start marker '{startMarker}'.");
+        int end = source.IndexOf(endMarker, start + startMarker.Length, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start, $"Expected end marker '{endMarker}'.");
+        return source[start..end];
     }
 
     private static string ResolveRepoRoot()
