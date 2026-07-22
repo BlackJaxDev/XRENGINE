@@ -183,21 +183,15 @@ namespace XREngine.Rendering.Vulkan
             bool hasDynamicUiBatchTextOverlay = dynamicUiBatchTextOpCount > 0;
 
             CommandBufferCacheVariant? reusableDirtyMatch = null;
-            CommandBufferCacheVariant? reusableCommandChainPrimary = null;
             for (int i = 0; i < variants.Count; i++)
             {
                 CommandBufferCacheVariant variant = variants[i];
                 if (useCommandChainKey)
                 {
-                    if (reusableCommandChainPrimary is null &&
-                        (variant.CommandChainScheduleSignature != 0 || variant.CommandChainPrimaryGroupCount != 0))
-                    {
-                        reusableCommandChainPrimary = variant;
-                    }
-
                     if (variant.CommandChainScheduleSignature == commandChainSchedule!.StructuralSignature &&
                         variant.CommandChainPrimaryGroupSignature == commandChainPrimaryGroupSignature &&
                         variant.CommandChainPrimaryGroupCount == commandChainPrimaryGroupCount &&
+                        variant.FrameOpsSignature == frameOpsSignature &&
                         variant.DynamicUiSignature == dynamicUiBatchTextSignature &&
                         variant.PreserveSwapchainForOverlay == preserveSwapchainForOverlay &&
                         (variant.DynamicUiOpCount > 0) == hasDynamicUiBatchTextOverlay)
@@ -216,12 +210,6 @@ namespace XREngine.Rendering.Vulkan
 
             if (reusableDirtyMatch is not null)
                 return reusableDirtyMatch;
-
-            // Command-chain primaries are cheap execution lists, not whole-frame
-            // cache variants. Re-record the one primary owned by this frame slot
-            // when packet membership changes instead of caching every camera view.
-            if (useCommandChainKey && reusableCommandChainPrimary is not null)
-                return reusableCommandChainPrimary;
 
             if (variants.Count < PrimaryCommandBufferVariantCapacity)
             {
@@ -496,28 +484,15 @@ namespace XREngine.Rendering.Vulkan
                 bool reset = false;
                 lock (_vulkanResourceLifetimeLock)
                 {
-                    if (_commandBufferTrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
-                    {
-                        lock (batch)
-                        {
-                            if (batch.IsRecording || batch.QueuedSubmissionCount != 0)
-                                continue;
-                        }
-                    }
-
-                    if (_vulkanCommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? lifetime) &&
-                        lifetime.QueuedSubmissionCount != 0)
-                    {
+                    // Use the complete reset predicate here. The former partial copy omitted
+                    // PendingRetirement, then called the throwing wrapper and turned a normal
+                    // deferred reset into a permanent render-loop exception.
+                    if (!CanResetVulkanCommandBuffer(commandBuffer, out _))
                         continue;
-                    }
 
-                    if (_vulkanResourceLifetimes.TryGetValue(
-                            ResourceKey(ObjectType.CommandBuffer, handle),
-                            out VulkanResourceLifetimeRecord? commandResource) &&
-                        !UpdateVulkanResourceCompletionState_NoLock(commandResource))
-                    {
-                        continue;
-                    }
+                    _vulkanCommandBufferLifetimes.TryGetValue(
+                        handle,
+                        out VulkanCommandBufferLifetimeRecord? lifetime);
 
                     Result result = ResetVulkanCommandBufferTracked(commandBuffer);
                     if (result != Result.Success)

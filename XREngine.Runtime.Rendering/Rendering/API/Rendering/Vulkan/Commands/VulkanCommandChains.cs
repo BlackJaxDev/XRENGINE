@@ -376,6 +376,7 @@ internal sealed class CommandChain(CommandChainKey key)
     public ulong InstanceCountSignature { get; set; }
     public int DescriptorSetCount { get; set; }
     public ulong DescriptorSetSignature { get; set; }
+    public ulong RecordedUniformSlotSignature { get; set; }
     public bool FrameDataRefreshTouchedDescriptors { get; set; }
     public int SourceStartIndex { get; set; } = -1;
     public int SourceCount { get; set; }

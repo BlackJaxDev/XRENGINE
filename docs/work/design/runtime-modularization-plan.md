@@ -16,6 +16,7 @@ Implementation companions:
 - Phase 2 is complete and its implementation record has been retired from `docs/work`.
 - [Runtime Modularization Phase 3 TODO](../todo/runtime-modularization-phase3-todo.md) (remaining Runtime.Core carve-out and non-rendering prerequisites)
 - [Runtime Modularization Phase 4 TODO](../todo/runtime-modularization-phase4-todo.md) (remaining rendering move and rendering-boundary cleanup)
+- [OpenGL And Vulkan Rendering Hot Reload TODO](../todo/rendering/rendering-backend-hot-reload-todo.md) (backend DLL extraction, collectible editor loading, and renderer replacement)
 
 > Status note (2026-07-14): Phases 0 through 2 are complete. Much of the rendering and subsystem-adapter work originally assigned to later design phases landed early while dependencies were lowered. This document remains the target-architecture and migration-rationale reference; use the Phase 3 and Phase 4 todo documents above for current execution status. Some historical baseline sections below intentionally no longer match the repository.
 
@@ -143,7 +144,11 @@ The recommended end state is:
 - `XREngine.Runtime.Core`
   - pure engine/runtime loop and engine-owned runtime model.
 - `XREngine.Runtime.Rendering`
-  - rendering API, render thread, render pipelines, windows/viewports, materials/shaders/meshes, render sync, renderable scene pieces.
+  - backend-neutral rendering kernel, render thread, render pipelines, windows/viewports, materials/shaders/meshes, render sync, renderable scene pieces, renderer contracts, and backend-module catalog.
+- `XREngine.Runtime.Rendering.OpenGL`
+  - concrete OpenGL renderer, GL API wrappers, GL resource/program/pipeline implementation, GL ImGui/platform integration, and OpenGL-specific native/XR bridges.
+- `XREngine.Runtime.Rendering.Vulkan`
+  - concrete Vulkan renderer, Vulkan API wrappers, device/swapchain/command/resource/descriptor/pipeline implementation, Vulkan ImGui integration, and Vulkan-specific native/XR bridges.
 - `XREngine.Runtime.AnimationIntegration`
   - scene/components that bind `XREngine.Animation` into runtime world objects.
 - `XREngine.Runtime.AudioIntegration`
@@ -195,6 +200,14 @@ XREngine.Runtime.Core
 XREngine.Runtime.Rendering
     -> XREngine.Runtime.Core, XREngine.Data, XREngine.Extensions
 
+XREngine.Runtime.Rendering.OpenGL
+    -> XREngine.Runtime.Rendering, XREngine.Runtime.Core,
+       XREngine.Data, XREngine.Extensions
+
+XREngine.Runtime.Rendering.Vulkan
+    -> XREngine.Runtime.Rendering, XREngine.Runtime.Core,
+       XREngine.Data, XREngine.Extensions
+
 XREngine.Runtime.AnimationIntegration
     -> XREngine.Runtime.Core, XREngine.Runtime.Rendering, XREngine.Animation, XREngine.Data
 
@@ -234,6 +247,11 @@ XREngine.VRClient
 - `XREngine.Runtime.Core -> XREngine.Input`
 - `XREngine.Runtime.Core -> XREngine.Modeling`
 - `XREngine.Runtime.Rendering -> XREngine.Editor`
+- `XREngine.Runtime.Rendering -> XREngine.Runtime.Rendering.OpenGL`
+- `XREngine.Runtime.Rendering -> XREngine.Runtime.Rendering.Vulkan`
+- `XREngine.Runtime.Rendering.OpenGL -> XREngine.Runtime.Rendering.Vulkan`
+- `XREngine.Runtime.Rendering.Vulkan -> XREngine.Runtime.Rendering.OpenGL`
+- either concrete rendering backend depending on Editor or an application executable
 - `XREngine.Animation`, `XREngine.Audio`, `XREngine.Input`, or `XREngine.Modeling` depending on any runtime or editor assembly
 - any production runtime project depending on `XREngine.UnitTests`
 
@@ -245,6 +263,8 @@ Recommended project names:
 
 - `XREngine.Runtime.Core`
 - `XREngine.Runtime.Rendering`
+- `XREngine.Runtime.Rendering.OpenGL`
+- `XREngine.Runtime.Rendering.Vulkan`
 - `XREngine.Runtime.AnimationIntegration`
 - `XREngine.Runtime.AudioIntegration`
 - `XREngine.Runtime.InputIntegration`
@@ -282,13 +302,43 @@ Owns:
 - `XRWindow`, `XRViewport`, render context, pipelines, render passes, materials, shaders, mesh runtime types, texture runtime types, render synchronization, world rendering publication.
 - rendering-facing scene components and renderable runtime objects.
 - render-thread state publication and render statistics.
+- stable renderer lifecycle, capability, factory, backend-module metadata/catalog, and renderer-replacement contracts.
 
 Should not own:
 
+- concrete OpenGL or Vulkan renderer implementations and API wrappers,
+- OpenGL/Vulkan-only packages, native libraries, generated bindings, or content once no stable consumer remains,
 - input device implementations,
 - audio runtime objects,
 - animation data structures,
 - bootstrap/test-world composition.
+
+### XREngine.Runtime.Rendering.OpenGL
+
+Owns:
+
+- `OpenGLRenderer` and every concrete GL API wrapper.
+- OpenGL context-facing resource, shader, program, pipeline, material, mesh, framebuffer, query, upload, readback, ImGui, and diagnostics implementation.
+- OpenGL-specific OpenXR, UI/video, shared-context worker, WGL, and native callback integration.
+- OpenGL-only packages, generated bindings, native assets, and static production registration.
+
+The project is a leaf backend module. It may depend downward on the stable
+rendering kernel and approved lower libraries, but the stable kernel must not
+reference it. Editor/CoreCLR builds may load it in a collectible
+`AssemblyLoadContext`; production/AOT builds use explicit static registration.
+
+### XREngine.Runtime.Rendering.Vulkan
+
+Owns:
+
+- `VulkanRenderer` and every concrete Vulkan API wrapper.
+- Vulkan device, swapchain, frame loop, command recording, resource lifetime,
+  render graph, descriptor, shader, pipeline, ImGui, and diagnostics implementation.
+- Vulkan-specific OpenXR, VMA, Streamline/DLSS, video, generated binding, native callback, and device integration.
+- Vulkan-only packages, generated bindings, native assets, and static production registration.
+
+The project is a leaf backend module with the same dependency and loading rules
+as OpenGL. The two backend modules must never reference each other.
 
 ### XREngine.Runtime.AnimationIntegration
 
@@ -434,10 +484,22 @@ The split should follow this rule:
 
 #### Move into XREngine.Runtime.Rendering
 
-- most of `Rendering/`
+- backend-neutral portions of `Rendering/`
 - `XRWindow`, viewport handling, render thread coordination
 - render pipelines, materials, shaders, GPU resource abstractions
 - rendering-facing scene components and render synchronization code
+
+#### Move into XREngine.Runtime.Rendering.OpenGL
+
+- `Rendering/API/Rendering/OpenGL/**`
+- OpenGL-specific ImGui/platform-window, OpenXR, UI/video, shader compiler,
+  upload/readback, package, generated binding, and native integration code
+
+#### Move into XREngine.Runtime.Rendering.Vulkan
+
+- `Rendering/API/Rendering/Vulkan/**`
+- Vulkan-specific ImGui, OpenXR, VMA, Streamline/DLSS, video, pipeline/compiler,
+  package, generated binding, and native integration code
 
 #### Move into XREngine.Runtime.AnimationIntegration
 
@@ -548,11 +610,21 @@ Temporary measure:
 
 ### Phase 4 - Move Rendering
 
-Move rendering code into `XREngine.Runtime.Rendering`.
+Move backend-neutral rendering code into `XREngine.Runtime.Rendering` and
+extract the concrete implementations into
+`XREngine.Runtime.Rendering.OpenGL` and
+`XREngine.Runtime.Rendering.Vulkan` leaf modules.
 
 During this phase, any type that currently forces `Engine` core code to know concrete rendering types should be inverted behind interfaces or moved wholly into the rendering assembly.
 
 The current `RuntimeRenderingHostServices` facade is a transitional bridge, not the desired final contract shape. It may remain as a compatibility/composition entry point while code moves, but the broad `IRuntimeRenderingHostServices` surface should be split into smaller capability-focused services as the rendering host settles. Preferred slices include render settings, frame timing, scheduling, diagnostics/logging, render statistics, debug drawing, asset and texture IO, renderer/window factories, VR/OpenXR presentation, and backend interop. Optional telemetry and debug capabilities should have explicit no-op defaults; required capabilities such as renderer creation should remain fail-fast when no concrete host is installed.
+
+Renderer creation must ultimately use a stable backend-module catalog/factory
+rather than direct construction of concrete renderer types. The stable rendering
+kernel must not reference either backend project. Applications may package both
+backend DLLs and use static registration for production/AOT; editor/CoreCLR
+builds may additionally load backend generations through collectible assembly
+contexts as specified by the renderer hot-reload TODO.
 
 Important rule:
 
@@ -596,7 +668,8 @@ Current risk:
 
 Needed change:
 
-- move concrete rendering implementation to `Runtime.Rendering`,
+- move backend-neutral rendering implementation to `Runtime.Rendering` and
+  concrete API implementations to the OpenGL/Vulkan leaf modules,
 - keep only narrow runtime contracts in `Data` or `Runtime.Core`-owned abstractions.
 - treat any large host-service facade as a temporary migration adapter and split it into smaller contracts before the final `XRENGINE` removal.
 
@@ -735,9 +808,11 @@ This delivers immediate architectural value with relatively low blast radius.
 
 After server/editor decoupling, the next slice should be:
 
-1. create `XREngine.Runtime.Core` and `XREngine.Runtime.Rendering`
+1. create `XREngine.Runtime.Core`, `XREngine.Runtime.Rendering`, and the two
+   concrete rendering backend projects
 2. move the smallest coherent runtime-core set out of `XRENGINE`
-3. move rendering implementation out of `XRENGINE`
+3. move rendering implementation out of `XRENGINE` and separate the stable
+   rendering kernel from the concrete backend modules
 4. keep the remaining subsystem bridges in the old assembly temporarily
 
 Only after that should the animation, audio, input, and modeling adapter assemblies be carved out.
@@ -751,6 +826,8 @@ This refactor is complete when all of the following are true:
 - the old `XRENGINE` assembly is either removed or reduced to a thin temporary facade with no meaningful implementation.
 - `XREngine.Runtime.Core` does not reference animation, audio, input, or modeling feature libraries.
 - rendering, animation integration, audio integration, input integration, and modeling bridge code live in explicit assemblies.
+- OpenGL and Vulkan implementation code lives in separate leaf backend DLLs,
+  while `XREngine.Runtime.Rendering` remains the backend-neutral stable kernel.
 - Editor, Server, VRClient, and targeted tests all build and launch through the new graph.
 
 ## Recommendation
@@ -758,6 +835,7 @@ This refactor is complete when all of the following are true:
 Proceed with this refactor in two deliberate waves:
 
 1. server/editor decoupling through `XREngine.Runtime.Bootstrap`
-2. `XRENGINE` decomposition into `Runtime.Core`, `Runtime.Rendering`, and subsystem adapter assemblies
+2. `XRENGINE` decomposition into `Runtime.Core`, the stable `Runtime.Rendering`
+   kernel, OpenGL/Vulkan leaf modules, and subsystem adapter assemblies
 
 That sequence removes the most obvious bad dependency first, establishes the target graph early, and avoids trying to solve every architectural issue in a single move.

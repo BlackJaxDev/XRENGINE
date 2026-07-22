@@ -440,11 +440,12 @@ namespace XREngine.Rendering.Vulkan
         {
             for (int i = 0; i < ops.Length; i++)
             {
-                // The count and argument buffers are produced by compute work every
-                // frame. Re-recording the primary preserves the producer/consumer
-                // dependency chain and avoids resubmitting a cached primary across
-                // mutable GPU publications.
-                if (ops[i] is ComputeDispatchOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp)
+                // A generic compute dispatch is safe to replay when its captured
+                // binding/dependency signature is unchanged. Only indirect consumers
+                // encode GPU-written command/count buffers whose contents change every
+                // frame; those must keep the conservative fresh-primary path until the
+                // producer publication lifetime is fully represented in the reuse key.
+                if (ops[i] is IndirectDrawOp or MeshTaskDispatchIndirectCountOp)
                     return true;
             }
 

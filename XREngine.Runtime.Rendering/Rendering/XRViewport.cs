@@ -963,7 +963,8 @@ namespace XREngine.Rendering
                 stereoPass: stereoFamily,
                 globalMaterialOverride: null,
                 screenSpaceUI: null,
-                meshRenderCommands: commandCollection);
+                meshRenderCommands: commandCollection,
+                applyRenderArea: false);
 
             if (visualScene is VisualScene3D scene3D)
             {

@@ -544,7 +544,7 @@ public sealed class VulkanCommandChainDataModelTests
         textureSource.ShouldContain("Sampler = _sampler");
         textureSource.ShouldContain("if (!TryRestorePhysicalImageViewCache(_physicalGroup, current))");
         descriptorKeySource.ShouldContain("ulong LayoutFingerprint");
-        descriptorKeySource.ShouldNotContain("ProgramBindingId");
+        descriptorKeySource.ShouldContain("uint ProgramBindingId");
         descriptorKeySource.ShouldContain("ulong BindingIdentityFingerprint");
         descriptorKeySource.ShouldContain("ulong ImmutableResourceFingerprint");
         descriptorKeySource.ShouldContain("int DescriptorFrameSlotCount");
@@ -553,6 +553,10 @@ public sealed class VulkanCommandChainDataModelTests
         descriptorSource.ShouldContain("hash.Add((int)info.ImageLayout);");
         descriptorSource.ShouldContain("AppendComponent(builder, \"resourceAllocator\", unchecked((ulong)Renderer.ResourceAllocatorIdentity));");
         descriptorSource.ShouldContain("DescriptorAllocationKey allocationKey = new(");
+        descriptorSource.ShouldContain("_program.BindingId,");
+        descriptorSource.ShouldContain("DescriptorAllocationMatchesProgram(cachedAllocation)");
+        descriptorSource.ShouldContain("DescriptorAllocationMatchesProgram(activeAllocation)");
+        descriptorSource.ShouldContain("ReferenceEquals(allocation.Program, _program)");
         descriptorSource.ShouldContain("viewFamilyIdentity,");
         descriptorSource.ShouldContain("immutableResourceFingerprint);");
         descriptorSource.ShouldContain("EnsureDescriptorSlotReady(cachedAllocation, material, bindings, frameIndex, drawUniformSlot, resourceFingerprint)");
@@ -1299,6 +1303,7 @@ public sealed class VulkanCommandChainDataModelTests
         VulkanRenderer.EvaluateCommandChainDirtyReason(chain, packet)
             .ShouldBe(
                 CommandChainDirtyReason.Structure |
+                CommandChainDirtyReason.ResourcePlan |
                 CommandChainDirtyReason.DescriptorGeneration);
         VulkanRenderer.TryRefreshReusableCommandChainFrameData(chain, packet)
             .ShouldBeFalse();
@@ -1476,7 +1481,7 @@ public sealed class VulkanCommandChainDataModelTests
             baseline.ResourcePlanSnapshot.PhysicalImageSignature + 1,
             baseline.ResourcePlanSnapshot.FramebufferSignature + 1);
         VulkanRenderer.EvaluateCommandChainDirtyReason(resizeChain, resize)
-            .ShouldBe(CommandChainDirtyReason.ResourcePlan);
+            .ShouldBe(CommandChainDirtyReason.Structure | CommandChainDirtyReason.ResourcePlan);
 
         CommandChain hotReloadChain = CreateRecordedChain(baseline);
         RenderPacket hotReload = CreatePacket(
@@ -1491,7 +1496,7 @@ public sealed class VulkanCommandChainDataModelTests
             baseline.ResourcePlanSnapshot.PhysicalImageSignature,
             baseline.ResourcePlanSnapshot.FramebufferSignature);
         VulkanRenderer.EvaluateCommandChainDirtyReason(hotReloadChain, hotReload)
-            .ShouldBe(CommandChainDirtyReason.PipelineGeneration);
+            .ShouldBe(CommandChainDirtyReason.Structure | CommandChainDirtyReason.PipelineGeneration);
     }
 
     [Test]
@@ -1611,6 +1616,7 @@ public sealed class VulkanCommandChainDataModelTests
 
         VulkanRenderer.EvaluateCommandChainDirtyReason(chain, packet)
             .ShouldBe(
+                CommandChainDirtyReason.Structure |
                 CommandChainDirtyReason.ResourcePlan |
                 CommandChainDirtyReason.DescriptorGeneration |
                 CommandChainDirtyReason.PipelineGeneration);
@@ -1633,7 +1639,7 @@ public sealed class VulkanCommandChainDataModelTests
             volatility: RenderPacketVolatility.FrameDataOnly);
 
         VulkanRenderer.EvaluateCommandChainDirtyReason(chain, packet)
-            .ShouldBe(CommandChainDirtyReason.ResourcePlan);
+            .ShouldBe(CommandChainDirtyReason.Structure | CommandChainDirtyReason.ResourcePlan);
     }
 
     [Test]
@@ -1752,7 +1758,7 @@ public sealed class VulkanCommandChainDataModelTests
             draws: [CreateDrawPacket(instanceCount: 2), CreateDrawPacket(instanceCount: 3)]);
 
         VulkanRenderer.EvaluateCommandChainDirtyReason(chain, packet)
-            .ShouldBe(CommandChainDirtyReason.Structure);
+            .ShouldBe(CommandChainDirtyReason.Structure | CommandChainDirtyReason.ResourcePlan);
     }
 
     [Test]
@@ -1828,15 +1834,14 @@ public sealed class VulkanCommandChainDataModelTests
     [Test]
     public void ValidatePrimaryCommandChainSchedule_RequiresStaticGroupsBeforeOverlayGroups()
     {
-        VulkanRenderer.ClearOp firstStatic = CreateClearOp(passIndex: 0);
-        VulkanRenderer.ClearOp secondStatic = CreateClearOp(passIndex: 0);
+        VulkanRenderer.MeshDrawOp firstStatic = CreateMeshDrawOp(default, passIndex: 0);
+        VulkanRenderer.MeshDrawOp secondStatic = CreateMeshDrawOp(default, passIndex: 0);
         CommandChainSchedule valid = new(
             structuralSignature: 0x100,
             resourcePlanRevision: 0x200,
             groups: new[]
             {
                 CreateGroup(passIndex: 0, targetIdentity: 0, dynamicOverlay: false, chainCount: 2),
-                CreateGroup(passIndex: 10, targetIdentity: 0, dynamicOverlay: true, chainCount: 1),
             });
         CommandChainSchedule invalid = new(
             structuralSignature: 0x101,
@@ -2119,7 +2124,10 @@ public sealed class VulkanCommandChainDataModelTests
             InstanceCountSignature = VulkanRenderer.ComputePacketInstanceCountSignature(packet),
             DescriptorSetCount = packet.DescriptorSnapshot.DescriptorSetCount,
             DescriptorSetSignature = packet.DescriptorSnapshot.DescriptorSetSignature,
+            SourceStartIndex = packet.SourceStartIndex,
+            SourceCount = packet.SourceCount,
         };
+        chain.DependencySignature = VulkanRenderer.BuildCommandChainDependencySignature(packet, chain.Key);
 
         return chain;
     }

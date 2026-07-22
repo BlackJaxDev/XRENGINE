@@ -563,6 +563,250 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     }
 
     [Test]
+    public void FrameWideManifest_GrowthAbovePublishedCapacityRelocatesFamilyAndAdvancesGeneration()
+    {
+        var renderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+            typeof(VulkanRenderer.VkMeshRenderer));
+        var primaryFamily = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(
+            2,
+            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
+            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+            10,
+            20,
+            30,
+            40,
+            50,
+            0,
+            false,
+            false);
+        var overlayFamily = primaryFamily with
+        {
+            StreamKind = VulkanRenderer.EVulkanMeshFrameDataStreamKind.DynamicUi,
+        };
+        var requirements = new Dictionary<VulkanRenderer.VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
+        var rendererFamilies = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance)
+        {
+            [new(renderer, primaryFamily)] = 4,
+            [new(renderer, overlayFamily)] = 1,
+        };
+        var familyStrides = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>
+        {
+            [primaryFamily] = 4,
+            [overlayFamily] = 1,
+        };
+        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+        VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
+
+        manifest.TryRegister(
+                100,
+                requirements,
+                rendererFamilies,
+                familyStrides,
+                familyBases,
+                sealAfterRegister: true,
+                out ulong firstGeneration,
+                out _)
+            .ShouldBeTrue();
+        int firstPrimaryBase = familyBases[new(renderer, primaryFamily)];
+
+        rendererFamilies[new(renderer, primaryFamily)] = 5;
+        familyStrides[primaryFamily] = 5;
+        manifest.TryRegister(
+                100,
+                requirements,
+                rendererFamilies,
+                familyStrides,
+                familyBases,
+                sealAfterRegister: true,
+                out _,
+                out string lateReason)
+            .ShouldBeFalse();
+        lateReason.ShouldContain("after frame-wide manifest generation");
+
+        manifest.TryRegister(
+                101,
+                requirements,
+                rendererFamilies,
+                familyStrides,
+                familyBases,
+                sealAfterRegister: true,
+                out ulong secondGeneration,
+                out _)
+            .ShouldBeTrue();
+
+        secondGeneration.ShouldBeGreaterThan(firstGeneration);
+        familyBases[new(renderer, primaryFamily)].ShouldNotBe(firstPrimaryBase);
+    }
+
+    [Test]
+    public void FrameWideManifestFamilyRelocation_InvalidatesEveryBakedDynamicOffsetCache()
+    {
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string lowering = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+
+        recording.ShouldContain("if (registered && manifestLayoutChanged)\n                ObserveMeshFrameDataManifestGeneration(manifestGeneration);");
+        recording.ShouldContain("InvalidateCommandChainSecondaryCommandBuffersForFrameDataLayoutChange()");
+        recording.ShouldContain("MarkOpenXrPrimaryCommandBufferVariantsDirty()");
+        recording.ShouldContain("MarkCommandBuffersDirty(\"mesh frame-data layout generation changed\")");
+        AssertOrdered(
+            recording,
+            "if (!TryRegisterFrameWideMeshFrameDataRequirements(\n                    ops,\n                    dynamicUiBatchTextOps,",
+            "if (!imageForcedDirty && HaveCommandBuffersDirtiedSince(ensureStartDirtyGeneration))",
+            "TryReuseLastSwapchainWriterVariant(",
+            "TryReuseCleanCommandChainPrimaryVariant(");
+        lowering.ShouldContain(
+            "InvalidateCommandChainSecondaryCommandBuffersForFrameDataLayoutChange()\n        => InvalidateCommandChainSecondaryCommandBuffers(CommandChainDirtyReason.Structure)");
+    }
+
+    [Test]
+    public void FrameWideManifest_AppendOnlyFamilyPublicationDoesNotRelocateExistingOffsets()
+    {
+        var renderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+            typeof(VulkanRenderer.VkMeshRenderer));
+        var primaryFamily = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(
+            0,
+            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
+            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+            10,
+            20,
+            30,
+            40,
+            50,
+            0,
+            false,
+            false);
+        var appendedFamily = primaryFamily with
+        {
+            ContextKind = VulkanRenderer.EVulkanFrameOpContextKind.Shadow,
+            OutputTargetIdentity = 41,
+        };
+        var requirements = new Dictionary<VulkanRenderer.VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
+        var rendererFamilies = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance)
+        {
+            [new(renderer, primaryFamily)] = 1,
+        };
+        var familyStrides = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>
+        {
+            [primaryFamily] = 1,
+        };
+        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+        VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
+
+        manifest.TryRegister(
+                100,
+                requirements,
+                rendererFamilies,
+                familyStrides,
+                familyBases,
+                sealAfterRegister: true,
+                out _,
+                out bool initialLayoutChanged,
+                out _)
+            .ShouldBeTrue();
+        initialLayoutChanged.ShouldBeFalse();
+        int primaryBase = familyBases[new(renderer, primaryFamily)];
+
+        rendererFamilies.Clear();
+        rendererFamilies[new(renderer, primaryFamily)] = 1;
+        rendererFamilies[new(renderer, appendedFamily)] = 1;
+        familyStrides[appendedFamily] = 1;
+        manifest.TryRegister(
+                101,
+                requirements,
+                rendererFamilies,
+                familyStrides,
+                familyBases,
+                sealAfterRegister: true,
+                out _,
+                out bool appendOnlyLayoutChanged,
+                out _)
+            .ShouldBeTrue();
+
+        appendOnlyLayoutChanged.ShouldBeFalse();
+        familyBases[new(renderer, primaryFamily)].ShouldBe(primaryBase);
+        familyBases[new(renderer, appendedFamily)].ShouldBeGreaterThanOrEqualTo(primaryBase + 4);
+    }
+
+    [Test]
+    public void ReusableDescriptorRefresh_IndexesDescriptorSetsByFrameNotDynamicUniformSlot()
+    {
+        string descriptors = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
+        const string methodStart = "private bool TryActivateReusableDescriptorSetsForCapturedResources";
+        const string methodEnd = "private bool TryActivateReusableDescriptorSetsFast";
+        int start = descriptors.IndexOf(methodStart, StringComparison.Ordinal);
+        int end = descriptors.IndexOf(methodEnd, start, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        end.ShouldBeGreaterThan(start);
+
+        string capturedReuse = descriptors[start..end];
+        capturedReuse.ShouldContain(
+            "ResolveDescriptorFrameIndex(currentFrameIndex, allocation.Sets.Length)");
+        capturedReuse.ShouldContain(
+            "ResolveDescriptorFrameIndex(frameIndex, allocation.Sets.Length)");
+        capturedReuse.ShouldNotContain("ResolveUniformBufferIndex(currentFrameIndex");
+        capturedReuse.ShouldNotContain("ResolveUniformBufferIndex(frameIndex");
+    }
+
+    [Test]
+    public void ReusableFrameDataSlotScratch_IsOwnedByTheRecordingThread()
+    {
+        string state = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
+        string scratch = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecordingScratch.cs");
+        string primary = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string secondary = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
+
+        state.ShouldNotContain("_refreshMeshDrawSlotsByRendererFamilyScratch");
+        state.ShouldNotContain("_dynamicUiMeshDrawSlotsByRendererFamilyScratch");
+        scratch.ShouldContain("ReusableMeshDrawSlotsByRendererFamily");
+        scratch.ShouldContain("DynamicUiMeshDrawSlotsByRenderer");
+        scratch.ShouldContain("DynamicUiMeshDrawSlotsByRendererFamily");
+        primary.ShouldContain("recordingScratch.ReusableMeshDrawSlotsByRendererFamily");
+        secondary.ShouldContain("recordingScratch.DynamicUiMeshDrawSlotsByRenderer");
+        secondary.ShouldContain("recordingScratch.DynamicUiMeshDrawSlotsByRendererFamily");
+    }
+
+    [Test]
+    public void ReusableMeshFrameDataRefresh_SerializesWithDrawRecording()
+    {
+        string drawing = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
+
+        int prewarmStart = drawing.IndexOf(
+            "internal bool TryPrewarmFrameDataForRecording(",
+            StringComparison.Ordinal);
+        int prewarmEnd = drawing.IndexOf(
+            "private bool TryPrewarmFrameDataForRecordingNoLock(",
+            prewarmStart,
+            StringComparison.Ordinal);
+        int refreshStart = drawing.IndexOf(
+            "internal bool TryRefreshReusableCommandBufferFrameData(\n\t\t\tuint imageIndex,",
+            StringComparison.Ordinal);
+        int refreshEnd = drawing.IndexOf(
+            "private bool TryRefreshReusableCommandBufferFrameDataNoLock(",
+            refreshStart,
+            StringComparison.Ordinal);
+
+        prewarmStart.ShouldBeGreaterThanOrEqualTo(0);
+        prewarmEnd.ShouldBeGreaterThan(prewarmStart);
+        refreshStart.ShouldBeGreaterThanOrEqualTo(0);
+        refreshEnd.ShouldBeGreaterThan(refreshStart);
+
+        drawing[prewarmStart..prewarmEnd].ShouldContain("lock (_recordDrawSync)");
+        drawing[refreshStart..refreshEnd].ShouldContain("lock (_recordDrawSync)");
+    }
+
+    [Test]
     public void FrameWideFamilyIdentity_IsStableAcrossExternalTargetRotationButSeparatesFrameSlots()
     {
         var leftSlot = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(

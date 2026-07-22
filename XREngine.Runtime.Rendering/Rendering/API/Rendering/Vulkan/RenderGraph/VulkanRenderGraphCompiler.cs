@@ -289,27 +289,12 @@ public unsafe partial class VulkanRenderer
         }
 
         /// <summary>
-        /// Sorts the warmed frame-op scratch without the small helper allocation made by
-        /// <see cref="Array.Sort{T}(T[], int, int, IComparer{T}?)"/> on every changed frame.
-        /// Frame ops arrive nearly sorted, so insertion sort also avoids unnecessary partitioning.
+        /// Sorts the warmed frame-op scratch with the allocation-free span introsort.
+        /// Camera motion can interleave hundreds of cascade and scene operations, so an
+        /// insertion sort here becomes quadratic precisely when frame time matters most.
         /// </summary>
         private static void SortFrameOpKeysInPlace(FrameOpSortKey[] sortKeys, int opCount)
-        {
-            for (int i = 1; i < opCount; i++)
-            {
-                FrameOpSortKey current = sortKeys[i];
-                int insertIndex = i;
-                while (insertIndex > 0 &&
-                       FrameOpSortKeyComparer.Instance.Compare(sortKeys[insertIndex - 1], current) > 0)
-                {
-                    sortKeys[insertIndex] = sortKeys[insertIndex - 1];
-                    insertIndex--;
-                }
-
-                if (insertIndex != i)
-                    sortKeys[insertIndex] = current;
-            }
-        }
+            => sortKeys.AsSpan(0, opCount).Sort(FrameOpSortKeyComparer.Instance);
 
         private static bool HasSubmissionOrderBlock(FrameOp[] ops)
         {

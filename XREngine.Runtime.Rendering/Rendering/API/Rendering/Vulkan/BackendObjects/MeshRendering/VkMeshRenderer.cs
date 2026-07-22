@@ -603,6 +603,7 @@ public unsafe partial class VulkanRenderer
                     hash.Add(meshDraw.Draw.IsStereoPass);
                     hash.Add(meshDraw.Draw.UseUnjitteredProjection);
                     hash.Add(meshDraw.Draw.PreparedProgramIdentity);
+                    hash.Add(meshDraw.Draw.PreparedProgram?.BindingId ?? 0u);
                     HashProgramBindingLayoutSnapshot(ref hash, meshDraw.Draw.ProgramBindingSnapshot);
                     break;
                 case QueryOp query:
@@ -1527,7 +1528,8 @@ public unsafe partial class VulkanRenderer
             Matrix4x4 previousRightEyeViewProjectionMatrixSnapshot = rightEyeViewProjectionMatrixSnapshot;
             Matrix4x4 previousRightEyeViewProjectionMatrixUnjitteredSnapshot =
                 snapshotRightEyeCamera?.ViewProjectionMatrixUnjittered ?? rightEyeViewProjectionMatrixSnapshot;
-            if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
+            if (currentPipeline is not null &&
+                VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(currentPipeline, out var temporalData))
             {
                 viewProjectionMatrixUnjitteredSnapshot = temporalData.CurrViewProjectionUnjittered;
                 rightEyeViewProjectionMatrixUnjitteredSnapshot = temporalData.RightEyeCurrViewProjectionUnjittered;
@@ -1808,7 +1810,8 @@ public unsafe partial class VulkanRenderer
             Matrix4x4 previousRightEyeViewProjectionMatrixSnapshot = rightEyeViewProjectionMatrixSnapshot;
             Matrix4x4 previousRightEyeViewProjectionMatrixUnjitteredSnapshot =
                 snapshotRightEyeCamera?.ViewProjectionMatrixUnjittered ?? rightEyeViewProjectionMatrixSnapshot;
-            if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
+            if (currentPipeline is not null &&
+                VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(currentPipeline, out var temporalData))
             {
                 viewProjectionMatrixUnjitteredSnapshot = temporalData.CurrViewProjectionUnjittered;
                 rightEyeViewProjectionMatrixUnjitteredSnapshot = temporalData.RightEyeCurrViewProjectionUnjittered;

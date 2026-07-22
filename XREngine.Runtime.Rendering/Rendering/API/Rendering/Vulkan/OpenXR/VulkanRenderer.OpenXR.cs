@@ -4933,7 +4933,7 @@ public unsafe partial class VulkanRenderer
 
         CommandBufferRecordingScratch recordingScratch = _commandBufferRecordingScratch.Value!;
         Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = recordingScratch.MeshDrawSlotsByRenderer;
-        meshDrawSlotsByRenderer.EnsureCapacity(_refreshMeshDrawSlotCapacityHint);
+        meshDrawSlotsByRenderer.EnsureCapacity(recordingScratch.OpenXrMeshDrawSlotCapacityHint);
 
         // Capacity must be final before the first descriptor/uniform prewarm. Growing a renderer's
         // draw-slot capacity destroys its old descriptors and uniform buffers; doing that midway
@@ -4981,7 +4981,7 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        _refreshMeshDrawSlotCapacityHint = Math.Max(1, rendererCount);
+        recordingScratch.OpenXrMeshDrawSlotCapacityHint = Math.Max(1, rendererCount);
         return allDrawsReady;
 
         void PrewarmDraw(VkMeshRenderer renderer, in PendingMeshDraw draw, in FrameOpContext context)

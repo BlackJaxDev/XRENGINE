@@ -109,6 +109,8 @@ public sealed class VulkanCoreHardeningPhase522Tests
 
         state.ShouldContain("PrimaryCommandBufferVariantCapacity = 64");
         allocation.ShouldContain("variants.Count < PrimaryCommandBufferVariantCapacity");
+        allocation.ShouldContain("variant.FrameOpsSignature == frameOpsSignature");
+        allocation.ShouldNotContain("reusableCommandChainPrimary");
         allocation.ShouldContain("LastUsedFrameId");
         allocation.ShouldContain("RecordedGenerations = default");
     }
@@ -122,7 +124,7 @@ public sealed class VulkanCoreHardeningPhase522Tests
             "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Queries/VkRenderQuery.cs");
 
         recording.ShouldContain("PrepareQueryFrameOpsForCommandBufferReuse");
-        recording.ShouldContain("queryOp.Query.PrepareForCommandBufferReuse(queryOp.QueryTarget)");
+        recording.ShouldContain("queryOp.Query.PrepareForCommandBufferReuse(commandBuffer, queryOp.QueryTarget)");
         recording.ShouldNotContain("!VulkanPrimaryCommandBufferReuseEnabled || hasQueryFrameOps");
         recording.ShouldNotContain("primaryFrameStateDirtyReason = hasQueryFrameOps");
         query.ShouldContain("PrepareForCommandBufferReuse(EQueryTarget target)");

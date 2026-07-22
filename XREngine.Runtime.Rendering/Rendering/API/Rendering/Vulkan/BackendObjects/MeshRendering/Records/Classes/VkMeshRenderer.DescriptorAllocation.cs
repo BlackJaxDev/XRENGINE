@@ -29,6 +29,7 @@ public unsafe partial class VulkanRenderer
             public uint[] VariableDescriptorCounts = [];
             public ulong LayoutFingerprint;
             public ulong SchemaFingerprint;
+            public uint ProgramBindingId;
             public int ViewFamilyIdentity;
             public int DrawUniformSlot;
             public ulong BindingIdentityFingerprint;

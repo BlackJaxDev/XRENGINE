@@ -108,11 +108,38 @@ public unsafe partial class VulkanRenderer
             bool sealAfterRegister,
             out ulong generation,
             out string reason)
+            => TryRegister(
+                frameId,
+                requiredDrawSlots,
+                rendererFamilyDrawSlots,
+                requiredFamilyStrides,
+                resolvedFamilyBases,
+                sealAfterRegister,
+                out generation,
+                out _,
+                out reason);
+
+        /// <summary>
+        /// Publishes the current frame's draw-slot requirements and reports whether an existing
+        /// family had to move. New families append safely; only a moved existing family invalidates
+        /// cached command buffers with baked dynamic offsets.
+        /// </summary>
+        public bool TryRegister(
+            ulong frameId,
+            Dictionary<VkMeshRenderer, int> requiredDrawSlots,
+            Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> rendererFamilyDrawSlots,
+            Dictionary<VulkanMeshFrameDataFamilyKey, int> requiredFamilyStrides,
+            Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> resolvedFamilyBases,
+            bool sealAfterRegister,
+            out ulong generation,
+            out bool existingFamilyBaseChanged,
+            out string reason)
         {
             lock (_sync)
             {
+                existingFamilyBaseChanged = false;
                 if (_frameId != frameId)
-                    BeginFrame(frameId);
+                    existingFamilyBaseChanged = BeginFrame(frameId);
 
                 requiredDrawSlots.Clear();
                 resolvedFamilyBases.Clear();
@@ -164,7 +191,11 @@ public unsafe partial class VulkanRenderer
                     int requiredStride = requiredFamilyStrides.TryGetValue(requirement.Key.Family, out int familyStride)
                         ? Math.Max(familyStride, requirement.Value)
                         : Math.Max(requirement.Value, 1);
-                    changed |= PublishRendererFamily(requirement.Key, requiredStride);
+                    changed |= PublishRendererFamily(
+                        requirement.Key,
+                        requiredStride,
+                        out bool familyBaseChanged);
+                    existingFamilyBaseChanged |= familyBaseChanged;
                 }
 
                 foreach (KeyValuePair<VulkanMeshFrameDataRendererFamilyKey, int> requirement in rendererFamilyDrawSlots)
@@ -237,15 +268,20 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        private void BeginFrame(ulong frameId)
+        private bool BeginFrame(ulong frameId)
         {
             _frameId = frameId;
             _isSealed = false;
             bool changed = false;
+            bool existingFamilyBaseChanged = false;
 
             foreach (KeyValuePair<VulkanMeshFrameDataRendererFamilyKey, int> requirement in _pendingRendererFamilyDrawSlots)
             {
-                changed |= PublishRendererFamily(requirement.Key, requirement.Value);
+                changed |= PublishRendererFamily(
+                    requirement.Key,
+                    requirement.Value,
+                    out bool familyBaseChanged);
+                existingFamilyBaseChanged |= familyBaseChanged;
                 FamilyAllocation allocation = _publishedRendererFamilies[requirement.Key];
                 int requiredSlots = checked(allocation.BaseSlot + allocation.SlotCount);
                 changed |= PublishRendererRequirement(requirement.Key.Renderer, requiredSlots);
@@ -257,10 +293,16 @@ public unsafe partial class VulkanRenderer
                 _generation++;
                 _publicationCount++;
             }
+
+            return existingFamilyBaseChanged;
         }
 
-        private bool PublishRendererFamily(VulkanMeshFrameDataRendererFamilyKey key, int requiredStride)
+        private bool PublishRendererFamily(
+            VulkanMeshFrameDataRendererFamilyKey key,
+            int requiredStride,
+            out bool existingFamilyBaseChanged)
         {
+            existingFamilyBaseChanged = false;
             requiredStride = Math.Max(requiredStride, 1);
             if (_publishedRendererFamilies.TryGetValue(key, out FamilyAllocation published) &&
                 published.SlotCount >= requiredStride)
@@ -269,6 +311,28 @@ public unsafe partial class VulkanRenderer
             }
 
             int publishedCapacity = ResolveFamilySlotCapacity(requiredStride);
+            int baseSlot;
+            if (!_publishedRendererFamilies.TryGetValue(key, out published))
+            {
+                baseSlot = ResolveNextFamilyBaseSlot(key);
+            }
+            else
+            {
+                baseSlot = published.BaseSlot;
+                int expandedEnd = checked(baseSlot + publishedCapacity);
+                if (WouldOverlapAnotherFamily(key, baseSlot, expandedEnd))
+                {
+                    baseSlot = ResolveNextFamilyBaseSlot(key);
+                    existingFamilyBaseChanged = baseSlot != published.BaseSlot;
+                }
+            }
+
+            _publishedRendererFamilies[key] = new FamilyAllocation(baseSlot, publishedCapacity);
+            return true;
+        }
+
+        private int ResolveNextFamilyBaseSlot(VulkanMeshFrameDataRendererFamilyKey key)
+        {
             int baseSlot = 0;
             foreach (KeyValuePair<VulkanMeshFrameDataRendererFamilyKey, FamilyAllocation> existing in _publishedRendererFamilies)
             {
@@ -280,8 +344,31 @@ public unsafe partial class VulkanRenderer
 
                 baseSlot = Math.Max(baseSlot, checked(existing.Value.BaseSlot + existing.Value.SlotCount));
             }
-            _publishedRendererFamilies[key] = new FamilyAllocation(baseSlot, publishedCapacity);
-            return true;
+
+            return baseSlot;
+        }
+
+        private bool WouldOverlapAnotherFamily(
+            VulkanMeshFrameDataRendererFamilyKey key,
+            int rangeStart,
+            int rangeEnd)
+        {
+            foreach (KeyValuePair<VulkanMeshFrameDataRendererFamilyKey, FamilyAllocation> existing in _publishedRendererFamilies)
+            {
+                if (existing.Key.Equals(key) ||
+                    !ReferenceEquals(existing.Key.Renderer, key.Renderer) ||
+                    existing.Key.Family.FrameDataSlot != key.Family.FrameDataSlot)
+                {
+                    continue;
+                }
+
+                int existingStart = existing.Value.BaseSlot;
+                int existingEnd = checked(existingStart + existing.Value.SlotCount);
+                if (rangeStart < existingEnd && existingStart < rangeEnd)
+                    return true;
+            }
+
+            return false;
         }
 
         private static int ResolveFamilySlotCapacity(int requiredStride)

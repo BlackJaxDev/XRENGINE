@@ -278,6 +278,7 @@ namespace XREngine.Rendering.Vulkan
             HashCode hash = new();
             hash.Add(renderer?.GetHashCode() ?? 0);
             hash.Add(draw.MaterialOverride?.GetHashCode() ?? 0);
+            hash.Add(draw.PreparedProgram?.BindingId ?? 0u);
             hash.Add(draw.Instances);
             hash.Add((int)draw.BillboardMode);
             hash.Add(draw.IsStereoPass);
@@ -290,7 +291,7 @@ namespace XREngine.Rendering.Vulkan
                 opType,
                 "material",
                 hash,
-                $"mesh='{renderer?.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' material='{material?.Name ?? "<unnamed material>"}' renderer=0x{(renderer?.GetHashCode() ?? 0):X8} instances={draw.Instances} stereo={draw.IsStereoPass} unjittered={draw.UseUnjitteredProjection}");
+                $"mesh='{renderer?.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' material='{material?.Name ?? "<unnamed material>"}' renderer=0x{(renderer?.GetHashCode() ?? 0):X8} program={draw.PreparedProgram?.BindingId ?? 0u} instances={draw.Instances} stereo={draw.IsStereoPass} unjittered={draw.UseUnjitteredProjection}");
         }
 
         private static void AddQuerySignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, QueryOp query)

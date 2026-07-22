@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Scene;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -311,6 +312,19 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
         atlasManager.ShouldContain("bool keepDirectionalStaleTileUntilRefresh =\n            fallbackCanUseStaleTile &&\n            IsDirectionalRequest(request) &&\n            !shouldRefreshBeforeStale;");
         atlasManager.ShouldNotContain("bool keepDirectionalStaleTileUntilRefresh = fallbackCanUseStaleTile && IsDirectionalRequest(request);");
         lightsSource.ShouldContain("SkipReason.StaleTileReused");
+    }
+
+    [TestCase(1024u, 0.03125f, 0.25f)]
+    [TestCase(4096u, 0.02f, 0.10f)]
+    public void DirectionalCascadeLargeJumpThresholds_AreClipSpaceScaled(
+        uint desiredResolution,
+        float expectedLinearThreshold,
+        float expectedTranslationThreshold)
+    {
+        Lights3DCollection.ResolveDirectionalCascadeLinearJumpThreshold(desiredResolution)
+            .ShouldBe(expectedLinearThreshold, 1e-6f);
+        Lights3DCollection.ResolveDirectionalCascadeTranslationJumpThreshold(desiredResolution)
+            .ShouldBe(expectedTranslationThreshold, 1e-6f);
     }
 
     private static string ReadRepoFile(string relativePath)

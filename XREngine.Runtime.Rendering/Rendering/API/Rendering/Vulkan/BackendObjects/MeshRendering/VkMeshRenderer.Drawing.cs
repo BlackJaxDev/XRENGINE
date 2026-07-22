@@ -965,6 +965,19 @@ public unsafe partial class VulkanRenderer
 			int frameIndex,
 			out string reason)
 		{
+			// The primary reuse refresh and secondary recording paths can prepare the
+			// same renderer concurrently. They mutate the active program, descriptor
+			// allocation, and dynamic UBO state, so they must share RecordDraw's lock.
+			lock (_recordDrawSync)
+				return TryPrewarmFrameDataForRecordingNoLock(draw, drawUniformSlot, frameIndex, out reason);
+		}
+
+		private bool TryPrewarmFrameDataForRecordingNoLock(
+			in PendingMeshDraw draw,
+			int drawUniformSlot,
+			int frameIndex,
+			out string reason)
+		{
 			reason = "Ready";
 			XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 
@@ -1155,6 +1168,26 @@ public unsafe partial class VulkanRenderer
 			out string reason,
 			bool refreshMaterialUniforms = true)
 		{
+			// Reuse does not record Vulkan commands, but it does update the same
+			// renderer-owned descriptor and UBO state consumed by RecordDraw.
+			// Serializing it with recording keeps a draw from observing another
+			// output's active program or dynamic-uniform slot during camera motion.
+			lock (_recordDrawSync)
+				return TryRefreshReusableCommandBufferFrameDataNoLock(
+					imageIndex,
+					draw,
+					drawUniformSlot,
+					out reason,
+					refreshMaterialUniforms);
+		}
+
+		private bool TryRefreshReusableCommandBufferFrameDataNoLock(
+			uint imageIndex,
+			in PendingMeshDraw draw,
+			int drawUniformSlot,
+			out string reason,
+			bool refreshMaterialUniforms)
+		{
 			reason = "reusable";
 			XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 			if (draw.PreparedProgram is { } preparedProgram)
@@ -1211,6 +1244,11 @@ public unsafe partial class VulkanRenderer
 			if (!descriptorSetsReusable)
 			{
 				reason = $"descriptors {descriptorReason}; snapshot={(draw.ProgramBindingSnapshot is null ? "none" : "captured")} program='{_program?.Data?.Name ?? "<unnamed program>"}'";
+				return false;
+			}
+			if (!TryRefreshSharedMaterialDescriptorSetForReusableFrame(material, frameIndex, out string sharedMaterialDescriptorReason))
+			{
+				reason = $"descriptors {sharedMaterialDescriptorReason}; snapshot={(draw.ProgramBindingSnapshot is null ? "none" : "captured")} program='{_program?.Data?.Name ?? "<unnamed program>"}'";
 				return false;
 			}
 			bool frameSourceDescriptorsReady = TryRefreshFrameSourceDescriptorSetsForDraw(

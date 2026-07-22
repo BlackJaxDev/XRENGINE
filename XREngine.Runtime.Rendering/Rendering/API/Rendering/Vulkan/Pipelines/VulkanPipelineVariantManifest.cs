@@ -105,6 +105,7 @@ public unsafe partial class VulkanRenderer
                 hash.Add(opIndex);
                 hash.Add(passIndex);
                 hash.Add(draw.PreparedProgramIdentity);
+                hash.Add(draw.PreparedProgram?.BindingId ?? 0u);
                 hash.Add(planPass?.RequiresPipelineReady ?? true);
                 hash.Add(materialOverride);
                 hash.Add(stereo);

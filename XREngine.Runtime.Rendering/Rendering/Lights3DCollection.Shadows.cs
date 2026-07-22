@@ -871,16 +871,31 @@ namespace XREngine.Scene
             AccumulateMaxAbsDelta(ref maxLinearDelta, a.M33, b.M33);
             AccumulateMaxAbsDelta(ref maxLinearDelta, a.M34, b.M34);
             AccumulateMaxAbsDelta(ref maxLinearDelta, a.M44, b.M44);
-            if (maxLinearDelta > 1e-3f)
+            if (maxLinearDelta > ResolveDirectionalCascadeLinearJumpThreshold(desiredResolution))
                 return true;
 
             float maxTranslationDelta = 0.0f;
             AccumulateMaxAbsDelta(ref maxTranslationDelta, a.M41, b.M41);
             AccumulateMaxAbsDelta(ref maxTranslationDelta, a.M42, b.M42);
             AccumulateMaxAbsDelta(ref maxTranslationDelta, a.M43, b.M43);
+            return maxTranslationDelta > ResolveDirectionalCascadeTranslationJumpThreshold(desiredResolution);
+        }
+
+        /// <summary>
+        /// Resolves a clip-space matrix threshold that distinguishes a teleport-like
+        /// cascade change from normal camera motion. Stale cascade reprojection is
+        /// designed to absorb smaller changes for the bounded stale-frame interval.
+        /// </summary>
+        internal static float ResolveDirectionalCascadeLinearJumpThreshold(uint desiredResolution)
+        {
             float clipTexel = 2.0f / MathF.Max(1.0f, desiredResolution);
-            float jumpThreshold = MathF.Max(0.10f, clipTexel * 128.0f);
-            return maxTranslationDelta > jumpThreshold;
+            return MathF.Max(0.02f, clipTexel * 16.0f);
+        }
+
+        internal static float ResolveDirectionalCascadeTranslationJumpThreshold(uint desiredResolution)
+        {
+            float clipTexel = 2.0f / MathF.Max(1.0f, desiredResolution);
+            return MathF.Max(0.10f, clipTexel * 128.0f);
         }
 
         private static void AccumulateMaxAbsDelta(ref float maxDelta, float current, float previous)
