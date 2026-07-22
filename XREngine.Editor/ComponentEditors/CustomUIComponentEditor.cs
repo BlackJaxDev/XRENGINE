@@ -58,6 +58,9 @@ public sealed class CustomUIComponentEditor : IXRComponentEditor
             case CustomUIBoolField boolField:
                 DrawBoolField(boolField);
                 break;
+            case CustomUIEnumField enumField:
+                DrawEnumField(enumField);
+                break;
             case CustomUIVector3Field vector3Field:
                 DrawVector3Field(vector3Field);
                 break;
@@ -90,6 +93,15 @@ public sealed class CustomUIComponentEditor : IXRComponentEditor
         bool value = field.GetValue();
         if (ImGui.Checkbox(field.Label, ref value))
             field.SetValue(value);
+
+        DrawTooltip(field);
+    }
+
+    private static void DrawEnumField(CustomUIEnumField field)
+    {
+        int selectedIndex = Math.Clamp(field.GetSelectedIndex(), 0, field.Options.Length - 1);
+        if (ImGui.Combo(field.Label, ref selectedIndex, field.Options, field.Options.Length))
+            field.SetSelectedIndex(selectedIndex);
 
         DrawTooltip(field);
     }

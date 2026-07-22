@@ -530,6 +530,53 @@ public sealed partial class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : cla
         }
     }
 
+    /// <summary>
+    /// Visits visible BVH node bounds for debug rendering and reports whether each node is a leaf.
+    /// Unlike <see cref="DebugRender(IVolume?, DelRenderAABB, bool)"/>, the callback can apply
+    /// independent leaf/internal colors and filters without reconstructing tree topology.
+    /// </summary>
+    public void DebugRenderNodes(IVolume? cullingVolume, DelRenderBvhNodeAABB render)
+    {
+        ArgumentNullException.ThrowIfNull(render);
+        EnsurePublished();
+        Snapshot snapshot = AcquireSnapshot();
+        try
+        {
+            if (snapshot.UnboundedCount > 0 || snapshot.RootIndex < 0)
+            {
+                EContainment boundsContainment = ClassifyNode(cullingVolume, _bounds);
+                if (boundsContainment != EContainment.Disjoint)
+                    render(_bounds.HalfExtents, _bounds.Center, boundsContainment, isLeaf: false);
+            }
+
+            Span<int> stack = stackalloc int[TraversalStackCapacity];
+            int count = 0;
+            if (snapshot.RootIndex >= 0)
+                stack[count++] = snapshot.RootIndex;
+
+            while (count > 0)
+            {
+                int nodeIndex = stack[--count];
+                ref readonly FlatNode node = ref snapshot.Nodes[nodeIndex];
+                EContainment containment = ClassifyNode(cullingVolume, node.Bounds);
+                if (containment == EContainment.Disjoint)
+                    continue;
+
+                render(node.Bounds.HalfExtents, node.Bounds.Center, containment, node.IsLeaf);
+
+                if (!node.IsLeaf)
+                {
+                    stack[count++] = node.Right;
+                    stack[count++] = node.Left;
+                }
+            }
+        }
+        finally
+        {
+            ReleaseSnapshot(snapshot);
+        }
+    }
+
     public SpatialTreeOccupancyStats GetOccupancyStats()
     {
         EnsurePublished();

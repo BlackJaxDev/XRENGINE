@@ -113,6 +113,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     private bool _useGPU;
     private bool _useBatchedDispatcher = true;
     private bool _gpuSyncToBones = false;
+    private bool _useGpuDrivenSkinning = true;
     private volatile bool _hasPendingGpuBoneSync;
     private bool _debugDrawChains;
     private PhysicsChainQualityTier _qualityTier = PhysicsChainQualityTier.Strict;
@@ -340,6 +341,17 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         get => _gpuSyncToBones;
         set => SetField(ref _gpuSyncToBones, value);
     }
+
+    [Category("Execution")]
+    [DisplayName("Use GPU-Driven Skinning")]
+    [Description("Publishes simulated particle poses directly to matching skinned renderers. Disable this with GPU Sync To Bones when rendering must consume the CPU transform-updated palette.")]
+    [EditorBrowsableIf("UseGPU")]
+    public bool UseGpuDrivenSkinning
+    {
+        get => _useGpuDrivenSkinning;
+        set => SetField(ref _useGpuDrivenSkinning, value);
+    }
+
     public float DistanceToObject
     {
         get => _distanceToObject;

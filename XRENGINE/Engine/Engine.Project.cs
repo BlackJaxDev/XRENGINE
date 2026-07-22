@@ -157,11 +157,27 @@ namespace XREngine
 
         private static string? GetSandboxConfigDirectory()
         {
-            string? baseDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            if (string.IsNullOrWhiteSpace(baseDir))
+            string? userDataRoot = GetEditorUserDataRoot();
+            if (string.IsNullOrWhiteSpace(userDataRoot))
                 return null;
 
-            return Path.Combine(baseDir, "XREngine", SandboxFolderName, SandboxConfigFolderName);
+            return Path.Combine(userDataRoot, SandboxFolderName, SandboxConfigFolderName);
+        }
+
+        /// <summary>
+        /// Resolves the writable editor settings root. Isolated editor sessions keep their
+        /// settings below the session root instead of sharing the user's global profile.
+        /// </summary>
+        private static string? GetEditorUserDataRoot()
+        {
+            string? sessionRoot = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EditorSessionRoot);
+            if (!string.IsNullOrWhiteSpace(sessionRoot))
+                return Path.Combine(Path.GetFullPath(sessionRoot), "user-data");
+
+            string? localApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            return string.IsNullOrWhiteSpace(localApplicationData)
+                ? null
+                : Path.Combine(localApplicationData, "XREngine");
         }
 
         private static string? GetSandboxEditorPreferencesOverridesPath()
@@ -178,21 +194,21 @@ namespace XREngine
 
         private static string? GetGlobalEditorPreferencesPath()
         {
-            string? baseDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            if (string.IsNullOrWhiteSpace(baseDir))
+            string? userDataRoot = GetEditorUserDataRoot();
+            if (string.IsNullOrWhiteSpace(userDataRoot))
                 return null;
 
-            string configDir = Path.Combine(baseDir, "XREngine", "Global", SandboxConfigFolderName);
+            string configDir = Path.Combine(userDataRoot, "Global", SandboxConfigFolderName);
             return Path.Combine(configDir, "editor_preferences_global.asset");
         }
 
         private static string? GetGlobalEngineDefaultsPath()
         {
-            string? baseDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            if (string.IsNullOrWhiteSpace(baseDir))
+            string? userDataRoot = GetEditorUserDataRoot();
+            if (string.IsNullOrWhiteSpace(userDataRoot))
                 return null;
 
-            string configDir = Path.Combine(baseDir, "XREngine", "Global", SandboxConfigFolderName);
+            string configDir = Path.Combine(userDataRoot, "Global", SandboxConfigFolderName);
             return Path.Combine(configDir, XRProject.EngineDefaultsFileName);
         }
 
@@ -1083,22 +1099,31 @@ namespace XREngine
             }
 
             EnsureDirectory(project.AssetsDirectory);
-            EnsureDirectory(project.MetadataDirectory);
+            string? metadataDirectoryOverride = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GameMetadataPath);
+            string? cacheDirectoryOverride = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GameCachePath);
+            string? effectiveMetadataDirectory = string.IsNullOrWhiteSpace(metadataDirectoryOverride)
+                ? project.MetadataDirectory
+                : Path.GetFullPath(metadataDirectoryOverride);
+            string? effectiveCacheDirectory = string.IsNullOrWhiteSpace(cacheDirectoryOverride)
+                ? project.CacheDirectory
+                : Path.GetFullPath(cacheDirectoryOverride);
+
+            EnsureDirectory(effectiveMetadataDirectory);
             EnsureDirectory(project.PackagesDirectory);
             EnsureDirectory(project.IntermediateDirectory);
             EnsureDirectory(project.BuildDirectory);
             EnsureDirectory(project.ConfigDirectory);
-            EnsureDirectory(project.CacheDirectory);
+            EnsureDirectory(effectiveCacheDirectory);
 
             if (project.AssetsDirectory is not null)
                 Assets.GameAssetsPath = project.AssetsDirectory;
-            if (project.MetadataDirectory is not null)
-                Assets.GameMetadataPath = project.MetadataDirectory;
+            if (effectiveMetadataDirectory is not null)
+                Assets.GameMetadataPath = effectiveMetadataDirectory;
             if (project.PackagesDirectory is not null)
                 Assets.PackagesPath = project.PackagesDirectory;
             if (project.IntermediateDirectory is not null)
                 Assets.LibrariesPath = project.IntermediateDirectory;
-            Assets.GameCachePath = project.CacheDirectory;
+            Assets.GameCachePath = effectiveCacheDirectory;
         }
 
         private static void LogUnexpectedProjectEntries(XRProject project)

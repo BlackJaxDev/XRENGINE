@@ -23,6 +23,41 @@ The server implements the [Model Context Protocol](https://modelcontextprotocol.
 
 The MCP server can be enabled through Editor Preferences or via command-line arguments.
 
+### Isolated Agent Sessions (Recommended For Automation)
+
+Do not launch automated MCP editors from the canonical `Build/Editor/...` output. A running process locks assemblies there and prevents another contributor from building the solution. Use the session manager instead:
+
+```powershell
+pwsh Tools/Manage-McpEditorSession.ps1 Start -Name agent-rendering
+pwsh Tools/Manage-McpEditorSession.ps1 Status -Name agent-rendering
+pwsh Tools/Manage-McpEditorSession.ps1 Stop -Name agent-rendering
+```
+
+The manager uses `dotnet build --artifacts-path` so every referenced project's `bin` and `obj` output is below the named session. The editor and engine projects honor SDK artifacts output instead of their canonical `BaseOutputPath` in this mode. Repository-managed native bridge DLLs are reused rather than rebuilt, avoiding shared native output races. After changing a native bridge, build that bridge explicitly before starting a new session.
+
+The child process receives these isolation variables:
+
+| Variable | Purpose |
+|----------|---------|
+| `XRE_EDITOR_SESSION_NAME` | Stable identity reported by MCP `ping` and `/mcp/status` |
+| `XRE_EDITOR_SESSION_ROOT` | Root for isolated editor user data and engine logs |
+| `XRE_GAME_CACHE_PATH` | Per-session imported-asset cache |
+| `XRE_GAME_METADATA_PATH` | Per-session asset metadata, initially seeded from the repository metadata |
+
+The manifest at `Build/_AgentValidation/mcp-sessions/<name>/session.json` records the endpoint, artifact path, PID, and process start time. Port selection and same-name startup are serialized through a file lock. Stop operations validate the recorded executable, PID, and start time to prevent PID reuse or cross-session termination.
+
+MCP status distinguishes the editor process session from protocol client sessions:
+
+```json
+{
+  "editorSession": {
+    "name": "agent-rendering",
+    "isolated": true,
+    "processId": 12345
+  }
+}
+```
+
 ### Editor Preferences (Recommended)
 
 The MCP server settings are located in the **Global Editor Preferences** panel under the **MCP Server** category:

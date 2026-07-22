@@ -920,6 +920,11 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             ApplyCpuQualityPolicy();
         if (propName == nameof(RuntimeVisible))
             return;
+        if (propName == nameof(UseGpuDrivenSkinning))
+        {
+            InvalidateGpuDrivenRenderers();
+            return;
+        }
         if (HandleGpuExecutionModePropertyChanged(propName, prev, field))
             return;
 

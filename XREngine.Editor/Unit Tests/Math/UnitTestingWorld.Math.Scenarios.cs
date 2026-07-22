@@ -144,22 +144,22 @@ public static partial class EditorUnitTests
                 (parent, _) => AddGeoUtilThreePlanesRig(parent)),
             new(
                 "CPU Scene BVH Test",
-                "Builds and refits the flat CPU scene BVH; a moving AABB query is checked against brute force and visited nodes are drawn.",
+                "Builds and refits the flat CPU scene BVH; a selectable moving box, sphere, frustum, or finite raycast query is checked against brute force and visited nodes are drawn.",
                 AABB.FromCenterSize(new Vector3(0.0f, 3.2f, 0.0f), new Vector3(13.0f, 9.0f, 13.0f)),
                 (parent, controller) => AddMathBvhRig(parent, MathBvhTestMode.CpuScene, controller)),
             new(
                 "GPU Scene BVH Test",
-                "Builds and refits the GPU scene BVH from animated AABBs and renders its node SSBO without CPU traversal or readback.",
+                "Runs the CPU scene test's animated AABBs and selectable box, sphere, frustum, or finite raycast query through the GPU scene BVH, then checks the GPU hit count against brute force.",
                 AABB.FromCenterSize(new Vector3(0.0f, 3.2f, 0.0f), new Vector3(13.0f, 9.0f, 13.0f)),
                 (parent, controller) => AddMathBvhRig(parent, MathBvhTestMode.GpuScene, controller)),
             new(
                 "Legacy CPU Mesh BVH Test",
-                "Builds the legacy triangle BVH over a wavy grid; an animated ray is checked against brute force and visited nodes are highlighted.",
+                "Builds the legacy triangle BVH over a wavy grid; query it with a box, sphere, frustum, or finite raycast and independently return selected points, lines, and triangles.",
                 AABB.FromCenterSize(new Vector3(0.0f, 3.2f, 0.0f), new Vector3(13.0f, 9.0f, 13.0f)),
                 (parent, controller) => AddMathBvhRig(parent, MathBvhTestMode.LegacyCpuMesh, controller)),
             new(
                 "GPU Mesh BVH Test",
-                "Builds the renderable-owned GPU triangle BVH and renders its compact node buffer directly on the GPU.",
+                "Runs the same wavy-grid box, sphere, frustum, or finite raycast query through the renderable-owned GPU triangle BVH and returns selected point, line, and triangle results for CPU-oracle validation.",
                 AABB.FromCenterSize(new Vector3(0.0f, 3.2f, 0.0f), new Vector3(13.0f, 9.0f, 13.0f)),
                 (parent, controller) => AddMathBvhRig(parent, MathBvhTestMode.GpuMesh, controller)),
             new(
@@ -199,9 +199,9 @@ public static partial class EditorUnitTests
                 (parent, controller) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Dispatcher Skinned Mesh Test", useGpu: true, multithread: false, useBatchedDispatcher: true, gpuSyncToBones: false, phaseOffset: 1.92f, new ColorF4(0.18f, 0.84f, 0.72f, 1.0f), ColorF4.Orange, includeSkinnedMesh: true, controller: controller)),
             new(
                 "Physics Chain GPU Dispatcher Skinned Mesh Sync To Bones Test",
-                "Runs the dispatcher-backed GPU physics chain with a skinned box mesh while the higher-cost CPU Sync To Bones compatibility path remains enabled.",
+                "Runs the dispatcher-backed GPU physics chain with readback-updated bone transforms driving the skinned box mesh's CPU-authored palette.",
                 s_physicsChainTestBounds,
-                (parent, controller) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Dispatcher Skinned Mesh Sync To Bones Test", useGpu: true, multithread: false, useBatchedDispatcher: true, gpuSyncToBones: true, phaseOffset: 2.0f, new ColorF4(0.32f, 0.79f, 0.58f, 1.0f), ColorF4.Orange, includeSkinnedMesh: true, controller: controller)),
+                (parent, controller) => AddPhysicsChainVariantRig(parent, "Physics Chain GPU Dispatcher Skinned Mesh Sync To Bones Test", useGpu: true, multithread: false, useBatchedDispatcher: true, gpuSyncToBones: true, phaseOffset: 2.0f, new ColorF4(0.32f, 0.79f, 0.58f, 1.0f), ColorF4.Orange, includeSkinnedMesh: true, useGpuDrivenSkinning: false, controller: controller)),
             new(
                 "Physics Chain GPU Dispatcher No Collider Test",
                 "Runs the dispatcher-backed GPU physics chain without colliders to isolate solver, upload, and transform costs.",
@@ -704,6 +704,7 @@ public static partial class EditorUnitTests
         ColorF4 rootColor,
         PhysicsChainColliderScenario colliderScenario = PhysicsChainColliderScenario.Default,
         bool includeSkinnedMesh = false,
+        bool useGpuDrivenSkinning = true,
         MathIntersectionsWorldControllerComponent? controller = null)
     {
         var rigNode = rootNode.NewChild(rigName);
@@ -721,6 +722,7 @@ public static partial class EditorUnitTests
             rootColor,
             colliderScenario,
             includeSkinnedMesh,
+            useGpuDrivenSkinning,
             controller);
         return rigNode;
     }

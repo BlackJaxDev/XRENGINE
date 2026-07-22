@@ -44,6 +44,27 @@ public sealed class CustomUIComponent : XRComponent
         return field;
     }
 
+    public CustomUIEnumField AddEnumField<TEnum>(
+        string label,
+        Func<TEnum> getter,
+        Action<TEnum> setter,
+        string? helpText = null)
+        where TEnum : struct, Enum
+    {
+        TEnum[] values = Enum.GetValues<TEnum>();
+        if (values.Length == 0)
+            throw new ArgumentException($"Enum {typeof(TEnum).Name} has no selectable values.", nameof(TEnum));
+
+        var field = new CustomUIEnumField(
+            label,
+            () => Math.Max(Array.IndexOf(values, getter()), 0),
+            index => setter(values[Math.Clamp(index, 0, values.Length - 1)]),
+            Enum.GetNames<TEnum>(),
+            helpText);
+        _fields.Add(field);
+        return field;
+    }
+
     public CustomUIVector3Field AddVector3Field(
         string label,
         Func<Vector3> getter,

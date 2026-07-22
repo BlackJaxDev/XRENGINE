@@ -77,6 +77,24 @@ public sealed class PhysicsChainShaderContractTests
     }
 
     [Test]
+    public void BonePaletteShader_ComposesSystemNumericsRowVectorMatrices()
+    {
+        string source = ReadPhysicsChainShader("PhysicsChainBonePalette.comp").Replace("\r\n", "\n");
+
+        source.ShouldContain("layout(row_major, std430, binding = 4) readonly buffer BoneInvBindMatricesBuffer");
+        int columnMatrixIndex = source.IndexOf("mat4 boneWorldColumn = mat4(", StringComparison.Ordinal);
+        int transposeIndex = source.IndexOf("mat4 boneWorldRow = transpose(boneWorldColumn);", StringComparison.Ordinal);
+        int composeIndex = source.IndexOf(
+            "mat4 skinMatrix = BoneInvBindMatrices[mapping.BoneMatrixIndex] * boneWorldRow;",
+            StringComparison.Ordinal);
+
+        columnMatrixIndex.ShouldBeGreaterThanOrEqualTo(0);
+        transposeIndex.ShouldBeGreaterThan(columnMatrixIndex);
+        composeIndex.ShouldBeGreaterThan(transposeIndex);
+        source.ShouldNotContain("BoneInvBindMatrices[mapping.BoneMatrixIndex] * boneWorld;");
+    }
+
+    [Test]
     public void PhysicsChainGpuRecords_MatchStd430Layout()
     {
         Marshal.SizeOf<GPUPhysicsChainDispatcher.GPUParticleData>().ShouldBe(64);

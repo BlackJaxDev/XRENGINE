@@ -27,7 +27,8 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
     private const uint Vec4PerLine = 3u;
     private const uint FloatsPerVec4 = 4u;
 
-    private static readonly ConditionalWeakTable<XRRenderPipelineInstance.RenderingState, GpuBvhDebugOverlayQueue> Queues = new();
+    private static readonly ConditionalWeakTable<XRRenderPipelineInstance.RenderingState, GpuBvhDebugOverlayQueue> BaseQueues = new();
+    private static readonly ConditionalWeakTable<XRRenderPipelineInstance.RenderingState, GpuBvhDebugOverlayQueue> HighlightQueues = new();
 
     private XRShader? _computeShader;
     private XRRenderProgram? _computeProgram;
@@ -47,7 +48,9 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
         float lineWidth,
         Vector4 leafColor,
         Vector4 internalColor,
-        uint showFilter)
+        uint showFilter,
+        GpuBvhDebugNodeClassOptions? nodeClasses = null,
+        GpuBvhDebugOverlayLayer overlayLayer = GpuBvhDebugOverlayLayer.Base)
     {
         if (_disposed || nodeBuffer.IsDestroyed || nodeCount == 0)
             return false;
@@ -63,17 +66,22 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
             lineWidth,
             leafColor,
             internalColor,
-            showFilter);
-        Queues.GetValue(pipelineState, static _ => new GpuBvhDebugOverlayQueue()).Enqueue(in request);
+            showFilter,
+            nodeClasses);
+        GetQueues(overlayLayer)
+            .GetValue(pipelineState, static _ => new GpuBvhDebugOverlayQueue())
+            .Enqueue(in request);
         return true;
     }
 
     /// <summary>
-    /// Renders the requests queued for a pipeline inside its active late-debug pass.
+    /// Renders one overlay layer queued for a pipeline inside its active late-debug pass.
     /// </summary>
-    internal static void RenderQueued(XRRenderPipelineInstance.RenderingState pipelineState)
+    internal static void RenderQueued(
+        XRRenderPipelineInstance.RenderingState pipelineState,
+        GpuBvhDebugOverlayLayer overlayLayer)
     {
-        if (!Queues.TryGetValue(pipelineState, out GpuBvhDebugOverlayQueue? queue))
+        if (!GetQueues(overlayLayer).TryGetValue(pipelineState, out GpuBvhDebugOverlayQueue? queue))
             return;
 
         List<GpuBvhDebugRenderRequest> batch = queue.TakeBatch();
@@ -91,6 +99,10 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
         }
     }
 
+    private static ConditionalWeakTable<XRRenderPipelineInstance.RenderingState, GpuBvhDebugOverlayQueue> GetQueues(
+        GpuBvhDebugOverlayLayer overlayLayer)
+        => overlayLayer == GpuBvhDebugOverlayLayer.Highlight ? HighlightQueues : BaseQueues;
+
     private bool RenderImmediate(in GpuBvhDebugRenderRequest request)
     {
         if (_disposed || request.NodeBuffer.IsDestroyed || request.NodeCount == 0)
@@ -107,11 +119,27 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
         {
             _computeProgram!.BindBuffer(request.NodeBuffer, 0);
             _computeProgram.BindBuffer(_linesBuffer!, 1);
+            GpuBvhDebugNodeClassOptions? nodeClasses = request.NodeClasses;
+            GpuBvhDebugNodeClassOptions nodeClassOptions = nodeClasses.GetValueOrDefault();
+            bool useNodeClasses = nodeClasses.HasValue && !nodeClassOptions.Buffer.IsDestroyed;
+            _computeProgram.BindBuffer(useNodeClasses ? nodeClassOptions.Buffer : request.NodeBuffer, 2);
             _computeProgram.Uniform("MaxNodes", visualizedNodes);
             _computeProgram.Uniform("LeafColor", request.LeafColor);
             _computeProgram.Uniform("InternalColor", request.InternalColor);
             _computeProgram.Uniform("NodeToWorld", request.NodeToWorld);
             _computeProgram.Uniform("ShowFilter", request.ShowFilter);
+            _computeProgram.Uniform(
+                "NodeClassMode",
+                useNodeClasses ? (uint)nodeClassOptions.Mode : (uint)GpuBvhDebugNodeClassMode.Ignore);
+            _computeProgram.Uniform(
+                "ClassOneColor",
+                useNodeClasses ? nodeClassOptions.ClassOneColor : Vector4.Zero);
+            _computeProgram.Uniform(
+                "ClassTwoColor",
+                useNodeClasses ? nodeClassOptions.ClassTwoColor : Vector4.Zero);
+            _computeProgram.Uniform(
+                "VisibleClassMask",
+                useNodeClasses ? nodeClassOptions.VisibleClassMask : uint.MaxValue);
 
             uint groups = (visualizedNodes + ComputeGroupSize - 1u) / ComputeGroupSize;
             _computeProgram.DispatchCompute(

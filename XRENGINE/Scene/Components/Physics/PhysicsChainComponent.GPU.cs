@@ -1053,6 +1053,14 @@ public partial class PhysicsChainComponent
         if (!_gpuDrivenRendererBindingsDirty)
             return;
 
+        if (!UseGpuDrivenSkinning)
+        {
+            ClearGpuDrivenRendererBindings();
+            _gpuDrivenRendererBindingsDirty = false;
+            _gpuDrivenRendererBindingRetryFrames = 0;
+            return;
+        }
+
         if (!UseGPU || SceneNode is null || _particleTrees.Count == 0)
             return;
 
@@ -1079,10 +1087,10 @@ public partial class PhysicsChainComponent
         ClearGpuDrivenRendererBindings();
         skinnedRendererCount = 0;
 
-        if (!UseGPU || SceneNode is null || _particleTrees.Count == 0)
+        if (!UseGPU || !UseGpuDrivenSkinning || SceneNode is null || _particleTrees.Count == 0)
         {
             if (VerboseGpuDrivenRendererLogging && previousBindingCount > 0)
-                Debug.Out($"[PhysicsChain] RebuildGpuDrivenRendererBindings: Cleared {previousBindingCount} bindings, not rebuilding (UseGPU={UseGPU}, SceneNode={SceneNode != null}, ParticleTrees={_particleTrees.Count}). Component={GetHashCode():X}");
+                Debug.Out($"[PhysicsChain] RebuildGpuDrivenRendererBindings: Cleared {previousBindingCount} bindings, not rebuilding (UseGPU={UseGPU}, UseGpuDrivenSkinning={UseGpuDrivenSkinning}, SceneNode={SceneNode != null}, ParticleTrees={_particleTrees.Count}). Component={GetHashCode():X}");
             return;
         }
 
@@ -1194,6 +1202,9 @@ public partial class PhysicsChainComponent
         Dictionary<int, int> firstChildIndexByParticle,
         Dictionary<int, Vector3> restDirectionByParticle)
     {
+        if (!UseGpuDrivenSkinning)
+            return;
+
         XRMesh? mesh = renderer.Mesh;
         if (mesh?.UtilizedBones is not { Length: > 0 })
         {

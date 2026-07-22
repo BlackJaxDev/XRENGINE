@@ -85,6 +85,39 @@ public class McpServerHostProtocolTests
     }
 
     [Test]
+    [NonParallelizable]
+    public async Task HandleRpcAsync_PingIdentifiesIsolatedEditorSession()
+    {
+        const string sessionName = "mcp-protocol-test";
+        string? previousName = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EditorSessionName);
+        string? previousRoot = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EditorSessionRoot);
+
+        try
+        {
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.EditorSessionName, sessionName);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.EditorSessionRoot, Path.GetTempPath());
+
+            using var document = JsonDocument.Parse("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}");
+            var prefs = new EditorPreferences { McpServerIncludeStatusInPing = true };
+
+            object result = await InvokeHandleRpcAsync(document.RootElement, prefs);
+            JsonElement editorSession = JsonSerializer.SerializeToElement(result)
+                .GetProperty("result")
+                .GetProperty("status")
+                .GetProperty("editorSession");
+
+            editorSession.GetProperty("name").GetString().ShouldBe(sessionName);
+            editorSession.GetProperty("isolated").GetBoolean().ShouldBeTrue();
+            editorSession.GetProperty("processId").GetInt32().ShouldBe(Environment.ProcessId);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.EditorSessionName, previousName);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.EditorSessionRoot, previousRoot);
+        }
+    }
+
+    [Test]
     public void TryResolveCorsOrigin_AllowsMatchingOriginAndBlocksUnknownOrigin()
     {
         var allowCall = new object?[] { "https://app.local", "https://app.local;https://tools.local", null };

@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
@@ -27,16 +28,21 @@ public static partial class EditorUnitTests
 
         MathBvhTestComponent test = rigNode.AddComponent<MathBvhTestComponent>()!;
         test.Configure(mode, targetModel, triangles);
+        if (controller?.IsSpawningBenchmarkInstances != true)
+        {
+            var debugControls = rigNode.AddComponent<CustomUIComponent>()!;
+            test.RegisterDebugControls(debugControls);
+        }
 
         controller?.RegisterSubLabel(
             rigNode,
             rigTransform,
             mode switch
             {
-                MathBvhTestMode.CpuScene => "green marker = BVH/brute-force query parity",
-                MathBvhTestMode.GpuScene => "green marker = GPU topology ready",
-                MathBvhTestMode.LegacyCpuMesh => "green marker = BVH/brute-force ray parity",
-                _ => "green marker = GPU mesh topology ready",
+                MathBvhTestMode.CpuScene => "green marker = CPU BVH/query parity",
+                MathBvhTestMode.GpuScene => "green marker = GPU BVH/query parity",
+                MathBvhTestMode.LegacyCpuMesh => "green marker = CPU mesh query parity",
+                _ => "green marker = GPU mesh query parity",
             },
             6.8f);
 
@@ -50,9 +56,7 @@ public static partial class EditorUnitTests
     {
         XRMesh mesh = CreateMathBvhGridMesh(out triangles);
         XRMaterial material = XRMaterial.CreateUnlitColorMaterialForward(
-            mode == MathBvhTestMode.LegacyCpuMesh
-                ? new ColorF4(0.12f, 0.31f, 0.46f, 1.0f)
-                : new ColorF4(0.25f, 0.12f, 0.38f, 1.0f));
+            new ColorF4(0.12f, 0.31f, 0.46f, 1.0f));
         var subMesh = new SubMesh(mesh, material)
         {
             Name = mode == MathBvhTestMode.LegacyCpuMesh ? "LegacyCpuMeshBvhGrid" : "GpuMeshBvhGrid",

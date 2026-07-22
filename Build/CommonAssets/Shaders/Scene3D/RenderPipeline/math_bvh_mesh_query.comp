@@ -1,0 +1,212 @@
+#version 460 core
+
+// Math Intersections World parity query for the renderable-owned mesh GPU BVH.
+// Box, sphere, and frustum queries report selected vertices, edges, and faces;
+// finite raycast mode reports intersected faces and the nearest distance.
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+#include "bvh_nodes.glslinc"
+#include "math_bvh_query_shapes.glslinc"
+
+layout(std430, binding = 0) readonly buffer BvhNodes
+{
+    uint NodeCount;
+    uint RootIndex;
+    uint NodeStrideScalars;
+    uint MaxLeafPrimitives;
+    BvhNode Nodes[];
+};
+
+struct PackedTriangle
+{
+    vec4 V0;
+    vec4 V1;
+    vec4 V2;
+    uvec4 Extra;
+};
+
+layout(std430, binding = 1) readonly buffer PackedTriangles
+{
+    PackedTriangle Triangles[];
+};
+
+// 0 = rejected/not visited, 1 = fully contained/visited, 2 = partial overlap.
+layout(std430, binding = 2) writeonly buffer QueryNodeClasses
+{
+    uint NodeClasses[];
+};
+
+// Query id, total hits, nearest distance/face, flags, topology, channel counts, mask.
+layout(std430, binding = 3) writeonly buffer QueryResult
+{
+    uint Result[];
+};
+
+// Seven two-bit classifications per source triangle: vertices 0..2, edges 3..5,
+// and triangle 6. Each value is 0 = disjoint, 1 = contained, 2 = intersected.
+layout(std430, binding = 4) writeonly buffer QueryPrimitiveClasses
+{
+    uint PrimitiveClasses[];
+};
+
+// Bit zero enables points, bit one enables lines, bit two enables triangles.
+uniform uint QueryPrimitiveMask;
+uniform uint LogicalNodeCount;
+uniform uint QueryId;
+
+const uint INVALID_INDEX = 0xFFFFFFFFu;
+const uint STACK_CAPACITY = 64u;
+const uint FLAG_STACK_OVERFLOW = 1u;
+const uint FLAG_INVALID_RANGE = 2u;
+
+void main()
+{
+    for (uint i = 0u; i < uint(NodeClasses.length()); ++i)
+        NodeClasses[i] = 0u;
+    for (uint i = 0u; i < uint(Result.length()); ++i)
+        Result[i] = 0u;
+    for (uint i = 0u; i < uint(PrimitiveClasses.length()); ++i)
+        PrimitiveClasses[i] = 0u;
+
+    vec3 rayDelta = QueryRayEnd - QueryRayStart;
+    float rayLength = length(rayDelta);
+    uint safeNodeCount = min(LogicalNodeCount, uint(Nodes.length()));
+    uint root = RootIndex;
+    uint hitCount = 0u;
+    uint nearestFace = INVALID_INDEX;
+    float nearestDistance = uintBitsToFloat(0x7F800000u);
+    uint pointHitCount = 0u;
+    uint lineHitCount = 0u;
+    uint triangleHitCount = 0u;
+    uint flags = 0u;
+
+    if (safeNodeCount > 0u && root != INVALID_INDEX && root < safeNodeCount)
+    {
+        uint stack[STACK_CAPACITY];
+        uint stackCount = 1u;
+        stack[0] = root;
+
+        while (stackCount > 0u)
+        {
+            uint nodeIndex = stack[--stackCount];
+            if (nodeIndex >= safeNodeCount)
+                continue;
+
+            BvhNode node = Nodes[nodeIndex];
+            uint nodeClass = ClassifyQueryAabb(node.minBounds, node.maxBounds);
+            if (nodeClass == 0u)
+                continue;
+
+            NodeClasses[nodeIndex] = nodeClass;
+            bool isLeaf = (node.flags & BVH_FLAG_LEAF) != 0u;
+            if (isLeaf)
+            {
+                uint first = node.primitiveRange.x;
+                uint count = node.primitiveRange.y;
+                uint triangleCount = uint(Triangles.length());
+                if (first >= triangleCount || count > triangleCount - first)
+                {
+                    flags |= FLAG_INVALID_RANGE;
+                    continue;
+                }
+
+                for (uint primitiveOffset = 0u; primitiveOffset < count; ++primitiveOffset)
+                {
+                    PackedTriangle triangle = Triangles[first + primitiveOffset];
+                    uint sourceFace = triangle.Extra.y;
+                    if (sourceFace >= uint(PrimitiveClasses.length()))
+                    {
+                        flags |= FLAG_INVALID_RANGE;
+                        continue;
+                    }
+
+                    uint packedClasses = 0u;
+                    if (QueryShape == 3u)
+                    {
+                        float distance;
+                        if (SegmentIntersectsTriangle(
+                            QueryRayStart,
+                            QueryRayEnd,
+                            triangle.V0.xyz,
+                            triangle.V1.xyz,
+                            triangle.V2.xyz,
+                            distance))
+                        {
+                            packedClasses |= 2u << 12u;
+                            ++triangleHitCount;
+                            ++hitCount;
+                            if (distance < nearestDistance)
+                            {
+                                nearestDistance = distance;
+                                nearestFace = sourceFace;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        if ((QueryPrimitiveMask & 1u) != 0u)
+                        {
+                            uint class0 = ClassifyQueryPoint(triangle.V0.xyz);
+                            uint class1 = ClassifyQueryPoint(triangle.V1.xyz);
+                            uint class2 = ClassifyQueryPoint(triangle.V2.xyz);
+                            packedClasses |= class0 << 0u;
+                            packedClasses |= class1 << 2u;
+                            packedClasses |= class2 << 4u;
+                            pointHitCount += uint(class0 != 0u) + uint(class1 != 0u) + uint(class2 != 0u);
+                        }
+                        if ((QueryPrimitiveMask & 2u) != 0u)
+                        {
+                            uint class0 = ClassifyQuerySegment(triangle.V0.xyz, triangle.V1.xyz);
+                            uint class1 = ClassifyQuerySegment(triangle.V1.xyz, triangle.V2.xyz);
+                            uint class2 = ClassifyQuerySegment(triangle.V2.xyz, triangle.V0.xyz);
+                            packedClasses |= class0 << 6u;
+                            packedClasses |= class1 << 8u;
+                            packedClasses |= class2 << 10u;
+                            lineHitCount += uint(class0 != 0u) + uint(class1 != 0u) + uint(class2 != 0u);
+                        }
+                        if ((QueryPrimitiveMask & 4u) != 0u)
+                        {
+                            uint triangleClass = ClassifyQueryTriangle(
+                                triangle.V0.xyz,
+                                triangle.V1.xyz,
+                                triangle.V2.xyz);
+                            packedClasses |= triangleClass << 12u;
+                            triangleHitCount += uint(triangleClass != 0u);
+                        }
+                        hitCount = pointHitCount + lineHitCount + triangleHitCount;
+                    }
+
+                    PrimitiveClasses[sourceFace] = packedClasses;
+                }
+                continue;
+            }
+
+            uint childCount = uint(node.leftChild != INVALID_INDEX && node.leftChild < safeNodeCount) +
+                              uint(node.rightChild != INVALID_INDEX && node.rightChild < safeNodeCount);
+            if (stackCount + childCount > STACK_CAPACITY)
+            {
+                flags |= FLAG_STACK_OVERFLOW;
+                break;
+            }
+
+            if (node.rightChild != INVALID_INDEX && node.rightChild < safeNodeCount)
+                stack[stackCount++] = node.rightChild;
+            if (node.leftChild != INVALID_INDEX && node.leftChild < safeNodeCount)
+                stack[stackCount++] = node.leftChild;
+        }
+    }
+
+    Result[0] = QueryId;
+    Result[1] = hitCount;
+    Result[2] = floatBitsToUint(nearestDistance);
+    Result[3] = nearestFace;
+    Result[4] = flags;
+    Result[5] = NodeCount;
+    Result[6] = RootIndex;
+    Result[7] = uint(Triangles.length());
+    Result[8] = pointHitCount;
+    Result[9] = lineHitCount;
+    Result[10] = triangleHitCount;
+    Result[11] = QueryPrimitiveMask;
+}

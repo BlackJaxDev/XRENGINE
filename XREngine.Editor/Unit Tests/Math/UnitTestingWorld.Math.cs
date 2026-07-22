@@ -996,6 +996,7 @@ public static partial class EditorUnitTests
         ColorF4 rootColor,
         PhysicsChainColliderScenario colliderScenario = PhysicsChainColliderScenario.Default,
         bool includeSkinnedMesh = false,
+        bool useGpuDrivenSkinning = true,
         MathIntersectionsWorldControllerComponent? controller = null)
     {
         var testNode = parentNode.NewChild(name);
@@ -1092,15 +1093,15 @@ public static partial class EditorUnitTests
         chain.Multithread = multithread;
         chain.UseBatchedDispatcher = useBatchedDispatcher;
         chain.GpuSyncToBones = gpuSyncToBones;
+        chain.UseGpuDrivenSkinning = useGpuDrivenSkinning;
         chain.Colliders = [.. colliders];
 
         if (includeSkinnedMesh)
         {
             AddPhysicsChainSkinnedBoxVisual(testNode, chainBones, chainColor);
-            // The skinned mesh was added after the chain component activated,
-            // so the auto-scan didn't find it. Trigger a re-scan so the GPU
-            // bone palette writes directly to the renderer's bone matrices
-            // buffer (zero-readback path).
+            // The visual is added after component activation. This either binds
+            // the zero-readback palette or explicitly leaves the renderer on its
+            // CPU transform-updated palette, according to the scenario.
             chain.InvalidateGpuDrivenRenderers();
         }
 
@@ -1284,7 +1285,7 @@ public static partial class EditorUnitTests
         // Reinitialize particles at the current (post-move) bone positions so the
         // simulation doesn't see a huge _objectMove delta on its first frame.
         chain.SetupParticles();
-           chain.InvalidateGpuDrivenRenderers();
+        chain.InvalidateGpuDrivenRenderers();
         return true;
     }
 
@@ -1299,12 +1300,12 @@ public static partial class EditorUnitTests
         Matrix4x4 visualParentWorld = visualParent.WorldMatrix;
         for (int boneIndex = 0; boneIndex < chainBones.Length; ++boneIndex)
         {
-            // InvBind must include the visual parent's world matrix so that the
-            // vertex shader skinning equation (invBind * boneMatrix * v) correctly
-            // maps mesh-local vertices to world space when model matrix = Identity.
-            // Without this, skinning only produces correct results when the visual
-            // parent sits at the world origin.
-            utilizedBones[boneIndex] = (chainBones[boneIndex], chainBones[boneIndex].InverseWorldMatrix * visualParentWorld);
+            // System.Numerics uses row vectors: mesh local -> visual parent world
+            // -> inverse bone bind. The final palette then appends current bone
+            // world and maps the mesh directly into world space.
+            utilizedBones[boneIndex] = (
+                chainBones[boneIndex],
+                ComposePhysicsChainMeshLocalInverseBind(visualParentWorld, chainBones[boneIndex].InverseWorldMatrix));
             boneCenters[boneIndex] = Vector3.Transform(chainBones[boneIndex].WorldTranslation, visualParentInverse);
         }
 
@@ -1393,6 +1394,11 @@ public static partial class EditorUnitTests
         mesh.RebuildSkinningBuffersFromVertices();
         return mesh;
     }
+
+    internal static Matrix4x4 ComposePhysicsChainMeshLocalInverseBind(
+        in Matrix4x4 visualParentWorld,
+        in Matrix4x4 boneInverseWorld)
+        => visualParentWorld * boneInverseWorld;
 
     private static void AddSkinnedQuad(
         List<Vertex> vertices,

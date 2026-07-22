@@ -23,6 +23,36 @@ The default endpoint is:
 http://localhost:5467/mcp/
 ```
 
+## Isolated Editor Sessions
+
+Use an isolated editor session for agent-driven MCP work. Each named session gets its own managed build output and intermediate files, MCP port, process identity, editor preferences, asset cache/metadata, and logs. A normal solution build can then overwrite `Build/Editor` without touching a running session.
+
+```powershell
+pwsh Tools/Manage-McpEditorSession.ps1 Start -Name agent-rendering
+pwsh Tools/Manage-McpEditorSession.ps1 Start -Name agent-physics
+pwsh Tools/Manage-McpEditorSession.ps1 List
+```
+
+`Start` selects an available port beginning at `5467`, builds with a session-specific .NET artifacts root, launches the Unit Testing World, and waits for that session's MCP status endpoint. Pass `-Port 5501` to require a particular port, `-NoWait` to return immediately after launch, or `-NoBuild` to reuse that stopped session's existing artifacts.
+
+Call a named session without copying its port:
+
+```powershell
+pwsh Tools/Invoke-Mcp.ps1 -Session agent-rendering -Method ping
+pwsh Tools/Invoke-Mcp.ps1 -Session agent-rendering -Method tools/list
+```
+
+Stop only the process owned by that session, then remove its disposable artifacts when they are no longer needed:
+
+```powershell
+pwsh Tools/Manage-McpEditorSession.ps1 Stop -Name agent-rendering
+pwsh Tools/Manage-McpEditorSession.ps1 Remove -Name agent-rendering
+```
+
+The manager verifies the executable path, PID, and process start time before stopping anything. It first requests a graceful window close, then terminates only that verified session PID if the editor apphost does not expose a closable main-window handle. It never searches for and kills all editor processes. Pass `Stop -Force` to skip the graceful close attempt.
+
+Session data lives under `Build/_AgentValidation/mcp-sessions/<name>/`. Repository source assets and `Assets/UnitTestingWorldSettings.jsonc` remain shared intentionally, so source edits are still visible across sessions. The default session permission policy is `AllowAll` for unattended local automation; use `-PermissionPolicy AllowReadOnly` when mutation is not required.
+
 ## Command Line
 
 You can also launch the editor with MCP enabled:
