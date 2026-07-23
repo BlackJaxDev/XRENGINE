@@ -38,7 +38,7 @@ public sealed class PhysicsChainCollisionScalingTests
         var context = new TestWorldContext();
         var node = new SceneNode();
         PhysicsChainComponent component = node.AddComponent<PhysicsChainComponent>()!;
-        component.World = context;
+        node.World = context;
         context.Run(ETickGroup.PostPhysics);
         PhysicsChainWorld.TryGet(context, out PhysicsChainWorld? world).ShouldBeTrue();
         PhysicsChainWorld activeWorld = world!;

@@ -60,15 +60,37 @@ namespace XREngine.Components.Capture.Lights.Types
 
         /// <summary>
         /// Camera used by the primary one-view shadow pass, when the component is active.
+        /// Runtime-only shadow state is restored lazily because editor snapshots do not
+        /// serialize viewport or camera instances.
         /// </summary>
-        public XRCamera? ShadowCamera => _primaryShadowViewport?.Camera;
+        public XRCamera? ShadowCamera
+        {
+            get
+            {
+                EnsurePrimaryShadowViewportReady();
+                return _primaryShadowViewport?.Camera;
+            }
+        }
 
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            EnsurePrimaryShadowViewportReady();
 
-            XRViewport viewport = PrimaryShadowViewport;
+            if (Type == ELightType.Dynamic && CastsShadows && ShadowMap is null)
+                SetShadowMapResolution(DefaultResolution, DefaultResolution);
+        }
+
+        private void EnsurePrimaryShadowViewportReady()
+        {
+            if (!IsActiveInHierarchy)
+                return;
+
+            XRViewport viewport = _primaryShadowViewport ??= CreateShadowViewport();
             viewport.WorldInstanceOverride = WorldAs<XREngine.Rendering.IRuntimeRenderWorld>();
+            if (viewport.Camera is not null)
+                return;
+
             XRCamera cam = new(GetShadowCameraParentTransform(), GetCameraParameters())
             {
                 CullingMask = DefaultLayers.EverythingExceptGizmos
@@ -85,9 +107,27 @@ namespace XREngine.Components.Capture.Lights.Types
                 colorStage?.SetValue(nameof(ColorGradingSettings.Exposure), 1.0f);
             }
             viewport.Camera = cam;
+        }
 
-            if (Type == ELightType.Dynamic && CastsShadows && ShadowMap is null)
-                SetShadowMapResolution(DefaultResolution, DefaultResolution);
+        /// <summary>
+        /// Resolves a live primary shadow viewport whose runtime camera has been
+        /// reconstructed. Snapshot restoration does not serialize either object, so
+        /// derived light implementations must use this guard instead of directly
+        /// submitting the lazily-created viewport.
+        /// </summary>
+        protected bool TryGetPrimaryShadowViewportForProcessing(out XRViewport viewport)
+        {
+            viewport = null!;
+            if (!IsActiveInHierarchy)
+                return false;
+
+            EnsurePrimaryShadowViewportReady();
+            XRViewport? candidate = _primaryShadowViewport;
+            if (candidate?.ActiveCamera is null)
+                return false;
+
+            viewport = candidate;
+            return true;
         }
 
         protected virtual TransformBase GetShadowCameraParentTransform()
@@ -95,11 +135,11 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected override void OnComponentDeactivated()
         {
-            if (_primaryShadowViewport is not null)
-            {
-                _primaryShadowViewport.WorldInstanceOverride = null;
-                _primaryShadowViewport.Camera = null;
-            }
+            // Publish the detached state before touching the viewport so queued shadow work
+            // cannot discover and reuse it while snapshot restoration is deactivating this light.
+            XRViewport? viewport = _primaryShadowViewport;
+            _primaryShadowViewport = null;
+            viewport?.Destroy();
 
             base.OnComponentDeactivated();
         }
@@ -108,18 +148,29 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected virtual bool PrimaryShadowViewportRelevant => true;
 
-        private bool ShouldProcessShadowViewport()
-            => CastsShadows && PrimaryShadowViewportRelevant && (ShadowMap is not null || UsesAtlasShadowViewport);
+        private bool TryGetProcessableShadowViewport(out XRViewport viewport)
+        {
+            viewport = null!;
+            if (!IsActiveInHierarchy ||
+                !CastsShadows ||
+                !PrimaryShadowViewportRelevant ||
+                (ShadowMap is null && !UsesAtlasShadowViewport))
+            {
+                return false;
+            }
+
+            return TryGetPrimaryShadowViewportForProcessing(out viewport);
+        }
 
         /// <summary>
         /// Swaps the one-view shadow viewport buffers after visible shadow casters have been collected.
         /// </summary>
         public override void SwapBuffers(Rendering.Lightmapping.LightmapBakeManager? lightmapBaker = null)
         {
-            if (!ShouldProcessShadowViewport())
+            if (!TryGetProcessableShadowViewport(out XRViewport viewport))
                 return;
 
-            PrimaryShadowViewport.SwapBuffers();
+            viewport.SwapBuffers();
             lightmapBaker?.ProcessDynamicCachedAutoBake(this);
         }
 
@@ -128,10 +179,10 @@ namespace XREngine.Components.Capture.Lights.Types
         /// </summary>
         public override void CollectVisibleItems()
         {
-            if (!ShouldProcessShadowViewport())
+            if (!TryGetProcessableShadowViewport(out XRViewport viewport))
                 return;
 
-            PrimaryShadowViewport.CollectVisible(false);
+            viewport.CollectVisible(false);
         }
 
         private static bool _loggedShadowRenderOnce = false;
@@ -141,7 +192,13 @@ namespace XREngine.Components.Capture.Lights.Types
         /// </summary>
         public override void RenderShadowMap(bool collectVisibleNow = false)
         {
-            if (!CastsShadows || ShadowMap is null || !PrimaryShadowViewportRelevant)
+            if (!IsActiveInHierarchy ||
+                !CastsShadows ||
+                ShadowMap is null ||
+                !PrimaryShadowViewportRelevant)
+                return;
+
+            if (!TryGetPrimaryShadowViewportForProcessing(out XRViewport viewport))
                 return;
 
             if (!_loggedShadowRenderOnce)
@@ -156,10 +213,10 @@ namespace XREngine.Components.Capture.Lights.Types
                 SwapBuffers();
             }
 
-            if (PrimaryShadowViewport.RenderPipeline is ShadowRenderPipeline shadowPipeline)
+            if (viewport.RenderPipeline is ShadowRenderPipeline shadowPipeline)
                 shadowPipeline.ClearColor = GetShadowMapClearColor();
 
-            PrimaryShadowViewport.Render(ShadowMap, null, null, true, ShadowMap.Material);
+            viewport.Render(ShadowMap, null, null, true, ShadowMap.Material);
         }
 
         protected virtual ColorF4 GetShadowMapClearColor()

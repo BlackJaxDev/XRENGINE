@@ -28,13 +28,24 @@ namespace XREngine.Editor.Mcp
                 return false;
             }
 
-            if (!XRObjectBase.ObjectsCache.TryGetValue(guid, out var obj) || obj is not SceneNode sceneNode)
+            SceneNode? sceneNode = FindNodeInWorld(world, guid);
+            if (sceneNode is null
+                && XRObjectBase.ObjectsCache.TryGetValue(guid, out var obj)
+                && obj is SceneNode cachedNode)
+            {
+                sceneNode = cachedNode;
+            }
+
+            if (sceneNode is null)
             {
                 error = $"Scene node '{nodeId}' not found.";
                 return false;
             }
 
-            if (sceneNode.World != world)
+            // Inactive nodes are deliberately detached from the runtime world context, but
+            // remain structurally owned by a scene in the active target world. MCP scene
+            // operations must still be able to inspect and reactivate those nodes.
+            if (!ReferenceEquals(sceneNode.World, world) && FindSceneForNode(sceneNode, world) is null)
             {
                 error = $"Scene node '{nodeId}' is not part of the active world instance.";
                 return false;
@@ -44,9 +55,46 @@ namespace XREngine.Editor.Mcp
             return true;
         }
 
-        private static XRComponent? FindComponent(SceneNode node, string? componentId, string? componentName, string? componentTypeName, out string? error)
+        private static SceneNode? FindNodeInWorld(XRWorldInstance world, Guid nodeId)
+        {
+            if (world.TargetWorld is not null)
+            {
+                foreach (var scene in world.TargetWorld.Scenes)
+                {
+                    foreach (var root in scene.RootNodes)
+                    {
+                        if (root is null)
+                            continue;
+
+                        foreach (var node in EnumerateHierarchy(root))
+                        {
+                            if (node.ID == nodeId)
+                                return node;
+                        }
+                    }
+                }
+            }
+
+            // Runtime/editor-only roots are not necessarily part of TargetWorld.Scenes.
+            foreach (var root in world.RootNodes)
+            {
+                if (root is null)
+                    continue;
+
+                foreach (var node in EnumerateHierarchy(root))
+                {
+                    if (node.ID == nodeId)
+                        return node;
+                }
+            }
+
+            return null;
+        }
+
+        internal static XRComponent? FindComponent(SceneNode node, string? componentId, string? componentName, string? componentTypeName, out string? error)
         {
             error = null;
+            var components = node.Components;
 
             if (!string.IsNullOrWhiteSpace(componentId))
             {
@@ -56,22 +104,25 @@ namespace XREngine.Editor.Mcp
                     return null;
                 }
 
-                if (!XRObjectBase.ObjectsCache.TryGetValue(guid, out var obj) || obj is not XRComponent component)
+                // Snapshot play/edit worlds temporarily contain different component
+                // instances with the same persistent ID. Resolve against the caller's
+                // live node first; the global cache can legitimately point at the
+                // dormant instance from the other world.
+                XRComponent? component = components.FirstOrDefault(candidate => candidate.ID == guid);
+                if (component is not null)
+                    return component;
+
+                if (XRObjectBase.ObjectsCache.TryGetValue(guid, out var obj) &&
+                    obj is XRComponent cachedComponent &&
+                    ReferenceEquals(cachedComponent.SceneNode, node))
                 {
-                    error = $"Component '{componentId}' not found.";
-                    return null;
+                    return cachedComponent;
                 }
 
-                if (!ReferenceEquals(component.SceneNode, node))
-                {
-                    error = $"Component '{componentId}' is not on the specified node.";
-                    return null;
-                }
-
-                return component;
+                error = $"Component '{componentId}' is not on the specified node.";
+                return null;
             }
 
-            var components = node.Components;
             if (!string.IsNullOrWhiteSpace(componentName))
                 return components.FirstOrDefault(comp => string.Equals(comp.Name, componentName, StringComparison.OrdinalIgnoreCase));
 

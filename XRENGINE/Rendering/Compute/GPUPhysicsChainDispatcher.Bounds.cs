@@ -47,7 +47,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         IReadOnlyList<GPUPhysicsChainRequest> requests)
     {
         if (_particlesBuffer is null || requests.Count == 0 || !RuntimeEngine.IsRenderThread)
-            return false;
+            return requests.Count == 0;
 
         EnsureGpuBoundsPrograms();
         if (_gpuBoundsProgram is null || _gpuBoundsToSceneProgram is null)
@@ -76,7 +76,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         _gpuBoundsSlotAllocator.EndLayout();
 
         if (_gpuBoundsWorkItems.Count == 0)
-            return false;
+            return true;
 
         bool workItemsResized = EnsureBufferCapacity(
             ref _gpuBoundsWorkItemBuffer,
@@ -91,7 +91,9 @@ public sealed partial class GPUPhysicsChainDispatcher
 
         uint workItemBytes = _gpuBoundsWorkItemBuffer.WriteDataRaw(CollectionsMarshal.AsSpan(_gpuBoundsWorkItems));
         PushBufferUpdate(_gpuBoundsWorkItemBuffer, workItemsResized, workItemBytes);
-        RecordCpuUploadBytes(workItemsResized ? _gpuBoundsWorkItemBuffer.Length : workItemBytes, isBatched: true);
+        RecordCpuUploadBytes(
+            workItemsResized ? _gpuBoundsWorkItemBuffer.Length : workItemBytes,
+            _currentDispatchGroupIsBatched);
         if (!backend.EnsureGpuBufferReady(_particlesBuffer)
             || !backend.EnsureGpuBufferReady(_gpuBoundsWorkItemBuffer)
             || !backend.EnsureGpuBufferReady(_gpuBoundsAtlasBuffer))
@@ -101,14 +103,23 @@ public sealed partial class GPUPhysicsChainDispatcher
         _gpuBoundsProgram.BindBuffer(_particlesBuffer, 0);
         _gpuBoundsProgram.BindBuffer(_gpuBoundsWorkItemBuffer, 1);
         _gpuBoundsProgram.BindBuffer(_gpuBoundsAtlasBuffer, 2);
-        _gpuBoundsProgram.DispatchCompute(checked((uint)_gpuBoundsWorkItems.Count), 1u, 1u);
-        backend.CompletePass(BoundsCompletionPass);
+        if (!TryDispatchDirect(
+                backend,
+                _gpuBoundsProgram,
+                checked((uint)_gpuBoundsWorkItems.Count),
+                1u,
+                1u,
+                PhysicsChainComputePassKind.BoundsPublication))
+            return false;
+        if (!TryCompletePass(backend, BoundsCompletionPass))
+            return false;
         ++_gpuBoundsDispatchCount;
 
         CollectBatchedGpuDrivenBonePaletteBindings(requests);
         CollectGpuBoundsScenes();
         for (int sceneIndex = 0; sceneIndex < _gpuBoundsScenes.Count; ++sceneIndex)
-            PublishGpuBoundsToScene(backend, _gpuBoundsScenes[sceneIndex]);
+            if (!PublishGpuBoundsToScene(backend, _gpuBoundsScenes[sceneIndex]))
+                return false;
         return true;
     }
 
@@ -127,7 +138,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         }
     }
 
-    private void PublishGpuBoundsToScene(IPhysicsChainComputeBackend backend, GPUScene scene)
+    private bool PublishGpuBoundsToScene(IPhysicsChainComputeBackend backend, GPUScene scene)
     {
         _gpuBoundsCopyItems.Clear();
         uint maximumCommandSlot = 0u;
@@ -152,37 +163,48 @@ public sealed partial class GPUPhysicsChainDispatcher
         }
 
         if (_gpuBoundsCopyItems.Count == 0)
-            return;
+            return true;
 
         scene.EnsureCommandAabbCapacity(maximumCommandSlot + 1u);
         XRDataBuffer? sceneBoundsBuffer = scene.CommandAabbBuffer;
         if (sceneBoundsBuffer is null || _gpuBoundsAtlasBuffer is null)
-            return;
+            return false;
 
         bool copyItemsResized = EnsureBufferCapacity(
             ref _gpuBoundsCopyItemBuffer,
             "PhysicsChainGlobalBoundsCopyItems",
             checked((uint)_gpuBoundsCopyItems.Count));
         if (_gpuBoundsCopyItemBuffer is null)
-            return;
+            return false;
 
         uint copyItemBytes = _gpuBoundsCopyItemBuffer.WriteDataRaw(CollectionsMarshal.AsSpan(_gpuBoundsCopyItems));
         PushBufferUpdate(_gpuBoundsCopyItemBuffer, copyItemsResized, copyItemBytes);
-        RecordCpuUploadBytes(copyItemsResized ? _gpuBoundsCopyItemBuffer.Length : copyItemBytes, isBatched: true);
+        RecordCpuUploadBytes(
+            copyItemsResized ? _gpuBoundsCopyItemBuffer.Length : copyItemBytes,
+            _currentDispatchGroupIsBatched);
         if (!backend.EnsureGpuBufferReady(_gpuBoundsAtlasBuffer)
             || !backend.EnsureGpuBufferReady(sceneBoundsBuffer)
             || !backend.EnsureGpuBufferReady(_gpuBoundsCopyItemBuffer))
-            return;
+            return false;
 
         _gpuBoundsToSceneProgram!.Uniform("CopyItemCount", checked((uint)_gpuBoundsCopyItems.Count));
         _gpuBoundsToSceneProgram.BindBuffer(_gpuBoundsAtlasBuffer, 0);
         _gpuBoundsToSceneProgram.BindBuffer(sceneBoundsBuffer, 1);
         _gpuBoundsToSceneProgram.BindBuffer(_gpuBoundsCopyItemBuffer, 2);
         uint groupCount = (checked((uint)_gpuBoundsCopyItems.Count) + BoundsCopyWorkgroupSize - 1u) / BoundsCopyWorkgroupSize;
-        _gpuBoundsToSceneProgram.DispatchCompute(Math.Max(groupCount, 1u), 1u, 1u);
-        backend.CompletePass(BoundsCompletionPass);
+        if (!TryDispatchDirect(
+                backend,
+                _gpuBoundsToSceneProgram,
+                Math.Max(groupCount, 1u),
+                1u,
+                1u,
+                PhysicsChainComputePassKind.BoundsPublication))
+            return false;
+        if (!TryCompletePass(backend, BoundsCompletionPass))
+            return false;
         ++_gpuBoundsSceneCopyDispatchCount;
         _gpuBoundsPublishedCommandCount += _gpuBoundsCopyItems.Count;
+        return true;
     }
 
     private void EnsureGpuBoundsPrograms()

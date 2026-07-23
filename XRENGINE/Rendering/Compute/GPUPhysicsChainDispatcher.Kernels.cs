@@ -289,12 +289,8 @@ public sealed partial class GPUPhysicsChainDispatcher
                     ? "GPUPhysicsChainDispatcher.Solver.ShortLinear"
                     : "GPUPhysicsChainDispatcher.Solver.BranchedOrLong");
             nint argumentOffset = (nint)(bucket * 3u * sizeof(uint));
-            if (!backend.TryDispatchIndirect(program, _indirectDispatchArgumentBuffer, argumentOffset))
-            {
-                XREngine.Debug.PhysicsWarning(
-                    $"[GPUPhysicsChainDispatcher] Backend '{backend.Name}' failed indirect dispatch for bucket {kernelBucket}. GPU work remains pending.");
+            if (!TryDispatchIndirect(backend, program, _indirectDispatchArgumentBuffer, argumentOffset, kernelBucket))
                 return false;
-            }
 
             if (kernelBucket == PhysicsChainKernelBucket.ShortLinear)
                 ++_shortLinearIndirectDispatchCount;

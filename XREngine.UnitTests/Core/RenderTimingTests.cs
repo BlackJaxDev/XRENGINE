@@ -22,4 +22,13 @@ public sealed class RenderTimingTests
         BvhGpuProfiler.ShouldResetFrameAccumulator(initializedFrameStamp: true, currentFrameTimestampTicks: 100L, nextFrameTimestampTicks: 100L).ShouldBeFalse();
         BvhGpuProfiler.ShouldResetFrameAccumulator(initializedFrameStamp: true, currentFrameTimestampTicks: 100L, nextFrameTimestampTicks: 101L).ShouldBeTrue();
     }
+
+    [Test]
+    public void BvhGpuProfiler_BoundsPendingAndAbandonedTimestampScopes()
+    {
+        BvhGpuProfiler.HasPendingCapacity(pending: 1023, abandoned: 0, reserved: 0).ShouldBeTrue();
+        BvhGpuProfiler.HasPendingCapacity(pending: 512, abandoned: 511, reserved: 1).ShouldBeFalse();
+        BvhGpuProfiler.HasPendingCapacity(pending: 0, abandoned: 1024, reserved: 0).ShouldBeFalse();
+        BvhGpuProfiler.HasPendingCapacity(pending: -1, abandoned: 0, reserved: 0).ShouldBeFalse();
+    }
 }

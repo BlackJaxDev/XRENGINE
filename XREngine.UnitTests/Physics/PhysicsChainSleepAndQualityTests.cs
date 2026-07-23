@@ -145,9 +145,10 @@ public sealed class PhysicsChainSleepAndQualityTests
     [Test]
     public void ColliderConfigurationMutation_WakesSleepingCpuChain()
     {
-        var node = new SceneNode("PhysicsChain");
-        PhysicsChainComponent component = node.AddComponent<PhysicsChainComponent>()!;
-        var collider = new PhysicsChainSphereCollider();
+        var componentNode = new SceneNode("PhysicsChain");
+        var colliderNode = new SceneNode("Collider");
+        PhysicsChainComponent component = componentNode.AddComponent<PhysicsChainComponent>()!;
+        PhysicsChainSphereCollider collider = colliderNode.AddComponent<PhysicsChainSphereCollider>()!;
         component.Colliders = [collider];
 
         int baselineSignature = Invoke<int>(component, "ComputeSleepColliderSignature");

@@ -21,6 +21,7 @@ internal static class AnimationPropertySerialization
             return new SerializedPropertyAnimationModel
             {
                 TypeName = animation.GetType().AssemblyQualifiedName,
+                LengthInSeconds = animation.LengthInSeconds,
                 Payload = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Serialize(animation))
             };
 
@@ -52,6 +53,7 @@ internal static class AnimationPropertySerialization
             return new SerializedPropertyAnimationModel
             {
                 TypeName = animation.GetType().AssemblyQualifiedName,
+                LengthInSeconds = animation.LengthInSeconds,
                 Payload = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Serialize(animation)),
                 Keyframes = keyframes
             };
@@ -72,6 +74,7 @@ internal static class AnimationPropertySerialization
         BasePropAnim animation = (BasePropAnim?)CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
             () => CookedBinarySerializer.Deserialize(animationType, model.Payload))
             ?? throw new InvalidOperationException($"Failed to deserialize animation '{animationType.FullName}'.");
+        animation.LengthInSeconds = model.LengthInSeconds;
         if (!TryGetKeyframesProperty(animation.GetType(), out PropertyInfo? keyframesProperty))
             return animation;
 
@@ -121,6 +124,12 @@ internal static class AnimationPropertySerialization
 internal sealed partial class SerializedPropertyAnimationModel
 {
     public string? TypeName { get; set; }
+
+    /// <summary>
+    /// Canonical timeline length. This is stored explicitly because cadence and baked-frame
+    /// setters can recompute a zero length while a property animation payload is restored.
+    /// </summary>
+    public float LengthInSeconds { get; set; }
 
     // Kept as byte[] for efficient MemoryPack binary serialization; hidden from YAML.
     // YAML round-trips via the base64 string proxy below under the key "Payload".

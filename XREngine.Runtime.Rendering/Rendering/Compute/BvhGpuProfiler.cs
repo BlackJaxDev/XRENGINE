@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering.Compute
 {
@@ -109,20 +110,23 @@ namespace XREngine.Rendering.Compute
                 => profiler.RecordCpuSubmission(stage, System.Diagnostics.Stopwatch.GetTimestamp() - _started);
         }
 
-        public readonly struct TimingHandle(BvhGpuProfiler.Stage stage, uint workCount, GLRenderQuery startQuery, OpenGLRenderer renderer)
+        public readonly struct TimingHandle(BvhGpuProfiler.Stage stage, uint workCount, XRRenderQuery startQuery)
         {
             public Stage Stage { get; } = stage;
             public uint WorkCount { get; } = workCount;
-            public GLRenderQuery StartQuery { get; } = startQuery;
-            public OpenGLRenderer Renderer { get; } = renderer;
+            public XRRenderQuery StartQuery { get; } = startQuery;
         }
 
-        private readonly struct PendingQuery(BvhGpuProfiler.Stage stage, uint workCount, GLRenderQuery start, GLRenderQuery end)
+        private struct PendingQuery(BvhGpuProfiler.Stage stage, uint workCount, XRRenderQuery start, XRRenderQuery end)
         {
             public Stage Stage { get; } = stage;
             public uint WorkCount { get; } = workCount;
-            public GLRenderQuery Start { get; } = start;
-            public GLRenderQuery End { get; } = end;
+            public XRRenderQuery Start { get; } = start;
+            public XRRenderQuery End { get; } = end;
+            public bool StartResolved;
+            public bool EndResolved;
+            public ulong StartNanoseconds;
+            public ulong EndNanoseconds;
         }
 
         private struct Accumulator
@@ -237,8 +241,11 @@ namespace XREngine.Rendering.Compute
         }
 
         private readonly object _lock = new();
-        private readonly Queue<XRRenderQuery> _queryPool = new();
-        private readonly List<PendingQuery> _pending = [];
+        private const int MaxPendingScopes = 1024;
+        private readonly Queue<XRRenderQuery> _queryPool = new(MaxPendingScopes * 2);
+        private readonly List<PendingQuery> _pending = new(MaxPendingScopes);
+        private readonly List<XRRenderQuery> _abandonedPending = new(MaxPendingScopes);
+        private int _reservedScopes;
         private Accumulator _frameAccumulator;
         private Metrics _latest = Metrics.Empty;
         private long _currentFrameTimestampTicks;
@@ -246,6 +253,10 @@ namespace XREngine.Rendering.Compute
 
         internal static bool ShouldResetFrameAccumulator(bool initializedFrameStamp, long currentFrameTimestampTicks, long nextFrameTimestampTicks)
             => initializedFrameStamp && nextFrameTimestampTicks != currentFrameTimestampTicks;
+
+        internal static bool HasPendingCapacity(int pending, int abandoned, int reserved)
+            => pending >= 0 && abandoned >= 0 && reserved >= 0 &&
+                pending + abandoned + reserved < MaxPendingScopes;
 
         private BvhGpuProfiler() { }
 
@@ -283,9 +294,8 @@ namespace XREngine.Rendering.Compute
                 _currentFrameTimestampTicks = frameTimestampTicks;
                 _initializedFrameStamp = true;
 
-                var gl = AbstractRenderer.Current as OpenGLRenderer;
-                if (gl is not null)
-                    ResolvePending(gl);
+                if (AbstractRenderer.Current is OpenGLRenderer or VulkanRenderer)
+                    ResolvePending();
 
                 _latest = _frameAccumulator.ToMetrics();
 
@@ -305,43 +315,90 @@ namespace XREngine.Rendering.Compute
                 return null;
             }
 
-            if (AbstractRenderer.Current is not OpenGLRenderer gl)
+            if (AbstractRenderer.Current is not (OpenGLRenderer or VulkanRenderer))
             {
                 lock (_lock)
                     _frameAccumulator.Add(stage, 0, workCount);
                 return null;
             }
 
-            GLRenderQuery start = AcquireQuery(gl);
-            start.Data.CurrentQuery = EQueryTarget.Timestamp;
-            start.QueryCounter();
+            lock (_lock)
+            {
+                if (!HasPendingCapacity(_pending.Count, _abandonedPending.Count, _reservedScopes))
+                {
+                    _frameAccumulator.Add(stage, 0, workCount);
+                    return null;
+                }
+                _reservedScopes++;
+            }
 
-            return new TimingHandle(stage, workCount, start, gl);
+            XRRenderQuery start = AcquireQuery();
+            if (!TryWriteTimestamp(start))
+            {
+                ReleaseQuery(start);
+                lock (_lock)
+                    _reservedScopes--;
+                return null;
+            }
+
+            return new TimingHandle(stage, workCount, start);
         }
 
         private void End(TimingHandle handle)
         {
-            if (!RuntimeEngine.EffectiveSettings.EnableGpuBvhTimingQueries)
+            XRRenderQuery end = AcquireQuery();
+            if (!TryWriteTimestamp(end))
+            {
+                ReleaseQuery(end);
+                lock (_lock)
+                {
+                    _reservedScopes--;
+                    _abandonedPending.Add(handle.StartQuery);
+                }
                 return;
-
-            GLRenderQuery end = AcquireQuery(handle.Renderer);
-            end.Data.CurrentQuery = EQueryTarget.Timestamp;
-            end.QueryCounter();
+            }
 
             lock (_lock)
+            {
+                _reservedScopes--;
                 _pending.Add(new PendingQuery(handle.Stage, handle.WorkCount, handle.StartQuery, end));
+            }
         }
 
-        private void ResolvePending(OpenGLRenderer renderer)
+        private void ResolvePending()
         {
+            for (int i = _abandonedPending.Count - 1; i >= 0; --i)
+            {
+                ERenderQueryReadStatus status = TryReadTimestamp(_abandonedPending[i], out _);
+                if (status == ERenderQueryReadStatus.NotReady)
+                    continue;
+
+                ReleaseQuery(_abandonedPending[i]);
+                _abandonedPending.RemoveAt(i);
+            }
+
             for (int i = _pending.Count - 1; i >= 0; --i)
             {
                 PendingQuery pending = _pending[i];
-                if (!TryReadTimestamp(pending.Start, out ulong start) ||
-                    !TryReadTimestamp(pending.End, out ulong end))
+                if (!pending.StartResolved && TryReadTimestamp(pending.Start, out ulong start) == ERenderQueryReadStatus.Ready)
+                {
+                    pending.StartNanoseconds = start;
+                    pending.StartResolved = true;
+                }
+                if (!pending.EndResolved && TryReadTimestamp(pending.End, out ulong end) == ERenderQueryReadStatus.Ready)
+                {
+                    pending.EndNanoseconds = end;
+                    pending.EndResolved = true;
+                }
+                if (!pending.StartResolved || !pending.EndResolved)
+                {
+                    _pending[i] = pending;
                     continue;
+                }
 
-                ulong duration = end > start ? end - start : 0;
+                ulong duration = pending.EndNanoseconds > pending.StartNanoseconds
+                    ? pending.EndNanoseconds - pending.StartNanoseconds
+                    : 0;
                 _frameAccumulator.Add(pending.Stage, duration, pending.WorkCount);
 
                 ReleaseQuery(pending.Start);
@@ -350,37 +407,46 @@ namespace XREngine.Rendering.Compute
             }
         }
 
-        private GLRenderQuery AcquireQuery(OpenGLRenderer renderer)
+        private XRRenderQuery AcquireQuery()
         {
             XRRenderQuery query;
+            bool created;
             lock (_lock)
-                query = _queryPool.Count > 0 ? _queryPool.Dequeue() : new XRRenderQuery();
-
-            query.CurrentQuery = EQueryTarget.Timestamp;
-            GLRenderQuery? glQuery = renderer.GenericToAPI<GLRenderQuery>(query)
-                ?? throw new InvalidOperationException("Failed to acquire GLRenderQuery wrapper.");
-            if (!glQuery.IsGenerated)
-                glQuery.Generate();
-            glQuery.Data.CurrentQuery = EQueryTarget.Timestamp;
-            return glQuery;
+            {
+                created = _queryPool.Count == 0;
+                query = created ? new XRRenderQuery(RenderQueryDescriptor.Timestamp) : _queryPool.Dequeue();
+            }
+            if (created)
+                query.Generate();
+            return query;
         }
 
-        private void ReleaseQuery(GLRenderQuery query)
+        private void ReleaseQuery(XRRenderQuery query)
         {
-            query.Data.CurrentQuery = null;
             lock (_lock)
-                _queryPool.Enqueue(query.Data);
+                _queryPool.Enqueue(query);
         }
 
-        private static bool TryReadTimestamp(GLRenderQuery query, out ulong timestamp)
+        private static bool TryWriteTimestamp(XRRenderQuery query)
+            => AbstractRenderer.Current switch
+            {
+                OpenGLRenderer gl => gl.GenericToAPI<GLRenderQuery>(query)?.WriteTimestamp() == ERenderQueryReadStatus.Ready,
+                VulkanRenderer vk => vk.EnqueueTimestampQuery(query),
+                _ => false,
+            };
+
+        private static ERenderQueryReadStatus TryReadTimestamp(XRRenderQuery query, out ulong timestamp)
         {
             timestamp = 0;
-            long available = query.GetQueryObject(EGetQueryObject.QueryResultAvailable);
-            if (available == 0)
-                return false;
-
-            timestamp = (ulong)query.GetQueryObject(EGetQueryObject.QueryResult);
-            return true;
+            TimestampQueryResult result = default;
+            ERenderQueryReadStatus status = AbstractRenderer.Current switch
+            {
+                OpenGLRenderer gl => gl.GenericToAPI<GLRenderQuery>(query)?.TryGetTimestamp(out result) ?? ERenderQueryReadStatus.InvalidState,
+                VulkanRenderer vk => vk.GenericToAPI<VulkanRenderer.VkRenderQuery>(query)?.TryGetTimestamp(out result) ?? ERenderQueryReadStatus.InvalidState,
+                _ => ERenderQueryReadStatus.Unsupported,
+            };
+            timestamp = result.Nanoseconds;
+            return status;
         }
 
         private static void WriteStats(XRDataBuffer? buffer, Metrics metrics)

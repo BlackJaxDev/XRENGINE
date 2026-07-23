@@ -93,6 +93,9 @@ public unsafe partial class VulkanRenderer
 
     private string[] EnumerateAvailableDeviceExtensions()
     {
+        if (_physicalDevice.Handle == 0)
+            return Array.Empty<string>();
+
         uint extensionCount = 0;
         Api!.EnumerateDeviceExtensionProperties(_physicalDevice, (byte*)null, ref extensionCount, null);
 
@@ -827,10 +830,12 @@ public unsafe partial class VulkanRenderer
     private unsafe void QueryMeshShaderCapabilities(
         bool extensionEnabled,
         out bool taskShaderSupported,
-        out bool meshShaderSupported)
+        out bool meshShaderSupported,
+        out bool meshShaderQueriesSupported)
     {
         taskShaderSupported = false;
         meshShaderSupported = false;
+        meshShaderQueriesSupported = false;
 
         if (!extensionEnabled)
             return;
@@ -850,6 +855,7 @@ public unsafe partial class VulkanRenderer
         Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
         taskShaderSupported = meshShaderFeatures.TaskShader;
         meshShaderSupported = meshShaderFeatures.MeshShader;
+        meshShaderQueriesSupported = meshShaderFeatures.MeshShaderQueries;
     }
 
     private unsafe void QueryGraphicsPipelineLibraryCapabilities(
@@ -1109,6 +1115,15 @@ public unsafe partial class VulkanRenderer
         Api!.GetPhysicalDeviceFeatures(_physicalDevice, out supportedFeatures);
 
         PhysicalDeviceFeatures deviceFeatures = new();
+        _queryOcclusionPreciseAdvertised = supportedFeatures.OcclusionQueryPrecise;
+        _queryOcclusionPreciseEnabled = supportedFeatures.OcclusionQueryPrecise;
+        deviceFeatures.OcclusionQueryPrecise = _queryOcclusionPreciseEnabled;
+        _queryPipelineStatisticsAdvertised = supportedFeatures.PipelineStatisticsQuery;
+        _queryPipelineStatisticsEnabled = supportedFeatures.PipelineStatisticsQuery;
+        deviceFeatures.PipelineStatisticsQuery = _queryPipelineStatisticsEnabled;
+        _queryInheritedQueriesAdvertised = supportedFeatures.InheritedQueries;
+        _queryInheritedQueriesEnabled = supportedFeatures.InheritedQueries;
+        deviceFeatures.InheritedQueries = _queryInheritedQueriesEnabled;
         if (supportedFeatures.RobustBufferAccess)
             deviceFeatures.RobustBufferAccess = Vk.True;
 
@@ -1300,10 +1315,19 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        var extensionsArray = extensionsToEnable.ToArray();
+        bool legacyBufferDeviceAddressRequested =
+            extensionsToEnable.Contains("VK_EXT_buffer_device_address", StringComparer.Ordinal);
+        var extensionsArray = NormalizeDeviceExtensionSelection(
+            extensionsToEnable,
+            vulkan12PromotedToCore);
+        if (legacyBufferDeviceAddressRequested &&
+            !extensionsArray.Contains("VK_EXT_buffer_device_address", StringComparer.Ordinal))
+        {
+            Debug.Vulkan(
+                "[Vulkan] Suppressed VK_EXT_buffer_device_address in favor of the KHR/core buffer-device-address path.");
+        }
         _enabledDeviceExtensions = [.. extensionsArray
             .Where(static name => !string.IsNullOrWhiteSpace(name))
-            .Distinct(StringComparer.Ordinal)
             .OrderBy(static name => name, StringComparer.Ordinal)];
 
         ValidateObsHookDeviceCompatibility(availableExtensionSet, extensionsArray);
@@ -1393,9 +1417,9 @@ public unsafe partial class VulkanRenderer
             vulkan12PromotedToCore &&
             supportedVulkan12Features.DrawIndirectCount;
 
-        // Host query reset (core 1.2). Occlusion query pools must be reset outside a render
-        // pass instance; CPU occlusion QueryOps are recorded while the target render pass is
-        // active, so the reset has to happen on the host instead of the command buffer.
+        // Host query reset (core 1.2) remains available for externally synchronized maintenance.
+        // Normal render-query reuse records queue-ordered command resets before rendering so
+        // cached and freshly recorded command buffers share the same submission-safe contract.
         bool hostQueryResetFeatureSupported =
             vulkan12PromotedToCore && supportedVulkan12Features.HostQueryReset;
         bool enableHostQueryResetFeature = hostQueryResetFeatureSupported;
@@ -1555,11 +1579,13 @@ public unsafe partial class VulkanRenderer
         QueryMeshShaderCapabilities(
             meshShaderExtensionEnabled,
             out bool taskShaderFeatureSupported,
-            out bool meshShaderFeatureSupported);
+            out bool meshShaderFeatureSupported,
+            out bool meshShaderQueriesSupported);
         bool enableMeshShaderFeature =
             meshShaderExtensionEnabled &&
             taskShaderFeatureSupported &&
             meshShaderFeatureSupported;
+        bool enableMeshShaderQueries = enableMeshShaderFeature && meshShaderQueriesSupported;
 
         bool graphicsPipelineLibraryDependencyEnabled = extensionsArray.Contains("VK_KHR_pipeline_library");
         bool graphicsPipelineLibraryExtensionEnabled =
@@ -1602,6 +1628,24 @@ public unsafe partial class VulkanRenderer
         bool enableTransformFeedbackFeature =
             transformFeedbackExtensionEnabled &&
             transformFeedbackFeatureSupported;
+
+        bool primitivesGeneratedExtensionEnabled = extensionsArray.Contains("VK_EXT_primitives_generated_query");
+        PhysicalDevicePrimitivesGeneratedQueryFeaturesEXT primitivesGeneratedFeatures = new()
+        {
+            SType = StructureType.PhysicalDevicePrimitivesGeneratedQueryFeaturesExt,
+        };
+        if (primitivesGeneratedExtensionEnabled)
+        {
+            PhysicalDeviceFeatures2 primitivesGeneratedFeatures2 = new()
+            {
+                SType = StructureType.PhysicalDeviceFeatures2,
+                PNext = &primitivesGeneratedFeatures,
+            };
+            Api.GetPhysicalDeviceFeatures2(_physicalDevice, &primitivesGeneratedFeatures2);
+        }
+        bool enablePrimitivesGeneratedQuery =
+            primitivesGeneratedExtensionEnabled &&
+            primitivesGeneratedFeatures.PrimitivesGeneratedQuery;
 
         bool fragmentShadingRateExtensionEnabled = extensionsArray.Contains("VK_KHR_fragment_shading_rate");
         QueryFragmentShadingRateCapabilities(
@@ -1782,6 +1826,16 @@ public unsafe partial class VulkanRenderer
             PNext = null,
             TaskShader = enableMeshShaderFeature,
             MeshShader = enableMeshShaderFeature,
+            MeshShaderQueries = enableMeshShaderQueries,
+        };
+
+        PhysicalDevicePrimitivesGeneratedQueryFeaturesEXT primitivesGeneratedFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDevicePrimitivesGeneratedQueryFeaturesExt,
+            PNext = null,
+            PrimitivesGeneratedQuery = enablePrimitivesGeneratedQuery,
+            PrimitivesGeneratedQueryWithRasterizerDiscard = enablePrimitivesGeneratedQuery && primitivesGeneratedFeatures.PrimitivesGeneratedQueryWithRasterizerDiscard,
+            PrimitivesGeneratedQueryWithNonZeroStreams = enablePrimitivesGeneratedQuery && primitivesGeneratedFeatures.PrimitivesGeneratedQueryWithNonZeroStreams,
         };
 
         PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT graphicsPipelineLibraryFeatureEnable = new()
@@ -2073,6 +2127,12 @@ public unsafe partial class VulkanRenderer
             enabledFeaturesPNext = &meshShaderFeatureEnable;
         }
 
+        if (enablePrimitivesGeneratedQuery)
+        {
+            primitivesGeneratedFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &primitivesGeneratedFeatureEnable;
+        }
+
         if (enableGraphicsPipelineLibraryFeature)
         {
             graphicsPipelineLibraryFeatureEnable.PNext = enabledFeaturesPNext;
@@ -2257,9 +2317,15 @@ public unsafe partial class VulkanRenderer
         _supportsVulkanFragmentDensityMapDynamic = enableFragmentDensityMapFeature && fragmentDensityMapDynamicSupported;
         _supportsVulkanTaskShaderFeature = enableMeshShaderFeature;
         _supportsVulkanMeshShaderFeature = enableMeshShaderFeature;
+        _queryMeshShaderQueriesEnabled = enableMeshShaderQueries;
+        _queryHostResetAdvertised = hostQueryResetFeatureSupported;
+        _queryPrimitivesGeneratedAdvertised = primitivesGeneratedFeatures.PrimitivesGeneratedQuery;
+        _queryPrimitivesGeneratedEnabled = enablePrimitivesGeneratedQuery;
+        _queryPrimitivesGeneratedNonZeroStreamsEnabled = primitivesGeneratedFeatureEnable.PrimitivesGeneratedQueryWithNonZeroStreams;
 
         // Load optional extension command tables before resolving backend modes that depend on them.
         LoadOptionalDeviceExtensions(extensionsArray, enableDrawIndirectCountFeature);
+        RefreshVulkanQueryCapabilities();
         LogVulkanDiagnosticDeviceCapabilities(
             khrDeviceFaultExtensionAvailable,
             khrDeviceFaultExtensionEnabled,
@@ -2499,6 +2565,48 @@ public unsafe partial class VulkanRenderer
 
         // Clean up allocated memory for extension names
         SilkMarshal.Free((nint)createInfo.PpEnabledExtensionNames);
+    }
+
+    /// <summary>
+    /// Produces the unique extension list passed to <c>vkCreateDevice</c> while resolving
+    /// the mutually exclusive EXT and KHR/core buffer-device-address paths.
+    /// </summary>
+    internal static string[] NormalizeDeviceExtensionSelection(
+        IReadOnlyList<string> requestedExtensions,
+        bool vulkan12PromotedToCore)
+    {
+        bool khrBufferDeviceAddressRequested = false;
+        for (int i = 0; i < requestedExtensions.Count; ++i)
+        {
+            if (string.Equals(
+                    requestedExtensions[i],
+                    "VK_KHR_buffer_device_address",
+                    StringComparison.Ordinal))
+            {
+                khrBufferDeviceAddressRequested = true;
+                break;
+            }
+        }
+
+        var normalized = new List<string>(requestedExtensions.Count);
+        for (int i = 0; i < requestedExtensions.Count; ++i)
+        {
+            string extension = requestedExtensions[i];
+            if (string.IsNullOrWhiteSpace(extension))
+                continue;
+            if (string.Equals(
+                    extension,
+                    "VK_EXT_buffer_device_address",
+                    StringComparison.Ordinal) &&
+                (vulkan12PromotedToCore || khrBufferDeviceAddressRequested))
+            {
+                continue;
+            }
+            if (!normalized.Contains(extension, StringComparer.Ordinal))
+                normalized.Add(extension);
+        }
+
+        return [.. normalized];
     }
 
     /// <summary>

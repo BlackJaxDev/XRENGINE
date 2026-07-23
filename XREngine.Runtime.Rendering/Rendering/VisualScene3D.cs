@@ -291,7 +291,10 @@ namespace XREngine.Scene
             // (Instrumented/ZeroReadback) already maintain the GPUScene directly.
             foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
             {
-                switch (viewport.RenderPipeline)
+                // This is an observational query and can run concurrently with editor
+                // snapshot restoration. Do not invoke the lazy Pipeline getter here:
+                // it mutates an unbound viewport and races camera/pipeline rebinding.
+                switch (viewport.RenderPipelineInstance.AssignedPipeline)
                 {
                     case DefaultRenderPipeline pipeline when pipeline.UsesSurfelGI:
                     case SurfelDebugRenderPipeline:

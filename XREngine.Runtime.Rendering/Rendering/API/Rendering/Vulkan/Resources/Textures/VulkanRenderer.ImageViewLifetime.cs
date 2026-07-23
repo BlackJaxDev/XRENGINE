@@ -300,7 +300,8 @@ public unsafe partial class VulkanRenderer
                 imageView,
                 [],
                 default,
-                0));
+                0),
+                owner);
             return false;
         }
 
@@ -316,6 +317,44 @@ public unsafe partial class VulkanRenderer
             TimeSpan.FromSeconds(5),
             "[Vulkan] Skipping stale destroy for image view 0x{0:X} in {1}; the handle is not live in renderer tracking.",
             imageView.Handle,
+            owner);
+        return false;
+    }
+
+    /// <summary>
+    /// Begins destruction only when the queued image-view generation still owns the
+    /// numeric Vulkan handle. Deferred retirement entries can outlive an earlier direct
+    /// destroy, after which the driver may recycle that handle for a new swapchain view.
+    /// </summary>
+    private bool TryBeginDestroyImageViewGeneration(
+        ImageView imageView,
+        ulong expectedGeneration,
+        string owner)
+    {
+        if (imageView.Handle == 0 || expectedGeneration == 0)
+            return false;
+
+        if (!TryBeginDestroyVulkanResourceGeneration(
+                ObjectType.ImageView,
+                imageView.Handle,
+                expectedGeneration,
+                owner))
+        {
+            return false;
+        }
+
+        if (_liveImageViewHandles.TryRemove(imageView.Handle, out _))
+        {
+            _descriptorHeapImageViewCreateInfos.TryRemove(imageView.Handle, out _);
+            return true;
+        }
+
+        Debug.VulkanEvery(
+            $"Vulkan.ImageView.SkipStaleGenerationDestroy.{GetHashCode()}.{owner}.{imageView.Handle}.{expectedGeneration}",
+            TimeSpan.FromSeconds(5),
+            "[Vulkan] Skipping stale generation destroy for image view 0x{0:X} generation {1} in {2}; the handle is not live in renderer tracking.",
+            imageView.Handle,
+            expectedGeneration,
             owner);
         return false;
     }

@@ -346,6 +346,7 @@ public unsafe partial class VulkanRenderer
                 new FrameOutputWorkTelemetry(SubmissionRejections: 1));
             lock (_oneTimeSubmitLock)
                 RecordVulkanQueueOperation("submit-rejected", queue, Result.ErrorDeviceLost, 0, caller);
+            ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
             return Result.ErrorDeviceLost;
         }
 
@@ -366,6 +367,7 @@ public unsafe partial class VulkanRenderer
                 Result.ErrorValidationFailedExt,
                 diagnosticContext.SubmissionSerial,
                 caller);
+            ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
             return Result.ErrorValidationFailedExt;
         }
 
@@ -383,6 +385,7 @@ public unsafe partial class VulkanRenderer
                     Result.ErrorValidationFailedExt,
                     diagnosticContext.SubmissionSerial,
                     caller);
+                ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
                 return Result.ErrorValidationFailedExt;
             }
 
@@ -398,6 +401,7 @@ public unsafe partial class VulkanRenderer
                 Result.ErrorValidationFailedExt,
                 diagnosticContext.SubmissionSerial,
                 caller);
+            ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
             return Result.ErrorValidationFailedExt;
         }
 
@@ -414,6 +418,7 @@ public unsafe partial class VulkanRenderer
                     Result.ErrorValidationFailedExt,
                     diagnosticContext.SubmissionSerial,
                     caller);
+                ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
                 return Result.ErrorValidationFailedExt;
             }
 
@@ -425,6 +430,7 @@ public unsafe partial class VulkanRenderer
             RecordVulkanQueueOperation("submit", queue, result, diagnosticContext.SubmissionSerial, caller);
             if (result == Result.Success)
             {
+                ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: true);
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanQueueSubmit();
                 VulkanLifetimeSubmission lifetimeSubmission =
                     RecordSuccessfulVulkanSubmissionLifetime(queue, ref submitInfo, fence, diagnosticContext);
@@ -433,10 +439,15 @@ public unsafe partial class VulkanRenderer
             }
             else if (result == Result.ErrorDeviceLost)
             {
+                ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
                 RecordFirstFailingVulkanApi($"vkQueueSubmit:{caller ?? "<unknown>"}:{result}");
                 MarkDeviceLost(
                     $"QueueSubmit returned ErrorDeviceLost in {caller ?? "<unknown>"} " +
                     $"(waits={submitInfo.WaitSemaphoreCount}, signals={submitInfo.SignalSemaphoreCount}, commandBuffers={submitInfo.CommandBufferCount}, fence=0x{fence.Handle:X})");
+            }
+            else
+            {
+                ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
             }
         }
         finally

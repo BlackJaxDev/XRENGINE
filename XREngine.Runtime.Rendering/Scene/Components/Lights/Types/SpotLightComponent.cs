@@ -404,13 +404,12 @@ namespace XREngine.Components.Capture.Lights.Types
         internal bool RenderShadowAtlasTile(XRFrameBuffer atlasFbo, BoundingRectangle renderRect, bool collectVisibleNow)
         {
             if (!CastsShadows ||
-                ShadowCamera is null ||
                 World is null ||
                 renderRect.Width <= 0 ||
-                renderRect.Height <= 0)
+                renderRect.Height <= 0 ||
+                !TryGetPrimaryShadowViewportForProcessing(out XRViewport viewport))
                 return false;
 
-            XRViewport viewport = PrimaryShadowViewport;
             if (viewport.RenderPipeline is not ShadowRenderPipeline shadowPipeline)
                 return false;
 

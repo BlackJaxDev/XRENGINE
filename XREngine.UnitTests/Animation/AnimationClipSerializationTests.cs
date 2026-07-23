@@ -1,18 +1,29 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using MemoryPack;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Animation;
 using XREngine.Core.Files;
 using XREngine.Data.Animation;
+using YamlDotNet.Serialization;
 
 namespace XREngine.UnitTests.Animation;
 
 [TestFixture]
 public sealed class AnimationClipSerializationTests
 {
+    [Test]
+    public void KeyframeOwningTrack_IsRuntimeOnlySerializationLinkage()
+    {
+        PropertyInfo property = typeof(Keyframe).GetProperty(nameof(Keyframe.OwningTrack))!;
+
+        property.GetCustomAttribute<MemoryPackIgnoreAttribute>().ShouldNotBeNull();
+        property.GetCustomAttribute<YamlIgnoreAttribute>().ShouldNotBeNull();
+    }
+
     [Test]
     public void YamlSerializer_RoundTrips_AnimationClipTree()
     {

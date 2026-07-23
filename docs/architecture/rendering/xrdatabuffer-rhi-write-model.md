@@ -212,6 +212,18 @@ Readback is allowed only when the buffer policy allows it or the caller chooses
 an explicit diagnostic path. `GpuIndirectZeroReadback` and meshlet zero-readback
 steady-state frames should report zero readback bytes.
 
+Physics-chain Vulkan readback uses reusable `XRDataBuffer` staging slots with
+`TransferDst` usage and host-visible memory. The ordered frame stream emits a
+compute-write-to-transfer-read dependency before the copy and an explicit
+transfer-write-to-host-read dependency after it. A timeline marker from the
+containing submission gates CPU access. Noncoherent ranges are invalidated only
+after signal and are aligned to the device's noncoherent atom size.
+
+Staging leases carry backend, arena, layout, and submission generations.
+Renderer switches, arena replacement, scene teardown, shutdown, and device
+loss reject stale results and release each lease exactly once. Zero-readback
+physics paths do not allocate or schedule a staging slot.
+
 ## Descriptor And Device Address Integration
 
 Writer commits and writer-driven growth must update descriptor and binding

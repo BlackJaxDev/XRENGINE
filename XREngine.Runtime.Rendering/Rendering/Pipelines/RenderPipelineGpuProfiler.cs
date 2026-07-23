@@ -851,12 +851,11 @@ internal sealed class RenderPipelineGpuProfiler
         long startTicks = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
-            candidate.QueryCounter();
+            candidate.WriteTimestamp();
             RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.TimestampQueryCount);
         }
         catch (Exception ex)
         {
-            candidate.Data.CurrentQuery = null;
             candidate.Destroy();
 
             lock (_lock)
@@ -1172,7 +1171,6 @@ internal sealed class RenderPipelineGpuProfiler
 
     private void RetireQueryWhenReadyNoLock(ulong frameId, GLRenderQuery query)
     {
-        query.Data.CurrentQuery = null;
         _orphanedQueries.Add(new OrphanedQuery(frameId, query));
     }
 
@@ -1199,20 +1197,17 @@ internal sealed class RenderPipelineGpuProfiler
     {
         XRRenderQuery query;
         lock (_lock)
-            query = _queryPool.Count > 0 ? _queryPool.Dequeue() : new XRRenderQuery();
+            query = _queryPool.Count > 0 ? _queryPool.Dequeue() : new XRRenderQuery(RenderQueryDescriptor.Timestamp);
 
-        query.CurrentQuery = Data.Rendering.EQueryTarget.Timestamp;
         GLRenderQuery? glQuery = renderer.GenericToAPI<GLRenderQuery>(query)
             ?? throw new InvalidOperationException("Failed to create OpenGL render query wrapper for GPU profiling.");
         if (!glQuery.IsGenerated)
             glQuery.Generate();
-        glQuery.Data.CurrentQuery = Data.Rendering.EQueryTarget.Timestamp;
         return glQuery;
     }
 
     private void ReleaseQueryNoLock(GLRenderQuery query)
     {
-        query.Data.CurrentQuery = null;
         _queryPool.Enqueue(query.Data);
     }
 
@@ -1222,11 +1217,11 @@ internal sealed class RenderPipelineGpuProfiler
     private static bool TryReadTimestamp(GLRenderQuery query, out ulong timestamp)
     {
         timestamp = 0UL;
-        long available = query.GetQueryObject(EGetQueryObject.QueryResultAvailable);
-        if (available == 0)
+        ERenderQueryReadStatus status = query.TryGetTimestamp(out TimestampQueryResult result);
+        if (status != ERenderQueryReadStatus.Ready)
             return false;
 
-        timestamp = (ulong)query.GetQueryObject(EGetQueryObject.QueryResult);
+        timestamp = result.Nanoseconds;
         RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.TimestampQueryReadbackBytes, sizeof(ulong));
         return true;
     }

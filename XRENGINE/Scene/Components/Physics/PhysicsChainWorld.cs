@@ -157,6 +157,11 @@ public sealed partial class PhysicsChainWorld
     private static readonly Dictionary<IRuntimeWorldContext, PhysicsChainWorld> Worlds =
         new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
+    // Fixed updates run on their own timer thread and can overlap normal/late updates.
+    // All three phases touch the same slot registries and component simulation state, so
+    // serialize them at the world boundary instead of allowing concurrent collection access.
+    private readonly Lock _tickGate = new();
+    private readonly IRuntimeWorldContext _world;
     private readonly ConcurrentQueue<StructuralCommand> _commands = [];
     private readonly ConcurrentDictionary<PhysicsChainComponent, long> _latestCommandVersion =
         new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
@@ -179,6 +184,7 @@ public sealed partial class PhysicsChainWorld
 
     private PhysicsChainWorld(IRuntimeWorldContext world)
     {
+        _world = world;
         world.RegisterTick(ETickGroup.PostPhysics, (int)ETickOrder.Animation, FixedTick);
         world.RegisterTick(ETickGroup.Normal, (int)ETickOrder.Animation, UpdateTick);
         world.RegisterTick(ETickGroup.Late, (int)ETickOrder.Animation, LateTick);
@@ -273,6 +279,12 @@ public sealed partial class PhysicsChainWorld
 
     private void FixedTick()
     {
+        using (_tickGate.EnterScope())
+            FixedTickExclusive();
+    }
+
+    private void FixedTickExclusive()
+    {
         DrainStructuralCommands();
         for (int i = 0; i < _liveSlots.Count; ++i)
         {
@@ -284,6 +296,12 @@ public sealed partial class PhysicsChainWorld
 
     private void UpdateTick()
     {
+        using (_tickGate.EnterScope())
+            UpdateTickExclusive();
+    }
+
+    private void UpdateTickExclusive()
+    {
         DrainStructuralCommands();
         for (int i = 0; i < _liveSlots.Count; ++i)
         {
@@ -294,6 +312,12 @@ public sealed partial class PhysicsChainWorld
     }
 
     private void LateTick()
+    {
+        using (_tickGate.EnterScope())
+            LateTickExclusive();
+    }
+
+    private void LateTickExclusive()
     {
         DrainStructuralCommands();
         PhysicsChainComponent.AdvancePreparedColliderFrame();
@@ -444,6 +468,15 @@ public sealed partial class PhysicsChainWorld
 
     private void AddComponent(PhysicsChainComponent component)
     {
+        if (component.IsDestroyed
+            || !ReferenceEquals(component.World, _world)
+            || !component.IsActiveInHierarchy)
+        {
+            component.DetachCpuBackend();
+            component.SetRuntimeHandle(PhysicsChainRuntimeHandle.Invalid);
+            return;
+        }
+
         if (_slotByComponent.TryGetValue(component, out int existingSlot))
         {
             RuntimeSlot existing = _slots[existingSlot];
@@ -451,6 +484,24 @@ public sealed partial class PhysicsChainWorld
             component.SetRuntimeHandle(new PhysicsChainRuntimeHandle(existingSlot, existing.Generation));
             return;
         }
+
+        // Snapshot restoration recreates components with their persistent XR object ID.
+        // If an earlier graph missed a lifecycle callback, replace that stale identity
+        // instead of allowing two runtime slots for the same authored component.
+        PhysicsChainComponent? replacedComponent = null;
+        for (int liveIndex = 0; liveIndex < _liveSlots.Count; ++liveIndex)
+        {
+            PhysicsChainComponent? candidate = _slots[_liveSlots[liveIndex]].Component;
+            if (candidate is not null
+                && !ReferenceEquals(candidate, component)
+                && candidate.ID == component.ID)
+            {
+                replacedComponent = candidate;
+                break;
+            }
+        }
+        if (replacedComponent is not null)
+            RemoveComponent(replacedComponent);
 
         int slotIndex;
         RuntimeSlot slot;

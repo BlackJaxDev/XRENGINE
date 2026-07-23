@@ -35,6 +35,14 @@ namespace XREngine
         public byte[]? SerializedGameMode { get; }
 
         /// <summary>
+        /// Runtime-only roots that already existed when the snapshot was captured.
+        /// These roots are not owned by an <see cref="XRScene"/> and therefore are not
+        /// present in <see cref="SerializedScenes"/>, but they are still part of the
+        /// editor state that must survive a play-mode round trip.
+        /// </summary>
+        public IReadOnlySet<Guid> CapturedRuntimeOnlyRootIds { get; }
+
+        /// <summary>
         /// Timestamp when the snapshot was created.
         /// </summary>
         public DateTime CaptureTime { get; }
@@ -49,12 +57,14 @@ namespace XREngine
             Dictionary<string, byte[]> serializedScenes,
             byte[]? serializedSettings,
             byte[]? serializedGameMode,
+            HashSet<Guid> capturedRuntimeOnlyRootIds,
             bool isValid)
         {
             SourceWorld = sourceWorld;
             SerializedScenes = serializedScenes;
             SerializedSettings = serializedSettings;
             SerializedGameMode = serializedGameMode;
+            CapturedRuntimeOnlyRootIds = capturedRuntimeOnlyRootIds;
             CaptureTime = DateTime.UtcNow;
             IsValid = isValid;
         }
@@ -71,6 +81,7 @@ namespace XREngine
             var serializedScenes = new Dictionary<string, byte[]>(StringComparer.Ordinal);
             byte[]? settingsData = null;
             byte[]? gameModeData = null;
+            HashSet<Guid> capturedRuntimeOnlyRootIds = CaptureRuntimeOnlyRootIds(world);
             bool isValid = true;
 
             try
@@ -139,6 +150,7 @@ namespace XREngine
                     serializedScenes,
                     settingsData,
                     gameModeData,
+                    capturedRuntimeOnlyRootIds,
                     isValid);
             }
             catch (Exception ex)
@@ -150,6 +162,7 @@ namespace XREngine
                     serializedScenes,
                     null,
                     null,
+                    capturedRuntimeOnlyRootIds,
                     false);
             }
         }
@@ -288,8 +301,9 @@ namespace XREngine
                 // attaching them to any XRScene (e.g. player pawns). Those roots are not tracked by
                 // scene serialization and will survive snapshot restore unless explicitly removed.
                 //
-                // After restoring all scenes, destroy any root nodes that are not present in any
-                // restored scene's RootNodes list.
+                // After restoring all scenes, destroy roots introduced after capture. Runtime-only
+                // editor roots that existed at capture (for example the editor camera pawn) are
+                // deliberately retained even though they are not owned by a serialized XRScene.
                 if (runtimeInstance is not null)
                 {
                     var expectedRoots = new HashSet<SceneNode>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
@@ -316,6 +330,9 @@ namespace XREngine
                         if (expectedRoots.Contains(root))
                             continue;
 
+                        if (CapturedRuntimeOnlyRootIds.Contains(root.ID))
+                            continue;
+
                         removedCount++;
                         Debug.Out($"[SnapshotRestore] Destroying orphan root node '{root.Name ?? SceneNode.DefaultName}' (Hash={root.GetHashCode()})");
                         runtimeInstance.RootNodes.Remove(root);
@@ -340,6 +357,31 @@ namespace XREngine
                 SnapshotDiagnostics.Warning($"Failed to restore world state from snapshot: {ex}");
                 return false;
             }
+        }
+
+        private static HashSet<Guid> CaptureRuntimeOnlyRootIds(XRWorld world)
+        {
+            var result = new HashSet<Guid>();
+            if (!XRWorldInstance.WorldInstances.TryGetValue(world, out XRWorldInstance? runtimeInstance))
+                return result;
+
+            var sceneRoots = new HashSet<SceneNode>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+            foreach (XRScene scene in world.Scenes)
+            {
+                if (scene.RootNodes is null)
+                    continue;
+
+                foreach (SceneNode? root in scene.RootNodes)
+                    if (root is not null)
+                        sceneRoots.Add(root);
+            }
+
+            foreach (SceneNode? root in runtimeInstance.RootNodes)
+                if (root is not null && !sceneRoots.Contains(root))
+                    result.Add(root.ID);
+
+            SnapshotDiagnostics.Log($"Captured {result.Count} runtime-only root identity/identities.");
+            return result;
         }
 
         private static byte[]? SerializeObject<T>(T obj)

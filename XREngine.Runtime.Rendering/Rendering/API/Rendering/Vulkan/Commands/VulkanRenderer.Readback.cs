@@ -304,15 +304,16 @@ namespace XREngine.Rendering.Vulkan
         {
             depth = 1.0f;
 
-            if (_swapchainDepthImage.Handle == 0)
+            VulkanSwapchainDepthResources? resources = CurrentSwapchainDepthResources;
+            if (resources is null)
                 return false;
 
             // Clamp coordinates to valid range
-            x = Math.Clamp(x, 0, Math.Max((int)swapChainExtent.Width - 1, 0));
-            y = Math.Clamp(y, 0, Math.Max((int)swapChainExtent.Height - 1, 0));
+            x = Math.Clamp(x, 0, Math.Max((int)resources.Extent.Width - 1, 0));
+            y = Math.Clamp(y, 0, Math.Max((int)resources.Extent.Height - 1, 0));
 
             // Determine byte size based on depth format
-            uint pixelSize = GetDepthFormatPixelSize(_swapchainDepthFormat);
+            uint pixelSize = GetDepthFormatPixelSize(resources.Format);
             if (pixelSize == 0)
                 return false;
 
@@ -332,7 +333,7 @@ namespace XREngine.Rendering.Vulkan
                     NewLayout = ImageLayout.TransferSrcOptimal,
                     SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
                     DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                    Image = _swapchainDepthImage,
+                    Image = resources.Image,
                     SubresourceRange = new ImageSubresourceRange
                     {
                         AspectMask = ImageAspectFlags.DepthBit,
@@ -369,7 +370,7 @@ namespace XREngine.Rendering.Vulkan
 
                 CmdCopyImageToBufferTracked(
                     scope.CommandBuffer,
-                    _swapchainDepthImage,
+                    resources.Image,
                     ImageLayout.TransferSrcOptimal,
                     stagingBuffer,
                     1,
@@ -403,7 +404,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            depth = ReadDepthValue(mappedPtr, _swapchainDepthFormat);
+            depth = ReadDepthValue(mappedPtr, resources.Format);
 
             UnmapBufferMemory(stagingBuffer, stagingMemory);
             DestroyBuffer(stagingBuffer, stagingMemory);
@@ -437,18 +438,19 @@ namespace XREngine.Rendering.Vulkan
 
             // Async fallback: read from swapchain depth image via fence + background poll.
 
-            if (_swapchainDepthImage.Handle == 0)
+            VulkanSwapchainDepthResources? resources = CurrentSwapchainDepthResources;
+            if (resources is null)
             {
                 depthCallback?.Invoke(1.0f);
                 return;
             }
 
             // Clamp coordinates to valid range
-            x = Math.Clamp(x, 0, (int)swapChainExtent.Width - 1);
-            y = Math.Clamp(y, 0, (int)swapChainExtent.Height - 1);
+            x = Math.Clamp(x, 0, (int)resources.Extent.Width - 1);
+            y = Math.Clamp(y, 0, (int)resources.Extent.Height - 1);
 
             // Determine byte size based on depth format
-            uint pixelSize = GetDepthFormatPixelSize(_swapchainDepthFormat);
+            uint pixelSize = GetDepthFormatPixelSize(resources.Format);
             if (pixelSize == 0)
             {
                 depthCallback?.Invoke(1.0f);
@@ -516,7 +518,7 @@ namespace XREngine.Rendering.Vulkan
                 NewLayout = ImageLayout.TransferSrcOptimal,
                 SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
                 DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                Image = _swapchainDepthImage,
+                Image = resources.Image,
                 SubresourceRange = new ImageSubresourceRange
                 {
                     AspectMask = ImageAspectFlags.DepthBit,
@@ -553,7 +555,7 @@ namespace XREngine.Rendering.Vulkan
 
             CmdCopyImageToBufferTracked(
                 commandBuffer,
-                _swapchainDepthImage,
+                resources.Image,
                 ImageLayout.TransferSrcOptimal,
                 stagingBuffer,
                 1,
@@ -606,7 +608,7 @@ namespace XREngine.Rendering.Vulkan
             var api = Api;
             var dev = device;
             var pool = commandPool;
-            var depthFormat = _swapchainDepthFormat;
+            var depthFormat = resources.Format;
             var capturedCommandBuffer = commandBuffer; // Copy for lambda capture
 
             // Wait for the fence asynchronously on a background thread

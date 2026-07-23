@@ -20,6 +20,8 @@ namespace XREngine.Rendering
         ShaderStorage = 0x2000,
         ClientMappedBuffer = 0x4000,
         QueryBuffer = 0x8000,
+        /// <summary>Makes GPU transfer writes visible to subsequent host reads.</summary>
+        GpuReadback = 0x10000,
         All = unchecked((int)0xFFFFFFFF),
     }
 }

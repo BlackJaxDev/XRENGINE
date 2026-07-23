@@ -497,6 +497,46 @@ public unsafe partial class VulkanRenderer
             }
         }
 
+        /// <summary>
+        /// Performs an allocation-free preflight of immutable buffer bindings before a
+        /// dispatch is reported as enqueued. Descriptor allocation still occurs while
+        /// recording, but missing or usage-incompatible SSBOs are rejected here.
+        /// </summary>
+        internal bool ValidateComputeSnapshot(ComputeDispatchSnapshot snapshot, out string? failure)
+        {
+            for (int index = 0; index < _programDescriptorBindings.Count; index++)
+            {
+                DescriptorBindingInfo binding = _programDescriptorBindings[index];
+                if (binding.DescriptorType is not (DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic))
+                    continue;
+
+                bool found = snapshot.Buffers.TryGetValue(binding.Binding, out VulkanComputeBufferBinding buffer);
+                if (!found && !string.IsNullOrWhiteSpace(binding.Name))
+                    found = snapshot.BuffersByName.TryGetValue(binding.Name, out buffer);
+
+                if (!found)
+                {
+                    failure = $"missing storage buffer at set {binding.Set}, binding {binding.Binding} ('{binding.Name}')";
+                    return false;
+                }
+
+                if (buffer.Buffer.Handle == 0 || buffer.Range == 0)
+                {
+                    failure = $"storage buffer '{buffer.Data.AttributeName}' has no ready Vulkan handle or range";
+                    return false;
+                }
+
+                if (!VkDataBuffer.SupportsDescriptorType(binding.DescriptorType, buffer.UsageFlags))
+                {
+                    failure = $"storage buffer '{buffer.Data.AttributeName}' was created with incompatible usage {buffer.UsageFlags}";
+                    return false;
+                }
+            }
+
+            failure = null;
+            return true;
+        }
+
         internal bool HasBoundDescriptorResources()
         {
             lock (_bindingLock)

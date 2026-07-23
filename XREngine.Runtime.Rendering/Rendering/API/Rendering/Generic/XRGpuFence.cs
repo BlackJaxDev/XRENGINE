@@ -30,6 +30,10 @@ public abstract class XRGpuFence : IDisposable
 
     protected abstract EGpuFenceStatus PollCore();
 
+    /// <summary>Reactivates a backend-owned fence returned from a bounded pool.</summary>
+    protected void ResetForReuse()
+        => _disposed = false;
+
     public void Dispose()
     {
         if (_disposed)

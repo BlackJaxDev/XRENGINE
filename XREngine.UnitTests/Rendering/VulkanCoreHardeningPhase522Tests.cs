@@ -124,11 +124,11 @@ public sealed class VulkanCoreHardeningPhase522Tests
             "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Queries/VkRenderQuery.cs");
 
         recording.ShouldContain("PrepareQueryFrameOpsForCommandBufferReuse");
-        recording.ShouldContain("queryOp.Query.PrepareForCommandBufferReuse(commandBuffer, queryOp.QueryTarget)");
+        recording.ShouldContain("queryOp.Query.PrepareForCommandBufferReuse(commandBuffer)");
         recording.ShouldNotContain("!VulkanPrimaryCommandBufferReuseEnabled || hasQueryFrameOps");
         recording.ShouldNotContain("primaryFrameStateDirtyReason = hasQueryFrameOps");
-        query.ShouldContain("PrepareForCommandBufferReuse(EQueryTarget target)");
-        query.ShouldContain("Api!.CmdResetQueryPool(commandBuffer, _queryPool, 0, _queryPoolCapacity);");
+        query.ShouldContain("PrepareForCommandBufferReuse(CommandBuffer commandBuffer)");
+        query.ShouldContain("Api!.CmdResetQueryPool(");
         query.ShouldNotContain("Api!.ResetQueryPool(Device");
         query.ShouldNotContain("ResetQueryPoolForCommandBufferReuse");
     }

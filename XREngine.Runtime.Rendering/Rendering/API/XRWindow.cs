@@ -1818,23 +1818,34 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
-        /// Remakes all viewports in order of active local player indices.
+        /// Reorders and relayouts existing local-player viewports without replacing their
+        /// runtime render pipelines or timer subscriptions.
         /// </summary>
         public void ResizeAllViewportsAccordingToPlayers()
         {
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.ResizeAllViewportsAccordingToPlayers");
 
-            IPawnController[] players = [.. Viewports
-                .Select(x => x.AssociatedPlayer)
-                .OfType<IPawnController>()
-                .Where(x => x.IsLocal)
-                .Distinct()
-                .OrderBy(x => (int)(x.LocalPlayerIndex ?? 0))];
-            foreach (var viewport in Viewports)
-                viewport.Destroy();
-            Viewports.Clear();
-            for (int i = 0; i < players.Length; i++)
-                AddViewportForPlayer(players[i], false);
+            XRViewport[] orderedViewports = [.. Viewports
+                .Where(x => x.AssociatedPlayer?.IsLocal == true)
+                .DistinctBy(x => x.AssociatedPlayer)
+                .OrderBy(x => (int)(x.AssociatedPlayer!.LocalPlayerIndex ?? 0))];
+
+            HashSet<XRViewport> retainedViewports = [.. orderedViewports];
+            XRViewport[] removedViewports = [.. Viewports.Where(x => !retainedViewports.Contains(x))];
+            for (int i = 0; i < removedViewports.Length; i++)
+                Viewports.Remove(removedViewports[i]);
+
+            if (!Viewports.SequenceEqual(orderedViewports))
+                Viewports.Set(orderedViewports, reportRemoved: false, reportAdded: false, reportModified: false);
+
+            int viewportCount = orderedViewports.Length;
+            ETwoPlayerPreference twoPlayerPreference = RuntimeRenderingHostServices.Current.TwoPlayerViewportPreference;
+            EThreePlayerPreference threePlayerPreference = RuntimeRenderingHostServices.Current.ThreePlayerViewportPreference;
+            for (int i = 0; i < viewportCount; i++)
+                orderedViewports[i].ViewportCountChanged(i, viewportCount, twoPlayerPreference, threePlayerPreference);
+
+            ResizeViewports(EffectiveWindowSize);
+            RequestRenderStateRecheck();
         }
 
         public void UpdateViewportSizes()
@@ -2477,8 +2488,9 @@ namespace XREngine.Rendering
 
         private void OnPlayModeTransition()
         {
-            bool isTransitioning = RuntimeEngine.PlayMode.IsTransitioning;
-            Debug.Rendering($"[XRWindow] OnPlayModeTransition called. PlayModeState={RuntimeEngine.PlayMode.State} Viewports={Viewports.Count} Transitioning={isTransitioning}");
+            IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
+            bool isTransitioning = hostServices.IsPlayModeTransitioning;
+            Debug.Rendering($"[XRWindow] OnPlayModeTransition called. PlayModeState={hostServices.PlayModeStateName} Viewports={Viewports.Count} Transitioning={isTransitioning}");
             
             // Invalidate scene panel resources IMMEDIATELY so stale textures don't persist.
             // Using immediate destruction ensures the GL texture handle is invalidated before
@@ -2948,14 +2960,15 @@ namespace XREngine.Rendering
                 Exception? viewportRenderException = null;
                 try
                 {
-                    if (RuntimeEngine.PlayMode.IsTransitioning)
+                    IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
+                    if (hostServices.IsPlayModeTransitioning)
                     {
                         Debug.RenderingEvery(
                             $"XRWindow.RenderCallback.TransitionSuspended.{GetHashCode()}",
                             TimeSpan.FromSeconds(1),
                             "[RenderDiag] Window viewport rendering suspended during play-mode transition. Window={0} State={1} Viewports={2}",
                             GetHashCode(),
-                            RuntimeEngine.PlayMode.State,
+                            hostServices.PlayModeStateName,
                             Viewports.Count);
                     }
                     else

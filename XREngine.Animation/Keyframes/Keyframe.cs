@@ -1,6 +1,8 @@
 using XREngine.Extensions;
+using MemoryPack;
 using System.ComponentModel;
 using XREngine.Data.Core;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Animation
 {
@@ -56,6 +58,13 @@ namespace XREngine.Animation
         public bool IsFirst => _prev is null;
         public bool IsLast => _next is null;
 
+        /// <summary>
+        /// Runtime linkage rebuilt when a keyframe is inserted into a track.
+        /// Serializing it would recursively walk the owning list for every item.
+        /// </summary>
+        [Browsable(false)]
+        [MemoryPackIgnore]
+        [YamlIgnore]
         public BaseKeyframeTrack? OwningTrack
         {
             get => _owningTrack;

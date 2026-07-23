@@ -18,8 +18,8 @@ public sealed class PhysicsChainShaderContractTests
 
         source.ShouldContain("uniform int ParticleCount;");
         source.ShouldContain("uniform int TreeCount;");
-        int treeIndex = source.IndexOf("uint dispatchIndex = gl_GlobalInvocationID.x;", StringComparison.Ordinal);
-        int guardIndex = source.IndexOf("if (ParticleCount <= 0 || TreeCount <= 0)", StringComparison.Ordinal);
+        int treeIndex = source.IndexOf("gl_GlobalInvocationID.x", StringComparison.Ordinal);
+        int guardIndex = source.IndexOf("if (ParticleCount <= 0 || TreeCount <= 0", StringComparison.Ordinal);
         int firstTreeRead = source.IndexOf("TreeParams[treeId]", StringComparison.Ordinal);
         int firstParticleStaticRead = source.IndexOf("ParticleStatics[pid]", StringComparison.Ordinal);
         int firstParticleRead = source.IndexOf("Particles[pid]", StringComparison.Ordinal);
@@ -33,18 +33,28 @@ public sealed class PhysicsChainShaderContractTests
         firstTransformRead.ShouldBeGreaterThan(guardIndex);
     }
 
+    [TestCase("PhysicsChain.comp")]
+    [TestCase("PhysicsChainBranched.comp")]
+    [TestCase("SkipUpdateParticles.comp")]
+    public void PhysicsChainDispatchShaders_DoNotShadowAutoUniformNamesInStructFields(string shaderFileName)
+    {
+        string source = ReadPhysicsChainShader(shaderFileName).Replace("\r\n", "\n");
+
+        source.ShouldContain("uniform int ParticleCount;");
+        source.ShouldNotContain("\n    int ParticleCount;");
+        source.ShouldNotContain("\n    uint ParticleCount;");
+    }
+
     [Test]
     public void PhysicsChainDispatchers_SetParticleAndTreeCountUniformsBeforeDispatch()
     {
         string componentSource = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent.GPU.cs");
-        string dispatcherSource = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
+        string dispatcherSource = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs")
+            + ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.Kernels.cs");
 
-        componentSource.ShouldContain("_mainPhysicsProgram.Uniform(\"ParticleCount\", _totalParticleCount);");
-        componentSource.ShouldContain("_skipUpdateParticlesProgram.Uniform(\"ParticleCount\", _totalParticleCount);");
-        componentSource.ShouldContain("_mainPhysicsProgram.Uniform(\"TreeCount\", _particleTreesData.Count);");
-        componentSource.ShouldContain("_skipUpdateParticlesProgram.Uniform(\"TreeCount\", _particleTreesData.Count);");
-        dispatcherSource.ShouldContain("_mainPhysicsProgram.Uniform(\"ParticleCount\", TotalParticleCount);");
-        dispatcherSource.ShouldContain("_mainPhysicsProgram.Uniform(\"TreeCount\", TotalTreeCount);");
+        componentSource.ShouldNotContain(".DispatchCompute(");
+        dispatcherSource.ShouldContain("program.Uniform(\"ParticleCount\", TotalParticleCount);");
+        dispatcherSource.ShouldContain("program.Uniform(\"TreeCount\", TotalTreeCount);");
     }
 
     [Test]
@@ -190,10 +200,10 @@ public sealed class PhysicsChainShaderContractTests
         component.ShouldNotContain("if (!state.DrivesCompleteBonePalette)\n                continue;");
         component.ShouldContain("state.DrivesCompleteBonePalette,");
         palette.ShouldContain("if (!binding.DrivesCompleteBonePalette)");
-        palette.ShouldContain("backend.TryCopyBuffer(copy)");
+        palette.ShouldContain("TryCopyBuffer(backend, copy, \"partial-palette-seed\")");
         palette.ShouldContain("PartialPaletteSeedCompletionPass");
         dispatcher.ShouldContain("PublishBatchedGpuDrivenBoneMatrices(backend, _dispatchGroup)");
-        dispatcher.ShouldContain("HasGpuDrivenRenderers && !batchedBonePalettePublished");
+        dispatcher.ShouldContain("if (!request.Component.HasGpuDrivenRenderers || batchedBonePalettePublished)");
         dispatcher.ShouldNotContain("includeCompletePalettes: !batchedBonePalettePublished");
     }
 

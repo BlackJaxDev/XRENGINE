@@ -99,7 +99,42 @@ public unsafe partial class VulkanRenderer
             if (!IsDeviceOperational)
                 return false;
 
-            Api!.UpdateDescriptorSetWithTemplate(device, descriptorSet, updateTemplate, data);
+            ulong[]? dependentCommandBuffers;
+            int dependentCommandBufferCount;
+            bool invalidatesRecordedCommandBuffers;
+            fixed (WriteDescriptorSet* writePtr = writes)
+            {
+                lock (_vulkanResourceLifetimeLock)
+                {
+                    if (!TryPrevalidateVulkanDescriptorWrites_NoLock(
+                            unchecked((uint)writes.Length),
+                            writePtr,
+                            out _))
+                    {
+                        return false;
+                    }
+
+                    ValidateAndRecordVulkanDescriptorWrites(
+                        unchecked((uint)writes.Length),
+                        writePtr);
+                    Api!.UpdateDescriptorSetWithTemplate(
+                        device,
+                        descriptorSet,
+                        updateTemplate,
+                        data);
+                    invalidatesRecordedCommandBuffers = TryCaptureDescriptorUpdateInvalidations_NoLock(
+                        unchecked((uint)writes.Length),
+                        writePtr,
+                        out dependentCommandBuffers,
+                        out dependentCommandBufferCount);
+                }
+            }
+
+            PublishDescriptorSetContentUpdate(
+                invalidatesRecordedCommandBuffers,
+                dependentCommandBuffers,
+                dependentCommandBufferCount,
+                "vkUpdateDescriptorSetWithTemplate");
             return true;
         }
         finally

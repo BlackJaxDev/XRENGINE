@@ -14,7 +14,7 @@ public sealed class PhysicsChainTemplateFeatureTests
         var world = new TestWorldContext();
         var node = new SceneNode();
         PhysicsChainComponent component = node.AddComponent<PhysicsChainComponent>()!;
-        component.World = world;
+        node.World = world;
         world.Run(ETickGroup.PostPhysics);
         PhysicsChainWorld.TryGet(world, out PhysicsChainWorld? scheduler).ShouldBeTrue();
         PhysicsChainWorld activeScheduler = scheduler!;

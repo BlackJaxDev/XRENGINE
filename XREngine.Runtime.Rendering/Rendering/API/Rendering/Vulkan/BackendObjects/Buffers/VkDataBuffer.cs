@@ -1735,9 +1735,10 @@ namespace XREngine.Rendering.Vulkan
             {
                 EBufferUsage.StaticDraw => BufferUsageFlags.TransferDstBit,
                 EBufferUsage.StreamDraw or EBufferUsage.DynamicDraw => BufferUsageFlags.TransferDstBit,
-                EBufferUsage.StreamRead or EBufferUsage.DynamicRead => BufferUsageFlags.TransferSrcBit,
+                // Read usage describes a CPU readback destination: GPU transfer writes,
+                // then the host reads after the submission fence completes.
+                EBufferUsage.StreamRead or EBufferUsage.DynamicRead or EBufferUsage.StaticRead => BufferUsageFlags.TransferDstBit,
                 EBufferUsage.StreamCopy or EBufferUsage.DynamicCopy => BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
-                EBufferUsage.StaticRead => BufferUsageFlags.TransferSrcBit,
                 EBufferUsage.StaticCopy => BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
                 _ => 0,
             };

@@ -1,9 +1,7 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
-using Silk.NET.OpenGL;
 using XREngine.Components;
 using XREngine.Data.Rendering;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Compute;
@@ -39,7 +37,8 @@ public sealed partial class GPUPhysicsChainDispatcher
             return;
         _gpuDebugRenderedFrame = frameId;
 
-        if (AbstractRenderer.Current is not OpenGLRenderer renderer
+        IPhysicsChainComputeBackend? backend = ResolveComputeBackend(AbstractRenderer.Current);
+        if (backend is null
             || !Engine.Rendering.State.DebugInstanceRenderingAvailable
             || _particlesBuffer is null
             || _particleStaticBuffer is null)
@@ -78,8 +77,20 @@ public sealed partial class GPUPhysicsChainDispatcher
         _gpuDebugProgram.BindBuffer(_gpuDebugItemBuffer, 4);
 
         uint groupCount = (checked((uint)particleCount) + 127u) / 128u;
-        _gpuDebugProgram.DispatchCompute(Math.Max(groupCount, 1u), 1u, 1u);
-        renderer.RawGL.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
+        if (!TryDispatchDirect(
+                backend,
+                _gpuDebugProgram,
+                Math.Max(groupCount, 1u),
+                1u,
+                1u,
+                PhysicsChainComputePassKind.DebugVisualization))
+            return;
+        if (!TryCompletePass(
+                backend,
+                new PhysicsChainComputePass(
+                    PhysicsChainComputePassKind.DebugVisualization,
+                    EMemoryBarrierMask.ShaderStorage)))
+            return;
 
         _gpuDebugPointsRenderer?.Material?.SetInt(1, particleCount);
         _gpuDebugLinesRenderer?.Material?.SetInt(1, particleCount);
@@ -153,14 +164,26 @@ public sealed partial class GPUPhysicsChainDispatcher
             new XRMesh([new Vertex(Vector3.Zero)]),
             PhysicsChainComponent.CreateGpuDebugLineMaterial());
 
-        if (_gpuDebugPointsRenderer.Buffers is not null
-            && _gpuDebugPointsBuffer is not null
-            && !_gpuDebugPointsRenderer.Buffers.ContainsKey(_gpuDebugPointsBuffer.AttributeName))
-            _gpuDebugPointsRenderer.Buffers.Add(_gpuDebugPointsBuffer.AttributeName, _gpuDebugPointsBuffer);
-        if (_gpuDebugLinesRenderer.Buffers is not null
-            && _gpuDebugLinesBuffer is not null
-            && !_gpuDebugLinesRenderer.Buffers.ContainsKey(_gpuDebugLinesBuffer.AttributeName))
-            _gpuDebugLinesRenderer.Buffers.Add(_gpuDebugLinesBuffer.AttributeName, _gpuDebugLinesBuffer);
+        ReplaceDebugRendererBuffer(_gpuDebugPointsRenderer, _gpuDebugPointsBuffer);
+        ReplaceDebugRendererBuffer(_gpuDebugLinesRenderer, _gpuDebugLinesBuffer);
+    }
+
+    /// <summary>
+    /// Publishes a resized debug buffer even though its shader attribute name is
+    /// stable. Merely checking the key would leave the renderer referencing the
+    /// disposed, undersized allocation after the first capacity growth.
+    /// </summary>
+    private static void ReplaceDebugRendererBuffer(XRMeshRenderer renderer, XRDataBuffer? buffer)
+    {
+        if (buffer is null)
+            return;
+
+        string name = buffer.AttributeName;
+        if (renderer.Buffers.TryGetValue(name, out XRDataBuffer? current)
+            && ReferenceEquals(current, buffer))
+            return;
+
+        renderer.Buffers[name] = buffer;
     }
 
     private static void EnsureRawDebugBuffer(

@@ -34,7 +34,12 @@ public unsafe partial class VulkanRenderer
     public override bool IsDeviceLost => _deviceLost;
     public override string? DeviceLostReason => _deviceLostReason;
     internal EVulkanDeviceState DeviceState => _deviceStateMachine.State;
-    internal bool IsDeviceOperational => _deviceStateMachine.IsOperational;
+    /// <summary>
+    /// Whether a live logical device exists and has not entered a terminal fault state.
+    /// The state machine starts healthy so it can collect a later device loss, but that
+    /// state alone must not make re-entrant startup rendering treat a null device as ready.
+    /// </summary>
+    internal bool IsDeviceOperational => device.Handle != 0 && _deviceStateMachine.IsOperational;
 
     private void MarkDeviceLost(string? reason = null)
     {
@@ -49,6 +54,7 @@ public unsafe partial class VulkanRenderer
                 if (firstObservation)
                 {
                     _deviceLost = true;
+                    FailAllSubmissionMarkers();
                     NotifyVulkanResourceLifetimeDeviceLost();
 
                     // Pending timeline signals will never arrive after device loss.
@@ -202,6 +208,7 @@ public unsafe partial class VulkanRenderer
 
     private void DestroySyncObjects()
     {
+        FailAllSubmissionMarkers();
         if (acquireBridgeSemaphores is not null)
         {
             for (int i = 0; i < acquireBridgeSemaphores.Length; i++)

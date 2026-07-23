@@ -6,6 +6,10 @@ using XREngine.Components;
 using XREngine.Components.Capture.Lights;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
+using XREngine.Data.Core;
+using XREngine.Data.Rendering;
+using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.UnitTests.Rendering;
@@ -534,6 +538,52 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         clearIndex.ShouldBeGreaterThan(bindIndex);
         source.ShouldContain("renderer?.SetIndexedViewportScissors(regions.AsSpan(0, count), regions.AsSpan(0, count));");
         source.ShouldNotContain("c.Add<VPRC_ClearByBoundFBO>();");
+    }
+
+    [Test]
+    public void ShadowRenderPipeline_ConstructedDuringSnapshotSuppression_HasCompletePassMetadata()
+    {
+        ShadowRenderPipeline pipeline;
+        using (XRBase.SuppressPropertyNotifications())
+            pipeline = new ShadowRenderPipeline();
+
+        pipeline.CommandChain.ParentPipeline.ShouldBeSameAs(pipeline);
+        pipeline.PassMetadata.ShouldNotBeEmpty();
+        pipeline.PassMetadata.ShouldContain(pass => pass.PassIndex == (int)EDefaultRenderPass.PreRender);
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void ShadowViewport_ConstructedDuringSnapshotSuppression_BindsPipelinePassCollections()
+    {
+        IRuntimeShaderServices? previousShaderServices = RuntimeShaderServices.Current;
+        RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
+        try
+        {
+            ShadowRenderPipeline pipeline;
+            XRViewport viewport;
+            using (XRBase.SuppressPropertyNotifications())
+            {
+                pipeline = new ShadowRenderPipeline();
+                viewport = new XRViewport(null, 64u, 64u)
+                {
+                    RenderPipeline = pipeline,
+                    SetRenderPipelineFromCamera = false,
+                };
+            }
+
+            pipeline.Instances.ShouldContain(viewport.RenderPipelineInstance);
+
+            var command = new RenderCommandMethod3D(EDefaultRenderPass.PreRender, static () => { });
+            viewport.RenderPipelineInstance.MeshRenderCommands.AddCPU(command);
+            viewport.RenderPipelineInstance.MeshRenderCommands
+                .GetUpdatingPassCommandCount((int)EDefaultRenderPass.PreRender)
+                .ShouldBe(1);
+        }
+        finally
+        {
+            RuntimeShaderServices.Current = previousShaderServices;
+        }
     }
 
     [Test]

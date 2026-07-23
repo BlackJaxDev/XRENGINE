@@ -1082,6 +1082,18 @@ namespace XREngine
         }
 
         /// <summary>
+        /// Rate-limited physics warning without stack trace (keeps per-frame simulation diagnostics readable).
+        /// </summary>
+        public static void PhysicsWarningEvery(string key, TimeSpan interval, string message, params object[] args)
+        {
+    #if DEBUG || EDITOR
+            if (!ShouldLogEvery(key, interval))
+                return;
+            Log(ELogCategory.Physics, EOutputVerbosity.Normal, false, "[WARN] " + message, args);
+    #endif
+        }
+
+        /// <summary>
         /// Rate-limited Vulkan log. Intended for per-frame diagnostics.
         /// </summary>
         public static void VulkanEvery(string key, TimeSpan interval, string message, params object[] args)

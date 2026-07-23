@@ -6,6 +6,8 @@ namespace XREngine.Rendering.Vulkan
             RetiredImageResources Resources,
             VulkanRetirementTicket Ticket,
             ulong ImageGeneration,
+            ulong PrimaryViewGeneration,
+            ulong[] AttachmentViewGenerations,
             ulong SamplerGeneration);
     }
 }

@@ -15,7 +15,9 @@ internal sealed class OpenGLPhysicsChainComputeBackend : IPhysicsChainComputeBac
         SupportsGpuBufferCopies: true,
         SupportsAsyncReadback: true,
         SupportsIndirectDispatch: true,
-        SupportsSubgroupArithmetic: false);
+        SupportsSubgroupArithmetic: false,
+        SupportsSubmissionFences: true,
+        SupportsZeroReadbackPublication: true);
 
     private readonly OpenGLRenderer _renderer;
 
@@ -25,6 +27,10 @@ internal sealed class OpenGLPhysicsChainComputeBackend : IPhysicsChainComputeBac
     public AbstractRenderer Renderer => _renderer;
     public string Name => _renderer.GetType().Name;
     public PhysicsChainComputeCapabilities Capabilities => SupportedCapabilities;
+
+    public bool BeginBatch() => true;
+    public void CommitBatch() { }
+    public void RollbackBatch() { }
 
     /// <summary>
     /// Creates an adapter when the active renderer is OpenGL. Backend type checks stay
@@ -45,11 +51,19 @@ internal sealed class OpenGLPhysicsChainComputeBackend : IPhysicsChainComputeBac
     public bool EnsureGpuBufferReady(XRDataBuffer buffer)
         => TryGetBufferIdForGpuCopy(buffer, out _);
 
-    public bool TryCopyBuffer(in PhysicsChainComputeBufferCopy copy)
+    public PhysicsChainComputeEnqueueStatus TryDispatchDirect(
+        XRRenderProgram program,
+        uint groupsX,
+        uint groupsY,
+        uint groupsZ,
+        PhysicsChainComputePassKind passKind)
+        => (PhysicsChainComputeEnqueueStatus)_renderer.TryDispatchCompute(program, groupsX, groupsY, groupsZ);
+
+    public PhysicsChainComputeEnqueueStatus TryCopyBuffer(in PhysicsChainComputeBufferCopy copy)
     {
         if (!TryGetBufferIdForGpuCopy(copy.Source, out uint sourceBufferId)
             || !TryGetBufferIdForGpuCopy(copy.Destination, out uint destinationBufferId))
-            return false;
+            return PhysicsChainComputeEnqueueStatus.InvalidResource;
 
         _renderer.RawGL.CopyNamedBufferSubData(
             sourceBufferId,
@@ -57,25 +71,32 @@ internal sealed class OpenGLPhysicsChainComputeBackend : IPhysicsChainComputeBac
             copy.SourceOffset,
             copy.DestinationOffset,
             copy.ByteCount);
-        return true;
+        return PhysicsChainComputeEnqueueStatus.Enqueued;
     }
 
-    public bool TryDispatchIndirect(XRRenderProgram program, XRDataBuffer arguments, nint byteOffset)
+    public PhysicsChainComputeEnqueueStatus TryDispatchIndirect(
+        XRRenderProgram program,
+        XRDataBuffer arguments,
+        nint byteOffset)
     {
         if (byteOffset < 0 || !TryGetBufferId(arguments, out uint argumentsBufferId))
-            return false;
-        if (_renderer.GetOrCreateAPIRenderObject(program, generateNow: true) is not OpenGLRenderer.GLRenderProgram glProgram
-            || !glProgram.Use())
-            return false;
+            return PhysicsChainComputeEnqueueStatus.InvalidResource;
+        if (_renderer.GetOrCreateAPIRenderObject(program, generateNow: true) is not OpenGLRenderer.GLRenderProgram glProgram)
+            return PhysicsChainComputeEnqueueStatus.InvalidResource;
+        if (!glProgram.Use())
+            return PhysicsChainComputeEnqueueStatus.ProgramPending;
 
         _renderer.RawGL.BindBuffer(GLEnum.DispatchIndirectBuffer, argumentsBufferId);
         _renderer.RawGL.DispatchComputeIndirect(byteOffset);
         _renderer.RawGL.BindBuffer(GLEnum.DispatchIndirectBuffer, 0);
-        return true;
+        return PhysicsChainComputeEnqueueStatus.Enqueued;
     }
 
-    public void CompletePass(in PhysicsChainComputePass pass)
-        => _renderer.MemoryBarrier(pass.CompletionBarrier);
+    public PhysicsChainComputeEnqueueStatus TryCompletePass(in PhysicsChainComputePass pass)
+    {
+        _renderer.MemoryBarrier(pass.CompletionBarrier);
+        return PhysicsChainComputeEnqueueStatus.Enqueued;
+    }
 
     public XRGpuFence? InsertFence()
         => _renderer.InsertGpuFence();

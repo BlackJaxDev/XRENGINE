@@ -79,12 +79,15 @@ namespace XREngine.Rendering
         /// Set to false for manual control over when visibility collection occurs (e.g., for deferred rendering setups).
         /// </summary>
         private bool _automaticallyCollectVisible = true;
+        private IRuntimeRenderingHostServices? _collectVisibleSubscriptionHost;
 
         /// <summary>
         /// When true, render command buffers are automatically double-buffered (swapped) each frame.
         /// Set to false for manual control over buffer swapping (e.g., for multi-pass rendering).
         /// </summary>
         private bool _automaticallySwapBuffers = true;
+        private IRuntimeRenderingHostServices? _swapBuffersSubscriptionHost;
+        private volatile bool _destroyed;
 
         /// <summary>
         /// When true, screen-space UI overlays (HUD, menus) are rendered on top of the 3D scene.
@@ -594,7 +597,7 @@ namespace XREngine.Rendering
             X = x;
             Y = y;
             Index = index;
-            Resize(width, height);
+            InitializeExplicitSize(window, width, height);
         }
 
         /// <summary>
@@ -609,7 +612,26 @@ namespace XREngine.Rendering
             Window = window;
             Index = 0;
             SetFullScreen();
-            Resize(width, height);
+            InitializeExplicitSize(window, width, height);
+        }
+
+        /// <summary>
+        /// Initializes an explicitly-sized viewport. Windowless viewports are configured
+        /// before their camera, pipeline, and caller-provided framebuffer exist, so
+        /// requesting a resource generation here would materialize an incorrect default
+        /// window pipeline that must immediately be retired on first use.
+        /// </summary>
+        private void InitializeExplicitSize(XRWindow? window, uint width, uint height)
+        {
+            if (window is not null)
+            {
+                Resize(width, height);
+                return;
+            }
+
+            UpdateRegionFromWindowSize(width, height);
+            _internalResolutionRegion.Width = _region.Width;
+            _internalResolutionRegion.Height = _region.Height;
         }
 
         #endregion
@@ -655,10 +677,17 @@ namespace XREngine.Rendering
         /// </summary>
         public void Destroy()
         {
+            if (_destroyed)
+                return;
+
+            _destroyed = true;
+            SetSwapBuffersSubscription(false);
+            SetCollectVisibleSubscription(false);
             RuntimeEngine.Rendering.ReleaseVulkanUpscaleBridge(this, "viewport destroyed");
             AssociatedPlayer = null;
-            Camera = null;
             CameraComponent = null;
+            Camera = null;
+            Window = null;
         }
 
         /// <summary>
@@ -667,6 +696,9 @@ namespace XREngine.Rendering
         /// </summary>
         public void EnsureViewportBoundToCamera()
         {
+            if (_destroyed)
+                return;
+
             var camera = ActiveCamera;
             Debug.Rendering($"[XRViewport] EnsureViewportBoundToCamera: VP[{Index}] ActiveCamera={camera?.GetHashCode().ToString() ?? "NULL"} _camera={_camera?.GetHashCode().ToString() ?? "NULL"} _cameraComponent?.Camera={_cameraComponent?.Camera?.GetHashCode().ToString() ?? "NULL"}");
             if (camera is null)
@@ -745,24 +777,17 @@ namespace XREngine.Rendering
                 switch (propName)
                 {
                     case nameof(AutomaticallySwapBuffers):
-                        if (_automaticallySwapBuffers && _camera is not null)
-                            RuntimeRenderingHostServices.Current.UnsubscribeViewportSwapBuffers(SwapBuffersAutomatic);
+                        SetSwapBuffersSubscription(false);
                         break;
                     case nameof(AutomaticallyCollectVisible):
-                        if (_automaticallyCollectVisible && _camera is not null)
-                            RuntimeRenderingHostServices.Current.UnsubscribeViewportCollectVisible(CollectVisibleAutomatic);
+                        SetCollectVisibleSubscription(false);
                         break;
                     case nameof(Camera):
                         if (_camera is not null)
-                        {
                             _camera.Viewports.Remove(this);
 
-                            if (AutomaticallySwapBuffers)
-                                RuntimeRenderingHostServices.Current.UnsubscribeViewportSwapBuffers(SwapBuffersAutomatic);
-
-                            if (AutomaticallyCollectVisible)
-                                RuntimeRenderingHostServices.Current.UnsubscribeViewportCollectVisible(CollectVisibleAutomatic);
-                        }
+                        SetSwapBuffersSubscription(false);
+                        SetCollectVisibleSubscription(false);
                         break;
                 }
             }
@@ -786,12 +811,10 @@ namespace XREngine.Rendering
             switch (propName)
             {
                 case nameof(AutomaticallySwapBuffers):
-                    if (_automaticallySwapBuffers && _camera is not null)
-                        RuntimeRenderingHostServices.Current.SubscribeViewportSwapBuffers(SwapBuffersAutomatic);
+                    SetSwapBuffersSubscription(_automaticallySwapBuffers && _camera is not null && !_destroyed);
                     break;
                 case nameof(AutomaticallyCollectVisible):
-                    if (_automaticallyCollectVisible && _camera is not null)
-                        RuntimeRenderingHostServices.Current.SubscribeViewportCollectVisible(CollectVisibleAutomatic);
+                    SetCollectVisibleSubscription(_automaticallyCollectVisible && _camera is not null && !_destroyed);
                     break;
                 case nameof(Camera):
                     if (_camera is not null)
@@ -799,13 +822,9 @@ namespace XREngine.Rendering
                         if (!_camera.Viewports.Contains(this))
                             _camera.Viewports.Add(this);
                         SetAspectRatioToCamera();
-
-                        if (AutomaticallySwapBuffers)
-                            RuntimeRenderingHostServices.Current.SubscribeViewportSwapBuffers(SwapBuffersAutomatic);
-
-                        if (AutomaticallyCollectVisible)
-                            RuntimeRenderingHostServices.Current.SubscribeViewportCollectVisible(CollectVisibleAutomatic);
                     }
+                    SetSwapBuffersSubscription(AutomaticallySwapBuffers && _camera is not null && !_destroyed);
+                    SetCollectVisibleSubscription(AutomaticallyCollectVisible && _camera is not null && !_destroyed);
                     if (SetRenderPipelineFromCamera)
                         SynchronizeRenderPipelineFromActiveCamera();
                     break;
@@ -832,13 +851,56 @@ namespace XREngine.Rendering
             }
         }
 
+        private void SetSwapBuffersSubscription(bool subscribe)
+        {
+            if (subscribe)
+            {
+                if (_swapBuffersSubscriptionHost is not null)
+                    return;
+
+                IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+                host.SubscribeViewportSwapBuffers(SwapBuffersAutomatic);
+                _swapBuffersSubscriptionHost = host;
+                return;
+            }
+
+            IRuntimeRenderingHostServices? subscribedHost = _swapBuffersSubscriptionHost;
+            if (subscribedHost is null)
+                return;
+
+            _swapBuffersSubscriptionHost = null;
+            subscribedHost.UnsubscribeViewportSwapBuffers(SwapBuffersAutomatic);
+        }
+
+        private void SetCollectVisibleSubscription(bool subscribe)
+        {
+            if (subscribe)
+            {
+                if (_collectVisibleSubscriptionHost is not null)
+                    return;
+
+                IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+                host.SubscribeViewportCollectVisible(CollectVisibleAutomatic);
+                _collectVisibleSubscriptionHost = host;
+                return;
+            }
+
+            IRuntimeRenderingHostServices? subscribedHost = _collectVisibleSubscriptionHost;
+            if (subscribedHost is null)
+                return;
+
+            _collectVisibleSubscriptionHost = null;
+            subscribedHost.UnsubscribeViewportCollectVisible(CollectVisibleAutomatic);
+        }
+
         #endregion
 
         #region Visibility Collection
 
         private bool ShouldSuspendPipelineWork(string operation)
         {
-            if (!RuntimeEngine.PlayMode.IsTransitioning)
+            IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
+            if (!hostServices.IsPlayModeTransitioning)
                 return false;
 
             Debug.RenderingEvery(
@@ -847,7 +909,7 @@ namespace XREngine.Rendering
                 "[RenderDiag] {0} skipped during play-mode transition. VP[{1}] State={2} World={3} CameraComponent={4}",
                 operation,
                 Index,
-                RuntimeEngine.PlayMode.State,
+                hostServices.PlayModeStateName,
                 World?.TargetWorldName ?? "<null>",
                 CameraComponent?.Name ?? "<null>");
 
@@ -877,6 +939,9 @@ namespace XREngine.Rendering
             bool allowScreenSpaceUICollectVisible = true,
             IVolume? collectionVolumeOverride = null)
         {
+            if (_destroyed)
+                return;
+
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.CollectVisible");
 
             if (ShouldSuspendPipelineWork(nameof(CollectVisible)))
@@ -902,11 +967,15 @@ namespace XREngine.Rendering
                 Debug.RenderingWarningEvery(
                     $"XRViewport.CollectVisible.NoCamera.{GetHashCode()}[{Index}]",
                     TimeSpan.FromSeconds(1),
-                    "[RenderDiag] CollectVisible skipped: no ActiveCamera. VP[{0}] AssocPlayer={1} CameraComponentNull={2} CameraFieldNull={3}",
+                    "[RenderDiag] CollectVisible skipped: no ActiveCamera. VP[{0}] Hash={1} AssocPlayer={2} CameraComponentNull={3} CameraFieldNull={4} WindowBound={5} Destroyed={6} Pipeline={7}",
                     Index,
+                    GetHashCode(),
                     AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>",
                     CameraComponent is null,
-                    Camera is null);
+                    Camera is null,
+                    Window?.Viewports.Contains(this) == true,
+                    _destroyed,
+                    _renderPipeline.AssignedPipeline?.GetType().Name ?? "<null>");
                 return;
             }
 
@@ -1069,6 +1138,9 @@ namespace XREngine.Rendering
         /// </summary>
         private void CollectVisibleAutomatic()
         {
+            if (_destroyed)
+                return;
+
             FrameOutputPacingDecision pacing = EvaluateFrameOutputPacing(EFrameOutputKind.DesktopScene);
             _pendingFrameOutputPacing = pacing;
             _pendingFrameOutputSceneDue = pacing.IsDue;
@@ -1135,6 +1207,9 @@ namespace XREngine.Rendering
             RenderCommandCollection? renderCommandsOverride = null,
             bool allowScreenSpaceUISwap = true)
         {
+            if (_destroyed)
+                return;
+
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope($"XRViewport.SwapBuffers[{Index}]");
 
             if (ShouldSuspendPipelineWork(nameof(SwapBuffers)))
@@ -1226,6 +1301,9 @@ namespace XREngine.Rendering
         /// </summary>
         private void SwapBuffersAutomatic()
         {
+            if (_destroyed)
+                return;
+
             FrameOutputPacingDecision pacing = _pendingFrameOutputPacing.FrameId != 0UL
                 ? _pendingFrameOutputPacing
                 : EvaluateFrameOutputPacing(EFrameOutputKind.DesktopScene);
@@ -1308,6 +1386,9 @@ namespace XREngine.Rendering
             bool shadowPass = false,
             XRMaterial? forcedMaterial = null)
         {
+            if (_destroyed)
+                return;
+
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.Render");
 
             if (ShouldSuspendPipelineWork(nameof(Render)))
@@ -1338,11 +1419,15 @@ namespace XREngine.Rendering
                 Debug.RenderingWarningEvery(
                     $"XRViewport.Render.NoCamera.{GetHashCode()}[{Index}]",
                     TimeSpan.FromSeconds(1),
-                    "[RenderDiag] Render skipped: no ActiveCamera. VP[{0}] AssocPlayer={1} CameraComponentNull={2} CameraFieldNull={3}",
+                    "[RenderDiag] Render skipped: no ActiveCamera. VP[{0}] Hash={1} AssocPlayer={2} CameraComponentNull={3} CameraFieldNull={4} WindowBound={5} Destroyed={6} Pipeline={7}",
                     Index,
+                    GetHashCode(),
                     AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>",
                     CameraComponent is null,
-                    Camera is null);
+                    Camera is null,
+                    Window?.Viewports.Contains(this) == true,
+                    _destroyed,
+                    _renderPipeline.AssignedPipeline?.GetType().Name ?? "<null>");
                 return;
             }
 
@@ -1722,7 +1807,10 @@ namespace XREngine.Rendering
                 request,
                 PipelineInstanceId: _renderPipeline.InstanceId,
                 ResourcePlanGeneration: _renderPipeline.ResourceGeneration,
-                CommandGeneration: _renderPipeline.Pipeline?.CommandGeneration ?? 0UL,
+                // Telemetry must not lazily create a pipeline while a play-mode transition is
+                // tearing resources down. The assigned instance is the only meaningful source
+                // for this frame and is safe to query without mutating pipeline ownership.
+                CommandGeneration: _renderPipeline.AssignedPipeline?.CommandGeneration ?? 0UL,
                 AntiAliasingMode: (_renderPipeline.EffectiveAntiAliasingModeThisFrame ?? hostServices.DefaultAntiAliasingMode).ToString());
             hostServices.RecordRenderFrameOutput(telemetry);
         }

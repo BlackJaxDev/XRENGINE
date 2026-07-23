@@ -1,9 +1,17 @@
+using System.Buffers;
 using Silk.NET.Vulkan;
 namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
     private DescriptorSet[]? descriptorSets;
+    private long _descriptorSetContentUpdateGeneration;
+
+    private long SnapshotDescriptorSetContentUpdateGeneration()
+        => Volatile.Read(ref _descriptorSetContentUpdateGeneration);
+
+    private bool HaveDescriptorSetContentsUpdatedSince(long generation)
+        => Volatile.Read(ref _descriptorSetContentUpdateGeneration) != generation;
 
     /// <summary>
     /// Updates the Vulkan descriptor sets with the specified descriptor writes, while tracking the updates for validation and debugging purposes.
@@ -16,11 +24,25 @@ public unsafe partial class VulkanRenderer
         if (!IsDeviceOperational)
             throw new InvalidOperationException($"Cannot update Vulkan descriptors while device state is {DeviceState}.");
 
+        ulong[]? dependentCommandBuffers;
+        int dependentCommandBufferCount;
+        bool invalidatesRecordedCommandBuffers;
         lock (_vulkanResourceLifetimeLock)
         {
             ValidateAndRecordVulkanDescriptorWrites(descriptorWriteCount, descriptorWrites);
             Api!.UpdateDescriptorSets(device, descriptorWriteCount, descriptorWrites, 0, null);
+            invalidatesRecordedCommandBuffers = TryCaptureDescriptorUpdateInvalidations_NoLock(
+                descriptorWriteCount,
+                descriptorWrites,
+                out dependentCommandBuffers,
+                out dependentCommandBufferCount);
         }
+
+        PublishDescriptorSetContentUpdate(
+            invalidatesRecordedCommandBuffers,
+            dependentCommandBuffers,
+            dependentCommandBufferCount,
+            "vkUpdateDescriptorSets");
     }
 
     /// <summary>
@@ -40,6 +62,9 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
+        ulong[]? dependentCommandBuffers;
+        int dependentCommandBufferCount;
+        bool invalidatesRecordedCommandBuffers;
         lock (_vulkanResourceLifetimeLock)
         {
             if (!TryPrevalidateVulkanDescriptorWrites_NoLock(
@@ -55,8 +80,131 @@ public unsafe partial class VulkanRenderer
             // lifetime ledger and native descriptor contents describing different resources.
             ValidateAndRecordVulkanDescriptorWrites(descriptorWriteCount, descriptorWrites);
             Api!.UpdateDescriptorSets(device, descriptorWriteCount, descriptorWrites, 0, null);
-            failureReason = string.Empty;
-            return true;
+            invalidatesRecordedCommandBuffers = TryCaptureDescriptorUpdateInvalidations_NoLock(
+                descriptorWriteCount,
+                descriptorWrites,
+                out dependentCommandBuffers,
+                out dependentCommandBufferCount);
+        }
+
+        PublishDescriptorSetContentUpdate(
+            invalidatesRecordedCommandBuffers,
+            dependentCommandBuffers,
+            dependentCommandBufferCount,
+            "vkUpdateDescriptorSets");
+        failureReason = string.Empty;
+        return true;
+    }
+
+    /// <summary>
+    /// Captures the cached command buffers invalidated by ordinary descriptor writes.
+    /// The caller must hold <see cref="_vulkanResourceLifetimeLock"/>.
+    /// </summary>
+    private bool TryCaptureDescriptorUpdateInvalidations_NoLock(
+        uint descriptorWriteCount,
+        WriteDescriptorSet* descriptorWrites,
+        out ulong[]? dependentCommandBuffers,
+        out int dependentCommandBufferCount)
+    {
+        dependentCommandBuffers = null;
+        dependentCommandBufferCount = 0;
+        if (descriptorWriteCount == 0 || descriptorWrites is null)
+            return false;
+
+        bool invalidatesRecordedCommandBuffers = false;
+        int dependentCapacity = 0;
+        for (uint writeIndex = 0; writeIndex < descriptorWriteCount; writeIndex++)
+        {
+            WriteDescriptorSet write = descriptorWrites[writeIndex];
+            if (!DescriptorWriteInvalidatesRecordedCommands_NoLock(write))
+                continue;
+
+            invalidatesRecordedCommandBuffers = true;
+            VulkanResourceLifetimeKey setKey = ResourceKey(ObjectType.DescriptorSet, write.DstSet.Handle);
+            if (_vulkanResourceCommandBufferDependencies.TryGetValue(setKey, out HashSet<ulong>? dependents))
+                dependentCapacity = checked(dependentCapacity + dependents.Count);
+        }
+
+        if (!invalidatesRecordedCommandBuffers || dependentCapacity == 0)
+            return invalidatesRecordedCommandBuffers;
+
+        dependentCommandBuffers = ArrayPool<ulong>.Shared.Rent(dependentCapacity);
+        for (uint writeIndex = 0; writeIndex < descriptorWriteCount; writeIndex++)
+        {
+            WriteDescriptorSet write = descriptorWrites[writeIndex];
+            if (!DescriptorWriteInvalidatesRecordedCommands_NoLock(write))
+                continue;
+
+            VulkanResourceLifetimeKey setKey = ResourceKey(ObjectType.DescriptorSet, write.DstSet.Handle);
+            if (!_vulkanResourceLifetimes.TryGetValue(setKey, out VulkanResourceLifetimeRecord? setResource) ||
+                !_vulkanResourceCommandBufferDependencies.TryGetValue(setKey, out HashSet<ulong>? dependents))
+            {
+                continue;
+            }
+
+            foreach (ulong commandBufferHandle in dependents)
+            {
+                if (!_vulkanCommandBufferLifetimes.TryGetValue(
+                        commandBufferHandle,
+                        out VulkanCommandBufferLifetimeRecord? commandBufferLifetime) ||
+                    !commandBufferLifetime.Dependencies.TryGetValue(
+                        setKey,
+                        out ulong recordedGeneration) ||
+                    recordedGeneration != setResource.Generation ||
+                    ContainsCommandBufferHandle(
+                        dependentCommandBuffers.AsSpan(0, dependentCommandBufferCount),
+                        commandBufferHandle))
+                {
+                    continue;
+                }
+
+                dependentCommandBuffers[dependentCommandBufferCount++] = commandBufferHandle;
+            }
+        }
+
+        return true;
+    }
+
+    private bool DescriptorWriteInvalidatesRecordedCommands_NoLock(in WriteDescriptorSet write)
+    {
+        if (write.DstSet.Handle == 0 || write.DescriptorCount == 0)
+            return false;
+
+        return !_vulkanDescriptorSetLifetimes.TryGetValue(
+                write.DstSet.Handle,
+                out VulkanDescriptorSetLifetimeRecord? setState) ||
+            !setState.UsesUpdateAfterBind ||
+            !CanUseUpdateAfterBind(write.DescriptorType);
+    }
+
+    private void PublishDescriptorSetContentUpdate(
+        bool invalidatesRecordedCommandBuffers,
+        ulong[]? dependentCommandBuffers,
+        int dependentCommandBufferCount,
+        string updateKind)
+    {
+        try
+        {
+            if (!invalidatesRecordedCommandBuffers)
+                return;
+
+            Interlocked.Increment(ref _descriptorSetContentUpdateGeneration);
+            if (dependentCommandBufferCount == 0 || dependentCommandBuffers is null)
+                return;
+
+            VulkanExactInvalidationResult result = InvalidateCachedCommandBuffersByHandle(
+                dependentCommandBuffers.AsSpan(0, dependentCommandBufferCount),
+                $"{updateKind} changed a descriptor set without UPDATE_AFTER_BIND");
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanExactResourceInvalidation(
+                result.ExactVariantsDirtied,
+                result.ExactCommandChainsDirtied,
+                result.UnrelatedVariantsPreserved,
+                result.GlobalFallbackInvalidations);
+        }
+        finally
+        {
+            if (dependentCommandBuffers is not null)
+                ArrayPool<ulong>.Shared.Return(dependentCommandBuffers);
         }
     }
 

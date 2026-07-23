@@ -280,6 +280,61 @@ public sealed class RuntimeRenderingHostServicesTests
     }
 
     [Test]
+    [NonParallelizable]
+    public void ViewportDestroy_UnsubscribesAutomaticCallbacksExactlyOnce()
+    {
+        TestRuntimeRenderingHostServices services = new()
+        {
+            DefaultPipeline = new TestRenderPipeline(),
+        };
+        RuntimeRenderingHostServices.Current = services;
+
+        XRCamera camera = new();
+        XRViewport viewport = new(null)
+        {
+            Camera = camera,
+        };
+
+        viewport.Destroy();
+        viewport.Destroy();
+
+        services.ViewportSwapSubscribeCount.ShouldBe(1);
+        services.ViewportSwapUnsubscribeCount.ShouldBe(1);
+        services.ViewportCollectSubscribeCount.ShouldBe(1);
+        services.ViewportCollectUnsubscribeCount.ShouldBe(1);
+        camera.Viewports.ShouldNotContain(viewport);
+        viewport.ActiveCamera.ShouldBeNull();
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void ViewportCameraDetach_UnsubscribesFromOriginalHostServices()
+    {
+        TestRuntimeRenderingHostServices originalServices = new()
+        {
+            DefaultPipeline = new TestRenderPipeline(),
+        };
+        TestRuntimeRenderingHostServices replacementServices = new()
+        {
+            DefaultPipeline = new TestRenderPipeline(),
+        };
+        RuntimeRenderingHostServices.Current = originalServices;
+
+        XRViewport viewport = new(null)
+        {
+            Camera = new XRCamera(),
+        };
+
+        RuntimeRenderingHostServices.Current = replacementServices;
+        viewport.Camera = null;
+
+        originalServices.ViewportSwapUnsubscribeCount.ShouldBe(1);
+        originalServices.ViewportCollectUnsubscribeCount.ShouldBe(1);
+        replacementServices.ViewportSwapUnsubscribeCount.ShouldBe(0);
+        replacementServices.ViewportCollectUnsubscribeCount.ShouldBe(0);
+    }
+
+    [Test]
     public void TextureAuthorityPathResolution_UsesRuntimeRenderingHostServicesResolver()
     {
         string sourcePath = Path.Combine(Path.GetTempPath(), "TextureAuthoritySource.png");

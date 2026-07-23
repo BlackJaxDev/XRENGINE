@@ -13,13 +13,15 @@ public sealed class PhysicsChainDebugDefaultTests
         string fields = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent Fields.cs");
         string component = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent.cs");
         string gpu = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent.GPU.cs");
+        string dispatcherDebug = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.Debug.cs");
 
         fields.ShouldContain("private bool _debugDrawChains;");
         fields.ShouldNotContain("private bool _debugDrawChains = true;");
         component.ShouldContain("if (!IsActiveInHierarchy || Engine.Rendering.State.IsShadowPass || !DebugDrawChains)");
-        gpu.ShouldContain("if (!DebugDrawChains)");
-        gpu.IndexOf("if (!DebugDrawChains)", StringComparison.Ordinal)
-            .ShouldBeLessThan(gpu.IndexOf("EnsureGpuDebugRenderProgram();", StringComparison.Ordinal));
+        gpu.ShouldContain("GPUPhysicsChainDispatcher.Instance.RenderSelectedGpuDebug()");
+        dispatcherDebug.ShouldContain("if (!request.Component.DebugDrawChains");
+        dispatcherDebug.IndexOf("if (!request.Component.DebugDrawChains", StringComparison.Ordinal)
+            .ShouldBeLessThan(dispatcherDebug.IndexOf("_gpuDebugItems.Add(", StringComparison.Ordinal));
     }
 
     [Test]
@@ -32,6 +34,18 @@ public sealed class PhysicsChainDebugDefaultTests
         dispatcher.ShouldContain("Registration order is the stable order within both dispatch buckets.");
         dispatcher.ShouldNotContain("_activeRequests.Sort(");
         dispatcher.ShouldNotContain("RequiresDispatchSort(");
+    }
+
+    [Test]
+    public void GpuDebugBufferGrowth_RebindsReplacementAllocations()
+    {
+        string dispatcherDebug = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.Debug.cs");
+
+        dispatcherDebug.ShouldContain("ReplaceDebugRendererBuffer(_gpuDebugPointsRenderer, _gpuDebugPointsBuffer)");
+        dispatcherDebug.ShouldContain("ReplaceDebugRendererBuffer(_gpuDebugLinesRenderer, _gpuDebugLinesBuffer)");
+        dispatcherDebug.ShouldContain("renderer.Buffers[name] = buffer;");
+        dispatcherDebug.ShouldNotContain("!_gpuDebugPointsRenderer.Buffers.ContainsKey");
+        dispatcherDebug.ShouldNotContain("!_gpuDebugLinesRenderer.Buffers.ContainsKey");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

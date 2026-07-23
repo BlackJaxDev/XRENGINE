@@ -14,6 +14,9 @@ public sealed class PhysicsChainWorldLifecycleTests
     private static readonly PropertyInfo WorldProperty = typeof(RuntimeWorldObjectBase).GetProperty(
         nameof(RuntimeWorldObjectBase.World),
         BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!;
+    private static readonly PropertyInfo ObjectIdProperty = typeof(XRObjectBase).GetProperty(
+        nameof(XRObjectBase.ID),
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!;
     private static readonly MethodInfo DrainDynamicCommandsMethod = typeof(PhysicsChainWorld).GetMethod(
         "DrainDynamicCommands",
         BindingFlags.Instance | BindingFlags.NonPublic)!;
@@ -109,6 +112,43 @@ public sealed class PhysicsChainWorldLifecycleTests
     }
 
     [Test]
+    public void SnapshotIdentityReplacement_ReusesSlotAndInvalidatesStaleHandle()
+    {
+        var world = new TestWorldContext();
+        PhysicsChainComponent original = CreateComponent(world);
+        world.Invoke(ETickGroup.Normal);
+        PhysicsChainWorld scheduler = GetScheduler(world);
+        PhysicsChainRuntimeHandle originalHandle = original.RuntimeHandle;
+
+        SceneNode replacementNode;
+        PhysicsChainComponent replacement;
+        using (XRObjectBase.SuppressObjectCacheRegistration())
+        {
+            replacementNode = new SceneNode("PhysicsChainLifecycleReplacement");
+            replacement = replacementNode.AddComponent<PhysicsChainComponent>()!;
+        }
+        ObjectIdProperty.SetValue(replacement, original.ID);
+        replacement.EndLength = 0.25f;
+        SetWorld(replacementNode, world);
+        world.Invoke(ETickGroup.Normal);
+
+        PhysicsChainRuntimeHandle replacementHandle = replacement.RuntimeHandle;
+        Assert.Multiple(() =>
+        {
+            scheduler.RegisteredCount.ShouldBe(1);
+            original.RuntimeHandle.ShouldBe(PhysicsChainRuntimeHandle.Invalid);
+            replacementHandle.IsValid.ShouldBeTrue();
+            replacementHandle.Slot.ShouldBe(originalHandle.Slot);
+            replacementHandle.Generation.ShouldNotBe(originalHandle.Generation);
+            scheduler.TryGetRegistration(originalHandle, out _, out _).ShouldBeFalse();
+            scheduler.TryGetRegistration(replacementHandle, out _, out _).ShouldBeTrue();
+        });
+
+        SetWorld(original.SceneNode!, null);
+        RemoveComponent(replacement, world);
+    }
+
+    [Test]
     public void WarmDynamicCommandDrain_DoesNotAllocate()
     {
         var world = new TestWorldContext();
@@ -167,6 +207,53 @@ public sealed class PhysicsChainWorldLifecycleTests
         reclaimed.LiveOutputs.ShouldBe(0);
         reclaimed.DeferredRetirements.ShouldBe(0);
         world.RegisteredTickCount.ShouldBe(3);
+    }
+
+    [Test]
+    public void ConcurrentWorldTickPhases_SerializeStructuralRegistration()
+    {
+        const int chainCount = 512;
+        var world = new TestWorldContext();
+        var nodes = new SceneNode[chainCount];
+        var components = new PhysicsChainComponent[chainCount];
+        for (int index = 0; index < chainCount; ++index)
+        {
+            var node = new SceneNode($"ConcurrentPhysicsChain{index}");
+            PhysicsChainComponent component = node.AddComponent<PhysicsChainComponent>()!;
+            component.QualityTier = PhysicsChainQualityTier.Sleep;
+            SetWorld(node, world);
+            nodes[index] = node;
+            components[index] = component;
+        }
+
+        using var start = new Barrier(participantCount: 4);
+        Task fixedTick = Task.Run(() =>
+        {
+            start.SignalAndWait();
+            world.Invoke(ETickGroup.PostPhysics);
+        });
+        Task updateTick = Task.Run(() =>
+        {
+            start.SignalAndWait();
+            world.Invoke(ETickGroup.Normal);
+        });
+        Task lateTick = Task.Run(() =>
+        {
+            start.SignalAndWait();
+            world.Invoke(ETickGroup.Late);
+        });
+
+        start.SignalAndWait();
+        Task.WaitAll(fixedTick, updateTick, lateTick);
+
+        PhysicsChainWorld scheduler = GetScheduler(world);
+        scheduler.RegisteredCount.ShouldBe(chainCount);
+        for (int index = 0; index < components.Length; ++index)
+            components[index].RuntimeHandle.IsValid.ShouldBeTrue();
+
+        for (int index = 0; index < nodes.Length; ++index)
+            SetWorld(nodes[index], null);
+        world.Invoke(ETickGroup.Normal);
     }
 
     private static PhysicsChainComponent CreateComponent(IRuntimeWorldContext world)

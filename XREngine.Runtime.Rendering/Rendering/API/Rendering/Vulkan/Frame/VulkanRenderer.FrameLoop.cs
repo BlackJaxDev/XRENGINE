@@ -249,6 +249,7 @@ namespace XREngine.Rendering.Vulkan
         private void DrainSkippedResizeFrameOps(string reason)
         {
             FrameOp[] droppedOps = DrainFrameOps(out _);
+            FailUnsubmittedSubmissionMarkers(droppedOps);
             var liveFramebufferSize = XRWindow.EffectiveFramebufferSize;
             var resizeExtents = XRWindow.ResizeExtents;
 
@@ -1512,13 +1513,23 @@ namespace XREngine.Rendering.Vulkan
 
                             if (!string.IsNullOrEmpty(recordingDeferredReason))
                             {
+                                bool swapchainAttachmentRetired =
+                                    IsSwapchainResourceRetirementRecordingFailure(
+                                        recordingDeferredReason);
                                 if (TryPresentAbortedDirtyFrame(
                                         commandBufferDirtyFlagSet: false,
                                         commandBuffersDirtiedAfterSceneRecord: true,
                                         recordedSwapchainWriteCount: sceneSwapchainWriteCount,
                                         rejectionStage: "RecordDeferred",
                                         rejectedSubmitResult: null))
+                                {
+                                    if (swapchainAttachmentRetired)
+                                    {
+                                        ScheduleSwapchainRecreate(
+                                            "A generation-bound swapchain attachment retired during command recording");
+                                    }
                                     return;
+                                }
 
                                 currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
                                 ConsumeAcquireSemaphoreForAbortedFrame("RecordDeferred");
@@ -2057,5 +2068,10 @@ namespace XREngine.Rendering.Vulkan
             => failureReason.Contains(
                 "attempted to record retired Vulkan resource",
                 StringComparison.Ordinal);
+
+        private static bool IsSwapchainResourceRetirementRecordingFailure(string failureReason)
+            => IsTransientResourceRetirementRecordingFailure(failureReason) &&
+               (failureReason.Contains("Swapchain.Color", StringComparison.Ordinal) ||
+                failureReason.Contains("Swapchain.Depth", StringComparison.Ordinal));
     }
 }

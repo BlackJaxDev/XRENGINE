@@ -11,10 +11,22 @@ public interface IPhysicsChainComputeBackend
     string Name { get; }
     PhysicsChainComputeCapabilities Capabilities { get; }
 
+    bool BeginBatch();
+    void CommitBatch();
+    void RollbackBatch();
     bool EnsureGpuBufferReady(XRDataBuffer buffer);
-    bool TryCopyBuffer(in PhysicsChainComputeBufferCopy copy);
-    bool TryDispatchIndirect(XRRenderProgram program, XRDataBuffer arguments, nint byteOffset);
-    void CompletePass(in PhysicsChainComputePass pass);
+    PhysicsChainComputeEnqueueStatus TryDispatchDirect(
+        XRRenderProgram program,
+        uint groupsX,
+        uint groupsY,
+        uint groupsZ,
+        PhysicsChainComputePassKind passKind);
+    PhysicsChainComputeEnqueueStatus TryCopyBuffer(in PhysicsChainComputeBufferCopy copy);
+    PhysicsChainComputeEnqueueStatus TryDispatchIndirect(
+        XRRenderProgram program,
+        XRDataBuffer arguments,
+        nint byteOffset);
+    PhysicsChainComputeEnqueueStatus TryCompletePass(in PhysicsChainComputePass pass);
     XRGpuFence? InsertFence();
     bool TryReadBuffer(XRDataBuffer buffer, Span<byte> destination);
 }

@@ -13,6 +13,7 @@ public unsafe partial class VulkanRenderer
     private sealed record RetiredSwapchainGeneration(
         SwapchainKHR Swapchain,
         Image[] Images,
+        ulong[] ImageLifetimeGenerations,
         ImageView[] ImageViews,
         Framebuffer[] Framebuffers,
         Semaphore[] PresentBridgeSemaphores,
@@ -302,8 +303,15 @@ public unsafe partial class VulkanRenderer
             Image image = generation.Images[i];
             if (image.Handle == 0)
                 continue;
-            ReleaseExternalVulkanResourceOwnership(ObjectType.Image, image.Handle);
-            CompleteVulkanResourceDestruction(ObjectType.Image, image.Handle, force);
+
+            ulong lifetimeGeneration = i < generation.ImageLifetimeGenerations.Length
+                ? generation.ImageLifetimeGenerations[i]
+                : 0;
+            CompleteDetachedExternalVulkanResourceDestruction(
+                ObjectType.Image,
+                image.Handle,
+                lifetimeGeneration,
+                force);
         }
 
         Debug.Vulkan(

@@ -79,12 +79,24 @@ public unsafe partial class VulkanRenderer
     private ColorSpaceKHR swapChainImageColorSpace;
     private Extent2D swapChainExtent;
 
-    private Image _swapchainDepthImage;
-    private DeviceMemory _swapchainDepthMemory;
-    private ImageView _swapchainDepthView;
-    private Format _swapchainDepthFormat;
-    private ImageAspectFlags _swapchainDepthAspect;
+    private VulkanSwapchainDepthResources? _swapchainDepthResources;
+    private readonly object _swapchainDepthMutationLock = new();
     private int _recreateSwapChainInProgress;
+
+    private VulkanSwapchainDepthResources? CurrentSwapchainDepthResources
+        => Volatile.Read(ref _swapchainDepthResources);
+
+    private Image _swapchainDepthImage
+        => CurrentSwapchainDepthResources?.Image ?? default;
+
+    private ImageView _swapchainDepthView
+        => CurrentSwapchainDepthResources?.View ?? default;
+
+    private Format _swapchainDepthFormat
+        => CurrentSwapchainDepthResources?.Format ?? default;
+
+    private ImageAspectFlags _swapchainDepthAspect
+        => CurrentSwapchainDepthResources?.Aspect ?? default;
 
     internal bool StreamlineFrameGenerationSwapchainActive => _streamlineFrameGenerationSwapchainActive;
     internal bool StreamlineFrameGenerationSwapchainIncludesDlss => _streamlineFrameGenerationSwapchainIncludesDlss;
@@ -160,6 +172,8 @@ public unsafe partial class VulkanRenderer
                 DetachSwapchainRenderPassesForRetirement();
             DestroyImageViews();
             DestroyDescriptorPool();
+            ulong[] oldImageLifetimeGenerations =
+                DetachSwapchainImageLifetimesForHandleReuse(oldImages);
 
             swapChain = default;
             swapChainImages = null;
@@ -172,6 +186,7 @@ public unsafe partial class VulkanRenderer
             RetiredSwapchainGeneration retiredGeneration = new(
                 oldSwapchain,
                 oldImages,
+                oldImageLifetimeGenerations,
                 oldImageViews,
                 oldFramebuffers,
                 oldPresentBridgeSemaphores,
@@ -286,14 +301,14 @@ public unsafe partial class VulkanRenderer
         CreateImageViews();
         CreateStreamlineUiResources();
 
-        _swapchainDepthFormat = FindDepthFormat();
-        _swapchainDepthAspect = IsDepthStencilFormat(_swapchainDepthFormat)
+        Format depthFormat = FindDepthFormat();
+        ImageAspectFlags depthAspect = IsDepthStencilFormat(depthFormat)
             ? (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)
             : ImageAspectFlags.DepthBit;
 
+        CreateDepth(depthFormat, depthAspect);
         CreateRenderPass();
         //_testModel?.Generate();
-        CreateDepth();
         CreateFramebuffers();
         //CreateUniformBuffers();
         CreateDescriptorPool();
@@ -303,83 +318,107 @@ public unsafe partial class VulkanRenderer
 
     private void DestroyDepth()
     {
+        VulkanSwapchainDepthResources? resources;
+        lock (_swapchainDepthMutationLock)
+            resources = Interlocked.Exchange(ref _swapchainDepthResources, null);
+
+        if (resources is null)
+            return;
+
+        Debug.Vulkan(
+            "[Vulkan] Detached swapchain depth target for retirement. Image=0x{0:X} Generation={1} Extent={2}x{3}.",
+            resources.Image.Handle,
+            GetCurrentVulkanResourceGeneration(ObjectType.Image, resources.Image.Handle),
+            resources.Extent.Width,
+            resources.Extent.Height);
         RetireImageResources(new RetiredImageResources(
-            _swapchainDepthImage,
-            _swapchainDepthMemory,
-            _swapchainDepthView,
+            resources.Image,
+            resources.Memory,
+            resources.View,
             [],
             default,
             0));
-        _swapchainDepthView = default;
-        _swapchainDepthImage = default;
-        _swapchainDepthMemory = default;
     }
 
-    private void CreateDepth()
+    private void CreateDepth(Format depthFormat, ImageAspectFlags depthAspect)
     {
-        if (_swapchainDepthImage.Handle != 0)
-            return;
-
-        ImageCreateInfo imageInfo = new()
+        lock (_swapchainDepthMutationLock)
         {
-            SType = StructureType.ImageCreateInfo,
-            ImageType = ImageType.Type2D,
-            Extent = new Extent3D(swapChainExtent.Width, swapChainExtent.Height, 1),
-            MipLevels = 1,
-            ArrayLayers = 1,
-            Format = _swapchainDepthFormat,
-            Tiling = ImageTiling.Optimal,
-            InitialLayout = ImageLayout.Undefined,
-            Usage = ImageUsageFlags.DepthStencilAttachmentBit | ImageUsageFlags.SampledBit | ImageUsageFlags.TransferSrcBit, // TransferSrcBit for depth readback
-            Samples = SampleCountFlags.Count1Bit,
-            SharingMode = SharingMode.Exclusive,
-        };
+            if (CurrentSwapchainDepthResources is not null)
+                return;
 
-        if (CreateVulkanImageTracked(ref imageInfo, out _swapchainDepthImage, "Swapchain.Depth") != Result.Success)
-            throw new Exception("Failed to create swapchain depth image.");
-
-        ClearTrackedImageLayouts(_swapchainDepthImage);
-        VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(_swapchainDepthImage, MemoryPropertyFlags.DeviceLocalBit);
-        _imageAllocations[_swapchainDepthImage.Handle] = allocation;
-        _swapchainDepthMemory = allocation.Memory;
-
-        if (Api!.BindImageMemory(device, _swapchainDepthImage, _swapchainDepthMemory, allocation.Offset) != Result.Success)
-        {
-            _imageAllocations.TryRemove(_swapchainDepthImage.Handle, out _);
-            DestroyVulkanImageImmediateTracked(_swapchainDepthImage, "Swapchain.Depth.BindFailure");
-            FreeMemoryAllocation(allocation);
-            _swapchainDepthImage = default;
-            _swapchainDepthMemory = default;
-            throw new Exception("Failed to bind swapchain depth memory.");
-        }
-
-        ImageViewCreateInfo viewInfo = new()
-        {
-            SType = StructureType.ImageViewCreateInfo,
-            Image = _swapchainDepthImage,
-            ViewType = ImageViewType.Type2D,
-            Format = _swapchainDepthFormat,
-            SubresourceRange = new ImageSubresourceRange
+            ImageCreateInfo imageInfo = new()
             {
-                AspectMask = _swapchainDepthAspect,
-                BaseMipLevel = 0,
-                LevelCount = 1,
-                BaseArrayLayer = 0,
-                LayerCount = 1,
+                SType = StructureType.ImageCreateInfo,
+                ImageType = ImageType.Type2D,
+                Extent = new Extent3D(swapChainExtent.Width, swapChainExtent.Height, 1),
+                MipLevels = 1,
+                ArrayLayers = 1,
+                Format = depthFormat,
+                Tiling = ImageTiling.Optimal,
+                InitialLayout = ImageLayout.Undefined,
+                Usage = ImageUsageFlags.DepthStencilAttachmentBit | ImageUsageFlags.SampledBit | ImageUsageFlags.TransferSrcBit, // TransferSrcBit for depth readback
+                Samples = SampleCountFlags.Count1Bit,
+                SharingMode = SharingMode.Exclusive,
+            };
+
+            if (CreateVulkanImageTracked(ref imageInfo, out Image depthImage, "Swapchain.Depth") != Result.Success)
+                throw new Exception("Failed to create swapchain depth image.");
+
+            ClearTrackedImageLayouts(depthImage);
+            VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(depthImage, MemoryPropertyFlags.DeviceLocalBit);
+            _imageAllocations[depthImage.Handle] = allocation;
+            DeviceMemory depthMemory = allocation.Memory;
+
+            if (Api!.BindImageMemory(device, depthImage, depthMemory, allocation.Offset) != Result.Success)
+            {
+                _imageAllocations.TryRemove(depthImage.Handle, out _);
+                DestroyVulkanImageImmediateTracked(depthImage, "Swapchain.Depth.BindFailure");
+                FreeMemoryAllocation(allocation);
+                throw new Exception("Failed to bind swapchain depth memory.");
             }
-        };
 
-        if (Api!.CreateImageView(device, ref viewInfo, null, out _swapchainDepthView) != Result.Success)
-        {
-            _imageAllocations.TryRemove(_swapchainDepthImage.Handle, out _);
-            DestroyVulkanImageImmediateTracked(_swapchainDepthImage, "Swapchain.Depth.ViewFailure");
-            FreeMemoryAllocation(allocation);
-            _swapchainDepthImage = default;
-            _swapchainDepthMemory = default;
-            throw new Exception("Failed to create swapchain depth view.");
+            ImageViewCreateInfo viewInfo = new()
+            {
+                SType = StructureType.ImageViewCreateInfo,
+                Image = depthImage,
+                ViewType = ImageViewType.Type2D,
+                Format = depthFormat,
+                SubresourceRange = new ImageSubresourceRange
+                {
+                    AspectMask = depthAspect,
+                    BaseMipLevel = 0,
+                    LevelCount = 1,
+                    BaseArrayLayer = 0,
+                    LayerCount = 1,
+                }
+            };
+
+            if (Api!.CreateImageView(device, ref viewInfo, null, out ImageView depthView) != Result.Success)
+            {
+                _imageAllocations.TryRemove(depthImage.Handle, out _);
+                DestroyVulkanImageImmediateTracked(depthImage, "Swapchain.Depth.ViewFailure");
+                FreeMemoryAllocation(allocation);
+                throw new Exception("Failed to create swapchain depth view.");
+            }
+
+            TrackLiveImageView(depthView, in viewInfo, "Swapchain.Depth");
+
+            VulkanSwapchainDepthResources resources = new(
+                depthImage,
+                depthMemory,
+                depthView,
+                depthFormat,
+                depthAspect,
+                swapChainExtent);
+            Volatile.Write(ref _swapchainDepthResources, resources);
+            Debug.Vulkan(
+                "[Vulkan] Published swapchain depth target. Image=0x{0:X} Generation={1} Extent={2}x{3}.",
+                depthImage.Handle,
+                GetCurrentVulkanResourceGeneration(ObjectType.Image, depthImage.Handle),
+                swapChainExtent.Width,
+                swapChainExtent.Height);
         }
-
-        TrackLiveImageView(_swapchainDepthView, in viewInfo, "Swapchain.Depth");
     }
 
     private static bool IsDepthStencilFormat(Format format)
@@ -557,6 +596,9 @@ public unsafe partial class VulkanRenderer
         if (getImagesResult != Result.Success)
             throw new InvalidOperationException($"Failed to fetch swapchain images ({getImagesResult}){(_streamlineFrameGenerationSwapchainActive ? " through Streamline" : string.Empty)}.");
 
+        for (int i = 0; i < swapChainImages.Length; i++)
+            ClearTrackedImageLayouts(swapChainImages[i]);
+
         swapChainImageFormat = surfaceFormat.Format;
         swapChainImageColorSpace = surfaceFormat.ColorSpace;
         swapChainExtent = extent;
@@ -678,6 +720,14 @@ public unsafe partial class VulkanRenderer
 
     private bool IsSurfacePresentableForSwapchain(out string reason)
     {
+        if (khrSurface is null || surface.Handle == 0 || _physicalDevice.Handle == 0)
+        {
+            reason =
+                $"surface query is not initialized (extension={khrSurface is not null}, " +
+                $"surface=0x{surface.Handle:X}, physicalDevice=0x{_physicalDevice.Handle:X})";
+            return false;
+        }
+
         var swapChainSupport = QuerySwapChainSupport(_physicalDevice);
         if (swapChainSupport.Formats.Length == 0)
         {

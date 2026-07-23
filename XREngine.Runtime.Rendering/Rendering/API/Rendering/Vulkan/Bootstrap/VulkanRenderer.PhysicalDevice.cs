@@ -103,6 +103,9 @@ public unsafe partial class VulkanRenderer
 
     private bool ProbeVulkanRayTracingSupport(PhysicalDevice device)
     {
+        if (device.Handle == 0)
+            return false;
+
         try
         {
             uint extensionsCount = 0;
@@ -161,6 +164,9 @@ public unsafe partial class VulkanRenderer
 
     private bool CheckDeviceExtensionsSupport(PhysicalDevice device)
     {
+        if (device.Handle == 0)
+            return false;
+
         uint extentionsCount = 0;
         Api!.EnumerateDeviceExtensionProperties(device, (byte*)null, ref extentionsCount, null);
 

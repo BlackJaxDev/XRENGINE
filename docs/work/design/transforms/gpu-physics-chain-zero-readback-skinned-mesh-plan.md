@@ -26,6 +26,25 @@ writes final `SkinPaletteMatrix` rows directly. The older references below to
 raw bone-matrix buffers describe the pre-compression design state and have been
 updated where they affected the final contract.
 
+## 2026-07-22 Vulkan Parity Update
+
+The proposed path is now implemented on both OpenGL and Vulkan. Vulkan physics
+work uses the renderer's ordered frame-operation stream for direct dispatch,
+barriers, GPU-authored indirect dispatch, palette seed copies, bounds/palette
+publication, optional staging copies, and a timeline-backed completion marker.
+Complete palettes are written directly; partial palettes copy the existing GPU
+slice before overwriting chain-owned rows.
+
+`UseGpuDrivenSkinning=true` with `GpuSyncToBones=false` is a true
+zero-readback mode: the renderer consumes current/previous GPU palette slices
+and GPU animated bounds, and no physics staging transfer is scheduled.
+`GpuSyncToBones=true` uses pooled asynchronous staging and nonblocking polling.
+Standalone chains now enter isolated dispatcher groups instead of maintaining
+an OpenGL-only synchronization implementation.
+
+Desktop Vulkan validation and RenderDoc evidence are recorded in
+[the physics-chain motion investigation](../../investigations/rendering/physics-chain-skinned-mesh-motion-2026-07-22.md).
+
 ## Current State
 
 ### 1. Physics-chain GPU execution already exists

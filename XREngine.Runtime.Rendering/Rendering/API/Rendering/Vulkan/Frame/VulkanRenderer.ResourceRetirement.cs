@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using System.Runtime.CompilerServices;
 
 namespace XREngine.Rendering.Vulkan
 {
@@ -928,7 +929,7 @@ namespace XREngine.Rendering.Vulkan
         private readonly HashSet<ulong>[] _retiredImageMemoryHandles =
             [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
 
-        private readonly HashSet<ulong>[] _retiredImageViewHandles =
+        private readonly HashSet<VulkanPinnedResourceGeneration>[] _retiredImageViewHandles =
             [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
 
         private readonly HashSet<ulong>[] _retiredSamplerHandles =
@@ -936,7 +937,7 @@ namespace XREngine.Rendering.Vulkan
 
         private readonly HashSet<ulong> _retiredImageHandlesAll = new();
         private readonly HashSet<ulong> _retiredImageMemoryHandlesAll = new();
-        private readonly HashSet<ulong> _retiredImageViewHandlesAll = new();
+        private readonly HashSet<VulkanPinnedResourceGeneration> _retiredImageViewHandlesAll = new();
         private readonly HashSet<ulong> _retiredSamplerHandlesAll = new();
 
         /// <summary>
@@ -944,28 +945,45 @@ namespace XREngine.Rendering.Vulkan
         /// destroyed the next time this frame slot is reused (after the timeline
         /// wait guarantees the GPU is done with them).
         /// </summary>
-        internal void RetireImageResources(in RetiredImageResources resources)
+        internal void RetireImageResources(
+            in RetiredImageResources resources,
+            [CallerMemberName] string owner = "")
         {
+            if (!CanQueueOwnedImageRetirement(resources.Image, resources.Memory, owner))
+                return;
+
+            ImageView primaryViewCandidate = CanQueueImageViewRetirement(
+                resources.PrimaryView,
+                owner)
+                ? resources.PrimaryView
+                : default;
+            ImageView[] sourceAttachmentViews = FilterOwnedImageViewRetirementCandidates(
+                resources.AttachmentViews,
+                owner);
             VulkanRetirementTicket imageTicket = CaptureVulkanRetirementTicket(
                 ObjectType.Image,
                 resources.Image.Handle,
-                nameof(RetireImageResources));
+                owner);
             VulkanRetirementTicket ticket = imageTicket;
             if (resources.Image.Handle == 0 && resources.Memory.Handle != 0)
                 ticket = ticket.Merge(CaptureVulkanRetirementWatermark());
             VulkanRetirementTicket primaryViewTicket = CaptureVulkanRetirementTicket(
                 ObjectType.ImageView,
-                resources.PrimaryView.Handle,
-                nameof(RetireImageResources));
+                primaryViewCandidate.Handle,
+                owner);
             ticket = ticket.Merge(primaryViewTicket);
-            if (resources.AttachmentViews is not null)
+            ulong[] sourceAttachmentViewGenerations = sourceAttachmentViews.Length == 0
+                ? []
+                : new ulong[sourceAttachmentViews.Length];
+            if (sourceAttachmentViews.Length != 0)
             {
-                for (int i = 0; i < resources.AttachmentViews.Length; i++)
+                for (int i = 0; i < sourceAttachmentViews.Length; i++)
                 {
                     VulkanRetirementTicket attachmentViewTicket = CaptureVulkanRetirementTicket(
                         ObjectType.ImageView,
-                        resources.AttachmentViews[i].Handle,
-                        nameof(RetireImageResources));
+                        sourceAttachmentViews[i].Handle,
+                        owner);
+                    sourceAttachmentViewGenerations[i] = attachmentViewTicket.ResourceGeneration;
                     ticket = ticket.Merge(attachmentViewTicket);
                 }
             }
@@ -980,7 +998,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 Image image = resources.Image;
                 DeviceMemory memory = resources.Memory;
-                ImageView primaryView = resources.PrimaryView;
+                ImageView primaryView = primaryViewCandidate;
                 Sampler sampler = resources.Sampler;
 
                 if (image.Handle != 0)
@@ -1007,13 +1025,20 @@ namespace XREngine.Rendering.Vulkan
 
                 if (primaryView.Handle != 0)
                 {
-                    if (!_retiredImageViewHandlesAll.Add(primaryView.Handle))
+                    VulkanPinnedResourceGeneration primaryViewKey = new(
+                        ResourceKey(ObjectType.ImageView, primaryView.Handle),
+                        primaryViewTicket.ResourceGeneration);
+                    if (!_retiredImageViewHandlesAll.Add(primaryViewKey))
                         primaryView = default;
                     else
-                        _retiredImageViewHandles[frameSlot].Add(primaryView.Handle);
+                        _retiredImageViewHandles[frameSlot].Add(primaryViewKey);
                 }
 
-                ImageView[] attachmentViews = FilterRetiredAttachmentViews(resources.AttachmentViews, frameSlot);
+                ImageView[] attachmentViews = FilterRetiredAttachmentViews(
+                    sourceAttachmentViews,
+                    sourceAttachmentViewGenerations,
+                    frameSlot,
+                    out ulong[] attachmentViewGenerations);
 
                 if (sampler.Handle != 0)
                 {
@@ -1044,27 +1069,155 @@ namespace XREngine.Rendering.Vulkan
                         resources.AllocatedVRAMBytes),
                     ticket,
                     imageTicket.ResourceGeneration,
+                    primaryViewTicket.ResourceGeneration,
+                    attachmentViewGenerations,
                     samplerTicket.ResourceGeneration));
             }
         }
 
-        private ImageView[] FilterRetiredAttachmentViews(ImageView[]? views, int frameSlot)
+        private bool CanQueueOwnedImageRetirement(
+            Image image,
+            DeviceMemory memory,
+            string owner)
+        {
+            if (image.Handle == 0)
+                return true;
+
+            VulkanResourceLifetimeKey key = ResourceKey(ObjectType.Image, image.Handle);
+            lock (_vulkanResourceLifetimeLock)
+            {
+                if (_vulkanResourceLifetimes.TryGetValue(
+                        key,
+                        out VulkanResourceLifetimeRecord? lifetime) &&
+                    (lifetime.State & EVulkanResourceLifetimeState.External) != 0)
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.Retirement.SkipExternalImage.{image.Handle}.{lifetime.Generation}.{owner}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan.ResourceLifetime] Rejected stale owned-image retirement because the numeric handle now belongs to an external generation. Resource={0} Generation={1} CurrentOwner={2} RequestedBy={3}.",
+                        key,
+                        lifetime.Generation,
+                        lifetime.Owner,
+                        owner);
+                    return false;
+                }
+            }
+
+            if (memory.Handle == 0 ||
+                !_imageAllocations.TryGetValue(
+                    image.Handle,
+                    out VulkanMemoryAllocation currentAllocation) ||
+                currentAllocation.Memory.Handle == memory.Handle)
+            {
+                return true;
+            }
+
+            Debug.VulkanWarningEvery(
+                $"Vulkan.Retirement.SkipRecycledImageAllocation.{image.Handle}.{memory.Handle}.{owner}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan.ResourceLifetime] Rejected stale image retirement because the numeric image handle now owns a different memory allocation. Image=0x{0:X} RequestedMemory=0x{1:X} CurrentMemory=0x{2:X} RequestedBy={3}.",
+                image.Handle,
+                memory.Handle,
+                currentAllocation.Memory.Handle,
+                owner);
+            return false;
+        }
+
+        private bool CanQueueImageViewRetirement(ImageView view, string owner)
+        {
+            if (view.Handle == 0 ||
+                !_liveImageViewHandles.TryGetValue(view.Handle, out string? currentOwner) ||
+                !IsExternalImageViewOwner(currentOwner))
+            {
+                return true;
+            }
+
+            bool compatibleOwner =
+                (currentOwner.StartsWith("Swapchain.Color", StringComparison.Ordinal) &&
+                 owner.Contains("Swapchain", StringComparison.Ordinal)) ||
+                (currentOwner.StartsWith("OpenXR.Swapchain", StringComparison.Ordinal) &&
+                 owner.Contains("OpenXR", StringComparison.OrdinalIgnoreCase));
+            if (compatibleOwner)
+                return true;
+
+            ulong generation = GetCurrentVulkanResourceGeneration(
+                ObjectType.ImageView,
+                view.Handle);
+            Debug.VulkanWarningEvery(
+                $"Vulkan.Retirement.SkipExternalImageView.{view.Handle}.{generation}.{owner}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan.ResourceLifetime] Rejected stale image-view retirement because the numeric handle now belongs to an external generation. ImageView=0x{0:X} Generation={1} CurrentOwner={2} RequestedBy={3}.",
+                view.Handle,
+                generation,
+                currentOwner,
+                owner);
+            return false;
+        }
+
+        private ImageView[] FilterOwnedImageViewRetirementCandidates(
+            ImageView[]? views,
+            string owner)
         {
             if (views is null || views.Length == 0)
                 return [];
 
             List<ImageView>? filtered = null;
-            foreach (ImageView view in views)
+            for (int i = 0; i < views.Length; i++)
             {
-                if (view.Handle == 0 || !_retiredImageViewHandlesAll.Add(view.Handle))
+                ImageView view = views[i];
+                if (!CanQueueImageViewRetirement(view, owner))
                     continue;
 
-                _retiredImageViewHandles[frameSlot].Add(view.Handle);
                 filtered ??= new List<ImageView>(views.Length);
                 filtered.Add(view);
             }
 
             return filtered is null ? [] : [.. filtered];
+        }
+
+        private ImageView[] FilterRetiredAttachmentViews(
+            ImageView[] views,
+            ulong[] generations,
+            int frameSlot,
+            out ulong[] filteredGenerations)
+        {
+            if (views.Length == 0)
+            {
+                filteredGenerations = [];
+                return [];
+            }
+
+            List<ImageView>? filtered = null;
+            List<ulong>? filteredGenerationList = null;
+            for (int i = 0; i < views.Length; i++)
+            {
+                ImageView view = views[i];
+                ulong generation = i < generations.Length ? generations[i] : 0;
+                VulkanPinnedResourceGeneration viewKey = new(
+                    ResourceKey(ObjectType.ImageView, view.Handle),
+                    generation);
+                if (view.Handle == 0 ||
+                    generation == 0 ||
+                    !_retiredImageViewHandlesAll.Add(viewKey))
+                {
+                    continue;
+                }
+
+                _retiredImageViewHandles[frameSlot].Add(viewKey);
+                filtered ??= new List<ImageView>(views.Length);
+                filteredGenerationList ??= new List<ulong>(views.Length);
+                filtered.Add(view);
+                filteredGenerationList.Add(generation);
+            }
+
+            if (filtered is null)
+            {
+                filteredGenerations = [];
+                return [];
+            }
+
+            filteredGenerations = [.. filteredGenerationList!];
+            return [.. filtered];
         }
 
         internal void RetireSampler(Sampler sampler)
@@ -1159,7 +1312,10 @@ namespace XREngine.Rendering.Vulkan
                 }
                 if (r.PrimaryView.Handle != 0)
                 {
-                    if (TryBeginDestroyImageView(r.PrimaryView, "DrainRetiredImages.PrimaryView"))
+                    if (TryBeginDestroyImageViewGeneration(
+                            r.PrimaryView,
+                            entry.PrimaryViewGeneration,
+                            "DrainRetiredImages.PrimaryView"))
                     {
                         Api!.DestroyImageView(device, r.PrimaryView, null);
                         CompleteVulkanResourceDestruction(ObjectType.ImageView, r.PrimaryView.Handle);
@@ -1168,11 +1324,18 @@ namespace XREngine.Rendering.Vulkan
                 }
                 if (r.AttachmentViews is not null)
                 {
-                    foreach (ImageView v in r.AttachmentViews)
+                    for (int i = 0; i < r.AttachmentViews.Length; i++)
                     {
+                        ImageView v = r.AttachmentViews[i];
                         if (v.Handle != 0)
                         {
-                            if (TryBeginDestroyImageView(v, "DrainRetiredImages.AttachmentView"))
+                            ulong viewGeneration = i < entry.AttachmentViewGenerations.Length
+                                ? entry.AttachmentViewGenerations[i]
+                                : 0;
+                            if (TryBeginDestroyImageViewGeneration(
+                                    v,
+                                    viewGeneration,
+                                    "DrainRetiredImages.AttachmentView"))
                             {
                                 Api!.DestroyImageView(device, v, null);
                                 CompleteVulkanResourceDestruction(ObjectType.ImageView, v.Handle);
@@ -1211,7 +1374,7 @@ namespace XREngine.Rendering.Vulkan
                         hasTrackedImageAllocation);
                 }
 
-                CompleteRetiredImageDeduplication(frameSlot, in r);
+                CompleteRetiredImageDeduplication(frameSlot, in entry);
             }
 
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
@@ -1224,8 +1387,9 @@ namespace XREngine.Rendering.Vulkan
 
         private void CompleteRetiredImageDeduplication(
             int frameSlot,
-            in RetiredImageResources resources)
+            in RetiredImageResourceEntry entry)
         {
+            RetiredImageResources resources = entry.Resources;
             lock (_retiredResourceLock)
             {
                 if (resources.Image.Handle != 0)
@@ -1240,8 +1404,11 @@ namespace XREngine.Rendering.Vulkan
                 }
                 if (resources.PrimaryView.Handle != 0)
                 {
-                    _retiredImageViewHandles[frameSlot].Remove(resources.PrimaryView.Handle);
-                    _retiredImageViewHandlesAll.Remove(resources.PrimaryView.Handle);
+                    VulkanPinnedResourceGeneration primaryViewKey = new(
+                        ResourceKey(ObjectType.ImageView, resources.PrimaryView.Handle),
+                        entry.PrimaryViewGeneration);
+                    _retiredImageViewHandles[frameSlot].Remove(primaryViewKey);
+                    _retiredImageViewHandlesAll.Remove(primaryViewKey);
                 }
                 if (resources.AttachmentViews is not null)
                 {
@@ -1250,8 +1417,14 @@ namespace XREngine.Rendering.Vulkan
                         ulong handle = resources.AttachmentViews[i].Handle;
                         if (handle == 0)
                             continue;
-                        _retiredImageViewHandles[frameSlot].Remove(handle);
-                        _retiredImageViewHandlesAll.Remove(handle);
+                        ulong generation = i < entry.AttachmentViewGenerations.Length
+                            ? entry.AttachmentViewGenerations[i]
+                            : 0;
+                        VulkanPinnedResourceGeneration attachmentViewKey = new(
+                            ResourceKey(ObjectType.ImageView, handle),
+                            generation);
+                        _retiredImageViewHandles[frameSlot].Remove(attachmentViewKey);
+                        _retiredImageViewHandlesAll.Remove(attachmentViewKey);
                     }
                 }
                 if (resources.Sampler.Handle != 0)

@@ -416,10 +416,9 @@ namespace XREngine.Rendering.OpenGL
                 if (!IsBatchedTextDiagnosticMesh() || s_batchedTextSamplesDiagCount >= 20)
                     return null;
 
-                _batchedTextSamplesQuery ??= new XRRenderQuery();
+                _batchedTextSamplesQuery ??= new XRRenderQuery(RenderQueryDescriptor.ExactOcclusion);
                 GLRenderQuery? query = Renderer.GenericToAPI<GLRenderQuery>(_batchedTextSamplesQuery);
-                query?.BeginQuery(EQueryTarget.SamplesPassed);
-                return query;
+                return query?.BeginQuery() == ERenderQueryReadStatus.Ready ? query : null;
             }
 
             internal void EndBatchedTextSamplesProbe(GLRenderQuery? query, uint instances, uint triangles)
@@ -428,15 +427,16 @@ namespace XREngine.Rendering.OpenGL
                     return;
 
                 query.EndQuery();
-                long samples = query.GetQueryObject(EGetQueryObject.QueryResult);
+                ERenderQueryReadStatus readStatus = query.TryGetExactSamplesPassed(out OcclusionQueryResult result);
                 s_batchedTextSamplesDiagCount++;
                 Debug.Log(
                     ELogCategory.UI,
-                    "[FpsTextDiag] GLMeshRenderer.TextSamplesPassed #{0}: instances={1} triangles={2} samples={3} state={4} ssbos=[{5}]",
+                    "[FpsTextDiag] GLMeshRenderer.TextSamplesPassed #{0}: instances={1} triangles={2} status={3} samples={4} state={5} ssbos=[{6}]",
                     s_batchedTextSamplesDiagCount,
                     instances,
                     triangles,
-                    samples,
+                    readStatus,
+                    result.SamplesPassed,
                     GetBatchedTextRasterStateSummary(),
                     GetShaderStorageBindingSummary());
             }

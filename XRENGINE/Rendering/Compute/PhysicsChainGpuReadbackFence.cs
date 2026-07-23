@@ -5,10 +5,12 @@ namespace XREngine.Rendering.Compute;
 /// <summary>
 /// Adapts the renderer's nonblocking fence to the selective-readback contract.
 /// </summary>
-internal sealed class PhysicsChainGpuReadbackFence(XRGpuFence fence)
-    : IPhysicsChainReadbackFence, IDisposable
+internal sealed class PhysicsChainGpuReadbackFence : IPhysicsChainReadbackFence, IDisposable
 {
-    private XRGpuFence? _fence = fence;
+    private XRGpuFence? _fence;
+
+    public void Reset(XRGpuFence fence)
+        => _fence = fence;
 
     public PhysicsChainReadbackFenceStatus Poll()
         => _fence?.Poll() switch

@@ -454,6 +454,21 @@ ImGui rendering happens within the viewport render callback, managed by the base
   waits, compile/link/binary-load/reflection timings, ready/failure state, and
   failure reasons.
 
+## Backend-Neutral Physics Compute
+
+OpenGL physics chains implement the same narrow compute contract as Vulkan:
+explicit direct/indirect dispatch status, ordered buffer copies, completion
+barriers, fences, mapped readback, and transactional batch boundaries. The
+OpenGL transaction is a no-op because GL calls are issued on the owning
+context, but it preserves identical dispatcher commit/failure semantics.
+Explicit GPU requests never silently fall back to CPU execution.
+
+Core zero-readback capability is evaluated independently of asynchronous
+readback. Consequently `UseGpuDrivenSkinning=true` with
+`GpuSyncToBones=false` publishes palettes and bounds without requiring a fence
+or staging read, while CPU mirroring continues to require the complete
+readback-capable contract.
+
 ---
 
 ## See Also

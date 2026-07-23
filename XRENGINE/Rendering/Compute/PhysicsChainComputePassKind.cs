@@ -14,4 +14,5 @@ public enum PhysicsChainComputePassKind
     BoundsPublication,
     BonePalettePublication,
     ReadbackTransfer,
+    DebugVisualization,
 }

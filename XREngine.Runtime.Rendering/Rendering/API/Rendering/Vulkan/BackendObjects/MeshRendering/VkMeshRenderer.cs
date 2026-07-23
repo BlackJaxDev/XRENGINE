@@ -28,6 +28,10 @@ public unsafe partial class VulkanRenderer
     [ThreadStatic]
     private static FrameOpCapture? t_frameOpCaptureScratch;
     [ThreadStatic]
+    private static FrameOpCapture? t_orderedComputeBatchCapture;
+    [ThreadStatic]
+    private static FrameOpCapture? t_orderedComputeBatchCaptureScratch;
+    [ThreadStatic]
     private static Dictionary<int, FrameOp[]>? t_frameOpCaptureBuffersByCount;
     private const int FrameOpKindUnknown = 0;
     private const int FrameOpKindClear = 1;
@@ -43,6 +47,9 @@ public unsafe partial class VulkanRenderer
     private const int FrameOpKindTextureUpload = 11;
     private const int FrameOpKindQuery = 12;
     private const int FrameOpKindPublishFramebufferForSampling = 13;
+    private const int FrameOpKindComputeDispatchIndirect = 14;
+    private const int FrameOpKindBufferCopy = 15;
+    private const int FrameOpKindSubmissionMarker = 16;
 
     private const ulong FrameSourceMutableDescriptorSignature = 0x4652534D55544453UL;
 
@@ -88,6 +95,57 @@ public unsafe partial class VulkanRenderer
             _frameOps.Add(validatedOp);
     }
 
+    /// <summary>
+    /// Begins a transactional ordered-work batch while preserving any outer
+    /// command-chain capture active on the render thread.
+    /// </summary>
+    public bool TryBeginOrderedComputeBatch()
+    {
+        if (t_orderedComputeBatchCapture is not null)
+            return false;
+
+        FrameOpCapture capture = t_orderedComputeBatchCaptureScratch ??= new FrameOpCapture();
+        capture.Begin(t_frameOpCapture, excludeTextureUploads: false);
+        t_orderedComputeBatchCapture = capture;
+        t_frameOpCapture = capture;
+        return true;
+    }
+
+    /// <summary>Atomically appends every captured operation to the parent command stream.</summary>
+    public void CommitOrderedComputeBatch()
+    {
+        FrameOpCapture capture = EndOrderedComputeBatch();
+        FrameOpCapture? previous = capture.Previous;
+        if (previous is not null)
+        {
+            for (int i = 0; i < capture.Count; ++i)
+                previous.Add(capture.Buffer[i]);
+            return;
+        }
+
+        using (_frameOpsLock.EnterScope())
+            for (int i = 0; i < capture.Count; ++i)
+                _frameOps.Add(capture.Buffer[i]);
+    }
+
+    /// <summary>Discards every operation and fails any completion marker in the batch.</summary>
+    public void RollbackOrderedComputeBatch()
+    {
+        FrameOpCapture capture = EndOrderedComputeBatch();
+        for (int i = 0; i < capture.Count; ++i)
+            if (capture.Buffer[i] is SubmissionMarkerOp marker)
+                marker.Fence.Fail();
+    }
+
+    private static FrameOpCapture EndOrderedComputeBatch()
+    {
+        FrameOpCapture capture = t_orderedComputeBatchCapture
+            ?? throw new InvalidOperationException("No ordered compute batch is active on this thread.");
+        t_frameOpCapture = capture.Previous;
+        t_orderedComputeBatchCapture = null;
+        return capture;
+    }
+
     private bool TryGetLastFrameOpForTarget(XRFrameBuffer target, out FrameOp op)
     {
         FrameOpCapture? capture = t_frameOpCapture;
@@ -125,11 +183,53 @@ public unsafe partial class VulkanRenderer
         => op is not PublishFramebufferForSamplingOp &&
            ReferenceEquals(op.Target, target);
 
-    internal bool EnqueueOcclusionQueryBegin(XRRenderQuery query, EQueryTarget target)
-        => EnqueueOcclusionQueryOp(query, target, EVulkanQueryFrameOpKind.Begin);
+    internal bool EnqueueOcclusionQueryBegin(XRRenderQuery query)
+        => query.Descriptor.Kind == ERenderQueryKind.Occlusion &&
+           EnqueueRenderQueryOp(query, ERenderQueryOperation.Begin);
 
     internal bool EnqueueOcclusionQueryEnd(XRRenderQuery query)
-        => EnqueueOcclusionQueryOp(query, EQueryTarget.AnySamplesPassedConservative, EVulkanQueryFrameOpKind.End);
+        => query.Descriptor.Kind == ERenderQueryKind.Occlusion &&
+           EnqueueRenderQueryOp(query, ERenderQueryOperation.End);
+
+    internal bool EnqueueRenderQueryBegin(XRRenderQuery query)
+        => EnqueueRenderQueryOp(query, ERenderQueryOperation.Begin);
+
+    internal bool EnqueueRenderQueryEnd(XRRenderQuery query)
+        => EnqueueRenderQueryOp(query, ERenderQueryOperation.End);
+
+    internal bool EnqueueTimestampQuery(
+        XRRenderQuery query,
+        Silk.NET.Vulkan.PipelineStageFlags2 stage = Silk.NET.Vulkan.PipelineStageFlags2.AllCommandsBit,
+        uint pointIndex = 0u)
+        => query.Descriptor.Kind is ERenderQueryKind.Timestamp or ERenderQueryKind.ElapsedTime &&
+           EnqueueRenderQueryOp(query, ERenderQueryOperation.WriteTimestamp, stage, pointIndex);
+
+    internal bool EnqueueRenderQueryReset(XRRenderQuery query)
+        => EnqueueRenderQueryOp(query, ERenderQueryOperation.Reset);
+
+    internal bool EnqueueRenderQueryProperties(
+        XRRenderQuery query,
+        ReadOnlyMemory<ulong> sourceHandles)
+        => sourceHandles.Length != 0 &&
+           EnqueueRenderQueryOp(
+               query,
+               ERenderQueryOperation.WriteProperties,
+               sourceHandles: sourceHandles);
+
+    internal bool EnqueueRenderQueryResultCopy(
+        XRRenderQuery query,
+        Silk.NET.Vulkan.Buffer destination,
+        ulong destinationOffset,
+        ulong stride,
+        bool includeAvailability = true)
+        => destination.Handle != 0ul &&
+           EnqueueRenderQueryOp(
+               query,
+               ERenderQueryOperation.CopyResults,
+               resultDestination: destination,
+               resultDestinationOffset: destinationOffset,
+               resultStride: stride,
+               includeAvailability: includeAvailability);
 
     // Tracks whether the calling thread is currently between an occlusion QueryOp
     // Begin and End enqueue. Mesh draws enqueued inside the bracket (proxy AABB
@@ -137,20 +237,29 @@ public unsafe partial class VulkanRenderer
     // each pass at query boundaries so draws cannot cross a bracket while unrelated
     // opaque regions retain canonical batching order.
     [ThreadStatic]
-    private static int t_occlusionQueryBracketDepth;
+    private static int t_renderQueryBracketDepth;
 
-    internal static bool IsInOcclusionQueryBracket => t_occlusionQueryBracketDepth > 0;
+    internal static bool IsInRenderQueryBracket => t_renderQueryBracketDepth > 0;
 
-    private bool EnqueueOcclusionQueryOp(
+    internal static bool IsInOcclusionQueryBracket => IsInRenderQueryBracket;
+
+    private bool EnqueueRenderQueryOp(
         XRRenderQuery query,
-        EQueryTarget target,
-        EVulkanQueryFrameOpKind operation)
+        ERenderQueryOperation operation,
+        Silk.NET.Vulkan.PipelineStageFlags2 timestampStage = Silk.NET.Vulkan.PipelineStageFlags2.AllCommandsBit,
+        uint pointIndex = 0u,
+        ReadOnlyMemory<ulong> sourceHandles = default,
+        Silk.NET.Vulkan.Buffer resultDestination = default,
+        ulong resultDestinationOffset = 0ul,
+        ulong resultStride = 0ul,
+        bool includeAvailability = true)
     {
         if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline is null)
             return false;
 
-        if (RenderDiagnosticsFlags.VkSkipOcclusionQueryOps &&
-            (operation == EVulkanQueryFrameOpKind.Begin || t_occlusionQueryBracketDepth == 0))
+        if (query.Descriptor.Kind == ERenderQueryKind.Occlusion &&
+            RenderDiagnosticsFlags.VkSkipOcclusionQueryOps &&
+            (operation == ERenderQueryOperation.Begin || t_renderQueryBracketDepth == 0))
         {
             Debug.VulkanWarningEvery(
                 "Vulkan.OcclusionQueryOpsSkipped",
@@ -175,14 +284,21 @@ public unsafe partial class VulkanRenderer
             passIndex,
             ResolveCurrentFrameOpDrawTarget(),
             vkQuery,
-            target,
+            query.Descriptor,
             operation,
-            context));
+            context,
+            timestampStage,
+            pointIndex,
+            sourceHandles,
+            resultDestination,
+            resultDestinationOffset,
+            resultStride,
+            includeAvailability));
 
-        if (operation == EVulkanQueryFrameOpKind.Begin)
-            t_occlusionQueryBracketDepth++;
-        else if (t_occlusionQueryBracketDepth > 0)
-            t_occlusionQueryBracketDepth--;
+        if (operation == ERenderQueryOperation.Begin)
+            t_renderQueryBracketDepth++;
+        else if (operation == ERenderQueryOperation.End && t_renderQueryBracketDepth > 0)
+            t_renderQueryBracketDepth--;
 
         return true;
     }
@@ -311,6 +427,9 @@ public unsafe partial class VulkanRenderer
             DlssFrameGenerationOp dlssFrameGeneration => dlssFrameGeneration with { PassIndex = validatedPassIndex },
             TransformFeedbackOp transformFeedback => transformFeedback with { PassIndex = validatedPassIndex },
             ComputeDispatchOp computeDispatch => computeDispatch with { PassIndex = validatedPassIndex },
+            ComputeDispatchIndirectOp computeDispatchIndirect => computeDispatchIndirect with { PassIndex = validatedPassIndex },
+            BufferCopyOp bufferCopy => bufferCopy with { PassIndex = validatedPassIndex },
+            SubmissionMarkerOp submissionMarker => submissionMarker with { PassIndex = validatedPassIndex },
             _ => op
         };
     }
@@ -608,8 +727,18 @@ public unsafe partial class VulkanRenderer
                     break;
                 case QueryOp query:
                     hash.Add(query.Query.GetHashCode());
-                    hash.Add((int)query.QueryTarget);
+                    hash.Add(query.Descriptor.GetHashCode());
+                    hash.Add(query.Query.Ticket.PoolIdentity);
+                    hash.Add(query.Query.Ticket.FirstQuery);
+                    hash.Add(query.Query.Ticket.QueryCount);
                     hash.Add((int)query.Operation);
+                    hash.Add((ulong)query.TimestampStage);
+                    hash.Add(query.PointIndex);
+                    hash.Add(query.SourceHandles.Length);
+                    hash.Add(query.ResultDestination.Handle);
+                    hash.Add(query.ResultDestinationOffset);
+                    hash.Add(query.ResultStride);
+                    hash.Add(query.IncludeAvailability);
                     break;
                 case BlitOp blit:
                     hash.Add(blit.InFbo?.GetHashCode() ?? 0);
@@ -699,6 +828,22 @@ public unsafe partial class VulkanRenderer
                     hash.Add(compute.GroupsZ);
                     HashProgramBindingLayoutSnapshot(ref hash, compute.Snapshot);
                     break;
+                case ComputeDispatchIndirectOp computeIndirect:
+                    hash.Add(computeIndirect.Program.GetHashCode());
+                    hash.Add(computeIndirect.ArgumentBuffer.Handle);
+                    hash.Add(computeIndirect.ArgumentOffset);
+                    HashProgramBindingLayoutSnapshot(ref hash, computeIndirect.Snapshot);
+                    break;
+                case BufferCopyOp copy:
+                    hash.Add(copy.SourceBuffer.Handle);
+                    hash.Add(copy.SourceOffset);
+                    hash.Add(copy.DestinationBuffer.Handle);
+                    hash.Add(copy.DestinationOffset);
+                    hash.Add(copy.ByteCount);
+                    break;
+                case SubmissionMarkerOp marker:
+                    hash.Add(marker.Fence.GetHashCode());
+                    break;
                 case TextureUploadFrameOp upload:
                     hash.Add(upload.Upload.PublicationToken);
                     hash.Add(upload.Upload.Request.StreamingGeneration);
@@ -732,6 +877,9 @@ public unsafe partial class VulkanRenderer
             DlssFrameGenerationOp => FrameOpKindDlssFrameGeneration,
             TransformFeedbackOp => FrameOpKindTransformFeedback,
             ComputeDispatchOp => FrameOpKindComputeDispatch,
+            ComputeDispatchIndirectOp => FrameOpKindComputeDispatchIndirect,
+            BufferCopyOp => FrameOpKindBufferCopy,
+            SubmissionMarkerOp => FrameOpKindSubmissionMarker,
             TextureUploadFrameOp => FrameOpKindTextureUpload,
             _ => FrameOpKindUnknown
         };
