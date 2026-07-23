@@ -6,6 +6,7 @@ using NUnit.Framework;
 using Shouldly;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
+using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Vulkan;
 using static XREngine.Rendering.Vulkan.VulkanRenderer;
@@ -569,8 +570,8 @@ public sealed class SwapchainContextCoalescingTests
             passIndex,
             Target: null,
             query,
-            XREngine.Data.Rendering.EQueryTarget.AnySamplesPassedConservative,
-            EVulkanQueryFrameOpKind.Begin,
+            RenderQueryDescriptor.ConservativeOcclusion,
+            ERenderQueryOperation.Begin,
             CtxPipelineA);
         MeshDrawOp proxy = OpaqueSwapchainDraw(
             passIndex,
@@ -581,8 +582,8 @@ public sealed class SwapchainContextCoalescingTests
             passIndex,
             Target: null,
             query,
-            XREngine.Data.Rendering.EQueryTarget.AnySamplesPassedConservative,
-            EVulkanQueryFrameOpKind.End,
+            RenderQueryDescriptor.ConservativeOcclusion,
+            ERenderQueryOperation.End,
             CtxPipelineA);
 
         FrameOp[] ops = [higherDraw, lowerDraw, begin, proxy, end];
@@ -623,8 +624,8 @@ public sealed class SwapchainContextCoalescingTests
             queryPass,
             Target: null,
             query,
-            XREngine.Data.Rendering.EQueryTarget.AnySamplesPassedConservative,
-            EVulkanQueryFrameOpKind.Begin,
+            RenderQueryDescriptor.ConservativeOcclusion,
+            ERenderQueryOperation.Begin,
             CtxPipelineA);
         MeshDrawOp proxy = OpaqueSwapchainDraw(
             queryPass,
@@ -635,8 +636,8 @@ public sealed class SwapchainContextCoalescingTests
             queryPass,
             Target: null,
             query,
-            XREngine.Data.Rendering.EQueryTarget.AnySamplesPassedConservative,
-            EVulkanQueryFrameOpKind.End,
+            RenderQueryDescriptor.ConservativeOcclusion,
+            ERenderQueryOperation.End,
             CtxPipelineA);
 
         FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(
@@ -662,8 +663,8 @@ public sealed class SwapchainContextCoalescingTests
             passIndex,
             Target: null,
             query,
-            XREngine.Data.Rendering.EQueryTarget.AnySamplesPassedConservative,
-            EVulkanQueryFrameOpKind.Begin,
+            RenderQueryDescriptor.ConservativeOcclusion,
+            ERenderQueryOperation.Begin,
             CtxPipelineA);
         MeshDrawOp draw = OpaqueSwapchainDraw(
             passIndex,
@@ -674,8 +675,8 @@ public sealed class SwapchainContextCoalescingTests
             passIndex,
             Target: null,
             query,
-            XREngine.Data.Rendering.EQueryTarget.AnySamplesPassedConservative,
-            EVulkanQueryFrameOpKind.End,
+            RenderQueryDescriptor.ConservativeOcclusion,
+            ERenderQueryOperation.End,
             CtxPipelineA);
         ClearOp clear = SwapchainClear(passIndex, CtxPipelineA);
 

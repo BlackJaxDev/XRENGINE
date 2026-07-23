@@ -42,17 +42,15 @@ public sealed partial class GPUPhysicsChainDispatcher
                         _gpuDrivenSkinPaletteBuffer,
                         destinationOffset,
                         byteCount);
-                    if (!backend.TryCopyBuffer(copy))
+                    if (!TryCopyBuffer(backend, copy, "partial-palette-seed"))
                         return false;
 
-                    RecordGpuCopyBytes((long)byteCount, isBatched: true);
+                    RecordGpuCopyBytes((long)byteCount, _currentDispatchGroupIsBatched);
                     copiedAny = true;
                 }
             }
         }
 
-        if (copiedAny)
-            backend.CompletePass(PartialPaletteSeedCompletionPass);
-        return true;
+        return !copiedAny || TryCompletePass(backend, PartialPaletteSeedCompletionPass);
     }
 }

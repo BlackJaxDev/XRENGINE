@@ -385,14 +385,10 @@ namespace XREngine.Rendering.Vulkan
             if (dependentCommandBuffers.IsEmpty)
                 return default;
 
-            HashSet<ulong> dependentHandles = new(dependentCommandBuffers.Length);
             for (int i = 0; i < dependentCommandBuffers.Length; i++)
             {
                 if (dependentCommandBuffers[i] != 0)
-                {
-                    dependentHandles.Add(dependentCommandBuffers[i]);
                     _invalidatedCommandBuffersPendingReset.TryAdd(dependentCommandBuffers[i], 0);
-                }
             }
 
             int exactVariantsDirtied = 0;
@@ -407,8 +403,12 @@ namespace XREngine.Rendering.Vulkan
                     for (int variantIndex = 0; variantIndex < variants.Count; variantIndex++)
                     {
                         CommandBufferCacheVariant variant = variants[variantIndex];
-                        bool dependent = dependentHandles.Contains(unchecked((ulong)variant.PrimaryCommandBuffer.Handle)) ||
-                            dependentHandles.Contains(unchecked((ulong)variant.DynamicUiSecondaryCommandBuffer.Handle));
+                        bool dependent = ContainsCommandBufferHandle(
+                                dependentCommandBuffers,
+                                unchecked((ulong)variant.PrimaryCommandBuffer.Handle)) ||
+                            ContainsCommandBufferHandle(
+                                dependentCommandBuffers,
+                                unchecked((ulong)variant.DynamicUiSecondaryCommandBuffer.Handle));
                         if (!dependent)
                         {
                             unrelatedVariantsPreserved++;
@@ -430,7 +430,9 @@ namespace XREngine.Rendering.Vulkan
                     for (int variantIndex = 0; variantIndex < variants.Count; variantIndex++)
                     {
                         CommandBufferCacheVariant variant = variants[variantIndex];
-                        if (!dependentHandles.Contains(unchecked((ulong)variant.PrimaryCommandBuffer.Handle)))
+                        if (!ContainsCommandBufferHandle(
+                                dependentCommandBuffers,
+                                unchecked((ulong)variant.PrimaryCommandBuffer.Handle)))
                         {
                             unrelatedVariantsPreserved++;
                             continue;
@@ -450,7 +452,9 @@ namespace XREngine.Rendering.Vulkan
                 {
                     foreach (CommandChain chain in _commandChainCaches[cacheIndex].Values)
                     {
-                        if (!dependentHandles.Contains(unchecked((ulong)chain.SecondaryCommandBuffer.Handle)))
+                        if (!ContainsCommandBufferHandle(
+                                dependentCommandBuffers,
+                                unchecked((ulong)chain.SecondaryCommandBuffer.Handle)))
                             continue;
 
                         chain.State = CommandChainState.Unrecorded;
@@ -466,6 +470,20 @@ namespace XREngine.Rendering.Vulkan
                 exactChainsDirtied,
                 unrelatedVariantsPreserved,
                 GlobalFallbackInvalidations: 0);
+        }
+
+        private static bool ContainsCommandBufferHandle(
+            ReadOnlySpan<ulong> commandBufferHandles,
+            ulong candidate)
+        {
+            if (candidate == 0)
+                return false;
+
+            for (int i = 0; i < commandBufferHandles.Length; i++)
+                if (commandBufferHandles[i] == candidate)
+                    return true;
+
+            return false;
         }
 
         private void DrainInvalidatedCommandBufferRecordings(int maxItems = 64)

@@ -34,7 +34,10 @@ internal static class SnapshotBinarySerializer
         if (payload is null || payload.Length == 0)
             return null;
 
-        return CookedBinarySerializer.Deserialize(typeof(T), payload, Callbacks) as T;
+        T? restored = CookedBinarySerializer.Deserialize(typeof(T), payload, Callbacks) as T;
+        if (restored is XRScene scene)
+            SnapshotSceneReferenceResolver.Repair(scene);
+        return restored;
     }
 
     private static object? PrepareAssetForSnapshot(XRAsset asset)

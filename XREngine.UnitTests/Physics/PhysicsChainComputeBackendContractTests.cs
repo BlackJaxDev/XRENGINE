@@ -17,6 +17,8 @@ public sealed class PhysicsChainComputeBackendContractTests
 
         complete.SupportsRequiredPipeline.ShouldBeTrue();
         missingReadback.SupportsRequiredPipeline.ShouldBeFalse();
+        missingReadback.SupportsCorePipeline.ShouldBeTrue();
+        missingReadback.SupportsReadbackPipeline.ShouldBeFalse();
     }
 
     [Test]
@@ -27,8 +29,9 @@ public sealed class PhysicsChainComputeBackendContractTests
             PhysicsChainComputePassKind.Simulation,
             EMemoryBarrierMask.ShaderStorage);
 
-        backend.CompletePass(pass);
+        PhysicsChainComputeEnqueueStatus status = backend.TryCompletePass(pass);
 
+        status.ShouldBe(PhysicsChainComputeEnqueueStatus.Enqueued);
         backend.LastCompletedPass.ShouldBe(pass);
     }
 
@@ -39,10 +42,29 @@ public sealed class PhysicsChainComputeBackendContractTests
         public PhysicsChainComputeCapabilities Capabilities => new(true, true, true, true, true);
         public PhysicsChainComputePass? LastCompletedPass { get; private set; }
 
+        public bool BeginBatch() => true;
+        public void CommitBatch() { }
+        public void RollbackBatch() { }
         public bool EnsureGpuBufferReady(XRDataBuffer buffer) => true;
-        public bool TryCopyBuffer(in PhysicsChainComputeBufferCopy copy) => true;
-        public bool TryDispatchIndirect(XRRenderProgram program, XRDataBuffer arguments, nint byteOffset) => true;
-        public void CompletePass(in PhysicsChainComputePass pass) => LastCompletedPass = pass;
+        public PhysicsChainComputeEnqueueStatus TryDispatchDirect(
+            XRRenderProgram program,
+            uint groupsX,
+            uint groupsY,
+            uint groupsZ,
+            PhysicsChainComputePassKind passKind)
+            => PhysicsChainComputeEnqueueStatus.Enqueued;
+        public PhysicsChainComputeEnqueueStatus TryCopyBuffer(in PhysicsChainComputeBufferCopy copy)
+            => PhysicsChainComputeEnqueueStatus.Enqueued;
+        public PhysicsChainComputeEnqueueStatus TryDispatchIndirect(
+            XRRenderProgram program,
+            XRDataBuffer arguments,
+            nint byteOffset)
+            => PhysicsChainComputeEnqueueStatus.Enqueued;
+        public PhysicsChainComputeEnqueueStatus TryCompletePass(in PhysicsChainComputePass pass)
+        {
+            LastCompletedPass = pass;
+            return PhysicsChainComputeEnqueueStatus.Enqueued;
+        }
         public XRGpuFence? InsertFence() => null;
         public bool TryReadBuffer(XRDataBuffer buffer, Span<byte> destination) => true;
     }

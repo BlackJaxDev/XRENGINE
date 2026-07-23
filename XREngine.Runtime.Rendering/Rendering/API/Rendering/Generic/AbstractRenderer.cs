@@ -765,6 +765,18 @@ namespace XREngine.Rendering
         public abstract void DispatchCompute(XRRenderProgram program, int numGroupsX, int numGroupsY, int numGroupsZ);
 
         /// <summary>
+        /// Attempts to accept a compute dispatch into the renderer's ordered command stream.
+        /// The default implementation reports unsupported so callers never infer success from
+        /// the legacy <see cref="DispatchCompute"/> method's void return value.
+        /// </summary>
+        public virtual ERendererComputeEnqueueStatus TryDispatchCompute(
+            XRRenderProgram program,
+            uint groupsX,
+            uint groupsY,
+            uint groupsZ)
+            => ERendererComputeEnqueueStatus.Unsupported;
+
+        /// <summary>
         /// True when images returned by <see cref="GetScreenshotAsync"/> need a CPU-side
         /// vertical flip before being written in normal top-left image-file order.
         /// This is independent from framebuffer texture UV sampling direction.

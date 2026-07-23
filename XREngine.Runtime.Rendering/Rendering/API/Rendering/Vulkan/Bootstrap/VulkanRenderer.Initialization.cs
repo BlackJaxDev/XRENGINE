@@ -126,6 +126,7 @@ namespace XREngine.Rendering.Vulkan
             DestroyDanglingFrameBufferWrappers();
             DestroyDanglingTextureWrappers();
             DestroyCachedAPIRenderObjects();
+            DestroyVulkanQueryArenas();
             DestroyRemainingTrackedMeshUniformBuffers();
 
             // Drain all deferred-deletion queues now that the GPU is idle.
@@ -778,18 +779,31 @@ namespace XREngine.Rendering.Vulkan
             ActiveState.SetDepthCompare(ToVulkanCompareOp(always));
         }
         public override void DispatchCompute(XRRenderProgram program, int numGroupsX, int numGroupsY, int numGroupsZ)
-        {
-            if (program is null)
-                return;
+            => TryDispatchCompute(
+                program,
+                checked((uint)Math.Max(numGroupsX, 1)),
+                checked((uint)Math.Max(numGroupsY, 1)),
+                checked((uint)Math.Max(numGroupsZ, 1)));
 
-            uint x = (uint)Math.Max(numGroupsX, 1);
-            uint y = (uint)Math.Max(numGroupsY, 1);
-            uint z = (uint)Math.Max(numGroupsZ, 1);
+        public override ERendererComputeEnqueueStatus TryDispatchCompute(
+            XRRenderProgram program,
+            uint groupsX,
+            uint groupsY,
+            uint groupsZ)
+        {
+            if (!IsDeviceOperational)
+                return ERendererComputeEnqueueStatus.DeviceLost;
+            if (program is null)
+                return ERendererComputeEnqueueStatus.InvalidResource;
+
+            uint x = Math.Max(groupsX, 1u);
+            uint y = Math.Max(groupsY, 1u);
+            uint z = Math.Max(groupsZ, 1u);
 
             if (GetOrCreateAPIRenderObject(program) is not VkRenderProgram vkProgram)
             {
                 Debug.VulkanWarning("DispatchCompute skipped: program could not be resolved to VkRenderProgram.");
-                return;
+                return ERendererComputeEnqueueStatus.InvalidResource;
             }
 
             vkProgram.Generate();
@@ -800,16 +814,13 @@ namespace XREngine.Rendering.Vulkan
                     TimeSpan.FromSeconds(1),
                     "DispatchCompute deferred: program '{0}' is not ready.",
                     program.Name ?? "UnnamedProgram");
-                return;
+                return ERendererComputeEnqueueStatus.ProgramPending;
             }
 
             FrameOpContext context = CaptureFrameOpContextOrLastActive();
             string programName = string.IsNullOrWhiteSpace(program.Name) ? "UnnamedProgram" : program.Name;
             string opName = $"DispatchCompute:{programName}";
-            int passIndex = EnsureValidPassIndex(
-                RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
-                opName,
-                context.PassMetadata);
+            int passIndex = ResolveOrderedPrimaryWorkPassIndex(opName, context.PassMetadata);
             if (passIndex == int.MinValue)
             {
                 Debug.VulkanWarningEvery(
@@ -817,7 +828,35 @@ namespace XREngine.Rendering.Vulkan
                     TimeSpan.FromSeconds(1),
                     "[Vulkan] DispatchCompute skipped for '{0}' because no active render-graph pass could be resolved.",
                     programName);
-                return;
+                return ERendererComputeEnqueueStatus.NoPassContext;
+            }
+
+            ComputeDispatchSnapshot snapshot = vkProgram.CaptureComputeSnapshot();
+            if (!vkProgram.ValidateComputeSnapshot(snapshot, out string? descriptorFailure))
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.DispatchCompute.DescriptorInvalid.{RuntimeHelpers.GetHashCode(program)}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] DispatchCompute skipped for '{0}' because its descriptor snapshot is invalid: {1}",
+                    programName,
+                    descriptorFailure ?? "unknown descriptor failure");
+                return ERendererComputeEnqueueStatus.DescriptorInvalid;
+            }
+
+            try
+            {
+                if (vkProgram.GetOrCreateComputePipeline(passIndex, context.PassMetadata).Handle == 0)
+                    return ERendererComputeEnqueueStatus.ProgramPending;
+            }
+            catch (Exception ex)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.DispatchCompute.PipelinePending.{RuntimeHelpers.GetHashCode(program)}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] DispatchCompute deferred for '{0}' because pipeline creation failed: {1}",
+                    programName,
+                    ex.Message);
+                return ERendererComputeEnqueueStatus.ProgramPending;
             }
 
             EnqueueFrameOp(new ComputeDispatchOp(
@@ -826,8 +865,9 @@ namespace XREngine.Rendering.Vulkan
                 x,
                 y,
                 z,
-                vkProgram.CaptureComputeSnapshot(),
+                snapshot,
                 context));
+            return ERendererComputeEnqueueStatus.Enqueued;
         }
         public override void WaitForGpu()
         {

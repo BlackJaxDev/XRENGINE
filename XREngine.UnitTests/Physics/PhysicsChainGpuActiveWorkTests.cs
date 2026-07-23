@@ -75,7 +75,7 @@ public sealed class PhysicsChainGpuActiveWorkTests
 
         scheduler.ShouldContain("CapacityPerBucket");
         solver.ShouldContain("ActiveTreeIds[ActiveTreeIdBase + dispatchIndex]");
-        dispatcher.ShouldContain("TryDispatchIndirect(_mainPhysicsProgram");
+        dispatcher.ShouldContain("EBufferTarget.DispatchIndirectBuffer");
         dispatcher.ShouldContain("EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command");
         dispatcher.ShouldNotContain("TryReadBuffer(_activeWorkCounterBuffer");
     }

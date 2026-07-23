@@ -249,6 +249,19 @@ namespace XREngine.Components
             {
                 switch (propName)
                 {
+                    case nameof(World):
+                        // A component's teardown must run while World still identifies the
+                        // context it registered with. Scene-graph replacement normally
+                        // deactivates the owning node first, but world detachment is also a
+                        // valid lifecycle boundary on its own (for example snapshot restore
+                        // or scene streaming). TryDeactivateComponent is idempotent, so the
+                        // normal node-deactivation path remains unchanged.
+                        if (field is IRuntimeWorldContext previousWorld &&
+                            !ReferenceEquals(previousWorld, @new))
+                        {
+                            TryDeactivateComponent();
+                        }
+                        break;
                     case nameof(SceneNode):
                         var oldNode = _sceneNode;
                         if (oldNode is not null)

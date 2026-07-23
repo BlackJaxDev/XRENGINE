@@ -162,6 +162,7 @@ namespace XREngine.Rendering.Vulkan
                     out string frameDataManifestReason))
             {
                 recordingDeferredReason = frameDataManifestReason;
+                FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
                 return default;
             }
 
@@ -186,6 +187,7 @@ namespace XREngine.Rendering.Vulkan
                     if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                     {
                         recordingDeferredReason = prePlanFailureReason;
+                        FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
                         return default;
                     }
 
@@ -193,6 +195,7 @@ namespace XREngine.Rendering.Vulkan
                     if (TryDescribeRecentResourceAllocationFailure(out string postPlanFailureReason))
                     {
                         recordingDeferredReason = postPlanFailureReason;
+                        FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
                         return default;
                     }
 
@@ -204,6 +207,7 @@ namespace XREngine.Rendering.Vulkan
                             out string refreshFailureReason))
                     {
                         recordingDeferredReason = refreshFailureReason;
+                        FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
                         return default;
                     }
                 }
@@ -212,6 +216,7 @@ namespace XREngine.Rendering.Vulkan
                     if (TryDescribeRecentResourceAllocationFailure(out string preDynamicPlanFailureReason))
                     {
                         recordingDeferredReason = preDynamicPlanFailureReason;
+                        FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
                         return default;
                     }
 
@@ -219,6 +224,7 @@ namespace XREngine.Rendering.Vulkan
                     if (TryDescribeRecentResourceAllocationFailure(out string postDynamicPlanFailureReason))
                     {
                         recordingDeferredReason = postDynamicPlanFailureReason;
+                        FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
                         return default;
                     }
 
@@ -230,6 +236,7 @@ namespace XREngine.Rendering.Vulkan
                         out string refreshFailureReason))
                     {
                         recordingDeferredReason = refreshFailureReason;
+                        FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
                         return default;
                     }
                 }
@@ -243,6 +250,7 @@ namespace XREngine.Rendering.Vulkan
                 if (TryDescribeRecentResourceAllocationFailure(out string frameOpPlannerFailureReason))
                 {
                     recordingDeferredReason = frameOpPlannerFailureReason;
+                    FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
                     return default;
                 }
             }
@@ -779,18 +787,22 @@ namespace XREngine.Rendering.Vulkan
                             break;
 
                         if (recordingAttempt != 0 ||
-                            !IsTransientResourceRetirementRecordingFailure(recordingDeferredReason))
+                            !IsTransientResourceRetirementRecordingFailure(recordingDeferredReason) ||
+                            IsSwapchainResourceRetirementRecordingFailure(recordingDeferredReason))
                         {
                             break;
                         }
 
                         CancelRecordedTextureUploadSubmitBatch(
                             "command buffer resource generation retired during recording retry");
+                        VulkanSwapchainDepthResources? currentDepth = CurrentSwapchainDepthResources;
                         Debug.VulkanWarningEvery(
                             $"Vulkan.Primary.RetryRetiredResource.{GetHashCode()}",
                             TimeSpan.FromSeconds(1),
-                            "[Vulkan] Retrying primary command recording immediately because a resource generation retired during the first attempt: {0}",
-                            recordingDeferredReason);
+                            "[Vulkan] Retrying primary command recording immediately because a resource generation retired during the first attempt: {0} CurrentSwapchainDepth=0x{1:X}/generation={2}",
+                            recordingDeferredReason,
+                            currentDepth?.Image.Handle ?? 0,
+                            GetCurrentVulkanResourceGeneration(ObjectType.Image, currentDepth?.Image.Handle ?? 0));
                     }
 
                     if (!primaryRecorded)
@@ -798,6 +810,7 @@ namespace XREngine.Rendering.Vulkan
                         _lastEnsureCommandBufferRecordedPrimary = false;
                         CancelRecordedTextureUploadSubmitBatch(
                             "command buffer recording deferred before or during recording");
+                        FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
                         return default;
                     }
                 }
@@ -805,6 +818,7 @@ namespace XREngine.Rendering.Vulkan
             catch
             {
                 CancelRecordedTextureUploadSubmitBatch("command buffer recording failed before upload submit");
+                FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
                 throw;
             }
             finally
@@ -1068,9 +1082,10 @@ namespace XREngine.Rendering.Vulkan
                 BufferAllocationGeneration: generations.ResourceAllocation,
                 ImageAllocationGeneration: unchecked((ulong)(uint)ResolveFrameOpContextResourceRegistrySignature(context)),
                 ImageViewGeneration: unchecked((ulong)(uint)context.OutputFrameBufferIdentity),
-                // Descriptor publication is data-only. Reusing it as the sampler
-                // allocation identity turns every compatible descriptor rewrite into
-                // a binding mismatch and forces the primary to be re-recorded.
+                // Immutable descriptor-set and sampler identity remain separate from
+                // publication generation. The dependency classifier still treats a
+                // publication change as binding state because ordinary descriptor
+                // writes invalidate recorded command buffers.
                 SamplerAllocationGeneration: descriptorBindingIdentity,
                 DescriptorLayoutGeneration: unchecked((ulong)(uint)ComputePassMetadataSignature(context.PassMetadata)),
                 DescriptorSetGeneration: descriptorBindingIdentity,
@@ -1418,9 +1433,9 @@ namespace XREngine.Rendering.Vulkan
                         i,
                         RenderPacketVolatility.FrameDataOnly));
 
-                    if (query.Operation == EVulkanQueryFrameOpKind.Begin)
+                    if (query.Operation == ERenderQueryOperation.Begin)
                         queryBracketDepth++;
-                    else if (queryBracketDepth > 0)
+                    else if (query.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
                         queryBracketDepth--;
                     continue;
                 }
@@ -1843,6 +1858,8 @@ namespace XREngine.Rendering.Vulkan
             if (ops.Length == 0)
                 return true;
 
+            long descriptorSetContentUpdateGeneration =
+                SnapshotDescriptorSetContentUpdateGeneration();
             CommandBufferRecordingScratch recordingScratch = _commandBufferRecordingScratch.Value!;
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshDrawSlotsByRendererFamily =
                 recordingScratch.ReusableMeshDrawSlotsByRendererFamily;
@@ -1961,6 +1978,13 @@ namespace XREngine.Rendering.Vulkan
             }
 
             recordingScratch.ReusableMeshDrawSlotCapacityHint = Math.Max(1, meshDrawSlotsByRendererFamily.Count);
+            if (HaveDescriptorSetContentsUpdatedSince(descriptorSetContentUpdateGeneration))
+            {
+                _lastReusableFrameDataRefreshFailureReason =
+                    "descriptor contents changed without UPDATE_AFTER_BIND; command recording is required";
+                return false;
+            }
+
             return true;
         }
 
@@ -2005,6 +2029,9 @@ namespace XREngine.Rendering.Vulkan
                 IndirectDrawOp => "Vulkan.RecordPrimary.Op.IndirectDraw",
                 MeshTaskDispatchIndirectCountOp => "Vulkan.RecordPrimary.Op.MeshTaskDispatch",
                 ComputeDispatchOp => "Vulkan.RecordPrimary.Op.ComputeDispatch",
+                ComputeDispatchIndirectOp => "Vulkan.RecordPrimary.Op.ComputeDispatchIndirect",
+                BufferCopyOp => "Vulkan.RecordPrimary.Op.BufferCopy",
+                SubmissionMarkerOp => "Vulkan.RecordPrimary.Op.SubmissionMarker",
                 MemoryBarrierOp => "Vulkan.RecordPrimary.Op.MemoryBarrier",
                 PublishFramebufferForSamplingOp => "Vulkan.RecordPrimary.Op.PublishFramebufferForSampling",
                 DlssUpscaleOp => "Vulkan.RecordPrimary.Op.DlssUpscale",
@@ -2734,15 +2761,16 @@ namespace XREngine.Rendering.Vulkan
             if (initialSwapchainLayout == ImageLayout.Undefined && imageEverPresented)
                 initialSwapchainLayout = ImageLayout.PresentSrcKhr;
 
+            VulkanSwapchainDepthResources? depth = CurrentSwapchainDepthResources;
             return new SwapchainRecordingTarget(
                 swapchainImage,
                 swapChainImageViews[imageIndex],
                 swapChainImageFormat,
                 swapChainExtent,
-                _swapchainDepthImage,
-                _swapchainDepthView,
-                _swapchainDepthFormat,
-                _swapchainDepthAspect,
+                depth?.Image ?? default,
+                depth?.View ?? default,
+                depth?.Format ?? default,
+                depth?.Aspect ?? default,
                 initialSwapchainLayout,
                 imageEverPresented);
         }
@@ -3097,6 +3125,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 ReleaseDeferredSecondaryCommandBuffers(frameDataImageIndex);
                 ResetVulkanCommandBufferTracked(commandBuffer);
+                ResetSubmissionMarkersForCommandBuffer(commandBuffer);
                 CleanupComputeTransientResources(frameDataImageIndex);
 
                 CommandBufferBeginInfo beginInfo = new()
@@ -3295,10 +3324,15 @@ namespace XREngine.Rendering.Vulkan
                 {
                     ComputeDispatchOp compute =>
                         $" compute='{compute.Program.Data.Name ?? "<unnamed program>"}' groups={compute.GroupsX},{compute.GroupsY},{compute.GroupsZ} uniforms={compute.Snapshot.Uniforms.Count} samplers={compute.Snapshot.Samplers.Count + compute.Snapshot.SamplersByName.Count} images={compute.Snapshot.Images.Count} buffers={compute.Snapshot.Buffers.Count}",
+                    ComputeDispatchIndirectOp computeIndirect =>
+                        $" computeIndirect='{computeIndirect.Program.Data.Name ?? "<unnamed program>"}' args=0x{computeIndirect.ArgumentBuffer.Handle:X}+{computeIndirect.ArgumentOffset}",
+                    BufferCopyOp copy =>
+                        $" copy=0x{copy.SourceBuffer.Handle:X}+{copy.SourceOffset}->0x{copy.DestinationBuffer.Handle:X}+{copy.DestinationOffset} bytes={copy.ByteCount}",
+                    SubmissionMarkerOp marker => $" marker='{marker.Label}'",
                     IndirectDrawOp indirect =>
                         $" renderer='{indirect.MeshRenderer.MeshRenderer?.Name ?? "<unnamed renderer>"}' draws={indirect.DrawCount} stride={indirect.Stride} offset={indirect.ByteOffset} countOffset={indirect.CountByteOffset} useCount={indirect.UseCount}",
                     QueryOp query =>
-                        $" query={query.Operation} target={query.QueryTarget}",
+                        $" query={query.Operation} descriptor={query.Descriptor}",
                     BlitOp blit =>
                         $" in='{blit.InFbo?.Name ?? "<swapchain>"}' out='{blit.OutFbo?.Name ?? "<swapchain>"}' color={blit.ColorBit} depth={blit.DepthBit} stencil={blit.StencilBit}",
                     _ => string.Empty
@@ -3500,7 +3534,7 @@ namespace XREngine.Rendering.Vulkan
                                 fboOnlyBlitOps++;
                             }
                             break;
-                        case ComputeDispatchOp: computeCount++; break;
+                        case ComputeDispatchOp or ComputeDispatchIndirectOp: computeCount++; break;
                         case DlssUpscaleOp: computeCount++; break;
                         case DlssFrameGenerationOp: computeCount++; break;
                     }
@@ -5661,15 +5695,24 @@ namespace XREngine.Rendering.Vulkan
                             {
                                 MeshDrawOp refreshDraw = (MeshDrawOp)ops[chain.SourceStartIndex + drawIndex];
                                 int refreshUniformSlot = uniformSlots[chain.SourceStartIndex + drawIndex - startIndex];
-                                if (!refreshDraw.Draw.Renderer.TryRefreshReusableCommandBufferFrameData(
+                                long descriptorSetContentUpdateGeneration =
+                                    SnapshotDescriptorSetContentUpdateGeneration();
+                                bool refreshedFrameData =
+                                    refreshDraw.Draw.Renderer.TryRefreshReusableCommandBufferFrameData(
                                         frameDataImageIndex,
                                         refreshDraw.Draw,
                                         refreshUniformSlot,
                                         out string refreshReason,
-                                        refreshMaterialUniforms: true))
+                                        refreshMaterialUniforms: true);
+                                bool descriptorsInvalidated =
+                                    HaveDescriptorSetContentsUpdatedSince(descriptorSetContentUpdateGeneration);
+                                if (!refreshedFrameData || descriptorsInvalidated)
                                 {
 									_lastReusableFrameDataRefreshFailureReason =
-										$"scheduled chain op={chain.SourceStartIndex + drawIndex}/{ops.Length} mesh='{refreshDraw.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' slot={refreshUniformSlot}: {refreshReason}";
+										$"scheduled chain op={chain.SourceStartIndex + drawIndex}/{ops.Length} mesh='{refreshDraw.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' slot={refreshUniformSlot}: " +
+                                        (descriptorsInvalidated
+                                            ? "descriptor contents changed without UPDATE_AFTER_BIND"
+                                            : refreshReason);
 									if (FrameDataReuseDiagnosticsEnabled)
 									{
 										Debug.VulkanEvery(
@@ -5681,7 +5724,9 @@ namespace XREngine.Rendering.Vulkan
 											ops.Length,
 											refreshDraw.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>",
 											refreshUniformSlot,
-											refreshReason);
+											descriptorsInvalidated
+                                                ? "descriptor contents changed without UPDATE_AFTER_BIND"
+                                                : refreshReason);
 									}
                                     needsRecording = true;
                                     break;
@@ -6398,10 +6443,12 @@ namespace XREngine.Rendering.Vulkan
             {
                 for (int prepareIndex = 0; prepareIndex < ops.Length; prepareIndex++)
                 {
-                    if (ops[prepareIndex] is not QueryOp
-                        {
-                            Operation: EVulkanQueryFrameOpKind.Begin,
-                        } pendingQuery ||
+                    if (ops[prepareIndex] is not QueryOp pendingQuery ||
+                        pendingQuery.Operation is not (
+                            ERenderQueryOperation.Reset or
+                            ERenderQueryOperation.Begin or
+                            ERenderQueryOperation.WriteTimestamp or
+                            ERenderQueryOperation.WriteProperties) ||
                         !recordingScratch.PreparedInlineQueries.Add(pendingQuery.Query))
                     {
                         continue;
@@ -6414,10 +6461,7 @@ namespace XREngine.Rendering.Vulkan
                         queryCount = (uint)System.Numerics.BitOperations.PopCount(queryFbo.MultiviewViewMask);
                     }
 
-                    if (!pendingQuery.Query.PrepareForRecording(
-                            commandBuffer,
-                            pendingQuery.QueryTarget,
-                            queryCount))
+                    if (!pendingQuery.Query.PrepareForRecording(commandBuffer, queryCount))
                     {
                         recordingScratch.PreparedInlineQueries.Remove(pendingQuery.Query);
                     }
@@ -6751,7 +6795,51 @@ namespace XREngine.Rendering.Vulkan
                         break;
 
                     case QueryOp queryOp:
-                        bool firstBeginForQuery = queryOp.Operation == EVulkanQueryFrameOpKind.Begin &&
+                        if (queryOp.Operation == ERenderQueryOperation.Reset)
+                            break;
+
+                        if (queryOp.Operation == ERenderQueryOperation.WriteTimestamp)
+                        {
+                            if (recordingScratch.PreparedInlineQueries.Contains(queryOp.Query) &&
+                                queryOp.Query.WriteTimestamp(
+                                    commandBuffer,
+                                    queryOp.TimestampStage,
+                                    queryOp.PointIndex) != ERenderQueryReadStatus.Ready)
+                            {
+                                queryFrameOpsRequireRerecordLocal = true;
+                            }
+                            break;
+                        }
+
+                        if (queryOp.Operation == ERenderQueryOperation.WriteProperties)
+                        {
+                            EndActiveRenderPass();
+                            if (!recordingScratch.PreparedInlineQueries.Contains(queryOp.Query) ||
+                                queryOp.Query.WriteProperties(
+                                    commandBuffer,
+                                    queryOp.SourceHandles.Span) != ERenderQueryReadStatus.Ready)
+                            {
+                                queryFrameOpsRequireRerecordLocal = true;
+                            }
+                            break;
+                        }
+
+                        if (queryOp.Operation == ERenderQueryOperation.CopyResults)
+                        {
+                            EndActiveRenderPass();
+                            if (queryOp.Query.CopyResults(
+                                    commandBuffer,
+                                    queryOp.ResultDestination,
+                                    queryOp.ResultDestinationOffset,
+                                    queryOp.ResultStride,
+                                    queryOp.IncludeAvailability) != ERenderQueryReadStatus.Ready)
+                            {
+                                queryFrameOpsRequireRerecordLocal = true;
+                            }
+                            break;
+                        }
+
+                        bool firstBeginForQuery = queryOp.Operation == ERenderQueryOperation.Begin &&
                             !recordingScratch.BegunInlineQueries.Contains(queryOp.Query);
                         if (firstBeginForQuery &&
                             !recordingScratch.PreparedInlineQueries.Contains(queryOp.Query))
@@ -6775,27 +6863,25 @@ namespace XREngine.Rendering.Vulkan
                         bool queryLabelActive = false;
                         if (CanRecordCommandBufferDebugLabels)
                             queryLabelActive = CmdBeginLabel(commandBuffer, $"Query.{queryOp.Operation}");
-                        if (queryOp.Operation == EVulkanQueryFrameOpKind.Begin)
+                        if (queryOp.Operation == ERenderQueryOperation.Begin)
                         {
                             if (activeInlineQuery is not null)
                             {
-                                if (!activeInlineQueryRecordedDraw)
-                                    queryFrameOpsRequireRerecordLocal = true;
-                                activeInlineQuery.EndQuery(commandBuffer);
-                                activeInlineQuery.InvalidateRecordedResultEpoch(commandBuffer);
-                                activeInlineQuery = null;
-                                activeInlineQueryRecordedDraw = false;
+                                queryFrameOpsRequireRerecordLocal = true;
+                                queryOp.Query.InvalidateRecordedResultEpoch(commandBuffer);
+                                Debug.VulkanWarningEvery(
+                                    $"Vulkan.NestedInlineQuery.{queryOp.Query.GetHashCode()}",
+                                    TimeSpan.FromSeconds(1),
+                                    "[Vulkan.Query] Nested query begin rejected. active='{0}' requested='{1}' pass={2} op={3}.",
+                                    activeInlineQuery.Data.Name ?? activeInlineQuery.Data.Descriptor.Kind.ToString(),
+                                    queryOp.Query.Data.Name ?? queryOp.Descriptor.Kind.ToString(),
+                                    opPassIndex,
+                                    opIndex);
                             }
-                            if (recordingScratch.PreparedInlineQueries.Contains(queryOp.Query) &&
+                            else if (recordingScratch.PreparedInlineQueries.Contains(queryOp.Query) &&
                                 recordingScratch.BegunInlineQueries.Add(queryOp.Query))
                             {
-                                uint queryViewMask = activeDynamicRendering
-                                    ? activeDynamicRenderingFormats.ViewMask
-                                    : 0u;
-                                activeInlineQuery = queryOp.Query.BeginQuery(
-                                    commandBuffer,
-                                    queryOp.QueryTarget,
-                                    viewMask: queryViewMask)
+                                activeInlineQuery = queryOp.Query.BeginQuery(commandBuffer) == ERenderQueryReadStatus.Ready
                                     ? queryOp.Query
                                     : null;
                                 if (activeInlineQuery is null)
@@ -6830,6 +6916,19 @@ namespace XREngine.Rendering.Vulkan
                             queryOp.Query.EndQuery(commandBuffer);
                             activeInlineQuery = null;
                             activeInlineQueryRecordedDraw = false;
+                        }
+                        else
+                        {
+                            queryFrameOpsRequireRerecordLocal = true;
+                            queryOp.Query.InvalidateRecordedResultEpoch(commandBuffer);
+                            Debug.VulkanWarningEvery(
+                                $"Vulkan.MismatchedInlineQueryEnd.{queryOp.Query.GetHashCode()}",
+                                TimeSpan.FromSeconds(1),
+                                "[Vulkan.Query] Query end rejected because it does not match the active query. active='{0}' requested='{1}' pass={2} op={3}.",
+                                activeInlineQuery?.Data.Name ?? "<none>",
+                                queryOp.Query.Data.Name ?? queryOp.Descriptor.Kind.ToString(),
+                                opPassIndex,
+                                opIndex);
                         }
                         if (queryLabelActive)
                             CmdEndLabel(commandBuffer);
@@ -6950,6 +7049,25 @@ namespace XREngine.Rendering.Vulkan
                         }
                         break;
 
+                    case ComputeDispatchIndirectOp computeIndirectOp:
+                        EndActiveRenderPass();
+                        CmdBeginLabel(commandBuffer, computeIndirectOp.Label);
+                        RecordComputeDispatchIndirectOp(commandBuffer, frameDataImageIndex, computeIndirectOp);
+                        CmdEndLabel(commandBuffer);
+                        break;
+
+                    case BufferCopyOp bufferCopyOp:
+                        EndActiveRenderPass();
+                        CmdBeginLabel(commandBuffer, bufferCopyOp.Label);
+                        RecordBufferCopyOp(commandBuffer, bufferCopyOp);
+                        CmdEndLabel(commandBuffer);
+                        break;
+
+                    case SubmissionMarkerOp submissionMarkerOp:
+                        EndActiveRenderPass();
+                        RegisterSubmissionMarker(commandBuffer, submissionMarkerOp.Fence);
+                        break;
+
                     case MemoryBarrierOp memoryBarrierOp:
                         EndActiveRenderPass();
                         CmdBeginLabel(commandBuffer, "MemoryBarrier");
@@ -6988,7 +7106,7 @@ namespace XREngine.Rendering.Vulkan
                         droppedFrameOps++;
                         if (op is MeshDrawOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp)
                             droppedDrawOps++;
-                        if (op is ComputeDispatchOp)
+                        if (op is ComputeDispatchOp or ComputeDispatchIndirectOp)
                             droppedComputeOps++;
                         firstFailure ??= CaptureFrameOpFailure(op, opEx);
 
@@ -8376,7 +8494,7 @@ namespace XREngine.Rendering.Vulkan
         private void RecordComputeDispatchOp(CommandBuffer commandBuffer, uint imageIndex, ComputeDispatchOp op, int opIndex = -1)
         {
             if (!op.Program.Link())
-                return;
+                throw new InvalidOperationException($"Compute program '{op.Program.Data.Name ?? "UnnamedProgram"}' became unavailable after enqueue.");
 
             Pipeline pipeline;
             try
@@ -8390,7 +8508,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             if (pipeline.Handle == 0)
-                return;
+                throw new InvalidOperationException($"Compute pipeline '{op.Program.Data.Name ?? "UnnamedProgram"}' became unavailable after enqueue.");
 
             BindPipelineTracked(commandBuffer, PipelineBindPoint.Compute, pipeline);
             EnsureComputeStorageImageLayoutsForDispatch(commandBuffer, op.Snapshot);
@@ -8424,7 +8542,7 @@ namespace XREngine.Rendering.Vulkan
                     skippedDraw: false,
                     skippedDispatch: true,
                     "compute dispatch skipped because descriptor binding failed");
-                return;
+                throw new InvalidOperationException($"Descriptor binding failed for compute program '{op.Program.Data.Name ?? "UnnamedProgram"}'.");
             }
 
             RegisterComputeTransientUniformBuffers(imageIndex, tempBuffers);
@@ -8690,6 +8808,12 @@ namespace XREngine.Rendering.Vulkan
                 PipelineStageFlags.TransferBit | PipelineStageFlags.VertexInputBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
                 AccessFlags.HostWriteBit,
                 AccessFlags.TransferReadBit | AccessFlags.VertexAttributeReadBit | AccessFlags.UniformReadBit | AccessFlags.ShaderReadBit);
+
+            Merge(mask.HasFlag(EMemoryBarrierMask.GpuReadback),
+                PipelineStageFlags.TransferBit,
+                PipelineStageFlags.HostBit,
+                AccessFlags.TransferWriteBit,
+                AccessFlags.HostReadBit);
 
             // Query buffers: AllCommandsBit is justified per Vulkan spec because
             // queries can be written by any pipeline stage.
@@ -9607,6 +9731,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     MeshDrawOp meshDraw => meshDraw.Draw.ProgramBindingSnapshot,
                     ComputeDispatchOp compute => compute.Snapshot,
+                    ComputeDispatchIndirectOp computeIndirect => computeIndirect.Snapshot,
                     _ => null,
                 };
                 if (snapshot is null)
@@ -9715,11 +9840,13 @@ namespace XREngine.Rendering.Vulkan
         {
             for (int index = 0; index < ops.Length; index++)
             {
-                if (ops[index] is QueryOp
-                    {
-                        Operation: EVulkanQueryFrameOpKind.Begin
-                    } queryOp &&
-                    !queryOp.Query.PrepareForCommandBufferReuse(commandBuffer, queryOp.QueryTarget))
+                if (ops[index] is QueryOp queryOp &&
+                    queryOp.Operation is (
+                        ERenderQueryOperation.Reset or
+                        ERenderQueryOperation.Begin or
+                        ERenderQueryOperation.WriteTimestamp or
+                        ERenderQueryOperation.WriteProperties) &&
+                    !queryOp.Query.PrepareForCommandBufferReuse(commandBuffer))
                 {
                     return false;
                 }

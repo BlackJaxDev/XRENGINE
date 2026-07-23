@@ -639,8 +639,9 @@ public sealed class OpenXrTimingPipelineContractTests
         pipelineLayoutLifetime.ShouldContain("internal bool TryBeginDestroyPipelineLayout(PipelineLayout pipelineLayout, string owner)");
         pipelineLayoutLifetime.ShouldContain("private void DestroyRemainingTrackedPipelineLayouts()");
 
-        resourceRetirement.ShouldContain("TryBeginDestroyImageView(r.PrimaryView, \"DrainRetiredImages.PrimaryView\")");
-        resourceRetirement.ShouldContain("TryBeginDestroyImageView(v, \"DrainRetiredImages.AttachmentView\")");
+        resourceRetirement.ShouldContain("TryBeginDestroyImageViewGeneration(");
+        resourceRetirement.ShouldContain("entry.PrimaryViewGeneration");
+        resourceRetirement.ShouldContain("entry.AttachmentViewGenerations");
         initialization.ShouldContain("ForceFlushAllRetiredResources();\n            DestroyRemainingTrackedImageViews();\n            DestroyRemainingTrackedPipelineLayouts();\n            DestroyRemainingTrackedBufferAllocations();");
         int finalFlushIndex = initialization.LastIndexOf("ForceFlushAllRetiredResources();", StringComparison.Ordinal);
         int finalImageViewsIndex = initialization.LastIndexOf("DestroyRemainingTrackedImageViews();", StringComparison.Ordinal);
@@ -653,7 +654,8 @@ public sealed class OpenXrTimingPipelineContractTests
 
         openXr.ShouldContain("TrackLiveImageView(imageView, in viewInfo, \"OpenXR.SwapchainImageView\");");
         openXr.ShouldContain("TrackLiveImageView(depthView, in viewInfo, \"OpenXR.DepthTarget\");");
-        imageBackedTexture.ShouldContain("Renderer.TrackLiveImageView(created, in viewInfo, \"VkImageBackedTexture.View\");");
+        imageBackedTexture.ShouldContain("Renderer.TrackLiveImageView(");
+        imageBackedTexture.ShouldContain("\"VkImageBackedTexture.View:");
         textureView.ShouldContain("Renderer.TryAcquireInternedImageView(in viewInfo, \"VkTextureView.View\", out _view)");
         textureView.ShouldContain("Renderer.TryAcquireInternedImageView(in depthOnlyViewInfo, \"VkTextureView.DepthOnlyDescriptor\", out _depthOnlyView)");
         textureView.ShouldContain("private readonly object _viewLifetimeLock = new();");

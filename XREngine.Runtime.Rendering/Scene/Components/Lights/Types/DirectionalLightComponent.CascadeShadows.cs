@@ -2623,16 +2623,19 @@ namespace XREngine.Components.Lights
 
         private static void ReleaseCascadeSourceResources(DirectionalCascadeSourceState state)
         {
-            for (int i = 0; i < state.Viewports.Length; i++)
-            {
-                state.Viewports[i].WorldInstanceOverride = null;
-                state.Viewports[i].Camera = null;
-            }
-
-            ReleaseCascadeReceiverResources(state);
+            // Readers on the render thread snapshot these arrays without taking the
+            // component lock. Withdraw the published slots first, then destroy the
+            // retired viewports so a reader can observe either a complete live set or
+            // a complete empty set, never a viewport whose camera was cleared in place.
+            XRViewport[] retiredViewports = state.Viewports;
             state.Viewports = [];
             state.Transforms = [];
             state.Cameras = [];
+
+            for (int i = 0; i < retiredViewports.Length; i++)
+                retiredViewports[i].Destroy();
+
+            ReleaseCascadeReceiverResources(state);
         }
 
         private static void ReleaseCascadeReceiverResources(DirectionalCascadeSourceState state)
@@ -3359,11 +3362,14 @@ namespace XREngine.Components.Lights
 
         public override void CollectVisibleItems()
         {
-            if (!CastsShadows)
+            if (!IsActiveInHierarchy || !CastsShadows)
                 return;
 
-            if (ShouldCollectPrimaryShadowViewport())
-                PrimaryShadowViewport.CollectVisible(false);
+            if (ShouldCollectPrimaryShadowViewport() &&
+                TryGetPrimaryShadowViewportForProcessing(out XRViewport primaryViewport))
+            {
+                primaryViewport.CollectVisible(false);
+            }
 
             CollectCascadeSourceVisibleItems(ShadowRequestSource.Desktop);
             CollectCascadeSourceVisibleItems(ShadowRequestSource.Hmd);
@@ -3375,7 +3381,11 @@ namespace XREngine.Components.Lights
             int faceOrCascadeIndex)
         {
             if (projectionType == EShadowProjectionType.DirectionalPrimary)
-                return PrimaryShadowViewport.RenderPipelineInstance.MeshRenderCommands.ShadowCasterCommandSetSignature;
+            {
+                return TryGetPrimaryShadowViewportForProcessing(out XRViewport primaryViewport)
+                    ? primaryViewport.RenderPipelineInstance.MeshRenderCommands.ShadowCasterCommandSetSignature
+                    : 0u;
+            }
 
             if (projectionType != EShadowProjectionType.DirectionalCascade)
                 return 0u;
@@ -3458,11 +3468,14 @@ namespace XREngine.Components.Lights
 
         public override void SwapBuffers(Rendering.Lightmapping.LightmapBakeManager? lightmapBaker = null)
         {
-            if (!CastsShadows)
+            if (!IsActiveInHierarchy || !CastsShadows)
                 return;
 
-            if (ShouldCollectPrimaryShadowViewport())
-                PrimaryShadowViewport.SwapBuffers();
+            if (ShouldCollectPrimaryShadowViewport() &&
+                TryGetPrimaryShadowViewportForProcessing(out XRViewport primaryViewport))
+            {
+                primaryViewport.SwapBuffers();
+            }
 
             SwapCascadeSourceBuffers(ShadowRequestSource.Desktop);
             SwapCascadeSourceBuffers(ShadowRequestSource.Hmd);
@@ -3877,13 +3890,12 @@ namespace XREngine.Components.Lights
         internal bool RenderPrimaryShadowAtlasTile(XRFrameBuffer atlasFbo, BoundingRectangle renderRect, bool collectVisibleNow)
         {
             if (!CastsShadows ||
-                ShadowCamera is null ||
                 World is null ||
                 renderRect.Width <= 0 ||
-                renderRect.Height <= 0)
+                renderRect.Height <= 0 ||
+                !TryGetPrimaryShadowViewportForProcessing(out XRViewport viewport))
                 return false;
 
-            XRViewport viewport = PrimaryShadowViewport;
             if (viewport.RenderPipeline is not ShadowRenderPipeline shadowPipeline)
                 return false;
 
@@ -3917,7 +3929,7 @@ namespace XREngine.Components.Lights
 
         internal void RenderShadowMap(bool collectVisibleNow, bool renderCascades)
         {
-            if (!CastsShadows)
+            if (!IsActiveInHierarchy || !CastsShadows)
                 return;
 
             if (collectVisibleNow)
@@ -3932,12 +3944,15 @@ namespace XREngine.Components.Lights
 
             LogLegacyDirectionalShadowRender(renderCascades, shadowMap is not null, shadowMaterial is not null, cascadeCount);
 
-            if (ShouldCollectPrimaryShadowViewport() && shadowMap is not null && shadowMaterial is not null)
+            if (ShouldCollectPrimaryShadowViewport() &&
+                shadowMap is not null &&
+                shadowMaterial is not null &&
+                TryGetPrimaryShadowViewportForProcessing(out XRViewport primaryViewport))
             {
-                if (PrimaryShadowViewport.RenderPipeline is ShadowRenderPipeline shadowPipeline)
+                if (primaryViewport.RenderPipeline is ShadowRenderPipeline shadowPipeline)
                     shadowPipeline.ClearColor = GetShadowMapClearColor();
 
-                PrimaryShadowViewport.Render(shadowMap, null, null, true, shadowMaterial);
+                primaryViewport.Render(shadowMap, null, null, true, shadowMaterial);
                 GenerateMomentShadowMipmapsIfNeeded();
             }
 

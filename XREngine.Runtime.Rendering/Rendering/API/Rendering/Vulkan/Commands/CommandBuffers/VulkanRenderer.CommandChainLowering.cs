@@ -907,9 +907,9 @@ public unsafe partial class VulkanRenderer
         {
             if (ops[i] is QueryOp queryOp)
             {
-                if (queryOp.Operation == EVulkanQueryFrameOpKind.Begin)
+                if (queryOp.Operation == ERenderQueryOperation.Begin)
                     queryBracketDepth++;
-                else if (queryBracketDepth > 0)
+                else if (queryOp.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
                     queryBracketDepth--;
                 continue;
             }
@@ -1002,9 +1002,8 @@ public unsafe partial class VulkanRenderer
             // A secondary command buffer may bind a different material descriptor
             // set and graphics program for every draw. Track the complete ordered
             // dependency set instead of splitting an otherwise compatible shadow
-            // draw run into one secondary per material. Any schema/identity change
-            // remains structural, while a publication-only change can still use
-            // the frame-data refresh path.
+            // draw run into one secondary per material. Schema/identity and ordinary
+            // descriptor publication changes require re-recording.
             DescriptorBindingSnapshot drawDescriptors = CreateDescriptorSnapshot(drawOp);
             descriptorGenerationHash.Add(drawDescriptors.DescriptorGeneration);
             descriptorSetHash.Add(drawDescriptors.DescriptorSetCount);
@@ -1711,9 +1710,9 @@ public unsafe partial class VulkanRenderer
             BufferAllocationGeneration: packet.ResourcePlanSnapshot.Revision,
             ImageAllocationGeneration: packet.ResourcePlanSnapshot.PhysicalImageSignature,
             ImageViewGeneration: packet.ResourcePlanSnapshot.FramebufferSignature,
-            // DescriptorGeneration includes compatible per-slot publication changes.
-            // Keep immutable sampler/layout identity separate so those changes can
-            // use the validated frame-data refresh path instead of re-recording.
+            // Keep immutable sampler/layout identity separate for precise diagnostics.
+            // Descriptor publication is nevertheless a recording dependency because
+            // ordinary vkUpdateDescriptorSets calls invalidate command buffers.
             SamplerAllocationGeneration: packet.DescriptorSnapshot.DescriptorSetSignature,
             DescriptorLayoutGeneration: MixSignature(packet.StructuralSignature, 0x444C4159UL),
             DescriptorSetGeneration: packet.DescriptorSnapshot.DescriptorSetSignature,
@@ -1756,14 +1755,12 @@ public unsafe partial class VulkanRenderer
             return false;
 
         CommandChainDirtyReason dirtyReason = EvaluateCommandChainDirtyReason(chain, packet);
-        if ((dirtyReason & ~CommandChainDirtyReason.DescriptorGeneration) != CommandChainDirtyReason.None)
+        if (dirtyReason != CommandChainDirtyReason.None)
             return false;
 
         chain.FrameDataSignature = packet.FrameDataSignature;
-        chain.DescriptorGeneration = packet.DescriptorSnapshot.DescriptorGeneration;
-        // A completed frame-slot publication is data-only. Advance the comparison
-        // baseline after refreshing its bytes so the same publication is not reported
-        // as a permanent dependency mismatch on every subsequent reuse attempt.
+        // Frame-buffered uniform/storage bytes can change without invalidating a
+        // command buffer as long as descriptor publication and binding identity match.
         chain.DependencySignature = BuildCommandChainDependencySignature(packet, chain.Key);
         chain.FrameDataRefreshTouchedDescriptors = false;
         return true;
@@ -1771,7 +1768,7 @@ public unsafe partial class VulkanRenderer
 
     private static bool CanRefreshCommandChainFrameData(CommandChainDirtyReason dirtyReason, RenderPacket packet)
         => packet.Volatility == RenderPacketVolatility.FrameDataOnly &&
-            (dirtyReason & ~CommandChainDirtyReason.DescriptorGeneration) == CommandChainDirtyReason.None;
+            dirtyReason == CommandChainDirtyReason.None;
 
     internal static PrimaryCommandBufferDirtyReason EvaluatePrimaryCommandBufferDirtyReason(
         CommandChainSchedule schedule,
@@ -2000,9 +1997,9 @@ public unsafe partial class VulkanRenderer
             FrameOp op = staticOps[opIndex];
             if (op is QueryOp queryOp)
             {
-                if (queryOp.Operation == EVulkanQueryFrameOpKind.Begin)
+                if (queryOp.Operation == ERenderQueryOperation.Begin)
                     queryBracketDepth++;
-                else if (queryBracketDepth > 0)
+                else if (queryOp.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
                     queryBracketDepth--;
                 continue;
             }
@@ -2191,6 +2188,9 @@ public unsafe partial class VulkanRenderer
             IndirectDrawOp => RenderPacketVolatility.FrameDataOnly,
             MeshTaskDispatchIndirectCountOp => RenderPacketVolatility.FrameDataOnly,
             ComputeDispatchOp => RenderPacketVolatility.FrameDataOnly,
+            ComputeDispatchIndirectOp => RenderPacketVolatility.DynamicCommand,
+            BufferCopyOp => RenderPacketVolatility.DynamicCommand,
+            SubmissionMarkerOp => RenderPacketVolatility.DynamicCommand,
             MemoryBarrierOp => RenderPacketVolatility.StaticStructural,
             PublishFramebufferForSamplingOp => RenderPacketVolatility.StaticStructural,
             TransformFeedbackOp => RenderPacketVolatility.DynamicCommand,
@@ -2575,8 +2575,18 @@ public unsafe partial class VulkanRenderer
                 break;
             case QueryOp query:
                 hash.Add(query.Query.GetHashCode());
-                hash.Add((int)query.QueryTarget);
+                hash.Add(query.Descriptor.GetHashCode());
+                hash.Add(query.Query.Ticket.PoolIdentity);
+                hash.Add(query.Query.Ticket.FirstQuery);
+                hash.Add(query.Query.Ticket.QueryCount);
                 hash.Add((int)query.Operation);
+                hash.Add((ulong)query.TimestampStage);
+                hash.Add(query.PointIndex);
+                hash.Add(query.SourceHandles.Length);
+                hash.Add(query.ResultDestination.Handle);
+                hash.Add(query.ResultDestinationOffset);
+                hash.Add(query.ResultStride);
+                hash.Add(query.IncludeAvailability);
                 break;
             case ClearOp clear:
                 hash.Add(clear.ClearColor);
@@ -2995,6 +3005,9 @@ public unsafe partial class VulkanRenderer
         {
             MeshDrawOp draw => $"MeshDraw[{draw.Draw.Renderer?.MeshRenderer?.Name ?? "<unnamed renderer>"}]",
             ComputeDispatchOp compute => $"ComputeDispatch[{compute.Program?.Data?.Name ?? "<unnamed program>"} {compute.GroupsX}x{compute.GroupsY}x{compute.GroupsZ}]",
+            ComputeDispatchIndirectOp computeIndirect => $"ComputeDispatchIndirect[{computeIndirect.Program?.Data?.Name ?? "<unnamed program>"} offset={computeIndirect.ArgumentOffset}]",
+            BufferCopyOp copy => $"BufferCopy[{copy.ByteCount} bytes]",
+            SubmissionMarkerOp marker => $"SubmissionMarker[{marker.Label}]",
             IndirectDrawOp indirect => $"IndirectDraw[count={indirect.DrawCount}]",
             MeshTaskDispatchIndirectCountOp meshTask => $"MeshTaskDispatch[max={meshTask.MaxDrawCount}]",
             BlitOp => "Blit",

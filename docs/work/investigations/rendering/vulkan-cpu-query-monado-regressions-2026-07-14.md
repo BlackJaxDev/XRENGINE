@@ -3,6 +3,7 @@
 Date: 2026-07-14
 Status: Implementation complete 2026-07-16; user confirmation pending
 Related TODO: [Vulkan core hardening and device-loss TODO](../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md)
+Query upgrade follow-up: [Vulkan render query system upgrade](vulkan-render-query-system-upgrade-2026-07-22.md)
 
 ## Problem
 

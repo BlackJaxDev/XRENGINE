@@ -105,8 +105,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRDataBuffer<uint>? _freeStackBuffer;
         private XRDataBuffer<uint>? _gridCountsBuffer;
         private XRDataBuffer<uint>? _gridIndicesBuffer;
-        private XRDataBuffer<Matrix4x4>? _transformAtlasBuffer;
-        private uint _transformAtlasElementCount;
+        private XRDataBuffer<Matrix4x4>? _transformAtlasBuffer = null;
+        private uint _transformAtlasElementCount = 0u;
 
         private bool _initialized;
 

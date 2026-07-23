@@ -286,6 +286,19 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     }
 
     [Test]
+    public void VkMeshRenderer_BindsAndTracksTheActiveGpuDrivenSkinPalette()
+    {
+        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Buffers.cs");
+
+        bufferSource.ShouldContain("OverrideCollectedSkinPaletteWithActiveSource();");
+        bufferSource.ShouldContain("MeshRenderer.ActiveSkinPaletteBuffer is not { } activeSkinPalette");
+        bufferSource.ShouldContain("_bufferCache[shaderName] = vkBuffer;");
+        bufferSource.ShouldContain("_cachedActiveSkinPaletteBuffer = MeshRenderer.ActiveSkinPaletteBuffer;");
+        bufferSource.ShouldContain("!ReferenceEquals(_cachedActiveSkinPaletteBuffer, MeshRenderer.ActiveSkinPaletteBuffer)");
+        bufferSource.ShouldContain("_cachedActiveSkinPaletteIdentity != CaptureBufferStructuralIdentity(MeshRenderer.ActiveSkinPaletteBuffer)");
+    }
+
+    [Test]
     public void VkMeshRenderer_SharedBufferStateIsSerializedAcrossDesktopAndOpenXrViews()
     {
         string mainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");

@@ -4728,6 +4728,7 @@ public unsafe partial class VulkanRenderer
             {
                 MeshDrawOp meshDraw => meshDraw.Draw.ProgramBindingSnapshot,
                 ComputeDispatchOp compute => compute.Snapshot,
+                ComputeDispatchIndirectOp computeIndirect => computeIndirect.Snapshot,
                 _ => null,
             };
             if (snapshot is null)

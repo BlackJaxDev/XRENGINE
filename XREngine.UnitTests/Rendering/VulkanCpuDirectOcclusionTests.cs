@@ -33,7 +33,7 @@ public sealed class VulkanCpuDirectOcclusionTests
 
         coordinator.ShouldContain("using XREngine.Rendering.Vulkan;");
         coordinator.ShouldContain("AbstractRenderer.Current is OpenGLRenderer or VulkanRenderer");
-        coordinator.ShouldContain("vk.EnqueueOcclusionQueryBegin(query, EQueryTarget.AnySamplesPassedConservative)");
+        coordinator.ShouldContain("vk.EnqueueOcclusionQueryBegin(query)");
         coordinator.ShouldContain("vk.EnqueueOcclusionQueryEnd(query)");
         coordinator.ShouldContain("VulkanQueryResolveMinLatencyFrames");
         coordinator.ShouldContain("ShouldDelayPendingQueryPoll(queryState, frameId)");
@@ -70,11 +70,11 @@ public sealed class VulkanCpuDirectOcclusionTests
             "if (ShouldLogSponzaCpuDiag(cmd))",
             StringComparison.Ordinal);
         int beginIndex = scheduledVisibleQuery.IndexOf(
-            "s_cpuOcclusionCoordinator.BeginQuery(renderPass, camera, queryKey, occlusionOwnership);",
+            "s_cpuOcclusionCoordinator.BeginQuery(",
             StringComparison.Ordinal);
         int drawIndex = scheduledVisibleQuery.IndexOf("RenderWithGpuScope(cmd, renderPass);", StringComparison.Ordinal);
         int endIndex = scheduledVisibleQuery.IndexOf(
-            "s_cpuOcclusionCoordinator.EndQuery(renderPass, camera, queryKey, occlusionOwnership);",
+            "s_cpuOcclusionCoordinator.EndQuery(",
             StringComparison.Ordinal);
         beginIndex.ShouldBeGreaterThanOrEqualTo(0);
         drawIndex.ShouldBeGreaterThan(beginIndex);
@@ -96,7 +96,7 @@ public sealed class VulkanCpuDirectOcclusionTests
         frameOps.ShouldContain("RuntimeEngine.Rendering.State.MapDepthComparison(dt.Function)");
 
         string depthPrepass = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_ForwardDepthNormalPrePass.cs");
-        depthPrepass.ShouldContain("commands.RenderCPU(pass, false, camera, suppressCpuOcclusionForPass: true);");
+        depthPrepass.ShouldContain("commands.RenderCPUMeshOnly(pass);");
 
         gpuOcclusion.ShouldContain("return VulkanFeatureProfile.ResolveOcclusionCullingMode(RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode);");
         gpuOcclusion.ShouldNotContain("_loggedCpuQueryModeSuppressedByProfile");
@@ -104,7 +104,7 @@ public sealed class VulkanCpuDirectOcclusionTests
         gpuOcclusion.ShouldNotContain("Occlusion mode {0} suppressed");
 
         queryFrameOp.ShouldContain("internal sealed record QueryOp(");
-        frameOps.ShouldContain("internal bool EnqueueOcclusionQueryBegin(XRRenderQuery query, EQueryTarget target)");
+        frameOps.ShouldContain("internal bool EnqueueOcclusionQueryBegin(XRRenderQuery query)");
         frameOps.ShouldContain("internal bool EnqueueOcclusionQueryEnd(XRRenderQuery query)");
         frameOps.ShouldContain("EnqueueFrameOp(new QueryOp(");
 
@@ -113,15 +113,14 @@ public sealed class VulkanCpuDirectOcclusionTests
         recorder.ShouldNotContain("(!VulkanPrimaryCommandBufferReuseEnabled || hasQueryFrameOps)");
         recorder.ShouldContain("private static bool HasQueryFrameOps(FrameOp[] ops)");
         recorder.ShouldContain("case QueryOp queryOp:");
-        recorder.ShouldContain("activeInlineQuery = queryOp.Query.BeginQuery(");
-        recorder.ShouldContain("queryOp.QueryTarget,");
+        recorder.ShouldContain("queryOp.Query.BeginQuery(commandBuffer) == ERenderQueryReadStatus.Ready");
         recorder.ShouldContain("queryOp.Query.EndQuery(commandBuffer);");
         recorder.ShouldContain("recordingScratch.PreparedInlineQueries.Clear();");
         recorder.ShouldContain("for (int prepareIndex = 0; prepareIndex < ops.Length; prepareIndex++)");
         recorder.ShouldContain("recordingScratch.PreparedInlineQueries.Add(pendingQuery.Query)");
         recorder.ShouldContain("pendingQuery.Query.PrepareForRecording(");
         recorder.ShouldContain("recordingScratch.PreparedInlineQueries.Contains(queryOp.Query)");
-        recorder.ShouldNotContain("queryOp.Query.PrepareForRecording(commandBuffer");
+        recorder.ShouldContain("pendingQuery.Query.PrepareForRecording(commandBuffer, queryCount)");
         string fastPrimaryReuse = Slice(
             recorder,
             "private bool TryReuseCleanCommandChainPrimaryVariant(",
@@ -159,39 +158,35 @@ public sealed class VulkanCpuDirectOcclusionTests
         openXr.ShouldContain("commandChainSchedule = null;");
         openXr.ShouldContain("allowExternalSwapchainTarget: true");
         openXr.ShouldContain("openxr-primary-miss:cpu-query-async");
-        openXr.ShouldContain("RebaseFrameOpResourcesToActiveResourcePlan(ops, plannerContext.ResourceRegistry)");
+        openXr.ShouldContain("RebaseFrameOpResourcesToActiveResourcePlan(ops);");
         openXr.ShouldContain("RebaseFrameOpTargetsToActiveResourcePlan");
         openXr.ShouldContain("snapshot.SamplersByName[pair.Key] = currentTexture");
         openXr.ShouldContain("? capturedTexture.Name");
 
-        query.ShouldContain("Api!.CmdResetQueryPool(commandBuffer, _queryPool, 0, _queryPoolCapacity);");
-        query.ShouldContain("PrepareForCommandBufferReuse(CommandBuffer commandBuffer, EQueryTarget target)");
+        query.ShouldContain("Api!.CmdResetQueryPool(");
+        query.ShouldContain("PrepareForCommandBufferReuse(CommandBuffer commandBuffer)");
         query.ShouldNotContain("Api!.ResetQueryPool(Device");
         query.ShouldNotContain("ResetQueryPoolBeforeRecording");
         query.ShouldNotContain("ResetQueryPoolForCommandBufferReuse");
-        query.ShouldContain("QueryCount = queryPoolCapacity");
-        query.ShouldContain("uint clampedQueryCount = Math.Clamp(queryCount, 1u, _queryPoolCapacity)");
-        query.ShouldContain("ResolveOcclusionQueryViewSlotCount(viewMask)");
-        query.ShouldContain("DestroyQueryPool();");
-        query.ShouldContain("_recordedResultEpochs");
-        query.ShouldContain("_submittedResultEpoch");
-        query.ShouldContain("QueryCount = _activeQueryCount");
-        query.ShouldContain("_recordedResultEpochs.ContainsKey(commandBufferHandle)");
-        query.ShouldContain("TryGetSubmittedResultEpoch(out SubmittedResultEpoch epoch)");
-        query.ShouldContain("TryConsumeSubmittedResultEpoch(epoch.Serial)");
-        query.ShouldContain("Renderer.RegisterVulkanRenderQuery(_queryPool, this);");
-        query.ShouldContain("Renderer.IsVulkanResourceUseCompleted(ObjectType.QueryPool, _queryPool.Handle)");
-        query.ShouldContain("Renderer.DeviceWaitIdle();");
+        query.ShouldContain("VulkanQueryPoolAllocation _allocation");
+        query.ShouldContain("RenderQueryTicket ticket = new(");
+        query.ShouldContain("internal static uint ResolveOcclusionQueryViewSlotCount(uint viewMask)");
+        query.ShouldContain("_recordedEpochs");
+        query.ShouldContain("_submittedEpoch");
+        query.ShouldContain("Renderer.RegisterVulkanRenderQuery(_allocation.Pool, this);");
+        query.ShouldContain("Renderer.IsVulkanSubmissionCompleted(epoch.Submission)");
+        query.ShouldNotContain("Renderer.DeviceWaitIdle();");
         query.ShouldContain("QueryResultFlags.ResultWithAvailabilityBit");
         query.ShouldNotContain("QueryResultFlags.ResultPartialBit");
         query.ShouldContain("InvalidateRecordedResultEpoch(CommandBuffer commandBuffer)");
-        query.ShouldContain("MarkResultEpochSubmitted(ulong commandBufferHandle)");
-        query.ShouldContain("recordedEpoch.ForceVisible || overlappingEpoch");
+        query.ShouldContain("MarkResultEpochSubmitted(");
+        query.ShouldContain("Rejected overlapping submission ownership");
+        query.ShouldContain("_recordedEpochs.Count != 0 && !_recordedEpochs.ContainsKey(commandBufferHandle)");
+        query.ShouldContain("!_submittedEpoch.IsValid && _recordedEpochs.Count == 0");
         query.ShouldNotContain("Renderer.NotifyVulkanResourceUseCompleted(ObjectType.QueryPool, _queryPool.Handle)");
-        queryManager.ShouldContain("vkQuery.TryGetResult(out ulong result, wait: false)");
-        queryManager.ShouldNotContain("vkQuery.TryGetResultAvailable(");
+        queryManager.ShouldContain("vkQuery.TryGetAnySamplesPassed(out result, expectedTicket)");
         resourceLifetime.ShouldContain("key.Type == ObjectType.QueryPool");
-        resourceLifetime.ShouldContain("query.MarkResultEpochSubmitted(commandBufferHandle);");
+        resourceLifetime.ShouldContain("queries[queryIndex].MarkResultEpochSubmitted(commandBufferHandle, in submission);");
         resourceLifetime.ShouldContain("private bool IsVulkanResourceUseCompleted(ObjectType type, ulong handle)");
         resourcePlanner.ShouldContain("AreFrameOpContextsRecordingCompatible(");
         resourcePlanner.ShouldContain("AreFrameOpContextsQueryScopeCompatible(");
@@ -280,14 +275,14 @@ public sealed class VulkanCpuDirectOcclusionTests
         using IDisposable _ = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
         AsyncOcclusionQueryManager manager = new();
 
-        XRRenderQuery pending = manager.Acquire(EQueryTarget.AnySamplesPassedConservative);
+        XRRenderQuery pending = manager.AcquireBooleanOcclusion();
         manager.Release(pending, pendingResult: true);
 
-        XRRenderQuery replacement = manager.Acquire(EQueryTarget.AnySamplesPassedConservative);
+        XRRenderQuery replacement = manager.AcquireBooleanOcclusion();
         replacement.ShouldNotBeSameAs(pending);
 
         manager.Release(replacement);
-        XRRenderQuery pooled = manager.Acquire(EQueryTarget.AnySamplesPassedConservative);
+        XRRenderQuery pooled = manager.AcquireBooleanOcclusion();
         pooled.ShouldBeSameAs(replacement);
         pooled.Destroy();
     }

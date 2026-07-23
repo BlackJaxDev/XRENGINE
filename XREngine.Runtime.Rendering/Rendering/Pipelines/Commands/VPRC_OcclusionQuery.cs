@@ -1,4 +1,3 @@
-using XREngine.Data.Rendering;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.RenderGraph;
@@ -18,7 +17,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         private bool _lastAnySamplesPassed = true;
         private ViewportRenderCommandContainer? _body;
 
-        public EQueryTarget QueryTarget { get; set; } = EQueryTarget.AnySamplesPassedConservative;
+        public RenderQueryDescriptor QueryDescriptor { get; set; } = RenderQueryDescriptor.ConservativeOcclusion;
         public bool WaitForResult { get; set; }
         public string? ResultVariableName { get; set; }
         public string? ResultAvailableVariableName { get; set; }
@@ -52,7 +51,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (_pendingQuery is not null)
                 return;
 
-            XRRenderQuery query = _queryManager.Acquire(QueryTarget);
+            XRRenderQuery query = _queryManager.Acquire(QueryDescriptor);
             if (!TryExecuteQueryBody(query))
             {
                 _queryManager.Release(query);
@@ -98,7 +97,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void ExecuteSynchronousQuery()
         {
-            XRRenderQuery query = _queryManager.Acquire(QueryTarget);
+            XRRenderQuery query = _queryManager.Acquire(QueryDescriptor);
             try
             {
                 if (!TryExecuteQueryBody(query))
@@ -154,7 +153,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return false;
             }
 
-            glQuery.BeginQuery(QueryTarget);
+            if (glQuery.BeginQuery() != ERenderQueryReadStatus.Ready)
+                return false;
             try
             {
                 Body?.Execute();
@@ -171,21 +171,20 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             anySamplesPassed = true;
 
-            if (AbstractRenderer.Current is OpenGLRenderer renderer)
-            {
-                GLRenderQuery? glQuery = renderer.GenericToAPI<GLRenderQuery>(query);
-                if (glQuery is null)
-                    return false;
+            _ = wait; // Query resolution is deliberately nonblocking on render paths.
+            if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+                return false;
 
-                if (!wait && glQuery.GetQueryObject(EGetQueryObject.QueryResultAvailable) == 0)
-                    return false;
+            GLRenderQuery? glQuery = renderer.GenericToAPI<GLRenderQuery>(query);
+            if (glQuery is null)
+                return false;
 
-                long result = glQuery.GetQueryObject(EGetQueryObject.QueryResult);
-                anySamplesPassed = result != 0;
-                return true;
-            }
+            ERenderQueryReadStatus status = glQuery.TryGetAnySamplesPassed(out OcclusionQueryResult result);
+            if (status != ERenderQueryReadStatus.Ready)
+                return false;
 
-            return false;
+            anySamplesPassed = result.AnySamplesPassed;
+            return true;
         }
 
         private void PublishResultVariables()

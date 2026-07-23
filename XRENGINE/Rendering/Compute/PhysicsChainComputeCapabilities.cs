@@ -9,12 +9,30 @@ public readonly record struct PhysicsChainComputeCapabilities(
     bool SupportsGpuBufferCopies,
     bool SupportsAsyncReadback,
     bool SupportsIndirectDispatch = false,
-    bool SupportsSubgroupArithmetic = false)
+    bool SupportsSubgroupArithmetic = false,
+    bool SupportsSubmissionFences = true,
+    bool SupportsZeroReadbackPublication = true)
 {
-    public bool SupportsRequiredPipeline
+    /// <summary>
+    /// Operations required for simulation, GPU-authored dispatch, palettes, and bounds.
+    /// Host readback is deliberately excluded.
+    /// </summary>
+    public bool SupportsCorePipeline
         => SupportsComputeDispatch
         && SupportsShaderStorageBarriers
         && SupportsGpuBufferCopies
-        && SupportsAsyncReadback
-        && SupportsIndirectDispatch;
+        && SupportsIndirectDispatch
+        && SupportsZeroReadbackPublication;
+
+    /// <summary>Operations required in addition to the core path for CPU mirroring.</summary>
+    public bool SupportsReadbackPipeline
+        => SupportsCorePipeline
+        && SupportsSubmissionFences
+        && SupportsAsyncReadback;
+
+    /// <summary>
+    /// Compatibility alias for callers that require every feature, including readback.
+    /// </summary>
+    public bool SupportsRequiredPipeline
+        => SupportsReadbackPipeline;
 }

@@ -1426,7 +1426,7 @@ namespace XREngine.Rendering.Commands
                 if (size.X <= 0f || size.Y <= 0f || size.Z <= 0f)
                     continue;
 
-                XRRenderQuery query = s_cpuOcclusionQueryManager.Acquire(EQueryTarget.AnySamplesPassedConservative);
+                XRRenderQuery query = s_cpuOcclusionQueryManager.AcquireBooleanOcclusion();
                 OpenGLRenderer? gl = AbstractRenderer.Current as OpenGLRenderer;
                 GLRenderQuery? glQuery = gl?.GenericToAPI<GLRenderQuery>(query);
                 if (glQuery is null)
@@ -1435,7 +1435,11 @@ namespace XREngine.Rendering.Commands
                     continue;
                 }
 
-                glQuery.BeginQuery(EQueryTarget.AnySamplesPassedConservative);
+                if (glQuery.BeginQuery() != ERenderQueryReadStatus.Ready)
+                {
+                    s_cpuOcclusionQueryManager.Release(query);
+                    continue;
+                }
                 CpuOcclusionProxyRenderer.Draw(bounds, camera);
                 glQuery.EndQuery();
 

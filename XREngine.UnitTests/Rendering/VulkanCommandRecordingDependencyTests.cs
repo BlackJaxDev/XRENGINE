@@ -35,7 +35,7 @@ public sealed class VulkanCommandRecordingDependencyTests
     }
 
     [Test]
-    public void DataPublicationMismatch_PreservesCompatibleRecording()
+    public void DescriptorPublicationMismatch_RequiresRecording()
     {
         CommandRecordingDependencySignature recorded = CreateSignature();
         CommandRecordingDependencySignature current = recorded with
@@ -48,12 +48,12 @@ public sealed class VulkanCommandRecordingDependencyTests
         CommandRecordingDependencyMismatch mismatch = recorded.Compare(current);
 
         mismatch.Field.ShouldBe(CommandRecordingDependencyField.DescriptorPublicationGeneration);
-        mismatch.InvalidationClass.ShouldBe(CommandRecordingInvalidationClass.DataOnly);
-        mismatch.RequiresRecording.ShouldBeFalse();
+        mismatch.InvalidationClass.ShouldBe(CommandRecordingInvalidationClass.BindingIdentity);
+        mismatch.RequiresRecording.ShouldBeTrue();
     }
 
     [Test]
-    public void EveryDataOnlyGenerationPreservesCompatibleStaticRecording()
+    public void PublicationGenerations_UseSpecRequiredInvalidationClasses()
     {
         CommandRecordingDependencySignature recorded = CreateSignature();
         CommandRecordingDependencySignature[] updates =
@@ -68,13 +68,19 @@ public sealed class VulkanCommandRecordingDependencyTests
             CommandRecordingDependencyField.DataPublicationGeneration,
             CommandRecordingDependencyField.VolatileSuffixGeneration,
         ];
+        CommandRecordingInvalidationClass[] expectedClasses =
+        [
+            CommandRecordingInvalidationClass.BindingIdentity,
+            CommandRecordingInvalidationClass.DataOnly,
+            CommandRecordingInvalidationClass.DataOnly,
+        ];
 
         for (int i = 0; i < updates.Length; i++)
         {
             CommandRecordingDependencyMismatch mismatch = recorded.Compare(updates[i]);
             mismatch.Field.ShouldBe(expectedFields[i]);
-            mismatch.InvalidationClass.ShouldBe(CommandRecordingInvalidationClass.DataOnly);
-            mismatch.RequiresRecording.ShouldBeFalse();
+            mismatch.InvalidationClass.ShouldBe(expectedClasses[i]);
+            mismatch.RequiresRecording.ShouldBe(i == 0);
         }
     }
 
@@ -244,6 +250,32 @@ public sealed class VulkanCommandRecordingDependencyTests
         drain.ShouldContain("if (!CanResetVulkanCommandBuffer(commandBuffer, out _))");
         drain.ShouldNotContain("lifetime.QueuedSubmissionCount != 0");
         drain.ShouldNotContain("UpdateVulkanResourceCompletionState_NoLock(commandResource)");
+    }
+
+    [Test]
+    public void OrdinaryDescriptorWrites_InvalidateRecordedDependentsBeforeReuse()
+    {
+        string descriptorSets = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorSets.cs");
+        string templates = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorUpdateTemplates.cs");
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string allocation = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs");
+
+        descriptorSets.ShouldContain("TryCaptureDescriptorUpdateInvalidations_NoLock(");
+        descriptorSets.ShouldContain("PublishDescriptorSetContentUpdate(");
+        descriptorSets.ShouldContain("setState.UsesUpdateAfterBind");
+        descriptorSets.ShouldContain("CanUseUpdateAfterBind(write.DescriptorType)");
+        descriptorSets.ShouldContain("InvalidateCachedCommandBuffersByHandle(");
+        templates.ShouldContain("ValidateAndRecordVulkanDescriptorWrites(");
+        templates.ShouldContain("TryCaptureDescriptorUpdateInvalidations_NoLock(");
+        recording.ShouldContain("SnapshotDescriptorSetContentUpdateGeneration()");
+        recording.ShouldContain("HaveDescriptorSetContentsUpdatedSince(descriptorSetContentUpdateGeneration)");
+        recording.ShouldContain("descriptor contents changed without UPDATE_AFTER_BIND");
+        allocation.ShouldContain("ContainsCommandBufferHandle(");
+        allocation.ShouldNotContain("HashSet<ulong> dependentHandles = new");
     }
 
     [TestCase(0UL, 1UL, 256UL)]

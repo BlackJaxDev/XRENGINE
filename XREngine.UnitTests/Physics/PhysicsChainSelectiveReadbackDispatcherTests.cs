@@ -13,7 +13,8 @@ public sealed class PhysicsChainSelectiveReadbackDispatcherTests
     public void GpuFenceAdapter_UsesOnlyNonBlockingPollAndOwnsFenceLifetime()
     {
         var rendererFence = new RecordingGpuFence(EGpuFenceStatus.Pending);
-        var adapter = new PhysicsChainGpuReadbackFence(rendererFence);
+        var adapter = new PhysicsChainGpuReadbackFence();
+        adapter.Reset(rendererFence);
 
         adapter.Poll().ShouldBe(PhysicsChainReadbackFenceStatus.Pending);
         rendererFence.PollCount.ShouldBe(1);
@@ -29,14 +30,15 @@ public sealed class PhysicsChainSelectiveReadbackDispatcherTests
     public void Dispatcher_SubmitsExactMappedStagingCopiesAfterProducerBarriers()
     {
         string source = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
-        int producerBarrier = source.IndexOf("backend.CompletePass(BonePaletteCompletionPass);", StringComparison.Ordinal);
+        int producerBarrier = source.IndexOf("TryCompletePass(backend, BonePaletteCompletionPass)", StringComparison.Ordinal);
         int selectiveQueue = source.IndexOf("QueueSelectiveReadbacks(backend, _dispatchGroup);", producerBarrier, StringComparison.Ordinal);
 
         producerBarrier.ShouldBeGreaterThanOrEqualTo(0);
         selectiveQueue.ShouldBeGreaterThan(producerBarrier);
         source.ShouldContain("nuint exactByteCount = (nuint)plan.ByteCount;");
-        source.ShouldContain("EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent");
-        source.ShouldContain("EMemoryBarrierMask.BufferUpdate | EMemoryBarrierMask.ClientMappedBuffer");
+        source.ShouldContain("DefaultMemoryPolicy = XRBufferMemoryPolicy.GpuToCpuReadback");
+        source.ShouldContain("EBufferMapStorageFlags.Read | EBufferMapStorageFlags.ClientStorage");
+        source.ShouldContain("EMemoryBarrierMask.BufferUpdate | EMemoryBarrierMask.GpuReadback");
         source.ShouldContain("world.CommitReadbackStagingSlot(lease, source, fence");
         source.ShouldContain("PollSelectiveReadbackTransfersOnce();");
         source.ShouldContain("if (_lastReadbackPollFrame == _readbackFrameIndex)");

@@ -253,9 +253,12 @@ namespace XREngine.Scene
         /// This property is used by the YAML serializer for persistence. Do not use directly.
         /// </remarks>
         [YamlMember(Order = 0, Alias = "Components")]
-        public EventList<XRComponent> ComponentsSerialized
+        public List<XRComponent> ComponentsSerialized
         {
-            get => _components;
+            // Expose a plain serialization view so cooked-binary collection handling visits
+            // each component. Serializing EventList as one opaque MemoryPack object bypasses
+            // component-specific serializers and snapshot asset filtering.
+            get => [.. _components];
             set
             {
                 _components.Clear();

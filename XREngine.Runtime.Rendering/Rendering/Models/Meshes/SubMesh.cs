@@ -18,18 +18,31 @@ namespace XREngine.Rendering.Models
         private SortedSet<SubMeshLOD> _lods = new(new LODSorter());
         private MeshOptimizerSubMeshSettings _meshOptimizer = new();
 
+        [MemoryPackIgnore]
         public SortedSet<SubMeshLOD> LODs
         {
             get => _lods;
-            set
-            {
-                _lods = new SortedSet<SubMeshLOD>(new LODSorter());
-                if (value is not null)
-                {
-                    foreach (var lod in value)
-                        _lods.Add(lod);
-                }
-            }
+            set => ReplaceLODs(value);
+        }
+
+        /// <summary>
+        /// Cooked-binary serialization bridge for the runtime sorted set. The cooked collection
+        /// modules intentionally support list payloads, while YAML continues to expose <see cref="LODs"/>.
+        /// </summary>
+        private List<SubMeshLOD> CookedBinaryLODs
+        {
+            get => [.. _lods];
+            set => ReplaceLODs(value);
+        }
+
+        private void ReplaceLODs(IEnumerable<SubMeshLOD>? lods)
+        {
+            SortedSet<SubMeshLOD> orderedLODs = new(new LODSorter());
+            if (lods is not null)
+                foreach (SubMeshLOD lod in lods)
+                    orderedLODs.Add(lod);
+
+            SetField(ref _lods, orderedLODs, nameof(LODs));
         }
 
         public MeshOptimizerSubMeshSettings MeshOptimizer

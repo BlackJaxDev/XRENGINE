@@ -139,8 +139,11 @@ namespace XREngine.Rendering.Vulkan
                 MeshDrawOp drawOp => BuildMeshDrawFrameOpTraceDetail(drawOp),
                 BlitOp blitOp => $"in='{blitOp.InFbo?.Name ?? "<swapchain>"}' out='{blitOp.OutFbo?.Name ?? "<swapchain>"}'",
                 ComputeDispatchOp computeOp => BuildComputeFrameOpTraceDetail(computeOp),
+                ComputeDispatchIndirectOp computeIndirectOp => $"computeIndirect='{computeIndirectOp.Program.Data.Name ?? "<unnamed program>"}' offset={computeIndirectOp.ArgumentOffset}",
+                BufferCopyOp copyOp => $"copyBytes={copyOp.ByteCount} srcOffset={copyOp.SourceOffset} dstOffset={copyOp.DestinationOffset}",
+                SubmissionMarkerOp markerOp => $"marker='{markerOp.Label}'",
                 IndirectDrawOp indirectOp => $"renderer='{indirectOp.MeshRenderer.MeshRenderer?.Name ?? "<unnamed renderer>"}' draws={indirectOp.DrawCount}",
-                QueryOp queryOp => $"query={queryOp.Operation} target={queryOp.QueryTarget}",
+                QueryOp queryOp => $"query={queryOp.Operation} descriptor={queryOp.Descriptor}",
                 ClearOp clearOp => $"clearColor={clearOp.ClearColor} clearDepth={clearOp.ClearDepth} clearStencil={clearOp.ClearStencil}",
                 _ => string.Empty
             };
@@ -441,11 +444,12 @@ namespace XREngine.Rendering.Vulkan
             for (int i = 0; i < ops.Length; i++)
             {
                 // A generic compute dispatch is safe to replay when its captured
-                // binding/dependency signature is unchanged. Only indirect consumers
-                // encode GPU-written command/count buffers whose contents change every
-                // frame; those must keep the conservative fresh-primary path until the
-                // producer publication lifetime is fully represented in the reuse key.
-                if (ops[i] is IndirectDrawOp or MeshTaskDispatchIndirectCountOp)
+                // binding/dependency signature is unchanged. Indirect consumers encode
+                // GPU-written command/count buffers whose contents change every frame.
+                // Submission markers also carry per-submission CPU state: a replayed
+                // command buffer cannot register a newly rented fence with the queue
+                // submission even when the pooled fence has the same object identity.
+                if (ops[i] is IndirectDrawOp or MeshTaskDispatchIndirectCountOp or SubmissionMarkerOp)
                     return true;
             }
 

@@ -367,9 +367,12 @@ internal static class SnapshotDiagnostics
         int missingClientSources = 0;
         long bytes = 0;
 
-        foreach (KeyValuePair<string, XRDataBuffer> pair in mesh.Buffers)
+        // BufferCollection exposes the legacy non-generic IDictionary enumerator
+        // for pattern-based foreach, which yields DictionaryEntry values. Iterate
+        // the strongly typed value collection so diagnostics cannot abort a
+        // play-mode snapshot restore with an InvalidCastException.
+        foreach (XRDataBuffer buffer in mesh.Buffers.Values)
         {
-            XRDataBuffer buffer = pair.Value;
             count++;
             bytes += buffer.ClientSideSource?.Length ?? 0;
             if (buffer.ClientSideSource is null)

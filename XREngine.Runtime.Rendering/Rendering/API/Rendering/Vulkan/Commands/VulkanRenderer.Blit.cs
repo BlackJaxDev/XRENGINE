@@ -643,26 +643,27 @@ namespace XREngine.Rendering.Vulkan
                     AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit);
             }
 
-            if ((wantDepth || wantStencil) && _swapchainDepthImage.Handle != 0)
+            VulkanSwapchainDepthResources? depth = CurrentSwapchainDepthResources;
+            if ((wantDepth || wantStencil) && depth is not null)
             {
                 ImageAspectFlags depthAspect = (wantDepth, wantStencil) switch
                 {
-                    (true, true) => _swapchainDepthAspect,
+                    (true, true) => depth.Aspect,
                     (true, false) => ImageAspectFlags.DepthBit,
-                    (false, true) => _swapchainDepthAspect.HasFlag(ImageAspectFlags.StencilBit) ? ImageAspectFlags.StencilBit : ImageAspectFlags.None,
+                    (false, true) => depth.Aspect.HasFlag(ImageAspectFlags.StencilBit) ? ImageAspectFlags.StencilBit : ImageAspectFlags.None,
                     _ => ImageAspectFlags.None
                 };
 
                 if (depthAspect != ImageAspectFlags.None)
                 {
                     return new BlitImageInfo(
-                        _swapchainDepthImage,
-                        _swapchainDepthFormat,
+                        depth.Image,
+                        depth.Format,
                         depthAspect,
                         0,
                         1,
                         0,
-                        swapChainExtent,
+                        depth.Extent,
                         ImageLayout.DepthStencilAttachmentOptimal,
                         PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
                         AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit);

@@ -31,15 +31,27 @@ namespace XREngine.Rendering.OpenGL;
 public partial class OpenGLRenderer
 {
     public override void DispatchCompute(XRRenderProgram program, int numGroupsX, int numGroupsY, int numGroupsZ)
+        => TryDispatchCompute(
+            program,
+            checked((uint)Math.Max(numGroupsX, 1)),
+            checked((uint)Math.Max(numGroupsY, 1)),
+            checked((uint)Math.Max(numGroupsZ, 1)));
+
+    public override ERendererComputeEnqueueStatus TryDispatchCompute(
+        XRRenderProgram program,
+        uint groupsX,
+        uint groupsY,
+        uint groupsZ)
     {
         GLRenderProgram? glProgram = GenericToAPI<GLRenderProgram>(program);
         if (glProgram is null)
-            return;
+            return ERendererComputeEnqueueStatus.InvalidResource;
 
         if (!glProgram.Use())
-            return;
+            return ERendererComputeEnqueueStatus.ProgramPending;
 
-        Api.DispatchCompute((uint)numGroupsX, (uint)numGroupsY, (uint)numGroupsZ);
+        Api.DispatchCompute(Math.Max(groupsX, 1u), Math.Max(groupsY, 1u), Math.Max(groupsZ, 1u));
+        return ERendererComputeEnqueueStatus.Enqueued;
     }
 
     public override void AllowDepthWrite(bool allow)

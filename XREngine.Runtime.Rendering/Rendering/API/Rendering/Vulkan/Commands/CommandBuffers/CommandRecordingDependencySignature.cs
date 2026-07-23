@@ -2,9 +2,10 @@ namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
 /// Immutable dependency snapshot shared by primary variants, secondary ranges,
-/// and command-chain schedules. Data-publication fields are intentionally kept
-/// separate from binding identity so completed frame slots can refresh bytes
-/// without rebuilding compatible command topology.
+/// and command-chain schedules. Ordinary descriptor-set publication is binding
+/// state because <c>vkUpdateDescriptorSets</c> invalidates command buffers that
+/// recorded those sets without update-after-bind. Buffer-backed frame data remains
+/// data-only and can refresh without rebuilding compatible command topology.
 /// </summary>
 internal readonly record struct CommandRecordingDependencySignature(
     ulong OutputPassAttachment,
@@ -71,7 +72,7 @@ internal readonly record struct CommandRecordingDependencySignature(
         if (FrameSlotVariant != current.FrameSlotVariant)
             return Binding(CommandRecordingDependencyField.FrameSlotVariant);
         if (DescriptorPublicationGeneration != current.DescriptorPublicationGeneration)
-            return Data(CommandRecordingDependencyField.DescriptorPublicationGeneration);
+            return Binding(CommandRecordingDependencyField.DescriptorPublicationGeneration);
         if (DataPublicationGeneration != current.DataPublicationGeneration)
             return Data(CommandRecordingDependencyField.DataPublicationGeneration);
         if (VolatileSuffixGeneration != current.VolatileSuffixGeneration)

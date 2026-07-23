@@ -87,7 +87,7 @@ public sealed class PhysicsChainGpuKernelFamilyTests
         dispatcher.ShouldContain("GPUPhysicsChainDispatcher.Solver.ShortLinear");
         dispatcher.ShouldContain("GPUPhysicsChainDispatcher.Solver.BranchedOrLong");
         dispatcher.ShouldContain("if (_kernelCandidateCounts[(int)bucket] == 0)");
-        dispatcher.ShouldContain("backend.TryDispatchIndirect(program");
+        dispatcher.ShouldContain("TryDispatchIndirect(backend, program");
         dispatcher.ShouldContain("DynamicWorkgroupCountsRemainGpuAuthored: true");
         dispatcher.ShouldNotContain("TryReadBuffer(_activeWorkCounterBuffer");
     }

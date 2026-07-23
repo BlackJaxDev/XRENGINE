@@ -13,6 +13,36 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class VulkanShaderPreprocessParityTests
 {
     [Test]
+    public void PhysicsChainDebugDrawShader_CompilesAfterAutoUniformRewrite()
+    {
+        string shaderPath = ResolveWorkspaceFile(
+            "Build/CommonAssets/Shaders/Compute/PhysicsChain/PhysicsChainDebugDraw.comp");
+        var shaderSource = new TextFile
+        {
+            FilePath = shaderPath,
+            Text = File.ReadAllText(shaderPath)
+        };
+        XRShader shader = new(EShaderType.Compute, shaderSource)
+        {
+            Name = "PhysicsChainDebugDraw.comp"
+        };
+
+        byte[] spirv = VulkanShaderCompiler.Compile(
+            shader,
+            out string entryPoint,
+            out _,
+            out string? rewrittenSource);
+
+        entryPoint.ShouldBe("main");
+        spirv.Length.ShouldBeGreaterThan(0);
+        rewrittenSource.ShouldNotBeNull();
+        rewrittenSource.ShouldContain("item.InterpolationAlpha");
+        rewrittenSource.ShouldContain("item.InterpolationMode");
+        rewrittenSource.ShouldNotContain("XREngine_AutoUniforms_Compute_Instance.InterpolationAlpha");
+        rewrittenSource.ShouldNotContain("XREngine_AutoUniforms_Compute_Instance.InterpolationMode");
+    }
+
+    [Test]
     public void VulkanCompiler_ResolvesIncludeThenSnippet_FromIncludedFile()
     {
         string tempDir = Path.Combine(Path.GetTempPath(), "xre-vk-preprocess-" + Guid.NewGuid().ToString("N"));
@@ -65,5 +95,23 @@ public sealed class VulkanShaderPreprocessParityTests
                 // best-effort cleanup only
             }
         }
+    }
+
+    private static string ResolveWorkspaceFile(string relativePath)
+    {
+        string? directory = TestContext.CurrentContext.TestDirectory;
+        while (!string.IsNullOrEmpty(directory))
+        {
+            string candidate = Path.Combine(
+                directory,
+                relativePath.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(candidate))
+                return candidate;
+
+            directory = Directory.GetParent(directory)?.FullName;
+        }
+
+        throw new FileNotFoundException(
+            $"Could not locate workspace file '{relativePath}' from the test directory.");
     }
 }

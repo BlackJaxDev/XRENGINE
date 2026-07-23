@@ -24,6 +24,9 @@ public unsafe partial class VulkanRenderer
 {
 	public partial class VkMeshRenderer
 	{
+		private XRDataBuffer? _cachedActiveSkinPaletteBuffer;
+		private BufferStructuralIdentity _cachedActiveSkinPaletteIdentity;
+
 		/// <summary>
 		/// Gathers all named GPU data buffers from both the Mesh and the MeshRenderer,
 		/// converting them to Vulkan-side VkDataBuffer wrappers. MeshRenderer buffers
@@ -49,6 +52,7 @@ public unsafe partial class VulkanRenderer
 							_bufferCache[pair.Key] = vkBuffer;
 							
 				FilterRuntimeDeformationSourceBuffers();
+				OverrideCollectedSkinPaletteWithActiveSource();
 				AddRuntimeDeformationBuffers();
 				CaptureRuntimeDeformationBufferReferences();
 
@@ -158,6 +162,22 @@ public unsafe partial class VulkanRenderer
 		private void RemoveCollectedBuffer(string key)
 			=> _bufferCache.Remove(key);
 
+		/// <summary>
+		/// Replaces the renderer-owned CPU palette with the active palette source used by
+		/// skinning uniforms. GPU-driven systems can publish an external atlas without
+		/// mutating the renderer's persistent buffer collection.
+		/// </summary>
+		private void OverrideCollectedSkinPaletteWithActiveSource()
+		{
+			string shaderName = $"{ECommonBufferType.SkinPalette}Buffer";
+			if (!_bufferCache.ContainsKey(shaderName)
+				|| MeshRenderer.ActiveSkinPaletteBuffer is not { } activeSkinPalette)
+				return;
+
+			if (Renderer.GenericToAPI<VkDataBuffer>(activeSkinPalette) is { } vkBuffer)
+				_bufferCache[shaderName] = vkBuffer;
+		}
+
 		private void AddRuntimeDeformationBuffers()
 		{
 			XRMesh? mesh = MeshRenderer.Mesh;
@@ -233,6 +253,8 @@ public unsafe partial class VulkanRenderer
 
 		private void CaptureRuntimeDeformationBufferReferences()
 		{
+			_cachedActiveSkinPaletteBuffer = MeshRenderer.ActiveSkinPaletteBuffer;
+			_cachedActiveSkinPaletteIdentity = CaptureBufferStructuralIdentity(_cachedActiveSkinPaletteBuffer);
 			_cachedHasValidPrecombinedBlendshapeDeltas = MeshRenderer.HasValidPrecombinedBlendshapeDeltas;
 			_cachedSkinnedPositionsIdentity = CaptureBufferStructuralIdentity(MeshRenderer.SkinnedPositionsBuffer);
 			_cachedSkinnedNormalsIdentity = CaptureBufferStructuralIdentity(MeshRenderer.SkinnedNormalsBuffer);
@@ -244,7 +266,9 @@ public unsafe partial class VulkanRenderer
 		}
 
 		private bool RuntimeDeformationBufferReferencesChanged()
-			=> _cachedSkinnedPositionsIdentity != CaptureBufferStructuralIdentity(MeshRenderer.SkinnedPositionsBuffer)
+			=> !ReferenceEquals(_cachedActiveSkinPaletteBuffer, MeshRenderer.ActiveSkinPaletteBuffer)
+			|| _cachedActiveSkinPaletteIdentity != CaptureBufferStructuralIdentity(MeshRenderer.ActiveSkinPaletteBuffer)
+			|| _cachedSkinnedPositionsIdentity != CaptureBufferStructuralIdentity(MeshRenderer.SkinnedPositionsBuffer)
 			|| _cachedSkinnedNormalsIdentity != CaptureBufferStructuralIdentity(MeshRenderer.SkinnedNormalsBuffer)
 			|| _cachedSkinnedTangentsIdentity != CaptureBufferStructuralIdentity(MeshRenderer.SkinnedTangentsBuffer)
 			|| _cachedSkinnedInterleavedIdentity != CaptureBufferStructuralIdentity(MeshRenderer.SkinnedInterleavedBuffer)

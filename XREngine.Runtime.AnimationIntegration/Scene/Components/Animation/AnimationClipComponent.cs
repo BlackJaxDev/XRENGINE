@@ -10,6 +10,7 @@ using System.Diagnostics;
 
 namespace XREngine.Components.Animation
 {
+    [CookedBinaryReflectionOnly]
     [XRComponentEditor("XREngine.Editor.ComponentEditors.AnimationClipComponentEditor")]
     public class AnimationClipComponent : XRComponent
     {

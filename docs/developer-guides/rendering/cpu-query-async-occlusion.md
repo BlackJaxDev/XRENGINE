@@ -104,9 +104,10 @@ snapshot. Repeated inline scheduling therefore avoids rescanning query state and
 becoming O(N^2).
 
 If an owner is evicted or a command container is released while its epoch is
-pending, the query is destroyed instead of being returned to the generic pool;
-backend lifetime tracking retires its native resources after the GPU submission
-completes. An individual or hierarchy epoch that exceeds
+pending, the query is quarantined instead of being returned to the descriptor-
+compatible pool. A later nonblocking drain consumes the exact ticket after its
+submission completes; terminal backend errors destroy the handle. An individual
+or hierarchy epoch that exceeds
 `CpuQueryOcclusionMaxPendingFrames` is likewise replaced with a fresh query and
 pending-released. Its decision fails visible, and the abandoned epoch cannot be
 pooled under a new owner or permanently consume query capacity. The render
@@ -310,6 +311,7 @@ unsupported backend, and so on).
 
 Both backends resolve through `AsyncOcclusionQueryManager` without query waits
 in the render path. For Vulkan, see the
+[render-query guide](render-queries.md),
 [query specification](https://docs.vulkan.org/spec/latest/chapters/queries.html),
 [`vkCmdResetQueryPool`](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdResetQueryPool.html),
 and

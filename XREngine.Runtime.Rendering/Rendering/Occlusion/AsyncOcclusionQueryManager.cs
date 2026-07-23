@@ -1,116 +1,141 @@
-using System;
-using System.Collections.Generic;
-using XREngine.Data.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 
-namespace XREngine.Rendering.Occlusion
+namespace XREngine.Rendering.Occlusion;
+
+/// <summary>
+/// Descriptor-compatible pool and nonblocking resolver for asynchronous
+/// hardware occlusion queries.
+/// </summary>
+public sealed class AsyncOcclusionQueryManager
 {
-    /// <summary>
-    /// Backend-agnostic pool + resolver for async hardware occlusion queries.
-    ///
-    /// This intentionally does NOT decide what to query or how to render query geometry.
-    /// It only manages <see cref="XRRenderQuery"/> lifetimes and resolves results without blocking.
-    /// </summary>
-    public sealed class AsyncOcclusionQueryManager
+    private readonly object _lock = new();
+    private readonly Dictionary<RenderQueryDescriptor, Queue<XRRenderQuery>> _pools = [];
+    private readonly List<XRRenderQuery> _discardedPending = [];
+
+    public XRRenderQuery Acquire(RenderQueryDescriptor descriptor)
     {
-        private readonly object _lock = new();
-        private readonly Queue<XRRenderQuery> _pool = new();
+        DrainDiscardedPending();
 
-        public XRRenderQuery Acquire(EQueryTarget target)
+        XRRenderQuery query;
+        bool isNew;
+        lock (_lock)
         {
-            XRRenderQuery query;
-            bool isNew;
-            lock (_lock)
+            if (_pools.TryGetValue(descriptor, out Queue<XRRenderQuery>? pool) && pool.Count != 0)
             {
-                isNew = _pool.Count == 0;
-                query = isNew ? new XRRenderQuery() : _pool.Dequeue();
+                query = pool.Dequeue();
+                isNew = false;
             }
-
-            // Do NOT set CurrentQuery here — that field tracks whether a GL/VK query
-            // is actively recording (between Begin and End). Setting it prematurely
-            // causes GLRenderQuery.BeginQuery to call EndQuery on a non-active query,
-            // triggering GL_INVALID_OPERATION.
-            query.CurrentQuery = null;
-
-            // Only generate API objects for brand-new queries; pooled ones are already generated.
-            if (isNew)
-                query.Generate();
-
-            return query;
+            else
+            {
+                query = new XRRenderQuery(descriptor);
+                isNew = true;
+            }
         }
 
-        /// <summary>
-        /// Releases a query after its owner is finished with it. Queries whose result
-        /// epoch is still pending are destroyed instead of pooled: assigning one to a
-        /// new owner would let that owner consume the previous owner's result.
-        /// Backend wrappers retire their native resources through normal lifetime
-        /// tracking, so destruction remains safe while GPU work is in flight.
-        /// </summary>
-        public void Release(XRRenderQuery query, bool pendingResult = false)
-        {
-            if (query is null)
-                return;
+        if (isNew)
+            query.Generate();
+        return query;
+    }
 
-            query.CurrentQuery = null;
+    public XRRenderQuery AcquireBooleanOcclusion()
+        => Acquire(RenderQueryDescriptor.ConservativeOcclusion);
+
+    /// <summary>
+    /// Returns a resolved handle to its descriptor-compatible pool. A discarded
+    /// pending handle remains quarantined until its exact epoch becomes ready.
+    /// </summary>
+    public void Release(XRRenderQuery query, bool pendingResult = false)
+    {
+        if (query is null)
+            return;
+
+        lock (_lock)
+        {
             if (pendingResult)
             {
-                query.Destroy();
+                _discardedPending.Add(query);
                 return;
             }
 
-            lock (_lock)
-                _pool.Enqueue(query);
+            ReturnToPoolNoLock(query);
         }
+    }
 
-        /// <summary>
-        /// Attempts to resolve an occlusion query result without waiting.
-        /// </summary>
-        /// <returns>True when a result was available and read; otherwise false.</returns>
-        public bool TryGetAnySamplesPassed(XRRenderQuery query, out bool anySamplesPassed)
+    public bool TryGetAnySamplesPassed(
+        XRRenderQuery query,
+        out bool anySamplesPassed,
+        in RenderQueryTicket expectedTicket = default)
+        => TryGetAnySamplesPassedStatus(query, out anySamplesPassed, expectedTicket) == ERenderQueryReadStatus.Ready;
+
+    public ERenderQueryReadStatus TryGetAnySamplesPassedStatus(
+        XRRenderQuery query,
+        out bool anySamplesPassed,
+        in RenderQueryTicket expectedTicket = default)
+    {
+        anySamplesPassed = true;
+        if (query is null || query.Descriptor.Kind != ERenderQueryKind.Occlusion)
+            return ERenderQueryReadStatus.InvalidState;
+
+        OcclusionQueryResult result = default;
+        ERenderQueryReadStatus status = AbstractRenderer.Current switch
         {
-            anySamplesPassed = true;
-            if (query is null)
-                return false;
+            OpenGLRenderer gl => gl.GenericToAPI<GLRenderQuery>(query) is { } glQuery
+                ? glQuery.TryGetAnySamplesPassed(out result, expectedTicket)
+                : ERenderQueryReadStatus.InvalidState,
+            VulkanRenderer vk => vk.GenericToAPI<VulkanRenderer.VkRenderQuery>(query) is { } vkQuery
+                ? vkQuery.TryGetAnySamplesPassed(out result, expectedTicket)
+                : ERenderQueryReadStatus.InvalidState,
+            _ => ERenderQueryReadStatus.Unsupported,
+        };
 
-            // Prefer conservative availability checks to avoid implicit waits.
-            if (AbstractRenderer.Current is OpenGLRenderer gl)
-                return TryGetAnySamplesPassed(gl, query, out anySamplesPassed);
+        if (status == ERenderQueryReadStatus.Ready)
+            anySamplesPassed = result.AnySamplesPassed;
+        return status;
+    }
 
-            if (AbstractRenderer.Current is VulkanRenderer vk)
-                return TryGetAnySamplesPassed(vk, query, out anySamplesPassed);
-
+    public bool TryGetTicket(XRRenderQuery query, out RenderQueryTicket ticket)
+    {
+        ticket = default;
+        if (query is null)
             return false;
-        }
 
-        private static bool TryGetAnySamplesPassed(OpenGLRenderer renderer, XRRenderQuery query, out bool anySamplesPassed)
+        ticket = AbstractRenderer.Current switch
         {
-            anySamplesPassed = true;
-            GLRenderQuery? glQuery = renderer.GenericToAPI<GLRenderQuery>(query);
-            if (glQuery is null)
-                return false;
+            OpenGLRenderer gl => gl.GenericToAPI<GLRenderQuery>(query)?.Ticket ?? default,
+            VulkanRenderer vk => vk.GenericToAPI<VulkanRenderer.VkRenderQuery>(query)?.Ticket ?? default,
+            _ => default,
+        };
+        return ticket.IsValid;
+    }
 
-            long available = glQuery.GetQueryObject(EGetQueryObject.QueryResultAvailable);
-            if (available == 0)
-                return false;
-
-            long result = glQuery.GetQueryObject(EGetQueryObject.QueryResult);
-            anySamplesPassed = result != 0;
-            return true;
-        }
-
-        private static bool TryGetAnySamplesPassed(VulkanRenderer renderer, XRRenderQuery query, out bool anySamplesPassed)
+    private void DrainDiscardedPending()
+    {
+        lock (_lock)
         {
-            anySamplesPassed = true;
-            VulkanRenderer.VkRenderQuery? vkQuery = renderer.GenericToAPI<VulkanRenderer.VkRenderQuery>(query);
-            if (vkQuery is null)
-                return false;
+            for (int index = _discardedPending.Count - 1; index >= 0; index--)
+            {
+                XRRenderQuery query = _discardedPending[index];
+                ERenderQueryReadStatus status = TryGetAnySamplesPassedStatus(query, out _);
+                if (status == ERenderQueryReadStatus.NotReady)
+                    continue;
 
-            if (!vkQuery.TryGetResult(out ulong result, wait: false))
-                return false;
-
-            anySamplesPassed = result != 0;
-            return true;
+                _discardedPending.RemoveAt(index);
+                if (status == ERenderQueryReadStatus.Ready)
+                    ReturnToPoolNoLock(query);
+                else
+                    query.Destroy();
+            }
         }
+    }
+
+    private void ReturnToPoolNoLock(XRRenderQuery query)
+    {
+        if (!_pools.TryGetValue(query.Descriptor, out Queue<XRRenderQuery>? pool))
+        {
+            pool = new Queue<XRRenderQuery>();
+            _pools.Add(query.Descriptor, pool);
+        }
+        pool.Enqueue(query);
     }
 }

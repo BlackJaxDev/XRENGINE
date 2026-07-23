@@ -809,6 +809,37 @@ compute shaders:
 The active renderer path must not reintroduce the old mesh-wide fixed-4 vs
 variable influence branch or a paired bone-world/inverse-bind palette contract.
 
+### Ordered Compute Work
+
+Backend-neutral compute clients use the renderer enqueue surface instead of
+recording Silk.NET commands or submitting one-time command buffers. Vulkan
+lowers accepted operations into the ordinary frame stream: direct compute,
+barriers, ordered buffer-range copies, indirect compute, and a submission
+marker.
+
+Operations submitted outside a graphics pass use the explicit pre-render
+bucket. Buffer-copy and indirect-dispatch records retain their concrete Vulkan
+buffer owners, handles, ranges, and descriptor snapshots. They are
+primary-only mutable GPU-driven work, so command-buffer reuse cannot replay a
+stale argument or resource generation.
+
+An ordered compute batch is transactional. A client begins a batch, enqueues
+all required operations, and commits only after every enqueue succeeds.
+Rollback discards the captured operations and fails any captured marker fence.
+Frame-recording deferral likewise fails unsubmitted markers immediately.
+
+Submission markers become `XRGpuFence` instances backed by the graphics
+timeline semaphore. Their value is taken from the actual `SubmitInfo` signal
+that contains the command buffer; it is never predicted from a counter.
+Polling is nonblocking. Submit failure, command-buffer reset, frame-recording
+abort, renderer cleanup, or device loss resolves the fence as failed.
+
+Physics-chain readback copies into pooled host-visible `TransferDst` buffers.
+After the marker signals, noncoherent mappings are invalidated using
+`nonCoherentAtomSize`-aligned ranges before CPU access; coherent memory takes
+the no-op invalidation path. Normal physics processing does not call
+`vkDeviceWaitIdle`, wait on the timeline, or create a per-pass queue submit.
+
 ### Ray Tracing
 
 `Features/Raytracing/VulkanRenderer.Raytracing.cs` provides ray tracing support when `VK_KHR_ray_tracing_pipeline` or `VK_NV_ray_tracing` is available:

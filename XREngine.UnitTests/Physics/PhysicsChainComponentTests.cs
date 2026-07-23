@@ -30,12 +30,6 @@ public sealed class PhysicsChainComponentTests
     private static readonly Action<PhysicsChainComponent> PrepareGpuDataMethod =
         CreateOpenDelegate<Action<PhysicsChainComponent>>("PrepareGPUData");
 
-    private static readonly Action<PhysicsChainComponent> InitializeBuffersMethod =
-        CreateOpenDelegate<Action<PhysicsChainComponent>>("InitializeBuffers");
-
-    private static readonly Action<PhysicsChainComponent, float> UpdatePerTreeParamsMethod =
-        CreateOpenDelegate<Action<PhysicsChainComponent, float>>("UpdatePerTreeParams");
-
     private static readonly Action<PhysicsChainComponent, XRMeshRenderer, Dictionary<Transform, int>, Dictionary<int, int>, Dictionary<int, Vector3>> TryAddGpuDrivenRendererStateMethod =
         CreateOpenDelegate<Action<PhysicsChainComponent, XRMeshRenderer, Dictionary<Transform, int>, Dictionary<int, int>, Dictionary<int, Vector3>>>("TryAddGpuDrivenRendererState");
 
@@ -454,7 +448,7 @@ public sealed class PhysicsChainComponentTests
     }
 
     [Test]
-    public void PrepareGpuData_TracksSingleTransformDirtyRange()
+    public void PrepareGpuData_TracksTransformSignatureChanges()
     {
         var (node, rootBone, _) = CreateBoneHierarchy(4);
         var component = CreateComponent(node, rootBone);
@@ -462,9 +456,9 @@ public sealed class PhysicsChainComponentTests
         component.SetupParticles();
 
         PrepareGpuDataMethod(component);
+        int initialSignature = GetFieldValue<int>(component, "_preparedTransformSignature");
         PrepareGpuDataMethod(component);
-
-        GetFieldValue<int>(component, "_preparedTransformDirtyLength").ShouldBe(0);
+        GetFieldValue<int>(component, "_preparedTransformSignature").ShouldBe(initialSignature);
 
         object particle = GetParticle(component, 0, 1);
         Matrix4x4 updatedMatrix = Matrix4x4.CreateTranslation(new Vector3(0.25f, -0.5f, 0.75f));
@@ -472,24 +466,22 @@ public sealed class PhysicsChainComponentTests
 
         PrepareGpuDataMethod(component);
 
-        GetFieldValue<int>(component, "_preparedTransformDirtyStart").ShouldBe(1);
-        GetFieldValue<int>(component, "_preparedTransformDirtyLength").ShouldBe(1);
+        GetFieldValue<int>(component, "_preparedTransformSignature").ShouldNotBe(initialSignature);
     }
 
     [Test]
-    public void UpdatePerTreeParams_WarmPathDoesNotAllocateManagedState()
+    public void PrepareGpuData_WarmPathDoesNotAllocateManagedState()
     {
         var (node, rootBone, _) = CreateBoneHierarchy(3);
         var component = CreateComponent(node, rootBone);
         component.UseGPU = true;
         component.SetupParticles();
 
-        InitializeBuffersMethod(component);
-        UpdatePerTreeParamsMethod(component, 0.016f);
+        PrepareGpuDataMethod(component);
 
         long beforeBytes = GC.GetAllocatedBytesForCurrentThread();
         for (int i = 0; i < 8; ++i)
-            UpdatePerTreeParamsMethod(component, 0.016f);
+            PrepareGpuDataMethod(component);
         long allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - beforeBytes;
 
         allocatedBytes.ShouldBeLessThanOrEqualTo(128L);

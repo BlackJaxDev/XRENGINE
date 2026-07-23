@@ -66,18 +66,16 @@ struct DebugItem
     float InterpolationAlpha;
     uint InterpolationMode;
     uint Padding;
+};
+
 layout(std430, binding = 4) readonly buffer DebugItemBuffer
 {
     DebugItem DebugItems[];
 };
 
-};
-
 uniform int ParticleCount;
 uniform vec4 PointColor;
 uniform vec4 LineColor;
-uniform float InterpolationAlpha; // 0 = Discrete (use Position), >0 = blend factor
-uniform int InterpolationMode;    // 0 = Discrete, 1 = Interpolate, 2 = Extrapolate
 
 vec3 resolveRenderPosition(ParticleState particle, float alpha, int mode)
 {

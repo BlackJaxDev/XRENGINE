@@ -11,17 +11,12 @@ public sealed class PhysicsChainDispatcherRoutingTests
     {
         string componentSource = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent.GPU.cs")
             .Replace("\r\n", "\n");
-        int methodStart = componentSource.IndexOf("private bool TryGetGpuParticleRenderSource", StringComparison.Ordinal);
-        int methodEnd = componentSource.IndexOf("private void EnsureGpuDebugResources", methodStart, StringComparison.Ordinal);
-        methodStart.ShouldBeGreaterThanOrEqualTo(0);
-        methodEnd.ShouldBeGreaterThan(methodStart);
-
-        string method = componentSource[methodStart..methodEnd];
-        method.ShouldContain("GPUPhysicsChainDispatcher.Instance.TryGetRenderParticleBuffers");
-        method.ShouldNotContain("if (UseBatchedDispatcher)");
-        method.ShouldNotContain("particleBuffer = _particlesBuffer;");
+        componentSource.ShouldContain("SubmitToBatchedDispatcher(loop, timeVar)");
+        componentSource.ShouldNotContain("private bool TryGetGpuParticleRenderSource");
+        componentSource.ShouldNotContain("XRDataBuffer<GPUParticleData>? _particlesBuffer");
 
         string dispatcherSource = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
+        dispatcherSource.ShouldContain("public bool TryGetRenderParticleBuffers(");
         dispatcherSource.ShouldContain("component.UseBatchedDispatcher ? 0 : request.RequestId");
     }
 

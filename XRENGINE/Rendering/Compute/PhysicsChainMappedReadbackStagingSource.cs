@@ -1,41 +1,41 @@
 using XREngine.Components;
-using XREngine.Data;
-using XREngine.Data.Core;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Compute;
 
 /// <summary>
-/// Lease over a persistently mapped staging buffer. The dispatcher retains the
-/// buffer; disposing this object only ends the service slot's lease.
+/// Lease over a backend-owned staging buffer. The dispatcher retains the buffer;
+/// disposing this object only ends the service slot's lease. Mapping and required
+/// noncoherent invalidation happen after the completion fence in the backend.
 /// </summary>
-internal sealed class PhysicsChainMappedReadbackStagingSource(
-    XRDataBuffer buffer,
-    int byteCount) : IPhysicsChainReadbackStagingSource
+internal sealed class PhysicsChainMappedReadbackStagingSource : IPhysicsChainReadbackStagingSource
 {
-    private VoidPtr _mappedAddress = ResolveMappedAddress(buffer);
+    private IPhysicsChainComputeBackend? _backend;
+    private XRDataBuffer? _buffer;
+    private int _byteCount;
 
-    public int ByteCount => _mappedAddress.IsValid ? byteCount : 0;
-    public bool IsValid => _mappedAddress.IsValid;
+    public int ByteCount => IsValid ? _byteCount : 0;
+    public bool IsValid => _backend is not null && _buffer is not null && _byteCount > 0;
+
+    public void Reset(IPhysicsChainComputeBackend backend, XRDataBuffer buffer, int byteCount)
+    {
+        _backend = backend;
+        _buffer = buffer;
+        _byteCount = byteCount;
+    }
 
     public unsafe bool TryCopyTo(Span<byte> destination)
     {
-        if (!_mappedAddress.IsValid || destination.Length != byteCount)
+        if (_backend is null || _buffer is null || destination.Length != _byteCount)
             return false;
 
-        fixed (byte* destinationPointer = destination)
-            Memory.Move(destinationPointer, _mappedAddress.Pointer, (uint)byteCount);
-        return true;
+        return _backend.TryReadBuffer(_buffer, destination);
     }
 
     public void Dispose()
-        => _mappedAddress = VoidPtr.Zero;
-
-    private static VoidPtr ResolveMappedAddress(XRDataBuffer buffer)
     {
-        foreach (VoidPtr address in buffer.GetMappedAddresses())
-            if (address.IsValid)
-                return address;
-
-        return VoidPtr.Zero;
+        _backend = null;
+        _buffer = null;
+        _byteCount = 0;
     }
 }

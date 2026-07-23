@@ -4,6 +4,7 @@ using System.Reflection;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Components;
+using XREngine.Data.Core;
 using XREngine.Rendering.Compute;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -18,6 +19,10 @@ namespace XREngine.UnitTests.Physics;
 public sealed class GPUPhysicsChainDispatcherTests
 {
     private const BindingFlags StaticFlags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+    private const BindingFlags InstanceFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+    private static readonly PropertyInfo ObjectIdProperty = typeof(XRObjectBase).GetProperty(
+        nameof(XRObjectBase.ID),
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!;
 
     private static readonly Action<long, bool> RecordCpuUploadBytesMethod = CreateStaticDelegate<Action<long, bool>>("RecordCpuUploadBytes");
     private static readonly Action<long, bool> RecordGpuCopyBytesMethod = CreateStaticDelegate<Action<long, bool>>("RecordGpuCopyBytes");
@@ -45,6 +50,20 @@ public sealed class GPUPhysicsChainDispatcherTests
         FieldInfo field = typeof(GPUPhysicsChainDispatcher).GetField(fieldName, StaticFlags)
             ?? throw new InvalidOperationException($"Field '{fieldName}' was not found.");
         field.SetValue(null, value);
+    }
+
+    private static void SetInstanceField<T>(object instance, string fieldName, T value)
+    {
+        FieldInfo field = instance.GetType().GetField(fieldName, InstanceFlags)
+            ?? throw new InvalidOperationException($"Field '{fieldName}' was not found.");
+        field.SetValue(instance, value);
+    }
+
+    private static T GetInstanceField<T>(object instance, string fieldName)
+    {
+        FieldInfo field = instance.GetType().GetField(fieldName, InstanceFlags)
+            ?? throw new InvalidOperationException($"Field '{fieldName}' was not found.");
+        return (T)field.GetValue(instance)!;
     }
 
     private static (SceneNode rootNode, Transform rootBone, Transform[] childBones) CreateBoneHierarchy(int boneCount = 5, float boneLength = 0.1f)
@@ -167,16 +186,106 @@ public sealed class GPUPhysicsChainDispatcherTests
     }
 
     [Test]
-    public void IsRegistered_ReturnsTrueForActivatedGpuComponent()
+    public void DetachedGpuComponent_DoesNotRegisterUntilHierarchyActivation()
     {
         var dispatcher = GPUPhysicsChainDispatcher.Instance;
+        int initialCount = dispatcher.RegisteredComponentCount;
 
         var (node, rootBone, _) = CreateBoneHierarchy(3);
         var component = CreateTestComponent(node, rootBone, useBatched: false);
 
-        dispatcher.IsRegistered(component).ShouldBeTrue();
+        dispatcher.IsRegistered(component).ShouldBeFalse();
+        dispatcher.RegisteredComponentCount.ShouldBe(initialCount);
+    }
+
+    [Test]
+    public void Register_ReplacesStaleSnapshotIdentity()
+    {
+        var dispatcher = GPUPhysicsChainDispatcher.Instance;
+        int initialCount = dispatcher.RegisteredComponentCount;
+        var (originalNode, originalRoot, _) = CreateBoneHierarchy(3);
+        var (replacementNode, replacementRoot, _) = CreateBoneHierarchy(3);
+        var original = CreateTestComponent(originalNode, originalRoot, useBatched: false);
+        var replacement = CreateTestComponent(replacementNode, replacementRoot, useBatched: false);
+        ObjectIdProperty.SetValue(replacement, original.ID);
+
+        dispatcher.Register(original);
+        dispatcher.Register(replacement);
+
+        Assert.Multiple(() =>
+        {
+            dispatcher.RegisteredComponentCount.ShouldBe(initialCount + 1);
+            dispatcher.IsRegistered(original).ShouldBeFalse();
+            dispatcher.IsRegistered(replacement).ShouldBeTrue();
+        });
+
+        dispatcher.Unregister(replacement);
+    }
+
+    [Test]
+    public void SnapshotIdentityReplacement_AdoptsResidentArenaSliceAndInvalidatesUploads()
+    {
+        var (originalNode, originalRoot, _) = CreateBoneHierarchy(3);
+        var (replacementNode, replacementRoot, _) = CreateBoneHierarchy(3);
+        var original = CreateTestComponent(originalNode, originalRoot, useBatched: false);
+        var replacement = CreateTestComponent(replacementNode, replacementRoot, useBatched: false);
+        var originalRequest = new GPUPhysicsChainRequest(original)
+        {
+            ParticleOffset = 32,
+            ParticleArenaCapacity = 64,
+            ColliderOffset = 8,
+            ColliderArenaCapacity = 16,
+            ArenaAllocationGeneration = 7,
+            UploadedArenaAllocationGeneration = 7,
+            UploadedParticleStateVersion = 11,
+            UploadedStaticDataVersion = 12,
+            UploadedTransformDataVersion = 13,
+            UploadedColliderDataVersion = 14,
+        };
+        var replacementRequest = new GPUPhysicsChainRequest(replacement);
+
+        replacementRequest.AdoptArenaAllocationFrom(originalRequest);
+
+        Assert.Multiple(() =>
+        {
+            replacementRequest.ParticleOffset.ShouldBe(32);
+            replacementRequest.ParticleArenaCapacity.ShouldBe(64);
+            replacementRequest.ColliderOffset.ShouldBe(8);
+            replacementRequest.ColliderArenaCapacity.ShouldBe(16);
+            replacementRequest.ArenaAllocationGeneration.ShouldBe(7);
+            replacementRequest.UploadedArenaAllocationGeneration.ShouldBe(int.MinValue);
+            replacementRequest.UploadedParticleStateVersion.ShouldBe(int.MinValue);
+            replacementRequest.UploadedStaticDataVersion.ShouldBe(int.MinValue);
+            replacementRequest.UploadedTransformDataVersion.ShouldBe(int.MinValue);
+            replacementRequest.UploadedColliderDataVersion.ShouldBe(int.MinValue);
+            replacementRequest.PendingArenaAllocationChange.ShouldBeTrue();
+        });
+    }
+
+    [Test]
+    public void UnregisterLastRequest_RewindsResidentArenaSuballocator()
+    {
+        var dispatcher = new GPUPhysicsChainDispatcher();
+        var (node, rootBone, _) = CreateBoneHierarchy(3);
+        var component = CreateTestComponent(node, rootBone, useBatched: false);
+        dispatcher.Register(component);
+        SetInstanceField(dispatcher, "_particleArenaHighWater", 128);
+        SetInstanceField(dispatcher, "_particleArenaUploadedHighWater", 128);
+        SetInstanceField(dispatcher, "_colliderArenaHighWater", 32);
+        SetInstanceField(dispatcher, "_colliderArenaUploadedHighWater", 32);
 
         dispatcher.Unregister(component);
+        dispatcher.ApplyPendingArenaLayoutReset();
+
+        Assert.Multiple(() =>
+        {
+            GetInstanceField<int>(dispatcher, "_particleArenaHighWater").ShouldBe(0);
+            GetInstanceField<int>(dispatcher, "_particleArenaUploadedHighWater").ShouldBe(0);
+            GetInstanceField<int>(dispatcher, "_colliderArenaHighWater").ShouldBe(0);
+            GetInstanceField<int>(dispatcher, "_colliderArenaUploadedHighWater").ShouldBe(0);
+            GetInstanceField<int>(dispatcher, "_arenaLayoutResetRequested").ShouldBe(0);
+        });
+        dispatcher.Dispose();
     }
 
     [Test]
@@ -284,7 +393,7 @@ public sealed class GPUPhysicsChainDispatcherTests
     }
 
     [Test]
-    public void BackendCapability_UnsupportedExplicitGpuBackendIsVisibleWithoutCpuFallback()
+    public void BackendCapability_MissingCoreContractIsVisibleWithoutCpuFallback()
     {
         GPUPhysicsChainBackendStatus status = EvaluateBackendCapabilityMethod(
             "VulkanRenderer",
@@ -295,7 +404,7 @@ public sealed class GPUPhysicsChainDispatcherTests
         status.BackendName.ShouldBe("VulkanRenderer");
         status.CanDispatchGpu.ShouldBeFalse();
         status.CpuFallbackUsed.ShouldBeFalse();
-        status.Diagnostic.ShouldContain("not implemented");
+        status.Diagnostic.ShouldContain("required core GPU physics-chain capabilities");
         status.Diagnostic.ShouldContain("VulkanRenderer");
     }
 

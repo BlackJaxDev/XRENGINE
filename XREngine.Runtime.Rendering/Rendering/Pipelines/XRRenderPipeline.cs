@@ -216,7 +216,21 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     protected void InitializeCommandChain()
     {
         using (ViewportRenderCommandContainer.SuppressStructureChangeNotifications())
+        {
+            ViewportRenderCommandContainer previous = CommandChain;
             CommandChain = GenerateCommandChain();
+
+            // Snapshot/cooked-data restoration suppresses XRBase property notifications.
+            // A pipeline can still be constructed from an activation callback inside that
+            // scope, so complete the ownership and derived metadata initialization that the
+            // CommandChain setter normally performs.
+            if (!ReferenceEquals(CommandChain.ParentPipeline, this))
+            {
+                previous.ParentPipeline = null;
+                CommandChain.ParentPipeline = this;
+                OnCommandChainChanged();
+            }
+        }
     }
 
     /// <summary>
@@ -225,7 +239,15 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     protected void RebuildCommandChain()
     {
         using (ViewportRenderCommandContainer.SuppressStructureChangeNotifications())
+        {
+            ViewportRenderCommandContainer previous = CommandChain;
             CommandChain = GenerateCommandChain();
+            if (!ReferenceEquals(CommandChain.ParentPipeline, this))
+            {
+                previous.ParentPipeline = null;
+                CommandChain.ParentPipeline = this;
+            }
+        }
 
         NotifyCommandChainStructureChanged();
     }

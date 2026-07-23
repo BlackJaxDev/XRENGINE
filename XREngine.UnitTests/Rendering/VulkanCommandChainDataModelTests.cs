@@ -1390,7 +1390,7 @@ public sealed class VulkanCommandChainDataModelTests
     }
 
     [Test]
-    public void TryRefreshReusableCommandChainFrameData_AllowsCompatibleDescriptorContentPublication()
+    public void TryRefreshReusableCommandChainFrameData_RejectsDescriptorPublication()
     {
         RenderPacket baseline = CreatePacket(
             structuralSignature: 0x100,
@@ -1413,11 +1413,11 @@ public sealed class VulkanCommandChainDataModelTests
             volatility: RenderPacketVolatility.FrameDataOnly);
 
         VulkanRenderer.EvaluateCommandChainDirtyReason(chain, packet)
-            .ShouldBe(CommandChainDirtyReason.DescriptorGeneration);
+            .ShouldBe(CommandChainDirtyReason.ResourcePlan | CommandChainDirtyReason.DescriptorGeneration);
         VulkanRenderer.TryRefreshReusableCommandChainFrameData(chain, packet)
-            .ShouldBeTrue();
-        chain.FrameDataSignature.ShouldBe(packet.FrameDataSignature);
-        chain.DescriptorGeneration.ShouldBe(packet.DescriptorSnapshot.DescriptorGeneration);
+            .ShouldBeFalse();
+        chain.FrameDataSignature.ShouldBe(baseline.FrameDataSignature);
+        chain.DescriptorGeneration.ShouldBe(baseline.DescriptorSnapshot.DescriptorGeneration);
         chain.FrameDataRefreshTouchedDescriptors.ShouldBeFalse();
     }
 
@@ -1464,9 +1464,9 @@ public sealed class VulkanCommandChainDataModelTests
             baseline.ResourcePlanSnapshot.PhysicalImageSignature,
             baseline.ResourcePlanSnapshot.FramebufferSignature);
         VulkanRenderer.EvaluateCommandChainDirtyReason(texturePublicationChain, texturePublication)
-            .ShouldBe(CommandChainDirtyReason.DescriptorGeneration);
+            .ShouldBe(CommandChainDirtyReason.ResourcePlan | CommandChainDirtyReason.DescriptorGeneration);
         VulkanRenderer.TryRefreshReusableCommandChainFrameData(texturePublicationChain, texturePublication)
-            .ShouldBeTrue();
+            .ShouldBeFalse();
 
         CommandChain resizeChain = CreateRecordedChain(baseline);
         RenderPacket resize = CreatePacket(
@@ -1500,7 +1500,7 @@ public sealed class VulkanCommandChainDataModelTests
     }
 
     [Test]
-    public void P04SwapchainRotation_DelaysPublicationAndRetirementPerOccupiedSlot()
+    public void P04SwapchainRotation_RequiresRerecordBeforeEachSlotPublication()
     {
         RenderPacket baseline = CreatePacket(
             structuralSignature: 0x100,
@@ -1527,8 +1527,8 @@ public sealed class VulkanCommandChainDataModelTests
             CreateRecordedChain(baseline, frameSlot: 2),
         ];
 
-        VulkanRenderer.TryRefreshReusableCommandChainFrameData(slots[0], publication).ShouldBeTrue();
-        slots[0].DescriptorGeneration.ShouldBe(publication.DescriptorSnapshot.DescriptorGeneration);
+        VulkanRenderer.TryRefreshReusableCommandChainFrameData(slots[0], publication).ShouldBeFalse();
+        slots[0].DescriptorGeneration.ShouldBe(baseline.DescriptorSnapshot.DescriptorGeneration);
         slots[1].DescriptorGeneration.ShouldBe(baseline.DescriptorSnapshot.DescriptorGeneration);
         slots[2].DescriptorGeneration.ShouldBe(baseline.DescriptorSnapshot.DescriptorGeneration);
 
@@ -1548,9 +1548,9 @@ public sealed class VulkanCommandChainDataModelTests
         retiredImage.Pins.IsRetirementReady(12, 0, 0).ShouldBeFalse();
         retiredImage.Pins.IsRetirementReady(13, 0, 0).ShouldBeTrue();
 
-        VulkanRenderer.TryRefreshReusableCommandChainFrameData(slots[1], publication).ShouldBeTrue();
-        VulkanRenderer.TryRefreshReusableCommandChainFrameData(slots[2], publication).ShouldBeTrue();
-        slots.ShouldAllBe(chain => chain.DescriptorGeneration == publication.DescriptorSnapshot.DescriptorGeneration);
+        VulkanRenderer.TryRefreshReusableCommandChainFrameData(slots[1], publication).ShouldBeFalse();
+        VulkanRenderer.TryRefreshReusableCommandChainFrameData(slots[2], publication).ShouldBeFalse();
+        slots.ShouldAllBe(chain => chain.DescriptorGeneration == baseline.DescriptorSnapshot.DescriptorGeneration);
         slots.Select(static chain => chain.Key.FrameSlot).ShouldBe([0, 1, 2]);
     }
 

@@ -520,6 +520,14 @@ namespace XREngine.Rendering.Vulkan
                         ObjectType.ImageView,
                         attachment.ResolveImageView.Handle,
                         "DynamicRendering.ColorResolveAttachment");
+                    EnsureVulkanImageViewAvailableForCommandRecording(
+                        commandBuffer,
+                        attachment.ImageView,
+                        "DynamicRendering.ColorAttachment");
+                    EnsureVulkanImageViewAvailableForCommandRecording(
+                        commandBuffer,
+                        attachment.ResolveImageView,
+                        "DynamicRendering.ColorResolveAttachment");
                 }
 
                 // Track resources for the depth attachment if it exists.
@@ -535,6 +543,14 @@ namespace XREngine.Rendering.Vulkan
                         ObjectType.ImageView,
                         renderingInfo->PDepthAttachment->ResolveImageView.Handle,
                         "DynamicRendering.DepthResolveAttachment");
+                    EnsureVulkanImageViewAvailableForCommandRecording(
+                        commandBuffer,
+                        renderingInfo->PDepthAttachment->ImageView,
+                        "DynamicRendering.DepthAttachment");
+                    EnsureVulkanImageViewAvailableForCommandRecording(
+                        commandBuffer,
+                        renderingInfo->PDepthAttachment->ResolveImageView,
+                        "DynamicRendering.DepthResolveAttachment");
                 }
 
                 // Track resources for the stencil attachment if it exists.
@@ -549,6 +565,14 @@ namespace XREngine.Rendering.Vulkan
                         commandBuffer,
                         ObjectType.ImageView,
                         renderingInfo->PStencilAttachment->ResolveImageView.Handle,
+                        "DynamicRendering.StencilResolveAttachment");
+                    EnsureVulkanImageViewAvailableForCommandRecording(
+                        commandBuffer,
+                        renderingInfo->PStencilAttachment->ImageView,
+                        "DynamicRendering.StencilAttachment");
+                    EnsureVulkanImageViewAvailableForCommandRecording(
+                        commandBuffer,
+                        renderingInfo->PStencilAttachment->ResolveImageView,
                         "DynamicRendering.StencilResolveAttachment");
                 }
             }
@@ -634,6 +658,28 @@ namespace XREngine.Rendering.Vulkan
                 throw new InvalidOperationException("VK_KHR_synchronization2 command extension is not loaded.");
 
             _khrSynchronization2.CmdPipelineBarrier2(commandBuffer, dependencyInfo);
+        }
+
+        /// <summary>
+        /// Writes a synchronization2 timestamp through the core 1.3 command or
+        /// its KHR extension alias, matching the path selected at device setup.
+        /// </summary>
+        private void CmdWriteTimestamp2Compat(
+            CommandBuffer commandBuffer,
+            PipelineStageFlags2 stage,
+            QueryPool queryPool,
+            uint query)
+        {
+            if (UseCoreSynchronization2Commands)
+            {
+                Api!.CmdWriteTimestamp2(commandBuffer, stage, queryPool, query);
+                return;
+            }
+
+            if (_khrSynchronization2 is null)
+                throw new InvalidOperationException("VK_KHR_synchronization2 command extension is not loaded.");
+
+            _khrSynchronization2.CmdWriteTimestamp2(commandBuffer, stage, queryPool, query);
         }
 
         /// <summary>
@@ -794,6 +840,7 @@ namespace XREngine.Rendering.Vulkan
             "VK_EXT_graphics_pipeline_library",
             "VK_EXT_pipeline_creation_cache_control",
             ExtTransformFeedback.ExtensionName,
+            "VK_EXT_primitives_generated_query",
             "VK_KHR_fragment_shading_rate",
             "VK_EXT_fragment_density_map",
             "VK_EXT_mesh_shader",

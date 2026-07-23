@@ -35,6 +35,14 @@ public class PhysicsChainComputeIntegrationTests : GpuTestBase
     public void SkipUpdateParticles_ComputeShader_CompilesSuccessfully()
         => CompileShaderSuccessfully(Path.Combine("PhysicsChain", "SkipUpdateParticles.comp"));
 
+    [TestCase("PhysicsChainBonePalette.comp")]
+    [TestCase("PhysicsChainBounds.comp")]
+    [TestCase("PhysicsChainBoundsToScene.comp")]
+    [TestCase("PhysicsChainBranched.comp")]
+    [TestCase("PhysicsChainDebugDraw.comp")]
+    public void PhysicsChainAuxiliary_ComputeShaders_CompileSuccessfully(string fileName)
+        => CompileShaderSuccessfully(Path.Combine("PhysicsChain", fileName));
+
     [Test]
     public void PhysicsChain_HasCurrentDispatchUniforms()
     {

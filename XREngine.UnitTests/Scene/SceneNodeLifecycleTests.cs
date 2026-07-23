@@ -17,11 +17,30 @@ using XREngine.Scene.Transforms;
 namespace XREngine.UnitTests.Scene;
 
 [TestFixture]
+[NonParallelizable]
 public class SceneNodeLifecycleTests
 {
     private static readonly PropertyInfo s_worldProperty = typeof(RuntimeWorldObjectBase).GetProperty(
         nameof(RuntimeWorldObjectBase.World),
         BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!;
+    private IRuntimeRenderingHostServices? _previousRenderingServices;
+    private IRuntimeShaderServices? _previousShaderServices;
+
+    [SetUp]
+    public void SetUp()
+    {
+        _previousRenderingServices = RuntimeRenderingHostServices.Current;
+        _previousShaderServices = RuntimeShaderServices.Current;
+        RuntimeRenderingHostServices.Current = new EngineRuntimeRenderingHostServices();
+        RuntimeShaderServices.Current = new XREngine.UnitTests.Rendering.GltfImportTestUtilities.TestRuntimeShaderServices();
+    }
+
+    [TearDown]
+    public void TearDown()
+    {
+        RuntimeRenderingHostServices.Current = _previousRenderingServices!;
+        RuntimeShaderServices.Current = _previousShaderServices;
+    }
 
     [Test]
     public void AddComponent_AfterBeginPlay_InvokesComponentBeginPlay()
@@ -350,6 +369,26 @@ public class SceneNodeLifecycleTests
     }
 
     [Test]
+    public void ClearingPlayWorld_DeactivatesComponentBeforeWorldChanges()
+    {
+        SceneNode node = new("LifecycleRoot");
+        LifecycleTrackingComponent component = node.AddComponent<LifecycleTrackingComponent>()!;
+        StubRuntimeWorldContext world = new(isPlaySessionActive: true);
+
+        SetWorld(node, world);
+        node.OnActivated();
+        SetWorld(node, null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(component.ActivationCount, Is.EqualTo(1));
+            Assert.That(component.DeactivationCount, Is.EqualTo(1));
+            Assert.That(component.WorldDuringLastDeactivation, Is.SameAs(world));
+            Assert.That(component.World, Is.Null);
+        });
+    }
+
+    [Test]
     public void DeactivatingTrackedParent_PreservesChildrenAndRecordsSingleUndo()
     {
         Undo.ClearHistory();
@@ -523,6 +562,114 @@ public class SceneNodeLifecycleTests
     }
 
     [Test]
+    public void ActiveDirectionalLight_RecreatesMissingRuntimeShadowCamera()
+    {
+        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        SceneNode root = new("Root");
+        SceneNode lightNode = new(root, "DirectionalLight");
+        DirectionalLightComponent light = lightNode.AddComponent<DirectionalLightComponent>()!;
+
+        world.RootNodes.Add(root);
+
+        FieldInfo viewportField = typeof(XREngine.Components.Capture.Lights.Types.OneViewLightComponent)
+            .GetField("_primaryShadowViewport", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        XRViewport viewport = (XRViewport)viewportField.GetValue(light)!;
+        viewport.Camera = null;
+
+        Assert.That(light.IsActiveInHierarchy, Is.True);
+        Assert.That(light.ShadowCamera, Is.Not.Null);
+        Assert.That(viewport.ActiveCamera, Is.SameAs(light.ShadowCamera));
+    }
+
+    [Test]
+    public void DirectionalShadowCollection_RecreatesMissingRuntimeShadowCameraBeforeSubmission()
+    {
+        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        SceneNode root = new("Root");
+        SceneNode lightNode = new(root, "DirectionalLight");
+        DirectionalLightComponent light = lightNode.AddComponent<DirectionalLightComponent>()!;
+        light.EnableCascadedShadows = false;
+
+        world.RootNodes.Add(root);
+
+        FieldInfo viewportField = typeof(XREngine.Components.Capture.Lights.Types.OneViewLightComponent)
+            .GetField("_primaryShadowViewport", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        XRViewport viewport = (XRViewport)viewportField.GetValue(light)!;
+        viewport.Camera = null;
+
+        light.CollectVisibleItems();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(viewport.ActiveCamera, Is.Not.Null);
+            Assert.That(viewport.ActiveCamera, Is.SameAs(light.ShadowCamera));
+        });
+    }
+
+    [Test]
+    public void ReactivatingDirectionalLight_ReplacesDisposedRuntimeShadowViewport()
+    {
+        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        SceneNode root = new("Root");
+        SceneNode lightNode = new(root, "DirectionalLight");
+        DirectionalLightComponent light = lightNode.AddComponent<DirectionalLightComponent>()!;
+
+        world.RootNodes.Add(root);
+
+        FieldInfo viewportField = typeof(XREngine.Components.Capture.Lights.Types.OneViewLightComponent)
+            .GetField("_primaryShadowViewport", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        XRViewport initialViewport = (XRViewport)viewportField.GetValue(light)!;
+        Assert.That(initialViewport.ActiveCamera, Is.Not.Null);
+
+        light.IsActive = false;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(viewportField.GetValue(light), Is.Null);
+            Assert.That(initialViewport.ActiveCamera, Is.Null);
+        });
+
+        light.IsActive = true;
+
+        XRViewport replacementViewport = (XRViewport)viewportField.GetValue(light)!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(replacementViewport, Is.Not.SameAs(initialViewport));
+            Assert.That(replacementViewport.ActiveCamera, Is.Not.Null);
+            Assert.That(light.ShadowCamera, Is.SameAs(replacementViewport.ActiveCamera));
+        });
+    }
+
+    [Test]
+    public void DeactivatingDirectionalLight_WithdrawsCascadeViewportsBeforeDisposal()
+    {
+        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        SceneNode root = new("Root");
+        SceneNode lightNode = new(root, "DirectionalLight");
+        DirectionalLightComponent light = lightNode.AddComponent<DirectionalLightComponent>()!;
+
+        world.RootNodes.Add(root);
+
+        FieldInfo stateField = typeof(DirectionalLightComponent)
+            .GetField("_desktopCascadeState", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        object state = stateField.GetValue(light)!;
+        FieldInfo viewportsField = state.GetType()
+            .GetField("Viewports", BindingFlags.Instance | BindingFlags.Public)!;
+        XRViewport[] initialViewports = (XRViewport[])viewportsField.GetValue(state)!;
+
+        Assert.That(initialViewports, Is.Not.Empty);
+        Assert.That(initialViewports, Has.All.Matches<XRViewport>(viewport => viewport.ActiveCamera is not null));
+
+        light.IsActive = false;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((XRViewport[])viewportsField.GetValue(state)!, Is.Empty);
+            Assert.That(initialViewports, Has.All.Matches<XRViewport>(viewport => viewport.ActiveCamera is null));
+        });
+    }
+
+    [Test]
     public void DestroyingEditorSceneRoot_RemovesItFromEditorAndRuntimeRootCollections()
     {
         XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
@@ -644,6 +791,8 @@ public class SceneNodeLifecycleTests
 
         public int EndPlayCount { get; private set; }
 
+        public IRuntimeWorldContext? WorldDuringLastDeactivation { get; private set; }
+
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
@@ -652,6 +801,7 @@ public class SceneNodeLifecycleTests
 
         protected override void OnComponentDeactivated()
         {
+            WorldDuringLastDeactivation = World;
             base.OnComponentDeactivated();
             DeactivationCount++;
         }

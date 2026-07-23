@@ -172,7 +172,22 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     public RenderPipeline? Pipeline
     {
         get => _pipeline ?? SetFieldReturn(ref _pipeline, CreateDefaultRenderPipeline());
-        set => SetField(ref _pipeline, value);
+        set
+        {
+            bool notificationsSuppressed = XRBase.ArePropertyNotificationsSuppressed;
+            RenderPipeline? previous = _pipeline;
+            if (!SetField(ref _pipeline, value))
+                return;
+
+            // Runtime-only pipeline instances are commonly created while cooked-data
+            // snapshot restoration suppresses XRBase notifications. Their pass
+            // collections and ownership still have to be initialized immediately.
+            if (notificationsSuppressed)
+            {
+                previous?.Instances.Remove(this);
+                ApplyPipelineChanged(value);
+            }
+        }
     }
 
     IRuntimeRenderPipelineHost? IRuntimeRenderPipelineFrameContext.PipelineHost => Pipeline;
@@ -402,7 +417,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             switch (propName)
             {
                 case nameof(Pipeline):
-                    _pipeline?.Instances.Remove(this);
+                    if (field is RenderPipeline pipeline)
+                        pipeline.Instances.Remove(this);
                     break;
             }
         }
@@ -423,17 +439,26 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         switch (propName)
         {
             case nameof(Pipeline):
-                if (_pipeline is not null)
-                {
-                    MeshRenderCommands.SetRenderPasses(_pipeline.PassIndicesAndSorters, _pipeline.PassMetadata);
-                    InvalidMaterial = _pipeline.InvalidMaterial;
-                    _pipeline.Instances.Add(this);
-                }
-                else
-                    InvalidMaterial = null;
-                DestroyCacheIfResourcesExist();
+                ApplyPipelineChanged(field is RenderPipeline pipeline ? pipeline : null);
                 break;
         }
+    }
+
+    private void ApplyPipelineChanged(RenderPipeline? pipeline)
+    {
+        if (pipeline is not null)
+        {
+            MeshRenderCommands.SetRenderPasses(pipeline.PassIndicesAndSorters, pipeline.PassMetadata);
+            InvalidMaterial = pipeline.InvalidMaterial;
+            if (!pipeline.Instances.Contains(this))
+                pipeline.Instances.Add(this);
+        }
+        else
+        {
+            InvalidMaterial = null;
+        }
+
+        DestroyCacheIfResourcesExist();
     }
     
     /// <summary>

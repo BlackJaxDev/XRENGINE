@@ -335,15 +335,19 @@ public sealed class VulkanStablePacketAndDescriptorTests
     }
 
     [Test]
-    public void CompatiblePublication_RefreshesDescriptorsWithoutDirtyingEveryPrimary()
+    public void CompatiblePublication_StillInvalidatesCommandBuffersThatRecordedAnUpdatedSet()
     {
         string lowering = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string descriptors = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorSets.cs");
         string pipeline = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs");
 
         lowering.ShouldContain("RenderResourceChangeKind.CompatibleContentPublication");
-        lowering.ShouldContain("dirtyReason & ~CommandChainDirtyReason.DescriptorGeneration");
+        descriptors.ShouldContain("TryCaptureDescriptorUpdateInvalidations_NoLock(");
+        descriptors.ShouldContain("InvalidateCachedCommandBuffersByHandle(");
+        descriptors.ShouldContain("setState.UsesUpdateAfterBind");
         pipeline.ShouldContain("ClassifyTextureBindingChange");
         pipeline.ShouldContain("RenderResourceChangeKind.StructuralLayout");
     }

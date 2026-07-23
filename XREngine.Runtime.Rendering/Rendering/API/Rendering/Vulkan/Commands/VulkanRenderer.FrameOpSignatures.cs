@@ -140,6 +140,15 @@ namespace XREngine.Rendering.Vulkan
                     case ComputeDispatchOp compute:
                         AddComputeDispatchSignatureParts(parts, i, opType, compute);
                         break;
+                    case ComputeDispatchIndirectOp computeIndirect:
+                        AddComputeDispatchIndirectSignatureParts(parts, i, opType, computeIndirect);
+                        break;
+                    case BufferCopyOp copy:
+                        AddBufferCopySignaturePart(parts, i, opType, copy);
+                        break;
+                    case SubmissionMarkerOp marker:
+                        AddSubmissionMarkerSignaturePart(parts, i, opType, marker);
+                        break;
                     case TextureUploadFrameOp upload:
                         AddTextureUploadSignaturePart(parts, i, opType, upload);
                         break;
@@ -298,15 +307,25 @@ namespace XREngine.Rendering.Vulkan
         {
             HashCode hash = new();
             hash.Add(query.Query.GetHashCode());
-            hash.Add((int)query.QueryTarget);
+            hash.Add(query.Descriptor.GetHashCode());
+            hash.Add(query.Query.Ticket.PoolIdentity);
+            hash.Add(query.Query.Ticket.FirstQuery);
+            hash.Add(query.Query.Ticket.QueryCount);
             hash.Add((int)query.Operation);
+            hash.Add((ulong)query.TimestampStage);
+            hash.Add(query.PointIndex);
+            hash.Add(query.SourceHandles.Length);
+            hash.Add(query.ResultDestination.Handle);
+            hash.Add(query.ResultDestinationOffset);
+            hash.Add(query.ResultStride);
+            hash.Add(query.IncludeAvailability);
             AddSignaturePart(
                 parts,
                 opIndex,
                 opType,
                 "query",
                 hash,
-                $"op={query.Operation} target={query.QueryTarget} query=0x{query.Query.GetHashCode():X8}");
+                $"op={query.Operation} descriptor={query.Descriptor} query=0x{query.Query.GetHashCode():X8}");
         }
 
         private static void AddBlitSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, BlitOp blit)
@@ -441,6 +460,35 @@ namespace XREngine.Rendering.Vulkan
             hash.Add(compute.GroupsZ);
             AddSignaturePart(parts, opIndex, opType, "compute", hash, $"program='{compute.Program.Data.Name ?? "<unnamed program>"}' groups={compute.GroupsX},{compute.GroupsY},{compute.GroupsZ}");
             AddProgramBindingSignatureParts(parts, opIndex, opType, "computeProgram", compute.Snapshot, compute.Context.PipelineInstance);
+        }
+
+        private static void AddComputeDispatchIndirectSignatureParts(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, ComputeDispatchIndirectOp compute)
+        {
+            HashCode hash = new();
+            hash.Add(compute.Program.GetHashCode());
+            hash.Add(compute.ArgumentBuffer.Handle);
+            hash.Add(compute.ArgumentOffset);
+            AddSignaturePart(parts, opIndex, opType, "computeIndirect", hash, $"program='{compute.Program.Data.Name ?? "<unnamed program>"}' args=0x{compute.ArgumentBuffer.Handle:X}+{compute.ArgumentOffset}");
+            AddProgramBindingSignatureParts(parts, opIndex, opType, "computeIndirectProgram", compute.Snapshot, compute.Context.PipelineInstance);
+        }
+
+        private static void AddBufferCopySignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, BufferCopyOp copy)
+        {
+            HashCode hash = new();
+            hash.Add(copy.SourceBuffer.Handle);
+            hash.Add(copy.SourceOffset);
+            hash.Add(copy.DestinationBuffer.Handle);
+            hash.Add(copy.DestinationOffset);
+            hash.Add(copy.ByteCount);
+            AddSignaturePart(parts, opIndex, opType, "bufferCopy", hash, $"bytes={copy.ByteCount} src=0x{copy.SourceBuffer.Handle:X}+{copy.SourceOffset} dst=0x{copy.DestinationBuffer.Handle:X}+{copy.DestinationOffset}");
+        }
+
+        private static void AddSubmissionMarkerSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, SubmissionMarkerOp marker)
+        {
+            HashCode hash = new();
+            hash.Add(marker.Fence.GetHashCode());
+            hash.Add(marker.Label, StringComparer.Ordinal);
+            AddSignaturePart(parts, opIndex, opType, "submissionMarker", hash, $"label='{marker.Label}'");
         }
 
         private static void AddTextureUploadSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, TextureUploadFrameOp upload)

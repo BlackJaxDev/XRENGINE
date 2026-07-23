@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using XREngine.Data.Geometry;
-using XREngine.Data.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 
@@ -34,6 +33,7 @@ namespace XREngine.Rendering.Occlusion
             public ulong LastResultFrame;
             public ulong PendingSinceFrame;
             public bool QueryPending;
+            public RenderQueryTicket PendingTicket;
             public bool DiscardPendingResult;
             public bool PendingQueryWasVisibleDraw;
             public ECpuOcclusionQueryReason PendingReason;
@@ -1280,7 +1280,7 @@ namespace XREngine.Rendering.Occlusion
             ulong frameId = state.FrameEpoch;
             var created = new QueryState
             {
-                Query = _queryManager.Acquire(EQueryTarget.AnySamplesPassedConservative),
+                Query = _queryManager.AcquireBooleanOcclusion(),
                 StateKind = ECpuOcclusionQueryStateKind.Unknown,
                 LastTouchedFrame = frameId,
                 LastVisibleFrame = frameId,
@@ -1297,7 +1297,7 @@ namespace XREngine.Rendering.Occlusion
             if (state.HierarchyGroups.TryGetValue(groupKey, out HierarchyGroupState? group))
             {
                 if (group.Query.Query is null)
-                    group.Query.Query = _queryManager.Acquire(EQueryTarget.AnySamplesPassedConservative);
+                    group.Query.Query = _queryManager.AcquireBooleanOcclusion();
                 return group;
             }
 
@@ -1306,7 +1306,7 @@ namespace XREngine.Rendering.Occlusion
             {
                 Query = new QueryState
                 {
-                    Query = _queryManager.Acquire(EQueryTarget.AnySamplesPassedConservative),
+                    Query = _queryManager.AcquireBooleanOcclusion(),
                     LastTouchedFrame = frameId,
                     LastVisibleFrame = frameId,
                     LastAnySamplesPassed = true,
@@ -1370,12 +1370,11 @@ namespace XREngine.Rendering.Occlusion
                 if (glQuery is null)
                     return false;
 
-                glQuery.BeginQuery(EQueryTarget.AnySamplesPassedConservative);
-                return true;
+                return glQuery.BeginQuery() == ERenderQueryReadStatus.Ready;
             }
 
             if (AbstractRenderer.Current is VulkanRenderer vk)
-                return vk.EnqueueOcclusionQueryBegin(query, EQueryTarget.AnySamplesPassedConservative);
+                return vk.EnqueueOcclusionQueryBegin(query);
 
             return false;
         }
@@ -1388,8 +1387,7 @@ namespace XREngine.Rendering.Occlusion
                 if (glQuery is null)
                     return false;
 
-                glQuery.EndQuery();
-                return true;
+                return glQuery.EndQuery() == ERenderQueryReadStatus.Ready;
             }
 
             if (AbstractRenderer.Current is VulkanRenderer vk)
@@ -1474,11 +1472,15 @@ namespace XREngine.Rendering.Occlusion
             if (ShouldDelayPendingQueryPoll(queryState, frameId))
                 return;
 
-            if (!_queryManager.TryGetAnySamplesPassed(queryState.Query, out anySamplesPassed))
+            if (!queryState.PendingTicket.IsValid)
+                _queryManager.TryGetTicket(queryState.Query, out queryState.PendingTicket);
+
+            if (!_queryManager.TryGetAnySamplesPassed(queryState.Query, out anySamplesPassed, queryState.PendingTicket))
                 return;
 
             resolved = true;
             queryState.QueryPending = false;
+            queryState.PendingTicket = default;
             queryState.PendingQueryWasVisibleDraw = false;
             ulong latency = frameId >= queryState.PendingSinceFrame ? frameId - queryState.PendingSinceFrame : 0UL;
             OcclusionTelemetry.RecordCpuQueryResolved(queryState.PendingReason, latency);
@@ -1607,8 +1609,9 @@ namespace XREngine.Rendering.Occlusion
         private void ReplaceOverduePendingQuery(PassState state, QueryState queryState)
         {
             XRRenderQuery expiredQuery = queryState.Query;
-            queryState.Query = _queryManager.Acquire(EQueryTarget.AnySamplesPassedConservative);
+            queryState.Query = _queryManager.AcquireBooleanOcclusion();
             queryState.QueryPending = false;
+            queryState.PendingTicket = default;
             queryState.DiscardPendingResult = false;
             queryState.PendingQueryWasVisibleDraw = false;
             queryState.PendingReason = ECpuOcclusionQueryReason.None;

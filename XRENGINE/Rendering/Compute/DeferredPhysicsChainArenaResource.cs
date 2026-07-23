@@ -7,5 +7,7 @@ namespace XREngine.Rendering.Compute;
 /// </summary>
 internal readonly record struct DeferredPhysicsChainArenaResource(
     XRDataBuffer Resource,
+    IPhysicsChainComputeBackend Backend,
     XRGpuFence? RetirementFence,
-    long ByteLength);
+    long ByteLength,
+    int FailedFenceRetryCount = 0);
