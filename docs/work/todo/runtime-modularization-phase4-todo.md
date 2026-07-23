@@ -6,6 +6,13 @@ Backend reload consumer: [rendering-backend-hot-reload-todo.md](rendering/render
 
 Created: 2026-07-14
 
+Phase 3 handoff accepted: 2026-07-22. Runtime.Core now owns the complete
+non-rendering PhysX scene/backend/controller/actor/joint/geometry implementation in
+`XREngine.Scene.Physics.Physx`. The facade retains only
+`InstancedDebugVisualizer.cs` from `Scene/Physics/Physx/`; that renderer-owned file,
+GPU physics/physics-chain presentation, render-world splitting, and renderer-bound
+components remain Phase 4 work.
+
 This file contains only unfinished design Phase 4 work. Rendering backends, pipelines, render objects, models, renderable scene components, windows, viewports, cameras, and the shared rendering kernel already compile from `Runtime.Rendering` and are not repeated here.
 
 ## Goal

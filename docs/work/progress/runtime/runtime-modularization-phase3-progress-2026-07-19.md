@@ -207,3 +207,44 @@ aggregator edges are removed.
    transfer remaining package/native/content ownership and remove the aggregator.
 5. Regenerate dependency/license and audit outputs, then run the complete R4 build,
    test, and startup-smoke matrix.
+
+## Closeout - 2026-07-22
+
+Phase 3 is complete. The earlier "Next Completion Gates" list mixed the
+Runtime.Core carve-out with design Phase 4 rendering work and design Phase 6 facade
+removal. The completed tracker now preserves those later gates as an explicit
+handoff instead of treating them as blockers for the lower runtime kernel.
+
+The final Phase 3 slice moved 30 PhysX source files from the facade into
+`XREngine.Runtime.Core/Scene/Physics/Physx/`. This includes the native scene,
+backend service, controllers, actors, shapes, materials, geometry adapter, cooker,
+and joints. Their ownership namespace is now `XREngine.Scene.Physics.Physx`.
+`InstancedDebugVisualizer.cs` is the only file left under the facade's
+`Scene/Physics/Physx/` path because it directly owns renderer buffers, materials,
+jobs, and editor visualization policy.
+
+The move removed direct dependencies on the legacy `Engine`, concrete
+`XRWorldInstance`, editor preferences, and renderer-buffer population from the
+simulation backend. PhysX now consumes `RuntimePhysicsServices`,
+`RuntimeThreadServices`, `IRuntimePhysicsWorldContext`, and
+`IRuntimePhysicsStepListener`. The engine composition adapter supplies accurate
+shutdown, thread, fixed-delta, and elapsed-tick state.
+
+Current source counts after the move are 452 C# files in Runtime.Core, 1,381 in
+Runtime.Rendering, 28 in Runtime.InputIntegration, 19 in Runtime.Bootstrap, and 610
+in the transitional facade. Runtime.Core still has exactly two project references:
+Data and Extensions. Bootstrap is the only direct project reference to the facade;
+that compatibility edge is intentionally a Phase 6 removal gate.
+
+Validation:
+
+- Runtime.Core build: passed, 0 warnings and 0 errors.
+- Transitional XRENGINE facade build: passed, 0 warnings and 0 errors.
+- Targeted physics and boundary matrix: 73/73 passed. The rerun TRX is at
+  `Build/_AgentValidation/20260719-vulkan-dlss/runtime-modularization-phase3-closeout/phase3-physics-rerun.trx`.
+- Full 25-project solution build: passed, 0 warnings and 0 errors.
+- Isolated Editor session `phase3-closeout-0722`: started, returned an MCP `ping`
+  with `ok: true`, and stopped cleanly through the named session manager. Startup
+  logs contain only unrelated optional-SDK/runtime warnings (missing Steam Audio,
+  disabled/unavailable NVIDIA features, and expected deferred Vulkan startup
+  frames); no Phase 3 physics or dependency failure was present.

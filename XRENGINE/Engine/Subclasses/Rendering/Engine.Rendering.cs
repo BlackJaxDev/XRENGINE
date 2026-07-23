@@ -1,11 +1,11 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.DLSS;
 using XREngine.Scene.Physics.Jitter2;
-using XREngine.Rendering.Physics.Physx;
+using XREngine.Scene.Physics.Physx;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Vulkan;
 using XREngine.Rendering.XeSS;

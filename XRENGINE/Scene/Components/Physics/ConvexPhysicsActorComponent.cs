@@ -1,4 +1,3 @@
-using XREngine.Scene.Physics.Physx;
 using MagicPhysX;
 using System;
 using System.Linq;
@@ -7,7 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Tools;
-using XREngine.Rendering.Physics.Physx;
+using XREngine.Scene.Physics.Physx;
 using XREngine.Scene;
 
 namespace XREngine.Components.Physics

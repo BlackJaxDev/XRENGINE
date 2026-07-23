@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using NUnit.Framework;
@@ -7,7 +7,7 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
 using XREngine.Rendering;
 using XREngine.Scene.Physics.Jitter2;
-using XREngine.Rendering.Physics.Physx;
+using XREngine.Scene.Physics.Physx;
 using XREngine.Rendering.Models;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;

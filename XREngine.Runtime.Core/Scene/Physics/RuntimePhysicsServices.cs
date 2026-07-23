@@ -10,6 +10,8 @@ public interface IRuntimePhysicsServices
 {
     float FixedDeltaSeconds { get; }
     bool IsPhysicsThread => true;
+    bool IsShuttingDown => false;
+    long ElapsedTicks => 0L;
     PhysicsVisualizeSettings VisualizeSettings { get; }
     bool JoltDebugRenderDiagnostics { get; }
 

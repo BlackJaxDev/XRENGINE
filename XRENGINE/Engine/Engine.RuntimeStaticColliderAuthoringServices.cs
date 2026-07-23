@@ -4,7 +4,6 @@ using MagicPhysX;
 using XREngine.Components.Physics;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Tools;
-using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene.Physics.Physx;
 
 namespace XREngine;
