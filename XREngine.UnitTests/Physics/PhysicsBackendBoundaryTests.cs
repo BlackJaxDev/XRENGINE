@@ -101,7 +101,7 @@ public sealed class PhysicsBackendBoundaryTests
         dynamicBody.ShouldNotContain("CreatePhysxDynamicRigidBody");
         dynamicBody.ShouldNotContain("CreateJoltDynamicRigidBody");
 
-        staticBody.ShouldContain("physicsScene.BackendService.CreateStaticRigidBody(");
+        staticBody.ShouldContain("scene.BackendService.CreateStaticRigidBody(");
         staticBody.ShouldNotContain("CreatePhysxStaticRigidBody");
         staticBody.ShouldNotContain("CreateJoltStaticRigidBody");
         staticBody.ShouldContain("World is IRuntimePhysicsWorldContext physicsWorld");
@@ -157,7 +157,7 @@ public sealed class PhysicsBackendBoundaryTests
         foreach (string file in contractFiles)
         {
             string source = ReadWorkspaceFile(file);
-            Assert.That(source, Does.Not.Contain("XREngine.Rendering.Physics.Physx"), file);
+            Assert.That(source, Does.Not.Contain("XREngine.Scene.Physics.Physx"), file);
             Assert.That(source, Does.Not.Contain("MagicPhysX"), file);
             Assert.That(source, Does.Not.Contain("JoltPhysicsSharp"), file);
         }

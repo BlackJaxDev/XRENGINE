@@ -1,139 +1,72 @@
-# Runtime Modularization Phase 3 - Remaining Work
+# Runtime Modularization Phase 3 - Complete
 
 Reference design: [runtime-modularization-plan.md](../design/runtime-modularization-plan.md)
+
 Rendering follow-on: [runtime-modularization-phase4-todo.md](runtime-modularization-phase4-todo.md)
 
-Updated: 2026-07-19
+Progress and validation record: [runtime-modularization-phase3-progress-2026-07-19.md](../progress/runtime/runtime-modularization-phase3-progress-2026-07-19.md)
 
-This file contains only unfinished Runtime.Core and non-rendering prerequisite work. Completed Phase 3 history remains available in Git. Remaining rendering work has moved to the Phase 4 todo and is intentionally not duplicated here.
+Completed: 2026-07-22
 
 ## Goal
 
-Finish the Runtime.Core carve-out and the non-rendering prerequisites needed for later adapter and aggregator removal without introducing project cycles or forbidden dependencies.
+Carve the host-independent runtime kernel and its lower physics, gameplay, transform,
+prefab-metadata, settings-contract, and host-service prerequisites out of the legacy
+`XRENGINE` dependency sink without creating a `Runtime.Core -> Runtime.Rendering`
+edge.
 
-## Current Remaining Inventory
+Phase 3 intentionally keeps `XRENGINE` as the compatibility/composition facade. The
+reference design assigns rendering ownership to Phase 4, subsystem adapters to Phase
+5, and final facade deletion or reduction to Phase 6. Earlier revisions of this
+tracker incorrectly repeated those later-phase gates as Phase 3 work.
 
-The following source still physically compiles from `XRENGINE` and drives this checklist:
+## Completion Checklist
 
-| Area | Current `.cs` files | Intended ownership |
-|---|---:|---|
-| `Scene/Physics/` | 31 | Runtime.Core |
-| `Scene/Components/Physics/` | 20 | Runtime.Core |
-| Other gameplay components | 24 | Runtime.Core, Runtime.InputIntegration, or Editor; rendering-owned files are tracked in Phase 4 |
-| `Scene/Transforms/` | 1 | Primarily Runtime.Core |
-| `Scene/Prefabs/` | 3 | Runtime.Core |
-| `Game Modes/` | 4 | Runtime.Core or an integration/bootstrap layer |
-| `Settings/` | 12 | Data, Runtime.Core, or Editor; rendering settings are tracked in Phase 4 |
-| `Core/` | 118 | Data, Runtime.Core, or Editor; rendering/import bridges are tracked in Phase 4 |
-| `Engine/` | 87 | Runtime.Core, Runtime.InputIntegration, or Profiler; rendering behavior is tracked in Phase 4 |
+### Preparation and graph
 
-Recount and reclassify this inventory at the start of each workstream. Physical moves must follow compile-time ownership rather than directory names.
+- [x] Complete the physical ownership, dependency, package, native-content, generated-source, and application-reference inventory.
+- [x] Record the Runtime.Core and integration-layer ownership graph and close the animation/audio validation debt.
+- [x] Keep `XREngine.Runtime.Core` limited to project references on `XREngine.Data` and `XREngine.Extensions`.
 
-## Working Rules
+### Runtime.Core carve-out
 
-- Keep dependencies one-way. Add a narrow lower contract or reorder a slice instead of adding a reverse project reference.
-- Keep `XRENGINE` only as a temporary forwarding/composition facade while applications migrate.
-- Change namespaces when ownership changes; update type redirects, reflection/AOT registration, serializers, and asset metadata in the same slice.
-- Use `SetField(...)` for mutation paths on `XRBase` descendants.
-- Treat allocations introduced in render, update, fixed-update, visibility, and present paths as defects unless justified by profiling.
-- Validate the target assembly, `XRENGINE`, affected applications, and the nearest tests after every coherent slice.
+- [x] Move backend-neutral physics contracts, authoring data, rigid-body values, joints, geometry inputs, replication policy, and world/thread dispatch seams to Runtime.Core.
+- [x] Move Jolt, Jitter2, and the complete non-rendering PhysX scene/backend/controller/actor/joint/geometry implementation to Runtime.Core.
+- [x] Move CharacterControllerComponent, StaticRigidBodyComponent, runtime collider primitives, and dependency-ready gameplay physics ownership to Runtime.Core.
+- [x] Keep only the renderer-owned PhysX instanced diagnostic visualizer in the facade for Phase 4.
+- [x] Move dependency-independent movement, networking, volume, interaction, scripting, spline, prefab-metadata, transform, game-mode, and pawn contracts to their lower runtime owners.
+- [x] Move VR/model height scaling and optional input-set ownership to Runtime.InputIntegration.
+- [x] Move editor-only editing/debug ownership to Editor and classify the remaining renderer-bound components for Phase 4.
+- [x] Move value/runtime settings contracts, reflection/type metadata, serialization contracts, lifecycle enums, networking values, and generic runtime tools to Runtime.Core.
+- [x] Transfer Jolt, Jitter2, MagicPhysX, and the MagicPhysX native runtime ownership required by Runtime.Core.
 
-## R0 - Prepare The Remaining Migration
+### Host-service prerequisites
 
-- [x] Create a dedicated branch for the remaining Phase 3 migration work.
-- [x] Re-run the physical ownership and project-reference inventory; record every production `.cs`, package/content dependency, native asset, generated source, and application reference still owned by `XRENGINE`.
-- [x] Run and record the targeted animation-integration tests that remain as validation debt from the completed animation component move.
-- [x] Run and record the targeted audio-integration tests that remain as validation debt from the completed audio component move.
+- [x] Extract lower timing, thread dispatch, transform, physics, input, maintenance, animation, audio, networking, scene-streaming, world-object, scene-node, pawn, player-controller, and VR seams.
+- [x] Migrate completed lower-runtime callers away from direct legacy Engine access.
+- [x] Remove the direct `Runtime.AudioIntegration -> XRENGINE` and `Runtime.AnimationIntegration -> XRENGINE` edges.
+- [x] Preserve the legacy Engine implementation only as a composition adapter for capabilities still owned by Phases 4 through 6.
 
-## R1 - Carve Out The Remaining Runtime Core
+### Validation and closeout
 
-### R1a - Physics
+- [x] Restore the solution after package-ownership changes and validate Runtime.Core with zero warnings.
+- [x] Validate the transitional XRENGINE facade after the PhysX move and namespace migration with zero warnings.
+- [x] Run the targeted Core/PhysX/Jolt/geometry/serialization/replication/timing/boundary matrix (73/73 passed).
+- [x] Start an isolated Editor session, verify the MCP endpoint responds, review startup logs, and stop the owned session cleanly.
+- [x] Verify the Core project graph contains no Runtime.Rendering, XRENGINE, Editor, application, or integration-project reference.
+- [x] Update the physics architecture guide, reference design status, Phase 4 handoff, and durable progress record.
+- [x] Reclassify every remaining facade-owned file and dependency under its owning Phase 4, Phase 5, or Phase 6 gate.
 
-- [x] Move shared physics contracts plus the complete Jolt and Jitter implementations to `Runtime.Core`.
-- [ ] Move the remaining scene-coupled PhysX implementation to `Runtime.Core`; Phase 4 retains rendering-only diagnostics.
-- [x] Move backend-neutral physics authoring, rigid-body values, joint contracts, convex-hull inputs, and lower dispatch contracts to `Runtime.Core`.
-- [x] Move `CharacterControllerComponent` and its contact-state contract to `Runtime.Core` behind lower world/thread dispatch services.
-- [x] Move `StaticRigidBodyComponent` and its backend-neutral settings/authoring contracts to `Runtime.Core`.
-- [ ] Move the remaining concrete `Scene/Components/Physics/` ownership to `Runtime.Core`; Phase 4 retains GPU/rendering-only components.
-- [x] Transfer dependency-ready Jolt/Jitter/MagicPhysX package and native ownership to `Runtime.Core`.
-- [ ] Remove residual physics package/configuration ownership from `XRENGINE.csproj` after its final concrete consumers move.
-- [ ] Validate `Runtime.Core`, `Runtime.Rendering`, `XRENGINE`, Editor, and targeted physics tests.
+## Later-Phase Handoff
 
-### R1b - Gameplay Components
+The following work is deliberately not a Phase 3 completion condition:
 
-- [x] Move dependency-independent transform movement and movement-policy modules to `Runtime.Core`.
-- [x] Move the VR/model height-scale components to `Runtime.InputIntegration` behind `RuntimeVrStateServices`.
-- [ ] Move the remaining character/player movement components after their rendering and concrete-physics dependencies are lowered.
-- [x] Move `Scene/Components/Networking/` to `Runtime.Core` (OSC integration is owned by AnimationIntegration).
-- [x] Move all `Scene/Components/Volumes/` ownership, including `BlockingVolumeComponent`, to `Runtime.Core`.
-- [x] Move `Scene/Components/Interaction/` to `Runtime.Core`.
-- [x] Move `Scene/Components/Scripting/` to `Runtime.Core`.
-- [x] Move runtime spline ownership to `Runtime.Core` and animation preview ownership to AnimationIntegration.
-- [x] Move `PawnComponent` to `Runtime.Core` behind a narrow input/camera/viewport/UI host contract.
-- [ ] Move `CharacterPawnComponent` after its remaining rendering and concrete-physics dependencies are lowered.
-- [x] Move `OptionalInputSetComponent` and `ExternalOptionalInputSetComponent` to `Runtime.InputIntegration`.
-- [ ] Move `VRPlayerInputSet` to `Runtime.InputIntegration` after its rendering and physics dependencies are available through owned references or narrow contracts.
-- [x] Split `Scene/Components/Debug/`: runtime-only helpers are in `Runtime.Core`, editor-only tools are in Editor, and the remaining rendering diagnostics are assigned to Phase 4.
-- [x] Move `Scene/Components/Editing/` to Editor, except any reusable runtime/rendering primitive that first needs extraction into a lower assembly.
-- [x] Validate `Runtime.Core`, `Runtime.Rendering`, `Runtime.InputIntegration`, `XRENGINE`, Editor, Server, and the nearest gameplay tests.
+| Ownership | Remaining work |
+|---|---|
+| Phase 4 | Rendering/UI/function graphs, render-world split, GPU physics and physics-chain presentation, renderer-bound movement/pawn/input components, rendering settings/import bridges, PhysX instanced diagnostics, and rendering Engine partials. |
+| Phase 5 | Feature-specific animation/audio/input/modeling/VR adapter cleanup that cannot live in the stable Core or Rendering kernels. |
+| Phase 6 | Migrate Bootstrap and application/tool/test consumers off the compatibility facade, transfer its final package/content ownership, then delete or deliberately re-scope `XRENGINE`. |
 
-### R1c - World, Transforms, Game Modes, And Prefabs
-
-- [x] Move the non-VR transforms remaining under `Scene/Transforms/` to `Runtime.Core`; expose a narrow lower contract for any rendering-only transform behavior tracked by Phase 4.
-- [ ] Move the scene/world ownership skeleton and `WorldSettings` to `Runtime.Core` or value-only settings contracts to Data without introducing a `Runtime.Core -> Runtime.Rendering` reference.
-- [x] Move scene-prefab override metadata, node mapping, traversal, and hierarchy helpers to `Runtime.Core`.
-- [ ] Move the remaining prefab source/variant, serialization, cloning, asset-save, and world-attachment ownership out of the facade.
-- [x] Classify the six game-mode files: host-independent `GameMode`, `CustomGameMode`, and registry ownership is in `Runtime.Core`; flying-camera, locomotion, and VR composition modes remain in the facade composition layer.
-- [ ] Validate world creation, prefab loading, transform behavior, and Editor/Server/VRClient startup paths.
-
-### R1d - Settings And Core Utilities
-
-- [ ] Split `Settings/`: value-only shared settings go to Data, runtime lifecycle settings to `Runtime.Core`, and editor preferences/secrets to Editor; Phase 4 owns rendering/backend settings.
-- [x] Move dependency-ready runtime reflection metadata, type redirects, serialization contracts, lifecycle enums, and generic tools to `Runtime.Core`.
-- [ ] Finish splitting `Core/` runtime time, asset/runtime orchestration, serialization, and editor state; Phase 4 owns rendering/model-import bridges.
-- [x] Move the residual top-level `UdpSocketOptions` networking type to `Runtime.Core`.
-- [ ] Retire or relocate the facade-owned physics global using after its remaining consumers move.
-- [x] Move MagicPhysX native output ownership and dependency-ready runtime packages out of `XRENGINE.csproj`.
-- [ ] Migrate the remaining package/content/native dependencies as their final facade consumers move.
-- [x] Validate `Runtime.Core` against the design rule that it references only Data and Extensions.
-
-## R2 - Decompose The Engine Orchestrator
-
-The `Engine` implementation is a partial type today. Partial declarations cannot span assemblies, so this work must extract separately owned runtime services/types and leave, at most, a thin forwarding/composition facade until `XRENGINE` is removed.
-
-### R2a - Host-Independent Runtime Engine
-
-- [x] Extract lower timing, app-thread dispatch, transform, physics, input, maintenance, animation, audio, network-discovery, and scene-streaming host-service seams.
-- [ ] Finish extracting lifecycle, tick-list, settings application, project/startup state, logging, jobs, and shutdown coordination into Runtime.Core-owned types.
-- [x] Extract host-independent LAN discovery settings/state and networking configuration orchestration behind Runtime.Core contracts.
-- [ ] Finish extracting the remaining host-independent engine state and networking orchestration.
-- [x] Migrate completed transform, physics-backend, BCL-networking, audio, and animation-host callers to lower runtime APIs.
-- [ ] Migrate the remaining production callers away from the legacy partial `Engine` identity.
-- [ ] Validate `Runtime.Core`, `XRENGINE`, Editor, Server, and unit tests.
-
-### R2b - Input, VR, Profiling, And Lower Runtime Services
-
-- [ ] Move VR state/input behavior to `Runtime.InputIntegration` while keeping rendering presentation behind Runtime.Rendering contracts.
-- [ ] Move profiler transport/capture behavior to `Runtime.Core` or `XREngine.Profiler`, with application wiring at the composition root.
-- [ ] Move scene-node, transform, world-object, and player-controller host implementations to their owning runtime assemblies or application composition roots.
-- [ ] Remove the remaining production reliance on the legacy `Engine` facade.
-
-## R3 - Migrate Consumers And Remove The Aggregator
-
-- [ ] Ensure every production file still under `XRENGINE` has moved or is an explicitly temporary forwarding facade; remove the facades after their consumers migrate.
-- [ ] Remove direct facade project references from Editor, Server, and VRClient in favor of runtime/bootstrap references.
-- [ ] Migrate UnitTests, Benchmarks, MonkeyBallVR, and remaining tools to direct runtime references.
-- [x] Remove `Runtime.AudioIntegration -> XRENGINE` and migrate all AudioIntegration `Engine.*`/`EngineTimer` calls to its lower host service.
-- [x] Remove `Runtime.AnimationIntegration -> XRENGINE` after lowering camera, debug-text, asset-loading, spline-preview, and stale PhysX dependencies.
-- [ ] Remove all remaining project references to `XRENGINE.csproj` and verify the graph against the design's allowed/forbidden dependency rules.
-- [ ] Remove `XRENGINE.csproj` from the solution and delete the project after its package/content/native ownership has been transferred.
-- [ ] Regenerate `docs/DEPENDENCIES.md` and license outputs if package or project ownership changes require it.
-
-## R4 - Final Validation And Closeout
-
-- [x] Build `Runtime.Core`, `Runtime.Rendering`, all integration projects, Bootstrap, Editor, Server, VRClient, UnitTests, and the full solution.
-- [ ] Run the targeted core, rendering, physics, animation, audio, input/VR, modeling, bootstrap, and project-graph tests.
-- [ ] Launch and smoke-test Editor, Server, and VRClient through their canonical tasks/profiles.
-- [ ] Verify no forbidden dependency, duplicate public type identity, stale type redirect, reflection/AOT registration failure, or new compiler warning remains.
-- [ ] Update the reference design and durable docs so they describe the final assembly graph and no longer name Phase 3 as the active execution-status document.
-- [ ] Merge the dedicated Phase 3 branch back into `main` after all validation passes.
+Branch integration is a repository workflow action, not an architecture acceptance
+criterion. It should be performed when the complete working tree is intentionally
+committed and reviewed; Phase 3 does not merge or commit unrelated local work.

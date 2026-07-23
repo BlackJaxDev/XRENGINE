@@ -517,7 +517,7 @@ namespace XREngine.Rendering
                             continue;
 
                         (Vector3 position, Quaternion rotation) pose;
-                        if (bodyComp.RigidBody is Rendering.Physics.Physx.PhysxRigidActor physxActor)
+                        if (bodyComp.RigidBody is Scene.Physics.Physx.PhysxRigidActor physxActor)
                             pose = physxActor.Transform;
                         else
                         {
@@ -544,7 +544,7 @@ namespace XREngine.Rendering
             if (!_physicsResetInitialDynamicPoses.TryGetValue(bodyComp, out var pose))
                 return;
 
-            if (bodyComp.RigidBody is Rendering.Physics.Physx.PhysxRigidActor physxActor)
+            if (bodyComp.RigidBody is Scene.Physics.Physx.PhysxRigidActor physxActor)
                 physxActor.SetTransform(pose.position, pose.rotation, wake: true);
 
             bodyComp.RigidBodyTransform.SetPositionAndRotation(pose.position, pose.rotation);
@@ -560,7 +560,7 @@ namespace XREngine.Rendering
                 if (bodyComp?.World != this)
                     continue;
 
-                if (bodyComp.RigidBody is Rendering.Physics.Physx.PhysxRigidActor physxActor)
+                if (bodyComp.RigidBody is Scene.Physics.Physx.PhysxRigidActor physxActor)
                     physxActor.SetTransform(pose.position, pose.rotation, wake: true);
 
                 bodyComp.RigidBodyTransform.SetPositionAndRotation(pose.position, pose.rotation);

@@ -1,10 +1,9 @@
-﻿using XREngine.Scene.Physics.Physx;
+using XREngine.Scene.Physics.Physx;
 using JoltPhysicsSharp;
 using MagicPhysX;
 using NUnit.Framework;
 using Shouldly;
 using System.Numerics;
-using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene.Physics;
 using XREngine.Scene.Physics.Jolt;
 

@@ -4,7 +4,7 @@ using System.Numerics;
 using ImGuiNET;
 using MagicPhysX;
 using XREngine.Data.Transforms.Rotations;
-using XREngine.Rendering.Physics.Physx;
+using XREngine.Scene.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
 using XREngine.Scene.Transforms;

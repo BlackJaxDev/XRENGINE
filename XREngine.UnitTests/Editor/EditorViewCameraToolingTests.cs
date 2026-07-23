@@ -1,8 +1,8 @@
-﻿using NUnit.Framework;
+using NUnit.Framework;
 using XREngine.Editor;
 using XREngine.Rendering;
 using XREngine.Scene.Physics.Jitter2;
-using XREngine.Rendering.Physics.Physx;
+using XREngine.Scene.Physics.Physx;
 using XREngine.UnitTests.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Components.Editing;

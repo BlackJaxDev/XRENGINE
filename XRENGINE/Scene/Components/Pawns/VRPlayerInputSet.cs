@@ -1,4 +1,4 @@
-﻿using Assimp;
+using Assimp;
 using MagicPhysX;
 using System.Numerics;
 using XREngine.Core;
@@ -11,8 +11,8 @@ using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
-using XREngine.Rendering.Physics.Physx;
-using XREngine.Rendering.Physics.Physx.Joints;
+using XREngine.Scene.Physics.Physx;
+using XREngine.Scene.Physics.Physx.Joints;
 using XREngine.Scene;
 using XREngine.Scene.Physics.Joints;
 using XREngine.Scene.Transforms;
