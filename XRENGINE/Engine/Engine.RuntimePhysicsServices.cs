@@ -8,6 +8,8 @@ internal sealed class EngineRuntimePhysicsServices : IRuntimePhysicsServices
 {
     public float FixedDeltaSeconds => Engine.FixedDelta;
     public bool IsPhysicsThread => Engine.IsPhysicsThread;
+    public bool IsShuttingDown => Engine.ShuttingDown;
+    public long ElapsedTicks => Engine.ElapsedTicks;
     public PhysicsVisualizeSettings VisualizeSettings => Engine.Rendering.Settings.PhysicsVisualizeSettings;
     public bool JoltDebugRenderDiagnostics => Engine.EditorPreferences.Diagnostics.General.JoltDebugRenderDiagnostics;
 

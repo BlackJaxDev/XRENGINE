@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using System.Reflection;
 using NUnit.Framework;
 using XREngine;
@@ -10,7 +10,7 @@ using XREngine.Data.Core;
 using XREngine.Editor;
 using XREngine.Rendering;
 using XREngine.Scene.Physics.Jitter2;
-using XREngine.Rendering.Physics.Physx;
+using XREngine.Scene.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 

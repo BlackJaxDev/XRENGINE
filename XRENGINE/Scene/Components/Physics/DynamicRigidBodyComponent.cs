@@ -3,7 +3,7 @@ using System.Numerics;
 using JoltPhysicsSharp;
 using MagicPhysX;
 using XREngine.Core.Attributes;
-using XREngine.Rendering.Physics.Physx;
+using XREngine.Scene.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Physics.Jolt;
 using XREngine.Scene.Transforms;

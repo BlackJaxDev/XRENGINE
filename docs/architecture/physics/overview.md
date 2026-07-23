@@ -2,7 +2,7 @@
 
 XREngine wraps multiple physics backends behind a single scene interface so gameplay, tools, and runtime code do not need to care which solver is active. The integration is centered around `AbstractPhysicsScene`, a host-side class that the world owns and ticks every fixed update. Concrete scenes translate high-level requests (actor management, queries, character control) into calls to the selected middleware while keeping compatible data structures such as `Segment`, `LayerMask`, `RaycastHit`, `SweepHit`, and `OverlapHit`.
 
-Most gameplay features ship against the PhysX backend (`XREngine.Rendering.Physics.Physx` namespace). Jolt and Jitter2 scenes exist as experimental alternatives; they share the same surface API but are still catching up on feature coverage.
+Most gameplay features ship against the PhysX backend (`XREngine.Scene.Physics.Physx` namespace in `XREngine.Runtime.Core`). Jolt and Jitter2 scenes exist as experimental alternatives; they share the same surface API but are still catching up on feature coverage.
 
 ---
 
@@ -51,7 +51,7 @@ Collider/material authoring should prefer `PhysicsMaterialDefinition` and `Physi
 Rigid-body components expose `ReplicationAuthority` and `OwnerClient` metadata so networking code can make explicit ownership decisions for rigid bodies, controllers, and joints. Scene reload, activation-order rebind, controller behavior, and Jolt diagnostics are covered by source-contract tests until full Windows/runtime integration tests can run in the engine validation environment. Jolt exposes `GetDiagnostics()` plus debug-render collection hooks so reload/leak tests can assert actor/controller/joint counts without reaching into backend dictionaries.
 
 ## PhysX Backend
-PhysX 5 is the primary, fully-featured integration. It lives in `XREngine.Rendering.Physics.Physx` and exposes the entire PxScene API surface area the engine relies on.
+PhysX 5 is the primary, fully-featured integration. Its scene, actors, controllers, joints, geometry adapter, and backend service live in `XREngine.Scene.Physics.Physx` under `XREngine.Runtime.Core`. The rendering-only instanced diagnostic visualizer remains in the transitional facade for the Phase 4 rendering move.
 
 ### Initialization & Lifetime
 - `PhysxScene.Init()` is invoked once (via the static ctor) to construct a global `PxFoundation` and `PxPhysics` instance. `Release()` tears them down when the runtime exits.

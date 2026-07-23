@@ -1,4 +1,4 @@
-﻿using MagicPhysX;
+using MagicPhysX;
 using System.Numerics;
 using XREngine.Audio;
 using XREngine.Components;
@@ -12,7 +12,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Components.Scene;
 using XREngine.Data.Core;
 using XREngine.Rendering;
-using XREngine.Rendering.Physics.Physx;
+using XREngine.Scene.Physics.Physx;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
 using XREngine.Scene.Physics;

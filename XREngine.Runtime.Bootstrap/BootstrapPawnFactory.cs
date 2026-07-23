@@ -1,4 +1,4 @@
-﻿using MagicPhysX;
+using MagicPhysX;
 using System.Numerics;
 using XREngine.Audio;
 using XREngine.Components;
@@ -9,7 +9,7 @@ using XREngine.Components.VR;
 using XREngine.Data.Components.Scene;
 using XREngine.Data.Colors;
 using XREngine.Rendering;
-using XREngine.Rendering.Physics.Physx;
+using XREngine.Scene.Physics.Physx;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.InputIntegration;
 using XREngine.Scene;

@@ -18,7 +18,7 @@ Implementation companions:
 - [Runtime Modularization Phase 4 TODO](../todo/runtime-modularization-phase4-todo.md) (remaining rendering move and rendering-boundary cleanup)
 - [OpenGL And Vulkan Rendering Hot Reload TODO](../todo/rendering/rendering-backend-hot-reload-todo.md) (backend DLL extraction, collectible editor loading, and renderer replacement)
 
-> Status note (2026-07-14): Phases 0 through 2 are complete. Much of the rendering and subsystem-adapter work originally assigned to later design phases landed early while dependencies were lowered. This document remains the target-architecture and migration-rationale reference; use the Phase 3 and Phase 4 todo documents above for current execution status. Some historical baseline sections below intentionally no longer match the repository.
+> Status note (2026-07-22): Phases 0 through 3 are complete. The Runtime.Core carve-out and its non-rendering prerequisites are closed; the Phase 3 document is now a completion record. Use the Phase 4 todo for the active rendering move. Subsystem-adapter cleanup remains design Phase 5, and final `XRENGINE` deletion or reduction remains design Phase 6. Some historical baseline sections below intentionally no longer match the repository.
 
 ## Why This Refactor Exists
 
