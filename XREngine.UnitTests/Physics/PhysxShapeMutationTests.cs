@@ -1,7 +1,7 @@
 using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
-using XREngine.Rendering.Physics.Physx;
+using XREngine.Scene.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
 

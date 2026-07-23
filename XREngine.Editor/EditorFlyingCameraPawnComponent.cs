@@ -21,7 +21,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.Physics.Physx;
+using XREngine.Scene.Physics.Physx;
 using XREngine.Rendering.Picking;
 using XREngine.Rendering.UI;
 using XREngine.Runtime.InputIntegration;

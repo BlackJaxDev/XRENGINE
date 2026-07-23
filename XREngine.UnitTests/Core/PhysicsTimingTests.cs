@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using NUnit.Framework;
 using Shouldly;
-using XREngine.Rendering.Physics.Physx;
+using XREngine.Scene.Physics.Physx;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.UnitTests.Core;

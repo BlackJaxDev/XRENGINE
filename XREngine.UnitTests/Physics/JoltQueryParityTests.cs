@@ -5,7 +5,7 @@ using XREngine.Components;
 using XREngine.Components.Physics;
 using XREngine.Data;
 using XREngine.Data.Geometry;
-using XREngine.Rendering.Physics.Physx;
+using XREngine.Scene.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
 using XREngine.Scene.Physics.Jolt;
