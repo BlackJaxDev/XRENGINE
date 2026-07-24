@@ -11,6 +11,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     public class VPRC_RenderDebugShapes : ViewportRenderCommand
     {
         public string? RenderGraphPassName { get; set; }
+        public bool DepthTested { get; set; }
 
         protected override void Execute()
         {
@@ -28,14 +29,20 @@ namespace XREngine.Rendering.Pipelines.Commands
                 using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(ResolveRenderGraphPassIndex()))
                 using (instance.RenderState.PushRenderingCamera(camera))
                 {
-                    GpuBvhDebugLineRenderer.RenderQueued(
-                        instance.RenderState,
-                        BvhDebugOverlayLayer.Base);
-                    RenderEnabledSpatialTreeDebug(instance, camera);
-                    RuntimeEngine.Rendering.Debug.RenderShapes();
-                    GpuBvhDebugLineRenderer.RenderQueued(
-                        instance.RenderState,
-                        BvhDebugOverlayLayer.Highlight);
+                    if (!DepthTested)
+                    {
+                        GpuBvhDebugLineRenderer.RenderQueued(
+                            instance.RenderState,
+                            BvhDebugOverlayLayer.Base);
+                        RenderEnabledSpatialTreeDebug(instance, camera);
+                    }
+                    RuntimeEngine.Rendering.Debug.RenderShapes(DepthTested);
+                    if (!DepthTested)
+                    {
+                        GpuBvhDebugLineRenderer.RenderQueued(
+                            instance.RenderState,
+                            BvhDebugOverlayLayer.Highlight);
+                    }
                 }
             }
             finally
@@ -87,7 +94,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
             }
 
-            return (int)EDefaultRenderPass.OnTopForward;
+            return DepthTested
+                ? (int)EDefaultRenderPass.OpaqueForward
+                : (int)EDefaultRenderPass.OnTopForward;
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

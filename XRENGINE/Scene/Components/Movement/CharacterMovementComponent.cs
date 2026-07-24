@@ -738,6 +738,7 @@ namespace XREngine.Components.Movement
 
             _subUpdateTick = GroundMovementTick;
             RegisterMovementTick();
+            _spawnPosition = Transform.WorldTranslation;
 
             var physicsScene = WorldAs<IRuntimePhysicsWorldContext>()?.PhysicsScene;
             if (physicsScene is null)
@@ -766,6 +767,17 @@ namespace XREngine.Components.Movement
             _ownsActiveController = true;
             Vector3 pos = Transform.WorldTranslation;
             QueueControllerCreation(physicsScene, pos);
+        }
+
+        /// <summary>
+        /// Captures the exact pose used by below-plane recovery for this Play session.
+        /// Components may already be active while the editor is in Edit mode, so activation
+        /// alone is not a reliable Play-start boundary.
+        /// </summary>
+        protected override void OnBeginPlay()
+        {
+            base.OnBeginPlay();
+            _spawnPosition = Transform.WorldTranslation;
         }
 
         private void ExternalControllerCreated(CharacterControllerComponent component, IAbstractCharacterController controller)
@@ -975,13 +987,50 @@ namespace XREngine.Components.Movement
         private void OnPhysicsSimulationStep()
         {
             // Runs from the physics fixed-step.
-            if (_controllerActorProxy is null)
+            if (_controllerActorProxy is null || ActiveController is not { } controller)
                 return;
 
-            ActiveController?.Synchronize();
+            ResetControllerIfBelowPhysicsPlane(controller);
+            controller.Synchronize();
 
             // Drive the transform update via the engine's standard rigid-body sync path.
             RigidBodyTransform.OnPhysicsStepped();
+        }
+
+        private void ResetControllerIfBelowPhysicsPlane(IAbstractCharacterController controller)
+        {
+            if (WorldAs<IRuntimePhysicsWorldContext>() is not { PhysicsEnabled: true } world)
+                return;
+
+            float minYDistance = world.PhysicsResetMinYDistance;
+            if (minYDistance <= 0.0f)
+                return;
+
+            Vector3 gravity = world.PhysicsGravity;
+            float gravityLengthSquared = gravity.LengthSquared();
+            if (gravityLengthSquared < 1e-8f)
+                return;
+
+            Vector3 position = controller.Position;
+            Vector3 up = -(gravity / MathF.Sqrt(gravityLengthSquared));
+            if (IsFinite(position) && Vector3.Dot(up, position) >= -minYDistance)
+                return;
+
+            controller.Teleport(_spawnPosition, clearMotion: true);
+            ResetManagedMovementAfterTeleport();
+        }
+
+        private void ResetManagedMovementAfterTeleport()
+        {
+            Velocity = Vector3.Zero;
+            LastVelocity = Vector3.Zero;
+            Acceleration = Vector3.Zero;
+            MovementMode = EMovementMode.Falling;
+            _jumpElapsed = 0.0f;
+            _coyoteTimer = 0.0f;
+            _canJumpState = false;
+            _jumpPressedThisProducerTick = false;
+            Interlocked.Exchange(ref _pendingJumpPresses, 0);
         }
 
         private unsafe void MainUpdateTick()
@@ -1139,10 +1188,32 @@ namespace XREngine.Components.Movement
                     moveDirection = Vector3.Normalize(alongGround);
             }
 
+            // A CCT collision cancels motion into its support surface, but the gameplay
+            // velocity is not a simulated rigid-body velocity and must be reconciled
+            // explicitly. Do this before the module runs so an old fall cannot keep
+            // submitting a large downward sweep every grounded frame. Slope-following
+            // input remains in moveDirection and is therefore preserved.
+            Vector3 groundedVelocity = Velocity;
+            float speedIntoGround = Vector3.Dot(groundedVelocity, up);
+            if (speedIntoGround < 0.0f)
+                groundedVelocity -= up * speedIntoGround;
+
             // Process ground movement through the module
-            var context = CreateMovementContext(moveDirection, dt, true);
+            var context = CreateMovementContext(moveDirection, groundedVelocity, dt, true);
             var result = MovementModule.ProcessGroundMovement(in context);
             Vector3 newVelocity = result.NewVelocity;
+
+            // A small, bounded gravity probe keeps PhysX CCT support contact active on
+            // flat ground without preserving an ever-growing fall velocity. Do not add
+            // it while explicit slope-following input already has a vertical component.
+            float verticalSpeed = Vector3.Dot(newVelocity, up);
+            if (MathF.Abs(verticalSpeed) < 1e-5f)
+            {
+                float supportProbeSpeed = MathF.Min(
+                    0.0f,
+                    Vector3.Dot(context.Gravity, up) * dt);
+                newVelocity += up * supportProbeSpeed;
+            }
 
             // Handle requested mode change from module
             ApplyRequestedModeChange(result.RequestedMode);
@@ -1162,7 +1233,11 @@ namespace XREngine.Components.Movement
         /// <summary>
         /// Creates a MovementContext for use with movement modules.
         /// </summary>
-        private MovementModule.MovementContext CreateMovementContext(Vector3 inputDirection, float dt, bool isGrounded)
+        private MovementModule.MovementContext CreateMovementContext(
+            Vector3 inputDirection,
+            Vector3 currentVelocity,
+            float dt,
+            bool isGrounded)
         {
             Vector3 gravity = Vector3.Zero;
             if (WorldAs<IRuntimePhysicsWorldContext>()?.PhysicsScene is { } scene)
@@ -1170,7 +1245,7 @@ namespace XREngine.Components.Movement
 
             return new MovementModule.MovementContext(
                 inputDirection,
-                Velocity,
+                currentVelocity,
                 CurrentGroundSpeed,
                 MovementModule.MaxSpeed,
                 dt,
@@ -1272,7 +1347,7 @@ namespace XREngine.Components.Movement
             Vector3 inputDirection = planarInput.LengthSquared() > 1e-8f
                 ? Vector3.Normalize(planarInput)
                 : Vector3.Zero;
-            var context = CreateMovementContext(inputDirection, dt, false);
+            var context = CreateMovementContext(inputDirection, Velocity, dt, false);
             var result = MovementModule.ProcessAirMovement(in context);
             Vector3 newVelocity = result.NewVelocity;
             
@@ -1317,7 +1392,7 @@ namespace XREngine.Components.Movement
             // Process swimming movement through the module
             // Swimming allows full 3D directional control
             Vector3 inputDirection = posDelta != Vector3.Zero ? posDelta.Normalized() : Vector3.Zero;
-            var context = CreateMovementContext(inputDirection, dt, false);
+            var context = CreateMovementContext(inputDirection, Velocity, dt, false);
             var result = MovementModule.ProcessSwimmingMovement(in context);
             Vector3 newVelocity = result.NewVelocity;
 

@@ -1,11 +1,13 @@
 using System.Numerics;
+using MemoryPack;
 
 namespace XREngine.Scene.Physics.Joints
 {
     /// <summary>
     /// Backend-neutral representation of a linear joint limit (single value, e.g. distance).
     /// </summary>
-    public struct JointLinearLimit
+    [MemoryPackable]
+    public partial struct JointLinearLimit
     {
         public float Value;
         public float Restitution;
@@ -26,7 +28,8 @@ namespace XREngine.Scene.Physics.Joints
     /// <summary>
     /// Backend-neutral representation of a linear limit pair (lower + upper).
     /// </summary>
-    public struct JointLinearLimitPair
+    [MemoryPackable]
+    public partial struct JointLinearLimitPair
     {
         public float Lower;
         public float Upper;
@@ -49,7 +52,8 @@ namespace XREngine.Scene.Physics.Joints
     /// <summary>
     /// Backend-neutral representation of an angular limit pair (lower + upper, in radians).
     /// </summary>
-    public struct JointAngularLimitPair
+    [MemoryPackable]
+    public partial struct JointAngularLimitPair
     {
         public float LowerRadians;
         public float UpperRadians;
@@ -72,7 +76,8 @@ namespace XREngine.Scene.Physics.Joints
     /// <summary>
     /// Backend-neutral representation of a cone limit for spherical joints (angles in radians).
     /// </summary>
-    public struct JointLimitCone
+    [MemoryPackable]
+    public partial struct JointLimitCone
     {
         public float YAngleRadians;
         public float ZAngleRadians;
@@ -95,7 +100,8 @@ namespace XREngine.Scene.Physics.Joints
     /// <summary>
     /// Backend-neutral representation of a joint drive (spring + damper).
     /// </summary>
-    public struct JointDrive
+    [MemoryPackable]
+    public partial struct JointDrive
     {
         public float Stiffness;
         public float Damping;
@@ -114,7 +120,8 @@ namespace XREngine.Scene.Physics.Joints
     /// <summary>
     /// Anchor/local frame for one side of a joint.
     /// </summary>
-    public struct JointAnchor
+    [MemoryPackable]
+    public partial struct JointAnchor
     {
         public Vector3 Position;
         public Quaternion Rotation;

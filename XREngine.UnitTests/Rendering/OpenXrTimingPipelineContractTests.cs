@@ -1191,6 +1191,23 @@ public sealed class OpenXrTimingPipelineContractTests
     }
 
     [Test]
+    public void RenderDocInstaller_InstallsCliPersistsPathAndRunsDoctor()
+    {
+        string installer = ReadWorkspaceFile("Tools/Dependencies/Install-RenderDoc.ps1");
+        string execTool = ReadWorkspaceFile("ExecTool.bat");
+        string documentation = ReadWorkspaceFile("Tools/RenderDoc/README.md");
+
+        installer.ShouldContain("$renderDocPackageId = \"BaldurKarlsson.RenderDoc\"");
+        installer.ShouldContain("[string]$RdcCliVersion = \"0.5.6\"");
+        installer.ShouldContain("\"tool\", \"install\", \"--force\", \"rdc-cli==$RdcCliVersion\"");
+        installer.ShouldContain("[Environment]::SetEnvironmentVariable(\"Path\", $updated, \"User\")");
+        installer.ShouldContain("Invoke-Native -FilePath $rdcCommand -Arguments @(\"setup-renderdoc\")");
+        installer.ShouldContain("& $rdcCommand \"doctor\"");
+        execTool.ShouldContain("Tools\\Dependencies\\Install-RenderDoc.ps1");
+        documentation.ShouldContain("rdc close");
+    }
+
+    [Test]
     public void OpenXrSmokeRun_UsesStableExitCodesAndSummaryContract()
     {
         string program = ReadWorkspaceFile("XREngine.Editor/Program.OpenXrSmokeRunController.cs");

@@ -1,16 +1,563 @@
+using System.Collections.Concurrent;
 using System.Numerics;
+using System.Reflection;
+using System.Runtime.ExceptionServices;
+using MemoryPack;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Components.Lights;
+using XREngine.Components.Movement;
 using XREngine.Components.Physics;
+using XREngine.Core.Files;
 using XREngine.Networking;
+using XREngine.Rendering;
+using XREngine.Runtime.Bootstrap.Builders;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
 using XREngine.Scene.Physics.Joints;
+using XREngine.Scene.Physics.Physx;
+using XREngine.Scene.Transforms;
+using XREngine.UnitTests.Rendering;
+using YamlDotNet.Serialization;
 
 namespace XREngine.UnitTests.Physics;
 
 public sealed class PhysicsSceneSerializationTests
 {
+    [Test]
+    [NonParallelizable]
+    public void PhysxControllerManager_IsRecreatedAfterSceneDestroy()
+    {
+        _ = Engine.Profiler;
+        IRuntimePhysicsServices previousPhysicsServices = RuntimePhysicsServices.Current;
+        RuntimePhysicsServices.Current = new FixedStepRuntimePhysicsServices();
+        var scene = new PhysxScene();
+
+        try
+        {
+            ControllerManager? firstManager = null;
+            ControllerManager? secondManager = null;
+            IAbstractCharacterController? firstController = null;
+            IAbstractCharacterController? secondController = null;
+
+            Engine.InvokePhysicsThreadTask(() =>
+            {
+                scene.Initialize();
+                firstController = CreateTestCharacterController(scene);
+                firstManager = scene.GetExistingControllerManager();
+
+                scene.Destroy();
+                scene.GetExistingControllerManager().ShouldBeNull();
+
+                scene.Initialize();
+                secondController = CreateTestCharacterController(scene);
+                secondManager = scene.GetExistingControllerManager();
+            });
+
+            firstController.ShouldNotBeNull();
+            secondController.ShouldNotBeNull();
+            firstManager.ShouldNotBeNull();
+            secondManager.ShouldNotBeNull();
+            secondManager.ShouldNotBeSameAs(firstManager);
+        }
+        finally
+        {
+            Engine.InvokePhysicsThreadTask(scene.Destroy);
+            RuntimePhysicsServices.Current = previousPhysicsServices;
+        }
+    }
+
+    [Test]
+    [NonParallelizable]
+    public async Task PhysxDynamicBox_RestsOnFloorAndResetsToPlayStartPose()
+    {
+        _ = Engine.Profiler;
+        IRuntimeShaderServices? previousShaderServices = RuntimeShaderServices.Current;
+        RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
+        IRuntimePhysicsServices previousPhysicsServices = RuntimePhysicsServices.Current;
+        RuntimePhysicsServices.Current = new FixedStepRuntimePhysicsServices();
+        XRWorld? world = null;
+        XRWorldInstance? worldInstance = null;
+
+        try
+        {
+            SceneNode root = new("Root");
+            SceneNode floorNode = new(root, "Floor");
+            floorNode.SetTransform<RigidBodyTransform>()
+                .SetPositionAndRotation(new Vector3(0.0f, -0.5f, 0.0f), Quaternion.Identity);
+            StaticRigidBodyComponent floor = floorNode.AddComponent<StaticRigidBodyComponent>()!;
+            floor.Geometry = new IPhysicsGeometry.Box(new Vector3(10.0f, 0.5f, 10.0f));
+            floor.CollisionGroup = 1;
+            floor.GroupsMask = new PhysicsGroupsMask(uint.MaxValue, uint.MaxValue, uint.MaxValue, uint.MaxValue);
+
+            SceneNode boxNode = new(root, "Box");
+            boxNode.SetTransform<RigidBodyTransform>()
+                .SetPositionAndRotation(new Vector3(0.0f, 3.0f, 0.0f), Quaternion.Identity);
+            DynamicRigidBodyComponent box = boxNode.AddComponent<DynamicRigidBodyComponent>()!;
+            box.Geometry = new IPhysicsGeometry.Box(new Vector3(0.5f));
+            box.CollisionGroup = 1;
+            box.GroupsMask = new PhysicsGroupsMask(uint.MaxValue, uint.MaxValue, uint.MaxValue, uint.MaxValue);
+
+            var scene = new XRScene("Physics Scene", root);
+            world = new XRWorld("Physics World", scene);
+            world.Settings.PhysicsResetMinYDist = 1.0f;
+            worldInstance = new XRWorldInstance(world, new VisualScene3D(), new PhysxScene())
+            {
+                PhysicsEnabled = true,
+            };
+            XRWorldInstance.WorldInstances.Add(world, worldInstance);
+
+            await worldInstance.BeginPlay();
+            worldInstance.PhysicsEnabled = true;
+
+            PhysxStaticRigidBody floorActor = floor.RigidBody.ShouldBeOfType<PhysxStaticRigidBody>();
+            PhysxDynamicRigidBody boxActor = box.RigidBody.ShouldBeOfType<PhysxDynamicRigidBody>();
+            floorActor.Scene.ShouldBeSameAs(worldInstance.PhysicsScene);
+            boxActor.Scene.ShouldBeSameAs(worldInstance.PhysicsScene);
+            floorActor.GetShapes().ShouldAllBe(static shape => shape.SimulationShape);
+            boxActor.GetShapes().ShouldAllBe(static shape => shape.SimulationShape);
+            floorActor.Transform.position.ShouldBe(new Vector3(0.0f, -0.5f, 0.0f));
+            boxActor.Transform.position.ShouldBe(new Vector3(0.0f, 3.0f, 0.0f));
+            box.MaxContactImpulse.ShouldBe(float.MaxValue);
+
+            Vector3 resetPosition = default;
+            Quaternion resetRotation = default;
+            Vector3 resetLinearVelocity = default;
+            Vector3 resetAngularVelocity = default;
+            float settledY = float.NaN;
+            Engine.InvokePhysicsThreadTask(() =>
+            {
+                boxActor.SetTransform(new Vector3(0.0f, -2.0f, 0.0f), Quaternion.Identity, wake: true);
+                boxActor.SetLinearVelocity(new Vector3(1.0f, -4.0f, 2.0f));
+                boxActor.SetAngularVelocity(new Vector3(0.5f, 1.0f, 1.5f));
+                worldInstance.EnqueuePhysicsResetFromMinYPlane(boxActor);
+                worldInstance.FixedUpdate();
+
+                (resetPosition, resetRotation) = boxActor.Transform;
+                resetLinearVelocity = boxActor.LinearVelocity;
+                resetAngularVelocity = boxActor.AngularVelocity;
+
+                for (int step = 0; step < 180; step++)
+                    worldInstance.FixedUpdate();
+
+                settledY = boxActor.Transform.position.Y;
+            });
+
+            Vector3.Distance(resetPosition, new Vector3(0.0f, 3.0f, 0.0f)).ShouldBeLessThan(0.001f);
+            resetRotation.ShouldBe(Quaternion.Identity);
+            resetLinearVelocity.Length().ShouldBeLessThan(0.001f);
+            resetAngularVelocity.Length().ShouldBeLessThan(0.001f);
+            settledY.ShouldBeInRange(0.49f, 0.55f);
+        }
+        finally
+        {
+            if (worldInstance is not null &&
+                worldInstance.PlayState != XRWorldInstance.EPlayState.Stopped)
+                worldInstance.EndPlay();
+
+            if (worldInstance is not null)
+                worldInstance.TargetWorld = null;
+            if (world is not null)
+                XRWorldInstance.WorldInstances.Remove(world);
+
+            RuntimeShaderServices.Current = previousShaderServices;
+            RuntimePhysicsServices.Current = previousPhysicsServices;
+        }
+    }
+
+    [Test]
+    [NonParallelizable]
+    public async Task PhysxLocomotionController_ResetsToPlayStartPoseAndClearsMotion()
+    {
+        _ = Engine.Profiler;
+        IRuntimeShaderServices? previousShaderServices = RuntimeShaderServices.Current;
+        RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
+        IRuntimePhysicsServices previousPhysicsServices = RuntimePhysicsServices.Current;
+        RuntimePhysicsServices.Current = new FixedStepRuntimePhysicsServices();
+        IRuntimeThreadServices previousThreadServices = RuntimeThreadServices.Current;
+        var threadServices = new DeferredRuntimeThreadServices();
+        RuntimeThreadServices.Current = threadServices;
+        XRWorld? world = null;
+        XRWorldInstance? worldInstance = null;
+
+        try
+        {
+            Vector3 activationPosition = new(1.0f, 2.0f, 3.0f);
+            Vector3 spawnPosition = new(2.0f, 3.0f, 4.0f);
+            SceneNode root = new("Root");
+            SceneNode pawnNode = new(root, "Locomotion Pawn");
+            RigidBodyTransform pawnTransform = pawnNode.SetTransform<RigidBodyTransform>();
+            pawnTransform.SetPositionAndRotation(activationPosition, Quaternion.Identity);
+            CharacterMovement3DComponent movement =
+                pawnNode.AddComponent<CharacterMovement3DComponent>()!;
+
+            var scene = new XRScene("Physics Scene", root);
+            world = new XRWorld("Physics World", scene);
+            world.Settings.PhysicsResetMinYDist = 1.0f;
+            worldInstance = new XRWorldInstance(world, new VisualScene3D(), new PhysxScene())
+            {
+                PhysicsEnabled = true,
+            };
+            XRWorldInstance.WorldInstances.Add(world, worldInstance);
+
+            // Components can activate in Edit mode. Move the authored pawn before Play to
+            // prove reset uses the Play-start pose rather than the earlier activation pose.
+            pawnTransform.SetWorldTranslation(spawnPosition);
+            await worldInstance.BeginPlay();
+            threadServices.DrainPhysicsThread();
+            threadServices.DrainUpdateThread();
+            worldInstance.PhysicsEnabled = true;
+
+            IAbstractCharacterController controller = movement.CharacterController.ShouldNotBeNull();
+            movement.Velocity = new Vector3(3.0f, -20.0f, 4.0f);
+            controller.SubmitMotion(new CharacterMotionCommand(
+                movement.Velocity,
+                CharacterMotionInputModel.Velocity,
+                0.00001f,
+                1.0f / 60.0f));
+            controller.Position = new Vector3(2.0f, -2.0f, 4.0f);
+
+            worldInstance.FixedUpdate();
+
+            Vector3.Distance(controller.Position, spawnPosition).ShouldBeLessThan(0.001f);
+            movement.Velocity.Length().ShouldBeLessThan(0.001f);
+            movement.LastVelocity.Length().ShouldBeLessThan(0.001f);
+            movement.Acceleration.Length().ShouldBeLessThan(0.001f);
+            controller.RequestedVelocity.Length().ShouldBeLessThan(0.001f);
+            controller.EffectiveVelocity.Length().ShouldBeLessThan(0.001f);
+            controller.LastMotionCommand.ShouldBe(default);
+        }
+        finally
+        {
+            if (worldInstance is not null &&
+                worldInstance.PlayState != XRWorldInstance.EPlayState.Stopped)
+                worldInstance.EndPlay();
+
+            if (worldInstance is not null)
+                worldInstance.TargetWorld = null;
+            if (world is not null)
+                XRWorldInstance.WorldInstances.Remove(world);
+
+            RuntimeThreadServices.Current = previousThreadServices;
+            RuntimeShaderServices.Current = previousShaderServices;
+            RuntimePhysicsServices.Current = previousPhysicsServices;
+        }
+    }
+
+    [Test]
+    [NonParallelizable]
+    public async Task PhysxController_RemainsSupportedDuringSustainedFloorTraversal()
+    {
+        _ = Engine.Profiler;
+        IRuntimeShaderServices? previousShaderServices = RuntimeShaderServices.Current;
+        RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
+        IRuntimePhysicsServices previousPhysicsServices = RuntimePhysicsServices.Current;
+        RuntimePhysicsServices.Current = new FixedStepRuntimePhysicsServices();
+        IRuntimeThreadServices previousThreadServices = RuntimeThreadServices.Current;
+        var threadServices = new DeferredRuntimeThreadServices();
+        RuntimeThreadServices.Current = threadServices;
+        XRWorld? world = null;
+        XRWorldInstance? worldInstance = null;
+        IAbstractCharacterController? controller = null;
+
+        try
+        {
+            SceneNode root = new("Root");
+            SceneNode floorNode = new(root, "Floor");
+            floorNode.SetTransform<RigidBodyTransform>()
+                .SetPositionAndRotation(new Vector3(0.0f, -0.5f, 0.0f), Quaternion.Identity);
+            StaticRigidBodyComponent floor = floorNode.AddComponent<StaticRigidBodyComponent>()!;
+            floor.Geometry = new IPhysicsGeometry.Box(new Vector3(50.0f, 0.5f, 50.0f));
+            floor.CollisionGroup = 1;
+            floor.GroupsMask =
+                new PhysicsGroupsMask(uint.MaxValue, uint.MaxValue, uint.MaxValue, uint.MaxValue);
+
+            var scene = new XRScene("Physics Scene", root);
+            world = new XRWorld("Physics World", scene);
+            var physicsScene = new PhysxScene();
+            worldInstance = new XRWorldInstance(world, new VisualScene3D(), physicsScene)
+            {
+                PhysicsEnabled = true,
+            };
+            XRWorldInstance.WorldInstances.Add(world, worldInstance);
+
+            await worldInstance.BeginPlay();
+            threadServices.DrainPhysicsThread();
+            threadServices.DrainUpdateThread();
+            worldInstance.PhysicsEnabled = true;
+
+            controller = physicsScene.BackendService.CreateCharacterController(
+                new PhysicsCharacterControllerCreateInfo(
+                    new Vector3(-10.0f, 0.82f, 0.0f),
+                    Vector3.UnitY,
+                    0.3f,
+                    1.6f,
+                    0.70710677f,
+                    0.02f,
+                    0.3f,
+                    1.0f,
+                    null));
+            controller.ShouldNotBeNull();
+
+            float minimumY = float.PositiveInfinity;
+            float maximumY = float.NegativeInfinity;
+            int unsupportedSteps = 0;
+            for (int step = 0; step < 600; step++)
+            {
+                controller.SubmitMotion(new CharacterMotionCommand(
+                    new Vector3(4.0f, -0.9f, 0.0f),
+                    CharacterMotionInputModel.Velocity,
+                    0.00001f,
+                    1.0f / 60.0f));
+                worldInstance.FixedUpdate();
+
+                Vector3 position = controller.Position;
+                minimumY = MathF.Min(minimumY, position.Y);
+                maximumY = MathF.Max(maximumY, position.Y);
+                if (step > 0 && !controller.IsGrounded)
+                    unsupportedSteps++;
+            }
+
+            controller.Position.X.ShouldBeGreaterThan(29.0f);
+            minimumY.ShouldBeGreaterThan(0.79f);
+            maximumY.ShouldBeLessThan(0.85f);
+            unsupportedSteps.ShouldBe(0);
+
+            controller.RequestRelease();
+            worldInstance.FixedUpdate();
+            controller = null;
+        }
+        finally
+        {
+            controller?.RequestRelease();
+
+            if (worldInstance is not null &&
+                worldInstance.PlayState != XRWorldInstance.EPlayState.Stopped)
+                worldInstance.EndPlay();
+
+            if (worldInstance is not null)
+                worldInstance.TargetWorld = null;
+            if (world is not null)
+                XRWorldInstance.WorldInstances.Remove(world);
+
+            RuntimeThreadServices.Current = previousThreadServices;
+            RuntimeShaderServices.Current = previousShaderServices;
+            RuntimePhysicsServices.Current = previousPhysicsServices;
+        }
+    }
+
+    [Test]
+    [NonParallelizable]
+    public async Task PhysxLocomotionController_ReconcilesGroundVelocityWithoutFallingThrough()
+    {
+        _ = Engine.Profiler;
+        IRuntimeShaderServices? previousShaderServices = RuntimeShaderServices.Current;
+        RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
+        IRuntimePhysicsServices previousPhysicsServices = RuntimePhysicsServices.Current;
+        RuntimePhysicsServices.Current = new FixedStepRuntimePhysicsServices();
+        IRuntimeThreadServices previousThreadServices = RuntimeThreadServices.Current;
+        var threadServices = new DeferredRuntimeThreadServices();
+        RuntimeThreadServices.Current = threadServices;
+        XRWorld? world = null;
+        XRWorldInstance? worldInstance = null;
+
+        try
+        {
+            SceneNode root = new("Root");
+            SceneNode floorNode = new(root, "Floor");
+            floorNode.SetTransform<RigidBodyTransform>()
+                .SetPositionAndRotation(new Vector3(0.0f, -0.5f, 0.0f), Quaternion.Identity);
+            StaticRigidBodyComponent floor = floorNode.AddComponent<StaticRigidBodyComponent>()!;
+            floor.Geometry = new IPhysicsGeometry.Box(new Vector3(50.0f, 0.5f, 50.0f));
+            floor.CollisionGroup = 1;
+            floor.GroupsMask =
+                new PhysicsGroupsMask(uint.MaxValue, uint.MaxValue, uint.MaxValue, uint.MaxValue);
+
+            SceneNode pawnNode = new(root, "Locomotion Pawn");
+            pawnNode.SetTransform<RigidBodyTransform>()
+                .SetPositionAndRotation(new Vector3(0.0f, 2.0f, 0.0f), Quaternion.Identity);
+            CharacterMovement3DComponent movement =
+                pawnNode.AddComponent<CharacterMovement3DComponent>()!;
+            movement.TickInputWithPhysics = true;
+
+            var scene = new XRScene("Physics Scene", root);
+            world = new XRWorld("Physics World", scene);
+            world.Settings.PhysicsResetMinYDist = 0.0f;
+            worldInstance = new XRWorldInstance(world, new VisualScene3D(), new PhysxScene())
+            {
+                PhysicsEnabled = true,
+            };
+            XRWorldInstance.WorldInstances.Add(world, worldInstance);
+
+            await worldInstance.BeginPlay();
+            threadServices.DrainPhysicsThread();
+            threadServices.DrainUpdateThread();
+            worldInstance.PhysicsEnabled = true;
+
+            IAbstractCharacterController controller = movement.CharacterController.ShouldNotBeNull();
+            float minimumY = float.PositiveInfinity;
+            for (int step = 0; step < 600; step++)
+            {
+                worldInstance.FixedUpdate();
+                minimumY = MathF.Min(minimumY, controller.Position.Y);
+            }
+
+            controller.IsGrounded.ShouldBeTrue();
+            controller.Position.Y.ShouldBeInRange(0.79f, 0.85f);
+            minimumY.ShouldBeGreaterThan(0.79f);
+            movement.Velocity.Y.ShouldBeInRange(-1.0f, 0.0f);
+            controller.EffectiveVelocity.Y.ShouldBeInRange(-0.001f, 0.001f);
+        }
+        finally
+        {
+            if (worldInstance is not null &&
+                worldInstance.PlayState != XRWorldInstance.EPlayState.Stopped)
+                worldInstance.EndPlay();
+
+            if (worldInstance is not null)
+                worldInstance.TargetWorld = null;
+            if (world is not null)
+                XRWorldInstance.WorldInstances.Remove(world);
+
+            RuntimeThreadServices.Current = previousThreadServices;
+            RuntimeShaderServices.Current = previousShaderServices;
+            RuntimePhysicsServices.Current = previousPhysicsServices;
+        }
+    }
+
+    [Test]
+    public void RigidBodyTransform_NativeActorLinkIsExcludedFromPersistentFormats()
+    {
+        PropertyInfo property = typeof(RigidBodyTransform)
+            .GetProperty(nameof(RigidBodyTransform.RigidBody))!;
+
+        property.GetCustomAttribute<RuntimeOnlyAttribute>().ShouldNotBeNull();
+        property.GetCustomAttribute<YamlIgnoreAttribute>().ShouldNotBeNull();
+        property.GetCustomAttribute<MemoryPackIgnoreAttribute>().ShouldNotBeNull();
+    }
+
+    [Test]
+    [NonParallelizable]
+    public async Task ActivePhysxPhysicsTestingWorld_SnapshotAvoidsMemoryPackFallbackAndNativeActors()
+    {
+        // Initialize engine-owned globals before substituting the shader loader so teardown restores
+        // the real service instead of leaving an initialized Engine with a null global service.
+        _ = Engine.Profiler;
+        IRuntimeShaderServices? previousShaderServices = RuntimeShaderServices.Current;
+        RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
+        XRWorld? world = null;
+        XRWorldInstance? worldInstance = null;
+
+        try
+        {
+            SceneNode root = new("Root");
+            BootstrapPhysicsTestWorldBuilder.AddPlayground(root, sphereCount: 0);
+            root.NewChild("Directional Light").AddComponent<DirectionalLightComponent>();
+            var scene = new XRScene("Physics Testing Scene", root);
+            var gameMode = new LocomotionGameMode
+            {
+                SpawnPositionOverride = new Vector3(0.0f, 2.0f, 9.0f),
+                SpawnRotationOverride = Quaternion.Identity,
+            };
+            world = new XRWorld("Physics Testing World", gameMode, scene);
+            var physicsScene = new PhysxScene();
+            worldInstance = new XRWorldInstance(world, new VisualScene3D(), physicsScene);
+            XRWorldInstance.WorldInstances.Add(world, worldInstance);
+
+            await worldInstance.BeginPlay();
+
+            DynamicRigidBodyComponent[] activeBodies = EnumerateHierarchy(root)
+                .SelectMany(static node => node.Components)
+                .OfType<DynamicRigidBodyComponent>()
+                .ToArray();
+            activeBodies.ShouldNotBeEmpty();
+            activeBodies.ShouldAllBe(static body => body.RigidBody is PhysxDynamicRigidBody);
+
+            int memoryPackExceptionCount = 0;
+            var memoryPackExceptionMessages = new ConcurrentQueue<string>();
+            EventHandler<FirstChanceExceptionEventArgs> handler = (_, args) =>
+            {
+                if (args.Exception is MemoryPackSerializationException)
+                {
+                    Interlocked.Increment(ref memoryPackExceptionCount);
+                    memoryPackExceptionMessages.Enqueue(args.Exception.Message);
+                }
+            };
+
+            AppDomain.CurrentDomain.FirstChanceException += handler;
+            WorldStateSnapshot? snapshot;
+            try
+            {
+                snapshot = WorldStateSnapshot.Capture(world);
+            }
+            finally
+            {
+                AppDomain.CurrentDomain.FirstChanceException -= handler;
+            }
+
+            snapshot.ShouldNotBeNull();
+            snapshot!.IsValid.ShouldBeTrue();
+            snapshot.SerializedScenes.Count.ShouldBe(1);
+            snapshot.SerializedGameMode.ShouldNotBeNull();
+            LocomotionGameMode restoredGameMode = SnapshotBinarySerializer
+                .Deserialize<GameMode>(snapshot.SerializedGameMode!)
+                .ShouldBeOfType<LocomotionGameMode>();
+            restoredGameMode.SpawnPositionOverride.ShouldBe(new Vector3(0.0f, 2.0f, 9.0f));
+            restoredGameMode.SpawnRotationOverride.ShouldBe(Quaternion.Identity);
+            memoryPackExceptionCount.ShouldBe(
+                0,
+                string.Join(
+                    Environment.NewLine,
+                    memoryPackExceptionMessages.Distinct(StringComparer.Ordinal)));
+
+            byte[] scenePayload = snapshot.SerializedScenes.Values.Single();
+            XRScene restoredScene = SnapshotBinarySerializer
+                .Deserialize<XRScene>(scenePayload)
+                .ShouldNotBeNull();
+            SceneNode[] restoredNodes = restoredScene.RootNodes
+                .SelectMany(EnumerateHierarchy)
+                .ToArray();
+
+            restoredNodes
+                .Select(static node => node.Transform)
+                .OfType<RigidBodyTransform>()
+                .ShouldAllBe(static transform => transform.RigidBody == null);
+            restoredNodes
+                .SelectMany(static node => node.Components)
+                .OfType<DynamicRigidBodyComponent>()
+                .ShouldAllBe(static body => body.RigidBody == null);
+            restoredNodes
+                .SelectMany(static node => node.Components)
+                .OfType<StaticRigidBodyComponent>()
+                .ShouldAllBe(static body => body.RigidBody == null);
+
+            StaticRigidBodyComponent restoredFloor = restoredNodes
+                .Single(static node => node.Name == "Physics Floor")
+                .GetComponent<StaticRigidBodyComponent>()!;
+            restoredFloor.Geometry.ShouldBeOfType<IPhysicsGeometry.Box>()
+                .HalfExtents.ShouldBe(new Vector3(30.0f, 0.5f, 30.0f));
+
+            DynamicRigidBodyComponent restoredBox = restoredNodes
+                .Single(static node => node.Name == "Box Stack 00")
+                .GetComponent<DynamicRigidBodyComponent>()!;
+            restoredBox.Geometry.ShouldBeOfType<IPhysicsGeometry.Box>()
+                .HalfExtents.ShouldBe(new Vector3(0.5f));
+        }
+        finally
+        {
+            if (worldInstance is not null &&
+                worldInstance.PlayState != XRWorldInstance.EPlayState.Stopped)
+                worldInstance.EndPlay();
+
+            if (worldInstance is not null)
+                worldInstance.TargetWorld = null;
+            if (world is not null)
+                XRWorldInstance.WorldInstances.Remove(world);
+
+            RuntimeShaderServices.Current = previousShaderServices;
+        }
+    }
+
     [Test]
     public void FullSceneYamlRoundTrip_PreservesBodiesControllerJointReferenceLimitsAndAuthority()
     {
@@ -193,4 +740,77 @@ public sealed class PhysicsSceneSerializationTests
         => root.Transform.Children
             .Select(static transform => transform.SceneNode)
             .Single(node => node?.Name == name)!;
+
+    private static IEnumerable<SceneNode> EnumerateHierarchy(SceneNode node)
+    {
+        yield return node;
+        foreach (TransformBase? childTransform in node.Transform.Children)
+        {
+            if (childTransform?.SceneNode is not SceneNode child)
+                continue;
+
+            foreach (SceneNode descendant in EnumerateHierarchy(child))
+                yield return descendant;
+        }
+    }
+
+    private static IAbstractCharacterController? CreateTestCharacterController(PhysxScene scene)
+        => scene.BackendService.CreateCharacterController(
+            new PhysicsCharacterControllerCreateInfo(
+                new Vector3(0.0f, 3.0f, 0.0f),
+                Vector3.UnitY,
+                0.3f,
+                1.6f,
+                0.70710677f,
+                0.02f,
+                0.3f,
+                1.0f,
+                null));
+
+    private sealed class FixedStepRuntimePhysicsServices : IRuntimePhysicsServices
+    {
+        private readonly PhysicsVisualizeSettings _visualizeSettings = new();
+
+        public float FixedDeltaSeconds => 1.0f / 60.0f;
+        public PhysicsVisualizeSettings VisualizeSettings => _visualizeSettings;
+        public bool JoltDebugRenderDiagnostics => false;
+
+        public void RenderPoint(Vector3 position, XREngine.Data.Colors.ColorF4 color) { }
+        public void RenderLine(Vector3 start, Vector3 end, XREngine.Data.Colors.ColorF4 color) { }
+        public void RenderSphere(Vector3 center, float radius, bool solid, XREngine.Data.Colors.ColorF4 color) { }
+        public void RenderCapsule(Vector3 start, Vector3 end, float radius, bool solid, XREngine.Data.Colors.ColorF4 color) { }
+    }
+
+    private sealed class DeferredRuntimeThreadServices : IRuntimeThreadServices
+    {
+        private readonly ConcurrentQueue<Action> _physicsActions = new();
+        private readonly ConcurrentQueue<Action> _updateActions = new();
+
+        public bool InvokeOnAppThread(
+            Action action,
+            string? reason = null,
+            bool executeNowIfAlreadyAppThread = false)
+        {
+            action();
+            return true;
+        }
+
+        public void EnqueueUpdateThread(Action action)
+            => _updateActions.Enqueue(action);
+
+        public void EnqueuePhysicsThread(Action action)
+            => _physicsActions.Enqueue(action);
+
+        public void DrainPhysicsThread()
+        {
+            while (_physicsActions.TryDequeue(out Action? action))
+                action();
+        }
+
+        public void DrainUpdateThread()
+        {
+            while (_updateActions.TryDequeue(out Action? action))
+                action();
+        }
+    }
 }

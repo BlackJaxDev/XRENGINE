@@ -13,7 +13,8 @@ internal readonly record struct VulkanMemoryAllocation(
     uint MemoryTypeIndex,
     MemoryPropertyFlags Properties,
     int BlockId,
-    nint NativeAllocation = 0)
+    nint NativeAllocation = 0,
+    nint MappedData = 0)
 {
     /// <summary>A sentinel allocation representing a failed or empty allocation.</summary>
     public static VulkanMemoryAllocation Null => default;

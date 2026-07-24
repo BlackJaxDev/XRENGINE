@@ -416,6 +416,29 @@ public sealed class VulkanP0ValidationTests
     }
 
     [Test]
+    public void VulkanVmaBridge_PersistentlyMapsHostVisibleAllocations()
+    {
+        string nativeBridge = ReadWorkspaceFile("Build/Native/VulkanMemoryAllocatorBridge/VulkanMemoryAllocatorBridge.cpp");
+        string nativeInterop = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Memory/VulkanVmaNative.cs");
+        string allocation = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Memory/VulkanMemoryAllocation.cs");
+        string allocator = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Memory/VulkanVmaAllocator.cs");
+        string allocationInfo = SliceMethod(nativeBridge, "VmaAllocationCreateInfo makeAllocationCreateInfo");
+
+        allocationInfo.ShouldContain("VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT");
+        allocationInfo.ShouldContain("VMA_ALLOCATION_CREATE_MAPPED_BIT");
+        nativeBridge.ShouldContain("void* mappedData;");
+        nativeBridge.ShouldContain("outAllocationInfo->mappedData = allocationInfo.pMappedData;");
+        nativeInterop.ShouldContain("public nint MappedData;");
+        allocation.ShouldContain("nint MappedData = 0");
+        allocator.ShouldContain("if (allocation.MappedData != 0)");
+        allocator.ShouldContain("mappedPtr = (byte*)allocation.MappedData + offset;");
+        allocator.ShouldContain("MappedData: nativeAllocation.MappedData");
+    }
+
+    [Test]
     public void VulkanDynamicUniformRingBuffer_UsesDedicatedMemoryForPersistentMap()
     {
         string ringSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs");

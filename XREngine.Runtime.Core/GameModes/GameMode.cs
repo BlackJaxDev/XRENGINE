@@ -23,6 +23,11 @@ public abstract class GameMode : XRAsset
     public Type? PlayerControllerClass => _defaultPlayerControllerClass;
     public Type? PlayerPawnClass => _defaultPlayerPawnClass ?? RuntimeGameModeHostServices.Current?.DefaultPawnType;
 
+    /// <summary>
+    /// True when <see cref="CreateDefaultPawn"/> constructs the pawn at its final spawn pose.
+    /// </summary>
+    protected virtual bool DefaultPawnAppliesSpawnTransform => false;
+
     [YamlIgnore, MemoryPackIgnore]
     [Description("The world instance this GameMode is managing.")]
     public object? WorldInstance { get; internal set; }
@@ -111,8 +116,11 @@ public abstract class GameMode : XRAsset
             return null;
 
         TrackAutoSpawnedPawn(pawn);
-        (Vector3 position, Quaternion rotation) = GetSpawnPoint(playerIndex);
-        RuntimeGameModeHostServices.Current?.ApplySpawnTransform(pawn, position, rotation);
+        if (!DefaultPawnAppliesSpawnTransform)
+        {
+            (Vector3 position, Quaternion rotation) = GetSpawnPoint(playerIndex);
+            RuntimeGameModeHostServices.Current?.ApplySpawnTransform(pawn, position, rotation);
+        }
         ForcePossession(pawn, playerIndex);
         Debug.Out($"Spawned default pawn for player {playerIndex}");
         return pawn;

@@ -1,4 +1,3 @@
-using System.Threading;
 using Silk.NET.Input;
 using Silk.NET.Maths;
 using Silk.NET.Windowing;
@@ -53,20 +52,6 @@ internal abstract class InteractiveResizeStrategyBase : IInteractiveResizeStrate
 
         window.InteractiveResizeDiagnostics.RecordCallback(reason);
         window.RenderInteractiveResizeFrame(reason);
-    }
-
-    protected bool ShouldRenderByRateLimit(ref long lastRenderTimestamp, int targetHz)
-    {
-        if (targetHz <= 0)
-            return true;
-
-        long now = System.Diagnostics.Stopwatch.GetTimestamp();
-        long previous = Volatile.Read(ref lastRenderTimestamp);
-        long minTicks = Math.Max(1, System.Diagnostics.Stopwatch.Frequency / targetHz);
-        if (previous != 0 && now - previous < minTicks)
-            return false;
-
-        return Interlocked.CompareExchange(ref lastRenderTimestamp, now, previous) == previous;
     }
 
     protected static Vector2D<int> GetCurrentFramebufferSize(IWindow window)

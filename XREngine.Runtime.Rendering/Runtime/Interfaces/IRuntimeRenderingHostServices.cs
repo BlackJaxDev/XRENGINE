@@ -870,6 +870,12 @@ public interface IRuntimeRenderingHostServices
     void UnsubscribeWindowTickCallbacks(Action swapBuffers, Action renderFrame);
 
     /// <summary>
+    /// Attempts to dispatch one complete host frame while the native window thread
+    /// is inside an interactive resize modal loop.
+    /// </summary>
+    bool TryDispatchInteractiveResizeFrame();
+
+    /// <summary>
     /// Subscribes a callback to host play-mode transition notifications that affect rendering.
     /// </summary>
     void SubscribePlayModeTransitions(Action callback);
@@ -1071,7 +1077,7 @@ public interface IRuntimeRenderingHostServices
     /// <summary>
     /// Flushes any queued debug shapes through the host debug renderer.
     /// </summary>
-    void RenderDebugShapes();
+    void RenderDebugShapes(bool depthTested);
 
     #endregion
 

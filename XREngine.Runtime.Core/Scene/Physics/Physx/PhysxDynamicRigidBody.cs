@@ -111,6 +111,12 @@ namespace XREngine.Scene.Physics.Physx
             }
             set
             {
+                if (RuntimePhysicsServices.Current.IsPhysicsThread)
+                {
+                    SetKinematicTargetInternal(value);
+                    return;
+                }
+
                 RuntimeThreadServices.Current.EnqueuePhysicsThread(() => SetKinematicTargetInternal(value));
             }
         }
@@ -151,24 +157,53 @@ namespace XREngine.Scene.Physics.Physx
 
         public void WakeUp()
         {
+            if (RuntimePhysicsServices.Current.IsPhysicsThread)
+            {
+                WakeUpInternal();
+                return;
+            }
+
             RuntimeThreadServices.Current.EnqueuePhysicsThread(WakeUpInternal);
         }
         private void WakeUpInternal()
         {
             if (_obj is null || IsReleased)
                 return;
+
+            // Snapshot restore can construct and reset bodies before the replacement
+            // PxScene exists. PxRigidDynamic::wakeUp requires an attached actor, so let
+            // PhysxScene.OnEnterPlayMode wake it after adding it to the live scene.
+            if (ScenePtr is null)
+            {
+                PhysxObjectLog.Modified(this, (nint)_obj, nameof(WakeUp), "ignored (detached)");
+                return;
+            }
+
             _obj->WakeUpMut();
             PhysxObjectLog.Modified(this, (nint)_obj, nameof(WakeUp));
         }
 
         public void PutToSleep()
         {
+            if (RuntimePhysicsServices.Current.IsPhysicsThread)
+            {
+                PutToSleepInternal();
+                return;
+            }
+
             RuntimeThreadServices.Current.EnqueuePhysicsThread(PutToSleepInternal);
         }
         private void PutToSleepInternal()
         {
             if (_obj is null || IsReleased)
                 return;
+
+            if (ScenePtr is null)
+            {
+                PhysxObjectLog.Modified(this, (nint)_obj, nameof(PutToSleep), "ignored (detached)");
+                return;
+            }
+
             _obj->PutToSleepMut();
             PhysxObjectLog.Modified(this, (nint)_obj, nameof(PutToSleep));
         }

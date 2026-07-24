@@ -1,8 +1,8 @@
 # Window Interactive Resize Strategies TODO
 
-Last Updated: 2026-06-22
+Last Updated: 2026-07-23
 Owner: Rendering
-Status: Implemented. Targeted editor build passes; manual resize matrix still needs runtime exercise.
+Status: Implemented. Targeted build/tests and actual mouse-held Vulkan/OpenGL resize passes; the broader strategy matrix remains follow-up coverage.
 Target Branch: none; user requested no branch for this work.
 
 ## Implementation Notes
@@ -21,16 +21,25 @@ Target Branch: none; user requested no branch for this work.
 - Added counters for callback, interactive render, suppressed render, queued
   resize, and last resize reason; the editor Engine State window lists the
   selected strategy, backend, and resize diagnostics for each window.
-- The Win32 modal-loop timer defaults to 16 ms and can be tuned with
+- Win32 dispatches an ordinary `EngineTimer.WaitToRender` frame from each
+  synchronous `WM_SIZING` position, so continuous mouse movement cannot starve
+  rendering. A self-sustaining low-priority `WM_PAINT` sequence keeps frames
+  moving while the held cursor is stationary. The 1 ms timer is only a paint
+  watchdog and can be tuned with
   `XRE_WIN32_INTERACTIVE_RESIZE_TIMER_MS` (1-250 ms).
 - The Win32 modal-loop strategy now handles live drag as a presentation-only
   resize: `WM_SIZE`/`WM_SIZING` update the effective framebuffer size,
   viewport output region, camera aspect, and screen-space UI dimensions, while
   full internal-resolution/resource invalidation is deferred until
   `WM_EXITSIZEMOVE`.
-- Live drag renders are rate-limited to 60 Hz and use actual client dimensions
-  from `WM_SIZE` or `GetClientRect`, avoiding the earlier proposed-outer-rect
-  conversion that could over-correct ImGui dimensions during border drags.
+- Live drag render requests use the normal EngineTimer cadence and actual
+  client dimensions from `WM_SIZE` or `GetClientRect`, avoiding both a
+  resize-only FPS cap and the earlier proposed-outer-rect conversion that could
+  over-correct ImGui dimensions during border drags.
+- Automatic internal-resolution mutation is frozen for the duration of the
+  native drag, and interactive snapshots do not admit transient full resource
+  generations. This lets Vulkan reuse its last complete internal generation
+  instead of pausing presentation while pending generations chase the mouse.
 - Vulkan live drag now bypasses swapchain resize debounce and recreates the
   swapchain immediately when the effective client size diverges from the
   current swapchain extent. While dragging, Vulkan also allows the previous

@@ -1402,6 +1402,16 @@ public unsafe partial class VulkanRenderer
             enableDynamicRenderingFeature &&
             dynamicRenderingLocalReadFeatureSupported;
 
+        bool swapchainMaintenance1ExtensionEnabled =
+            extensionsArray.Contains(SwapchainMaintenance1ExtensionName);
+        bool swapchainMaintenance1FeatureSupported =
+            swapchainMaintenance1ExtensionEnabled &&
+            QuerySwapchainMaintenance1FeatureSupport();
+        bool enableSwapchainMaintenance1Feature =
+            swapchainMaintenance1ExtensionEnabled &&
+            swapchainMaintenance1FeatureSupported;
+        _swapchainMaintenance1Enabled = enableSwapchainMaintenance1Feature;
+
         bool shaderDrawParametersExtensionEnabled = extensionsArray.Contains("VK_KHR_shader_draw_parameters");
         QueryShaderDrawParametersCapabilities(out bool shaderDrawParametersFeatureSupported);
         bool enableShaderDrawParametersFeature = shaderDrawParametersFeatureSupported;
@@ -1725,6 +1735,13 @@ public unsafe partial class VulkanRenderer
             SType = StructureType.PhysicalDeviceDynamicRenderingLocalReadFeaturesKhr,
             PNext = null,
             DynamicRenderingLocalRead = enableDynamicRenderingLocalReadFeature,
+        };
+
+        PhysicalDeviceSwapchainMaintenance1FeaturesEXT swapchainMaintenance1FeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceSwapchainMaintenance1FeaturesExt,
+            PNext = null,
+            SwapchainMaintenance1 = enableSwapchainMaintenance1Feature,
         };
 
         PhysicalDeviceVulkan11Features vulkan11FeatureEnable = new()
@@ -2051,6 +2068,12 @@ public unsafe partial class VulkanRenderer
                 dynamicRenderingLocalReadFeatureEnableKhr.PNext = enabledFeaturesPNext;
                 enabledFeaturesPNext = &dynamicRenderingLocalReadFeatureEnableKhr;
             }
+        }
+
+        if (enableSwapchainMaintenance1Feature)
+        {
+            swapchainMaintenance1FeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &swapchainMaintenance1FeatureEnable;
         }
 
         if (enableShaderDrawParametersFeature || enableMultiviewFeature)

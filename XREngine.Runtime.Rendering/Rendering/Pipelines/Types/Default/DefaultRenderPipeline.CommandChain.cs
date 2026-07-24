@@ -8,6 +8,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Resources;
+using XREngine.Scene.Physics.DebugVisualization;
 using static XREngine.RuntimeEngine.Rendering.State;
 
 namespace XREngine.Rendering;
@@ -153,6 +154,7 @@ public partial class DefaultRenderPipeline
             AppendLightingPass(fullSceneCommands);
             AppendForwardPass(fullSceneCommands, enableComputePasses);
             AppendTransparencyPasses(fullSceneCommands);
+            AppendPhysicsWorldDebug(fullSceneCommands);
 
             fullSceneCommands.Add<VPRC_DepthTest>().Enable = false;
             AppendVelocityPassSwitch(fullSceneCommands);
@@ -1043,13 +1045,39 @@ public partial class DefaultRenderPipeline
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
                 c.Add<VPRC_RenderDebugGpuBvh>().RenderGraphPassName = lateDebugPassName;
                 c.Add<VPRC_RenderDebugShapes>().RenderGraphPassName = lateDebugPassName;
-                c.Add<VPRC_RenderDebugPhysics>().RenderGraphPassName = lateDebugPassName;
+                VPRC_RenderDebugPhysics physicsOverlay = c.Add<VPRC_RenderDebugPhysics>();
+                physicsOverlay.RenderGraphPassName = lateDebugPassName;
+                physicsOverlay.DepthMode = PhysicsDebugDepthMode.Overlay;
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
                 c.Add<VPRC_DepthWrite>().Allow = true;
             }
         }
 
         AppendDiagnosticTextureCapture(c, "12_PostProcessOutput", PostProcessOutputTextureName);
+    }
+
+    private void AppendPhysicsWorldDebug(ViewportRenderCommandContainer c)
+    {
+        const string worldDebugPassName = "PhysicsWorldDebug";
+        using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
+        using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(
+            ForwardPassFBOName,
+            write: true,
+            clearColor: false,
+            clearDepth: false,
+            clearStencil: false)))
+        {
+            c.Add<VPRC_ColorMask>().Set(true, true, true, true);
+            c.Add<VPRC_DepthTest>().Enable = true;
+            c.Add<VPRC_DepthWrite>().Allow = true;
+            c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
+            VPRC_RenderDebugShapes shapesWorld = c.Add<VPRC_RenderDebugShapes>();
+            shapesWorld.RenderGraphPassName = worldDebugPassName;
+            shapesWorld.DepthTested = true;
+            VPRC_RenderDebugPhysics physicsWorld = c.Add<VPRC_RenderDebugPhysics>();
+            physicsWorld.RenderGraphPassName = worldDebugPassName;
+            physicsWorld.DepthMode = PhysicsDebugDepthMode.DepthTested;
+        }
     }
 
     private void AppendFinalPostProcess(ViewportRenderCommandContainer c)
@@ -1270,7 +1298,8 @@ public partial class DefaultRenderPipeline
     {
         c.Add<VPRC_ColorMask>().Set(visible, visible, visible, visible);
         c.Add<VPRC_RenderDebugShapes>();
-        c.Add<VPRC_RenderDebugPhysics>();
+        VPRC_RenderDebugPhysics physicsOverlay = c.Add<VPRC_RenderDebugPhysics>();
+        physicsOverlay.DepthMode = PhysicsDebugDepthMode.Overlay;
         if (!visible)
             c.Add<VPRC_ColorMask>().Set(true, true, true, true);
     }

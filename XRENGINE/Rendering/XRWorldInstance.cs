@@ -502,6 +502,15 @@ namespace XREngine.Rendering
             if (_physicsResetCacheValid)
                 return;
 
+            CapturePhysicsResetInitialPoses();
+        }
+
+        /// <summary>
+        /// Captures the native poses that dynamic bodies have when play begins.
+        /// This must run after actors enter the live physics scene and before the first step.
+        /// </summary>
+        private void CapturePhysicsResetInitialPoses()
+        {
             _physicsResetInitialDynamicPoses.Clear();
             _physicsResetDynamicBodyLookup.Clear();
 
@@ -628,15 +637,21 @@ namespace XREngine.Rendering
             Lights.RebuildCachesFromWorld();
 
             VisualScene.Initialize();
-            PhysicsScene.Initialize();
+            Engine.InvokePhysicsThreadTask(PhysicsScene.Initialize);
 
             _physicsResetCacheValid = false;
             _physicsResetInitialDynamicPoses.Clear();
+            _physicsResetDynamicBodyLookup.Clear();
+            _pendingMinYPlaneResetRequests.Clear();
+            _pendingMinYPlaneResetRequestSet.Clear();
 
             await BeginPlayInternal();
 
             if (PhysicsEnabled)
-                PhysicsScene.OnEnterPlayMode();
+            {
+                Engine.InvokePhysicsThreadTask(PhysicsScene.OnEnterPlayMode);
+                Engine.InvokePhysicsThreadTask(CapturePhysicsResetInitialPoses);
+            }
 
             LinkTimeCallbacks();
             PostBeginPlay?.Invoke(this);
@@ -674,8 +689,9 @@ namespace XREngine.Rendering
 
             // IMPORTANT: EndPlayInternal deactivates nodes/components which may unregister
             // physics/render objects. Keep scenes alive until after that completes.
-            PhysicsScene.Destroy();
+            Engine.InvokePhysicsThreadTask(PhysicsScene.Destroy);
             VisualScene.Destroy();
+            ResetPhysicsDebugFrameRenderer();
 
             // After ending play, editor state restoration may be about to swap scene graphs back.
             // Reset caches now to avoid stale references persisting into edit mode.
@@ -683,6 +699,9 @@ namespace XREngine.Rendering
 
             _physicsResetCacheValid = false;
             _physicsResetInitialDynamicPoses.Clear();
+            _physicsResetDynamicBodyLookup.Clear();
+            _pendingMinYPlaneResetRequests.Clear();
+            _pendingMinYPlaneResetRequestSet.Clear();
 
             PostEndPlay?.Invoke(this);
             PlayState = EPlayState.Stopped;

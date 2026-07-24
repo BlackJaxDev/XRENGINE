@@ -182,6 +182,12 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
             return true;
         }
 
+        if (allocation.MappedData != 0)
+        {
+            mappedPtr = (byte*)allocation.MappedData + offset;
+            return true;
+        }
+
         try
         {
             lock (_mapCountsGate)
@@ -190,7 +196,23 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
 
                 Result result = VulkanVmaNative.MapMemory(_allocator, allocation.NativeAllocation, out nint allocationPtr);
                 if (result != Result.Success || allocationPtr == 0)
+                {
+                    if (result == Result.Success)
+                        VulkanVmaNative.UnmapMemory(_allocator, allocation.NativeAllocation);
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.VMA.MapFailed.{allocation.NativeAllocation}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] VMA map failed. Result={0} Allocation=0x{1:X} Memory=0x{2:X} AllocationOffset={3} RelativeOffset={4} Length={5} Size={6} Properties={7}.",
+                        result,
+                        allocation.NativeAllocation,
+                        allocation.Memory.Handle,
+                        allocation.Offset,
+                        offset,
+                        length,
+                        allocation.Size,
+                        allocation.Properties);
                     return false;
+                }
 
                 _mapCounts.AddOrUpdate(allocation.NativeAllocation, 1, static (_, count) => count + 1);
                 mappedPtr = (byte*)allocationPtr + offset;
@@ -213,6 +235,9 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
             api.UnmapMemory(device, allocation.Memory);
             return;
         }
+
+        if (allocation.MappedData != 0)
+            return;
 
         try
         {
@@ -435,7 +460,8 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
             MemoryTypeIndex: nativeAllocation.MemoryTypeIndex,
             Properties: properties,
             BlockId: VmaBlockId,
-            NativeAllocation: nativeAllocation.Allocation);
+            NativeAllocation: nativeAllocation.Allocation,
+            MappedData: nativeAllocation.MappedData);
 
         Interlocked.Increment(ref _activeAllocationCount);
         Interlocked.Add(ref _totalAllocatedBytes, ClampToLong(nativeAllocation.Size));

@@ -22,6 +22,14 @@ Attach physics behavior through scene components:
 
 Most rigid body components expect a compatible transform and automatically register or unregister their backend actor as the node is activated, deactivated, or removed.
 
+## Play-Mode Fall Reset
+
+`WorldSettings.PhysicsResetMinYDist` defines a gravity-aligned fall plane. When it is greater
+than zero, dynamic rigid bodies and locomotion character controllers that cross the plane
+return to the pose they captured at Play start. Linear, angular, queued controller, and
+inherited support motion is cleared so the object restarts from the spawn pose rather than
+continuing its previous fall. Set the value to zero to disable this behavior.
+
 ## Queries
 
 Use physics scene queries for gameplay selection, placement tests, and editor picking:
@@ -35,7 +43,7 @@ Query results resolve back to owning engine components where possible, so gamepl
 
 ## Debugging
 
-Enable physics debug visualization from engine or editor rendering settings. PhysX debug output can visualize shapes, contacts, joints, controllers, and other solver data.
+Enable physics debug visualization from engine or editor rendering settings. PhysX debug output can visualize shapes, contacts, joints, controllers, and other solver data. The Physics Testing world honors `RenderPhysicsDebug`; when that explicitly configured setting is `false`, it does not enable visualization flags implicitly.
 
 For physics chain performance diagnostics, see [Physics Chain Performance](../developer-guides/rendering/physics-chain-performance.md).
 

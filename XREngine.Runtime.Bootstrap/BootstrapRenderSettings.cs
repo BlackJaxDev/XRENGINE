@@ -120,12 +120,20 @@ public static class BootstrapRenderSettings
             $"VrMirrorMode={renderSettings.VrMirrorMode} " +
             $"VrMirrorComposeFromEyeTextures={renderSettings.VrMirrorComposeFromEyeTextures} " +
             $"VrCopyEyePreviewTextures={renderSettings.VrCopyEyePreviewTextures}");
-        if (settings.RenderPhysicsDebug)
-            renderSettings.PhysicsVisualizeSettings.SetAllTrue();
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderPhysicsDebug)))
+        {
+            if (settings.RenderPhysicsDebug)
+                renderSettings.PhysicsVisualizeSettings.SetAllTrue();
+            else
+                renderSettings.PhysicsVisualizeSettings.SetAllFalse();
+        }
 
-        // Profiler frame logging is driven by EditorPreferences.Debug.EnableProfilerFrameLogging,
-        // whose setter syncs Engine.Profiler.EnableFrameLogging automatically.
-        // Do not override it here â€” that would discard the user's saved preference.
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.EnableProfilerLogging)))
+        {
+            // This is a process-scoped launch control. Apply it without mutating the user's
+            // persisted editor preference.
+            Engine.Profiler.EnableFrameLogging = settings.EnableProfilerLogging;
+        }
 
         EnsureEmulatedVRStereoPreviewRenderingHooked();
     }

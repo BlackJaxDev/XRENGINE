@@ -45,6 +45,19 @@ namespace XREngine.Rendering.Pipelines.Commands
                 externalRegion,
                 outputRegion);
 
+            // During Vulkan interactive resize the live presentation extent changes while the
+            // swapchain raster remains at its last complete generation. Direct-to-window passes
+            // (final scene composition, native screen-space UI, and debug overlays) therefore
+            // need the same live-presentation -> fixed-backbuffer transform as RenderToWindow.
+            // Rendering into an FBO or external swapchain already has an explicit target extent.
+            if (!UseInternalResolution &&
+                !externalRegion.HasValue &&
+                !outputRegion.HasValue &&
+                renderer is not null)
+            {
+                res = renderer.MapWindowPresentationRegionToBackbuffer(res);
+            }
+
             ActivePipelineInstance.RenderState.PushRenderArea(res);
             ActivePipelineInstance.RenderState.PushCropArea(res);
         }

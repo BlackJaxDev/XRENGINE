@@ -143,6 +143,7 @@ public sealed class JoltProductionHardeningTests
         public PhysicsVisualizeSettings VisualizeSettings => settings;
         public bool JoltDebugRenderDiagnostics => false;
 
+        public void RenderPoint(Vector3 position, XREngine.Data.Colors.ColorF4 color) { }
         public void RenderLine(Vector3 start, Vector3 end, XREngine.Data.Colors.ColorF4 color) { }
         public void RenderSphere(Vector3 center, float radius, bool solid, XREngine.Data.Colors.ColorF4 color) { }
         public void RenderCapsule(Vector3 start, Vector3 end, float radius, bool solid, XREngine.Data.Colors.ColorF4 color) { }

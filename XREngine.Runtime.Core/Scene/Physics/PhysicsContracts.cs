@@ -227,6 +227,13 @@ public interface IAbstractCharacterController : IAbstractRigidPhysicsActor
 
     void SubmitMotion(in CharacterMotionCommand command);
     void Move(Vector3 value, float minDist, float elapsedTime);
+    /// <summary>
+    /// Moves the controller immediately to an absolute world position. When
+    /// <paramref name="clearMotion"/> is true, pending movement and cached
+    /// support velocity are discarded so the controller cannot carry pre-teleport
+    /// falling or platform motion into the new pose.
+    /// </summary>
+    void Teleport(Vector3 position, bool clearMotion = true);
     void Resize(float totalHeight);
     void Synchronize() { }
     void RequestRelease();

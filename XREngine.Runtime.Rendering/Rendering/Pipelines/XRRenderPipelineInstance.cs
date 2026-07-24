@@ -566,7 +566,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         // Honor any internal resolution request from the pipeline before executing commands.
         if (viewport is not null)
         {
-            if (viewport.AllowAutomaticInternalResolution)
+            // Keep the last complete internal resource generation while the native window is
+            // being dragged. The viewport's presentation region still follows every WM_SIZING
+            // position, so camera/UI layout remains live, but changing the internal resolution
+            // here would invalidate that stable generation before the interactive-resize
+            // resource freeze can reuse it.
+            if (viewport.AllowAutomaticInternalResolution &&
+                !ShouldDeferResourceGenerationForInteractiveWindowResize(viewport))
             {
                 float? requestedScale = Pipeline.GetRequestedInternalResolutionForCamera(
                     effectiveAntiAliasingCamera,
@@ -1690,13 +1696,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
             if (fenceStatus == EGpuFenceStatus.Failed)
             {
-                Debug.RenderingWarning(
+                Debug.RenderingWarningEvery(
+                    $"RenderResources.RetiredGenerationFenceFailed.{GetHashCode()}",
+                    System.TimeSpan.FromSeconds(1),
                     "[RenderResources] Retired generation fence failed. Pipeline={0} Key={1} Force={2}",
                     ProfilerKey,
                     retired.Key,
                     force);
-                if (!force)
-                    return;
+                PrepareForPhysicalResourceDestruction("RetiredRenderResourceGenerationFenceFailed");
             }
 
             _retiredGenerations.Dequeue();

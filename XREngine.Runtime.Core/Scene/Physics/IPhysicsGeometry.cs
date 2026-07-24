@@ -8,26 +8,26 @@ namespace XREngine.Scene.Physics;
 /// </summary>
 public interface IPhysicsGeometry
 {
-    [Serializable]
+    [Serializable, CookedBinaryReflectionOnly]
     public struct Sphere(float radius) : IPhysicsGeometry
     {
         public float Radius = radius;
     }
 
-    [Serializable]
+    [Serializable, CookedBinaryReflectionOnly]
     public struct Box(Vector3 halfExtents) : IPhysicsGeometry
     {
         public Vector3 HalfExtents = halfExtents;
     }
 
-    [Serializable]
+    [Serializable, CookedBinaryReflectionOnly]
     public struct Capsule(float radius, float halfHeight) : IPhysicsGeometry
     {
         public float Radius = radius;
         public float HalfHeight = halfHeight;
     }
 
-    [Serializable]
+    [Serializable, CookedBinaryReflectionOnly]
     public struct Plane() : IPhysicsGeometry
     {
         public System.Numerics.Plane PlaneData = new(Vector3.UnitY, 0.0f);

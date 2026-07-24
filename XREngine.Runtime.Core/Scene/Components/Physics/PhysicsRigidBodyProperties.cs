@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using MemoryPack;
 
 namespace XREngine.Components.Physics
 {
@@ -27,7 +28,8 @@ namespace XREngine.Components.Physics
         AngularZ = 1 << 5,
     }
 
-    public struct PhysicsGroupsMask(uint word0, uint word1, uint word2, uint word3)
+    [MemoryPackable]
+    public partial struct PhysicsGroupsMask(uint word0, uint word1, uint word2, uint word3)
     {
         public uint Word0 = word0;
         public uint Word1 = word1;
@@ -37,7 +39,8 @@ namespace XREngine.Components.Physics
         public static PhysicsGroupsMask Empty => new(0, 0, 0, 0);
     }
 
-    public struct PhysicsMassFrame(Vector3 translation, Quaternion rotation)
+    [MemoryPackable]
+    public partial struct PhysicsMassFrame(Vector3 translation, Quaternion rotation)
     {
         public Vector3 Translation = translation;
         public Quaternion Rotation = rotation;
@@ -45,7 +48,8 @@ namespace XREngine.Components.Physics
         public static PhysicsMassFrame Identity => new(Vector3.Zero, Quaternion.Identity);
     }
 
-    public struct PhysicsSolverIterations(uint positions, uint velocities)
+    [MemoryPackable]
+    public partial struct PhysicsSolverIterations(uint positions, uint velocities)
     {
         public uint MinPositionIterations = positions;
         public uint MinVelocityIterations = velocities;

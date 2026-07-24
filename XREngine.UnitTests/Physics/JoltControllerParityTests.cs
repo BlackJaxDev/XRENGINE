@@ -156,6 +156,33 @@ public sealed class JoltControllerParityTests
     }
 
     [Test]
+    public void Teleport_ClearsQueuedAndInheritedMotion()
+    {
+        CreateFloor();
+        JoltCharacterVirtualController controller =
+            CreateController(new Vector3(0.0f, 0.55f, 0.0f));
+        controller.Move(-Vector3.UnitY * 0.2f, 0.0f, FixedDelta);
+        controller.ConsumeInputBuffer(FixedDelta);
+        controller.IsGrounded.ShouldBeTrue();
+
+        controller.Move(new Vector3(5.0f, -3.0f, 1.0f), 0.0f, FixedDelta);
+        Vector3 target = new(3.0f, 4.0f, 5.0f);
+        controller.Teleport(target, clearMotion: true);
+
+        controller.Position.ShouldBe(target);
+        controller.LastMotionCommand.ShouldBe(default);
+        controller.RequestedVelocity.ShouldBe(Vector3.Zero);
+        controller.EffectiveVelocity.ShouldBe(Vector3.Zero);
+        controller.SupportState.ShouldBe(CharacterSupportState.Unknown);
+        controller.CollidingUp.ShouldBeFalse();
+        controller.CollidingDown.ShouldBeFalse();
+        controller.CollidingSides.ShouldBeFalse();
+
+        controller.ConsumeInputBuffer(FixedDelta);
+        controller.Position.ShouldBe(target);
+    }
+
+    [Test]
     public void VelocityAndDisplacementInput_ProduceEquivalentFreeMotion()
     {
         JoltCharacterVirtualController displacement = CreateController(Vector3.Zero);
@@ -473,6 +500,15 @@ public sealed class JoltControllerParityTests
         }
         public void Move(Vector3 value, float minDist, float elapsedTime)
             => SubmitMotion(new CharacterMotionCommand(value, MotionInputModel, minDist, elapsedTime));
+        public void Teleport(Vector3 position, bool clearMotion = true)
+        {
+            Position = position;
+            if (!clearMotion)
+                return;
+
+            LastMotionCommand = default;
+            RequestedVelocity = Vector3.Zero;
+        }
         public void Resize(float totalHeight) => TotalHeight = totalHeight;
         public void RequestRelease() { }
         public void Destroy(bool wakeOnLostTouch = false) { }

@@ -802,7 +802,7 @@ public sealed class VulkanP1ValidationTests
         string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
         string syncSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.SyncObjects.cs");
         string win32ResizeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/InteractiveResize/Win32ModalLoopTimerInteractiveResizeStrategy.cs");
-        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string resizeResourceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/RenderPipelineAntiAliasingResources.cs");
 
         drawingSource.ShouldContain("AcquireNextImage");
@@ -821,8 +821,6 @@ public sealed class VulkanP1ValidationTests
         drawingSource.ShouldContain("pendingMatchesLive && ShouldRunInteractiveSwapchainRecreate()");
         drawingSource.ShouldContain("InteractiveSwapchainRecreateMinInterval = TimeSpan.FromMilliseconds(16)");
         drawingSource.ShouldContain("HasTimelineValueCompleted(_graphicsTimelineSemaphore, slotWaitValue)");
-        drawingSource.ShouldContain("PendingResizeResourceCatchUp");
-        drawingSource.ShouldContain("Allowing active presentation-size mismatch while pending generation catches up");
         drawingSource.ShouldContain("VulkanResizeResourceMismatch");
         drawingSource.ShouldContain("SkippedResizeCatchUpThisFrame");
         drawingSource.ShouldContain("skipped command-chain execution this frame while resize resources catch up");
@@ -832,11 +830,19 @@ public sealed class VulkanP1ValidationTests
         pipelineInstanceSource.ShouldContain("FramePrepareResizeCatchUp");
         pipelineInstanceSource.ShouldContain("FrameSkippedForResizeCatchUp");
         pipelineInstanceSource.ShouldContain("_resizeCatchUpSkippedFrameId = RuntimeEngine.Rendering.State.RenderFrameId");
-        pipelineInstanceSource.ShouldContain("return PendingGeneration is null;");
+        pipelineInstanceSource.ShouldContain("return PendingGeneration is null && !_requiresManagedResourceGeneration;");
         pipelineInstanceSource.ShouldContain("legacy");
         syncSource.ShouldContain("GetSemaphoreCounterValue");
-        win32ResizeSource.ShouldContain("private const int VulkanActiveSizingRenderHz = 60;");
+        win32ResizeSource.ShouldContain("case WM_PAINT:");
+        win32ResizeSource.ShouldContain("RecordCallbackAndRenderImmediate(\"win32-paint\")");
+        win32ResizeSource.ShouldContain("RequestInteractiveResizePaint()");
+        win32ResizeSource.ShouldContain("case WM_SIZING:");
+        win32ResizeSource.ShouldContain("ApplyCoalescedClientPresentationResize(\"win32-sizing-live\")");
+        win32ResizeSource.ShouldContain("RecordCallbackAndRenderImmediate(\"win32-sizing-live\")");
+        win32ResizeSource.ShouldNotContain("VulkanActiveSizingRenderHz");
         win32ResizeSource.ShouldNotContain("if (ApplyCoalescedClientPresentationResize(\"win32-timer\"))");
+        pipelineInstanceSource.ShouldContain(
+            "!ShouldDeferResourceGenerationForInteractiveWindowResize(viewport)");
         resizeResourceSource.ShouldContain("InvalidateAntiAliasingResources(instance, \"ViewportResized\")");
         resizeResourceSource.ShouldNotContain("RemoveTextureResource");
         resizeResourceSource.ShouldNotContain("RemoveFrameBufferResource");

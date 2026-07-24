@@ -151,7 +151,7 @@ public static partial class EditorUnitTests
         public string? VideoStreamingUrl { get; set; } = null; //Stream URL used by the video streaming test component.
         public bool UltralightWebView = false; //Adds an Ultralight web view component to the scene for testing web page rendering.
         public string UltralightWebViewUrl { get; set; } = "https://blackjaxvr.com"; //Page URL used by the Ultralight web view test component.
-        public bool EnableProfilerLogging = true; //Enables Engine.Profiler frame logging even without Dear ImGui.
+        public bool EnableProfilerLogging = false; //Enables Engine.Profiler frame logging even without Dear ImGui.
         public UnitTestFbxLogVerbosity FbxLogVerbosity { get; set; } = UnitTestFbxLogVerbosity.UseEnvironment; //Controls native FBX importer/exporter trace verbosity. UseEnvironment defers to XRE_FBX_LOG and routes enabled traces to the Assets log category.
         public UnitTestingRenderSettings Rendering { get; set; } = new(); //Grouped render backend, startup fallback, OpenGL shader-linking, and Vulkan target-mode settings. Legacy flat RenderAPI values are migrated here when settings are regenerated.
         public bool RiveUI = false; //Adds a Rive UI component to the scene for testing Rive animations.

@@ -65,7 +65,9 @@ namespace XREngine.Components.Physics
         private PhysicsMassFrame _centerOfMassPose = PhysicsMassFrame.Identity;
         private float _minCcdAdvanceCoefficient = 0.15f;
         private float _maxDepenetrationVelocity = 10.0f;
-        private float _maxContactImpulse;
+        // PhysX interprets zero as "contacts may apply no impulse", so a zero-initialized
+        // component silently falls through every collider. Match the native unlimited default.
+        private float _maxContactImpulse = float.MaxValue;
         private float _contactSlopCoefficient;
         private float _stabilizationThreshold;
         private float _sleepThreshold = 0.005f;

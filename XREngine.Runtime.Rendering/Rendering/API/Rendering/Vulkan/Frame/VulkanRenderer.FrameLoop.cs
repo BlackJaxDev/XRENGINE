@@ -584,16 +584,23 @@ namespace XREngine.Rendering.Vulkan
             uint swapchainWidth,
             uint swapchainHeight)
         {
-            _ = liveSurfaceWidth;
-            _ = liveSurfaceHeight;
-            _ = swapchainWidth;
-            _ = swapchainHeight;
+            if (liveSurfaceWidth == 0 ||
+                liveSurfaceHeight == 0 ||
+                swapchainWidth == 0 ||
+                swapchainHeight == 0)
+            {
+                return false;
+            }
 
-            // Keep the normal Windows Vulkan contract strict until
-            // VkSwapchainPresentScalingCreateInfoKHR support is queried,
-            // configured, and validated end-to-end for this backend.
-            return false;
+            return IsSwapchainPresentScalingExtentSupported(
+                swapchainWidth,
+                swapchainHeight);
         }
+
+        private bool ShouldKeepPresentScalingSwapchain(Result result, bool interactiveResize)
+            => result == Result.SuboptimalKhr &&
+                interactiveResize &&
+                _swapchainPresentScalingActive;
 
         /// <summary>
         /// Renders a frame for the window, using the specified time delta since the last frame.
@@ -699,7 +706,18 @@ namespace XREngine.Rendering.Vulkan
 
                     if (liveSurfaceValid && !surfaceMatchesSwapchain)
                     {
-                        if (interactiveResize)
+                        if (interactiveResize && canPresentMismatchedSwapchainExtent)
+                        {
+                            Debug.VulkanEvery(
+                                $"Vulkan.Frame.{GetHashCode()}.PresentScaledInteractiveResize",
+                                TimeSpan.FromSeconds(1),
+                                "[Vulkan] Presenting through validated WSI scaling during interactive resize. LiveSurface={0}x{1} Swapchain={2}x{3}.",
+                                liveSurfaceWidth,
+                                liveSurfaceHeight,
+                                swapChainExtent.Width,
+                                swapChainExtent.Height);
+                        }
+                        else if (interactiveResize)
                             ScheduleSwapchainRecreate("Interactive resize surface/swapchain size mismatch");
                         else
                             ScheduleSwapchainRecreate("Surface/swapchain size mismatch");
@@ -707,7 +725,7 @@ namespace XREngine.Rendering.Vulkan
                         Debug.VulkanEvery(
                             $"Vulkan.Frame.{GetHashCode()}.SizeMismatch",
                             TimeSpan.FromSeconds(1),
-                            "[Vulkan] Detected surface/swapchain size mismatch: WindowFB={0}x{1} Window={2}x{3} LiveSurface={4}x{5} Swapchain={6}x{7}. Scheduling swapchain recreate.",
+                            "[Vulkan] Detected surface/swapchain size mismatch: WindowFB={0}x{1} Window={2}x{3} LiveSurface={4}x{5} Swapchain={6}x{7}. Interactive={8} PresentScaling={9}.",
                             liveFramebufferSize.X,
                             liveFramebufferSize.Y,
                             liveWindowSize.X,
@@ -715,7 +733,9 @@ namespace XREngine.Rendering.Vulkan
                             liveSurfaceWidth,
                             liveSurfaceHeight,
                             swapChainExtent.Width,
-                            swapChainExtent.Height);
+                            swapChainExtent.Height,
+                            interactiveResize,
+                            canPresentMismatchedSwapchainExtent);
                     }
                     else if (_pendingSurfaceWidth == swapChainExtent.Width && _pendingSurfaceHeight == swapChainExtent.Height)
                     {
@@ -933,7 +953,8 @@ namespace XREngine.Rendering.Vulkan
                     }
                     else if (result == Result.SuboptimalKhr)
                     {
-                        ScheduleSwapchainRecreate("AcquireNextImage returned SuboptimalKhr");
+                        if (!ShouldKeepPresentScalingSwapchain(result, interactiveResize))
+                            ScheduleSwapchainRecreate("AcquireNextImage returned SuboptimalKhr");
                     }
                     else if (result == Result.NotReady || result == Result.Timeout)
                     {
@@ -1373,7 +1394,10 @@ namespace XREngine.Rendering.Vulkan
                             if (result == Result.ErrorOutOfDateKhr)
                                 ScheduleSwapchainRecreate("Dirty abort QueuePresent returned ErrorOutOfDateKhr");
                             else if (result == Result.SuboptimalKhr)
-                                ScheduleSwapchainRecreate("Dirty abort QueuePresent returned SuboptimalKhr");
+                            {
+                                if (!ShouldKeepPresentScalingSwapchain(result, interactiveResize))
+                                    ScheduleSwapchainRecreate("Dirty abort QueuePresent returned SuboptimalKhr");
+                            }
                             else if (result == Result.ErrorSurfaceLostKhr)
                                 RecreateSwapchainImmediately("Dirty abort QueuePresent returned ErrorSurfaceLostKhr");
                             else if (result != Result.Success)
@@ -2017,7 +2041,8 @@ namespace XREngine.Rendering.Vulkan
                     }
                     else if (result == Result.SuboptimalKhr)
                     {
-                        ScheduleSwapchainRecreate("QueuePresent returned SuboptimalKhr");
+                        if (!ShouldKeepPresentScalingSwapchain(result, interactiveResize))
+                            ScheduleSwapchainRecreate("QueuePresent returned SuboptimalKhr");
                     }
                     else if (result == Result.ErrorSurfaceLostKhr)
                     {

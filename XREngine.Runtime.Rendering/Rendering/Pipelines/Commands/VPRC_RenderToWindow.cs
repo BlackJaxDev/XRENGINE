@@ -205,6 +205,9 @@ void main()
             : useBoundOutputFbo
                 ? ResolveOutputFboRegion(instance)
                 : ResolveTargetRegion(instance, targetWindow);
+        if (!isExternalSwapchainTarget && !useBoundOutputFbo)
+            region = renderer.MapWindowPresentationRegionToBackbuffer(region);
+
         if (region.Width <= 0 || region.Height <= 0)
         {
             Debug.RenderingWarningEvery(

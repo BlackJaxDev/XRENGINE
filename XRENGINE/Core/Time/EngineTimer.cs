@@ -693,6 +693,25 @@ namespace XREngine.Timers
 
         public float Time() => (float)TimeDouble();
 
+        /// <summary>
+        /// Dispatches a complete render frame from a native modal resize callback.
+        /// </summary>
+        /// <remarks>
+        /// The collapsed Windows window/render thread can remain inside the OS size/move
+        /// loop while the normal outer render loop is paused. This entry point preserves
+        /// the ordinary render clock, callbacks, visibility-generation handoff, and
+        /// collect/swap publication instead of drawing a window-only frame.
+        /// </remarks>
+        public bool TryDispatchInteractiveResizeFrame()
+        {
+            if (!IsRunning || !Engine.IsRenderThread || Engine.IsDispatchingRenderFrame)
+                return false;
+
+            ulong previousPresentFrameId = PresentFrameId;
+            WaitToRender();
+            return IsRunning && PresentFrameId != previousPresentFrameId;
+        }
+
         public bool DispatchRender()
         {
             try

@@ -13,7 +13,7 @@ public sealed class DebugVisualizerSourceContractTests
     {
         string source = ReadWorkspaceFile("XRENGINE/Scene/Physics/Physx/InstancedDebugVisualizer.cs").Replace("\r\n", "\n");
 
-        source.ShouldContain("private void MarkLinesDirty()\n            => _fullPushLines = true;");
+        source.ShouldContain("private void MarkLinesDirty()\n            => _lineDirtyBytes = checked(");
 
         string setLineMethod = SliceMethod(source, "public unsafe void SetLineAt");
         setLineMethod.ShouldContain("MarkLinesDirty();");
@@ -23,6 +23,9 @@ public sealed class DebugVisualizerSourceContractTests
             directMemoryMethod,
             "bulkLn(_debugLinesBuffer.Address, lnCount);",
             "MarkLinesDirty();");
+
+        string pushLineMethod = SliceMethod(source, "public void PushLinesBuffer()");
+        pushLineMethod.ShouldContain("_debugLinesBuffer.CommitDirtyBytes(0u, _lineDirtyBytes);");
     }
 
     [Test]
@@ -63,7 +66,7 @@ public sealed class DebugVisualizerSourceContractTests
         source.ShouldContain("private static readonly DebugPrimitiveSceneState _debug2D = new();");
         source.ShouldContain("Engine.Rendering.State.RenderingScene is VisualScene2D");
 
-        string renderShapes = SliceMethod(source, "public static void RenderShapes()");
+        string renderShapes = SliceMethod(source, "public static void RenderShapes(bool depthTested)");
         renderShapes.ShouldContain("DebugPrimitiveSceneState scene = ResolveDebugPrimitiveSceneState();");
         renderShapes.ShouldContain("scene.Visualizer.Render();");
 

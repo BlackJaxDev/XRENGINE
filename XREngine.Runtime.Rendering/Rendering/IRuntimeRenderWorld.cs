@@ -6,6 +6,7 @@ using XREngine.Data.Geometry;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Picking;
 using XREngine.Scene;
+using XREngine.Scene.Physics.DebugVisualization;
 
 namespace XREngine.Rendering;
 
@@ -27,7 +28,7 @@ public interface IRuntimeRenderWorld : IRuntimeWorldContext
     }
     void GlobalPreRender();
     void GlobalPostRender();
-    void DebugRenderPhysics();
+    void DebugRenderPhysics(PhysicsDebugDepthMode depthMode);
     bool IsInEditorScene(SceneNode? node);
     void RaycastOctreeAsync(
         CameraComponent cameraComponent,

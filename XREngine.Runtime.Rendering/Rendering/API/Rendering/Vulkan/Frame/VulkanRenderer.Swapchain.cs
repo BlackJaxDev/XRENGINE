@@ -519,6 +519,14 @@ public unsafe partial class VulkanRenderer
             OldSwapchain = oldSwapchain
         };
 
+        bool usePresentScaling = TryGetSwapchainPresentScalingConfiguration(
+            presentMode,
+            extent,
+            out SwapchainPresentScalingCreateInfoEXT presentScalingCreateInfo,
+            out SurfacePresentScalingCapabilitiesEXT presentScalingCapabilities);
+        if (usePresentScaling)
+            createInfo.PNext = &presentScalingCreateInfo;
+
         if (!Api!.TryGetDeviceExtension(instance, device, out khrSwapChain))
             throw new NotSupportedException("VK_KHR_swapchain extension not found.");
 
@@ -556,6 +564,21 @@ public unsafe partial class VulkanRenderer
 
         if (createResult != Result.Success)
             throw new InvalidOperationException($"Failed to create swap chain ({createResult}){(requestStreamlineFrameGeneration ? " through Streamline for NVIDIA DLSS frame generation" : string.Empty)}.");
+
+        _swapchainPresentScalingActive = usePresentScaling;
+        _swapchainPresentScalingCapabilities = usePresentScaling
+            ? presentScalingCapabilities
+            : default;
+        Debug.Vulkan(
+            "[Vulkan] Swapchain present scaling: active={0} behavior={1} imageExtent={2}x{3} scaledRange={4}x{5}-{6}x{7}.",
+            _swapchainPresentScalingActive,
+            usePresentScaling ? presentScalingCreateInfo.ScalingBehavior : PresentScalingFlagsKHR.None,
+            extent.Width,
+            extent.Height,
+            presentScalingCapabilities.MinScaledImageExtent.Width,
+            presentScalingCapabilities.MinScaledImageExtent.Height,
+            presentScalingCapabilities.MaxScaledImageExtent.Width,
+            presentScalingCapabilities.MaxScaledImageExtent.Height);
 
         _streamlineFrameGenerationSwapchainActive = requestStreamlineFrameGeneration;
         _streamlineFrameGenerationSwapchainIncludesDlss = requestStreamlineFrameGenerationDlss;

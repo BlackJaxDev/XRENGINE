@@ -564,8 +564,8 @@ internal static partial class RuntimeEngine
             public static void RenderText(Vector3 position, string text, ColorF4 color)
                 => RuntimeRenderingHostServices.Current.RenderDebugText(position, text, color);
 
-            public static void RenderShapes()
-                => RuntimeRenderingHostServices.Current.RenderDebugShapes();
+            public static void RenderShapes(bool depthTested)
+                => RuntimeRenderingHostServices.Current.RenderDebugShapes(depthTested);
         }
 
         public static class Stats

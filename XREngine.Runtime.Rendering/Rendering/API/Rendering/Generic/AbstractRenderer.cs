@@ -243,6 +243,15 @@ namespace XREngine.Rendering
 
         public abstract void CropRenderArea(BoundingRectangle region);
         public abstract void SetRenderArea(BoundingRectangle region);
+
+        /// <summary>
+        /// Maps a window presentation-space region to the physical backbuffer raster space.
+        /// Most backends use identical extents; a backend presenting a fixed-size image
+        /// through compositor scaling can override this without changing camera or UI layout.
+        /// </summary>
+        internal virtual BoundingRectangle MapWindowPresentationRegionToBackbuffer(BoundingRectangle region)
+            => region;
+
         public virtual void ClearRenderArea()
         {
             var size = Window.Size;

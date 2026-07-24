@@ -6,7 +6,12 @@ namespace XREngine.Components
 {
     public partial class DebugDrawComponent
     {
-        public class DebugDrawBox(Vector3 halfExtents, Vector3 localOffset, ColorF4 color, bool solid) : DebugShapeBase(color, solid)
+        public class DebugDrawBox(
+            Vector3 halfExtents,
+            Vector3 localOffset,
+            ColorF4 color,
+            bool solid,
+            bool depthTested = false) : DebugShapeBase(color, solid)
         {
             /// <summary>
             /// Parameterless constructor for serialization.
@@ -31,13 +36,19 @@ namespace XREngine.Components
                 set => localOffset = value;
             }
 
+            /// <summary>
+            /// Whether the solid box participates in normal scene depth testing.
+            /// </summary>
+            public bool DepthTested { get; set; } = depthTested;
+
             public override void Render(TransformBase transform)
                 => Engine.Rendering.Debug.RenderBox(
                     HalfExtents,
                     LocalOffset,
                     transform.RenderMatrix,
                     Solid,
-                    Color);
+                    Color,
+                    DepthTested);
         }
     }
 }

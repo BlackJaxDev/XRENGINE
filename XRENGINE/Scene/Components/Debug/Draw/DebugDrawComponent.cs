@@ -29,6 +29,7 @@ namespace XREngine.Components
         public void Render()
         {
             using var profilerState = Engine.Profiler.Start("DebugDrawComponent.Render");
+            Engine.Rendering.Debug.RecordDebugDrawComponentCallback();
 
             lock (_shapeSync)
             {
@@ -62,7 +63,12 @@ namespace XREngine.Components
                 Shapes.Add(shape);
             }
         }
-        public void AddBox(Vector3 halfExtents, Vector3 localOffset, ColorF4 color, bool solid)
+        public void AddBox(
+            Vector3 halfExtents,
+            Vector3 localOffset,
+            ColorF4 color,
+            bool solid,
+            bool depthTested = false)
         {
             lock (_shapeSync)
             {
@@ -71,6 +77,7 @@ namespace XREngine.Components
                 shape.LocalOffset = localOffset;
                 shape.Color = color;
                 shape.Solid = solid;
+                shape.DepthTested = depthTested;
                 Shapes.Add(shape);
             }
         }

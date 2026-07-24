@@ -1098,12 +1098,18 @@ namespace XREngine.Rendering
             if (!WindowResizeController.NeedsFullInternalResize(snapshot, extents))
                 return;
 
+            // Keep the last complete internal resource generation alive during a
+            // native border drag. UI layout, camera aspect, and presentation still
+            // follow the transient extent, while WM_EXITSIZEMOVE queues the exact
+            // final full-internal resize. Admitting a heavy generation for every
+            // transient pixel prevents Vulkan presentation from ever converging.
+            if (snapshot.IsInteractiveResize)
+                return;
+
             QueueFullInternalResize(
                 snapshot.FramebufferExtent,
-                force: !snapshot.IsInteractiveResize,
-                snapshot.IsInteractiveResize
-                    ? "native-snapshot-consumed-live-policy"
-                    : "native-snapshot-consumed-settled");
+                force: true,
+                "native-snapshot-consumed-settled");
         }
 
         private void RecordAllRenderExtents(Vector2D<int> extent)
@@ -1280,20 +1286,12 @@ namespace XREngine.Rendering
                 ObserveRenderOwnerThread("interactive-resize-render");
                 WarnIfNotRenderOwnerThread("InteractiveResize.Render");
 
-                if (Window.API.API == ContextAPI.OpenGL)
-                    Window.MakeCurrent();
+                if (!RuntimeRenderingHostServices.Current.TryDispatchInteractiveResizeFrame())
+                {
+                    InteractiveResizeDiagnostics.RecordSuppressedRender(reason + ":frame-not-ready");
+                    return;
+                }
 
-                ProcessPendingInteractivePresentationResize();
-                PrepareWindowBackbufferRenderArea();
-
-                if (Volatile.Read(ref _interactiveResizeInProgress) == 0)
-                    ProcessPendingFramebufferResize();
-
-                WarnIfNotNativeWindowThread("Window.DoRender.InteractiveResize");
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.InteractiveResize.DoRender"))
-                    Window.DoRender();
-
-                TryCommitPendingFullInternalResizeAfterRender("interactive-resize-render");
                 InteractiveResizeDiagnostics.RecordInteractiveRender(reason);
             }
             catch (Exception ex)
@@ -2583,16 +2581,6 @@ namespace XREngine.Rendering
                 RuntimeRenderingHostServices.Current.UnsubscribeWindowTickCallbacks(SwapBuffers, RenderFrame);
             DestroyRenderer(_renderer, "EndTick", waitForGpu: true);
             _rendererInitialized = false;
-            if (!IsNativeEventPumpExternallyOwned)
-            {
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.EndTick.DoEvents"))
-                {
-                    WarnIfNotNativeWindowThread("Window.DoEvents.EndTick");
-                    Window.DoEvents();
-                }
-
-                PublishWindowInputSnapshot();
-            }
         }
 
         private void SwapBuffers()
@@ -2612,20 +2600,6 @@ namespace XREngine.Rendering
             ulong renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
 
             long phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
-            if (!IsNativeEventPumpExternallyOwned)
-            {
-                using var eventsSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.Timer.DoEvents");
-                WarnIfNotNativeWindowThread("Window.DoEvents.RenderFrame");
-                Window.DoEvents();
-                PublishWindowInputSnapshot();
-            }
-            RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.DoEvents", phaseStart);
-
-            // Re-check after DoEvents in case window was closed
-            if (ShouldStopRenderingForClose())
-                return;
-
-            phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
             ConsumeLatestWindowSurfaceSnapshotForRenderFrame();
             RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.ConsumeWindowSurfaceSnapshot", phaseStart);
 

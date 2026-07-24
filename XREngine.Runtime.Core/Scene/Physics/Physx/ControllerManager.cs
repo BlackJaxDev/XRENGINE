@@ -210,11 +210,13 @@ namespace XREngine.Scene.Physics.Physx
             PxFilterData filterData = PxFilterData_new_2(0, 0, 0, 0);
             _filterDataSource = DataSource.FromStruct(filterData);
 
-            // IMPORTANT: Pass null callbacks to avoid native AV when PhysX invokes vtable-based callbacks.
-            // The smoke test proved that null callbacks + Static|Dynamic flags work reliably.
-            // Do NOT use Prefilter/Postfilter flags as they cause PhysX to invoke callbacks.
-            var filter = PxControllerFilters_new(FilterData, QueryFilterCallback, ControllerFilterCallback);
-            filter.mFilterFlags = PxQueryFlags.Static | PxQueryFlags.Dynamic | PxQueryFlags.Prefilter | PxQueryFlags.Postfilter;
+            // Keep a non-null PxControllerFilters structure, but use PhysX's native
+            // default filtering. The managed callback vtables are an optional extension
+            // surface and are not safe or necessary in the fixed-step movement hot path.
+            // Enabling Prefilter/Postfilter here also makes every controller sweep cross
+            // the managed boundary even though the default delegates only return Block.
+            var filter = PxControllerFilters_new(FilterData, null, null);
+            filter.mFilterFlags = PxQueryFlags.Static | PxQueryFlags.Dynamic;
             _controllerFiltersSource = DataSource.FromStruct(filter);
 
             //SetTessellation(true, 1.0f);

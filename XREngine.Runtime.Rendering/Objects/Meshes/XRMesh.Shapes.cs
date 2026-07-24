@@ -274,6 +274,155 @@ namespace XREngine.Rendering
                     bottomCircleDown, bottomHalfCircleAway, bottomHalfCircleRight,
                     right, left, front, back);
             }
+
+            /// <summary>
+            /// Generates a smooth, solid capsule centered on <paramref name="center"/>.
+            /// <paramref name="halfHeight"/> is the distance from the capsule center to each
+            /// hemisphere center, matching the engine physics-geometry convention.
+            /// </summary>
+            public static XRMesh SolidCapsule(
+                Vector3 center,
+                Vector3 upAxis,
+                float radius,
+                float halfHeight,
+                int segments = 20,
+                int hemisphereRings = 8)
+            {
+                if (radius <= 0.0f)
+                    throw new ArgumentOutOfRangeException(nameof(radius), "Capsule radius must be positive.");
+                if (halfHeight < 0.0f)
+                    throw new ArgumentOutOfRangeException(nameof(halfHeight), "Capsule half height cannot be negative.");
+                if (segments < 3)
+                    throw new ArgumentOutOfRangeException(nameof(segments), "A capsule requires at least three radial segments.");
+                if (hemisphereRings < 1)
+                    throw new ArgumentOutOfRangeException(nameof(hemisphereRings), "A capsule requires at least one hemisphere ring.");
+                if (upAxis.LengthSquared() <= XRMath.Epsilon)
+                    throw new ArgumentException("Capsule up axis cannot be zero.", nameof(upAxis));
+                if (halfHeight <= XRMath.Epsilon)
+                    return SolidSphere(center, radius, (uint)Math.Max(segments, hemisphereRings * 2));
+
+                Vector3 normalizedUp = Vector3.Normalize(upAxis);
+                Quaternion orientation = XRMath.RotationBetweenVectors(Vector3.UnitY, normalizedUp);
+                int ringCount = hemisphereRings * 2;
+                int vertexCount = 2 + ringCount * segments;
+                if (vertexCount > ushort.MaxValue)
+                    throw new InvalidOperationException("Capsule tessellation exceeds the 16-bit mesh index limit.");
+
+                Vertex[] vertices = new Vertex[vertexCount];
+                List<ushort> indices = new(segments * 6 * ringCount);
+                vertices[0] = new Vertex(
+                    center - normalizedUp * (halfHeight + radius),
+                    -normalizedUp);
+
+                float hemisphereStep = (PI * 0.5f) / hemisphereRings;
+                int vertexIndex = 1;
+
+                // Bottom hemisphere excludes its pole and includes its equator.
+                for (int ring = 0; ring < hemisphereRings; ring++)
+                {
+                    float latitude = -PI * 0.5f + (ring + 1) * hemisphereStep;
+                    AddCapsuleRing(
+                        vertices,
+                        ref vertexIndex,
+                        center,
+                        orientation,
+                        radius,
+                        -halfHeight,
+                        latitude,
+                        segments);
+                }
+
+                // Top hemisphere includes its equator and excludes its pole.
+                for (int ring = 0; ring < hemisphereRings; ring++)
+                {
+                    float latitude = ring * hemisphereStep;
+                    AddCapsuleRing(
+                        vertices,
+                        ref vertexIndex,
+                        center,
+                        orientation,
+                        radius,
+                        halfHeight,
+                        latitude,
+                        segments);
+                }
+
+                ushort topPole = (ushort)vertexIndex;
+                vertices[vertexIndex] = new Vertex(
+                    center + normalizedUp * (halfHeight + radius),
+                    normalizedUp);
+
+                for (int segment = 0; segment < segments; segment++)
+                {
+                    ushort current = (ushort)(1 + segment);
+                    ushort next = (ushort)(1 + (segment + 1) % segments);
+                    indices.Add(0);
+                    indices.Add(current);
+                    indices.Add(next);
+                }
+
+                for (int ring = 0; ring < ringCount - 1; ring++)
+                {
+                    int lowerStart = 1 + ring * segments;
+                    int upperStart = lowerStart + segments;
+                    for (int segment = 0; segment < segments; segment++)
+                    {
+                        ushort lowerCurrent = (ushort)(lowerStart + segment);
+                        ushort lowerNext = (ushort)(lowerStart + (segment + 1) % segments);
+                        ushort upperCurrent = (ushort)(upperStart + segment);
+                        ushort upperNext = (ushort)(upperStart + (segment + 1) % segments);
+
+                        indices.Add(lowerCurrent);
+                        indices.Add(upperNext);
+                        indices.Add(lowerNext);
+                        indices.Add(lowerCurrent);
+                        indices.Add(upperCurrent);
+                        indices.Add(upperNext);
+                    }
+                }
+
+                int topRingStart = 1 + (ringCount - 1) * segments;
+                for (int segment = 0; segment < segments; segment++)
+                {
+                    ushort current = (ushort)(topRingStart + segment);
+                    ushort next = (ushort)(topRingStart + (segment + 1) % segments);
+                    indices.Add(topPole);
+                    indices.Add(next);
+                    indices.Add(current);
+                }
+
+                return new XRMesh(vertices, indices);
+            }
+
+            private static void AddCapsuleRing(
+                Vertex[] vertices,
+                ref int vertexIndex,
+                Vector3 center,
+                Quaternion orientation,
+                float radius,
+                float hemisphereCenterHeight,
+                float latitude,
+                int segments)
+            {
+                float radialScale = Cos(latitude);
+                float normalHeight = Sin(latitude);
+                for (int segment = 0; segment < segments; segment++)
+                {
+                    float longitude = 2.0f * PI * segment / segments;
+                    Vector3 localNormal = new(
+                        Cos(longitude) * radialScale,
+                        normalHeight,
+                        Sin(longitude) * radialScale);
+                    Vector3 localPosition = new(
+                        localNormal.X * radius,
+                        hemisphereCenterHeight + localNormal.Y * radius,
+                        localNormal.Z * radius);
+                    vertices[vertexIndex++] = new Vertex(
+                        center + Vector3.Transform(localPosition, orientation),
+                        Vector3.Transform(localNormal, orientation));
+                }
+            }
+
             public static void SolidCapsuleParts(
                 Vector3 center, Vector3 upAxis, float radius, float halfHeight, int pointCountHalfCircle,
                 out XRMesh cylinder, out XRMesh topSphereHalf, out XRMesh bottomSphereHalf)
@@ -698,7 +847,7 @@ namespace XREngine.Rendering
                         : SolidCone(cone.Center, cone.Up, cone.Height, cone.Radius, 32, false),
                     Capsule capsule => wireframe
                         ? WireframeCapsule(capsule.Center, capsule.UpAxis, capsule.Radius, capsule.HalfHeight, 32)
-                        : SolidCone(capsule.Center, capsule.UpAxis, capsule.HalfHeight, capsule.Radius, 32, true),
+                        : SolidCapsule(capsule.Center, capsule.UpAxis, capsule.Radius, capsule.HalfHeight),
                     Frustum frustum => wireframe
                         ? WireframeFrustum(frustum)
                         : SolidFrustum(frustum),
