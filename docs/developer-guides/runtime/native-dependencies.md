@@ -145,7 +145,7 @@ Used for Rive-based UI rendering.
 
 - Source submodule: `Build/Submodules/rive-sharp`
 - Runtime DLL: `rive.dll`
-- Expected location: `XRENGINE/runtimes/win-x64/native`
+- Expected location: `XREngine.Runtime.Rendering/runtimes/win-x64/native`
 
 To rebuild submodule binaries:
 
@@ -169,7 +169,7 @@ disabled at runtime until the native `rive.dll` is built and staged.
 
 Used for video/media decode, streaming, and audio extraction.
 
-- Runtime DLLs live under `XRENGINE/runtimes/win-x64/native`
+- Runtime DLLs are staged by `XREngine.Runtime.Rendering` from `Build/Dependencies/FFmpeg/`
 - Optional seed/reference files live under `Build/Dependencies/FFmpeg/`
 
 To retrieve the repo's FFmpeg seed binaries:

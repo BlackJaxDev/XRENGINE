@@ -320,7 +320,7 @@ public partial class GLTexture2D
             if (scheduledStorageGeneration != CurrentStorageGeneration)
             {
                 TextureRuntimeDiagnostics.LogStaleUploadCanceled(
-                    RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                    RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                     GetDescribingName(),
                     Data.FilePath,
                     BindingId,
@@ -493,7 +493,7 @@ public partial class GLTexture2D
         }
 
         TextureRuntimeDiagnostics.LogUploadChunk(
-            RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+            RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
             GetDescribingName(),
             Data.FilePath,
             BindingId,
@@ -1057,7 +1057,7 @@ public partial class GLTexture2D
     {
         Data.RecordTextureUploadValidationFailure();
         TextureRuntimeDiagnostics.LogUploadValidationFailed(
-            RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+            RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
             GetDescribingName(),
             Data.FilePath,
             BindingId,
@@ -1092,7 +1092,7 @@ public partial class GLTexture2D
         if (StorageSet)
         {
             TextureRuntimeDiagnostics.LogStorageRecreated(
-                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                 GetDescribingName(),
                 Data.FilePath,
                 BindingId,

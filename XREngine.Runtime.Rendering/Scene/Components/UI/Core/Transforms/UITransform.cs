@@ -1,0 +1,613 @@
+using System.Collections;
+using System.Drawing;
+using System.Numerics;
+using System.Runtime.CompilerServices;
+using XREngine.Components;
+using XREngine.Data.Core;
+using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
+using XREngine.Input.Devices;
+using XREngine.Rendering.Commands;
+using XREngine.Rendering.Info;
+using XREngine.Scene;
+using XREngine.Scene.Transforms;
+
+namespace XREngine.Rendering.UI
+{
+    /// <summary>
+    /// Represents the current phase of UI layout processing.
+    /// </summary>
+    public enum ELayoutPhase
+    {
+        /// <summary>
+        /// No layout operation is in progress.
+        /// </summary>
+        None,
+        /// <summary>
+        /// Measure phase: calculates desired sizes bottom-up.
+        /// This phase can be parallelized for independent subtrees.
+        /// </summary>
+        Measure,
+        /// <summary>
+        /// Arrange phase: assigns final positions and sizes top-down.
+        /// </summary>
+        Arrange
+    }
+
+    /// <summary>
+    /// Represents a UI transform in 2D space.
+    /// </summary>
+    [XRTransformEditor("XREngine.Editor.TransformEditors.UITransformEditor")]
+    public class UITransform : TransformBase, IRenderable
+    {
+        private UICanvasTransform? _parentCanvas;
+        public UICanvasTransform? ParentCanvas
+        {
+            get => _parentCanvas;
+            set => SetField(ref _parentCanvas, value);
+        }
+
+        public UICanvasTransform? GetCanvasTransform()
+            => ParentCanvas ?? this as UICanvasTransform;
+        public UICanvasComponent? GetCanvasComponent()
+            => GetCanvasTransform()?.SceneNode?.GetComponent<UICanvasComponent>();
+
+        private string _stylingClass = string.Empty;
+        /// <summary>
+        /// The CSS class that this UI component uses for styling.
+        /// </summary>
+        public string StylingClass
+        {
+            get => _stylingClass;
+            set => SetField(ref _stylingClass, value);
+        }
+
+        private string _stylingID = string.Empty;
+        /// <summary>
+        /// The CSS ID that this UI component uses for styling.
+        /// </summary>
+        public string StylingID
+        {
+            get => _stylingID;
+            set => SetField(ref _stylingID, value);
+        }
+
+        protected Vector2 _translation = Vector2.Zero;
+        public virtual Vector2 Translation
+        {
+            get => _translation;
+            set => SetField(ref _translation, value);
+        }
+
+        protected Vector2 _actualLocalBottomLeftTranslation = new();
+        /// <summary>
+        /// This is the translation after being potentially modified by the parent's placement info.
+        /// </summary>
+        public Vector2 ActualLocalBottomLeftTranslation
+        {
+            get => _actualLocalBottomLeftTranslation;
+            set => SetField(ref _actualLocalBottomLeftTranslation, value);
+        }
+
+        protected float _z = 0.0f;
+        public virtual float DepthTranslation
+        {
+            get => _z;
+            set => SetField(ref _z, value);
+        }
+
+        protected Vector3 _scale = Vector3.One;
+        public virtual Vector3 Scale
+        {
+            get => _scale;
+            set => SetField(ref _scale, value);
+        }
+
+        protected float _rotationRadians = 0.0f;
+        public float RotationRadians
+        {
+            get => _rotationRadians;
+            set => SetField(ref _rotationRadians, value);
+        }
+        public float RotationDegrees
+        {
+            get => XRMath.RadToDeg(RotationRadians);
+            set => RotationRadians = XRMath.DegToRad(value);
+        }
+
+        #region Layout State Tracking
+
+        /// <summary>
+        /// Version number that increments each time layout properties change.
+        /// Used for dirty checking to avoid redundant layout passes.
+        /// </summary>
+        protected volatile uint _layoutVersion = 0;
+
+        /// <summary>
+        /// The layout version when this transform was last measured.
+        /// </summary>
+        protected uint _lastMeasuredVersion = 0;
+
+        /// <summary>
+        /// The layout version when this transform was last arranged.
+        /// </summary>
+        protected uint _lastArrangedVersion = 0;
+
+        /// <summary>
+        /// Indicates if this transform needs to be re-measured.
+        /// Thread-safe check using version comparison.
+        /// </summary>
+        public bool NeedsMeasure
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _lastMeasuredVersion != _layoutVersion;
+        }
+
+        /// <summary>
+        /// Indicates if this transform needs to be re-arranged.
+        /// </summary>
+        public bool NeedsArrange
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _lastArrangedVersion != _layoutVersion;
+        }
+
+        /// <summary>
+        /// Marks the layout as dirty, requiring both measure and arrange passes.
+        /// This is thread-safe via interlocked increment.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        protected void IncrementLayoutVersion()
+        {
+            Interlocked.Increment(ref _layoutVersion);
+        }
+
+        /// <summary>
+        /// The desired size calculated during the measure phase.
+        /// This is the size the transform wants to be before constraints are applied.
+        /// </summary>
+        protected Vector2 _desiredSize = Vector2.Zero;
+        public Vector2 DesiredSize
+        {
+            get => _desiredSize;
+            protected set => SetField(ref _desiredSize, value);
+        }
+
+        /// <summary>
+        /// The available size passed to this transform during measure.
+        /// Cached to detect if re-measure is needed due to constraint changes.
+        /// </summary>
+        protected Vector2 _lastMeasureConstraint = new(float.PositiveInfinity, float.PositiveInfinity);
+
+        /// <summary>
+        /// The final bounds assigned during the arrange phase.
+        /// Cached to detect if re-arrange is needed.
+        /// </summary>
+        protected BoundingRectangleF _lastArrangeBounds = default;
+
+        // Internal accessors for UILayoutSystem
+        public Vector2 LastMeasureConstraint => _lastMeasureConstraint;
+        public BoundingRectangleF LastArrangeBounds => _lastArrangeBounds;
+
+        internal void IncrementLayoutVersionInternal() => IncrementLayoutVersion();
+        internal void SetDesiredSize(Vector2 size) => _desiredSize = size;
+        internal void SetLastMeasureConstraint(Vector2 constraint) => _lastMeasureConstraint = constraint;
+        internal void SetLastArrangeBounds(BoundingRectangleF bounds) => _lastArrangeBounds = bounds;
+        internal void SetLastMeasuredVersion() => _lastMeasuredVersion = _layoutVersion;
+        internal void SetLastArrangedVersion() => _lastArrangedVersion = _layoutVersion;
+        internal void OnResizeActualInternal(BoundingRectangleF parentBounds) => OnResizeActual(parentBounds);
+        internal void RaiseLayoutInvalidated() => OnLayoutInvalidated();
+        internal new void MarkLocalModified(bool deferred = false) => base.MarkLocalModified(deferred);
+        internal new void MarkLocalModified() => base.MarkLocalModified();
+
+        #endregion
+
+        public RenderInfo2D DebugRenderInfo2D { get; private set; }
+        public RenderInfo[] RenderedObjects { get; }
+
+        public UITransform() : this(null) { }
+#pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
+        public UITransform(TransformBase? parent) : base(parent)
+#pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
+        {
+            RenderedObjects =
+            [
+                DebugRenderInfo2D = RenderInfo2D.New(this, _debugRC = new RenderCommandMethod2D((int)EDefaultRenderPass.OnTopForward, RenderDebug))
+            ];
+            DebugRenderInfo2D.PreCollectCommandsCallback = ShouldRenderDebug2D;
+            Children.PostAnythingAdded += OnChildAdded;
+            Children.PostAnythingRemoved += OnChildRemoved;
+        }
+        ~UITransform()
+        {
+            Children.PostAnythingAdded -= OnChildAdded;
+            Children.PostAnythingRemoved -= OnChildRemoved;
+        }
+
+        private RenderCommandMethod2D _debugRC;
+        public RenderCommandMethod2D DebugRenderCommand => _debugRC;
+
+        private bool ShouldRenderDebug2D(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera)
+            => IsScreenSpaceCanvas();
+
+        protected bool ShouldRenderDebugInCurrentScene()
+            => !IsScreenSpaceCanvas() || RuntimeEngine.Rendering.State.RenderingScene is VisualScene2D;
+
+        protected bool IsScreenSpaceCanvas()
+            => GetCanvasTransform()?.DrawSpace == ECanvasDrawSpace.Screen;
+
+        protected override Matrix4x4 CreateLocalMatrix() => 
+            Matrix4x4.CreateScale(Scale) * 
+            Matrix4x4.CreateFromAxisAngle(Globals.Backward, RotationRadians) *
+            Matrix4x4.CreateTranslation(new Vector3(Translation, DepthTranslation));
+
+        /// <summary>
+        /// Scale and translate in/out to/from a specific point.
+        /// </summary>
+        /// <param name="delta"></param>
+        /// <param name="worldScreenPoint"></param>
+        /// <param name="minScale"></param>
+        /// <param name="maxScale"></param>
+        public void Zoom(float delta, Vector2 worldScreenPoint, Vector2? minScale, Vector2? maxScale)
+        {
+            if (Math.Abs(delta) < 0.0001f)
+                return;
+
+            Vector2 scale = new(_scale.X, _scale.Y);
+            Vector2 newScale = scale - new Vector2(delta);
+
+            if (minScale != null)
+            {
+                if (newScale.X < minScale.Value.X)
+                    newScale.X = minScale.Value.X;
+
+                if (newScale.Y < minScale.Value.Y)
+                    newScale.Y = minScale.Value.Y;
+            }
+
+            if (maxScale != null)
+            {
+                if (newScale.X > maxScale.Value.X)
+                    newScale.X = maxScale.Value.X;
+
+                if (newScale.Y > maxScale.Value.Y)
+                    newScale.Y = maxScale.Value.Y;
+            }
+
+            if (Vector2.Distance(scale, newScale) < 0.0001f)
+                return;
+            
+            Translation += (worldScreenPoint - new Vector2(WorldTranslation.X, WorldTranslation.Y)) * Vector2.One / scale * delta;
+            Scale = new Vector3(newScale, Scale.Z);
+        }
+
+        public event Action<UITransform>? LayoutInvalidated;
+        protected void OnLayoutInvalidated()
+            => LayoutInvalidated?.Invoke(this);
+
+        /// <summary>
+        /// Marks this transform's layout as needing recalculation.
+        /// Propagates to the parent canvas for batched processing.
+        /// </summary>
+        public virtual void InvalidateLayout()
+        {
+            UILayoutSystem.InvalidateLayout(this);
+        }
+
+        /// <summary>
+        /// Invalidates only the measure phase, not the full layout.
+        /// Use when only size calculations need to be redone.
+        /// </summary>
+        public virtual void InvalidateMeasure()
+        {
+            UILayoutSystem.InvalidateMeasure(this);
+        }
+
+        /// <summary>
+        /// Invalidates only the arrange phase.
+        /// Use when position needs updating but size is unchanged.
+        /// </summary>
+        public virtual void InvalidateArrange()
+        {
+            UILayoutSystem.InvalidateArrange(this);
+        }
+
+        /// <summary>
+        /// Forces invalidation of the arrange phase by incrementing the layout version.
+        /// This is called during canvas resize to ensure all children re-calculate positions.
+        /// </summary>
+        public void ForceInvalidateArrange()
+        {
+            IncrementLayoutVersion();
+        }
+
+        #region Measure/Arrange Phase Methods
+
+        /// <summary>
+        /// Measure phase: calculates the desired size of this transform.
+        /// Override in derived classes to provide custom measurement logic.
+        /// </summary>
+        /// <param name="availableSize">The available space from the parent.</param>
+        /// <returns>The desired size of this transform.</returns>
+        public virtual Vector2 Measure(Vector2 availableSize)
+        {
+            return UILayoutSystem.MeasureTransform(this, availableSize);
+        }
+
+        /// <summary>
+        /// Arrange phase: assigns final position and size to this transform.
+        /// </summary>
+        /// <param name="finalBounds">The final bounds assigned by the parent.</param>
+        public virtual void Arrange(BoundingRectangleF finalBounds)
+        {
+            UILayoutSystem.ArrangeTransform(this, finalBounds);
+        }
+
+        #endregion
+
+        /// <summary>
+        /// Fits the layout of this UI transform to the parent region.
+        /// For non-boundable transforms, delegates to the centralized layout system
+        /// to run Measure + Arrange.
+        /// </summary>
+        /// <param name="parentRegion"></param>
+        public virtual void FitLayout(BoundingRectangleF parentRegion)
+        {
+            UILayoutSystem.MeasureTransform(this, parentRegion.Extents);
+            UILayoutSystem.ArrangeTransform(this, parentRegion);
+        }
+
+        public bool IsVisible => Visibility == EVisibility.Visible;
+        public bool IsHidden => Visibility == EVisibility.Hidden;
+        public bool IsCollapsed => Visibility == EVisibility.Collapsed;
+
+        public void Show() => Visibility = EVisibility.Visible;
+        public void Hide() => Visibility = EVisibility.Hidden;
+        public void Collapse() => Visibility = EVisibility.Collapsed;
+
+        protected EVisibility _visibility = EVisibility.Visible;
+        public virtual EVisibility Visibility
+        {
+            get => _visibility;
+            set => SetField(ref _visibility, value);
+        }
+
+        public bool IsVisibleInHierarchy => IsVisible && (Parent is not UITransform tfm || tfm.IsVisibleInHierarchy);
+
+        private UIChildPlacementInfo? _placementInfo = null;
+        /// <summary>
+        /// Dictates how this UI component is arranged within the parent transform's bounds.
+        /// </summary>
+        public UIChildPlacementInfo? PlacementInfo
+        {
+            get
+            {
+                ITransformChildPlacementInfo? placementInfo = _placementInfo;
+                Parent?.VerifyPlacementInfo(this, ref placementInfo);
+                if (!ReferenceEquals(_placementInfo, placementInfo))
+                    _placementInfo = placementInfo as UIChildPlacementInfo;
+                return _placementInfo;
+            }
+            set => SetField(ref _placementInfo, value);
+        }
+
+        /// <summary>
+        /// Recursively registers (or unregisters) inputs on this and all child UI components.
+        /// </summary>
+        /// <param name="input"></param>
+        internal protected virtual void RegisterInputs(IInputRegistration input)
+        {
+            //try
+            //{
+            //    foreach (ISceneComponent comp in ChildComponents)
+            //        if (comp is IUIComponent uiComp)
+            //            uiComp.RegisterInputs(input);
+            //}
+            //catch (Exception ex) 
+            //{
+            //    RuntimeEngine.LogException(ex);
+            //}
+        }
+        //protected internal override void Start()
+        //{
+        //    if (this is IRenderable r)
+        //        OwningUserInterface?.AddRenderableComponent(r);
+        //}
+        //protected internal override void Stop()
+        //{
+        //    if (this is IRenderable r)
+        //        OwningUserInterface?.RemoveRenderableComponent(r);
+        //}
+
+        protected virtual void OnResizeChildComponents(BoundingRectangleF parentRegion)
+        {
+            try
+            {
+                //lock (Children)
+                {
+                    foreach (var c in Children)
+                        if (c is UITransform uiTfm)
+                            uiTfm.FitLayout(parentRegion);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.UIException(ex);
+            }
+            finally
+            {
+                //_childLocker.ExitReadLock();
+            }
+        }
+
+        /// <summary>
+        /// Converts a local-space coordinate of a parent UI component 
+        /// to a local-space coordinate of a child UI component.
+        /// </summary>
+        /// <param name="coordinate">The coordinate relative to the parent UI component.</param>
+        /// <param name="parent">The parent UI component whose space the coordinate is already in.</param>
+        /// <param name="targetChild">The UI component whose space you wish to convert the coordinate to.</param>
+        /// <returns></returns>
+        public static Vector2 ConvertUICoordinate(Vector2 coordinate, UITransform parent, UITransform targetChild)
+            => Vector2.Transform(coordinate, targetChild.InverseWorldMatrix * parent.WorldMatrix);
+        /// <summary>
+        /// Converts a screen-space coordinate
+        /// to a local-space coordinate of a UI component.
+        /// </summary>
+        /// <param name="coordinate">The coordinate relative to the screen / origin of the root UI component.</param>
+        /// <param name="uiComp">The UI component whose space you wish to convert the coordinate to.</param>
+        /// <param name="delta">If true, the coordinate and returned value are treated like a vector offset instead of an absolute point.</param>
+        /// <returns></returns>
+        public Vector2 ScreenToLocal(Vector2 coordinate)
+            => Vector2.Transform(coordinate, ParentCanvas?.InverseWorldMatrix ?? Matrix4x4.Identity);
+        public Vector3 ScreenToLocal(Vector3 coordinate)
+            => Vector3.Transform(coordinate, ParentCanvas?.InverseWorldMatrix ?? Matrix4x4.Identity);
+        public Vector3 LocalToScreen(Vector3 coordinate)
+            => Vector3.Transform(coordinate, ParentCanvas?.WorldMatrix ?? Matrix4x4.Identity);
+        public Vector2 LocalToScreen(Vector2 coordinate)
+            => Vector2.Transform(coordinate, ParentCanvas?.WorldMatrix ?? Matrix4x4.Identity);
+
+        public virtual float GetMaxChildWidth() => 0.0f;
+        public virtual float GetMaxChildHeight() => 0.0f;
+
+        public virtual bool Contains(Vector2 worldPoint)
+        {
+            var worldTranslation = WorldTranslation;
+            return Vector2.Distance(worldPoint, new Vector2(worldTranslation.X, worldTranslation.Y)) < 0.0001f;
+        }
+        public virtual Vector2 ClosestPoint(Vector2 worldPoint)
+        {
+            var worldTranslation = WorldTranslation;
+            return new Vector2(worldTranslation.X, worldTranslation.Y);
+        }
+
+        protected virtual void OnChildAdded(TransformBase item)
+        {
+            //if (item is IRenderable c && c.RenderedObjects is RenderInfo2D r2D)
+            //{
+            //    r2D.LayerIndex = RenderInfo2D.LayerIndex;
+            //    r2D.IndexWithinLayer = RenderInfo2D.IndexWithinLayer + 1;
+            //}
+
+            if (item is UITransform uic)
+                uic.InvalidateLayout();
+        }
+        protected virtual void OnChildRemoved(TransformBase item)
+        {
+
+        }
+
+        protected virtual void OnResizeActual(BoundingRectangleF parentBounds)
+        {
+            bool posChanged = !XRMath.VectorsEqual(_actualLocalBottomLeftTranslation, Translation);
+            _actualLocalBottomLeftTranslation = Translation;
+            if (posChanged)
+                MarkLocalModified(true); // Force deferred to avoid re-entrant layout
+        }
+
+        public override byte[] EncodeToBytes(bool delta)
+        {
+            return [];
+        }
+
+        public override void DecodeFromBytes(byte[] arr)
+        {
+
+        }
+
+        //protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
+        //{
+        //    bool change = base.OnPropertyChanging(propName, field, @new);
+        //    if (change)
+        //    {
+        //        switch (propName)
+        //        {
+                    
+        //        }
+        //    }
+        //    return change;
+        //}
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(Translation):
+                case nameof(DepthTranslation):
+                case nameof(Scale):
+                    InvalidateLayout();
+                    // These properties directly affect CreateLocalMatrix,
+                    // so the matrix must be marked dirty independently of layout.
+                    MarkLocalModified(true);
+                    break;
+                case nameof(Visibility):
+                    // Visibility affects layout but not the transform matrix directly.
+                    InvalidateLayout();
+                    break;
+                case nameof(ParentCanvas):
+                    if (this is IRenderable r)
+                        foreach (var rc in r.RenderedObjects)
+                            rc.UserInterfaceCanvas = ParentCanvas?.SceneNode?.GetComponent<UICanvasComponent>();
+                    //lock (Children)
+                    //{
+                        foreach (var child in Children)
+                            if (child is UITransform uiTransform)
+                                uiTransform.ParentCanvas = ParentCanvas;
+                    //}
+                    InvalidateLayout();
+                    break;
+                case nameof(PlacementInfo):
+                    InvalidateLayout();
+                    break;
+                case nameof(Parent):
+                    ParentCanvas = Parent switch
+                    {
+                        UICanvasTransform uiCanvas => uiCanvas,
+                        UITransform uiTfm => uiTfm.ParentCanvas,
+                        _ => null,
+                    };
+                    InvalidateLayout();
+                    break;
+            }
+        }
+
+        protected override void RenderDebug()
+        {
+            if (!ShouldRenderDebugInCurrentScene())
+                return;
+
+            base.RenderDebug();
+
+            if (!RuntimeEngine.EditorPreferences.Debug.RenderUITransformCoordinate || RuntimeEngine.Rendering.State.IsShadowPass)
+                return;
+            
+            Vector3 endPoint = RenderTranslation + RuntimeEngine.Rendering.Debug.UIPositionBias;
+            Vector3 up = RenderUp * 50.0f;
+            Vector3 right = RenderRight * 50.0f;
+
+            RuntimeEngine.Rendering.Debug.RenderLine(endPoint, endPoint + up, Color.Green);
+            RuntimeEngine.Rendering.Debug.RenderLine(endPoint, endPoint + right, Color.Red);
+        }
+
+        /// <summary>
+        /// Converts a canvas-space coordinate to a local-space coordinate of this UI component.
+        /// </summary>
+        /// <param name="canvasPoint"></param>
+        /// <returns></returns>
+        public Vector2 CanvasToLocal(Vector2 canvasPoint)
+        {
+            Matrix4x4 canvasToLocal = InverseWorldMatrix * (ParentCanvas?.WorldMatrix ?? Matrix4x4.Identity);
+            return Vector2.Transform(canvasPoint, canvasToLocal);
+        }
+        /// <summary>
+        /// Converts a local-space coordinate of this UI component to a canvas-space coordinate.
+        /// </summary>
+        /// <param name="localPoint"></param>
+        /// <returns></returns>
+        public Vector2 LocalToCanvas(Vector2 localPoint)
+        {
+            Matrix4x4 localToCanvas = WorldMatrix * (ParentCanvas?.InverseWorldMatrix ?? Matrix4x4.Identity);
+            return Vector2.Transform(localPoint, localToCanvas);
+        }
+    }
+}

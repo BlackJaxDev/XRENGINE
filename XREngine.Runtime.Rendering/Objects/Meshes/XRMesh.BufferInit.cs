@@ -7,10 +7,10 @@ public partial class XRMesh
 {
     private void InitMeshBuffers(bool hasNormals, bool hasTangents, int colorCount, int texCoordCount, bool? forceInterleaved = null)
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope();
+        using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope();
         ColorCount = (uint)colorCount;
         TexCoordCount = (uint)texCoordCount;
-        bool targetInterleaved = forceInterleaved ?? RuntimeRenderingHostServices.Current.UseInterleavedMeshBuffer;
+        bool targetInterleaved = forceInterleaved ?? RuntimeRenderingHostServices.Settings.UseInterleavedMeshBuffer;
         Interleaved = targetInterleaved;
 
         InterleavedVertexBuffer = null;

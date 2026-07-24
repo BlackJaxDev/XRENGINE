@@ -21,7 +21,7 @@ public sealed class ImportedTextureStreamingContractTests
         source.ShouldContain("bool IsCurrentTransition()");
         source.ShouldContain("ReferenceEquals(record.PendingLoadCts, cts) && !cts.IsCancellationRequested");
         source.ShouldContain("shouldAcceptResult: IsCurrentTransition");
-        source.ShouldContain("RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(");
+        source.ShouldContain("RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadTask(");
         source.ShouldContain("XRTexture2D.ApplyResidentData(target, residentData, includeMipChain);");
     }
 
@@ -42,7 +42,7 @@ public sealed class ImportedTextureStreamingContractTests
     {
         string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
         string timerSource = ReadWorkspaceFile("XREngine/Core/Time/EngineTimer.cs");
-        string interfaceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderingHostServices.cs");
+        string interfaceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderSchedulingServices.cs");
         string hostSource = ReadWorkspaceFile("XREngine/Engine/Engine.RuntimeRenderingHostServices.cs");
 
         timerSource.ShouldContain("PostCollectVisible?.Invoke();");
@@ -119,7 +119,7 @@ public sealed class ImportedTextureStreamingContractTests
         assetManagerSource.ShouldContain("TextureStreaming_v3_preview");
 
         payloadSource.ShouldContain("TryCreateTextureStreamingCacheAssetGpu");
-        payloadSource.ShouldContain("RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(");
+        payloadSource.ShouldContain("RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadTask(");
         payloadSource.ShouldContain("TryBuildTexture2DMipChainRgba8Async");
         payloadSource.ShouldContain("Falling back to CPU mip generation");
 

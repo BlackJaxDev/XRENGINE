@@ -148,12 +148,11 @@ public static partial class EditorImGuiUI
                 if (window?.Renderer is not AbstractRenderer renderer)
                     continue;
 
-                string apiBackend = renderer switch
-                {
-                    OpenGLRenderer => "OpenGL",
-                    VulkanRenderer => "Vulkan",
-                    _ => string.Empty,
-                };
+                string apiBackend = renderer.BackendId == RendererBackendId.OpenGL
+                    ? "OpenGL"
+                    : renderer.BackendId == RendererBackendId.Vulkan
+                        ? "Vulkan"
+                        : string.Empty;
 
                 if (string.IsNullOrEmpty(apiBackend))
                     continue;
@@ -518,7 +517,7 @@ public static partial class EditorImGuiUI
                 ImGui.TextDisabled("No OpenGL or Vulkan errors are currently tracked.");
                 if (ImGui.Button("Clear Tracked Errors"))
                 {
-                    OpenGLRenderer.ClearTrackedOpenGLErrors();
+                    ClearTrackedBackendErrors();
                     Debug.ClearConsoleEntries(ELogCategory.OpenGL);
                     Debug.ClearConsoleEntries(ELogCategory.Vulkan);
                 }
@@ -538,7 +537,7 @@ public static partial class EditorImGuiUI
 
             if (ImGui.Button("Clear Tracked Errors"))
             {
-                OpenGLRenderer.ClearTrackedOpenGLErrors();
+                ClearTrackedBackendErrors();
                 Debug.ClearConsoleEntries(ELogCategory.OpenGL);
                 Debug.ClearConsoleEntries(ELogCategory.Vulkan);
                 return;
@@ -608,18 +607,18 @@ public static partial class EditorImGuiUI
         {
             var rows = new List<RenderApiErrorRow>();
 
-            foreach (var error in OpenGLRenderer.GetTrackedOpenGLErrors())
-            {
-                rows.Add(new RenderApiErrorRow(
-                    "OpenGL",
-                    error.Id,
-                    Math.Max(error.Count, 1),
-                    error.Severity,
-                    error.Type,
-                    error.Source,
-                    error.LastSeenUtc,
-                    error.Message));
-            }
+            foreach (IRenderBackendDiagnosticsCapability diagnostics
+                     in EditorRendererCapabilityResolver.Enumerate<IRenderBackendDiagnosticsCapability>())
+                foreach (RenderBackendDiagnosticError error in diagnostics.GetTrackedErrors())
+                    rows.Add(new RenderApiErrorRow(
+                        error.BackendId.ToString(),
+                        error.Id,
+                        Math.Max(error.Count, 1),
+                        error.Severity,
+                        error.Type,
+                        error.Source,
+                        error.LastSeenUtc,
+                        error.Message));
 
             foreach (var entry in Debug.GetConsoleEntries())
             {
@@ -728,18 +727,16 @@ public static partial class EditorImGuiUI
             HashSet<string> available = new(StringComparer.Ordinal);
             HashSet<string> enabled = new(StringComparer.Ordinal);
 
-            foreach (var window in Engine.Windows)
+            foreach (IRenderBackendDiagnosticsCapability diagnostics
+                     in EditorRendererCapabilityResolver.Enumerate<IRenderBackendDiagnosticsCapability>())
             {
-                if (window?.Renderer is not VulkanRenderer vkRenderer)
-                    continue;
-
-                foreach (string extension in vkRenderer.AvailableDeviceExtensions)
+                foreach (string extension in diagnostics.AvailableDeviceExtensions)
                 {
                     if (!string.IsNullOrWhiteSpace(extension))
                         available.Add(extension);
                 }
 
-                foreach (string extension in vkRenderer.EnabledDeviceExtensions)
+                foreach (string extension in diagnostics.EnabledDeviceExtensions)
                 {
                     if (!string.IsNullOrWhiteSpace(extension))
                         enabled.Add(extension);
@@ -750,6 +747,13 @@ public static partial class EditorImGuiUI
             string[] enabledArray = [.. enabled.OrderBy(static name => name, StringComparer.Ordinal)];
 
             return (availableArray, enabledArray);
+        }
+
+        private static void ClearTrackedBackendErrors()
+        {
+            foreach (IRenderBackendDiagnosticsCapability diagnostics
+                     in EditorRendererCapabilityResolver.Enumerate<IRenderBackendDiagnosticsCapability>())
+                diagnostics.ClearTrackedErrors();
         }
 
         private static string[] GetSortedOpenGLExtensions()

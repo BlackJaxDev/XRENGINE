@@ -197,57 +197,13 @@ public sealed class XRTexture2DInspector : IXRAssetInspector
             return false;
         }
 
-        if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
-        {
-            IntPtr textureId = EditorRenderThread.Invoke(
-                () => vkRenderer.RegisterImGuiTexture(texture),
-                "XRTexture2DInspector.RegisterVulkanPreviewTexture",
-                RenderThreadJobKind.TextureUpload);
-            if (textureId == IntPtr.Zero)
-            {
-                failureReason = "Texture not uploaded";
-                return false;
-            }
-            handle = (nint)textureId;
-            return true;
-        }
-
-        if (AbstractRenderer.Current is OpenGLRenderer glRenderer)
-        {
-            var apiTexture = EditorRenderThread.Invoke(
-                () => glRenderer.GetOrCreateAPIRenderObject(texture, generateNow: true),
-                "XRTexture2DInspector.ResolveOpenGLPreviewTexture",
-                RenderThreadJobKind.TextureUpload) as GLTexture2D;
-            if (apiTexture is null)
-            {
-                failureReason = "Texture not uploaded";
-                return false;
-            }
-
-            if (apiTexture.IsInvalidated && !apiTexture.IsPushing)
-            {
-                IGLTexture? previousTexture = glRenderer.BoundTexture;
-                apiTexture.Bind();
-
-                if (previousTexture is null || ReferenceEquals(previousTexture, apiTexture))
-                    apiTexture.Unbind();
-                else
-                    previousTexture.Bind();
-            }
-
-            uint binding = apiTexture.BindingId;
-            if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
-            {
-                failureReason = "Texture not ready";
-                return false;
-            }
-
-            handle = (nint)binding;
-            return true;
-        }
-
-        failureReason = "Preview requires OpenGL or Vulkan renderer";
-        return false;
+        var options = new RenderTexturePreviewOptions(UploadIfNeeded: true);
+        return EditorTexturePreviewService.TryGetHandle(
+            texture,
+            in options,
+            out handle,
+            out _,
+            out failureReason);
     }
 
     private static Vector2 FitPreview(Vector2 pixelSize)

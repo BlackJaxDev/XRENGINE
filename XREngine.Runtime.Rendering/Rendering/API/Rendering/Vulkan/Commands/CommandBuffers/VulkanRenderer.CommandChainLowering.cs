@@ -102,13 +102,14 @@ public unsafe partial class VulkanRenderer
     {
         get
         {
-            IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
-            return host.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan &&
-                   host.IsInVR &&
-                   host.IsOpenXRActive &&
-                   host.RenderWindowsWhileInVR &&
-                   host.VrMirrorMode == EVrMirrorMode.FullIndependentRender &&
-                   !host.VrMirrorComposeFromEyeTextures;
+            IRuntimeRenderFrameTimingServices frameTiming = RuntimeRenderingHostServices.FrameTiming;
+            IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
+            return frameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan &&
+                   presentation.IsInVR &&
+                   presentation.IsOpenXRActive &&
+                   presentation.RenderWindowsWhileInVR &&
+                   presentation.VrMirrorMode == EVrMirrorMode.FullIndependentRender &&
+                   !presentation.VrMirrorComposeFromEyeTextures;
         }
     }
 

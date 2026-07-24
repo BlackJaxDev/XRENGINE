@@ -524,55 +524,11 @@ public static partial class EditorImGuiUI
                 return false;
             }
 
-            if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
-            {
-                IntPtr textureId = EditorRenderThread.Invoke(
-                    () => vkRenderer.RegisterImGuiTexture(texture),
-                    "StatePanel.RegisterVulkanPreviewTexture",
-                    RenderThreadJobKind.TextureUpload);
-                if (textureId == IntPtr.Zero)
-                {
-                    failureReason = "Texture not uploaded";
-                    return false;
-                }
-
-                handle = (nint)textureId;
-                return true;
-            }
-
-            if (AbstractRenderer.Current is OpenGLRenderer renderer)
-            {
-                switch (texture)
-                {
-                    case XRTexture2D tex2D:
-                        var apiTexture = EditorRenderThread.Invoke(
-                            () => renderer.GenericToAPI<GLTexture2D>(tex2D),
-                            "StatePanel.ResolveOpenGLPreviewTexture2D",
-                            RenderThreadJobKind.TextureUpload);
-                        if (apiTexture is null)
-                        {
-                            failureReason = "Texture not uploaded";
-                            return false;
-                        }
-
-                        uint binding = apiTexture.BindingId;
-                        if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
-                        {
-                            failureReason = "Texture not ready";
-                            return false;
-                        }
-
-                        handle = (nint)binding;
-                        return true;
-
-                    default:
-                        failureReason = $"{texture.GetType().Name} preview not supported";
-                        return false;
-                }
-            }
-
-            failureReason = "Preview requires OpenGL or Vulkan renderer";
-            return false;
+            return EditorTexturePreviewService.TryGetHandle(
+                texture,
+                out handle,
+                out _,
+                out failureReason);
         }
 
         private static Vector2 GetTexturePixelSize(XRTexture texture)

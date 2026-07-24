@@ -342,7 +342,7 @@ public unsafe partial class VulkanRenderer
             VulkanQueueOperationLease.TryEnter(_oneTimeSubmitLock, _deviceStateMachine);
         if (!queueOperation.Acquired)
         {
-            RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
+            RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
                 new FrameOutputWorkTelemetry(SubmissionRejections: 1));
             lock (_oneTimeSubmitLock)
                 RecordVulkanQueueOperation("submit-rejected", queue, Result.ErrorDeviceLost, 0, caller);
@@ -355,7 +355,7 @@ public unsafe partial class VulkanRenderer
 
         if (!ValidateOrderedCommandBufferImageStateContracts(ref submitInfo, out string imageStateFailure))
         {
-            RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
+            RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
                 new FrameOutputWorkTelemetry(SubmissionRejections: 1));
             Debug.VulkanWarning(
                 "[Vulkan.Layout] Rejected queue submission before vkQueueSubmit: caller={0} reason={1}",
@@ -389,7 +389,7 @@ public unsafe partial class VulkanRenderer
                 return Result.ErrorValidationFailedExt;
             }
 
-            RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
+            RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
                 new FrameOutputWorkTelemetry(SubmissionRejections: 1));
             Debug.VulkanWarning(
                 "[Vulkan.ResourceLifetime] Rejected queue submission before vkQueueSubmit: caller={0} reason={1}",

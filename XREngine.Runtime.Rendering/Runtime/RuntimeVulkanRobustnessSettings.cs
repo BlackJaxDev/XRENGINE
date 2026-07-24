@@ -11,7 +11,7 @@ internal sealed class RuntimeVulkanRobustnessSettings
 
     public EVulkanAllocatorBackend AllocatorBackend
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderSettingsServices services)
             ? services.VulkanAllocatorBackend
             : _allocatorBackend;
         set => _allocatorBackend = value;
@@ -19,7 +19,7 @@ internal sealed class RuntimeVulkanRobustnessSettings
 
     public EVulkanSynchronizationBackend SynchronizationBackend
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderSettingsServices services)
             ? services.VulkanSynchronizationBackend
             : _synchronizationBackend;
         set => _synchronizationBackend = value;
@@ -33,7 +33,7 @@ internal sealed class RuntimeVulkanRobustnessSettings
 
     public EVulkanDescriptorUpdateBackend DescriptorUpdateBackend
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderSettingsServices services)
             ? services.VulkanDescriptorUpdateBackend
             : _descriptorUpdateBackend;
         set => _descriptorUpdateBackend = value;
@@ -41,7 +41,7 @@ internal sealed class RuntimeVulkanRobustnessSettings
 
     public bool DynamicUniformBufferEnabled
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderSettingsServices services)
             ? services.VulkanDynamicUniformBufferEnabled
             : _dynamicUniformBufferEnabled;
         set => _dynamicUniformBufferEnabled = value;
@@ -50,9 +50,9 @@ internal sealed class RuntimeVulkanRobustnessSettings
     public bool EnableDebugNames { get; set; }
     public bool EnableValidationLayers { get; set; }
 
-    private static bool TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+    private static bool TryGetHostRuntimeSettings(out IRuntimeRenderSettingsServices services)
     {
-        services = RuntimeRenderingHostServices.Current;
+        services = RuntimeRenderingHostServices.Settings;
         return RuntimeRenderingHostServices.HasConcreteHost;
     }
 }

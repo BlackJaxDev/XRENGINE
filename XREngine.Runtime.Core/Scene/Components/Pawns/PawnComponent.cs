@@ -68,6 +68,7 @@ public class PawnComponent : XRComponent, IRuntimeInputControllablePawn, IRuntim
     }
 
     public EventList<XRComponent> LinkedUICanvasInputs { get; } = [];
+    ICollection<XRComponent> IRuntimeInputControllablePawn.LinkedUiInputComponents => LinkedUICanvasInputs;
 
     protected virtual void PostPossess() => PostPossessed?.Invoke(this);
     protected virtual void PrePossess() => PrePossessed?.Invoke(this);

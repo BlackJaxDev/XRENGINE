@@ -242,7 +242,7 @@ public partial class GLTexture2D
             _allocatedVRAMBytes = CalculateTextureVRAMSize(width, height, levels, Data.SizedInternalFormat, Data.MultiSample ? Data.MultiSampleCount : 1u);
             RuntimeEngine.Rendering.Stats.Vram.AddTextureAllocation(_allocatedVRAMBytes);
             TextureRuntimeDiagnostics.LogStorageAllocated(
-                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                 GetDescribingName(),
                 Data.FilePath,
                 BindingId,

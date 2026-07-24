@@ -477,7 +477,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     /// Attempts to retrieve the current render pipeline instance from the runtime rendering host services.
     /// </summary>
     protected static XRRenderPipelineInstance? TryCurrentPipeline
-        => RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext as XRRenderPipelineInstance
+        => RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext as XRRenderPipelineInstance
             ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
 
     /// <summary>
@@ -507,7 +507,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
                 ?? pipeline.LastRenderingCamera;
         }
 
-        IRuntimeRenderCommandExecutionState? renderState = RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState;
+        IRuntimeRenderCommandExecutionState? renderState = RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState;
         return renderState?.SceneCamera as XRCamera
             ?? renderState?.RenderingCamera as XRCamera;
     }
@@ -522,7 +522,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
             return latched;
 
         return ResolveEffectiveCameraForFrame()?.AntiAliasingModeOverride
-            ?? RuntimeRenderingHostServices.Current.DefaultAntiAliasingMode;
+            ?? RuntimeRenderingHostServices.FrameTiming.DefaultAntiAliasingMode;
     }
 
     /// <summary>
@@ -533,7 +533,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         => TryCurrentPipeline?.EffectiveMsaaSampleCountThisFrame is uint latched
             ? Math.Max(1u, latched)
             : Math.Max(1u,
-                ResolveEffectiveCameraForFrame()?.MsaaSampleCountOverride ?? RuntimeRenderingHostServices.Current.DefaultMsaaSampleCount);
+                ResolveEffectiveCameraForFrame()?.MsaaSampleCountOverride ?? RuntimeRenderingHostServices.FrameTiming.DefaultMsaaSampleCount);
 
     /// <summary>
     /// Resolves the effective TSR render scale for the current frame, considering the current render pipeline instance and rendering state.
@@ -545,7 +545,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
             return Math.Clamp(latched, 0.5f, 1.0f);
 
         return Math.Clamp(
-            ResolveEffectiveCameraForFrame()?.TsrRenderScaleOverride ?? RuntimeRenderingHostServices.Current.DefaultTsrRenderScale,
+            ResolveEffectiveCameraForFrame()?.TsrRenderScaleOverride ?? RuntimeRenderingHostServices.FrameTiming.DefaultTsrRenderScale,
             0.5f,
             1.0f);
     }

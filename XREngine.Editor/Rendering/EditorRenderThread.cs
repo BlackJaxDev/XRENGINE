@@ -8,5 +8,5 @@ internal static class EditorRenderThread
         Func<T> task,
         string reason,
         RenderThreadJobKind renderThreadKind = RenderThreadJobKind.RequiresGraphicsContext)
-        => RuntimeRenderingHostServices.Current.InvokeRenderThreadTask(task, reason, renderThreadKind);
+        => RuntimeRenderingHostServices.Scheduling.InvokeRenderThreadTask(task, reason, renderThreadKind);
 }

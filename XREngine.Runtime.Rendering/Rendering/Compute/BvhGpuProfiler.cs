@@ -294,7 +294,8 @@ namespace XREngine.Rendering.Compute
                 _currentFrameTimestampTicks = frameTimestampTicks;
                 _initializedFrameStamp = true;
 
-                if (AbstractRenderer.Current is OpenGLRenderer or VulkanRenderer)
+                if (AbstractRenderer.Current?.BackendId is var backendId &&
+                    (backendId == RendererBackendId.OpenGL || backendId == RendererBackendId.Vulkan))
                     ResolvePending();
 
                 _latest = _frameAccumulator.ToMetrics();
@@ -315,7 +316,8 @@ namespace XREngine.Rendering.Compute
                 return null;
             }
 
-            if (AbstractRenderer.Current is not (OpenGLRenderer or VulkanRenderer))
+            if (AbstractRenderer.Current is not IRuntimeRendererHost renderer ||
+                !renderer.TryGetBackendCapability<IOcclusionQueryBackendCapability>(out _))
             {
                 lock (_lock)
                     _frameAccumulator.Add(stage, 0, workCount);
@@ -428,23 +430,24 @@ namespace XREngine.Rendering.Compute
         }
 
         private static bool TryWriteTimestamp(XRRenderQuery query)
-            => AbstractRenderer.Current switch
-            {
-                OpenGLRenderer gl => gl.GenericToAPI<GLRenderQuery>(query)?.WriteTimestamp() == ERenderQueryReadStatus.Ready,
-                VulkanRenderer vk => vk.EnqueueTimestampQuery(query),
-                _ => false,
-            };
+        {
+            IRuntimeRendererHost? renderer = AbstractRenderer.Current;
+            return renderer is not null &&
+                renderer.TryGetBackendCapability<IOcclusionQueryBackendCapability>(out var capability) &&
+                capability?.WriteTimestamp(query) == ERenderQueryReadStatus.Ready;
+        }
 
         private static ERenderQueryReadStatus TryReadTimestamp(XRRenderQuery query, out ulong timestamp)
         {
             timestamp = 0;
             TimestampQueryResult result = default;
-            ERenderQueryReadStatus status = AbstractRenderer.Current switch
-            {
-                OpenGLRenderer gl => gl.GenericToAPI<GLRenderQuery>(query)?.TryGetTimestamp(out result) ?? ERenderQueryReadStatus.InvalidState,
-                VulkanRenderer vk => vk.GenericToAPI<VulkanRenderer.VkRenderQuery>(query)?.TryGetTimestamp(out result) ?? ERenderQueryReadStatus.InvalidState,
-                _ => ERenderQueryReadStatus.Unsupported,
-            };
+            IRuntimeRendererHost? renderer = AbstractRenderer.Current;
+            ERenderQueryReadStatus status =
+                renderer is not null &&
+                renderer.TryGetBackendCapability<IOcclusionQueryBackendCapability>(out var capability) &&
+                capability is not null
+                    ? capability.TryGetTimestamp(query, out result)
+                    : ERenderQueryReadStatus.Unsupported;
             timestamp = result.Nanoseconds;
             return status;
         }

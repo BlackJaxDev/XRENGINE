@@ -1295,7 +1295,7 @@ namespace XREngine.Rendering.Commands
                 lastCameraSnapshot,
                 current,
                 vrScope: camera.StereoEyeLeft.HasValue,
-                renderDeltaSeconds: RuntimeRenderingHostServices.Current.RenderDeltaSeconds);
+                renderDeltaSeconds: RuntimeRenderingHostServices.FrameTiming.RenderDeltaSeconds);
             lastCameraSnapshot = current;
             return tier;
         }
@@ -1343,7 +1343,10 @@ namespace XREngine.Rendering.Commands
             // Proxy-AABB submission requires synchronous draws bracketed by hardware queries.
             // The pool path is implemented for OpenGL; the Vulkan backend has its own query
             // lifecycle and would need an equivalent renderer wired before submitting here.
-            if (AbstractRenderer.Current is not OpenGLRenderer)
+            IRuntimeRendererHost? renderer = AbstractRenderer.Current;
+            if (renderer is null ||
+                !renderer.TryGetBackendCapability<IOcclusionQueryBackendCapability>(out var queryCapability) ||
+                queryCapability is null)
             {
                 OcclusionTelemetry.RecordCpuBudgetSkipped(ECpuOcclusionQueryReason.DiagnosticForcedQuery);
                 return;
@@ -1427,21 +1430,13 @@ namespace XREngine.Rendering.Commands
                     continue;
 
                 XRRenderQuery query = s_cpuOcclusionQueryManager.AcquireBooleanOcclusion();
-                OpenGLRenderer? gl = AbstractRenderer.Current as OpenGLRenderer;
-                GLRenderQuery? glQuery = gl?.GenericToAPI<GLRenderQuery>(query);
-                if (glQuery is null)
-                {
-                    s_cpuOcclusionQueryManager.Release(query);
-                    continue;
-                }
-
-                if (glQuery.BeginQuery() != ERenderQueryReadStatus.Ready)
+                if (!queryCapability.BeginOcclusionQuery(query))
                 {
                     s_cpuOcclusionQueryManager.Release(query);
                     continue;
                 }
                 CpuOcclusionProxyRenderer.Draw(bounds, camera);
-                glQuery.EndQuery();
+                queryCapability.EndOcclusionQuery(query);
 
                 _cpuOcclusionPending.Add((sourceIndex, query, queryCamera, bounds));
                 submitted++;

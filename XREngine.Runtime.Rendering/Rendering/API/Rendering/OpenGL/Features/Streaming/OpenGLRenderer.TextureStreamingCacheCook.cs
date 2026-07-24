@@ -32,7 +32,7 @@ public partial class OpenGLRenderer
 
         if (!RuntimeEngine.IsRenderThread)
         {
-            RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
+            RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadTask(
                 () => TryBuildTexture2DMipChainRgba8Async(texture, callback),
                 "OpenGL.TextureStreamingCacheGpuCook",
                 RenderThreadJobKind.TextureUpload);
@@ -197,7 +197,7 @@ public partial class OpenGLRenderer
                 Callback = callback
             };
 
-            RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(
+            RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
                 () => PollTextureStreamingCacheMipChainReadback(pending),
                 "OpenGL.TextureStreamingCacheMipReadback",
                 RenderThreadJobKind.Readback);

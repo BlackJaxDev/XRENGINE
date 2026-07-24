@@ -313,7 +313,7 @@ namespace XREngine.Scene
 
             // Skip the per-program data refresh + GPU upload when this frame already populated the buffers.
             // Bind/sampler/uniform calls are still executed by the caller for every program.
-            long frameTicks = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+            long frameTicks = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
             ShadowRequestSource cascadeSource = DirectionalLightComponent.GetCascadeSourceForCamera(directionalShadowCamera);
             if (frameTicks == _lightBuffersUploadedFrameTicks &&
                 cascadeSource == _lightBuffersUploadedCascadeSource)
@@ -541,7 +541,7 @@ namespace XREngine.Scene
             program.Uniform(EEngineUniform.ClipDepthRange.ToStringFast(), (int)RuntimeEngine.Rendering.EffectiveClipDepthRange);
             program.Uniform(
                 EEngineUniform.FramebufferTextureYDirection.ToStringFast(),
-                (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeRenderingHostServices.Current.CurrentRenderBackend));
+                (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend));
 
             SetForwardLightingCameraUniforms(
                 program,
@@ -1200,7 +1200,7 @@ namespace XREngine.Scene
             // Gate the host->GPU upload of shadow metadata to once per frame; sampler bindings above
             // still run per program. Host-side Set() calls remain (cheap) — only the PushSubData traffic
             // is skipped on repeat invocations within the same frame.
-            long shadowFrameTicks = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+            long shadowFrameTicks = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
             if (shadowFrameTicks != _shadowMetadataUploadedFrameTicks)
             {
                 _shadowMetadataUploadedFrameTicks = shadowFrameTicks;

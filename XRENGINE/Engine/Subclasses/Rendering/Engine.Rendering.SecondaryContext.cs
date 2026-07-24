@@ -43,8 +43,15 @@ namespace XREngine
                         Engine.EffectiveSettings.EnableNvidiaDlss
                         || Engine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Dlaa
                         || NvidiaDlssManager.IsFrameGenerationRequested;
-                    if (templateWindow.Renderer is VulkanRenderer vulkanRenderer &&
-                        (streamlinePresentationRequested || vulkanRenderer.StreamlineFrameGenerationProvisioned))
+                    IRuntimeRendererHost? templateRenderer = templateWindow.Renderer;
+                    bool streamlineFrameGenerationProvisioned =
+                        templateRenderer is not null &&
+                        templateRenderer.TryGetBackendCapability(
+                            out IStreamlinePresentationBackendCapability? streamlineCapability) &&
+                        streamlineCapability is not null &&
+                        streamlineCapability.StreamlineFrameGenerationProvisioned;
+                    if (templateRenderer?.BackendId == RendererBackendId.Vulkan &&
+                        (streamlinePresentationRequested || streamlineFrameGenerationProvisioned))
                     {
                         XREngine.Debug.RenderingWarning(
                             "Secondary Vulkan GPU compute is disabled while NVIDIA DLSS/DLAA/DLSS-G is active or provisioned. " +

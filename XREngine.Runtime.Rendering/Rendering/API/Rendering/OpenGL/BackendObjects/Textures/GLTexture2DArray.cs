@@ -258,7 +258,7 @@ namespace XREngine.Rendering.OpenGL
             _allocatedVRAMBytes = requestedBytes;
             RuntimeEngine.Rendering.Stats.Vram.AddTextureAllocation(_allocatedVRAMBytes);
             TextureRuntimeDiagnostics.LogStorageAllocated(
-                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                 GetDescribingName(),
                 null,
                 BindingId,

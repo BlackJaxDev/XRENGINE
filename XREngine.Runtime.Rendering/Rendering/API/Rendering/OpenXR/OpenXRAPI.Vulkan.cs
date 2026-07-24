@@ -164,8 +164,8 @@ public unsafe partial class OpenXRAPI
 
         // Check if multiple graphics queues are supported
         bool supportsMultiQueue = renderer.SupportsMultipleGraphicsQueues();
-        bool projectAllowsParallel = RuntimeRenderingHostServices.Current.EnableOpenXrVulkanParallelRendering;
-        EVrViewRenderMode requestedViewMode = RuntimeRenderingHostServices.Current.VrViewRenderMode;
+        bool projectAllowsParallel = RuntimeRenderingHostServices.Presentation.EnableOpenXrVulkanParallelRendering;
+        EVrViewRenderMode requestedViewMode = RuntimeRenderingHostServices.Presentation.VrViewRenderMode;
         if (requestedViewMode == EVrViewRenderMode.SinglePassStereo)
         {
             Debug.Vulkan(
@@ -307,11 +307,11 @@ public unsafe partial class OpenXRAPI
 
         string? trueSinglePassStereoUnavailableReason = null;
         bool trueSinglePassStereoAvailable =
-            RuntimeRenderingHostServices.Current.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo &&
+            RuntimeRenderingHostServices.Presentation.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo &&
             backend == ERenderLibrary.Vulkan &&
             CanUseOpenXrTrueSinglePassStereo(out trueSinglePassStereoUnavailableReason);
 
-        if (RuntimeRenderingHostServices.Current.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo &&
+        if (RuntimeRenderingHostServices.Presentation.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo &&
             backend != ERenderLibrary.Vulkan)
         {
             trueSinglePassStereoUnavailableReason =
@@ -320,8 +320,8 @@ public unsafe partial class OpenXRAPI
 
         resolution = VrViewRenderModeResolver.Resolve(
             backend,
-            RuntimeRenderingHostServices.Current.VrViewRenderMode,
-            RuntimeRenderingHostServices.Current.EnableOpenXrVulkanParallelRendering,
+            RuntimeRenderingHostServices.Presentation.VrViewRenderMode,
+            RuntimeRenderingHostServices.Presentation.EnableOpenXrVulkanParallelRendering,
             trueSinglePassStereoAvailable,
             rendersExternalSwapchainTargets: !trueSinglePassStereoAvailable,
             trueSinglePassStereoUnavailableReason: trueSinglePassStereoUnavailableReason);
@@ -596,7 +596,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
             resolution.IsSupported,
             resolution.EffectiveImplementationPath,
             resolution.TemporalHistoryPolicy,
-            RuntimeRenderingHostServices.Current.EnableOpenXrVulkanParallelRendering,
+            RuntimeRenderingHostServices.Presentation.EnableOpenXrVulkanParallelRendering,
             DescribeOpenXrSwapchainFormats(backend),
             DescribeOpenXrTrueStereoMultiviewSupport());
     }
@@ -1216,7 +1216,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
     private bool TryRenderVulkanEyesBatch(CompositionLayerProjectionView* projectionViews, out bool handled)
     {
         bool strictSinglePassStereoRequested =
-            RuntimeRenderingHostServices.Current.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo;
+            RuntimeRenderingHostServices.Presentation.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo;
         handled = strictSinglePassStereoRequested;
         if (strictSinglePassStereoRequested &&
             TryCommitStrictSpsFailure(
@@ -1351,7 +1351,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
             if (!trueSinglePassStereo)
             {
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.Prewarm"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.Prewarm"))
                 {
                     if (ShouldPrewarmVulkanEyeResources(0))
                         PrewarmVulkanEyeResources(0);
@@ -1360,7 +1360,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 }
             }
 
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.AcquireWaitLeft"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.AcquireWaitLeft"))
             {
                 if (!AcquireAndWaitOpenXrEyeImage(0, ref leftImageIndex, ref leftAcquired, frameNo))
                 {
@@ -1369,7 +1369,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 }
             }
 
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.AcquireWaitRight"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.AcquireWaitRight"))
             {
                 if (!AcquireAndWaitOpenXrEyeImage(1, ref rightImageIndex, ref rightAcquired, frameNo))
                 {
@@ -1378,7 +1378,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 }
             }
 
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.RenderSwapchains"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.RenderSwapchains"))
             {
                 VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage requestedFaultInjectionStage =
                     ResolveVulkanStrictSpsFaultInjectionStage();
@@ -1441,7 +1441,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
             }
 
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.FillProjectionViews"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.FillProjectionViews"))
             {
                 if (strictSinglePassStereoRequested &&
                     TryCommitStrictSpsFailure(
@@ -1489,7 +1489,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         }
         finally
         {
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.ReleaseEyes"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.ReleaseEyes"))
             {
                 ReleaseOpenXrEyeImageIfAcquired(0, leftAcquired, frameNo);
                 ReleaseOpenXrEyeImageIfAcquired(1, rightAcquired, frameNo);
@@ -1617,7 +1617,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
             return false;
         }
 
-        using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.RenderAndPublish"))
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.RenderAndPublish"))
         {
             if (TryRenderVulkanTrueSinglePassStereoToSwapchains(
                     renderer,
@@ -1778,7 +1778,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
             renderer.Active = true;
             AbstractRenderer.Current = renderer;
 
-            ulong renderFrameId = RuntimeRenderingHostServices.Current.CurrentRenderFrameId;
+            ulong renderFrameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
             FrameOutputPacingDecision stereoPacing = CreateOpenXrStereoFrameOutputPacing(
                 renderFrameId,
                 checked((int)leftImageIndex));
@@ -1879,9 +1879,9 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 leftImageIndex,
                 rightImageIndex);
 
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.PublishLeft"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.PublishLeft"))
                 PublishVulkanEyeMirror(renderer, target.LeftColorView, 0, leftImageIndex, width, height);
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.PublishRight"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.PublishRight"))
                 PublishVulkanEyeMirror(renderer, target.RightColorView, 1, rightImageIndex, width, height);
 
             RecordVulkanTrueSinglePassStereoOutput(
@@ -1938,7 +1938,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
             EVrOutputViewKind.LeftEye,
             EFrameOutputKind.OpenXREyeSubmit,
             frameId) with { Request = request };
-        RuntimeRenderingHostServices.Current.RecordRenderFrameOutput(new FrameOutputTelemetry(
+        RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutput(new FrameOutputTelemetry(
             EFrameOutputKind.OpenXREyeSubmit,
             EVrOutputViewKind.LeftEye,
             EFrameOutputPhase.Render,
@@ -1989,7 +1989,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
             TimeSpan.FromSeconds(2),
             "[OpenXR] VR.ViewRenderMode=ParallelCommandBufferRecording selected; using the explicit worker-backed eye path with serialized shared Vulkan layout-state recording.");
 
-        using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.RenderSwapchains"))
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.RenderSwapchains"))
             return TryRenderVulkanEyeBatchToSwapchains(
                 renderer,
                 leftImageIndex,
@@ -2012,7 +2012,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
         uint width = GetOpenXrSwapchainWidth(0);
         uint height = GetOpenXrSwapchainHeight(0);
-        using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.EnsureTargets"))
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.EnsureTargets"))
         {
             if (OpenXrVulkanMirrorFbo)
                 EnsureVulkanEyeMirrorTargets(renderer, width, height);
@@ -2208,7 +2208,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 });
 
             bool directRendered;
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.RenderDirectSwapchains"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.RenderDirectSwapchains"))
             {
                 directRendered = viewRenderMode switch
                 {
@@ -2220,9 +2220,9 @@ Target:                 new RenderFrameViewTargetDescriptor(
             if (!directRendered)
                 return false;
 
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.PublishLeft"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.PublishLeft"))
                 PublishVulkanEyeSwapchain(renderer, leftImage, (VkFormat)leftFormat, extent, 0, leftImageIndex, width, height);
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.PublishRight"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.PublishRight"))
                 PublishVulkanEyeSwapchain(renderer, rightImage, (VkFormat)rightFormat, extent, 1, rightImageIndex, width, height);
             MarkVulkanEyeResourceWarmupComplete(0);
             MarkVulkanEyeResourceWarmupComplete(1);
@@ -2396,14 +2396,14 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
     private static bool ShouldCopyDirectVulkanEyeSwapchainPreview()
         => VulkanCaptureEyeOutputs ||
-           RuntimeRenderingHostServices.Current.VrCopyEyePreviewTextures ||
-           (RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR &&
-            RuntimeRenderingHostServices.Current.VrMirrorComposeFromEyeTextures);
+           RuntimeRenderingHostServices.Presentation.VrCopyEyePreviewTextures ||
+           (RuntimeRenderingHostServices.Presentation.RenderWindowsWhileInVR &&
+            RuntimeRenderingHostServices.Presentation.VrMirrorComposeFromEyeTextures);
 
     private static bool ShouldCopyVulkanEyeToDesktopMirror(uint viewIndex)
         => viewIndex == 0 &&
-           RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR &&
-           RuntimeRenderingHostServices.Current.VrMirrorComposeFromEyeTextures;
+           RuntimeRenderingHostServices.Presentation.RenderWindowsWhileInVR &&
+           RuntimeRenderingHostServices.Presentation.VrMirrorComposeFromEyeTextures;
 
     private void PrewarmVulkanEyeResources(uint viewIndex)
     {

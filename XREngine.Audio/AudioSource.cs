@@ -9,7 +9,7 @@ using XREngine.Audio.Steam;
 
 namespace XREngine.Audio
 {
-    public sealed class AudioSource : IDisposable, IPoolable
+    public sealed class AudioSource : IDisposable, IPoolable, IAudioPlaybackSource
     {
         private bool IsV2 => ParentListener.IsV2 && ParentListener.Transport is not null;
 
@@ -152,6 +152,7 @@ namespace XREngine.Audio
 
         public XREvent<AudioBuffer>? BufferQueued;
         public XREvent<AudioBuffer>? BufferProcessed;
+        public event Action? StreamingBufferProcessed;
 
         /// <summary>
         /// When <c>true</c> (default), <see cref="QueueBuffers"/> automatically
@@ -482,6 +483,7 @@ namespace XREngine.Audio
                 }
 
                 BufferProcessed?.Invoke(buf);
+                StreamingBufferProcessed?.Invoke();
                 ParentListener.ReleaseBuffer(buf);
             }
             //Trace.WriteLineIf(handles.Length > 0, $"Unqueued {handles.Length} buffers.");

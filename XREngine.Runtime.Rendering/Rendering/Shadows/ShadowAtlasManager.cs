@@ -1167,7 +1167,7 @@ public sealed partial class ShadowAtlasManager
 
     private static bool ShouldBuildGroupedAtlasRenderPlanEntries()
     {
-        if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+        if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
         {
             // Keep the known Monado OpenXR Vulkan path on sequential tile entries.
             // SteamVR and ordinary Vulkan sessions can use the grouped
@@ -2024,7 +2024,7 @@ public sealed partial class ShadowAtlasManager
         if (deferredByTexture > 0)
         {
             TextureRuntimeDiagnostics.LogRenderWorkBudget(
-                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                 "Shadow.DelayedByTexture",
                 RenderWorkBudgetCoordinator.GetSnapshot(),
                 "urgent visible texture repair deferred low-priority shadow tiles");
@@ -2036,7 +2036,7 @@ public sealed partial class ShadowAtlasManager
             if (deferredByBudget > 0 && budgetSnapshot.TextureUploadQueueDepth > 0)
             {
                 TextureRuntimeDiagnostics.LogRenderWorkBudget(
-                    RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                    RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                     "Texture.DelayedByShadow",
                     budgetSnapshot,
                     "shadow atlas render budget deferred while texture uploads were queued");
@@ -2944,7 +2944,7 @@ public sealed partial class ShadowAtlasManager
             innerRect.X / (float)_settings.PageSize,
             innerRect.Y / (float)_settings.PageSize);
 
-        if (RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeRenderingHostServices.Current.CurrentRenderBackend) == ERenderClipSpaceYDirection.YDown)
+        if (RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend) == ERenderClipSpaceYDirection.YDown)
             uv.W = 1.0f - ((innerRect.Y + innerRect.Height) * invPageSize);
 
         return uv;

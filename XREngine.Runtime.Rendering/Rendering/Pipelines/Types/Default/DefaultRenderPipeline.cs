@@ -161,7 +161,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     private static bool IsVulkanRuntimeActiveOrExpected()
     {
         if (IsVulkan ||
-            RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+            RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
         {
             return true;
         }
@@ -172,7 +172,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
 
     private static bool IsOpenXrRuntimeRequestedOrExpected()
     {
-        if (RuntimeRenderingHostServices.Current.IsOpenXrRuntimeRequested ||
+        if (RuntimeRenderingHostServices.Presentation.IsOpenXrRuntimeRequested ||
             RuntimeEngine.GameSettings?.VRRuntime == EVRRuntime.OpenXR ||
             RuntimeEngine.VRState.IsOpenXRActive ||
             RuntimeEngine.VRState.OpenXRApi is not null)
@@ -438,7 +438,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
 
     private static bool IsRenderingExternalSwapchainTarget()
     {
-        AbstractRenderer? renderer = RuntimeRenderingHostServices.Current.CurrentRenderer as AbstractRenderer
+        AbstractRenderer? renderer = RuntimeRenderingHostServices.FrameTiming.CurrentRenderer as AbstractRenderer
             ?? AbstractRenderer.Current;
         return renderer?.IsRenderingExternalSwapchainTarget == true;
     }
@@ -2003,7 +2003,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     }
 
     private static bool ShouldUseDirectVulkanFinalPresent()
-        => AbstractRenderer.Current is VulkanRenderer && !RuntimeEnableVendorUpscale;
+        => AbstractRenderer.Current?.BackendId == RendererBackendId.Vulkan && !RuntimeEnableVendorUpscale;
 
     private static bool ShouldUseDirectFinalPresent()
         => IsRenderingExternalSwapchainTarget() || ShouldUseDirectVulkanFinalPresent();

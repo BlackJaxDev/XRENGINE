@@ -475,7 +475,7 @@ uniform ColorGradeStruct ColorGrade;";
             // exposure writes. Render-on-demand can skip 3D scene frames for seconds; the
             // next real scene render should advance by the current render tick instead of
             // catching up in one large adaptation step.
-            double rawRenderDeltaSeconds = RuntimeRenderingHostServices.Current.RenderDeltaSeconds;
+            double rawRenderDeltaSeconds = RuntimeRenderingHostServices.FrameTiming.RenderDeltaSeconds;
             float deltaTime = _lastUpdateTime == float.MinValue ? 0.0f : SanitizeGpuAutoExposureDeltaSeconds(rawRenderDeltaSeconds);
 
             bool success = renderer.UpdateAutoExposureGpu(sourceTex, exposureTex, this, deltaTime, generateMipmapsNow);

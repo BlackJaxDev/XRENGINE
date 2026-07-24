@@ -371,7 +371,7 @@ public partial class XRMesh
         Dictionary<int, List<int>>? faceRemap,
         Vertex[] sourceList)
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope();
+        using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope();
 
         CollectBoneWeights(
             mesh,
@@ -395,7 +395,7 @@ public partial class XRMesh
         out Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[]? weightsPerVertex,
         out Dictionary<TransformBase, int> boneToIndexTable)
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope();
+        using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope();
 
         boneCount = mesh.BoneCount;
         int vertexCount = VertexCount;
@@ -529,7 +529,7 @@ public partial class XRMesh
         Dictionary<TransformBase, int> boneToIndexTable,
         Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex)
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope();
+        using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope();
 
         int vertexCount = VertexCount;
         var coreIndices = BoneInfluenceCoreIndices!;

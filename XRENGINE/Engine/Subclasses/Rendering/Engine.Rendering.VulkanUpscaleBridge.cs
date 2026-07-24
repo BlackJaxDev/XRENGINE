@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine
@@ -140,7 +139,8 @@ namespace XREngine
                     bridge.Value.Destroy(reason);
             }
 
-            internal static void RefreshVulkanUpscaleBridgeCapabilitySnapshot(OpenGLRenderer renderer)
+            internal static void RefreshVulkanUpscaleBridgeCapabilitySnapshot(
+                IOpenGlExternalInteropBackendCapability renderer)
             {
                 if (renderer is null)
                     return;
@@ -161,10 +161,10 @@ namespace XREngine
                     "|",
                     State.OpenGLVendor ?? string.Empty,
                     State.OpenGLRendererName ?? string.Empty,
-                    renderer.EXTMemoryObject is not null ? "1" : "0",
-                    renderer.EXTMemoryObjectWin32 is not null ? "1" : "0",
-                    renderer.EXTSemaphore is not null ? "1" : "0",
-                    renderer.EXTSemaphoreWin32 is not null ? "1" : "0");
+                    renderer.HasExternalMemory ? "1" : "0",
+                    renderer.HasExternalMemoryWin32 ? "1" : "0",
+                    renderer.HasExternalSemaphore ? "1" : "0",
+                    renderer.HasExternalSemaphoreWin32 ? "1" : "0");
 
                 lock (_vulkanUpscaleBridgeSnapshotSync)
                 {
@@ -190,10 +190,10 @@ namespace XREngine
                     OwnershipMode = VulkanUpscaleBridgeOwnershipMode,
                     InteropMode = VulkanUpscaleBridgeInteropMode,
                     SurfaceSet = VulkanUpscaleBridgeSurfaceSet,
-                    HasOpenGlExternalMemory = renderer.EXTMemoryObject is not null,
-                    HasOpenGlExternalMemoryWin32 = renderer.EXTMemoryObjectWin32 is not null,
-                    HasOpenGlSemaphore = renderer.EXTSemaphore is not null,
-                    HasOpenGlSemaphoreWin32 = renderer.EXTSemaphoreWin32 is not null,
+                    HasOpenGlExternalMemory = renderer.HasExternalMemory,
+                    HasOpenGlExternalMemoryWin32 = renderer.HasExternalMemoryWin32,
+                    HasOpenGlSemaphore = renderer.HasExternalSemaphore,
+                    HasOpenGlSemaphoreWin32 = renderer.HasExternalSemaphoreWin32,
                     VulkanProbeSucceeded = probe.ProbeSucceeded,
                     HasVulkanExternalMemoryImport = probe.HasVulkanExternalMemoryImport,
                     HasVulkanExternalSemaphoreImport = probe.HasVulkanExternalSemaphoreImport,
@@ -274,7 +274,7 @@ namespace XREngine
                 if (snapshot.WindowsOnly && !OperatingSystem.IsWindows())
                     reasons.Add("bridge MVP is Windows only");
 
-                if (viewport?.Window?.Renderer is not OpenGLRenderer)
+                if (viewport?.Window?.Renderer?.BackendId != RendererBackendId.OpenGL)
                     reasons.Add("bridge MVP only applies to OpenGL windows");
 
                 if (snapshot.MonoViewportOnly && CountWindowViewports(viewport?.Window) != 1)

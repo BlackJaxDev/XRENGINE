@@ -50,6 +50,9 @@ namespace XREngine.Rendering
     /// </summary>
     public abstract unsafe class AbstractRenderer : XRBase, IRenderApiWrapperOwner, IRuntimeRendererHost, IRenderResourceGenerationBackend//, IDisposable
     {
+        /// <inheritdoc />
+        public virtual RendererBackendId BackendId => default;
+
         #region Constants / Statics
         /// <summary>
         /// If true, this renderer is currently being used to render a window.
@@ -313,12 +316,12 @@ namespace XREngine.Rendering
         private static void RecordImGuiFrameOutput(XRCamera? camera, ulong frameId, long elapsedTicks)
         {
             double cpuMs = elapsedTicks <= 0L ? 0.0 : elapsedTicks * 1000.0 / Stopwatch.Frequency;
-            IRuntimeRenderingHostServices services = RuntimeRenderingHostServices.Current;
-            EVrOutputViewKind viewKind = ResolveImGuiOverlayViewKind(camera, services);
+            IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
+            EVrOutputViewKind viewKind = ResolveImGuiOverlayViewKind(camera, presentation);
             bool desktopFacing = viewKind is EVrOutputViewKind.DesktopEditor or EVrOutputViewKind.CyclopeanDesktop;
             bool mirror = desktopFacing &&
-                services.IsInVR &&
-                services.VrMirrorMode is EVrMirrorMode.BlitSubmittedEye or EVrMirrorMode.CyclopeanReconstruct;
+                presentation.IsInVR &&
+                presentation.VrMirrorMode is EVrMirrorMode.BlitSubmittedEye or EVrMirrorMode.CyclopeanReconstruct;
             var pacing = FrameOutputPacingDecision.Due(viewKind, EFrameOutputKind.ImGuiOverlay, frameId);
             var telemetry = new FrameOutputTelemetry(
                 EFrameOutputKind.ImGuiOverlay,
@@ -333,24 +336,26 @@ namespace XREngine.Rendering
                 mirror,
                 false,
                 viewKind is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye ||
-                    (viewKind == EVrOutputViewKind.CyclopeanDesktop && services.VrMirrorMode != EVrMirrorMode.FullIndependentRender),
+                    (viewKind == EVrOutputViewKind.CyclopeanDesktop && presentation.VrMirrorMode != EVrMirrorMode.FullIndependentRender),
                 0,
                 0,
                 0,
                 0,
                 cpuMs,
                 0.0);
-            services.RecordRenderFrameOutput(telemetry);
+            presentation.RecordRenderFrameOutput(telemetry);
         }
 
-        private static EVrOutputViewKind ResolveImGuiOverlayViewKind(XRCamera? camera, IRuntimeRenderingHostServices services)
+        private static EVrOutputViewKind ResolveImGuiOverlayViewKind(
+            XRCamera? camera,
+            IRuntimeRenderPresentationServices presentation)
         {
             if (camera?.StereoEyeLeft == true)
                 return EVrOutputViewKind.LeftEye;
             if (camera?.StereoEyeLeft == false)
                 return EVrOutputViewKind.RightEye;
 
-            return services.IsInVR && services.VrMirrorMode != EVrMirrorMode.FullIndependentRender
+            return presentation.IsInVR && presentation.VrMirrorMode != EVrMirrorMode.FullIndependentRender
                 ? EVrOutputViewKind.CyclopeanDesktop
                 : EVrOutputViewKind.DesktopEditor;
         }
@@ -450,7 +455,7 @@ namespace XREngine.Rendering
             if (!SupportsImGui)
                 return false;
 
-            if (RuntimeRenderingHostServices.Current.IsShadowPass)
+            if (RuntimeRenderingHostServices.FrameTiming.IsShadowPass)
                 return false;
 
             if (!ShouldRenderImGui(viewport))
@@ -460,7 +465,7 @@ namespace XREngine.Rendering
             if (backend is null)
                 return false;
 
-            long timestampTicks = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+            long timestampTicks = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
             bool allowResizeFrame =
                 viewport?.Window?.IsInteractiveResizeInProgress == true ||
                 XRWindow.IsInteractiveResizeInProgress;
@@ -490,7 +495,7 @@ namespace XREngine.Rendering
                         RecordImGuiCpuPhase(profilingActive, frameId, "ImGui.ConfigureDisplay", phaseStart);
 
                         phaseStart = BeginImGuiCpuPhase(profilingActive);
-                        backend.Update((float)RuntimeRenderingHostServices.Current.RenderDeltaSeconds);
+                        backend.Update((float)RuntimeRenderingHostServices.FrameTiming.RenderDeltaSeconds);
                         RecordImGuiCpuPhase(profilingActive, frameId, "ImGui.Backend.Update", phaseStart);
                         frameStarted = true;
 
@@ -667,13 +672,13 @@ namespace XREngine.Rendering
         #region Luminance / Exposure
 
         public bool CalcDotLuminance(XRTexture2D texture, out float dotLuminance, bool genMipmapsNow)
-            => CalcDotLuminance(texture, RuntimeRenderingHostServices.Current.DefaultLuminance, out dotLuminance, genMipmapsNow);
+            => CalcDotLuminance(texture, RuntimeRenderingHostServices.FrameTiming.DefaultLuminance, out dotLuminance, genMipmapsNow);
         public abstract bool CalcDotLuminance(XRTexture2D texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow);
         public float CalculateDotLuminance(XRTexture2D texture, bool generateMipmapsNow)
             => CalcDotLuminance(texture, out float dotLum, generateMipmapsNow) ? dotLum : 1.0f;
 
         public bool CalcDotLuminance(XRTexture2DArray texture, out float dotLuminance, bool genMipmapsNow)
-            => CalcDotLuminance(texture, RuntimeRenderingHostServices.Current.DefaultLuminance, out dotLuminance, genMipmapsNow);
+            => CalcDotLuminance(texture, RuntimeRenderingHostServices.FrameTiming.DefaultLuminance, out dotLuminance, genMipmapsNow);
         public abstract bool CalcDotLuminance(XRTexture2DArray texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow);
         public float CalculateDotLuminance(XRTexture2DArray texture, bool generateMipmapsNow)
             => CalcDotLuminance(texture, out float dotLum, generateMipmapsNow) ? dotLum : 1.0f;
@@ -708,11 +713,11 @@ namespace XREngine.Rendering
             => throw new NotSupportedException();
 
         public void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Action<bool, float> callback)
-            => CalcDotLuminanceFrontAsync(region, withTransparency, RuntimeRenderingHostServices.Current.DefaultLuminance, callback);
+            => CalcDotLuminanceFrontAsync(region, withTransparency, RuntimeRenderingHostServices.FrameTiming.DefaultLuminance, callback);
         public abstract void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback);
 
         public void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Action<bool, float> callback)
-            => CalcDotLuminanceFrontAsyncCompute(region, withTransparency, RuntimeRenderingHostServices.Current.DefaultLuminance, callback);
+            => CalcDotLuminanceFrontAsyncCompute(region, withTransparency, RuntimeRenderingHostServices.FrameTiming.DefaultLuminance, callback);
         public abstract void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback);
         #endregion
 

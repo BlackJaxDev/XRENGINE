@@ -792,14 +792,16 @@ internal partial class Program
         Engine.EnqueueRenderThreadTask(
             () =>
             {
-                if (window.Renderer is not OpenGLRenderer glRenderer)
+                IRuntimeRendererHost rendererHost = window.Renderer;
+                if (!rendererHost.TryGetBackendCapability<IRendererStartupWarmupBackendCapability>(out var warmup) ||
+                    warmup is null)
                     return;
 
-                glRenderer.MeshGenerationQueue.BoostBudgetUntilDrained(
+                warmup.BoostStartupBudgets(
                     StartupMeshGenerationBudgetMs,
                     StartupMeshGenerationNormalRendererCap,
-                    StartupMeshGenerationPriorityRendererCap);
-                glRenderer.UploadQueue.BoostBudgetUntilDrained(StartupUploadBudgetMs);
+                    StartupMeshGenerationPriorityRendererCap,
+                    StartupUploadBudgetMs);
                 WriteBootstrapTrace(
                     $"Enabled GL startup warmup budgets: mesh={StartupMeshGenerationBudgetMs:F0}ms/{StartupMeshGenerationNormalRendererCap} normal renderers, upload={StartupUploadBudgetMs:F0}ms.");
             },
@@ -835,7 +837,7 @@ internal partial class Program
 
         // The OpenGL front-buffer luminance probe can force a large first-frame sync.
         // The second-frame fallback gives a stable startup marker without blocking presentation.
-        if (renderer is OpenGLRenderer)
+        if (renderer.BackendId == RendererBackendId.OpenGL)
             return;
 
         if (Interlocked.CompareExchange(ref s_captureInFlight, 1, 0) != 0)

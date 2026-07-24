@@ -446,8 +446,9 @@ namespace XREngine.Rendering.Commands
         private bool BeginCpuExactTransparentSpsFilter(int renderPass)
         {
             if (renderPass != (int)EDefaultRenderPass.TransparentForward ||
-                AbstractRenderer.Current is not VulkanRenderer renderer ||
-                !renderer.HasActiveMultiviewDrawTarget ||
+                AbstractRenderer.Current is not IRuntimeRendererHost renderer ||
+                !renderer.TryGetBackendCapability<IRendererMultiviewStateBackendCapability>(out var multiview) ||
+                multiview?.HasActiveMultiviewDrawTarget != true ||
                 RuntimeEngine.Rendering.State.CurrentRenderingPipeline is not XRRenderPipelineInstance pipeline)
             {
                 _reportedCpuExactTransparentSpsRejection = false;
@@ -463,7 +464,7 @@ namespace XREngine.Rendering.Commands
                 return false;
             }
 
-            _activeCpuExactTransparentSpsViewMask = renderer.CurrentDrawViewMask;
+            _activeCpuExactTransparentSpsViewMask = multiview.CurrentDrawViewMask;
             _activeCpuExactTransparentSpsPolicy = policy;
             return true;
         }
@@ -1621,7 +1622,7 @@ namespace XREngine.Rendering.Commands
         }
 
         private static bool ShouldSkipGpuScope(RenderCommand command)
-            => RuntimeRenderingHostServices.Current.IsShadowPass && command is IRenderCommandMesh;
+            => RuntimeRenderingHostServices.FrameTiming.IsShadowPass && command is IRenderCommandMesh;
 
         private static string BuildRenderCommandGpuScopeName(int renderPass, RenderCommand command)
         {
@@ -1725,7 +1726,7 @@ namespace XREngine.Rendering.Commands
             if (!HasGpuEligibleMeshCommands(renderPass))
                 return;
             
-            IRuntimeRenderCommandExecutionState? renderState = RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState;
+            IRuntimeRenderCommandExecutionState? renderState = RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState;
             if (renderState is null)
                 return;
 
@@ -1766,14 +1767,14 @@ namespace XREngine.Rendering.Commands
                 scene.RecordGpuVisibility(draws, instances);
 
                 bool allowPerViewReadback = meshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented &&
-                    RuntimeRenderingHostServices.Current.EnableGpuIndirectDebugLogging;
+                    RuntimeRenderingHostServices.FrameTiming.EnableGpuIndirectDebugLogging;
                 if (allowPerViewReadback && gpuPass.ActiveViewCount > 0)
                 {
                     uint leftDraws = gpuPass.ReadPerViewDrawCount(0u);
                     uint rightDraws = gpuPass.ActiveViewCount > 1u
                         ? gpuPass.ReadPerViewDrawCount(1u)
                         : 0u;
-                    RuntimeRenderingHostServices.Current.RecordVrPerViewDrawCounts(leftDraws, rightDraws);
+                    RuntimeRenderingHostServices.Presentation.RecordVrPerViewDrawCounts(leftDraws, rightDraws);
                 }
             }
             finally
@@ -1866,20 +1867,20 @@ namespace XREngine.Rendering.Commands
 
         private static void GetActiveViewportSize(out int width, out int height)
         {
-            IRuntimeRenderCommandExecutionState? renderState = RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState;
+            IRuntimeRenderCommandExecutionState? renderState = RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState;
             width = Math.Max(1, renderState?.WindowViewport?.InternalWidth ?? renderState?.WindowViewport?.Width ?? RuntimeEngine.EffectiveSettings.CpuSocBufferWidth);
             height = Math.Max(1, renderState?.WindowViewport?.InternalHeight ?? renderState?.WindowViewport?.Height ?? RuntimeEngine.EffectiveSettings.CpuSocBufferHeight);
         }
 
         private static bool IsStereoRenderPassActive()
-            => RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState?.StereoPass == true;
+            => RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState?.StereoPass == true;
 
         private static XRCamera? GetActiveRightEyeCamera()
-            => RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState?.StereoRightEyeCamera as XRCamera;
+            => RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState?.StereoRightEyeCamera as XRCamera;
 
         private static XRCamera? GetActiveCpuOcclusionCamera()
         {
-            IRuntimeRenderCommandExecutionState? renderState = RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState;
+            IRuntimeRenderCommandExecutionState? renderState = RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState;
             return renderState?.RenderingCamera as XRCamera
                 ?? renderState?.SceneCamera as XRCamera;
         }

@@ -400,13 +400,13 @@ public unsafe partial class VulkanRenderer
         {
             // Planner replacement can retire descriptor references globally. Finish both
             // eyes' resource preparation before either command buffer captures descriptors.
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.PrepareLeftEye"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.PrepareLeftEye"))
             {
                 if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(firstEye, out firstPrepared))
                     return false;
             }
 
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.PrepareRightEye"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.PrepareRightEye"))
             {
                 if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(secondEye, out secondPrepared))
                     return false;
@@ -416,23 +416,23 @@ public unsafe partial class VulkanRenderer
             // uniform capacity. Re-prewarm both complete op streams only after
             // both reservations are known and before either command buffer is
             // recorded, so no recorded generation can retire between eyes.
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.FinalizeSharedCapacity"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.FinalizeSharedCapacity"))
             {
                 PrewarmOpenXrFrameOpResources(firstPrepared.Ops, firstPrepared.TargetContext.FrameDataSlotIndex);
                 PrewarmOpenXrFrameOpResources(secondPrepared.Ops, secondPrepared.TargetContext.FrameDataSlotIndex);
             }
 
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.RecordLeftEye"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.RecordLeftEye"))
                 hasFirst = TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(in firstPrepared, out firstRecorded);
             if (!hasFirst)
                 return false;
 
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.RecordRightEye"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.RecordRightEye"))
                 hasSecond = TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(in secondPrepared, out secondRecorded);
             if (!hasSecond)
                 return false;
 
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.SubmitAndWait"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.SubmitAndWait"))
             {
                 submitted = SubmitAndWaitOpenXrCommandBuffers(
                     firstRecorded.CommandBuffer,
@@ -451,9 +451,9 @@ public unsafe partial class VulkanRenderer
                 int publishCount = CountOpenXrEyeRecordedTextureUploads();
                 CompleteOpenXrGpuProfilerSubmission(in firstRecorded);
                 CompleteOpenXrGpuProfilerSubmission(in secondRecorded);
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.PublishUploads"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.PublishUploads"))
                     PublishOpenXrEyeRecordedTextureUploadsAfterCompletedSubmit("OpenXR eye batch");
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.FlushRetired"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.FlushRetired"))
                     DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
                 if (OpenXrVulkanTraceEnabled)
                 {
@@ -510,7 +510,7 @@ public unsafe partial class VulkanRenderer
         in OpenXrEyeSwapchainRenderRequest leftEye,
         in OpenXrEyeSwapchainRenderRequest rightEye)
     {
-        using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.SinglePassStereo.RecordSubmit"))
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.SinglePassStereo.RecordSubmit"))
             return TryRenderOpenXrEyeSwapchains(leftEye, rightEye);
     }
 
@@ -518,7 +518,7 @@ public unsafe partial class VulkanRenderer
         in OpenXrEyeSwapchainRenderRequest leftEye,
         in OpenXrEyeSwapchainRenderRequest rightEye)
     {
-        using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.RecordSubmit"))
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.RecordSubmit"))
             return TryRenderOpenXrEyeSwapchainsWithParallelEyeWorkers(leftEye, rightEye);
     }
 
@@ -571,7 +571,7 @@ public unsafe partial class VulkanRenderer
 
         try
         {
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.PrepareFrameSlot"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PrepareFrameSlot"))
             {
                 EnsureOpenXrFrameDataSlotCapacity(openXrFrameDataSlotCount);
                 EnsureDescriptorFrameSlotFrameCountFloor(openXrFrameDataSlotCount);
@@ -590,7 +590,7 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.PrepareTargets"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PrepareTargets"))
             {
                 ImageView openXrImageView = GetOrCreateOpenXrSwapchainImageView(request.Image, request.Format);
                 OpenXrDepthTarget depthTarget = GetOrCreateOpenXrDepthTarget(request.OpenXrViewIndex, request.Extent);
@@ -619,7 +619,7 @@ public unsafe partial class VulkanRenderer
 
                 ResetDynamicUniformRingBuffer(recordImageIndex);
                 FrameOp[] ops;
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.EmitFrameOps"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.EmitFrameOps"))
                     ops = CaptureFrameOpsExcludingTextureUploads(request.EmitFrameOps, out _);
                 drainedFrameOps = true;
                 ops = FilterDiagnosticSkippedFrameOps(ops);
@@ -642,9 +642,9 @@ public unsafe partial class VulkanRenderer
                 ulong frameOpsSignature;
                 CommandChainSchedule? commandChainSchedule;
                 FrameOpContext plannerContext;
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule"))
                 {
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule.Sort"))
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule.Sort"))
                         ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
                     if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                     {
@@ -689,7 +689,7 @@ public unsafe partial class VulkanRenderer
                         return false;
                     }
                     plannerRevision = ResourcePlannerRevision;
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule.Signature"))
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule.Signature"))
                     {
                         frameOpsSignature = ComputeFrameOpsSignature(ops);
                     }
@@ -779,7 +779,7 @@ public unsafe partial class VulkanRenderer
             {
                 CommandBuffer commandBuffer;
                 bool reusedPrimary;
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.ReuseOrRecordPrimary"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.ReuseOrRecordPrimary"))
                 {
                     ulong imageLayoutStartSignature = ComputeImageLayoutStateSignature();
                     FrameOpContext fallbackContext = prepared.Ops.Length > 0
@@ -1087,7 +1087,7 @@ public unsafe partial class VulkanRenderer
                 }
 
                 _lastReusableFrameDataRefreshFailureReason = null;
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.RefreshFrameData"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.RefreshFrameData"))
                 {
                     if (!TryRefreshReusableCommandBufferFrameData(recordImageIndex, ops))
                         return false;
@@ -2189,7 +2189,7 @@ public unsafe partial class VulkanRenderer
                         "eye mirror render");
                 }
 
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordMirror.PlanAndSchedule.Sort"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordMirror.PlanAndSchedule.Sort"))
                     ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
                 if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                 {
@@ -2238,7 +2238,7 @@ public unsafe partial class VulkanRenderer
                 }
                 ulong plannerRevision = ResourcePlannerRevision;
                 ulong frameOpsSignature;
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordMirror.PlanAndSchedule.Signature"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordMirror.PlanAndSchedule.Signature"))
                 {
                     frameOpsSignature = ComputeFrameOpsSignature(ops);
                 }
@@ -2406,7 +2406,7 @@ public unsafe partial class VulkanRenderer
                 }
 
                 _lastReusableFrameDataRefreshFailureReason = null;
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.MirrorPrimary.RefreshFrameData"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.MirrorPrimary.RefreshFrameData"))
                 {
                     if (!TryRefreshReusableCommandBufferFrameData(recordImageIndex, ops))
                         return false;
@@ -4300,7 +4300,7 @@ public unsafe partial class VulkanRenderer
                     (uint)Math.Max(resourcePlannerStateIndex, 0),
                     "eye swapchain prewarm");
 
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.PrewarmEye.Sort"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.PrewarmEye.Sort"))
                     ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
                 if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                 {
@@ -4418,7 +4418,7 @@ public unsafe partial class VulkanRenderer
                     (uint)Math.Max(resourcePlannerStateIndex, 0),
                     "eye mirror prewarm");
 
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.PrewarmEyeMirror.Sort"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.PrewarmEyeMirror.Sort"))
                     ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
                 if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                 {
@@ -5662,7 +5662,7 @@ public unsafe partial class VulkanRenderer
             Monitor.Enter(_oneTimeSubmitLock, ref queueLockTaken);
             LogOpenXrSerializedCriticalSectionWait("RuntimeGraphicsTransition", lockWaitStart, Stopwatch.GetTimestamp());
 
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RuntimeGraphicsTransition"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RuntimeGraphicsTransition"))
             {
                 Debug.Vulkan(
                     "[OpenXR] Beginning Vulkan runtime graphics transition. Reason={0}",
@@ -5888,7 +5888,7 @@ public unsafe partial class VulkanRenderer
             return true;
         }
 
-        IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+        IRuntimeRenderPresentationServices host = RuntimeRenderingHostServices.Presentation;
         if (!host.IsOpenXRActive && !host.IsInVR)
             return false;
 
@@ -6173,7 +6173,7 @@ public unsafe partial class VulkanRenderer
 
             Result submitResult;
             long submitStart = Stopwatch.GetTimestamp();
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.QueueSubmit"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.QueueSubmit"))
             {
                 long queueLockWaitStart = Stopwatch.GetTimestamp();
                 bool queueLockTaken = false;
@@ -6213,7 +6213,7 @@ public unsafe partial class VulkanRenderer
 
             long waitStart = Stopwatch.GetTimestamp();
             Result waitResult;
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.SubmitFenceWait"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.SubmitFenceWait"))
                 waitResult = Api!.WaitForFences(device, 1, &fence, true, ulong.MaxValue);
             long waitEnd = Stopwatch.GetTimestamp();
             if (waitResult != Result.Success)

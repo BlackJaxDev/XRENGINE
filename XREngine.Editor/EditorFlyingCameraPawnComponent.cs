@@ -1188,11 +1188,11 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         get
         {
-            var host = RuntimeRenderingHostServices.Current;
-            return host.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan &&
-                   host.IsInVR &&
-                   host.IsOpenXRActive &&
-                   host.RenderWindowsWhileInVR;
+            IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
+            return RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan &&
+                   presentation.IsInVR &&
+                   presentation.IsOpenXRActive &&
+                   presentation.RenderWindowsWhileInVR;
         }
     }
 
@@ -1875,7 +1875,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private static bool ShouldFlipDepthReadbackY()
     {
-        RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.Current.CurrentRenderBackend;
+        RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
         if (backend == RuntimeGraphicsApiKind.Unknown)
             return false;
 
@@ -1902,8 +1902,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             : ReadDepthSample(vp, fbo, clamped, flippedCoordinate);
         EditorDepthHitReadbackSample current = CoordinatesEqual(currentCoordinate, flippedCoordinate) ? flipped : unflipped;
 
-        RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.Current.CurrentRenderBackend;
-        ERenderClipSpaceYDirection clipY = RuntimeRenderingHostServices.Current.ClipSpaceYDirection;
+        RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
+        ERenderClipSpaceYDirection clipY = RuntimeRenderingHostServices.Settings.ClipSpaceYDirection;
         ERenderClipSpaceYDirection framebufferY = backend == RuntimeGraphicsApiKind.Unknown
             ? clipY
             : RenderClipSpacePolicy.FramebufferTextureYDirection(backend);

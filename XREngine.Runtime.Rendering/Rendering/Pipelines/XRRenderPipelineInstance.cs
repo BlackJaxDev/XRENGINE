@@ -303,7 +303,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     }
 
     private static RenderPipeline CreateDefaultRenderPipeline()
-        => RuntimeRenderingHostServices.Current.CreateDefaultRenderPipeline() as RenderPipeline
+        => RuntimeRenderingHostServices.Factories.CreateDefaultRenderPipeline() as RenderPipeline
             ?? throw new InvalidOperationException("RuntimeRenderingHostServices.Current did not provide a default render pipeline.");
 
     /// <summary>
@@ -313,7 +313,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// <param name="exportDirPath"></param>
     public void CaptureAllTextures(string exportDirPath)
     {
-        if (AbstractRenderer.Current is not OpenGLRenderer rend)
+        if (AbstractRenderer.Current is not IRuntimeRendererHost renderer ||
+            !renderer.TryGetBackendCapability<IRenderCaptureBackendCapability>(out var capture) ||
+            capture is null)
             return;
 
         foreach (XRTexture tex in Resources.EnumerateTextureInstances())
@@ -339,7 +341,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     image.Write(filePath);
                 }
 
-                rend.CaptureTexture(region, ProcessImage, apiWrapper.BindingId, 0, i);
+                capture.CaptureTexture(region, ProcessImage, apiWrapper.BindingId, 0, i);
             }
         }
     }
@@ -351,7 +353,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// <param name="exportDirPath"></param>
     public void CaptureAllFBOs(string exportDirPath)
     {
-        if (AbstractRenderer.Current is not OpenGLRenderer rend)
+        if (AbstractRenderer.Current is not IRuntimeRendererHost renderer ||
+            !renderer.TryGetBackendCapability<IRenderCaptureBackendCapability>(out var capture) ||
+            capture is null)
             return;
 
         foreach (XRFrameBuffer fbo in Resources.EnumerateFrameBufferInstances())
@@ -384,14 +388,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     case XRTexture2D tex2D:
                         {
                             BoundingRectangle region = new(0, 0, (int)tex2D.Width, (int)tex2D.Height);
-                            rend.CaptureFBOAttachment(region, true, ProcessImage, apiWrapper.BindingId, Attachment);
+                            capture.CaptureFrameBufferAttachment(region, true, ProcessImage, apiWrapper.BindingId, Attachment);
                         }
                         break;
                     case XRTexture2DArray tex2DArray:
                         for (int i = 0; i < tex2DArray.Depth; ++i)
                         {
                             BoundingRectangle region = new(0, 0, (int)tex2DArray.Width, (int)tex2DArray.Height);
-                            rend.CaptureFBOAttachment(region, true, ProcessImage, apiWrapper.BindingId, Attachment);
+                            capture.CaptureFrameBufferAttachment(region, true, ProcessImage, apiWrapper.BindingId, Attachment);
                         }
                         break;
                 }    
@@ -500,7 +504,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         XRMaterial? shadowMaterial = null,
         RenderCommandCollection? meshRenderCommandsOverride = null)
     {
-        IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
+        IRuntimeRenderFrameTimingServices frameTiming = RuntimeRenderingHostServices.FrameTiming;
 
         if (Pipeline is null)
         {
@@ -514,14 +518,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return;
         }
 
-        if (hostServices.IsPlayModeTransitioning)
+        if (frameTiming.IsPlayModeTransitioning)
         {
             Debug.RenderingEvery(
                 $"XRRenderPipelineInstance.Render.TransitionSuspended.{GetHashCode()}",
                 TimeSpan.FromSeconds(1),
                 "[RenderDiag] Pipeline execution skipped during play-mode transition. Pipeline={0} State={1} Camera={2} Viewport={3}",
                 Pipeline.DebugName ?? "<null>",
-                hostServices.PlayModeStateName,
+                frameTiming.PlayModeStateName,
                 camera?.Transform.SceneNode?.Name ?? stereoRightEyeCamera?.Transform.SceneNode?.Name ?? "<null>",
                 viewport is null ? "<null>" : $"{viewport.Index}:{viewport.Width}x{viewport.Height}");
             return;
@@ -534,16 +538,16 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         XRCamera? effectiveAntiAliasingCamera = camera ?? stereoRightEyeCamera;
         EAntiAliasingMode effectiveAntiAliasingMode =
             effectiveAntiAliasingCamera?.AntiAliasingModeOverride
-            ?? hostServices.DefaultAntiAliasingMode;
+            ?? frameTiming.DefaultAntiAliasingMode;
         EffectiveOutputHDRThisFrame = camera?.OutputHDROverride
             ?? (camera is null ? stereoRightEyeCamera?.OutputHDROverride : null)
-            ?? hostServices.DefaultOutputHDR;
+            ?? frameTiming.DefaultOutputHDR;
         EffectiveAntiAliasingModeThisFrame = effectiveAntiAliasingMode;
         EffectiveMsaaSampleCountThisFrame = Math.Max(1u,
-            effectiveAntiAliasingCamera?.MsaaSampleCountOverride ?? hostServices.DefaultMsaaSampleCount);
+            effectiveAntiAliasingCamera?.MsaaSampleCountOverride ?? frameTiming.DefaultMsaaSampleCount);
         EffectiveTsrRenderScaleThisFrame = effectiveAntiAliasingMode == EAntiAliasingMode.Tsr
             ? Math.Clamp(
-                effectiveAntiAliasingCamera?.TsrRenderScaleOverride ?? hostServices.DefaultTsrRenderScale,
+                effectiveAntiAliasingCamera?.TsrRenderScaleOverride ?? frameTiming.DefaultTsrRenderScale,
                 0.5f,
                 1.0f)
             : null;
@@ -605,10 +609,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             }
 
             if (!RuntimeEngine.Rendering.State.IsSceneCapturePass && !RuntimeEngine.Rendering.State.IsLightProbePass)
-                hostServices.PrepareUpscaleBridgeForFrame(viewport, this);
+                RuntimeRenderingHostServices.BackendInterop.PrepareUpscaleBridgeForFrame(viewport, this);
         }
 
-        using (hostServices.PushRenderingPipeline(this))
+        using (RuntimeRenderingHostServices.Diagnostics.PushRenderingPipeline(this))
         {
             using (RenderState.PushMainAttributes(viewport, scene, camera, stereoRightEyeCamera, targetFBO, shadowPass, stereoPass, shadowMaterial, userInterface, meshRenderCommandsOverride ?? MeshRenderCommands))
             {
@@ -629,7 +633,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 _resizeCatchUpSkippedFrameId = ulong.MaxValue;
                 BeginRenderGraphValidationFrame();
 
-                if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL)
+                if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL)
                 {
                     var passMetadata = Pipeline.PassMetadata;
                     if (passMetadata is { Count: > 0 })
@@ -1287,14 +1291,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         // otherwise only the requested viewport's camera may influence this key.
         bool outputHdr = EffectiveOutputHDRThisFrame
             ?? viewportCamera?.OutputHDROverride
-            ?? RuntimeRenderingHostServices.Current.DefaultOutputHDR;
+            ?? RuntimeRenderingHostServices.FrameTiming.DefaultOutputHDR;
         EAntiAliasingMode antiAliasingMode = EffectiveAntiAliasingModeThisFrame
             ?? viewportCamera?.AntiAliasingModeOverride
-            ?? RuntimeRenderingHostServices.Current.DefaultAntiAliasingMode;
+            ?? RuntimeRenderingHostServices.FrameTiming.DefaultAntiAliasingMode;
         uint msaaSamples = Math.Max(1u,
             EffectiveMsaaSampleCountThisFrame
                 ?? viewportCamera?.MsaaSampleCountOverride
-                ?? RuntimeRenderingHostServices.Current.DefaultMsaaSampleCount);
+                ?? RuntimeRenderingHostServices.FrameTiming.DefaultMsaaSampleCount);
         ulong featureMask = pipeline?.BuildResourceFeatureMaskForGenerationKey(this, viewport) ?? 0UL;
         RenderPipelineExternalTargetKind externalTargetKind = viewport?.RendersToExternalSwapchainTarget == true
             ? RenderPipelineExternalTargetKind.ExternalSwapchain
@@ -1892,28 +1896,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (renderer is null)
             return;
 
-        if (renderer is not VulkanRenderer vulkanRenderer)
+        if (!((IRuntimeRendererHost)renderer).TryGetBackendCapability<IRenderResourceRetirementBackendCapability>(
+                out var retirement) ||
+            retirement is null)
         {
             renderer.WaitForGpu();
             return;
         }
-
-        if (vulkanRenderer.IsDeviceLost)
-        {
-            Debug.VulkanWarningEvery(
-                $"Vulkan.RenderPipeline.ResourceDestroy.DeviceLost.{reason}",
-                System.TimeSpan.FromSeconds(1),
-                "[Vulkan] Skipping descriptor-reference release because the device is lost: {0}",
-                reason);
-            return;
-        }
-
-        vulkanRenderer.ReleaseDescriptorReferencesForPhysicalResourceDestruction(reason);
-        Debug.VulkanEvery(
-            $"Vulkan.RenderPipeline.ResourceDestroy.Deferred.{reason}",
-            System.TimeSpan.FromSeconds(1),
-            "[Vulkan] Prepared render-pipeline physical resources for completion-aware retirement without a device idle: {0}",
-            reason);
+        retirement.PrepareForPhysicalResourceDestruction(reason);
     }
 
     /// <summary>

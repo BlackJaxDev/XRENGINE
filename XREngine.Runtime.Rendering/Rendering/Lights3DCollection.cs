@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -252,7 +252,7 @@ namespace XREngine.Scene
             if (!XRTexture2D.HasLargeProgressiveUploadBacklog)
                 return false;
 
-            long frameTicks = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+            long frameTicks = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
             if (_lastStreamingPressureLogFrameTicks != frameTicks)
             {
                 _lastStreamingPressureLogFrameTicks = frameTicks;

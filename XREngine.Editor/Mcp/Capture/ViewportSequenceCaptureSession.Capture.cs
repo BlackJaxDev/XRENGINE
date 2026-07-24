@@ -190,9 +190,7 @@ internal sealed partial class ViewportSequenceCaptureSession
         long readbackBytes,
         out string? queueFailure)
     {
-        using IDisposable? pipelineReadbackScope = renderer is VulkanRenderer
-            ? _viewport.EnterRenderPipelineReadbackScope()
-            : null;
+        using IDisposable? pipelineReadbackScope = _viewport.EnterRenderPipelineReadbackScope();
         using IDisposable? targetReadScope = _viewport.LastRenderedTargetFBO?.BindForReadingState();
         if (targetReadScope is not null)
             renderer.SetReadBuffer(EReadBufferMode.ColorAttachment0);

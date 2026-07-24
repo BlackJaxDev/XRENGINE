@@ -431,7 +431,8 @@ public sealed class RvcRenderingContractTests
         string openXrCalls = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.XrCalls.cs");
         string openXrFrameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
         string openXrExtensions = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/Extensions.cs");
-        string hostServices = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderingHostServices.cs");
+        string hostStatistics = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderStatisticsServices.cs");
+        string hostPresentation = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderPresentationServices.cs");
         string rvcPass = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_RvcPass.cs");
         string rendererHost = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRendererHost.cs");
         string abstractRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Generic/AbstractRenderer.cs");
@@ -490,10 +491,10 @@ public sealed class RvcRenderingContractTests
         openXrFrameLifecycle.ShouldContain("RecordOpenXrRvcFrameViewProjectionDiagnostics");
         openXrFrameLifecycle.ShouldContain("ResolveRvcViewGpuMilliseconds");
         openXrExtensions.ShouldContain("XR_KHR_visibility_mask");
-        hostServices.ShouldContain("RecordRenderRvcFrameCounters");
-        hostServices.ShouldContain("RecordRenderRvcFrameProfile");
-        hostServices.ShouldContain("ERvcPipelineMode RvcPipelineMode");
-        hostServices.ShouldContain("RvcOpenXrVisibilityMaskEnabled");
+        hostStatistics.ShouldContain("RecordRenderRvcFrameCounters");
+        hostStatistics.ShouldContain("RecordRenderRvcFrameProfile");
+        hostPresentation.ShouldContain("ERvcPipelineMode RvcPipelineMode");
+        hostPresentation.ShouldContain("RvcOpenXrVisibilityMaskEnabled");
         rendererHost.ShouldContain("SupportsRvcMaterialResourceTable");
         rendererHost.ShouldContain("SupportsRvcVisibilityTargets");
         abstractRenderer.ShouldContain("RvcDescriptorBackend");

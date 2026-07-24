@@ -9,7 +9,8 @@ public sealed class OpenXrStereoTemporalIsolationCompletionTests
     [Test]
     public void AutoExposure_UsesExplicitHeadsetSharedVrPolicy()
     {
-        string contracts = ReadWorkspaceFile("XREngine.Runtime.Core/Settings/VrRenderingContracts.cs");
+        string contracts = ReadWorkspaceFile(
+            "XREngine.Runtime.Core/Settings/VRRenderingContracts/Enums/EVrAutoExposurePolicy.cs");
         string exposure = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_ExposureUpdate.cs");
         string vulkanExposure = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/VulkanRenderer.AutoExposure.cs");
 
@@ -36,7 +37,8 @@ public sealed class OpenXrStereoTemporalIsolationCompletionTests
     {
         string atmosphere = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_AtmosphereHistoryPass.cs");
         string fog = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_VolumetricFogHistoryPass.cs");
-        string commandChain = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs");
+        string commandChain = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs");
 
         atmosphere.ShouldContain("TryUseTemporalAtmosphereHistory");
         atmosphere.ShouldContain("VPRC_TemporalAccumulationPass.ResolveHistoryIsolationPolicy");
@@ -51,8 +53,8 @@ public sealed class OpenXrStereoTemporalIsolationCompletionTests
         fog.ShouldContain("HistoryReady = TryUseTemporalVolumetricFogHistory(out _, out _)");
 
         commandChain.ShouldContain("if (!Stereo)");
-        commandChain.ShouldContain("AppendAtmosphericScattering(c);");
-        commandChain.ShouldContain("AppendVolumetricFog(c);");
+        commandChain.ShouldContain("AppendAtmosphericScattering(fullSceneCommands);");
+        commandChain.ShouldContain("AppendVolumetricFog(fullSceneCommands);");
     }
 
     [Test]
@@ -87,9 +89,10 @@ public sealed class OpenXrStereoTemporalIsolationCompletionTests
         vulkanOpenXr.ShouldContain("LogOpenXrSerializedCriticalSectionWait(\"QueueSubmit\"");
         vulkanOpenXr.ShouldContain("serialized critical section={0} waitMs={1:F3}");
 
-        pipelineInstance.ShouldContain("externalSwapchainTarget");
-        pipelineInstance.ShouldContain("reservedViewCount = stereo && !externalSwapchainTarget ? 2u : 1u;");
-        pipelineInstance.ShouldContain("reservedEyeIndex");
+        pipelineInstance.ShouldContain("bool stereo = pipeline?.UsesStereoResources(this, viewport) ?? RenderState.StereoPass;");
+        pipelineInstance.ShouldContain("stereo ? 2u : 1u,");
+        pipelineInstance.ShouldContain("RenderPipelineExternalTargetKind externalTargetKind");
+        pipelineInstance.ShouldContain("RenderPipelineExternalTargetKind.ExternalSwapchain");
         pipelineInstance.ShouldContain("ExternalSwapchainFrameProfileChanged");
 
         resourceKey.ShouldContain("ReservedViewCount");

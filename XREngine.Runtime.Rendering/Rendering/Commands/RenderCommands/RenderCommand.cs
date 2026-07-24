@@ -121,7 +121,7 @@ namespace XREngine.Rendering.Commands
 
         protected void OnPreRender()
         {
-            _renderState = RuntimeRenderingHostServices.Current.StartProfileScope("RenderCommand.Render");
+            _renderState = RuntimeRenderingHostServices.Profiling.StartProfileScope("RenderCommand.Render");
             
             PreRender?.Invoke();
         }

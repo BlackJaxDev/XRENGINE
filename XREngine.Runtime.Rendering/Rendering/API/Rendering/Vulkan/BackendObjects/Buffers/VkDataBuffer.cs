@@ -1506,6 +1506,9 @@ namespace XREngine.Rendering.Vulkan
                     PushData();
             }
 
+            void IApiDataBuffer.EnsureStorageAllocatedForGpuUse()
+                => EnsureStorageAllocatedForGpuUse();
+
             private bool CanFlushMappedMemory(out ulong length)
             {
                 length = 0ul;
@@ -2602,7 +2605,7 @@ namespace XREngine.Rendering.Vulkan
                 out MemoryHeapFlags heapFlags,
                 out MemoryPropertyFlags memoryTypeFlags);
 
-            long trackedVramBytes = RuntimeRenderingHostServices.Current.TrackedVramBytes;
+            long trackedVramBytes = RuntimeRenderingHostServices.FrameTiming.TrackedVramBytes;
             string allocationClass = ClassifyVulkanAllocation(properties, allocation.Properties);
             RuntimeEngine.Rendering.Stats.Vram.CanAllocateVram(
                 IsDeviceLocalVramAllocation(allocation.Properties)

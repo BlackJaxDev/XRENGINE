@@ -256,14 +256,14 @@ namespace XREngine
 
             public static bool IsVulkanRendererActive()
             {
-                if (State.RenderingViewport?.Window?.Renderer is VulkanRenderer)
+                if (State.RenderingViewport?.Window?.Renderer?.BackendId == RendererBackendId.Vulkan)
                     return true;
 
-                if (AbstractRenderer.Current is VulkanRenderer)
+                if (AbstractRenderer.Current?.BackendId == RendererBackendId.Vulkan)
                     return true;
 
                 foreach (XRWindow window in Engine.Windows)
-                    if (window.Renderer is VulkanRenderer)
+                    if (window.Renderer?.BackendId == RendererBackendId.Vulkan)
                         return true;
 
                 return false;

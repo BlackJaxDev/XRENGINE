@@ -24,14 +24,14 @@ public unsafe partial class VulkanRenderer
 
         try
         {
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.PrepareInputs"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.PrepareInputs"))
             {
                 if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(firstEye, out OpenXrPreparedEyeCommandBufferInput preparedFirstEye))
                     return false;
                 if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(secondEye, out OpenXrPreparedEyeCommandBufferInput preparedSecondEye))
                     return false;
 
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.WorkerRecord"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.WorkerRecord"))
                 {
                     workerBatch = DispatchOpenXrEyeRecordWorkers(preparedFirstEye, preparedSecondEye);
                     hasFirst = workerBatch.Left.Success;
@@ -47,7 +47,7 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.SubmitAndWait"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.SubmitAndWait"))
             {
                 submitted = SubmitAndWaitOpenXrCommandBuffers(
                     firstRecorded.CommandBuffer,
@@ -66,9 +66,9 @@ public unsafe partial class VulkanRenderer
                 int publishCount = CountOpenXrEyeRecordedTextureUploads();
                 CompleteOpenXrGpuProfilerSubmission(in firstRecorded);
                 CompleteOpenXrGpuProfilerSubmission(in secondRecorded);
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.PublishUploads"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.PublishUploads"))
                     PublishOpenXrEyeRecordedTextureUploadsAfterCompletedSubmit("OpenXR eye parallel batch");
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.FlushRetired"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.FlushRetired"))
                     ForceFlushCompletedNonImageRetiredResources();
                 if (OpenXrVulkanTraceEnabled)
                 {

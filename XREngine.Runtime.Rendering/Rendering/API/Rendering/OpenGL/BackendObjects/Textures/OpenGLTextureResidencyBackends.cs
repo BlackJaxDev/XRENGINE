@@ -153,7 +153,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
         void ReportCanceled(string phase)
         {
             TextureRuntimeDiagnostics.LogTransitionCanceled(
-                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                 target.Name,
                 source.SourcePath,
                 maxResidentDimension,
@@ -187,7 +187,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
                     if (TextureStreamingResidentDataReuseCache.TryGet(source, maxResidentDimension, includeMipChain, out residentData))
                     {
                         TextureRuntimeDiagnostics.LogResidentDataReused(
-                            RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                            RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                             source.SourcePath,
                             maxResidentDimension,
                             includeMipChain,
@@ -284,10 +284,10 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
                     return true;
                 }
 
-                if (RuntimeRenderingHostServices.Current.IsRenderThread && TryEnterRenderThreadApplyBudget())
+                if (RuntimeRenderingHostServices.FrameTiming.IsRenderThread && TryEnterRenderThreadApplyBudget())
                     ApplyResidentDataOnRenderThreadCore();
                 else
-                    RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(
+                    RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
                         ApplyResidentDataOnRenderThreadBudgeted,
                         $"TextureStreaming.ApplyResidentData[{target.Name}]",
                         RenderThreadJobKind.TextureUpload);
@@ -316,7 +316,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
             yield return loadTask;
         }
 
-        return RuntimeRenderingHostServices.Current.ScheduleEnumeratorJob(
+        return RuntimeRenderingHostServices.Assets.ScheduleEnumeratorJob(
             Routine,
             priority,
             cancellationToken: CancellationToken.None);
@@ -338,10 +338,10 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
         Action<float>? onProgress,
         Action<string> reportCanceled)
     {
-        if (RuntimeRenderingHostServices.Current.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan)
+        if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan)
             return false;
 
-        if ((RuntimeRenderingHostServices.Current.CurrentRenderer ?? AbstractRenderer.Current) is not VulkanRenderer renderer)
+        if ((RuntimeRenderingHostServices.FrameTiming.CurrentRenderer ?? AbstractRenderer.Current) is not VulkanRenderer renderer)
         {
             onError?.Invoke(new InvalidOperationException("Vulkan imported texture upload service could not resolve the active Vulkan renderer."));
             return true;
@@ -390,7 +390,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
 
     private static bool TryEnterRenderThreadApplyBudget()
     {
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+        long currentFrame = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
         long previousFrame = Interlocked.Exchange(ref s_applyResidentDataFrameTicks, currentFrame);
         if (previousFrame != currentFrame)
             Interlocked.Exchange(ref s_applyResidentDataCountThisFrame, 0);
@@ -411,7 +411,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
         if (bytes <= 0)
             return;
 
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+        long currentFrame = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
         long previousFrame = Interlocked.Exchange(ref s_uploadBytesFrameTicks, currentFrame);
         if (previousFrame != currentFrame)
             Interlocked.Exchange(ref s_uploadBytesScheduledThisFrame, 0L);
@@ -421,7 +421,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
 
     private static long GetUploadBytesScheduledThisFrame()
     {
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+        long currentFrame = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
         long previousFrame = Volatile.Read(ref s_uploadBytesFrameTicks);
         if (previousFrame != currentFrame)
             return 0L;
@@ -482,7 +482,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
             return 0L;
 
         int requestedBaseMipLevel = XRTexture2D.ResolveResidentBaseMipLevel(sourceWidth, sourceHeight, residentMaxDimension);
-        SparseTextureStreamingSupport support = RuntimeRenderingHostServices.Current.GetSparseTextureStreamingSupport(format);
+        SparseTextureStreamingSupport support = RuntimeRenderingHostServices.Assets.GetSparseTextureStreamingSupport(format);
         return XRTexture2D.EstimateSparsePageSelectionBytes(
             sourceWidth,
             sourceHeight,
@@ -598,7 +598,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
         void ReportCanceled(string phase)
         {
             TextureRuntimeDiagnostics.LogTransitionCanceled(
-                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                 target.Name,
                 source.SourcePath,
                 maxResidentDimension,
@@ -639,7 +639,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                     if (TextureStreamingResidentDataReuseCache.TryGet(source, maxResidentDimension, cacheIncludeMipChain, out residentData))
                     {
                         TextureRuntimeDiagnostics.LogResidentDataReused(
-                            RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                            RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                             source.SourcePath,
                             maxResidentDimension,
                             cacheIncludeMipChain,
@@ -734,17 +734,17 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                     if (allowAsyncUpload)
                     {
                         RecordUploadBytes(uploadBytes);
-                        bool asyncScheduled = RuntimeRenderingHostServices.Current.TryScheduleSparseTextureStreamingTransitionAsync(
+                        bool asyncScheduled = RuntimeRenderingHostServices.Assets.TryScheduleSparseTextureStreamingTransitionAsync(
                             target,
                             transitionRequest,
                             cancellationToken,
                             transitionResult =>
                             {
                                 ExitSharedUpload();
-                                if (RuntimeRenderingHostServices.Current.IsRenderThread)
+                                if (RuntimeRenderingHostServices.FrameTiming.IsRenderThread)
                                     CompleteSparseTransition(transitionResult);
                                 else
-                                    RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
+                                    RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadTask(
                                         () => CompleteSparseTransition(transitionResult),
                                         $"TextureStreaming.CompleteSparseTransition[{target.Name}]",
                                         RenderThreadJobKind.TextureUpload);
@@ -785,10 +785,10 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                     return true;
                 }
 
-                if (RuntimeRenderingHostServices.Current.IsRenderThread && TryEnterSparseTransitionScheduleBudget())
+                if (RuntimeRenderingHostServices.FrameTiming.IsRenderThread && TryEnterSparseTransitionScheduleBudget())
                     ContinueOnRenderThreadCore();
                 else
-                    RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(
+                    RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
                         ContinueOnRenderThreadBudgeted,
                         $"TextureStreaming.ScheduleSparseTransition[{target.Name}]",
                         RenderThreadJobKind.TextureUpload);
@@ -817,7 +817,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
             yield return loadTask;
         }
 
-        return RuntimeRenderingHostServices.Current.ScheduleEnumeratorJob(
+        return RuntimeRenderingHostServices.Assets.ScheduleEnumeratorJob(
             Routine,
             priority,
             cancellationToken: CancellationToken.None);
@@ -856,7 +856,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
 
     private static bool TryEnterSparseTransitionScheduleBudget()
     {
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+        long currentFrame = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
         long previousFrame = Interlocked.Exchange(ref s_sparseTransitionScheduleFrameTicks, currentFrame);
         if (previousFrame != currentFrame)
             Interlocked.Exchange(ref s_sparseTransitionScheduleCountThisFrame, 0);
@@ -884,7 +884,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
         if (bytes <= 0)
             return;
 
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+        long currentFrame = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
         long previousFrame = Interlocked.Exchange(ref s_uploadBytesFrameTicks, currentFrame);
         if (previousFrame != currentFrame)
             Interlocked.Exchange(ref s_uploadBytesScheduledThisFrame, 0L);
@@ -894,7 +894,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
 
     private static long GetUploadBytesScheduledThisFrame()
     {
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+        long currentFrame = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
         long previousFrame = Volatile.Read(ref s_uploadBytesFrameTicks);
         if (previousFrame != currentFrame)
             return 0L;

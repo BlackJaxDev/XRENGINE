@@ -84,7 +84,7 @@ public unsafe partial class OpenXRAPI
             !RuntimeEngine.IsRenderThread &&
             RequiresVulkanRuntimeStateRenderThread())
         {
-            RuntimeRenderingHostServices.Current.InvokeRenderThreadTask(
+            RuntimeRenderingHostServices.Scheduling.InvokeRenderThreadTask(
                 () =>
                 {
                     UpdateRuntimeState();
@@ -620,7 +620,7 @@ public unsafe partial class OpenXRAPI
     {
         try
         {
-            if (RuntimeRenderingHostServices.Current.TryEnsureOpenXrRuntimeService(reason))
+            if (RuntimeRenderingHostServices.Presentation.TryEnsureOpenXrRuntimeService(reason))
                 Debug.Out($"OpenXR runtime service ensured. Reason={reason}");
         }
         catch (Exception ex)
@@ -648,7 +648,7 @@ public unsafe partial class OpenXRAPI
     {
         if (Window?.Renderer is VulkanRenderer && !RuntimeEngine.IsRenderThread)
         {
-            RuntimeRenderingHostServices.Current.InvokeRenderThreadTask(
+            RuntimeRenderingHostServices.Scheduling.InvokeRenderThreadTask(
                 () =>
                 {
                     TearDownSessionResourcesWithCurrentContext(destroyInstance);
@@ -661,7 +661,7 @@ public unsafe partial class OpenXRAPI
 
         if (_gl is not null && !RuntimeEngine.IsRenderThread)
         {
-            RuntimeRenderingHostServices.Current.InvokeRenderThreadTask(
+            RuntimeRenderingHostServices.Scheduling.InvokeRenderThreadTask(
                 () =>
                 {
                     TearDownSessionResourcesWithCurrentContext(destroyInstance);

@@ -71,7 +71,7 @@ public sealed class VulkanCpuDirectDynamicDataTests
     [Test]
     public void DebugLinesKeepPowerOfTwoClientCapacityAndUseSubrangeUploads()
     {
-        string debugLines = ReadWorkspaceFile("XRENGINE/Scene/Physics/Physx/InstancedDebugVisualizer.cs");
+        string debugLines = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Physics/DebugVisualization/InstancedDebugVisualizer.cs");
 
         debugLines.ShouldContain("_debugLinesBuffer.Resize(elementCount, true, true)");
         debugLines.ShouldContain("_debugLinesBuffer.PushSubData()");

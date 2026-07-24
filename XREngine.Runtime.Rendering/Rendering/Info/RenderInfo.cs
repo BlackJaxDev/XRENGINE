@@ -155,7 +155,7 @@ namespace XREngine.Rendering.Info
                 passes.AddCPU(cmd, camera);
             }
 
-            if (RuntimeRenderingHostServices.Current.RenderCullingVolumesEnabled &&
+            if (RuntimeRenderingHostServices.FrameTiming.RenderCullingVolumesEnabled &&
                 !(RenderCullingVolumeDebugOverride?.Invoke(this) ?? false))
             {
                 RenderCullingVolume();

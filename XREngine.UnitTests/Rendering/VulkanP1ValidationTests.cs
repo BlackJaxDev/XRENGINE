@@ -162,7 +162,7 @@ public sealed class VulkanP1ValidationTests
         stateSource.ShouldContain("Deferring replaced physical resource plan retirement through frame-slot/timeline completion");
         stateSource.ShouldContain("ShouldSkipAutoExposureHistoryPreserve");
         stateSource.ShouldContain("ActiveResourcePlannerRevision == 0");
-        stateSource.ShouldContain("RuntimeRenderingHostServices.Current.IsInVR");
+        stateSource.ShouldContain("RuntimeRenderingHostServices.Presentation.IsInVR");
         plannerUpdate.ShouldNotContain("WaitForAllInFlightWork()");
         plannerUpdate.ShouldNotContain("DeviceWaitIdle()");
         plannerUpdate.ShouldNotContain("ForceFlushAllRetiredResourcesAfterWaiting(\"ResourcePlanReplacement\")");

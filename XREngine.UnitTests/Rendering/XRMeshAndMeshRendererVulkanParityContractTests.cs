@@ -261,7 +261,7 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
         bufferSource.ShouldContain("AddMeshDeformSourceBuffers");
         bufferSource.ShouldContain("\"DeformerPositionsBuffer\"");
         bufferSource.ShouldContain("assignBindingOverride: false");
-        bufferSource.ShouldContain("RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask");
+        bufferSource.ShouldContain("RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadTask");
         bufferSource.ShouldContain("MarkIndexBuffersDirty");
         bufferSource.ShouldContain("GetIndexBufferForBinding(EPrimitiveType.Triangles");
         bufferSource.ShouldContain("GetIndexBufferForBinding(EPrimitiveType.Lines");

@@ -83,8 +83,8 @@ public sealed class VulkanStablePacketAndDescriptorTests
     }
 
     [Test]
-    public void IndirectDrawStateScope_IsAValueTypeToAvoidPerBucketAllocation()
-        => typeof(VulkanRenderer.IndirectDrawStateScope).IsValueType.ShouldBeTrue();
+    public void IndirectDrawStateCapabilityScope_IsAValueTypeToAvoidPerBucketAllocation()
+        => typeof(IndirectDrawStateCapabilityScope).IsValueType.ShouldBeTrue();
 
     [Test]
     public void GpuIndirectCommandChains_KeepMutableArgumentStreamsOnPrimary()

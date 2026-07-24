@@ -285,18 +285,18 @@ internal sealed class RenderPipelineGpuProfiler
         }
     }
 
-    private readonly struct PendingScope(ulong frameId, string[] path, GLRenderQuery startQuery, GLRenderQuery endQuery)
+    private readonly struct PendingScope(ulong frameId, string[] path, XRRenderQuery startQuery, XRRenderQuery endQuery)
     {
         public ulong FrameId { get; } = frameId;
         public string[] Path { get; } = path;
-        public GLRenderQuery StartQuery { get; } = startQuery;
-        public GLRenderQuery EndQuery { get; } = endQuery;
+        public XRRenderQuery StartQuery { get; } = startQuery;
+        public XRRenderQuery EndQuery { get; } = endQuery;
     }
 
-    private readonly struct OrphanedQuery(ulong frameId, GLRenderQuery query)
+    private readonly struct OrphanedQuery(ulong frameId, XRRenderQuery query)
     {
         public ulong FrameId { get; } = frameId;
-        public GLRenderQuery Query { get; } = query;
+        public XRRenderQuery Query { get; } = query;
     }
 
     public readonly struct Scope : IDisposable
@@ -304,10 +304,10 @@ internal sealed class RenderPipelineGpuProfiler
         private readonly RenderPipelineGpuProfiler? _profiler;
         private readonly ulong _frameId;
         private readonly string[]? _path;
-        private readonly GLRenderQuery? _startQuery;
+        private readonly XRRenderQuery? _startQuery;
         private readonly bool _popScope;
 
-        internal Scope(RenderPipelineGpuProfiler profiler, ulong frameId, string[] path, GLRenderQuery startQuery, bool popScope)
+        internal Scope(RenderPipelineGpuProfiler profiler, ulong frameId, string[] path, XRRenderQuery startQuery, bool popScope)
         {
             _profiler = profiler;
             _frameId = frameId;
@@ -357,21 +357,21 @@ internal sealed class RenderPipelineGpuProfiler
     /// </summary>
     private static bool IsProfilingRequested()
     {
-        var host = RuntimeRenderingHostServices.Current;
-        return host.EnableRenderStatisticsTracking && host.EnableGpuRenderPipelineProfiling;
+        IRuntimeRenderFrameTimingServices frameTiming = RuntimeRenderingHostServices.FrameTiming;
+        return frameTiming.EnableRenderStatisticsTracking && frameTiming.EnableGpuRenderPipelineProfiling;
     }
 
     public bool IsProfilingActive
         => Volatile.Read(ref _enabled) != 0 || IsProfilingRequested();
 
     public bool ShouldInstrumentCommandScopes
-        => IsProfilingActive && AbstractRenderer.Current is OpenGLRenderer;
+        => IsProfilingActive && TryGetQueryCapability(out _);
 
-    private readonly struct UserScopeHandle(ulong frameId, string[] path, GLRenderQuery startQuery)
+    private readonly struct UserScopeHandle(ulong frameId, string[] path, XRRenderQuery startQuery)
     {
         public ulong FrameId { get; } = frameId;
         public string[] Path { get; } = path;
-        public GLRenderQuery StartQuery { get; } = startQuery;
+        public XRRenderQuery StartQuery { get; } = startQuery;
     }
 
     public RenderStatsGpuPipelineSnapshot LatestSnapshot
@@ -580,7 +580,7 @@ internal sealed class RenderPipelineGpuProfiler
             {
                 string backendName = GetLastBackendNameNoLock();
                 string statusMessage = string.Equals(backendName, "Vulkan", StringComparison.Ordinal)
-                    ? VulkanRenderer.VulkanGpuProfilerCommandTimingStatusMessage
+                    ? "Vulkan command timings are collected by the backend profiler."
                     : "Waiting for the first resolved GPU command frame.";
                 _latestSnapshot = RenderStatsGpuPipelineSnapshot.Pending(backendName, statusMessage);
             }
@@ -608,9 +608,6 @@ internal sealed class RenderPipelineGpuProfiler
         if (!ShouldInstrumentCommandScopes)
             return default;
 
-        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
-            return default;
-
         XRRenderPipelineInstance instance = ViewportRenderCommand.ActivePipelineInstance;
         ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
         List<string> commandStack = _commandScopeStack ??= [];
@@ -628,7 +625,7 @@ internal sealed class RenderPipelineGpuProfiler
             path[pathIndex++] = commandStack[i];
         path[^1] = scopeName;
 
-        if (!TryBeginTimestampScope(renderer, frameId, out GLRenderQuery? startQuery))
+        if (!TryBeginTimestampScope(frameId, out XRRenderQuery? startQuery))
             return default;
 
         commandStack.Add(scopeName);
@@ -655,9 +652,6 @@ internal sealed class RenderPipelineGpuProfiler
             !ShouldInstrumentCommandScopes)
             return false;
 
-        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
-            return false;
-
         XRRenderPipelineInstance instance = ViewportRenderCommand.ActivePipelineInstance;
         ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
         string pipelineName = instance.ProfilerKey;
@@ -670,7 +664,7 @@ internal sealed class RenderPipelineGpuProfiler
             path[i + 1] = userStack[i];
         path[^1] = scopeName;
 
-        if (!TryBeginTimestampScope(renderer, frameId, out GLRenderQuery? startQuery))
+        if (!TryBeginTimestampScope(frameId, out XRRenderQuery? startQuery))
             return false;
 
         userStack.Add(scopeName);
@@ -711,7 +705,7 @@ internal sealed class RenderPipelineGpuProfiler
             userStack.RemoveAt(userStack.Count - 1);
         }
 
-        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+        if (!TryGetQueryCapability(out _))
         {
             lock (_lock)
             {
@@ -721,7 +715,7 @@ internal sealed class RenderPipelineGpuProfiler
             return;
         }
 
-        if (!TryBeginTimestampScope(renderer, scope.FrameId, out GLRenderQuery? endQuery))
+        if (!TryBeginTimestampScope(scope.FrameId, out XRRenderQuery? endQuery))
         {
             lock (_lock)
             {
@@ -735,7 +729,7 @@ internal sealed class RenderPipelineGpuProfiler
             _pendingScopes.Add(new PendingScope(scope.FrameId, scope.Path, scope.StartQuery, endQuery!));
     }
 
-    private void EndScope(ulong frameId, string[]? path, GLRenderQuery? startQuery, bool popScope)
+    private void EndScope(ulong frameId, string[]? path, XRRenderQuery? startQuery, bool popScope)
     {
         if (popScope)
         {
@@ -751,7 +745,7 @@ internal sealed class RenderPipelineGpuProfiler
         if (path is null || startQuery is null)
             return;
 
-        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+        if (!TryGetQueryCapability(out _))
         {
             lock (_lock)
             {
@@ -761,7 +755,7 @@ internal sealed class RenderPipelineGpuProfiler
             return;
         }
 
-        if (!TryBeginTimestampScope(renderer, frameId, out GLRenderQuery? endQuery))
+        if (!TryBeginTimestampScope(frameId, out XRRenderQuery? endQuery))
         {
             lock (_lock)
             {
@@ -841,17 +835,22 @@ internal sealed class RenderPipelineGpuProfiler
             frame.PendingSamples--;
     }
 
-    private bool TryBeginTimestampScope(OpenGLRenderer renderer, ulong frameId, out GLRenderQuery? query)
+    private bool TryBeginTimestampScope(ulong frameId, out XRRenderQuery? query)
     {
         query = null;
         if (!TryReserveTimestampScope(frameId))
             return false;
 
-        GLRenderQuery candidate = AcquireTimestampQuery(renderer);
+        XRRenderQuery candidate = AcquireTimestampQuery();
         long startTicks = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
-            candidate.WriteTimestamp();
+            if (!TryGetQueryCapability(out var capability) ||
+                capability.WriteTimestamp(candidate) != ERenderQueryReadStatus.Ready)
+            {
+                candidate.Destroy();
+                return false;
+            }
             RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.TimestampQueryCount);
         }
         catch (Exception ex)
@@ -1169,7 +1168,7 @@ internal sealed class RenderPipelineGpuProfiler
         }
     }
 
-    private void RetireQueryWhenReadyNoLock(ulong frameId, GLRenderQuery query)
+    private void RetireQueryWhenReadyNoLock(ulong frameId, XRRenderQuery query)
     {
         _orphanedQueries.Add(new OrphanedQuery(frameId, query));
     }
@@ -1193,31 +1192,36 @@ internal sealed class RenderPipelineGpuProfiler
         _orphanedQueries.Clear();
     }
 
-    private GLRenderQuery AcquireTimestampQuery(OpenGLRenderer renderer)
+    private XRRenderQuery AcquireTimestampQuery()
     {
         XRRenderQuery query;
         lock (_lock)
             query = _queryPool.Count > 0 ? _queryPool.Dequeue() : new XRRenderQuery(RenderQueryDescriptor.Timestamp);
 
-        GLRenderQuery? glQuery = renderer.GenericToAPI<GLRenderQuery>(query)
-            ?? throw new InvalidOperationException("Failed to create OpenGL render query wrapper for GPU profiling.");
-        if (!glQuery.IsGenerated)
-            glQuery.Generate();
-        return glQuery;
+        if (!TryGetQueryCapability(out var capability) ||
+            !capability.EnsureQueryGenerated(query))
+        {
+            throw new InvalidOperationException("Failed to create a render-query wrapper for GPU profiling.");
+        }
+        return query;
     }
 
-    private void ReleaseQueryNoLock(GLRenderQuery query)
+    private void ReleaseQueryNoLock(XRRenderQuery query)
     {
-        _queryPool.Enqueue(query.Data);
+        _queryPool.Enqueue(query);
     }
 
     private string GetLastBackendNameNoLock()
         => string.IsNullOrWhiteSpace(_lastBackendName) ? GetBackendName() : _lastBackendName;
 
-    private static bool TryReadTimestamp(GLRenderQuery query, out ulong timestamp)
+    private static bool TryReadTimestamp(XRRenderQuery query, out ulong timestamp)
     {
         timestamp = 0UL;
-        ERenderQueryReadStatus status = query.TryGetTimestamp(out TimestampQueryResult result);
+        TimestampQueryResult result = default;
+        ERenderQueryReadStatus status =
+            TryGetQueryCapability(out var capability)
+                ? capability.TryGetTimestamp(query, out result)
+                : ERenderQueryReadStatus.Unsupported;
         if (status != ERenderQueryReadStatus.Ready)
             return false;
 
@@ -1226,22 +1230,27 @@ internal sealed class RenderPipelineGpuProfiler
         return true;
     }
 
+    private static bool TryGetQueryCapability(
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IOcclusionQueryBackendCapability? capability)
+    {
+        capability = null;
+        IRuntimeRendererHost? renderer = AbstractRenderer.Current;
+        return renderer is not null &&
+            renderer.TryGetBackendCapability(out capability) &&
+            capability is not null;
+    }
+
     private static bool IsOlderThan(ulong currentFrameId, ulong frameId, ulong frameCount)
         => currentFrameId > frameId && currentFrameId - frameId > frameCount;
 
     private static string GetBackendName()
     {
-        string currentName = AbstractRenderer.Current switch
-        {
-            OpenGLRenderer => "OpenGL",
-            Vulkan.VulkanRenderer => "Vulkan",
-            _ => string.Empty
-        };
+        string currentName = AbstractRenderer.Current?.BackendId.Value ?? string.Empty;
 
         if (!string.IsNullOrWhiteSpace(currentName))
             return currentName;
 
-        return RuntimeRenderingHostServices.Current.CurrentRenderBackend switch
+        return RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend switch
         {
             RuntimeGraphicsApiKind.OpenGL => "OpenGL",
             RuntimeGraphicsApiKind.Vulkan => "Vulkan",

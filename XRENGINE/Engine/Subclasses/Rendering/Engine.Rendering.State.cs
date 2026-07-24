@@ -132,7 +132,7 @@ namespace XREngine
                     get
                     {
                         IRuntimeRenderCommandExecutionState? commandState =
-                            RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState;
+                            RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState;
                         return RenderingCameraOverride
                             ?? commandState?.RenderingCamera as XRCamera
                             ?? commandState?.SceneCamera as XRCamera

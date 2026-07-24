@@ -69,9 +69,7 @@ namespace XREngine.Editor.Mcp
                 string path,
                 TaskCompletionSource<(string Path, ScreenshotReadbackResult Readback)> tcs)
             {
-                using IDisposable? readbackScope = renderer is VulkanRenderer
-                    ? viewport.EnterRenderPipelineReadbackScope()
-                    : null;
+                using IDisposable? readbackScope = viewport.EnterRenderPipelineReadbackScope();
                 using IDisposable? targetReadScope = viewport.LastRenderedTargetFBO?.BindForReadingState();
 
                 BoundingRectangle captureRegion = viewport.LastRenderedTargetFBO is { } targetFbo
@@ -447,8 +445,8 @@ namespace XREngine.Editor.Mcp
                 : ReadDepthProbeSample(viewport, clamped, fbo, flippedCoordinate, includeRaw);
             object current = CoordinatesEqual(currentCoordinate, flippedCoordinate) ? flipped : unflipped;
 
-            RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.Current.CurrentRenderBackend;
-            ERenderClipSpaceYDirection clipY = RuntimeRenderingHostServices.Current.ClipSpaceYDirection;
+            RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
+            ERenderClipSpaceYDirection clipY = RuntimeRenderingHostServices.Settings.ClipSpaceYDirection;
             ERenderClipSpaceYDirection framebufferY = backend == RuntimeGraphicsApiKind.Unknown
                 ? clipY
                 : RenderClipSpacePolicy.FramebufferTextureYDirection(backend);
@@ -531,10 +529,16 @@ namespace XREngine.Editor.Mcp
                 ? viewport.NormalizedViewportToWorldCoordinate(new Vector3(normalizedViewportPoint, depth))
                 : null;
             object? vulkanRaw = null;
-            if (includeRaw && AbstractRenderer.Current is VulkanRenderer vulkan)
+            if (includeRaw
+                && EditorRendererCapabilityResolver.TryGetForBackend(
+                    RendererBackendId.Vulkan,
+                    out IRenderBackendDiagnosticsCapability diagnostics))
             {
-                vulkan.TryReadDepthPixelDebug(fbo, readbackCoordinate.X, readbackCoordinate.Y, out var debugInfo);
-                vulkanRaw = debugInfo;
+                diagnostics.TryReadDepthPixelDebug(
+                    fbo,
+                    readbackCoordinate.X,
+                    readbackCoordinate.Y,
+                    out vulkanRaw);
             }
 
             return new
@@ -566,7 +570,7 @@ namespace XREngine.Editor.Mcp
 
         private static bool ShouldFlipDepthReadbackY()
         {
-            RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.Current.CurrentRenderBackend;
+            RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
             if (backend == RuntimeGraphicsApiKind.Unknown)
                 return false;
 

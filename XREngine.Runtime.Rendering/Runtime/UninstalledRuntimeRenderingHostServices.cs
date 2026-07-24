@@ -1,0 +1,1239 @@
+using System.Collections;
+using System.Diagnostics;
+using System.IO;
+using System.Numerics;
+using System.Threading;
+using XREngine.Components;
+using XREngine.Core.Files;
+using XREngine.Data.Colors;
+using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
+using XREngine.Data.Trees;
+using XREngine.Data.Transforms.Rotations;
+using XREngine.Input;
+using XREngine.Rendering.API.Rendering.OpenXR;
+using XREngine.Rendering.Occlusion;
+using XREngine.Rendering.Shadows;
+using XREngine.Scene;
+namespace XREngine.Rendering;
+
+internal sealed class UninstalledRuntimeRenderingHostServices : IRuntimeRenderingHostServices
+{
+    private readonly Stopwatch _elapsedStopwatch = Stopwatch.StartNew();
+
+    #region Profiling
+
+    public IDisposable? StartProfileScope(string? scopeName)
+        => null;
+
+    #endregion
+
+    #region Import and shader settings
+
+    public bool AllowShaderPipelines => RuntimeRenderingHostServiceDefaults.AllowShaderPipelines;
+    public bool EnableExactTransparencyTechniques => RuntimeRenderingHostServiceDefaults.EnableExactTransparencyTechniques;
+    public bool UseInterleavedMeshBuffer => RuntimeRenderingHostServiceDefaults.UseInterleavedMeshBuffer;
+    public bool UseIntegerUniformsInShaders => RuntimeRenderingHostServiceDefaults.UseIntegerUniformsInShaders;
+    public bool RemapBlendshapeDeltas => RuntimeRenderingHostServiceDefaults.RemapBlendshapeDeltas;
+    public bool AllowBlendshapes => RuntimeRenderingHostServiceDefaults.AllowBlendshapes;
+    public bool PopulateVertexDataInParallel => RuntimeRenderingHostServiceDefaults.PopulateVertexDataInParallel;
+    public bool ProcessMeshImportsAsynchronously => RuntimeRenderingHostServiceDefaults.ProcessMeshImportsAsynchronously;
+    public bool AllowSkinning => RuntimeRenderingHostServiceDefaults.AllowSkinning;
+    public bool CalculateSkinningInComputeShader => RuntimeRenderingHostServiceDefaults.CalculateSkinningInComputeShader;
+    public bool CalculateBlendshapesInComputeShader => RuntimeRenderingHostServiceDefaults.CalculateBlendshapesInComputeShader;
+    public bool CalculateSkinnedBoundsInComputeShader => false;
+    public bool SkinnedBoundsGpuDirectAabbWrite => false;
+    public bool EnableBlendshapePrecombinePass => RuntimeRenderingHostServiceDefaults.EnableBlendshapePrecombinePass;
+    public bool EnableBlendshapePrecombineForDirectVertexPath => RuntimeRenderingHostServiceDefaults.EnableBlendshapePrecombineForDirectVertexPath;
+    public bool EnableBlendshapePcaBasisCompression => RuntimeRenderingHostServiceDefaults.EnableBlendshapePcaBasisCompression;
+    public int BlendshapePrecombineComputeMinActiveShapes => RuntimeRenderingHostServiceDefaults.BlendshapePrecombineComputeMinActiveShapes;
+    public int BlendshapePrecombineDirectMinActiveShapes => RuntimeRenderingHostServiceDefaults.BlendshapePrecombineDirectMinActiveShapes;
+    public int BlendshapePrecombineMinAffectedVertices => RuntimeRenderingHostServiceDefaults.BlendshapePrecombineMinAffectedVertices;
+    public bool StreamMeshLodsOnDemand => RuntimeRenderingHostServiceDefaults.StreamMeshLodsOnDemand;
+    public int MeshLodStreamingDrainIntervalFrames => RuntimeRenderingHostServiceDefaults.MeshLodStreamingDrainIntervalFrames;
+    public int MeshLodStreamingMaxLoadsPerDrain => RuntimeRenderingHostServiceDefaults.MeshLodStreamingMaxLoadsPerDrain;
+    public int ShaderConfigVersion => RuntimeRenderingHostServiceDefaults.ShaderConfigVersion;
+    public ERenderClipSpaceYDirection ClipSpaceYDirection => RuntimeRenderingHostServiceDefaults.ClipSpaceYDirection;
+    public ERenderClipDepthRange ClipDepthRange => RuntimeRenderingHostServiceDefaults.ClipDepthRange;
+    public bool AllowBinaryProgramCaching => RuntimeRenderingHostServiceDefaults.AllowBinaryProgramCaching;
+    public bool AsyncProgramBinaryUpload => RuntimeRenderingHostServiceDefaults.AsyncProgramBinaryUpload;
+    public bool AsyncProgramCompilation => RuntimeRenderingHostServiceDefaults.AsyncProgramCompilation;
+    public int OpenGLProgramCompileLinkWorkerCount => RuntimeRenderingHostServiceDefaults.OpenGLProgramCompileLinkWorkerCount;
+    public int MaxAsyncShaderProgramsPerFrame => RuntimeRenderingHostServiceDefaults.MaxAsyncShaderProgramsPerFrame;
+    public EOpenGLShaderLinkStrategy OpenGLShaderLinkStrategy => RuntimeRenderingHostServiceDefaults.OpenGLShaderLinkStrategy;
+    public int OpenGLShaderCompilerThreadCount => RuntimeRenderingHostServiceDefaults.OpenGLShaderCompilerThreadCount;
+    public bool OpenGLParallelShaderCompileProbeEnabled => RuntimeRenderingHostServiceDefaults.OpenGLParallelShaderCompileProbeEnabled;
+    public int OpenGLParallelShaderCompileProbeTimeoutMs => RuntimeRenderingHostServiceDefaults.OpenGLParallelShaderCompileProbeTimeoutMs;
+    public EVulkanAllocatorBackend VulkanAllocatorBackend => RuntimeRenderingHostServiceDefaults.VulkanAllocatorBackend;
+    public EVulkanSynchronizationBackend VulkanSynchronizationBackend => RuntimeRenderingHostServiceDefaults.VulkanSynchronizationBackend;
+    public EVulkanDescriptorUpdateBackend VulkanDescriptorUpdateBackend => RuntimeRenderingHostServiceDefaults.VulkanDescriptorUpdateBackend;
+    public bool VulkanDynamicUniformBufferEnabled => RuntimeRenderingHostServiceDefaults.VulkanDynamicUniformBufferEnabled;
+
+    public void SubscribeRenderingSettingsChanged(Action callback)
+    {
+    }
+
+    public void UnsubscribeRenderingSettingsChanged(Action callback)
+    {
+    }
+
+    public void SubscribeAntiAliasingSettingsChanged(Action callback)
+    {
+    }
+
+    public void UnsubscribeAntiAliasingSettingsChanged(Action callback)
+    {
+    }
+
+    #endregion
+
+    #region Frame and render state
+
+    public bool IsRenderThread => RuntimeRenderingHostServiceDefaults.IsRenderThread;
+    public bool IsRendererActive => RuntimeRenderingHostServiceDefaults.IsRendererActive;
+    public bool IsShadowPass => RuntimeRenderingHostServiceDefaults.IsShadowPass;
+    public bool IsStereoPass => RuntimeRenderingHostServiceDefaults.IsStereoPass;
+    public bool IsSceneCapturePass => RuntimeRenderingHostServiceDefaults.IsSceneCapturePass;
+    public bool RenderCullingVolumesEnabled => RuntimeRenderingHostServiceDefaults.RenderCullingVolumesEnabled;
+    public bool IsNvidia => RuntimeRenderingHostServiceDefaults.IsNvidia;
+    public Vector3 DefaultLuminance => new(
+        RuntimeRenderingHostServiceDefaults.DefaultLuminanceX,
+        RuntimeRenderingHostServiceDefaults.DefaultLuminanceY,
+        RuntimeRenderingHostServiceDefaults.DefaultLuminanceZ);
+    public long ElapsedTicks => _elapsedStopwatch.ElapsedTicks;
+    public float ElapsedTime => (float)_elapsedStopwatch.Elapsed.TotalSeconds;
+    public bool IsAppThread => true;
+    public bool IsStartingUp => false;
+    public double UpdateDeltaSeconds => RuntimeRenderingHostServiceDefaults.DefaultDeltaSeconds;
+    public double SmoothedUpdateDeltaSeconds => UpdateDeltaSeconds;
+    public long LastUpdateTimestampTicks => RuntimeRenderingHostServiceDefaults.DefaultTimestampTicks;
+    public double RenderDeltaSeconds => RuntimeRenderingHostServiceDefaults.DefaultDeltaSeconds;
+    public long LastRenderTimestampTicks => RuntimeRenderingHostServiceDefaults.DefaultTimestampTicks;
+    public string DefaultFontFolder => "Roboto";
+    public string DefaultFontFileName => "Roboto-Regular.ttf";
+    public bool RenderMesh2DBounds => false;
+    public bool RenderUITransformCoordinate => false;
+    public ColorF4 Bounds2DColor => ColorF4.Cyan;
+    public long TrackedVramBytes => RuntimeRenderingHostServiceDefaults.DefaultTrackedVramBytes;
+    public long TrackedVramBudgetBytes => RuntimeRenderingHostServiceDefaults.DefaultTrackedVramBudgetBytes;
+    public bool EnableGpuIndirectDebugLogging => RuntimeRenderingHostServiceDefaults.EnableGpuIndirectDebugLogging;
+    public EOcclusionCullingMode GpuOcclusionCullingMode => RuntimeRenderingHostServiceDefaults.GpuOcclusionCullingMode;
+    public int CpuQueryOcclusionRetestPeriodFrames => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionRetestPeriodFrames;
+    public int CpuQueryOcclusionMaxQueriesPerFrame => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionMaxQueriesPerFrame;
+    public float CpuQueryOcclusionVisibleDemotionBudgetFraction => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionVisibleDemotionBudgetFraction;
+    public int CpuQueryOcclusionRecoveryMinCadenceFrames => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionRecoveryMinCadenceFrames;
+    public float CpuQueryOcclusionSmallMotionMeters => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionSmallMotionMeters;
+    public float CpuQueryOcclusionMediumMotionMeters => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionMediumMotionMeters;
+    public float CpuQueryOcclusionLargeMotionMeters => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionLargeMotionMeters;
+    public float CpuQueryOcclusionCameraCutMeters => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionCameraCutMeters;
+    public float CpuQueryOcclusionSmallRotationDegrees => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionSmallRotationDegrees;
+    public float CpuQueryOcclusionMediumRotationDegrees => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionMediumRotationDegrees;
+    public float CpuQueryOcclusionLargeRotationDegrees => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionLargeRotationDegrees;
+    public float CpuQueryOcclusionCameraCutRotationDegrees => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionCameraCutRotationDegrees;
+    public float CpuQueryOcclusionVrHeadMotionMeters => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionVrHeadMotionMeters;
+    public float CpuQueryOcclusionVrHeadRotationDegrees => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionVrHeadRotationDegrees;
+    public ECpuQueryStereoMode CpuQueryOcclusionStereoMode => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionStereoMode;
+    public int CpuQueryOcclusionMaxPendingFrames => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionMaxPendingFrames;
+    public bool EnableCpuSoftwareOcclusionCulling => RuntimeRenderingHostServiceDefaults.EnableCpuSoftwareOcclusionCulling;
+    public int CpuSocBufferWidth => RuntimeRenderingHostServiceDefaults.CpuSocBufferWidth;
+    public int CpuSocBufferHeight => RuntimeRenderingHostServiceDefaults.CpuSocBufferHeight;
+    public int CpuSocOccluderTriangleBudget => RuntimeRenderingHostServiceDefaults.CpuSocOccluderTriangleBudget;
+    public int CpuSocMaxOccluders => RuntimeRenderingHostServiceDefaults.CpuSocMaxOccluders;
+    public float CpuSocMinOccluderScreenArea => RuntimeRenderingHostServiceDefaults.CpuSocMinOccluderScreenArea;
+    public bool CpuSocUseAvx2 => RuntimeRenderingHostServiceDefaults.CpuSocUseAvx2;
+    public bool CpuSocDebugVisualization => RuntimeRenderingHostServiceDefaults.CpuSocDebugVisualization;
+    public bool CpuSocDebugForceVisible => RuntimeRenderingHostServiceDefaults.CpuSocDebugForceVisible;
+    public ECpuSceneCullingStructure CpuSceneCullingStructure => RuntimeRenderingHostServiceDefaults.CpuSceneCullingStructure;
+    public ETwoPlayerPreference TwoPlayerViewportPreference => RuntimeRenderingHostServiceDefaults.TwoPlayerViewportPreference;
+    public EThreePlayerPreference ThreePlayerViewportPreference => RuntimeRenderingHostServiceDefaults.ThreePlayerViewportPreference;
+    public RuntimeGraphicsApiKind CurrentRenderBackend => RuntimeRenderingHostServiceDefaults.CurrentRenderBackend;
+    public IRuntimeRendererHost? CurrentRenderer => null;
+    public IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState => null;
+    public IRuntimeRenderPipelineFrameContext? CurrentRenderPipelineContext => null;
+    public bool IsPlayModeTransitioning => RuntimeRenderingHostServiceDefaults.IsPlayModeTransitioning;
+    public string PlayModeStateName => RuntimeRenderingHostServiceDefaults.PlayModeStateName;
+    public EAntiAliasingMode DefaultAntiAliasingMode => RuntimeRenderingHostServiceDefaults.DefaultAntiAliasingMode;
+    public bool EnableNvidiaDlss => RuntimeRenderingHostServiceDefaults.EnableNvidiaDlss;
+    public EDlssQualityMode DlssQuality => RuntimeRenderingHostServiceDefaults.DlssQuality;
+    public float DlssCustomScale => RuntimeRenderingHostServiceDefaults.DlssCustomScale;
+    public float DlssSharpness => RuntimeRenderingHostServiceDefaults.DlssSharpness;
+    public bool EnableNvidiaDlssFrameGeneration => RuntimeRenderingHostServiceDefaults.EnableNvidiaDlssFrameGeneration;
+    public ENvidiaDlssFrameGenerationMode NvidiaDlssFrameGenerationMode => RuntimeRenderingHostServiceDefaults.NvidiaDlssFrameGenerationMode;
+    public uint DefaultMsaaSampleCount => RuntimeRenderingHostServiceDefaults.DefaultMsaaSampleCount;
+    public bool DefaultOutputHDR => RuntimeRenderingHostServiceDefaults.DefaultOutputHDR;
+    public float DefaultTsrRenderScale => RuntimeRenderingHostServiceDefaults.DefaultTsrRenderScale;
+    public bool EnableRenderStatisticsTracking => RuntimeRenderingHostServiceDefaults.EnableRenderStatisticsTracking;
+    public bool EnableGpuRenderPipelineProfiling => RuntimeRenderingHostServiceDefaults.EnableGpuRenderPipelineProfiling;
+    public bool GpuRenderPipelineTimingsReady => RuntimeRenderingHostServiceDefaults.GpuRenderPipelineTimingsReady;
+    public double GpuRenderPipelineFrameMs => RuntimeRenderingHostServiceDefaults.GpuRenderPipelineFrameMs;
+    public ulong CurrentRenderFrameId => RuntimeRenderingHostServiceDefaults.CurrentRenderFrameId;
+
+    #endregion
+
+    #region Shadow settings
+
+    public bool ProvidesShadowAtlasSettings => RuntimeRenderingHostServiceDefaults.ProvidesShadowAtlasSettings;
+    public bool UseSpotShadowAtlas => RuntimeRenderingHostServiceDefaults.UseSpotShadowAtlas;
+    public bool UseDirectionalShadowAtlas => RuntimeRenderingHostServiceDefaults.UseDirectionalShadowAtlas;
+    public bool UsePointShadowAtlas => RuntimeRenderingHostServiceDefaults.UsePointShadowAtlas;
+    public uint ShadowAtlasPageSize => RuntimeRenderingHostServiceDefaults.ShadowAtlasPageSize;
+    public int MaxShadowAtlasPages => RuntimeRenderingHostServiceDefaults.MaxShadowAtlasPages;
+    public long MaxShadowAtlasMemoryBytes => RuntimeRenderingHostServiceDefaults.MaxShadowAtlasMemoryBytes;
+    public int MaxShadowTilesRenderedPerFrame => RuntimeRenderingHostServiceDefaults.MaxShadowTilesRenderedPerFrame;
+    public float MaxShadowRenderMilliseconds => RuntimeRenderingHostServiceDefaults.MaxShadowRenderMilliseconds;
+    public int MaxDirectionalCascadeAtlasStaleFrames => RuntimeRenderingHostServiceDefaults.MaxDirectionalCascadeAtlasStaleFrames;
+    public uint MinShadowAtlasTileResolution => RuntimeRenderingHostServiceDefaults.MinShadowAtlasTileResolution;
+    public uint MaxShadowAtlasTileResolution => RuntimeRenderingHostServiceDefaults.MaxShadowAtlasTileResolution;
+
+    #endregion
+
+    #region Viewports, cameras, and players
+
+    public RuntimeGraphicsApiKind GetWindowRenderBackend(IRuntimeRenderWindowHost? window)
+        => RuntimeRenderingHostServiceDefaults.CurrentRenderBackend;
+
+    public IEnumerable<IRuntimeViewportHost> EnumerateActiveViewports()
+        => [];
+
+    public IEnumerable<IPawnController> EnumerateLocalPlayers()
+        => [];
+
+    public XRCamera.EDepthMode ResolveSceneCameraDepthModePreference()
+        => RuntimeRenderingHostServiceDefaults.SceneCameraDepthModePreference;
+
+    public IRuntimeInputControllablePawn? EnsurePawnForCamera(SceneNode sceneNode, CameraComponent camera, ELocalPlayerIndex playerIndex, Type? pawnType = null)
+        => null;
+
+    public void PickViewportPhysicsAsync(
+        XRViewport viewport,
+        CameraComponent camera,
+        Vector2 normalizedViewportPosition,
+        LayerMask layerMask,
+        object? filter,
+        SortedDictionary<float, List<(XRComponent? item, object? data)>> orderedPhysicsResults,
+        Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>?> physicsFinishedCallback,
+        bool useUnjitteredProjection)
+    {
+        physicsFinishedCallback(null);
+    }
+
+    #endregion
+
+    #region Pipeline context and diagnostics
+
+    public IDisposable? PushRenderingPipeline(IRuntimeRenderPipelineFrameContext pipeline)
+        => null;
+
+    public void LogOutput(string message)
+    {
+    }
+
+    public void LogWarning(string message)
+    {
+    }
+
+    public void LogException(Exception ex, string? context = null)
+    {
+    }
+
+    public void RecordMissingAsset(string assetPath, string category, string? context = null)
+    {
+    }
+
+    #endregion
+
+    #region Asset and texture IO
+
+    private const string AssetServicesNotConfiguredMessage =
+        "Runtime rendering asset services are not installed. Install a concrete rendering host before loading fonts or UI assets.";
+
+    public string EngineAssetsPath => throw new InvalidOperationException(AssetServicesNotConfiguredMessage);
+    public string GameAssetsPath => throw new InvalidOperationException(AssetServicesNotConfiguredMessage);
+    public string? GameCachePath => throw new InvalidOperationException(AssetServicesNotConfiguredMessage);
+
+    public string ResolveEngineAssetPath(params string[] relativePathFolders)
+        => throw new InvalidOperationException(AssetServicesNotConfiguredMessage);
+
+    public object? GetOrCreateThirdPartyImportOptions(string sourcePath, Type assetType)
+        => throw new InvalidOperationException(AssetServicesNotConfiguredMessage);
+
+    public TAsset? LoadAsset<TAsset>(string filePath, JobPriority priority, bool bypassJobThread)
+        where TAsset : XRAsset, new()
+        => throw new InvalidOperationException(AssetServicesNotConfiguredMessage);
+
+    public bool TryResolveThirdPartyCachePath(
+        string filePath,
+        Type assetType,
+        string? cacheVariantKey,
+        out string cachePath)
+        => throw new InvalidOperationException(AssetServicesNotConfiguredMessage);
+
+    public TAsset? LoadThirdPartyVariantWithCache<TAsset>(
+        string filePath,
+        object? importOptions,
+        string cacheVariantKey,
+        JobPriority priority,
+        bool bypassJobThread)
+        where TAsset : XRAsset, new()
+        => throw new InvalidOperationException(AssetServicesNotConfiguredMessage);
+
+    public void EvictAsset(XRAsset asset, string resolvedPath)
+        => throw new InvalidOperationException(AssetServicesNotConfiguredMessage);
+
+    public Task<TAsset> LoadEngineAssetAsync<TAsset>(
+        JobPriority priority,
+        bool bypassJobThread,
+        params string[] relativePathFolders)
+        where TAsset : XRAsset, new()
+        => throw new InvalidOperationException(AssetServicesNotConfiguredMessage);
+
+    public string AssetFileExtension => RuntimeRenderingHostServiceDefaults.AssetFileExtension;
+    public string? TextureFallbackPath => null;
+    public XRMaterial? InvalidMaterial => null;
+    public TextureRuntimeLogMode TextureLogMode => RuntimeRenderingHostServiceDefaults.TextureLogMode;
+    public double TextureSlowCpuDecodeResizeMilliseconds => RuntimeRenderingHostServiceDefaults.TextureSlowCpuDecodeResizeMilliseconds;
+    public double TextureSlowMipBuildMilliseconds => RuntimeRenderingHostServiceDefaults.TextureSlowMipBuildMilliseconds;
+    public double TextureSlowUploadChunkMilliseconds => RuntimeRenderingHostServiceDefaults.TextureSlowUploadChunkMilliseconds;
+    public double TextureSlowTransitionMilliseconds => RuntimeRenderingHostServiceDefaults.TextureSlowTransitionMilliseconds;
+    public double TextureSlowQueueWaitMilliseconds => RuntimeRenderingHostServiceDefaults.TextureSlowQueueWaitMilliseconds;
+    public double TextureUploadFrameBudgetMilliseconds => RuntimeRenderingHostServiceDefaults.TextureUploadFrameBudgetMilliseconds;
+
+    public byte[] ReadAllBytes(string filePath)
+        => File.ReadAllBytes(filePath);
+
+    public string ResolveTextureStreamingAuthorityPath(string filePath)
+        => string.IsNullOrWhiteSpace(filePath) ? filePath : Path.GetFullPath(filePath);
+
+    public SparseTextureStreamingSupport GetSparseTextureStreamingSupport(ESizedInternalFormat format)
+        => SparseTextureStreamingSupport.Unsupported(RuntimeRenderingHostServiceDefaults.SparseTextureStreamingUnsupportedReason);
+
+    public bool TryScheduleSparseTextureStreamingTransitionAsync(
+        XRTexture2D texture,
+        SparseTextureStreamingTransitionRequest request,
+        CancellationToken cancellationToken,
+        Action<SparseTextureStreamingTransitionResult> onCompleted,
+        Action<Exception>? onError = null)
+        => false;
+
+    public SparseTextureStreamingFinalizeResult FinalizeSparseTextureStreamingTransition(
+        XRTexture2D texture,
+        SparseTextureStreamingTransitionRequest request,
+        SparseTextureStreamingTransitionResult transitionResult)
+        => SparseTextureStreamingFinalizeResult.Failed(RuntimeRenderingHostServiceDefaults.SparseTextureStreamingFinalizeNotConfiguredReason);
+
+    public EnumeratorJob ScheduleEnumeratorJob(
+        Func<IEnumerable> routineFactory,
+        JobPriority priority = JobPriority.Normal,
+        Action? completed = null,
+        Action<Exception>? error = null,
+        CancellationToken cancellationToken = default)
+        => throw new InvalidOperationException(RuntimeRenderingHostServiceDefaults.JobSchedulingNotConfiguredMessage);
+
+    #endregion
+
+    #region Scheduling and frame callbacks
+
+    public void SubscribeViewportSwapBuffers(Action swapBuffers)
+    {
+    }
+
+    public void UnsubscribeViewportSwapBuffers(Action swapBuffers)
+    {
+    }
+
+    public void SubscribeViewportCollectVisible(Action collectVisible)
+    {
+    }
+
+    public void UnsubscribeViewportCollectVisible(Action collectVisible)
+    {
+    }
+
+    public void SubscribeViewportPostCollectVisible(Action postCollectVisible)
+    {
+    }
+
+    public void UnsubscribeViewportPostCollectVisible(Action postCollectVisible)
+    {
+    }
+
+    public void SubscribeUpdateFrame(Action callback)
+    {
+    }
+
+    public void UnsubscribeUpdateFrame(Action callback)
+    {
+    }
+
+    public void SubscribePostUpdateFrame(Action callback)
+    {
+    }
+
+    public void UnsubscribePostUpdateFrame(Action callback)
+    {
+    }
+
+    public void SubscribeRenderFrame(Action callback)
+    {
+    }
+
+    public void UnsubscribeRenderFrame(Action callback)
+    {
+    }
+
+    public void SubscribeWindowTickCallbacks(Action swapBuffers, Action renderFrame)
+    {
+    }
+
+    public void UnsubscribeWindowTickCallbacks(Action swapBuffers, Action renderFrame)
+    {
+    }
+
+    public bool TryDispatchInteractiveResizeFrame()
+        => false;
+
+    public void SubscribePlayModeTransitions(Action callback)
+    {
+    }
+
+    public void UnsubscribePlayModeTransitions(Action callback)
+    {
+    }
+
+    public void EnqueueRenderThreadTask(Action task)
+        => task();
+
+    public void EnqueueRenderThreadTask(Action task, RenderThreadJobKind renderThreadKind)
+        => task();
+
+    public void EnqueueRenderThreadTask(Action task, string reason)
+        => task();
+
+    public void EnqueueRenderThreadTask(Action task, string reason, RenderThreadJobKind renderThreadKind)
+        => task();
+
+    public T InvokeRenderThreadTask<T>(Func<T> task, string reason, RenderThreadJobKind renderThreadKind = RenderThreadJobKind.Unknown)
+        => task();
+
+    public void EnqueueAppThreadTask(Action task)
+        => task();
+
+    public void EnqueueAppThreadTask(Action task, string reason)
+        => task();
+
+    public void EnqueueWindowThreadTask(IRuntimeRenderWindowHost window, Action task, string reason)
+        => task();
+
+    public T InvokeWindowThreadTask<T>(IRuntimeRenderWindowHost window, Func<T> task, string reason)
+        => task();
+
+    public void EnqueueRenderThreadCoroutine(Func<bool> task)
+        => task();
+
+    public void EnqueueRenderThreadCoroutine(Func<bool> task, RenderThreadJobKind renderThreadKind)
+        => task();
+
+    public void EnqueueRenderThreadCoroutine(Func<bool> task, string reason)
+        => task();
+
+    public void EnqueueRenderThreadCoroutine(Func<bool> task, string reason, RenderThreadJobKind renderThreadKind)
+        => task();
+
+    public void ProcessRenderThreadTasks()
+    {
+    }
+
+    public void MarkRenderFrameReadyForCollect(IRuntimeRenderWindowHost window)
+    {
+    }
+
+    #endregion
+
+    #region Debug drawing and scene maintenance
+
+    public bool Preview3DWorldOctree => RuntimeEngine.EditorPreferences.Debug.Preview3DWorldOctree;
+    public bool Preview2DWorldQuadtree => RuntimeEngine.EditorPreferences.Debug.Preview2DWorldQuadtree;
+    public bool HoverOutlineEnabled => RuntimeEngine.EditorPreferences.HoverOutlineEnabled;
+    public bool SelectionOutlineEnabled => RuntimeEngine.EditorPreferences.SelectionOutlineEnabled;
+    public ColorF4 OctreeIntersectedBoundsColor => RuntimeEngine.EditorPreferences.Theme.OctreeIntersectedBoundsColor;
+    public ColorF4 OctreeContainedBoundsColor => RuntimeEngine.EditorPreferences.Theme.OctreeContainedBoundsColor;
+    public ColorF4 QuadtreeIntersectedBoundsColor => RuntimeEngine.EditorPreferences.Theme.QuadtreeIntersectedBoundsColor;
+    public ColorF4 QuadtreeContainedBoundsColor => RuntimeEngine.EditorPreferences.Theme.QuadtreeContainedBoundsColor;
+
+    public IDisposable? PushTransformId(uint transformId)
+        => null;
+
+    public void RecordOctreeSkippedMove()
+    {
+    }
+
+    public void ProcessGpuPhysicsChainDispatches()
+    {
+    }
+
+    public void ProcessGpuPhysicsChainCompletions()
+    {
+    }
+
+    public void RenderDebugRect2D(BoundingRectangleF rectangle, bool solid, ColorF4 color)
+    {
+    }
+
+    public void RenderDebugLine(Vector3 start, Vector3 end, ColorF4 color)
+    {
+    }
+
+    public void RenderDebugSphere(Vector3 center, float radius, bool solid, ColorF4 color)
+    {
+    }
+
+    public void RenderDebugCone(Vector3 center, Vector3 up, float radius, float height, bool solid, ColorF4 color)
+    {
+    }
+
+    public void RenderDebugAABB(Vector3 halfExtents, Vector3 center, bool solid, ColorF4 color)
+    {
+    }
+
+    public void RenderDebugBox(Vector3 halfExtents, Vector3 center, Matrix4x4 transform, bool solid, ColorF4 color)
+    {
+    }
+
+    public void RenderDebugQuad(Vector3 center, Rotator rotation, Vector2 extents, bool solid, ColorF4 color)
+    {
+    }
+
+    public void RenderDebugPoint(Vector3 position, ColorF4 color)
+    {
+    }
+
+    public void RenderDebugText(Vector3 position, string text, ColorF4 color)
+    {
+    }
+
+    public void RenderDebugShapes(bool depthTested)
+    {
+    }
+
+    #endregion
+
+    #region Factories and window presentation
+
+    public TAsset? LoadAsset<TAsset>(string filePath) where TAsset : XRAsset, new()
+        => null;
+
+    public IRuntimeRenderPipelineHost? CreateDefaultRenderPipeline()
+        => null;
+
+    public IRuntimeRendererHost CreateRenderer(IRuntimeRenderWindowHost window, RuntimeGraphicsApiKind apiKind)
+        => throw new InvalidOperationException(RuntimeRenderingHostServiceDefaults.RendererCreationNotConfiguredMessage);
+
+    public IRuntimeWindowScenePanelAdapter CreateWindowScenePanelAdapter()
+            => UninstalledRuntimeWindowScenePanelAdapter.Instance;
+
+    public BoundingRectangle? GetScenePanelRenderRegion(IRuntimeRenderWindowHost window)
+        => null;
+
+    public bool AllowWindowClose(IRuntimeRenderWindowHost window)
+        => true;
+
+    public void RemoveWindow(IRuntimeRenderWindowHost window)
+    {
+    }
+
+    public void ReplicateWindowTargetWorldChange(IRuntimeRenderWindowHost window)
+    {
+    }
+
+    public void BeginRenderStatsFrame()
+    {
+    }
+
+    public void IncrementRenderDrawCalls(int count)
+    {
+    }
+
+    public void IncrementRenderMultiDrawCalls(int count)
+    {
+    }
+
+    public void AddRenderTrianglesRendered(int count)
+    {
+    }
+
+    public void AddRenderGpuBufferAllocation(long bytes)
+    {
+    }
+
+    public void RemoveRenderGpuBufferAllocation(long bytes)
+    {
+    }
+
+    public void AddRenderGpuTextureAllocation(long bytes)
+    {
+    }
+
+    public void RemoveRenderGpuTextureAllocation(long bytes)
+    {
+    }
+
+    public void AddRenderGpuRenderBufferAllocation(long bytes)
+    {
+    }
+
+    public void RemoveRenderGpuRenderBufferAllocation(long bytes)
+    {
+    }
+
+    public bool CanAllocateRenderVram(long requestedBytes, long existingAllocationBytes, out long projectedBytes, out long budgetBytes)
+    {
+        budgetBytes = RuntimeRenderingHostServiceDefaults.DefaultTrackedVramBudgetBytes;
+        projectedBytes = Math.Max(0L, requestedBytes - Math.Max(0L, existingAllocationBytes));
+        return true;
+    }
+
+    public void RecordRenderGpuBufferMapped(int count = 1)
+    {
+    }
+
+    public void RecordRenderGpuReadbackBytes(long bytes)
+    {
+    }
+
+    public void RecordRenderRendererStateCounter(ERendererProfilerCounter counter, long count = 1)
+    {
+    }
+
+    public void RecordRenderMemoryBarrier(EMemoryBarrierMask mask)
+    {
+    }
+
+    public void RecordRenderSceneAssetVisible(
+        string? sourceAssetIdentity,
+        string? cookedVariantIdentity,
+        string? meshName,
+        string? materialName,
+        int materialSlots,
+        int textureCount,
+        long triangleCount,
+        bool skinned,
+        string? representation)
+    {
+    }
+
+    public void RecordRenderTextureUpload(long bytes, TimeSpan elapsed)
+    {
+    }
+
+    public void RecordRenderSkinningUpload(
+        long boneMatrixBytes,
+        long blendshapeWeightBytes,
+        int skinningDispatches = 0,
+        int blendshapeDispatches = 0,
+        long coreInfluenceBytes = 0,
+        long spillHeaderBytes = 0,
+        long spillEntryBytes = 0,
+        long skinPaletteBytes = 0,
+        int skippedSkinningDispatches = 0,
+        int reusedSkinnedOutputBuffers = 0,
+        int liveSkinningShaderPermutations = 0,
+        long blendshapeActiveListUploadBytes = 0,
+        long blendshapeDeltaBytes = 0,
+        int blendshapeAuthoredShapeCount = 0,
+        int blendshapeActiveShapeCount = 0,
+        int blendshapeAffectedVertexCount = 0,
+        int skippedBlendshapeDispatches = 0,
+        int compactedActiveBlendshapeCount = 0,
+        int liveBlendshapeShaderPermutations = 0)
+    {
+    }
+
+    public void RecordRenderShaderVariant(bool requested, bool warming, bool linked, bool failed, bool loadedFromDiskCache, bool generatedThisRun)
+    {
+    }
+
+    public void RecordRenderGpuDrivenBucketWork(int activeBuckets, int emptyBucketSkips, int fullBucketScans, int materialScatterDispatches)
+    {
+    }
+
+    public void RecordRenderGpuDrivenCommandCompaction(long culledCommands, long delayedDrawCountValue, long gpuCompactionOverflow, long activeListOverflow, long bucketOverflow, long meshletOverflow)
+    {
+    }
+
+    public void RecordRenderGpuDrivenStageTiming(TimeSpan indirectGeneration, TimeSpan gpuCull, TimeSpan sortCompact)
+    {
+    }
+
+    public void RecordRenderGpuDrivenDelayedDiagnosticReadback(long bytes)
+    {
+    }
+
+    public void RecordRenderGpuDrivenHiZMode(string? mode)
+    {
+    }
+
+    public void RecordRenderGpuDrivenHiZPhase(bool twoPhase, long phaseOneDraws, long phaseTwoDraws)
+    {
+    }
+
+    public void RecordRenderVisibilityBuffer(int passDraws, long classifiedPixels, int activeMaterialTiles, int classificationOverflow, TimeSpan reconstruction, TimeSpan materialShading)
+    {
+    }
+
+    public void RecordRenderRvcFrameCounters(RvcFrameCounters counters)
+    {
+    }
+
+    public void RecordRenderRvcFrameProfile(RvcFrameProfileSnapshot profile)
+    {
+    }
+
+    public void RecordRenderGpuCpuFallback(int eventCount, int recoveredCommands)
+    {
+    }
+
+    public void RecordRenderForbiddenGpuFallback(int eventCount = 1)
+    {
+    }
+
+    public void RecordRenderResourceChurn(string resourceKind, string resourceName, string eventName, string? reason = null)
+    {
+    }
+
+    public void RecordRenderShadowAtlasSolveDiagnostics(ShadowAtlasSolveDiagnostics diagnostics)
+    {
+    }
+
+    public void RecordRenderGpuTransparencyDomainCounts(uint opaqueOrOtherVisible, uint maskedVisible, uint approximateVisible, uint exactVisible)
+    {
+    }
+
+    public void RecordRenderGpuMeshletStrategyRequested(int eventCount = 1)
+    {
+    }
+
+    public void RecordRenderGpuMeshletProductionFrame(int eventCount = 1)
+    {
+    }
+
+    public void RecordRenderGpuMeshletFallback(int eventCount = 1)
+    {
+    }
+
+    public void RecordRenderGpuMeshletDispatchSkipped(int eventCount = 1)
+    {
+    }
+
+    public void RecordRenderGpuMeshletTaskStats(uint emitted, uint frustumCulled, uint coneCulled, uint hiZCulled)
+    {
+    }
+
+    public void RecordRenderGpuMeshletExpansionOverflow(uint overflowCount)
+    {
+    }
+
+    public void RecordRenderGpuMeshletBufferBytesResident(long bytes)
+    {
+    }
+
+    public void RecordRenderGpuMeshletInstrumentation(
+        uint visibleMeshletCount,
+        uint dispatchedMeshletCount,
+        uint taskRecordOverflowCount,
+        TimeSpan dispatchTime,
+        uint readbackBytes)
+    {
+    }
+
+    public void RecordRenderGpuMeshletCacheHit(int eventCount = 1)
+    {
+    }
+
+    public void RecordRenderGpuMeshletCacheMiss(int eventCount = 1)
+    {
+    }
+
+    public void RecordRenderGpuMeshletCacheStale(int eventCount = 1)
+    {
+    }
+
+    public void RecordRenderOctreeCollect(int visibleRenderables, int emittedCommands)
+    {
+    }
+
+    public void RecordRenderCpuSpatialTreeStats(string mode, SpatialTreeOccupancyStats occupancy, long collectTicks)
+    {
+    }
+
+    public void RecordRenderRtxIoCopyIndirect(long copiedBytes, TimeSpan submissionTime)
+    {
+    }
+
+    public void RecordRenderRtxIoDecompression(long compressedBytes, long decompressedBytes, TimeSpan submissionTime)
+    {
+    }
+
+    public void RecordRenderSkinnedBoundsRefreshDeferredFinished(long queueWaitTicks, long cpuJobTicks, long applyTicks, bool succeeded)
+    {
+    }
+
+    public void RecordRenderSkinnedBoundsRefreshDeferredScheduled()
+    {
+    }
+
+    public void RecordRenderSkinnedBoundsRefreshGpuCompleted(long computeTicks, long applyTicks)
+    {
+    }
+
+    public void RecordRenderVrCommandBuildTimes(TimeSpan leftBuildTime, TimeSpan rightBuildTime)
+    {
+    }
+
+    public void RecordRenderVrPerViewVisibleCounts(uint leftVisible, uint rightVisible)
+    {
+    }
+
+    public void RecordRenderVrRenderSubmitTime(TimeSpan submitTime)
+    {
+    }
+
+    public void RecordRenderVrXrWaitFrameBlockTime(TimeSpan waitTime)
+    {
+    }
+
+    public void RecordRenderVrXrEndFrameSubmitTime(TimeSpan submitTime, ulong renderFrameId = 0UL)
+    {
+    }
+
+    public void RecordRenderVrXrPredictedToLatePoseDelta(double millimeters, double degrees)
+    {
+    }
+
+    public void RecordRenderVrXrPredictedDisplayLeadTime(double leadTimeMs)
+    {
+    }
+
+    public void RecordRenderVrXrMissedDeadlineFrame()
+    {
+    }
+
+    public void RecordRenderVrXrTrackingLossFrame()
+    {
+    }
+
+    public void RecordRenderVrXrRelocatePredictedTime(TimeSpan elapsed)
+    {
+    }
+
+    public void RecordRenderVrXrCollectFrustumExpansionDegrees(double degrees)
+    {
+    }
+
+    public void RecordRenderVrXrPacingThreadIdleTime(TimeSpan elapsed)
+    {
+    }
+
+    public void RecordRenderVrXrPacingHandoffStall()
+    {
+    }
+
+    public void RecordRenderVulkanAdhocBarrier(int emittedCount, int redundantCount)
+    {
+    }
+
+    public void RecordRenderVulkanAllocation(int allocationClass, long bytes)
+    {
+    }
+
+    public void RecordRenderVulkanBarrierPlannerPass(int imageBarrierCount, int bufferBarrierCount, int queueOwnershipTransfers, int stageFlushes)
+    {
+    }
+
+    public void RecordRenderVulkanBindChurn(
+        int pipelineBinds = 0,
+        int descriptorBinds = 0,
+        int pushConstantWrites = 0,
+        int vertexBufferBinds = 0,
+        int indexBufferBinds = 0,
+        int pipelineBindSkips = 0,
+        int descriptorBindSkips = 0,
+        int vertexBufferBindSkips = 0,
+        int indexBufferBindSkips = 0)
+    {
+    }
+
+    public void RecordRenderVulkanDescriptorBindingFailure(
+        string? programName,
+        string? bindingClass,
+        string? bindingName,
+        uint set,
+        uint binding,
+        bool skippedDraw,
+        bool skippedDispatch,
+        string? message)
+    {
+    }
+
+    public void RecordRenderVulkanDescriptorFallback(
+        string? programName,
+        string? bindingClass,
+        string? bindingName,
+        uint set,
+        uint binding,
+        int count = 1)
+    {
+    }
+
+    public void RecordRenderVulkanDescriptorPoolCreate()
+    {
+    }
+
+    public void RecordRenderVulkanDescriptorPoolDestroy()
+    {
+    }
+
+    public void RecordRenderVulkanDescriptorPoolReset()
+    {
+    }
+
+    public void RecordRenderVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount, int pendingRetirementCount, long oldestPendingRetirementAgeMilliseconds)
+    {
+    }
+
+    public void RecordRenderVulkanMeshFrameDataGauges(int arenaChunkCount, long mappedBytes, long reservedBytes, int reservationCount, ulong generation, int recordingLeases, int cachedLeases, int submittedLeases, int activeGenerationCount, int leaseRetainedGenerationCount)
+    {
+    }
+
+    public void RecordRenderVulkanFrameWideMeshFrameDataManifestGauges(ulong generation, long publicationCount, long lateRegistrationCount, int rendererCount, int familyCount, bool isSealed)
+    {
+    }
+
+    public void AdjustRenderVulkanMeshDescriptorOwnership(int allocationVariants, int pools, int allocatedSets, int reservedSets)
+    {
+    }
+
+    public void RecordRenderVulkanDynamicUniformAllocation(long bytes)
+    {
+    }
+
+    public void RecordRenderVulkanDynamicUniformExhaustion()
+    {
+    }
+
+    public void RecordRenderVulkanRecordCommandBufferAllocation(long bytes)
+    {
+    }
+
+    public void RecordRenderVulkanFrameDiagnostics(
+        int droppedFrameOps,
+        int droppedDrawOps,
+        int droppedComputeOps,
+        int sceneSwapchainWriters,
+        int overlaySwapchainWriters,
+        int forcedDiagnosticSwapchainWriters,
+        int fboOnlyDrawOps,
+        int fboOnlyBlitOps,
+        bool missingSceneSwapchainWriters,
+        string? firstFailedOpType,
+        int firstFailedPassIndex,
+        int firstFailedPipelineIdentity,
+        int firstFailedViewportIdentity,
+        string? firstFailedTargetName,
+        string? firstFailedMaterialName,
+        string? firstFailedShaderName,
+        string? firstFailedMessage,
+        string? diagnosticSummary)
+    {
+    }
+
+    public void RecordRenderVulkanFrameGpuCommandBufferTime(TimeSpan elapsed)
+    {
+    }
+
+    public void RecordRenderVulkanFrameLifecycleTiming(
+        TimeSpan waitFence,
+        TimeSpan acquireImage,
+        TimeSpan recordCommandBuffer,
+        TimeSpan submit,
+        TimeSpan trim,
+        TimeSpan present,
+        TimeSpan total)
+    {
+    }
+
+    public void RecordRenderVulkanFrameLifecycleDetailTiming(
+        TimeSpan sampleTimingQueries,
+        TimeSpan drainRetiredResources,
+        TimeSpan acquireBridgeSubmit,
+        TimeSpan waitSwapchainImage,
+        TimeSpan resetDynamicUniformRing,
+        TimeSpan snapshotImGuiOverlay,
+        TimeSpan recordSceneCommandBuffer,
+        TimeSpan recordImGuiOverlay,
+        TimeSpan recordDynamicUiTextOverlay)
+    {
+    }
+
+    public void RecordRenderVulkanFrameOpCensus(
+        int totalCount,
+        int clearCount,
+        int meshDrawCount,
+        int indirectDrawCount,
+        int meshTaskDispatchCount,
+        int blitCount,
+        int computeCount,
+        int swapchainWriteCount,
+        int fboWriteCount,
+        int uniquePassCount,
+        int uniqueContextCount,
+        int uniqueTargetCount)
+    {
+    }
+
+    public void RecordRenderVulkanCommandBufferCacheOutcome(
+        bool reusedClean,
+        bool recorded,
+        bool forcedDirty,
+        bool frameOpSignatureDirty,
+        bool plannerDirty,
+        bool profilerDirty,
+        string? dirtyReason,
+        EVulkanCommandBufferDecisionReason detailReasons,
+        ulong structuralSignature,
+        ulong descriptorGeneration,
+        int swapchainSlot)
+    {
+    }
+
+    public void RecordRenderVulkanCpuStage(EVulkanCpuStage stage, TimeSpan elapsed, long allocatedBytes)
+    {
+    }
+
+    public void RecordRenderVulkanCommandBuffersDirty(string? reason)
+    {
+    }
+
+    public void RecordRenderVulkanCommandChainMetrics(
+        int chainsScheduled,
+        int chainsRecorded,
+        int chainsReused,
+        int chainsFrameDataRefreshed,
+        int volatileChainsRecorded,
+        int primaryCommandBuffersReused,
+        int primaryCommandBuffersRecorded,
+        int visibilityPackets,
+        int renderPackets,
+        int secondaryCommandBuffers,
+        TimeSpan chainWorkerRecordTime,
+        TimeSpan renderThreadWaitForWorkersTime,
+        string? firstStructuralDirtyReason,
+        string? firstDescriptorGenerationMismatch,
+        string? firstResourcePlanRevisionMismatch)
+    {
+    }
+
+    public void RecordRenderVulkanGpuDrivenStageTiming(int stage, TimeSpan elapsed)
+    {
+    }
+
+    public void RecordRenderVulkanIndirectBatchMerge(int requestedBatchCount, int mergedBatchCount)
+    {
+    }
+
+    public void RecordRenderVulkanIndirectEffectiveness(uint requestedDraws, uint culledDraws, uint emittedIndirectDraws, uint consumedDraws, uint overflowCount = 0)
+    {
+    }
+
+    public void RecordRenderVulkanIndirectRecordingMode(bool usedSecondary, bool usedParallel, int opCount)
+    {
+    }
+
+    public void RecordRenderVulkanIndirectSubmission(bool usedCountPath, bool usedLoopFallback, int apiCalls, uint submittedDraws)
+    {
+    }
+
+    public void RecordRenderVulkanOomFallback()
+    {
+    }
+
+    public void RecordRenderVulkanPipelineCacheLookup(bool cacheHit)
+    {
+    }
+
+    public void RecordRenderVulkanPipelineCacheMiss(string? summary)
+    {
+    }
+
+    public void RecordRenderVulkanPipelineTelemetry(
+        EVulkanPipelineTelemetryEvent eventKind,
+        EVulkanDriverPipelineCacheOutcome cacheOutcome,
+        bool backgroundCompile,
+        double compileMilliseconds,
+        int queueDepth,
+        int queueCapacity)
+    {
+    }
+
+    public void RecordRenderVulkanQueueOverlapWindow(int overlapCandidatePasses, int transferCost, TimeSpan frameDelta, bool promotedMode, bool demotedMode)
+    {
+    }
+
+    public void RecordRenderVulkanQueueSubmit()
+    {
+    }
+
+    public void RecordRenderVulkanPresentResult(int result, bool accepted)
+    {
+    }
+
+    public void RecordRenderVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount)
+    {
+    }
+
+    public void RecordRenderVulkanSwapchainRetirement(int queued, int drained, int pending, int deferred)
+    {
+    }
+
+    public void RecordRenderVulkanRetiredResourceDrain(
+        int descriptorPools,
+        int descriptorSets,
+        int commandBuffers,
+        int queryPools,
+        int bufferViews,
+        int pipelines,
+        int framebuffers,
+        int buffers,
+        int bufferMemories,
+        int images,
+        int imageViews,
+        int samplers,
+        int imageMemories,
+        long imageBytes)
+    {
+    }
+
+    public void RecordRenderVulkanValidationMessage(bool isError, string? message)
+    {
+    }
+
+    public bool IsWindowScenePanelPresentationEnabled => RuntimeRenderingHostServiceDefaults.IsWindowScenePanelPresentationEnabled;
+    public EInteractiveWindowResizeStrategy InteractiveResizeStrategy => RuntimeRenderingHostServiceDefaults.InteractiveResizeStrategy;
+    public int ScenePanelResizeDebounceMs => RuntimeRenderingHostServiceDefaults.ScenePanelResizeDebounceMs;
+    public bool ForceFullViewport => RuntimeRenderingHostServiceDefaults.ForceFullViewport;
+
+    #endregion
+
+    #region VR and desktop mirror
+
+    public bool RenderWindowsWhileInVR => RuntimeRenderingHostServiceDefaults.RenderWindowsWhileInVR;
+    public bool EnableOpenXrVulkanParallelRendering => RuntimeRenderingHostServiceDefaults.EnableOpenXrVulkanParallelRendering;
+    public bool IsOpenXrRuntimeRequested => RuntimeRenderingHostServiceDefaults.IsOpenXrRuntimeRequested;
+    public EVrViewRenderMode VrViewRenderMode => RuntimeRenderingHostServiceDefaults.VrViewRenderMode;
+    public bool EnableVrFoveatedViewSet => RuntimeRenderingHostServiceDefaults.EnableVrFoveatedViewSet;
+    public EVrFoveationMode VrFoveationMode => RuntimeRenderingHostServiceDefaults.VrFoveationMode;
+    public EVrFoveationQualityPreset VrFoveationQualityPreset => RuntimeRenderingHostServiceDefaults.VrFoveationQualityPreset;
+    public bool VrFoveationRequireRequested => RuntimeRenderingHostServiceDefaults.VrFoveationRequireRequested;
+    public EOpenXrEyeResolutionPreset OpenXrEyeResolutionPreset => RuntimeRenderingHostServiceDefaults.OpenXrEyeResolutionPreset;
+    public float OpenXrEyeResolutionScale => RuntimeRenderingHostServiceDefaults.OpenXrEyeResolutionScale;
+    public uint OpenXrCustomEyeResolutionWidth => RuntimeRenderingHostServiceDefaults.OpenXrCustomEyeResolutionWidth;
+    public uint OpenXrCustomEyeResolutionHeight => RuntimeRenderingHostServiceDefaults.OpenXrCustomEyeResolutionHeight;
+    public bool IsInVR => RuntimeRenderingHostServiceDefaults.IsInVR;
+    public bool IsOpenXRActive => RuntimeRenderingHostServiceDefaults.IsOpenXRActive;
+    public bool VrMirrorComposeFromEyeTextures => RuntimeRenderingHostServiceDefaults.VrMirrorComposeFromEyeTextures;
+    public bool VrCopyEyePreviewTextures => RuntimeRenderingHostServiceDefaults.VrCopyEyePreviewTextures;
+    public Vector2 VrFoveationCenterUv => new(
+        RuntimeRenderingHostServiceDefaults.VrFoveationCenterU,
+        RuntimeRenderingHostServiceDefaults.VrFoveationCenterV);
+    public float VrFoveationInnerRadius => RuntimeRenderingHostServiceDefaults.VrFoveationInnerRadius;
+    public float VrFoveationOuterRadius => RuntimeRenderingHostServiceDefaults.VrFoveationOuterRadius;
+    public Vector3 VrFoveationShadingRates => new(
+        RuntimeRenderingHostServiceDefaults.VrFoveationInnerShadingRate,
+        RuntimeRenderingHostServiceDefaults.VrFoveationMiddleShadingRate,
+        RuntimeRenderingHostServiceDefaults.VrFoveationOuterShadingRate);
+    public float VrFoveationVisibilityMargin => RuntimeRenderingHostServiceDefaults.VrFoveationVisibilityMargin;
+    public bool VrFoveationForceFullResForUiAndNearField => RuntimeRenderingHostServiceDefaults.VrFoveationForceFullResForUiAndNearField;
+    public float VrFoveationFullResNearDistanceMeters => RuntimeRenderingHostServiceDefaults.VrFoveationFullResNearDistanceMeters;
+    public bool OpenXrCullWithFrustum => RuntimeRenderingHostServiceDefaults.OpenXrCullWithFrustum;
+    public bool OpenXrDebugGl => RuntimeRenderingHostServiceDefaults.OpenXrDebugGl;
+    public bool OpenXrDebugClearOnly => RuntimeRenderingHostServiceDefaults.OpenXrDebugClearOnly;
+    public bool OpenXrDebugLifecycle => RuntimeRenderingHostServiceDefaults.OpenXrDebugLifecycle;
+    public bool OpenXrDebugRenderRightThenLeft => RuntimeRenderingHostServiceDefaults.OpenXrDebugRenderRightThenLeft;
+    public bool OpenXrPrepareFrameAfterDesktopRender => RuntimeRenderingHostServiceDefaults.OpenXrPrepareFrameAfterDesktopRender;
+    public float OpenXrDeadlineSafetyMarginMs => RuntimeRenderingHostServiceDefaults.OpenXrDeadlineSafetyMarginMs;
+    public float OpenXrPoseTimeOffsetMs => RuntimeRenderingHostServiceDefaults.OpenXrPoseTimeOffsetMs;
+    public OpenXRAPI.OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy => OpenXRAPI.OpenXrCollectVisiblePosePolicy.Predicted;
+    public float OpenXrCollectVisibleFrustumPaddingDegrees => RuntimeRenderingHostServiceDefaults.OpenXrCollectVisibleFrustumPaddingDegrees;
+    public OpenXRAPI.OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy => OpenXRAPI.OpenXrTrackingLossPolicy.FreezeLastValid;
+    public OpenXRAPI.OpenXrActionSyncPolicy OpenXrActionSyncPolicy => OpenXRAPI.OpenXrActionSyncPolicy.PredictedOnly;
+    public OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode => RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
+
+    public bool TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
+    {
+        return false;
+    }
+
+    public void RecordVrPerViewDrawCounts(uint leftDraws, uint rightDraws)
+    {
+    }
+
+    #endregion
+
+    #region Backend utilities
+
+    public void DestroyObjectsForRenderer(IRuntimeRendererHost renderer)
+    {
+    }
+
+    public bool IsViewportCurrentlyRendering(IRuntimeViewportHost viewport)
+        => RuntimeRenderingHostServiceDefaults.IsViewportCurrentlyRendering;
+
+    public bool ShouldForceDebugOpaquePipeline => RuntimeRenderingHostServiceDefaults.ShouldForceDebugOpaquePipeline;
+
+    public IRuntimeRenderPipelineHost? CreateDebugOpaquePipelineOverride()
+        => null;
+
+    public void PrepareUpscaleBridgeForFrame(IRuntimeViewportHost viewport, IRuntimeRenderPipelineFrameContext pipeline)
+    {
+    }
+
+    public void ConfigureMaterialProgram(XRMaterialBase material, XRRenderProgram program)
+    {
+    }
+
+    public int GetBytesPerPixel(ESizedInternalFormat format)
+        => RuntimeRenderingHostServiceDefaults.FallbackBytesPerPixel;
+
+    public int GetBytesPerPixel(ERenderBufferStorage storage)
+        => RuntimeRenderingHostServiceDefaults.FallbackBytesPerPixel;
+
+    public void AddFrameBufferBandwidth(long totalBytes)
+    {
+    }
+
+    public void DispatchCompute(XRRenderProgram program, uint groupCountX, uint groupCountY, uint groupCountZ)
+    {
+    }
+
+    public bool TryBlitFrameBufferToFrameBuffer(
+        XRFrameBuffer sourceFrameBuffer,
+        XRFrameBuffer destinationFrameBuffer,
+        EReadBufferMode readBuffer,
+        bool colorBit,
+        bool depthBit,
+        bool stencilBit,
+        bool linearFilter)
+        => false;
+
+    public bool TryBlitViewportToFrameBuffer(
+        IRuntimeViewportGrabSource viewport,
+        XRFrameBuffer framebuffer,
+        EReadBufferMode readBuffer,
+        bool colorBit,
+        bool depthBit,
+        bool stencilBit,
+        bool linearFilter)
+        => false;
+
+    #endregion
+
+}

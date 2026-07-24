@@ -78,7 +78,7 @@ public unsafe partial class OpenXRAPI
         RenderFrameViewSetPublication.Publish(
             RuntimeEngine.Rendering.State.RenderFrameId,
             builder.Build(
-            RuntimeRenderingHostServices.Current.VrViewRenderMode,
+            RuntimeRenderingHostServices.Presentation.VrViewRenderMode,
             EVrVisibilityPolicy.SharedFrameViewSet,
             visibilityGroupCount: 1,
             "Located OpenXR views"));

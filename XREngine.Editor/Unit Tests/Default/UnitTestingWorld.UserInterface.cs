@@ -22,7 +22,6 @@ using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
-using XREngine.Scene.Components.UI;
 using XREngine.Scene.Transforms;
 using XREngine.Scene.Components.Editing;
 
@@ -1017,7 +1016,7 @@ public static partial class EditorUnitTests
 
         private static bool ShouldFlipOpenXrVulkanStereoPreviewUv()
             => Engine.VRState.IsOpenXRActive
-            && RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan;
+            && RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan;
 
         private static bool TryResolveVRStereoPreviewTextures(
             out XRTexture? leftTex,

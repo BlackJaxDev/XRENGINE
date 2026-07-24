@@ -215,7 +215,7 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void SkinnedBoundsComputeReadsMappedGpuOutputAndUsesDynamicResetBuffer()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Compute/SkinnedMeshBoundsCalculator.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/SkinnedMeshBoundsCalculator.cs");
         string shader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Animation/SkinnedBounds.comp");
 
         source.ShouldContain("StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent");

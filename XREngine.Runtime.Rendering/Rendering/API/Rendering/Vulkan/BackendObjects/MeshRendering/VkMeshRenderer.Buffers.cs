@@ -388,7 +388,7 @@ public unsafe partial class VulkanRenderer
 
 		private void OnAsyncIndexBufferReady(XRDataBuffer buffer, IndexSize elementSize)
 		{
-			RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
+			RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadTask(
 				MarkIndexBuffersDirty,
 				"VkMeshRenderer.AsyncIndexBufferReady",
 				RenderThreadJobKind.MeshUpload);

@@ -122,7 +122,7 @@ public sealed class WindowOwnershipContractTests
         renderBody.ShouldNotContain("Interlocked.CompareExchange(ref _interactiveResizeRenderActive, 1, 0) != 0 ||");
         renderBody.ShouldContain("InteractiveResizeDiagnostics.RecordSuppressedRender(reason + \":interactive-active\");");
         renderBody.ShouldContain("Volatile.Write(ref _interactiveResizeRenderActive, 0);\n                InteractiveResizeDiagnostics.RecordSuppressedRender(reason + \":normal-render-active\");");
-        renderBody.ShouldContain("RuntimeRenderingHostServices.Current.TryDispatchInteractiveResizeFrame()");
+        renderBody.ShouldContain("RuntimeRenderingHostServices.Scheduling.TryDispatchInteractiveResizeFrame()");
         renderBody.ShouldNotContain("Window.DoRender()");
         renderBody.ShouldNotContain("ProcessPendingInteractivePresentationResize()");
     }
@@ -482,7 +482,7 @@ public sealed class WindowOwnershipContractTests
     [Test]
     public void EditorPreviewTextureApiObjectCreationUsesRenderThreadInvocationService()
     {
-        string services = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderingHostServices.cs");
+        string services = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderSchedulingServices.cs");
         string hostServices = ReadWorkspaceFile("XRENGINE/Engine/Engine.RuntimeRenderingHostServices.cs");
         string editorHelper = ReadWorkspaceFile("XREngine.Editor/Rendering/EditorRenderThread.cs");
         string materialInspector = ReadWorkspaceFile("XREngine.Editor/AssetEditors/XRMaterialInspector.cs");
@@ -492,7 +492,7 @@ public sealed class WindowOwnershipContractTests
         services.ShouldContain("T InvokeRenderThreadTask<T>");
         hostServices.ShouldContain("Engine.EnqueueRenderThreadTask(");
         hostServices.ShouldContain("ManualResetEventSlim completed");
-        editorHelper.ShouldContain("RuntimeRenderingHostServices.Current.InvokeRenderThreadTask");
+        editorHelper.ShouldContain("RuntimeRenderingHostServices.Scheduling.InvokeRenderThreadTask");
         materialInspector.ShouldContain("EditorRenderThread.Invoke(");
         renderPipelineInspector.ShouldContain("EditorRenderThread.Invoke(");
         viewportPanel.ShouldContain("EditorRenderThread.Invoke(");
@@ -512,7 +512,7 @@ public sealed class WindowOwnershipContractTests
         xrWindow.ShouldContain("public event Action<XRWindow, Vector2D<int>>? FramebufferResized;");
         xrWindow.ShouldContain("public string WindowTitle");
         xrWindow.ShouldContain("public Vector2D<int> WindowSizeSnapshot");
-        xrWindow.ShouldContain("RuntimeRenderingHostServices.Current.EnqueueWindowThreadTask(");
+        xrWindow.ShouldContain("RuntimeRenderingHostServices.Scheduling.EnqueueWindowThreadTask(");
 
         fileDrop.ShouldContain("window.FileDropped += HandleFileDrop;");
         fileDrop.ShouldNotContain("window.Window.FileDrop");

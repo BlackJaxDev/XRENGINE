@@ -589,7 +589,7 @@ internal sealed class VulkanTextureUploadService
             : $"stale generation request={request.StreamingGeneration} current={currentStreamingGeneration}";
 
         TextureRuntimeDiagnostics.LogVulkanImportedTextureUploadRejected(
-            RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+            RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
             request.TextureName,
             request.SourcePath,
             request.StreamingGeneration,
@@ -611,7 +611,7 @@ internal sealed class VulkanTextureUploadService
         string? detail = null)
     {
         TextureRuntimeDiagnostics.LogVulkanImportedTextureUploadState(
-            RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+            RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
             request.TextureName,
             request.SourcePath,
             request.StreamingGeneration,
@@ -745,7 +745,7 @@ internal sealed class VulkanTextureUploadService
         if (Interlocked.CompareExchange(ref _prepDrainScheduled, 1, 0) != 0)
             return;
 
-        RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(
+        RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
             () => DrainQueuedUploadPreparation(renderer),
             "VulkanTextureUploadService.DrainUploadPrepQueue",
             RenderThreadJobKind.TextureUpload);
@@ -914,7 +914,7 @@ internal sealed class VulkanTextureUploadService
                 double stepMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(stepStart);
                 TextureRuntimeDiagnostics.RecordUploadDuration(stepMilliseconds);
                 RenderWorkBudgetCoordinator.RecordCompleted(RenderWorkSubsystem.TextureUpload, stepMilliseconds);
-                RuntimeRenderingHostServices.Current.RecordRenderTextureUpload(request.EstimatedBytes, TimeSpan.FromMilliseconds(stepMilliseconds));
+                RuntimeRenderingHostServices.Statistics.RecordRenderTextureUpload(request.EstimatedBytes, TimeSpan.FromMilliseconds(stepMilliseconds));
                 Volatile.Write(ref s_lastRenderThreadPrepMilliseconds, stepMilliseconds);
 
                 if (!stepOk)
@@ -1114,7 +1114,7 @@ internal sealed class VulkanTextureUploadService
 
         Volatile.Write(ref s_lastWorkerPrepMilliseconds, workerResult.PrepMilliseconds);
         TextureRuntimeDiagnostics.RecordUploadDuration(workerResult.PrepMilliseconds);
-        RuntimeRenderingHostServices.Current.RecordRenderTextureUpload(job.Request.EstimatedBytes, TimeSpan.FromMilliseconds(workerResult.PrepMilliseconds));
+        RuntimeRenderingHostServices.Statistics.RecordRenderTextureUpload(job.Request.EstimatedBytes, TimeSpan.FromMilliseconds(workerResult.PrepMilliseconds));
         RecordState(
             job.Request,
             VulkanTextureUploadGenerationState.PrepReady,
@@ -1130,7 +1130,7 @@ internal sealed class VulkanTextureUploadService
         long prepStart = TextureRuntimeDiagnostics.StartTiming();
         try
         {
-            if (RuntimeRenderingHostServices.Current.IsRenderThread)
+            if (RuntimeRenderingHostServices.FrameTiming.IsRenderThread)
                 throw new InvalidOperationException("Vulkan upload worker preparation must not run on the render thread or touch active frame command buffers.");
 
             lock (renderer.TextureUploadContextSync)
@@ -1254,7 +1254,7 @@ internal sealed class VulkanTextureUploadService
         if (Interlocked.CompareExchange(ref _transferDrainScheduled, 1, 0) != 0)
             return;
 
-        RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(
+        RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
             () => DrainSubmittedTextureTransfers(renderer),
             "VulkanTextureUploadService.DrainTransferUploads",
             RenderThreadJobKind.TextureUpload);
@@ -1394,7 +1394,7 @@ internal sealed class VulkanTextureUploadService
             Interlocked.Exchange(ref s_pendingDescriptorPublications, 0);
 
         TextureRuntimeDiagnostics.LogVulkanImportedTextureUploadLatency(
-            RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+            RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
             request.TextureName,
             request.SourcePath,
             request.StreamingGeneration,
@@ -1650,7 +1650,7 @@ internal sealed class VulkanTextureUploadService
         if (configured <= 0.0)
             return 0.0;
 
-        double frameBudget = RuntimeRenderingHostServices.Current.TextureUploadFrameBudgetMilliseconds;
+        double frameBudget = RuntimeRenderingHostServices.Settings.TextureUploadFrameBudgetMilliseconds;
         if (frameBudget <= 0.0)
             return configured;
 

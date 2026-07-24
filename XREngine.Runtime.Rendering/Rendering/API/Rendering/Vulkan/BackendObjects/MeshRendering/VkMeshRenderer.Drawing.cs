@@ -31,7 +31,7 @@ public unsafe partial class VulkanRenderer
 
 		private static IDisposable? StartMeshDrawDetailScope(string name)
 			=> CommandRecordingDetailProfilingEnabled
-				? RuntimeRenderingHostServices.Current.StartProfileScope(name)
+				? RuntimeRenderingHostServices.Profiling.StartProfileScope(name)
 				: null;
 
 		/// <summary>

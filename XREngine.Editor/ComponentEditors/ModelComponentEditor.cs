@@ -1347,80 +1347,11 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             return false;
         }
 
-        if (TryGetVulkanRenderer() is VulkanRenderer vkRenderer)
-        {
-            IntPtr textureId = EditorRenderThread.Invoke(
-                () => vkRenderer.RegisterImGuiTexture(texture),
-                "ModelComponentEditor.RegisterVulkanPreviewTexture",
-                RenderThreadJobKind.TextureUpload);
-            if (textureId == IntPtr.Zero)
-            {
-                failureReason = "Texture not uploaded";
-                return false;
-            }
-
-            handle = (nint)textureId;
-            return true;
-        }
-
-        OpenGLRenderer? renderer = TryGetOpenGLRenderer();
-        if (renderer is null)
-        {
-            failureReason = "Preview requires OpenGL or Vulkan renderer";
-            return false;
-        }
-
-        switch (texture)
-        {
-            case XRTexture2D tex2D:
-                var apiTexture = EditorRenderThread.Invoke(
-                    () => renderer.GenericToAPI<GLTexture2D>(tex2D),
-                    "ModelComponentEditor.ResolveOpenGLPreviewTexture2D",
-                    RenderThreadJobKind.TextureUpload);
-                if (apiTexture is null)
-                {
-                    failureReason = "Texture not uploaded";
-                    return false;
-                }
-
-                uint binding = apiTexture.BindingId;
-                if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
-                {
-                    failureReason = "Texture not ready";
-                    return false;
-                }
-
-                handle = (nint)binding;
-                return true;
-
-            default:
-                failureReason = $"{texture.GetType().Name} preview not supported";
-                return false;
-        }
-    }
-
-    private static OpenGLRenderer? TryGetOpenGLRenderer()
-    {
-        if (AbstractRenderer.Current is OpenGLRenderer current)
-            return current;
-
-        foreach (var window in Engine.Windows)
-            if (window.Renderer is OpenGLRenderer renderer)
-                return renderer;
-
-        return null;
-    }
-
-    private static VulkanRenderer? TryGetVulkanRenderer()
-    {
-        if (AbstractRenderer.Current is VulkanRenderer current)
-            return current;
-
-        foreach (var window in Engine.Windows)
-            if (window.Renderer is VulkanRenderer renderer)
-                return renderer;
-
-        return null;
+        return EditorTexturePreviewService.TryGetHandle(
+            texture,
+            out handle,
+            out _,
+            out failureReason);
     }
 
     private static Vector2 GetTexturePixelSize(XRTexture texture)

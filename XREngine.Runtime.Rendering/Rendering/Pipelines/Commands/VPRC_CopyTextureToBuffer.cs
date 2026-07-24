@@ -56,7 +56,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return bytes.Length > 0;
             }
 
-            if (AbstractRenderer.Current is OpenGLRenderer renderer)
+            if (AbstractRenderer.Current is IRuntimeRendererHost renderer &&
+                renderer.TryGetBackendCapability<IRenderCaptureBackendCapability>(out var capture) &&
+                capture is not null)
             {
                 IGLTexture? apiTexture = null;
                 foreach (IRenderAPIObject wrapper in texture.APIWrappers)
@@ -69,7 +71,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
 
                 if (apiTexture is not null &&
-                    renderer.TryCaptureTextureBytes(apiTexture.BindingId, SourceMipLevel, SourceLayerIndex, out bytes, out _, out _, out _, out _))
+                    capture.TryCaptureTextureBytes(apiTexture.BindingId, SourceMipLevel, SourceLayerIndex, out bytes, out _, out _, out _, out _))
                 {
                     return true;
                 }

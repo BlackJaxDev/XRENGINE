@@ -662,7 +662,9 @@ namespace XREngine.Rendering
 
             try
             {
-                if (AbstractRenderer.Current is not VulkanRenderer vulkanRenderer)
+                if (AbstractRenderer.Current is not IRuntimeRendererHost renderer ||
+                    !renderer.TryGetBackendCapability<IBufferDiagnosticReadbackBackendCapability>(out var readback) ||
+                    readback is null)
                 {
                     reason = "<not-vulkan>";
                     return false;
@@ -670,7 +672,7 @@ namespace XREngine.Rendering
 
                 uint byteOffset = checked(index * sizeof(uint));
                 Span<byte> bytes = stackalloc byte[sizeof(uint)];
-                if (!vulkanRenderer.TryReadBufferBytesForDiagnostics(buffer, byteOffset, bytes, out reason))
+                if (!readback.TryReadBufferBytes(buffer, byteOffset, bytes, out reason))
                     return false;
 
                 value = BitConverter.ToUInt32(bytes);
@@ -720,14 +722,16 @@ namespace XREngine.Rendering
 
             try
             {
-                if (AbstractRenderer.Current is not VulkanRenderer vulkanRenderer)
+                if (AbstractRenderer.Current is not IRuntimeRendererHost renderer ||
+                    !renderer.TryGetBackendCapability<IBufferDiagnosticReadbackBackendCapability>(out var readback) ||
+                    readback is null)
                 {
                     reason = "<not-vulkan>";
                     return false;
                 }
 
                 Span<byte> bytes = stackalloc byte[(int)commandSize];
-                if (!vulkanRenderer.TryReadBufferBytesForDiagnostics(buffer, (uint)offset, bytes, out reason))
+                if (!readback.TryReadBufferBytes(buffer, (uint)offset, bytes, out reason))
                     return false;
 
                 command = MemoryMarshal.Read<DrawElementsIndirectCommand>(bytes);
@@ -1561,8 +1565,8 @@ namespace XREngine.Rendering
 
         private static void LogGLErrors(AbstractRenderer renderer, string context)
         {
-            if (renderer is OpenGLRenderer glRenderer)
-                glRenderer.LogGLErrors(context);
+            if (((IRuntimeRendererHost)renderer).TryGetBackendCapability<IRenderProgramBackendCapability>(out var capability))
+                capability?.LogBackendErrors(context);
         }
 
         private static bool EnsureParameterBufferReady(XRDataBuffer parameterBuffer, bool requireMapped = false)
@@ -2274,28 +2278,11 @@ namespace XREngine.Rendering
 
         private static bool IsProgramReadyForCurrentRenderer(XRRenderProgram program)
         {
-            if (AbstractRenderer.Current is not OpenGLRenderer glRenderer)
+            if (AbstractRenderer.Current is not IRuntimeRendererHost renderer ||
+                !renderer.TryGetBackendCapability<IRenderProgramBackendCapability>(out var capability) ||
+                capability is null)
                 return true;
-
-            OpenGLRenderer.GLRenderProgram? glProgram = FindProgramForCurrentOpenGLRenderer(program, glRenderer);
-
-            return glProgram?.IsLinked == true;
-        }
-
-        private static OpenGLRenderer.GLRenderProgram? FindProgramForCurrentOpenGLRenderer(
-            XRRenderProgram program,
-            OpenGLRenderer glRenderer)
-        {
-            foreach (var wrapper in program.APIWrappers)
-            {
-                if (wrapper is OpenGLRenderer.GLRenderProgram glProgram &&
-                    ReferenceEquals(glProgram.Owner, glRenderer))
-                {
-                    return glProgram;
-                }
-            }
-
-            return null;
+            return capability.IsProgramReady(program);
         }
 
         private bool EnsureZeroReadbackMaterialSlotProgramsReady(
@@ -2441,10 +2428,11 @@ namespace XREngine.Rendering
             string materialName = TrimDiagnosticName(material.Name, 64);
             string programName = TrimDiagnosticName(program.Name, 64);
             string glLinkedText = "n/a";
-            if (AbstractRenderer.Current is OpenGLRenderer glRenderer)
+            if (AbstractRenderer.Current is IRuntimeRendererHost renderer &&
+                renderer.TryGetBackendCapability<IRenderProgramBackendCapability>(out var capability) &&
+                capability is not null)
             {
-                OpenGLRenderer.GLRenderProgram? glProgram = FindProgramForCurrentOpenGLRenderer(program, glRenderer);
-                glLinkedText = glProgram?.IsLinked.ToString() ?? "missing-wrapper";
+                glLinkedText = capability.DescribeProgramReadiness(program);
             }
 
             builder
@@ -2722,15 +2710,15 @@ namespace XREngine.Rendering
                     EMemoryBarrierMask.TextureFetch);
 
                 System.Diagnostics.Stopwatch dispatchStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                VulkanRenderer? vulkanRenderer = textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable
-                    ? renderer as VulkanRenderer
-                    : null;
+                IMaterialTableBackendCapability? materialCapability = null;
+                if (textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable)
+                    ((IRuntimeRendererHost)renderer).TryGetBackendCapability(out materialCapability);
                 bool bindlessScopeActive = false;
                 try
                 {
-                    if (vulkanRenderer is not null)
+                    if (materialCapability is not null)
                     {
-                        bindlessScopeActive = vulkanRenderer.BeginGlobalMaterialTextureDescriptorScope(
+                        bindlessScopeActive = materialCapability.BeginGlobalMaterialTextureDescriptorScope(
                             program,
                             "GpuMeshletVulkanDescriptorIndexMaterialTable");
                         if (!bindlessScopeActive)
@@ -2740,7 +2728,7 @@ namespace XREngine.Rendering
                         }
                     }
 
-                    if (bindlessScopeActive || vulkanRenderer is null)
+                    if (bindlessScopeActive || materialCapability is null)
                     {
                         submitted = renderer.TryDrawMeshTasksIndirectCount(
                             dispatchIndirectBuffer,
@@ -2753,7 +2741,7 @@ namespace XREngine.Rendering
                 finally
                 {
                     if (bindlessScopeActive)
-                        vulkanRenderer?.EndGlobalMaterialTextureDescriptorScope(program);
+                        materialCapability?.EndGlobalMaterialTextureDescriptorScope(program);
                 }
                 dispatchStopwatch.Stop();
                 dispatchElapsed = dispatchStopwatch.Elapsed;
@@ -3021,8 +3009,9 @@ namespace XREngine.Rendering
         }
 
         private static bool ShouldUseVulkanSceneDatabaseDeviceAddresses()
-            => AbstractRenderer.Current is VulkanRenderer renderer &&
-               renderer.SupportsBufferDeviceAddress &&
+            => AbstractRenderer.Current is IRuntimeRendererHost renderer &&
+               renderer.TryGetBackendCapability<IMaterialTableBackendCapability>(out var capability) &&
+               capability?.SupportsBufferDeviceAddress == true &&
                VulkanFeatureProfile.ActiveGeometryFetchMode == EVulkanGeometryFetchMode.BufferDeviceAddressPrototype;
 
         private static EMaterialTableTextureReferenceMode ResolveMaterialTableTextureReferenceMode(
@@ -3036,13 +3025,15 @@ namespace XREngine.Rendering
             if (SupportsOpenGLBindlessMaterialTable())
                 return EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable;
 
-            if (AbstractRenderer.Current is VulkanRenderer vulkanRenderer)
+            if (AbstractRenderer.Current is IRuntimeRendererHost renderer &&
+                renderer.TryGetBackendCapability<IMaterialTableBackendCapability>(out var capability) &&
+                capability is not null &&
+                renderer.BackendId == RendererBackendId.Vulkan)
             {
-                VulkanBindlessMaterialCapability capability = vulkanRenderer.BindlessMaterialCapability;
-                if (capability.Tier >= EVulkanBindlessMaterialCapabilityTier.BindlessMaterialTableShaderReady)
+                if (capability.SupportsBindlessMaterialTable)
                     return EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable;
 
-                unavailableReason = $"Vulkan capability tier={capability.Tier}, mode={capability.Mode}, reason='{capability.Reason}'.";
+                unavailableReason = capability.BindlessMaterialUnavailableReason;
                 return EMaterialTableTextureReferenceMode.None;
             }
 
@@ -3052,7 +3043,9 @@ namespace XREngine.Rendering
 
         private static bool SupportsOpenGLBindlessMaterialTable()
         {
-            if (AbstractRenderer.Current is not OpenGLRenderer)
+            if (AbstractRenderer.Current is not IRuntimeRendererHost renderer ||
+                renderer.BackendId != RendererBackendId.OpenGL ||
+                !renderer.TryGetBackendCapability<IMaterialTableBackendCapability>(out var capability))
                 return false;
 
             string[]? extensions = RuntimeEngine.Rendering.State.OpenGLExtensions;
@@ -3061,7 +3054,7 @@ namespace XREngine.Rendering
 
             return extensions.Contains("GL_ARB_bindless_texture", StringComparer.Ordinal) &&
                 extensions.Contains("GL_ARB_gpu_shader_int64", StringComparer.Ordinal) &&
-                AbstractRenderer.Current is OpenGLRenderer { SupportsBindlessTextureHandles: true };
+                capability?.SupportsBindlessTextureHandles == true;
         }
 
         private static void AppendDrawMetadataStructGlsl(StringBuilder sb)
@@ -5328,102 +5321,23 @@ namespace XREngine.Rendering
             if (!graphicsProgram.HasUniform(SceneDatabaseDrawMetadataAddressUniform))
                 return true;
 
-            if (AbstractRenderer.Current is not VulkanRenderer renderer)
+            if (AbstractRenderer.Current is not ISceneDatabaseDeviceAddressBackendCapability capability)
             {
                 XREngine.Debug.RenderingWarningEvery(
-                    $"RenderDispatch.SceneDatabaseBda.NonVulkan.{consumer}",
+                    $"RenderDispatch.SceneDatabaseBda.UnsupportedBackend.{consumer}",
                     TimeSpan.FromSeconds(2),
-                    "[RenderDispatch] Scene-database buffer-device-address shader '{0}' is active, but the current renderer is not Vulkan.",
+                    "[RenderDispatch] Scene-database buffer-device-address shader '{0}' is active, but the current backend does not provide device-address binding.",
                     consumer);
                 return false;
             }
 
-            if (!renderer.SupportsBufferDeviceAddress)
-            {
-                XREngine.Debug.RenderingWarningEvery(
-                    $"RenderDispatch.SceneDatabaseBda.Unsupported.{consumer}",
-                    TimeSpan.FromSeconds(2),
-                    "[RenderDispatch] Scene-database buffer-device-address shader '{0}' is active, but bufferDeviceAddress is unavailable.",
-                    consumer);
-                return false;
-            }
-
-            graphicsProgram.Uniform(SceneDatabaseDrawMetadataCountUniform, drawMetadataBuffer.ElementCount);
-            if (!TryBindSceneDatabaseBufferDeviceAddress(
-                renderer,
+            return capability.TryBindSceneDatabaseDeviceAddressUniforms(
                 graphicsProgram,
                 drawMetadataBuffer,
-                SceneDatabaseDrawMetadataAddressUniform,
-                consumer,
-                required: true))
-            {
-                return false;
-            }
-
-            if (!useInstanceTransformBuffer || instanceTransformBuffer is null)
-            {
-                graphicsProgram.Uniform(SceneDatabaseTransformAddressUniform, new UVector2(0u, 0u));
-                graphicsProgram.Uniform(SceneDatabaseTransformFloatCountUniform, 0u);
-                return true;
-            }
-
-            graphicsProgram.Uniform(SceneDatabaseTransformFloatCountUniform, instanceTransformBuffer.Length / (uint)sizeof(float));
-            return TryBindSceneDatabaseBufferDeviceAddress(
-                renderer,
-                graphicsProgram,
                 instanceTransformBuffer,
-                SceneDatabaseTransformAddressUniform,
-                consumer,
-                required: true);
+                useInstanceTransformBuffer,
+                consumer);
         }
-
-        private static bool TryBindSceneDatabaseBufferDeviceAddress(
-            VulkanRenderer renderer,
-            XRRenderProgram program,
-            XRDataBuffer buffer,
-            string uniformName,
-            string consumer,
-            bool required)
-        {
-            if (renderer.GetOrCreateAPIRenderObject(buffer, generateNow: true) is not VulkanRenderer.VkDataBuffer vkBuffer)
-            {
-                renderer.RecordSceneDatabaseDeviceAddressConsumer(buffer, 0ul, consumer, consumed: false, "wrapper-unavailable");
-                if (required)
-                    WarnSceneDatabaseDeviceAddressUnavailable(buffer, consumer, "wrapper-unavailable");
-                return !required;
-            }
-
-            vkBuffer.Generate();
-            if (!vkBuffer.TryGetDeviceAddress(out ulong address) || address == 0ul)
-            {
-                vkBuffer.PushData();
-                vkBuffer.TryGetDeviceAddress(out address);
-            }
-
-            bool consumed = address != 0ul;
-            renderer.RecordSceneDatabaseDeviceAddressConsumer(buffer, address, consumer, consumed, consumed ? "resolved" : "address-unresolved");
-            if (!consumed)
-            {
-                if (required)
-                    WarnSceneDatabaseDeviceAddressUnavailable(buffer, consumer, "address-unresolved");
-                return !required;
-            }
-
-            program.Uniform(uniformName, PackDeviceAddress(address));
-            return true;
-        }
-
-        private static UVector2 PackDeviceAddress(ulong address)
-            => new((uint)(address & 0xFFFFFFFFul), (uint)(address >> 32));
-
-        private static void WarnSceneDatabaseDeviceAddressUnavailable(XRDataBuffer buffer, string consumer, string reason)
-            => XREngine.Debug.RenderingWarningEvery(
-                $"RenderDispatch.SceneDatabaseBda.Unresolved.{consumer}.{buffer.AttributeName}.{reason}",
-                TimeSpan.FromSeconds(2),
-                "[RenderDispatch] Scene-database buffer-device-address consumer '{0}' cannot resolve buffer '{1}' ({2}); skipping this Vulkan prototype draw bucket instead of falling back silently.",
-                consumer,
-                buffer.AttributeName,
-                reason);
 
         private static void DispatchRenderIndirectCountBucket(
             XRDataBuffer indirectDrawBuffer,
@@ -5468,22 +5382,20 @@ namespace XREngine.Rendering
             if (!TryUseIndirectGraphicsProgram(graphicsProgram, "RenderIndirectCountBucket"))
                 return;
 
-            bool TryBeginVulkanIndirectDrawState(out VulkanRenderer.IndirectDrawStateScope scope)
+            bool TryBeginIndirectDrawState(out IndirectDrawStateCapabilityScope scope)
             {
                 scope = default;
-                if (renderer is not VulkanRenderer vulkanRenderer)
+                if (renderer is not IIndirectDrawStateBackendCapability capability)
                     return true;
 
-                if (material is null)
-                {
-                    XREngine.Debug.RenderingWarningEvery(
-                        "RenderDispatch.VulkanIndirectDrawStateMissingMaterial",
-                        TimeSpan.FromSeconds(2),
-                        "[RenderDispatch] Vulkan indirect draw skipped because no material was provided for captured draw state.");
+                if (!capability.TryBeginIndirectDrawState(
+                    graphicsProgram,
+                    material,
+                    modelMatrix,
+                    out IndirectDrawStateToken token))
                     return false;
-                }
 
-                scope = vulkanRenderer.PushIndirectDrawState(graphicsProgram, material, modelMatrix);
+                scope = new(capability, token);
                 return true;
             }
 
@@ -5571,20 +5483,20 @@ namespace XREngine.Rendering
 
                     using (RuntimeEngine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirectWithOffset"))
                     {
-                        if (!TryBeginVulkanIndirectDrawState(out VulkanRenderer.IndirectDrawStateScope indirectDrawStateScope))
+                        if (!TryBeginIndirectDrawState(out IndirectDrawStateCapabilityScope indirectDrawStateScope))
                             return;
 
                         using (indirectDrawStateScope)
                         {
-                        VulkanRenderer? vulkanRenderer = bindVulkanMaterialTextureDescriptorTable
-                            ? renderer as VulkanRenderer
+                        IMaterialTableBackendCapability? materialCapability = bindVulkanMaterialTextureDescriptorTable
+                            ? renderer as IMaterialTableBackendCapability
                             : null;
                         bool bindlessScopeActive = false;
                         try
                         {
-                            if (vulkanRenderer is not null)
+                            if (materialCapability is not null)
                             {
-                                bindlessScopeActive = vulkanRenderer.BeginGlobalMaterialTextureDescriptorScope(
+                                bindlessScopeActive = materialCapability.BeginGlobalMaterialTextureDescriptorScope(
                                     graphicsProgram,
                                     "ZeroReadbackVulkanDescriptorIndexMaterialTable");
                                 if (!bindlessScopeActive)
@@ -5596,7 +5508,7 @@ namespace XREngine.Rendering
                         finally
                         {
                             if (bindlessScopeActive)
-                                vulkanRenderer?.EndGlobalMaterialTextureDescriptorScope(graphicsProgram);
+                                materialCapability?.EndGlobalMaterialTextureDescriptorScope(graphicsProgram);
                         }
                         }
                     }
@@ -5661,20 +5573,20 @@ namespace XREngine.Rendering
                         graphicsProgram,
                         material);
                     GPURenderPassCollection.Crumb($"MDIC.BUCKET.BEGIN bucket={bucketIndex} maxCmd={maxDrawCount} stride={stride} indirectOff={indirectByteOffset} countOff={countByteOffset} indCap={indirectDrawBuffer.ElementCount} paramCap={parameterBuffer.ElementCount}");
-                    VulkanRenderer? vulkanRenderer = bindVulkanMaterialTextureDescriptorTable
-                        ? renderer as VulkanRenderer
+                    IMaterialTableBackendCapability? materialCapability = bindVulkanMaterialTextureDescriptorTable
+                        ? renderer as IMaterialTableBackendCapability
                         : null;
                     bool bindlessScopeActive = false;
-                    if (!TryBeginVulkanIndirectDrawState(out VulkanRenderer.IndirectDrawStateScope indirectDrawStateScope))
+                    if (!TryBeginIndirectDrawState(out IndirectDrawStateCapabilityScope indirectDrawStateScope))
                         return;
 
                     using (indirectDrawStateScope)
                     {
                     try
                     {
-                        if (vulkanRenderer is not null)
+                        if (materialCapability is not null)
                         {
-                            bindlessScopeActive = vulkanRenderer.BeginGlobalMaterialTextureDescriptorScope(
+                            bindlessScopeActive = materialCapability.BeginGlobalMaterialTextureDescriptorScope(
                                 graphicsProgram,
                                 "ZeroReadbackVulkanDescriptorIndexMaterialTable");
                             if (!bindlessScopeActive)
@@ -5686,7 +5598,7 @@ namespace XREngine.Rendering
                     finally
                     {
                         if (bindlessScopeActive)
-                            vulkanRenderer?.EndGlobalMaterialTextureDescriptorScope(graphicsProgram);
+                            materialCapability?.EndGlobalMaterialTextureDescriptorScope(graphicsProgram);
                     }
                     }
                     if (P3Diagnostics.FinishAfterMultiDrawIndirectCount)

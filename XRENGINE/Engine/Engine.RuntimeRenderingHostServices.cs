@@ -29,6 +29,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 {
     private const int MaxConsecutiveVrDesktopBudgetSkips = 2;
 
+    private readonly RendererBackendCatalog _rendererBackends = new();
     private readonly object _vrDesktopPressureLock = new();
     private readonly object _renderOutputGraphLock = new();
     private readonly RenderOutputGraphPlanner _renderOutputGraphPlanner = new();
@@ -36,6 +37,11 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     private int _vrDesktopPressureConsecutiveSkips;
     private ulong _vrDesktopPressureFrameId;
     private bool _vrDesktopPressureHoldCurrentFrame;
+
+    public EngineRuntimeRenderingHostServices()
+        => _ = BuiltInRendererBackendModules.RegisterAll(_rendererBackends);
+
+    public IRendererBackendCatalog RendererBackends => _rendererBackends;
 
     public IDisposable? StartProfileScope(string? scopeName)
     {
@@ -134,10 +140,18 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public Vector3 DefaultLuminance => Engine.Rendering.Settings.DefaultLuminance;
     public long ElapsedTicks => Engine.ElapsedTicks;
     public float ElapsedTime => Engine.ElapsedTime;
+    public bool IsAppThread => Engine.IsAppThread;
+    public bool IsStartingUp => Engine.StartingUp;
     public double UpdateDeltaSeconds => Engine.Time.Timer.Update.Delta;
+    public double SmoothedUpdateDeltaSeconds => Engine.SmoothedDelta;
     public long LastUpdateTimestampTicks => Engine.Time.Timer.Update.LastTimestampTicks;
     public double RenderDeltaSeconds => Engine.Time.Timer.Render.Delta;
     public long LastRenderTimestampTicks => Engine.Time.Timer.Render.LastTimestampTicks;
+    public string DefaultFontFolder => Engine.Rendering.Settings.DefaultFontFolder;
+    public string DefaultFontFileName => Engine.Rendering.Settings.DefaultFontFileName;
+    public bool RenderMesh2DBounds => Engine.EditorPreferences.Debug.RenderMesh2DBounds;
+    public bool RenderUITransformCoordinate => Engine.EditorPreferences.Debug.RenderUITransformCoordinate;
+    public ColorF4 Bounds2DColor => Engine.EditorPreferences.Theme.Bounds2DColor;
     public long TrackedVramBytes => Engine.Rendering.Stats.Vram.AllocatedVRAMBytes;
     public long TrackedVramBudgetBytes => Engine.Rendering.Stats.Vram.VramBudgetBytes;
     public bool EnableGpuIndirectDebugLogging => Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
@@ -252,12 +266,10 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public SparseTextureStreamingSupport GetSparseTextureStreamingSupport(ESizedInternalFormat format)
     {
-        if (AbstractRenderer.Current is OpenGLRenderer glRenderer)
-            return glRenderer.GetSparseTextureStreamingSupport(format);
-
-        if (AbstractRenderer.Current is VulkanRenderer)
-            return SparseTextureStreamingSupport.Unsupported(
-                "Vulkan true sparse image page residency is not implemented yet. Vulkan sparse-transition requests are handled by a dense resident mip upload compatibility path; prefer ImportedTextureStreamingManager/VulkanTextureUploadService for Vulkan texture streaming.");
+        ISparseTextureStreamingBackendCapability? capability =
+            GetPrimaryRendererCapability<ISparseTextureStreamingBackendCapability>();
+        if (capability is not null)
+            return capability.GetSparseTextureStreamingSupport(format);
 
         return SparseTextureStreamingSupport.Unsupported("Sparse texture streaming is unavailable because no renderer-specific sparse handler is active.");
     }
@@ -269,75 +281,14 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         Action<SparseTextureStreamingTransitionResult> onCompleted,
         Action<Exception>? onError = null)
     {
-        if (AbstractRenderer.Current is VulkanRenderer)
-        {
-            string vulkanTextureName = string.IsNullOrWhiteSpace(texture.Name) ? "UnnamedTexture" : texture.Name;
-            Engine.EnqueueRenderThreadTask(() =>
-            {
-                try
-                {
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        onCompleted(SparseTextureStreamingTransitionResult.Unsupported("Vulkan sparse texture transition was canceled before compatibility upload."));
-                        return;
-                    }
-
-                    onCompleted(texture.ApplySparseTextureStreamingTransition(request));
-                }
-                catch (Exception ex)
-                {
-                    onError?.Invoke(ex);
-                }
-            }, $"XRTexture2D.ScheduleVulkanSparseCompatTransition[{vulkanTextureName}]", RenderThreadJobKind.TextureUpload);
-
-            return true;
-        }
-
-        OpenGLRenderer? glRenderer = GetPrimaryOpenGlRenderer();
-        if (glRenderer is null)
-            return false;
-
-        string textureName = string.IsNullOrWhiteSpace(texture.Name) ? "UnnamedTexture" : texture.Name;
-        Engine.EnqueueRenderThreadTask(() =>
-        {
-            try
-            {
-                OpenGLRenderer? renderThreadRenderer = GetPrimaryOpenGlRenderer();
-                if (renderThreadRenderer is null)
-                {
-                    onCompleted(SparseTextureStreamingTransitionResult.Unsupported("OpenGL renderer is unavailable for sparse texture streaming."));
-                    return;
-                }
-
-                GLTexture2D? glTexture = renderThreadRenderer.GetOrCreateAPIRenderObject(texture, generateNow: false) as GLTexture2D;
-                if (glTexture is null)
-                {
-                    onCompleted(SparseTextureStreamingTransitionResult.Unsupported("OpenGL texture wrapper is unavailable for sparse texture streaming."));
-                    return;
-                }
-
-                void CompleteAsyncTransition(SparseTextureStreamingTransitionResult result)
-                    => Engine.EnqueueRenderThreadTask(
-                        () => onCompleted(result),
-                        $"XRTexture2D.CompleteSparseTransition[{textureName}]",
-                        RenderThreadJobKind.TextureUpload);
-
-                void ReportAsyncTransitionError(Exception ex)
-                    => Engine.EnqueueRenderThreadTask(
-                        () => onError?.Invoke(ex),
-                        $"XRTexture2D.FailSparseTransition[{textureName}]",
-                        RenderThreadJobKind.TextureUpload);
-
-                if (!glTexture.TryScheduleSparseTextureStreamingTransitionAsync(request, cancellationToken, CompleteAsyncTransition, ReportAsyncTransitionError))
-                    onCompleted(texture.ApplySparseTextureStreamingTransition(request));
-            }
-            catch (Exception ex)
-            {
-                onError?.Invoke(ex);
-            }
-        }, $"XRTexture2D.ScheduleSparseTransition[{textureName}]", RenderThreadJobKind.TextureUpload);
-
-        return true;
+        ISparseTextureStreamingBackendCapability? capability =
+            GetPrimaryRendererCapability<ISparseTextureStreamingBackendCapability>();
+        return capability?.TryScheduleSparseTextureStreamingTransitionAsync(
+            texture,
+            request,
+            cancellationToken,
+            onCompleted,
+            onError) ?? false;
     }
 
     public SparseTextureStreamingFinalizeResult FinalizeSparseTextureStreamingTransition(
@@ -345,26 +296,12 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         SparseTextureStreamingTransitionRequest request,
         SparseTextureStreamingTransitionResult transitionResult)
     {
-        if (AbstractRenderer.Current is VulkanRenderer)
-        {
-            if (!transitionResult.Applied)
-                return SparseTextureStreamingFinalizeResult.Failed(transitionResult.FailureReason ?? "Vulkan sparse compatibility transition did not apply.");
-
-            if (transitionResult.ExposureDeferred)
-                return SparseTextureStreamingFinalizeResult.Failed("Vulkan dense sparse-compat transitions are not deferred; no sparse fence finalization is available.");
-
-            return SparseTextureStreamingFinalizeResult.Success();
-        }
-
-        OpenGLRenderer? glRenderer = GetPrimaryOpenGlRenderer();
-        if (glRenderer is null)
-            return SparseTextureStreamingFinalizeResult.Failed("OpenGL renderer is unavailable for sparse texture finalization.");
-
-        GLTexture2D? glTexture = glRenderer.GetOrCreateAPIRenderObject(texture, generateNow: false) as GLTexture2D;
-        if (glTexture is null)
-            return SparseTextureStreamingFinalizeResult.Failed("OpenGL texture wrapper is unavailable for sparse texture finalization.");
-
-        return glTexture.FinalizeSparseTextureStreamingTransition(request, transitionResult);
+        ISparseTextureStreamingBackendCapability? capability =
+            GetPrimaryRendererCapability<ISparseTextureStreamingBackendCapability>();
+        return capability is null
+            ? SparseTextureStreamingFinalizeResult.Failed(
+                "No renderer sparse texture streaming capability is active.")
+            : capability.FinalizeSparseTextureStreamingTransition(texture, request, transitionResult);
     }
 
     public EnumeratorJob ScheduleEnumeratorJob(
@@ -408,6 +345,24 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     {
         Engine.Time.Timer.PostCollectVisible -= postCollectVisible;
     }
+
+    public void SubscribeUpdateFrame(Action callback)
+        => Engine.Time.Timer.UpdateFrame += callback;
+
+    public void UnsubscribeUpdateFrame(Action callback)
+        => Engine.Time.Timer.UpdateFrame -= callback;
+
+    public void SubscribePostUpdateFrame(Action callback)
+        => Engine.Time.Timer.PostUpdateFrame += callback;
+
+    public void UnsubscribePostUpdateFrame(Action callback)
+        => Engine.Time.Timer.PostUpdateFrame -= callback;
+
+    public void SubscribeRenderFrame(Action callback)
+        => Engine.Time.Timer.RenderFrame += callback;
+
+    public void UnsubscribeRenderFrame(Action callback)
+        => Engine.Time.Timer.RenderFrame -= callback;
 
     public void SubscribeWindowTickCallbacks(Action swapBuffers, Action renderFrame)
     {
@@ -576,6 +531,56 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RenderDebugShapes(bool depthTested)
         => Engine.Rendering.Debug.RenderShapes(depthTested);
 
+    public string EngineAssetsPath => Engine.Assets.EngineAssetsPath;
+    public string GameAssetsPath => Engine.Assets.GameAssetsPath;
+    public string? GameCachePath => Engine.Assets.GameCachePath;
+
+    public string ResolveEngineAssetPath(params string[] relativePathFolders)
+        => Engine.Assets.ResolveEngineAssetPath(relativePathFolders);
+
+    public object? GetOrCreateThirdPartyImportOptions(string sourcePath, Type assetType)
+        => Engine.Assets.GetOrCreateThirdPartyImportOptions(sourcePath, assetType);
+
+    public TAsset? LoadAsset<TAsset>(string filePath, JobPriority priority, bool bypassJobThread)
+        where TAsset : XRAsset, new()
+        => Engine.Assets.Load<TAsset>(filePath, priority, bypassJobThread);
+
+    public bool TryResolveThirdPartyCachePath(
+        string filePath,
+        Type assetType,
+        string? cacheVariantKey,
+        out string cachePath)
+        => Engine.Assets.TryResolveThirdPartyCachePath(filePath, assetType, cacheVariantKey, out cachePath);
+
+    public TAsset? LoadThirdPartyVariantWithCache<TAsset>(
+        string filePath,
+        object? importOptions,
+        string cacheVariantKey,
+        JobPriority priority,
+        bool bypassJobThread)
+        where TAsset : XRAsset, new()
+        => Engine.Assets.Load3rdPartyVariantWithCache<TAsset>(
+            filePath,
+            importOptions,
+            cacheVariantKey,
+            priority,
+            bypassJobThread);
+
+    public void EvictAsset(XRAsset asset, string resolvedPath)
+    {
+        Engine.Assets.LoadedAssetsByPathInternal.TryRemove(resolvedPath, out _);
+        if (!string.IsNullOrWhiteSpace(asset.OriginalPath))
+            Engine.Assets.LoadedAssetsByOriginalPathInternal.TryRemove(asset.OriginalPath, out _);
+        Engine.Assets.LoadedAssetsByIDInternal.TryRemove(asset.ID, out _);
+    }
+
+    public Task<TAsset> LoadEngineAssetAsync<TAsset>(
+        JobPriority priority,
+        bool bypassJobThread,
+        params string[] relativePathFolders)
+        where TAsset : XRAsset, new()
+        => Engine.Assets.LoadEngineAssetAsync<TAsset>(priority, bypassJobThread, relativePathFolders);
+
     public TAsset? LoadAsset<TAsset>(string filePath) where TAsset : XRAsset, new()
         => Engine.Assets?.Load<TAsset>(filePath);
 
@@ -583,15 +588,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         => Engine.Rendering.NewRenderPipeline();
 
     public IRuntimeRendererHost CreateRenderer(IRuntimeRenderWindowHost window, RuntimeGraphicsApiKind apiKind)
-    {
-        XRWindow xrWindow = (XRWindow)window;
-        return apiKind switch
-        {
-            RuntimeGraphicsApiKind.OpenGL => new OpenGLRenderer(xrWindow, true),
-            RuntimeGraphicsApiKind.Vulkan => new VulkanRenderer(xrWindow, true),
-            _ => throw new InvalidOperationException($"Unsupported graphics API: {apiKind}"),
-        };
-    }
+        => _rendererBackends.CreateRequired(apiKind, new RendererBackendCreateContext(window));
 
     public IRuntimeWindowScenePanelAdapter CreateWindowScenePanelAdapter()
         => new XRWindowScenePanelAdapter();
@@ -1658,15 +1655,20 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public int GetBytesPerPixel(ERenderBufferStorage storage)
         => Engine.Rendering.Stats.PixelFormats.GetBytesPerPixel(storage);
 
-    private static OpenGLRenderer? GetPrimaryOpenGlRenderer()
+    private static TCapability? GetPrimaryRendererCapability<TCapability>()
+        where TCapability : class
     {
-        if (AbstractRenderer.Current is OpenGLRenderer currentRenderer)
-            return currentRenderer;
+        if (AbstractRenderer.Current is IRuntimeRendererHost currentRenderer &&
+            currentRenderer.TryGetBackendCapability(out TCapability? currentCapability))
+        {
+            return currentCapability;
+        }
 
         for (int i = 0; i < Engine.Windows.Count; i++)
         {
-            if (Engine.Windows[i].Renderer is OpenGLRenderer renderer)
-                return renderer;
+            IRuntimeRendererHost? renderer = Engine.Windows[i].Renderer;
+            if (renderer is not null && renderer.TryGetBackendCapability(out TCapability? capability))
+                return capability;
         }
 
         return null;
@@ -1791,10 +1793,15 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     }
 
     private static RuntimeGraphicsApiKind GetRendererBackend(object? renderer)
-        => renderer switch
-        {
-            VulkanRenderer => RuntimeGraphicsApiKind.Vulkan,
-            OpenGLRenderer => RuntimeGraphicsApiKind.OpenGL,
-            _ => RuntimeGraphicsApiKind.Unknown,
-        };
+    {
+        if (renderer is not IRuntimeRendererHost runtimeRenderer)
+            return RuntimeGraphicsApiKind.Unknown;
+
+        if (runtimeRenderer.BackendId == RendererBackendId.Vulkan)
+            return RuntimeGraphicsApiKind.Vulkan;
+
+        return runtimeRenderer.BackendId == RendererBackendId.OpenGL
+            ? RuntimeGraphicsApiKind.OpenGL
+            : RuntimeGraphicsApiKind.Unknown;
+    }
 }

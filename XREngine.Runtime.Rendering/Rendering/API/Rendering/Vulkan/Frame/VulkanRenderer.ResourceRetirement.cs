@@ -1445,7 +1445,7 @@ namespace XREngine.Rendering.Vulkan
             if (_frameSlotTimelineValues is null || _graphicsTimelineSemaphore.Handle == 0)
                 return;
 
-            RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
+            RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
                 new FrameOutputWorkTelemetry(GlobalInFlightWaits: 1));
             for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
             {
@@ -1462,7 +1462,7 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         internal void ForceFlushAllRetiredResources()
         {
-            RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
+            RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
                 new FrameOutputWorkTelemetry(ForceFlushes: 1));
             bool forcedAfterDeviceLoss = IsDeviceLost;
             if (forcedAfterDeviceLoss)

@@ -288,7 +288,7 @@ public unsafe partial class OpenXRAPI
         AssertOpenXrRenderThread("xrEndFrame");
         long start = Stopwatch.GetTimestamp();
         Result result;
-        using (var endFrameSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.XrEndFrame"))
+        using (var endFrameSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.XrEndFrame"))
         {
             result = CheckResult(Api.EndFrame(_session, in frameEndInfo), "xrEndFrame");
         }

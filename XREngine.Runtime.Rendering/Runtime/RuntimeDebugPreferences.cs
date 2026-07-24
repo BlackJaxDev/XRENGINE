@@ -1,7 +1,12 @@
+using XREngine.Rendering;
+
 namespace XREngine;
 
 internal sealed class RuntimeDebugPreferences
 {
+    public bool RenderMesh2DBounds => RuntimeRenderingHostServices.FrameTiming.RenderMesh2DBounds;
+    public bool RenderUITransformCoordinate => RuntimeRenderingHostServices.FrameTiming.RenderUITransformCoordinate;
+
     public bool EnableGpuRenderPipelineProfiling { get; set; }
     public bool EnableExactTransparencyTechniques { get; set; }
     public int DepthPeelingMaxLayers { get; set; } = 4;
@@ -23,4 +28,6 @@ internal sealed class RuntimeDebugPreferences
     public bool EnableZeroReadbackMaterialScatter { get; set; }
     public EZeroReadbackMaterialDrawPath ZeroReadbackMaterialDrawPath { get; set; } = EZeroReadbackMaterialDrawPath.FullBucketScan;
     public bool ForceGpuPassthroughCulling { get; set; }
+    public EDebugVisualizerPopulationMode DebugVisualizerPopulationMode { get; set; }
+        = EDebugVisualizerPopulationMode.Tasks;
 }

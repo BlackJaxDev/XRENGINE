@@ -1336,7 +1336,8 @@ namespace XREngine
     /// <summary>
     /// Controls how the physics/instanced debug visualizer populates its buffers each frame.
     /// </summary>
-    public enum EDebugVisualizerPopulationMode
+    [Obsolete("Use EDebugVisualizerPopulationMode from XREngine.Runtime.Rendering.")]
+    internal enum LegacyDebugVisualizerPopulationMode
     {
         /// <summary>
         /// Legacy path: Task.Run wrapping Parallel.For per primitive type + Task.WaitAll.
