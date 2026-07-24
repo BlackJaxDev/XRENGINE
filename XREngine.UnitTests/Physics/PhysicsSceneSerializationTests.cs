@@ -5,6 +5,7 @@ using System.Runtime.ExceptionServices;
 using MemoryPack;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Components;
 using XREngine.Components.Lights;
 using XREngine.Components.Movement;
 using XREngine.Components.Physics;
@@ -504,6 +505,7 @@ public sealed class PhysicsSceneSerializationTests
                 .ShouldBeOfType<LocomotionGameMode>();
             restoredGameMode.SpawnPositionOverride.ShouldBe(new Vector3(0.0f, 2.0f, 9.0f));
             restoredGameMode.SpawnRotationOverride.ShouldBe(Quaternion.Identity);
+            restoredGameMode.PlayerUserInterfaceClass.ShouldBe(typeof(UICanvasComponent));
             memoryPackExceptionCount.ShouldBe(
                 0,
                 string.Join(

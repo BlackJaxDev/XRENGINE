@@ -18,6 +18,7 @@ namespace XREngine
         public LocomotionGameMode()
         {
             _defaultPlayerPawnClass = typeof(CharacterPawnComponent);
+            _defaultPlayerUserInterfaceClass = typeof(UICanvasComponent);
         }
 
         protected override bool DefaultPawnAppliesSpawnTransform => true;

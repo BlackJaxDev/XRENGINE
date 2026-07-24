@@ -892,8 +892,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (area.Width <= 0 || area.Height <= 0)
                 area = RuntimeEngine.Rendering.State.RenderArea;
 
-            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), Math.Max(area.Width, 1));
-            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), Math.Max(area.Height, 1));
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)Math.Max(area.Width, 1));
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)Math.Max(area.Height, 1));
             program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), new Vector2(area.X, area.Y));
         }
 

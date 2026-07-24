@@ -151,7 +151,7 @@ public static partial class EditorImGuiUI
 
         Engine.Rendering.ScenePanelRenderRegionProvider = window =>
         {
-            if (!Engine.IsEditor)
+            if (!Engine.IsEditor || !Engine.PlayMode.IsEditing)
                 return null;
 
             if (Engine.EditorPreferences.ViewportPresentationMode != EditorPreferences.EViewportPresentationMode.UseViewportPanel)

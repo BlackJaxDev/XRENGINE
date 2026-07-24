@@ -283,8 +283,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ResolveSettingsPipeline());
 
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
-            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)region.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)region.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
         }
 
@@ -302,8 +302,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             var settings = GetCurrentSettings();
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
-            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)region.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)region.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
             program.Uniform("BlurDirection", direction);
             program.Uniform("BlurRadius", Math.Clamp(settings?.HBAOBlurRadius ?? 8, 0, 16));

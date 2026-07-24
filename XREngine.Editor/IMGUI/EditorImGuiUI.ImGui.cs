@@ -293,6 +293,9 @@ public static partial class EditorImGuiUI
                 host.RenderWindowsWhileInVR;
         }
 
+        private static bool ShouldRenderEditorImGui()
+            => Engine.PlayMode.IsEditing && !ShouldSuppressEditorImGuiForRuntimeVrView();
+
         internal static void ForceAllowWindowCloseForShutdown()
         {
             _forceAllowWindowCloseForShutdown = true;
@@ -346,7 +349,7 @@ public static partial class EditorImGuiUI
         {
             using var profilerScope = Engine.Profiler.Start("EditorImGuiUI.RenderEditorScenePanelMode");
 
-            if (ShouldSuppressEditorImGuiForRuntimeVrView())
+            if (!ShouldRenderEditorImGui())
                 return;
 
             if (Engine.EditorPreferences.ViewportPresentationMode != EditorPreferences.EViewportPresentationMode.UseViewportPanel)
@@ -555,19 +558,14 @@ public static partial class EditorImGuiUI
         {
             using var profilerScope = Engine.Profiler.Start("EditorImGuiUI.RenderEditor");
 
-            if (ShouldSuppressEditorImGuiForRuntimeVrView())
+            if (!ShouldRenderEditorImGui())
             {
                 Engine.Input.SetUIInputCaptured(false);
                 return;
             }
 
-            // In play mode, don't let ImGui capture keyboard input - let the game pawn receive it
-            bool inPlayMode =
-                Engine.PlayMode.State == EPlayModeState.Play || 
-                Engine.PlayMode.State == EPlayModeState.EnteringPlay;
-
             var io = ImGui.GetIO();
-            bool captureKeyboard = !inPlayMode && (io.WantCaptureKeyboard || io.WantTextInput);
+            bool captureKeyboard = io.WantCaptureKeyboard || io.WantTextInput;
             HandleProfilerToggleHotkey();
             ImGuiUndoHelper.BeginFrame();
             

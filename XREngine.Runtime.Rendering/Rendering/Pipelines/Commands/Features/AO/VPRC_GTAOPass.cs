@@ -365,8 +365,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         private void SetScreenUniforms(XRRenderProgram program)
         {
             ResolveActiveRenderSize(ActivePipelineInstance, out int width, out int height);
-            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), height);
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
         }
 

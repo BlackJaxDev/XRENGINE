@@ -60,14 +60,25 @@ public sealed class GLMaterialTextureBindingContractTests
     }
 
     [Test]
+    public void BinaryLoadedProgram_ReflectsTheLinkedHandleUniformInterface()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.UniformBinding.cs");
+
+        source.ShouldContain("private double ReflectRuntimeBindingStateAfterBinaryLoad()");
+        source.ShouldContain("CacheActiveUniforms();");
+        source.ShouldContain("CachedUniformMetadataMatchesCurrent(cachedMetadata)");
+        source.ShouldNotContain("TryRestoreCachedUniformMetadata");
+    }
+
+    [Test]
     public void SamplerBinding_RelocatesNamedEngineSamplersWhenMaterialSlotsAlreadyUseFixedUnits()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.Samplers.cs");
 
-        source.ShouldContain("TryResolveSamplerTextureUnit(location, texture, textureUnit, out int resolvedTextureUnit)");
+        source.ShouldContain("TryResolveSamplerTextureUnit(location, texture, textureUnit, samplerName, out int resolvedTextureUnit)");
         source.ShouldContain("if (location < 0)");
         source.ShouldContain("return false;");
-        source.ShouldContain("TryFindFreeSamplerTextureUnit(out resolvedTextureUnit)");
+        source.ShouldContain("TryFindFreeSamplerTextureUnit(samplerName, out resolvedTextureUnit)");
         source.ShouldContain("Uniform(location, resolvedTextureUnit);");
         source.ShouldNotContain("_boundSamplerUnits.Add(textureUnit);");
     }

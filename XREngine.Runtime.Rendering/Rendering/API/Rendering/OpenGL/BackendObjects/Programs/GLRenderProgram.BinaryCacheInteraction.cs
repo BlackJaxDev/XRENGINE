@@ -481,7 +481,7 @@ namespace XREngine.Rendering.OpenGL
                 AttachSharedLinkedProgram(sharedProgram);
                 IsLinked = true;
 
-                double reflectionMilliseconds = RestoreRuntimeBindingStateAfterBinaryLoad();
+                double reflectionMilliseconds = ReflectRuntimeBindingStateAfterBinaryLoad();
                 PublishBackendStatus(
                     EShaderProgramBackendStage.Ready,
                     "BinaryProgramShared",

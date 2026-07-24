@@ -698,6 +698,45 @@ public class SceneNodeLifecycleTests
     }
 
     [Test]
+    public async Task PlayLifecycle_KeepsEditorSceneOutsideGameplayLifecycleAndReactivatesIt()
+    {
+        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        SceneNode gameplayRoot = new("GameplayRoot");
+        LifecycleTrackingComponent gameplay = gameplayRoot.AddComponent<LifecycleTrackingComponent>()!;
+        SceneNode editorRoot = new("EditorRoot");
+        LifecycleTrackingComponent editor = editorRoot.AddComponent<LifecycleTrackingComponent>()!;
+
+        world.RootNodes.Add(gameplayRoot);
+        world.AddToEditorScene(editorRoot);
+
+        int gameplayActivationBaseline = gameplay.ActivationCount;
+        int gameplayDeactivationBaseline = gameplay.DeactivationCount;
+        int editorActivationBaseline = editor.ActivationCount;
+        int editorDeactivationBaseline = editor.DeactivationCount;
+
+        await world.BeginPlay();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(gameplay.BeginPlayCount, Is.EqualTo(1));
+            Assert.That(gameplay.ActivationCount, Is.EqualTo(gameplayActivationBaseline));
+            Assert.That(editor.BeginPlayCount, Is.Zero);
+            Assert.That(editor.ActivationCount, Is.EqualTo(editorActivationBaseline));
+        });
+
+        world.EndPlay();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(gameplay.EndPlayCount, Is.EqualTo(1));
+            Assert.That(gameplay.DeactivationCount, Is.EqualTo(gameplayDeactivationBaseline + 1));
+            Assert.That(editor.EndPlayCount, Is.Zero);
+            Assert.That(editor.DeactivationCount, Is.EqualTo(editorDeactivationBaseline + 1));
+            Assert.That(editor.ActivationCount, Is.EqualTo(editorActivationBaseline + 1));
+        });
+    }
+
+    [Test]
     public void DestroyingLoadedSceneRoot_RemovesItFromSceneAndRuntimeRootCollections()
     {
         SceneNode root = new("SceneRoot");

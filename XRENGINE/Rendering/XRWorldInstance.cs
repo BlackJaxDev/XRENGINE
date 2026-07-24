@@ -671,10 +671,11 @@ namespace XREngine.Rendering
                 await node.Transform.RecalculateMatrixHierarchy(true, true, Engine.Rendering.Settings.RecalcChildMatricesLoopType);
 
             foreach (SceneNode node in roots)
-                node.OnBeginPlay();
+                if (!IsInEditorScene(node))
+                    node.OnBeginPlay();
 
             foreach (SceneNode node in roots)
-                if (node.IsActiveSelf)
+                if (!IsInEditorScene(node) && node.IsActiveSelf)
                     node.OnActivated();
         }
 
@@ -692,6 +693,7 @@ namespace XREngine.Rendering
             Engine.InvokePhysicsThreadTask(PhysicsScene.Destroy);
             VisualScene.Destroy();
             ResetPhysicsDebugFrameRenderer();
+            ReactivateEditorSceneRoots();
 
             // After ending play, editor state restoration may be about to swap scene graphs back.
             // Reset caches now to avoid stale references persisting into edit mode.
@@ -713,12 +715,29 @@ namespace XREngine.Rendering
             // Snapshot — OnEndPlay / OnDeactivated may mutate root nodes.
             SceneNode[] roots = [.. RootNodes];
 
+            // The hidden editor scene belongs to the editor shell, not the gameplay session,
+            // so it does not receive gameplay begin/end callbacks.
             foreach (SceneNode node in roots)
-                node.OnEndPlay();
+                if (!IsInEditorScene(node))
+                    node.OnEndPlay();
 
+            // Balance the editor roots' existing Edit-mode activation before VisualScene is
+            // destroyed. EndPlay reactivates them immediately afterward so their render and
+            // input registrations target the fresh Edit-mode scene state.
             foreach (SceneNode node in roots)
                 if (node.IsActiveSelf)
                     node.OnDeactivated();
+        }
+
+        private void ReactivateEditorSceneRoots()
+        {
+            if (_editorScene is null)
+                return;
+
+            SceneNode[] editorRoots = [.. _editorScene.RootNodes];
+            foreach (SceneNode node in editorRoots)
+                if (node.IsActiveSelf)
+                    node.OnActivated();
         }
 
         private void LinkTimeCallbacks()
