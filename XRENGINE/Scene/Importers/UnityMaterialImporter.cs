@@ -1,12 +1,12 @@
 using System.Collections.Concurrent;
-using System.Globalization;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
-using YamlDotNet.RepresentationModel;
+using XREngine.Scene.Importers.Poiyomi;
 
 namespace XREngine.Scene.Importers;
 
@@ -16,15 +16,29 @@ public sealed class UnityMaterialImportResult
     public bool IsPoiyomiToon { get; init; }
     public bool IsLilToon { get; init; }
     public string? ShaderPath { get; init; }
+    public UnityMaterialDocument? SourceDocument { get; init; }
+    public UnityResolvedAsset? ShaderAsset { get; init; }
+    public PoiyomiMaterialDescriptor? PoiyomiDescriptor { get; init; }
     public string[] Warnings { get; init; } = [];
+    public MaterialConversionDiagnostic[] Diagnostics { get; init; } = [];
 }
 
 public static class UnityMaterialImporter
 {
     private static readonly ConcurrentDictionary<string, XRTexture2D> DefaultUberSamplerTextures = new(StringComparer.Ordinal);
+    private static readonly ConditionalWeakTable<XRMaterial, UnityMaterialDocument> PoiyomiSourceDocuments = new();
 
     public static XRMaterial? Import(string materialPath, string? projectRoot = null)
         => ImportWithReport(materialPath, projectRoot).Material;
+    /// <summary>
+    /// Validates the UV channels requested by an imported Poiyomi material against a mesh.
+    /// Missing channels fall back to UV0 in generated vertex shaders.
+    /// </summary>
+    public static MaterialConversionDiagnostic[] ValidateMeshCompatibility(XRMaterial material, uint availableUvChannels)
+        => PoiyomiSourceDocuments.TryGetValue(material, out UnityMaterialDocument? document)
+            ? PoiyomiUvUsage.Validate(document, availableUvChannels)
+            : [];
+
 
     public static UnityMaterialImportResult ImportWithReport(string materialPath, string? projectRoot = null)
     {
@@ -32,24 +46,37 @@ public static class UnityMaterialImporter
 
         string normalizedPath = Path.GetFullPath(materialPath);
         List<string> warnings = [];
+        List<MaterialConversionDiagnostic> diagnostics = [];
 
-        if (LoadUnityDocumentMapping(normalizedPath, "Material") is not YamlMappingNode materialMapping)
+        UnityMaterialDocument document;
+        try
         {
-            warnings.Add($"Unity material '{normalizedPath}' did not contain a Material document.");
+            document = UnityMaterialDocumentParser.ParseFile(normalizedPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            warnings.Add($"Could not parse Unity material '{normalizedPath}'. {ex.Message}");
             return new UnityMaterialImportResult { Warnings = [.. warnings] };
         }
 
-        UnityMaterialDocument document = ParseMaterialDocument(materialMapping, normalizedPath);
         var resolver = new UnityAssetResolver(projectRoot ?? ResolveUnityProjectRoot(normalizedPath));
-        bool isPoiyomiToon = IsPoiyomiToon93Material(document, resolver, out string? shaderPath);
+        UnityResolvedAsset shaderAsset = resolver.Resolve(document.Shader);
+        PoiyomiShaderMatchResult poiyomiMatch = MatchPoiyomiToon93Material(document, resolver, out string? shaderPath);
+        diagnostics.AddRange(poiyomiMatch.Diagnostics);
+        PoiyomiMaterialDescriptor? poiyomiDescriptor = poiyomiMatch.IsAccepted
+            ? PoiyomiMaterialDescriptorFactory.Create(document, resolver, poiyomiMatch, diagnostics)
+            : null;
+        foreach (MaterialConversionDiagnostic diagnostic in diagnostics)
+            warnings.Add(diagnostic.ToString());
+        bool isPoiyomiToon = poiyomiMatch.IsAccepted;
         bool isLilToon = false;
-        if (!isPoiyomiToon)
+        if (!isPoiyomiToon && !poiyomiMatch.IsPoiyomiFamily)
             isLilToon = IsLilToonMaterial(document, resolver, out shaderPath);
 
         try
         {
             XRMaterial material = isPoiyomiToon
-                ? ConvertPoiyomiToUberMaterial(document, resolver, warnings)
+                ? ConvertPoiyomiToUberMaterial(document, resolver, warnings, diagnostics)
                 : isLilToon
                     ? ConvertLilToonToUberMaterial(document, resolver, warnings, shaderPath)
                 : ConvertGenericUnityMaterial(document, resolver, warnings);
@@ -61,7 +88,11 @@ public static class UnityMaterialImporter
                 IsPoiyomiToon = isPoiyomiToon,
                 IsLilToon = isLilToon,
                 ShaderPath = shaderPath,
+                SourceDocument = document,
+                ShaderAsset = shaderAsset,
+                PoiyomiDescriptor = poiyomiDescriptor,
                 Warnings = [.. warnings],
+                Diagnostics = [.. diagnostics],
             };
         }
         catch (Exception ex) when (isPoiyomiToon || isLilToon)
@@ -76,7 +107,11 @@ public static class UnityMaterialImporter
                 IsPoiyomiToon = isPoiyomiToon,
                 IsLilToon = isLilToon,
                 ShaderPath = shaderPath,
+                SourceDocument = document,
+                ShaderAsset = shaderAsset,
+                PoiyomiDescriptor = poiyomiDescriptor,
                 Warnings = [.. warnings],
+                Diagnostics = [.. diagnostics],
             };
         }
     }
@@ -84,7 +119,8 @@ public static class UnityMaterialImporter
     private static XRMaterial ConvertPoiyomiToUberMaterial(
         UnityMaterialDocument document,
         UnityAssetResolver resolver,
-        List<string> warnings)
+        List<string> warnings,
+        List<MaterialConversionDiagnostic> diagnostics)
     {
         XRTexture2D main = ResolveUberTexture(document, resolver, warnings, "_MainTex", "_MainTex")
             ?? GetDefaultUberSamplerTexture("_MainTex", ColorF4.White);
@@ -100,14 +136,20 @@ public static class UnityMaterialImporter
 
         string? alphaSource = AddMappedTexture(document, resolver, warnings, textures, "_AlphaMask", "_AlphaMask", "_AlphaTexture");
         string? colorAdjustSource = AddMappedTexture(document, resolver, warnings, textures, "_MainColorAdjustTexture", "_MainColorAdjustTexture");
-        string? shadowColorSource = AddMappedTexture(document, resolver, warnings, textures, "_ShadowColorTex", "_ShadowColorTex", "_ShadowColorTex", "_1st_ShadeMap", "_2nd_ShadeMap");
+        string? toonRampSource = AddMappedTexture(document, resolver, warnings, textures, "_ToonRamp", "_ToonRamp");
+        string? firstShadeSource = AddMappedTexture(document, resolver, warnings, textures, "_FirstShadeMap", "_1st_ShadeMap");
+        string? secondShadeSource = AddMappedTexture(document, resolver, warnings, textures, "_SecondShadeMap", "_2nd_ShadeMap");
+        string? shadowColorSource = AddMappedTexture(document, resolver, warnings, textures, "_ShadowColorTex", "_ShadowColorTex");
         string? aoSource = AddMappedTexture(document, resolver, warnings, textures, "_LightingAOMaps", "_LightingAOMaps");
         string? shadowMaskSource = AddMappedTexture(document, resolver, warnings, textures, "_LightingShadowMasks", "_LightingShadowMasks");
         string? emissionSource = AddMappedTexture(document, resolver, warnings, textures, "_EmissionMap", "_EmissionMap");
         string? matcapSource = AddMappedTexture(document, resolver, warnings, textures, "_Matcap", "_Matcap");
         string? matcapMaskSource = AddMappedTexture(document, resolver, warnings, textures, "_MatcapMask", "_MatcapMask", "_MatcapMask");
-        string? rimMaskSource = AddMappedTexture(document, resolver, warnings, textures, "_RimMask", "_RimMask", "_RimMask", "_RimTex", "_RimColorTex");
-        string? specularSource = AddMappedTexture(document, resolver, warnings, textures, "_SpecularMap", "_SpecularMap", "_SpecularMap", "_MetallicGlossMap", "_SmoothnessTex");
+        string? rimColorSource = AddMappedTexture(document, resolver, warnings, textures, "_RimColorTexture", "_RimColorTex", "_RimTex");
+        string? rimMaskSource = AddMappedTexture(document, resolver, warnings, textures, "_RimMask", "_RimMask");
+        string? specularSource = AddMappedTexture(document, resolver, warnings, textures, "_SpecularMap", "_SpecularMap");
+        string? metallicSource = AddMappedTexture(document, resolver, warnings, textures, "_PBRMetallicMaps", "_MochieMetallicMaps", "_RGBAMetallicMaps", "_MetallicGlossMap");
+        string? smoothnessSource = AddMappedTexture(document, resolver, warnings, textures, "_PBRSmoothnessMaps", "_RGBASmoothnessMaps", "_SmoothnessTex", "_MochieMetallicMaps", "_MetallicGlossMap");
         string? detailMaskSource = AddMappedTexture(document, resolver, warnings, textures, "_DetailMask", "_DetailMask");
         string? detailTexSource = AddMappedTexture(document, resolver, warnings, textures, "_DetailTex", "_DetailTex");
         string? detailNormalSource = AddMappedTexture(document, resolver, warnings, textures, "_DetailNormalMap", "_DetailNormalMap");
@@ -116,7 +158,11 @@ public static class UnityMaterialImporter
         string? glitterMaskSource = AddMappedTexture(document, resolver, warnings, textures, "_GlitterMask", "_GlitterMask");
         string? flipbookSource = AddMappedTexture(document, resolver, warnings, textures, "_FlipbookTexture", "_FlipbookTexture", "_FlipbookTexture", "_Flipbook");
         string? sssSource = AddMappedTexture(document, resolver, warnings, textures, "_SSSThicknessMap", "_SSSThicknessMap");
-        string? dissolveSource = AddMappedTexture(document, resolver, warnings, textures, "_DissolveNoiseTexture", "_DissolveNoiseTexture", "_DissolveNoiseTexture", "_DissolveDetailNoise", "_DissolveMask");
+        string? dissolveNoiseSource = AddMappedTexture(document, resolver, warnings, textures, "_DissolveNoiseTexture", "_DissolveNoiseTexture");
+        string? dissolveDetailSource = AddMappedTexture(document, resolver, warnings, textures, "_DissolveDetailNoise", "_DissolveDetailNoise");
+        string? dissolveMaskSource = AddMappedTexture(document, resolver, warnings, textures, "_DissolveMask", "_DissolveMask");
+        string? dissolveGradientSource = AddMappedTexture(document, resolver, warnings, textures, "_DissolveEdgeGradient", "_DissolveEdgeGradient");
+        string? dissolveEdgeSource = AddMappedTexture(document, resolver, warnings, textures, "_DissolveEdgeTexture", "_DissolveToTexture");
         string? parallaxSource = AddMappedTexture(document, resolver, warnings, textures, "_ParallaxMap", "_ParallaxMap", "_ParallaxMap", "_ParallaxInternalMap");
 
         XRMaterial material = new()
@@ -136,24 +182,38 @@ public static class UnityMaterialImporter
         ApplyTextureTransform(material, document, alphaSource, "_AlphaMask");
         ApplyTextureTransform(material, document, colorAdjustSource, "_MainColorAdjustTexture");
         ApplyTextureTransform(material, document, shadowColorSource, "_ShadowColorTex");
+        ApplyPoiyomiTextureTransform(material, document, toonRampSource, "_ToonRamp", "_ToonRampUVSelector", diagnostics);
+        ApplyPoiyomiTextureTransform(material, document, firstShadeSource, "_FirstShadeMap", null, diagnostics);
+        ApplyPoiyomiTextureTransform(material, document, secondShadeSource, "_SecondShadeMap", null, diagnostics);
         ApplyTextureTransform(material, document, aoSource, "_LightingAOMaps");
         ApplyTextureTransform(material, document, shadowMaskSource, "_LightingShadowMasks");
         ApplyTextureTransform(material, document, emissionSource, "_EmissionMap");
         ApplyTextureTransform(material, document, matcapMaskSource, "_MatcapMask");
-        ApplyTextureTransform(material, document, rimMaskSource, "_RimMask");
+        ApplyPoiyomiTextureTransform(material, document, rimMaskSource, "_RimMask", null, diagnostics);
+        ApplyPoiyomiTextureTransform(material, document, rimColorSource, "_RimColorTexture", null, diagnostics);
         ApplyTextureTransform(material, document, specularSource, "_SpecularMap");
+        ApplyPoiyomiTextureTransform(material, document, metallicSource, "_PBRMetallicMaps", null, diagnostics);
+        ApplyPoiyomiTextureTransform(material, document, smoothnessSource, "_PBRSmoothnessMaps", null, diagnostics);
         ApplyTextureTransform(material, document, detailMaskSource, "_DetailMask");
         ApplyTextureTransform(material, document, detailTexSource, "_DetailTex");
         ApplyTextureTransform(material, document, detailNormalSource, "_DetailNormalMap");
         ApplyTextureTransform(material, document, outlineMaskSource, "_OutlineMask");
-        ApplyTextureTransform(material, document, dissolveSource, "_DissolveNoiseTexture");
+        ApplyPoiyomiTextureTransform(material, document, dissolveNoiseSource, "_DissolveNoiseTexture", null, diagnostics);
+        ApplyPoiyomiTextureTransform(material, document, dissolveDetailSource, "_DissolveDetailNoise", null, diagnostics);
+        ApplyPoiyomiTextureTransform(material, document, dissolveMaskSource, "_DissolveMask", null, diagnostics);
+        ApplyTextureTransform(material, document, dissolveGradientSource, "_DissolveEdgeGradient");
+        ApplyPoiyomiTextureTransform(material, document, dissolveEdgeSource, "_DissolveEdgeTexture", null, diagnostics);
         ApplyTextureTransform(material, document, parallaxSource, "_ParallaxMap");
 
-        ApplyPoiyomiScalarAndColorProperties(material, document);
+        ApplyPoiyomiScalarAndColorProperties(material, document, diagnostics);
+        ApplyPoiyomiPackedPbrProperties(material, document, metallicSource, smoothnessSource, diagnostics);
         ApplyPoiyomiFeatureState(material, document,
             alphaSource,
             colorAdjustSource,
             shadowColorSource,
+            toonRampSource,
+            firstShadeSource,
+            secondShadeSource,
             aoSource,
             shadowMaskSource,
             emissionSource,
@@ -162,6 +222,9 @@ public static class UnityMaterialImporter
             rimMaskSource,
             specularSource,
             detailMaskSource,
+            rimColorSource,
+            metallicSource,
+            smoothnessSource,
             detailTexSource,
             detailNormalSource,
             outlineMaskSource,
@@ -169,10 +232,16 @@ public static class UnityMaterialImporter
             glitterMaskSource,
             flipbookSource,
             sssSource,
-            dissolveSource,
-            parallaxSource);
+            dissolveNoiseSource,
+            dissolveDetailSource,
+            dissolveMaskSource,
+            parallaxSource,
+            diagnostics,
+            warnings);
 
-        ApplyPoiyomiRenderState(material, document);
+        ApplyPoiyomiRenderState(material, document, diagnostics);
+        PoiyomiSourceDocuments.Remove(material);
+        PoiyomiSourceDocuments.Add(material, document);
         material.PrepareUberVariantImmediately();
         return material;
     }
@@ -296,13 +365,16 @@ public static class UnityMaterialImporter
         return material;
     }
 
-    private static void ApplyPoiyomiScalarAndColorProperties(XRMaterial material, UnityMaterialDocument document)
+    private static void ApplyPoiyomiScalarAndColorProperties(
+        XRMaterial material,
+        UnityMaterialDocument document,
+        ICollection<MaterialConversionDiagnostic> diagnostics)
     {
         MapVector4(document, material, "_Color", "_Color");
-        MapInt(document, material, "_ColorThemeIndex", "_ColorThemeIndex");
+        SetInt(material, "_ColorThemeIndex", PoiyomiEnumMapper.Identity(document, "_ColorThemeIndex", 0, 0, 12, diagnostics));
         MapFloat(document, material, "_BumpScale", "_BumpScale");
 
-        MapInt(document, material, "_MainAlphaMaskMode", "_MainAlphaMaskMode");
+        SetInt(material, "_MainAlphaMaskMode", PoiyomiEnumMapper.AlphaMaskMode(document, diagnostics));
         MapFloat(document, material, "_AlphaMaskBlendStrength", "_AlphaMaskBlendStrength");
         MapFloat(document, material, "_AlphaMaskValue", "_AlphaMaskValue");
         MapFloat(document, material, "_AlphaMaskInvert", "_AlphaMaskInvert");
@@ -313,13 +385,13 @@ public static class UnityMaterialImporter
         MapFloat(document, material, "_MainHueShiftToggle", "_MainHueShiftToggle", "_MainHueShiftEnabled");
         MapFloat(document, material, "_MainHueShift", "_MainHueShift");
         MapFloat(document, material, "_MainHueShiftSpeed", "_MainHueShiftSpeed");
-        MapInt(document, material, "_MainHueShiftColorSpace", "_MainHueShiftColorSpace");
+        SetInt(material, "_MainHueShiftColorSpace", PoiyomiEnumMapper.Identity(document, "_MainHueShiftColorSpace", 0, 0, 1, diagnostics));
         MapFloat(document, material, "_MainHueShiftReplace", "_MainHueShiftReplace");
 
-        MapInt(document, material, "_LightingMode", "_LightingMode");
-        MapInt(document, material, "_LightingColorMode", "_LightingColorMode");
-        MapInt(document, material, "_LightingMapMode", "_LightingMapMode");
-        MapInt(document, material, "_LightingDirectionMode", "_LightingDirectionMode");
+        SetInt(material, "_LightingMode", PoiyomiEnumMapper.LightingMode(document, diagnostics));
+        SetInt(material, "_LightingColorMode", PoiyomiEnumMapper.Identity(document, "_LightingColorMode", 0, 0, 3, diagnostics));
+        SetInt(material, "_LightingMapMode", PoiyomiEnumMapper.Identity(document, "_LightingMapMode", 0, 0, 3, diagnostics));
+        SetInt(material, "_LightingDirectionMode", PoiyomiEnumMapper.Identity(document, "_LightingDirectionMode", 0, 0, 3, diagnostics));
         MapFloat(document, material, "_LightingCapEnabled", "_LightingCapEnabled");
         MapFloat(document, material, "_LightingCap", "_LightingCap");
         MapFloat(document, material, "_LightingMinLightBrightness", "_LightingMinLightBrightness");
@@ -349,14 +421,14 @@ public static class UnityMaterialImporter
         MapVector4(document, material, "_MatcapColor", "_MatcapColor");
         MapFloat(document, material, "_MatcapIntensity", "_MatcapIntensity");
         MapFloat(document, material, "_MatcapBorder", "_MatcapBorder");
-        MapInt(document, material, "_MatcapUVMode", "_MatcapUVMode");
+        SetInt(material, "_MatcapUVMode", PoiyomiEnumMapper.MatcapUvMode(document, diagnostics));
         MapFloat(document, material, "_MatcapReplace", "_MatcapReplace");
         MapFloat(document, material, "_MatcapMultiply", "_MatcapMultiply");
         MapFloat(document, material, "_MatcapAdd", "_MatcapAdd");
         MapFloat(document, material, "_MatcapEmissionStrength", "_MatcapEmissionStrength");
         MapFloat(document, material, "_MatcapLightMask", "_MatcapLightMask");
         MapFloat(document, material, "_MatcapNormal", "_MatcapNormal");
-        MapInt(document, material, "_MatcapMaskChannel", "_MatcapMaskChannel");
+        SetInt(material, "_MatcapMaskChannel", PoiyomiEnumMapper.TextureChannel(document, "_MatcapMaskChannel", 0, diagnostics));
         MapFloat(document, material, "_MatcapMaskInvert", "_MatcapMaskInvert");
 
         MapVector4(document, material, "_RimLightColor", "_RimLightColor", "_RimColor");
@@ -365,15 +437,15 @@ public static class UnityMaterialImporter
         MapFloat(document, material, "_RimLightColorBias", "_RimLightColorBias", "_RimBiasIntensity");
         MapFloat(document, material, "_RimEmission", "_RimEmission");
         MapFloat(document, material, "_RimHideInShadow", "_RimHideInShadow");
-        MapInt(document, material, "_RimStyle", "_RimStyle");
+        SetInt(material, "_RimStyle", PoiyomiEnumMapper.RimStyle(document, diagnostics));
         MapFloat(document, material, "_RimBlendStrength", "_RimBlendStrength", "_RimStrength", "_RimMainStrength");
-        MapInt(document, material, "_RimBlendMode", "_RimBlendMode", "_RimPoiBlendMode");
-        MapInt(document, material, "_RimMaskChannel", "_RimMaskChannel");
+        SetInt(material, "_RimBlendMode", PoiyomiEnumMapper.RimBlendMode(document, diagnostics));
+        SetInt(material, "_RimMaskChannel", PoiyomiEnumMapper.TextureChannel(document, "_RimMaskChannel", 0, diagnostics));
 
         MapFloat(document, material, "_SpecularSmoothness", "_SpecularSmoothness", "_Smoothness");
         MapFloat(document, material, "_SpecularStrength", "_SpecularStrength", "_ApplySpecular");
         MapVector4(document, material, "_SpecularTint", "_SpecularTint");
-        MapInt(document, material, "_SpecularType", "_SpecularType", "_SpecularToon");
+        SetInt(material, "_SpecularType", PoiyomiEnumMapper.SpecularType(document, diagnostics));
 
         MapVector3(document, material, "_DetailTint", "_DetailTint");
         MapFloat(document, material, "_DetailTexIntensity", "_DetailTexIntensity");
@@ -386,7 +458,6 @@ public static class UnityMaterialImporter
         MapFloat(document, material, "_MainUseVertexColorAlpha", "_MainUseVertexColorAlpha");
 
         MapVector4(document, material, "_BackFaceColor", "_BackFaceColor");
-        MapFloat(document, material, "_BackFaceBlendMode", "_BackFaceBlendMode");
         MapFloat(document, material, "_BackFaceEmission", "_BackFaceEmission", "_BackFaceEmissionStrength");
         MapFloat(document, material, "_BackFaceAlpha", "_BackFaceAlpha", "_BackFaceReplaceAlpha");
 
@@ -408,7 +479,6 @@ public static class UnityMaterialImporter
         MapFloat(document, material, "_FlipbookRows", "_FlipbookRows");
         MapFloat(document, material, "_FlipbookFrameRate", "_FlipbookFrameRate");
         MapFloat(document, material, "_FlipbookManualFrame", "_FlipbookManualFrame");
-        MapFloat(document, material, "_FlipbookBlendMode", "_FlipbookBlendMode");
         MapFloat(document, material, "_FlipbookCrossfade", "_FlipbookCrossfade");
 
         MapVector4(document, material, "_SSSColor", "_SSSColor");
@@ -417,23 +487,91 @@ public static class UnityMaterialImporter
         MapFloat(document, material, "_SSSScale", "_SSSScale", "_SSSStrength");
         MapFloat(document, material, "_SSSAmbient", "_SSSAmbient");
 
-        MapFloat(document, material, "_DissolveType", "_DissolveType");
+        SetFloat(material, "_DissolveType", PoiyomiEnumMapper.DissolveMode(document, diagnostics));
         MapFloat(document, material, "_DissolveProgress", "_DissolveProgress", "_DissolveAlpha", "_DissolveAlpha0");
         MapVector4(document, material, "_DissolveEdgeColor", "_DissolveEdgeColor");
         MapFloat(document, material, "_DissolveEdgeWidth", "_DissolveEdgeWidth");
         MapFloat(document, material, "_DissolveEdgeEmission", "_DissolveEdgeEmission", "_DissolveToEmissionStrength");
-        MapFloat(document, material, "_DissolveNoiseStrength", "_DissolveNoiseStrength", "_DissolveDetailStrength");
+        MapFloat(document, material, "_DissolveNoiseStrength", "_DissolveNoiseStrength");
+        MapFloat(document, material, "_DissolveDetailStrength", "_DissolveDetailStrength");
+        MapFloat(document, material, "_DissolveMaskInvert", "_DissolveMaskInvert");
         MapVector3(document, material, "_DissolveStartPoint", "_DissolveStartPoint");
         MapVector3(document, material, "_DissolveEndPoint", "_DissolveEndPoint");
         MapFloat(document, material, "_DissolveInvert", "_DissolveInvert", "_DissolveInvertNoise");
         MapFloat(document, material, "_DissolveCutoff", "_DissolveCutoff", "_DissolveAlpha", "_DissolveAlpha0");
 
-        MapFloat(document, material, "_ParallaxMode", "_ParallaxMode", "_ParallaxInternalHeightmapMode");
+        SetFloat(material, "_ParallaxMode", PoiyomiEnumMapper.ParallaxMode(document, diagnostics));
         MapFloat(document, material, "_ParallaxStrength", "_ParallaxStrength", "_ParallaxInternalMaxDepth");
         MapFloat(document, material, "_ParallaxMinSamples", "_ParallaxMinSamples", "_ParallaxInternalIterations");
         MapFloat(document, material, "_ParallaxMaxSamples", "_ParallaxMaxSamples", "_ParallaxInternalIterations");
         MapFloat(document, material, "_ParallaxOffset", "_ParallaxOffset");
-        MapFloat(document, material, "_ParallaxMapChannel", "_ParallaxMapChannel");
+        SetFloat(material, "_ParallaxMapChannel", PoiyomiEnumMapper.TextureChannel(
+            document,
+            "_ParallaxInternalMapMaskChannel",
+            0,
+            diagnostics));
+    }
+
+    private static void ApplyPoiyomiPackedPbrProperties(
+        XRMaterial material,
+        UnityMaterialDocument document,
+        string? metallicSource,
+        string? smoothnessSource,
+        ICollection<MaterialConversionDiagnostic> diagnostics)
+    {
+        float metallicMultiplier = document.TryGetFloat("_Metallic", out float authoredMetallic)
+            ? authoredMetallic
+            : metallicSource is null ? 0.0f : 1.0f;
+        SetFloat(material, "_PBRMetallicMultiplier", Math.Clamp(metallicMultiplier, 0.0f, 1.0f));
+
+        int metallicChannel = 0;
+        bool metallicInvert = false;
+        if (string.Equals(metallicSource, "_MochieMetallicMaps", StringComparison.Ordinal))
+        {
+            metallicChannel = PoiyomiEnumMapper.TextureChannel(
+                document,
+                "_MochieMetallicMapsMetallicChannel",
+                0,
+                diagnostics);
+            metallicInvert = document.TryGetPositive("_MochieMetallicMapInvert");
+        }
+        else if (string.Equals(metallicSource, "_RGBAMetallicMaps", StringComparison.Ordinal))
+        {
+            metallicInvert = document.TryGetPositive("_RGBARedMetallicInvert");
+        }
+
+        SetInt(material, "_PBRMetallicMapsMetallicChannel", metallicChannel);
+        SetFloat(material, "_PBRMetallicMapInvert", metallicInvert ? 1.0f : 0.0f);
+
+        float smoothnessMultiplier = document.TryGetFloat("_Smoothness", out float authoredSmoothness)
+            ? authoredSmoothness
+            : document.TryGetFloat("_SpecularSmoothness", out float specularSmoothness)
+                ? specularSmoothness
+                : smoothnessSource is null ? 0.5f : 1.0f;
+        SetFloat(material, "_PBRRoughnessMultiplier", Math.Clamp(smoothnessMultiplier, 0.0f, 1.0f));
+
+        int smoothnessChannel = 0;
+        bool smoothnessInvert = false;
+        if (string.Equals(smoothnessSource, "_MetallicGlossMap", StringComparison.Ordinal))
+        {
+            smoothnessChannel = 3;
+        }
+        else if (string.Equals(smoothnessSource, "_MochieMetallicMaps", StringComparison.Ordinal))
+        {
+            smoothnessChannel = PoiyomiEnumMapper.TextureChannel(
+                document,
+                "_MochieMetallicMapsRoughnessChannel",
+                1,
+                diagnostics);
+            smoothnessInvert = true;
+        }
+        else if (string.Equals(smoothnessSource, "_RGBASmoothnessMaps", StringComparison.Ordinal))
+        {
+            smoothnessInvert = document.TryGetPositive("_RGBARedSmoothnessInvert");
+        }
+
+        SetInt(material, "_PBRSmoothnessMapsChannel", smoothnessChannel);
+        SetFloat(material, "_PBRSmoothnessMapInvert", smoothnessInvert ? 1.0f : 0.0f);
     }
 
     private static void ApplyLilToonScalarAndColorProperties(XRMaterial material, UnityMaterialDocument document)
@@ -541,6 +679,9 @@ public static class UnityMaterialImporter
         string? alphaSource,
         string? colorAdjustSource,
         string? shadowColorSource,
+        string? toonRampSource,
+        string? firstShadeSource,
+        string? secondShadeSource,
         string? aoSource,
         string? shadowMaskSource,
         string? emissionSource,
@@ -549,6 +690,9 @@ public static class UnityMaterialImporter
         string? rimMaskSource,
         string? specularSource,
         string? detailMaskSource,
+        string? rimColorSource,
+        string? metallicSource,
+        string? smoothnessSource,
         string? detailTexSource,
         string? detailNormalSource,
         string? outlineMaskSource,
@@ -556,11 +700,31 @@ public static class UnityMaterialImporter
         string? glitterMaskSource,
         string? flipbookSource,
         string? sssSource,
-        string? dissolveSource,
-        string? parallaxSource)
+        string? dissolveNoiseSource,
+        string? dissolveDetailSource,
+        string? dissolveMaskSource,
+        string? parallaxSource,
+        ICollection<MaterialConversionDiagnostic> diagnostics,
+        ICollection<string> warnings)
     {
-        bool stylizedEnabled = !document.TryGetFloat("_ShadingEnabled", out float shadingEnabled) || shadingEnabled > 0.5f;
-        material.SetUberFeatureEnabled("stylized-shading", stylizedEnabled);
+        bool hasNormalMap =
+            document.Textures.TryGetValue("_BumpMap", out UnityTexturePropertyDocument? bumpMap) &&
+            bumpMap.TextureReference.HasExternalGuid &&
+            (!document.TryGetFloat("_BumpScale", out float bumpScale) || MathF.Abs(bumpScale) > 0.0001f);
+        material.SetUberFeatureEnabled("normal-map", hasNormalMap);
+
+        bool stylizedEvidence =
+            toonRampSource is not null ||
+            firstShadeSource is not null ||
+            secondShadeSource is not null ||
+            shadowColorSource is not null ||
+            document.TryGetInt("_LightingMode", out int lightingMode) && lightingMode != 5;
+        material.SetUberFeatureEnabled("stylized-shading",
+            PoiyomiFeatureStateResolver.IsEnabled(
+                document,
+                stylizedEvidence,
+                ["_ShadingEnabled"],
+                ["VIGNETTE_MASKED"]));
 
         material.SetUberFeatureEnabled("alpha-masks",
             alphaSource is not null ||
@@ -568,77 +732,161 @@ public static class UnityMaterialImporter
             document.TryGetPositive("_AlphaMaskBlendStrength"));
 
         material.SetUberFeatureEnabled("color-adjustments",
-            colorAdjustSource is not null ||
-            document.TryGetPositive("_ColorGradingToggle") ||
-            document.TryGetPositive("_MainHueShiftToggle"));
+            PoiyomiFeatureStateResolver.IsEnabled(
+                document,
+                colorAdjustSource is not null || document.TryGetPositive("_MainHueShiftToggle"),
+                ["_ColorGradingToggle"],
+                ["COLOR_GRADING_HDR"]));
 
         material.SetUberFeatureEnabled("material-ao",
-            aoSource is not null ||
-            document.TryGetPositive("_LightDataAOStrengthR"));
-
+            aoSource is not null || document.TryGetPositive("_LightDataAOStrengthR"));
         material.SetUberFeatureEnabled("shadow-masks",
-            shadowMaskSource is not null ||
-            document.TryGetPositive("_LightingShadowMaskStrengthR"));
+            shadowMaskSource is not null || document.TryGetPositive("_LightingShadowMaskStrengthR"));
 
         material.SetUberFeatureEnabled("emission",
-            document.TryGetPositive("_EnableEmission") ||
-            emissionSource is not null);
+            PoiyomiFeatureStateResolver.IsEnabled(
+                document,
+                emissionSource is not null,
+                ["_EnableEmission"],
+                ["_EMISSION"]));
 
         material.SetUberFeatureEnabled("matcap",
-            document.TryGetPositive("_MatcapEnable") ||
-            matcapSource is not null ||
-            matcapMaskSource is not null);
+            PoiyomiFeatureStateResolver.IsEnabled(
+                document,
+                matcapSource is not null || matcapMaskSource is not null,
+                ["_MatcapEnable"],
+                ["POI_MATCAP0"]));
 
         material.SetUberFeatureEnabled("rim-lighting",
-            document.TryGetPositive("_EnableRimLighting") ||
-            rimMaskSource is not null);
+            PoiyomiFeatureStateResolver.IsEnabled(
+                document,
+                rimColorSource is not null || rimMaskSource is not null,
+                ["_EnableRimLighting"],
+                ["_GLOSSYREFLECTIONS_OFF"]));
 
         material.SetUberFeatureEnabled("advanced-specular",
-            specularSource is not null ||
-            document.TryGetPositive("_ApplySpecular") ||
-            document.TryGetPositive("_SpecularStrength"));
+            PoiyomiFeatureStateResolver.IsEnabled(
+                document,
+                specularSource is not null || metallicSource is not null || smoothnessSource is not null ||
+                document.TryGetPositive("_ApplySpecular") || document.TryGetPositive("_SpecularStrength"),
+                ["_MochieBRDF", "_StylizedSpecular"],
+                ["MOCHIE_PBR", "POI_STYLIZED_StylizedSpecular"]));
 
         material.SetUberFeatureEnabled("detail-textures",
-            document.TryGetPositive("_DetailEnabled") ||
-            detailMaskSource is not null ||
-            detailTexSource is not null ||
-            detailNormalSource is not null);
+            PoiyomiFeatureStateResolver.IsEnabled(
+                document,
+                detailMaskSource is not null || detailTexSource is not null || detailNormalSource is not null,
+                ["_DetailEnabled"],
+                ["FINALPASS"]));
 
-        material.SetUberFeatureEnabled("outline",
-            document.TryGetPositive("_EnableOutlines") ||
-            outlineMaskSource is not null);
-
+        material.SetUberFeatureEnabled("outline", false);
         material.SetUberFeatureEnabled("backface",
-            document.TryGetPositive("_BackFaceEnabled") ||
-            backFaceSource is not null);
-
+            PoiyomiFeatureStateResolver.IsEnabled(
+                document,
+                backFaceSource is not null,
+                ["_BackFaceEnabled"],
+                ["POI_BACKFACE"]));
         material.SetUberFeatureEnabled("glitter",
-            document.TryGetPositive("_GlitterEnable") ||
-            glitterMaskSource is not null);
-
+            PoiyomiFeatureStateResolver.IsEnabled(
+                document,
+                glitterMaskSource is not null,
+                ["_GlitterEnable"],
+                ["_SUNDISK_SIMPLE"]));
         material.SetUberFeatureEnabled("flipbook",
-            document.TryGetPositive("_EnableFlipbook") ||
-            flipbookSource is not null);
-
+            PoiyomiFeatureStateResolver.IsEnabled(
+                document,
+                flipbookSource is not null,
+                ["_EnableFlipbook"],
+                ["_SUNDISK_HIGH_QUALITY"]));
         material.SetUberFeatureEnabled("subsurface",
-            document.TryGetPositive("_SubsurfaceScattering") ||
-            sssSource is not null);
-
+            PoiyomiFeatureStateResolver.IsEnabled(
+                document,
+                sssSource is not null,
+                ["_SubsurfaceScattering"],
+                ["POI_SUBSURFACESCATTERING"]));
         material.SetUberFeatureEnabled("dissolve",
-            document.TryGetPositive("_EnableDissolve") ||
-            dissolveSource is not null);
-
+            PoiyomiFeatureStateResolver.IsEnabled(
+                document,
+                dissolveNoiseSource is not null || dissolveDetailSource is not null || dissolveMaskSource is not null,
+                ["_EnableDissolve"],
+                ["DISTORT"]));
         material.SetUberFeatureEnabled("parallax",
-            parallaxSource is not null ||
-            document.TryGetPositive("_ParallaxStrength") ||
-            document.TryGetPositive("_ParallaxInternalMaxDepth"));
+            PoiyomiFeatureStateResolver.IsEnabled(
+                document,
+                parallaxSource is not null ||
+                document.TryGetPositive("_ParallaxStrength") ||
+                document.TryGetPositive("_ParallaxInternalMaxDepth"),
+                ["_Parallax"],
+                ["POI_PARALLAX", "POI_INTERNALPARALLAX"]));
 
-        // The current engine uber shader has no direct Poiyomi ramp sampler, but
-        // a shadow color texture still means the stylized path is meaningful.
-        if (shadowColorSource is not null)
-            material.SetUberFeatureEnabled("stylized-shading", true);
+        ReportUnsupportedPoiyomiFeatures(document, outlineMaskSource, diagnostics, warnings);
     }
 
+    private static void ReportUnsupportedPoiyomiFeatures(
+        UnityMaterialDocument document,
+        string? outlineMaskSource,
+        ICollection<MaterialConversionDiagnostic> diagnostics,
+        ICollection<string> warnings)
+    {
+        if (document.TryGetPositive("_EnableOutlines") || outlineMaskSource is not null)
+        {
+            AddDiagnostic(
+                diagnostics,
+                warnings,
+                MaterialConversionDiagnosticCodes.IntentionalNativeDifference,
+                "Poiyomi outline authoring was preserved, but no outline pass was enabled because inverse-hull rendering is not implemented yet.",
+                "_EnableOutlines");
+        }
+
+        ReportUnsupportedIntegration(document, "_LTCGIEnabled", "LTCGI", diagnostics, warnings);
+        ReportUnsupportedIntegration(document, "_EnableMirrorOptions", "VRChat mirror visibility", diagnostics, warnings);
+        ReportUnsupportedIntegration(document, "_MirrorTextureEnabled", "VRChat mirror textures", diagnostics, warnings);
+        ReportUnsupportedIntegration(document, "_AlphaAudioLinkEnabled", "AudioLink", diagnostics, warnings);
+
+        if (document.ValidKeywords.Contains("POI_AUDIOLINK"))
+        {
+            AddDiagnostic(
+                diagnostics,
+                warnings,
+                MaterialConversionDiagnosticCodes.IntegrationUnavailable,
+                "AudioLink state was preserved, but the XRENGINE AudioLink integration is unavailable.",
+                "POI_AUDIOLINK");
+        }
+    }
+
+    private static void ReportUnsupportedIntegration(
+        UnityMaterialDocument document,
+        string sourceProperty,
+        string displayName,
+        ICollection<MaterialConversionDiagnostic> diagnostics,
+        ICollection<string> warnings)
+    {
+        if (!document.TryGetPositive(sourceProperty))
+            return;
+
+        AddDiagnostic(
+            diagnostics,
+            warnings,
+            MaterialConversionDiagnosticCodes.IntegrationUnavailable,
+            $"{displayName} state was preserved, but its XRENGINE integration is unavailable.",
+            sourceProperty);
+    }
+
+    private static void AddDiagnostic(
+        ICollection<MaterialConversionDiagnostic> diagnostics,
+        ICollection<string> warnings,
+        string code,
+        string message,
+        string? sourceProperty)
+    {
+        var diagnostic = new MaterialConversionDiagnostic(
+            code,
+            MaterialConversionDiagnosticSeverity.Warning,
+            message,
+            sourceProperty);
+        diagnostics.Add(diagnostic);
+        warnings.Add(diagnostic.ToString());
+    }
     private static void ApplyLilToonFeatureState(
         XRMaterial material,
         UnityMaterialDocument document,
@@ -737,24 +985,18 @@ public static class UnityMaterialImporter
             parallaxSource is not null);
     }
 
-    private static void ApplyPoiyomiRenderState(XRMaterial material, UnityMaterialDocument document)
+    private static void ApplyPoiyomiRenderState(
+        XRMaterial material,
+        UnityMaterialDocument document,
+        ICollection<MaterialConversionDiagnostic> diagnostics)
     {
-        if (document.TryGetFloat("_Cull", out float cullMode))
-        {
-            material.RenderOptions.CullMode = (int)MathF.Round(cullMode) switch
-            {
-                0 => ECullMode.None,
-                1 => ECullMode.Front,
-                2 => ECullMode.Back,
-                _ => material.RenderOptions.CullMode,
-            };
-        }
+        material.RenderOptions.CullMode = PoiyomiEnumMapper.CullMode(document, material.RenderOptions.CullMode, diagnostics);
 
         float cutoff = document.TryGetFloat("_Cutoff", out float authoredCutoff)
             ? Math.Clamp(authoredCutoff, 0.0f, 1.0f)
             : material.AlphaCutoff;
         material.AlphaCutoff = cutoff;
-        material.TransparencyMode = ResolvePoiyomiTransparencyMode(document);
+        material.TransparencyMode = PoiyomiEnumMapper.TransparencyMode(document, diagnostics);
     }
 
     private static void ApplyLilToonRenderState(XRMaterial material, UnityMaterialDocument document, string? shaderPath)
@@ -775,27 +1017,6 @@ public static class UnityMaterialImporter
             : material.AlphaCutoff;
         material.AlphaCutoff = cutoff;
         material.TransparencyMode = ResolveLilToonTransparencyMode(document, shaderPath);
-    }
-
-    private static ETransparencyMode ResolvePoiyomiTransparencyMode(UnityMaterialDocument document)
-    {
-        int mode = document.TryGetInt("_Mode", out int authoredMode)
-            ? authoredMode
-            : document.CustomRenderQueue >= 3000 ? 3 : 0;
-
-        if (document.TryGetPositive("_AlphaToCoverage"))
-            return ETransparencyMode.AlphaToCoverage;
-
-        return mode switch
-        {
-            0 => ETransparencyMode.Opaque,
-            1 => ETransparencyMode.Masked,
-            9 => ETransparencyMode.Masked,
-            4 => ETransparencyMode.Additive,
-            2 or 3 or 5 or 6 or 7 => ETransparencyMode.WeightedBlendedOit,
-            _ when document.TryGetFloat("_AlphaForceOpaque", out float forceOpaque) && forceOpaque <= 0.5f => ETransparencyMode.WeightedBlendedOit,
-            _ => ETransparencyMode.Opaque,
-        };
     }
 
     private static ETransparencyMode ResolveLilToonTransparencyMode(UnityMaterialDocument document, string? shaderPath)
@@ -886,7 +1107,7 @@ public static class UnityMaterialImporter
         string sourceProperty,
         string samplerName)
     {
-        if (!document.Textures.TryGetValue(sourceProperty, out UnityTextureProperty? textureProperty) ||
+        if (!document.Textures.TryGetValue(sourceProperty, out UnityTexturePropertyDocument? textureProperty) ||
             textureProperty is null ||
             !textureProperty.TextureReference.HasExternalGuid)
         {
@@ -900,7 +1121,11 @@ public static class UnityMaterialImporter
             return null;
         }
 
-        return ModelImporter.GetOrCreateUberSamplerTexture(texturePath, samplerName);
+        XRTexture2D texture = ModelImporter.GetOrCreateUberSamplerTexture(texturePath, samplerName);
+        UnityTextureImportDocument? importSettings = UnityTextureImportDocumentParser.ParseFile(texturePath);
+        if (importSettings is not null)
+            ApplyUnityTextureImportSettings(texture, importSettings, samplerName);
+        return texture;
     }
 
     private static XRTexture2D? ResolveGenericTexture(
@@ -911,7 +1136,7 @@ public static class UnityMaterialImporter
     {
         foreach (string sourceProperty in sourceProperties)
         {
-            if (!document.Textures.TryGetValue(sourceProperty, out UnityTextureProperty? textureProperty) ||
+            if (!document.Textures.TryGetValue(sourceProperty, out UnityTexturePropertyDocument? textureProperty) ||
                 textureProperty is null ||
                 !textureProperty.TextureReference.HasExternalGuid)
             {
@@ -963,12 +1188,108 @@ public static class UnityMaterialImporter
             Resizable = false,
         };
 
+    private static void ApplyUnityTextureImportSettings(
+        XRTexture2D texture,
+        UnityTextureImportDocument settings,
+        string samplerName)
+    {
+        texture.ImportedColorSpace = settings.IsSrgb
+            ? ETextureColorSpace.Srgb
+            : ETextureColorSpace.Linear;
+        texture.ImportedUsage = ResolveImportedTextureUsage(settings, samplerName);
+        texture.ImportedNormalMapFlipGreen = settings.FlipGreenChannel;
+        texture.AlphaAsTransparency = settings.AlphaIsTransparency;
+        texture.AutoGenerateMipmaps = settings.GenerateMipMaps;
+        texture.LodBias = settings.MipBias;
+        texture.MaxAnisotropy = Math.Max(1, settings.Anisotropy);
+        texture.UWrap = MapUnityWrapMode(settings.WrapU);
+        texture.VWrap = MapUnityWrapMode(settings.WrapV);
+
+        texture.MagFilter = settings.FilterMode == 0
+            ? ETexMagFilter.Nearest
+            : ETexMagFilter.Linear;
+        texture.MinFilter = settings.FilterMode switch
+        {
+            0 when settings.GenerateMipMaps => ETexMinFilter.NearestMipmapNearest,
+            0 => ETexMinFilter.Nearest,
+            2 when settings.GenerateMipMaps => ETexMinFilter.LinearMipmapLinear,
+            1 when settings.GenerateMipMaps => ETexMinFilter.LinearMipmapNearest,
+            _ => ETexMinFilter.Linear,
+        };
+
+        if (texture.SizedInternalFormat is ESizedInternalFormat.Rgb8 or ESizedInternalFormat.Srgb8)
+        {
+            texture.SizedInternalFormat = settings.IsSrgb
+                ? ESizedInternalFormat.Srgb8
+                : ESizedInternalFormat.Rgb8;
+        }
+        else if (texture.SizedInternalFormat is ESizedInternalFormat.Rgba8 or ESizedInternalFormat.Srgb8Alpha8)
+        {
+            texture.SizedInternalFormat = settings.IsSrgb
+                ? ESizedInternalFormat.Srgb8Alpha8
+                : ESizedInternalFormat.Rgba8;
+        }
+    }
+
+    private static ETextureImportUsage ResolveImportedTextureUsage(
+        UnityTextureImportDocument settings,
+        string samplerName)
+    {
+        if (settings.IsNormalMap ||
+            samplerName.Contains("Normal", StringComparison.OrdinalIgnoreCase) ||
+            samplerName.Contains("Bump", StringComparison.OrdinalIgnoreCase))
+        {
+            return ETextureImportUsage.Normal;
+        }
+
+        if (samplerName.Contains("Mask", StringComparison.OrdinalIgnoreCase) ||
+            samplerName.Contains("Metallic", StringComparison.OrdinalIgnoreCase) ||
+            samplerName.Contains("Smoothness", StringComparison.OrdinalIgnoreCase) ||
+            samplerName.Contains("Parallax", StringComparison.OrdinalIgnoreCase) ||
+            samplerName.Contains("Noise", StringComparison.OrdinalIgnoreCase) ||
+            samplerName.Contains("AO", StringComparison.OrdinalIgnoreCase))
+        {
+            return ETextureImportUsage.Data;
+        }
+
+        return ETextureImportUsage.Color;
+    }
+
+    private static ETexWrapMode MapUnityWrapMode(int wrapMode)
+        => wrapMode switch
+        {
+            0 => ETexWrapMode.Repeat,
+            1 => ETexWrapMode.ClampToEdge,
+            2 or 3 => ETexWrapMode.MirroredRepeat,
+            _ => ETexWrapMode.Repeat,
+        };
+
+    private static void ApplyPoiyomiTextureTransform(
+        XRMaterial material,
+        UnityMaterialDocument document,
+        string? sourceProperty,
+        string destinationSampler,
+        string? sourceUvSelector,
+        ICollection<MaterialConversionDiagnostic> diagnostics)
+    {
+        ApplyTextureTransform(material, document, sourceProperty, destinationSampler);
+        if (string.IsNullOrWhiteSpace(sourceProperty))
+            return;
+
+        string selector = sourceUvSelector ?? $"{sourceProperty}UV";
+        if (!document.HasAnyProperty(selector))
+            return;
+
+        int uvChannel = PoiyomiEnumMapper.UvChannel(document, selector, 0, diagnostics);
+        SetInt(material, $"{destinationSampler}UV", uvChannel);
+    }
+
     private static void ApplyTextureTransform(XRMaterial material, UnityMaterialDocument document, string? sourceProperty, string destinationSampler)
     {
         if (string.IsNullOrWhiteSpace(sourceProperty))
             return;
 
-        if (document.Textures.TryGetValue(sourceProperty, out UnityTextureProperty? textureProperty) && textureProperty is not null)
+        if (document.Textures.TryGetValue(sourceProperty, out UnityTexturePropertyDocument? textureProperty) && textureProperty is not null)
             SetVector4(material, $"{destinationSampler}_ST", new Vector4(textureProperty.Scale.X, textureProperty.Scale.Y, textureProperty.Offset.X, textureProperty.Offset.Y));
 
         if (document.TryGetVector($"{sourceProperty}Pan", out Vector4 pan))
@@ -978,38 +1299,35 @@ public static class UnityMaterialImporter
             SetInt(material, $"{destinationSampler}UV", uv);
     }
 
-    private static bool IsPoiyomiToon93Material(UnityMaterialDocument document, UnityAssetResolver resolver, out string? shaderPath)
+    private static PoiyomiShaderMatchResult MatchPoiyomiToon93Material(
+        UnityMaterialDocument document,
+        UnityAssetResolver resolver,
+        out string? shaderPath)
     {
         shaderPath = resolver.Resolve(document.Shader.Guid);
-        string normalizedShaderPath = shaderPath?.Replace('\\', '/') ?? string.Empty;
-        if (normalizedShaderPath.Contains("/_PoiyomiShaders/Shaders/9.3/Toon/", StringComparison.OrdinalIgnoreCase) &&
-            Path.GetFileName(normalizedShaderPath).StartsWith("Poiyomi Toon", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
+        string? shaderSource = null;
         if (!string.IsNullOrWhiteSpace(shaderPath) && File.Exists(shaderPath))
         {
             try
             {
-                string shaderText = File.ReadAllText(shaderPath);
-                if (shaderText.Contains("Shader \".poiyomi/Poiyomi Toon\"", StringComparison.Ordinal) &&
-                    shaderText.Contains("Poiyomi 9.3", StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
+                shaderSource = File.ReadAllText(shaderPath);
             }
-            catch
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
             {
             }
         }
 
-        return document.HasAnyProperty("shader_master_label") &&
-               document.HasAnyProperty("_ShadingEnabled") &&
-               document.HasAnyProperty("_MainTex") &&
-               (document.HasAnyProperty("_EnableEmission") ||
-                document.HasAnyProperty("_MatcapEnable") ||
-                document.HasAnyProperty("_EnableRimLighting"));
+        return PoiyomiShaderMatcher.Match(new PoiyomiShaderMatchInput
+        {
+            ShaderPath = shaderPath,
+            ShaderGuid = document.Shader.Guid,
+            ShaderSource = shaderSource,
+            PropertyNames = document.GetPropertyNames(),
+            OverrideTags = document.OverrideTags,
+        });
     }
 
     private static bool IsLilToonMaterial(UnityMaterialDocument document, UnityAssetResolver resolver, out string? shaderPath)
@@ -1124,203 +1442,6 @@ public static class UnityMaterialImporter
     private static void SetVector4(XRMaterial material, string name, Vector4 value)
         => material.Parameter<ShaderVector4>(name)?.SetValue(value);
 
-    private static UnityMaterialDocument ParseMaterialDocument(YamlMappingNode mapping, string materialPath)
-    {
-        var document = new UnityMaterialDocument
-        {
-            Name = GetScalarString(mapping, "m_Name") ?? Path.GetFileNameWithoutExtension(materialPath),
-            Shader = ParseReference(GetNode(mapping, "m_Shader")),
-            CustomRenderQueue = GetScalarInt(mapping, "m_CustomRenderQueue") ?? -1,
-        };
-
-        if (GetNode(mapping, "m_SavedProperties") is not YamlMappingNode savedProperties)
-            return document;
-
-        if (GetNode(savedProperties, "m_TexEnvs") is YamlSequenceNode texEnvs)
-            ParseTextureProperties(texEnvs, document.Textures);
-
-        if (GetNode(savedProperties, "m_Floats") is YamlSequenceNode floats)
-            ParseFloatProperties(floats, document.Floats);
-
-        if (GetNode(savedProperties, "m_Ints") is YamlSequenceNode ints)
-            ParseIntProperties(ints, document.Ints);
-
-        if (GetNode(savedProperties, "m_Colors") is YamlSequenceNode colors)
-            ParseVectorProperties(colors, document.Vectors);
-
-        return document;
-    }
-
-    private static void ParseTextureProperties(YamlSequenceNode sequence, Dictionary<string, UnityTextureProperty> destination)
-    {
-        foreach (YamlNode item in sequence.Children)
-        {
-            if (item is not YamlMappingNode entry)
-                continue;
-
-            foreach ((YamlNode keyNode, YamlNode valueNode) in entry.Children)
-            {
-                string? propertyName = (keyNode as YamlScalarNode)?.Value;
-                if (string.IsNullOrWhiteSpace(propertyName) || valueNode is not YamlMappingNode textureNode)
-                    continue;
-
-                destination[propertyName] = new UnityTextureProperty(
-                    ParseReference(GetNode(textureNode, "m_Texture")),
-                    GetVector2(textureNode, "m_Scale", Vector2.One),
-                    GetVector2(textureNode, "m_Offset", Vector2.Zero));
-            }
-        }
-    }
-
-    private static void ParseFloatProperties(YamlSequenceNode sequence, Dictionary<string, float> destination)
-    {
-        foreach (YamlNode item in sequence.Children)
-        {
-            if (item is not YamlMappingNode entry)
-                continue;
-
-            foreach ((YamlNode keyNode, YamlNode valueNode) in entry.Children)
-            {
-                string? propertyName = (keyNode as YamlScalarNode)?.Value;
-                string? rawValue = (valueNode as YamlScalarNode)?.Value;
-                if (string.IsNullOrWhiteSpace(propertyName) ||
-                    !float.TryParse(rawValue, NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
-                {
-                    continue;
-                }
-
-                destination[propertyName] = value;
-            }
-        }
-    }
-
-    private static void ParseIntProperties(YamlSequenceNode sequence, Dictionary<string, int> destination)
-    {
-        foreach (YamlNode item in sequence.Children)
-        {
-            if (item is not YamlMappingNode entry)
-                continue;
-
-            foreach ((YamlNode keyNode, YamlNode valueNode) in entry.Children)
-            {
-                string? propertyName = (keyNode as YamlScalarNode)?.Value;
-                string? rawValue = (valueNode as YamlScalarNode)?.Value;
-                if (string.IsNullOrWhiteSpace(propertyName) ||
-                    !int.TryParse(rawValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
-                {
-                    continue;
-                }
-
-                destination[propertyName] = value;
-            }
-        }
-    }
-
-    private static void ParseVectorProperties(YamlSequenceNode sequence, Dictionary<string, Vector4> destination)
-    {
-        foreach (YamlNode item in sequence.Children)
-        {
-            if (item is not YamlMappingNode entry)
-                continue;
-
-            foreach ((YamlNode keyNode, YamlNode valueNode) in entry.Children)
-            {
-                string? propertyName = (keyNode as YamlScalarNode)?.Value;
-                if (string.IsNullOrWhiteSpace(propertyName) || valueNode is not YamlMappingNode vectorNode)
-                    continue;
-
-                destination[propertyName] = GetVector4(vectorNode, Vector4.Zero);
-            }
-        }
-    }
-
-    private static YamlMappingNode? LoadUnityDocumentMapping(string assetPath, string documentType)
-    {
-        var yaml = new YamlStream();
-        using var reader = new StreamReader(assetPath);
-        yaml.Load(reader);
-
-        foreach (YamlDocument document in yaml.Documents)
-        {
-            if (document.RootNode is not YamlMappingNode rootNode || rootNode.Children.Count == 0)
-                continue;
-
-            foreach ((YamlNode keyNode, YamlNode valueNode) in rootNode.Children)
-            {
-                string? key = (keyNode as YamlScalarNode)?.Value;
-                if (string.Equals(key, documentType, StringComparison.Ordinal) && valueNode is YamlMappingNode mappingNode)
-                    return mappingNode;
-            }
-        }
-
-        return null;
-    }
-
-    private static YamlNode? GetNode(YamlMappingNode mapping, string key)
-    {
-        foreach ((YamlNode yamlKey, YamlNode yamlValue) in mapping.Children)
-        {
-            if (string.Equals((yamlKey as YamlScalarNode)?.Value, key, StringComparison.Ordinal))
-                return yamlValue;
-        }
-
-        return null;
-    }
-
-    private static string? GetScalarString(YamlMappingNode mapping, string key)
-        => (GetNode(mapping, key) as YamlScalarNode)?.Value;
-
-    private static int? GetScalarInt(YamlMappingNode mapping, string key)
-    {
-        string? value = GetScalarString(mapping, key);
-        return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int result)
-            ? result
-            : null;
-    }
-
-    private static float? GetScalarFloat(YamlMappingNode mapping, string key)
-    {
-        string? value = GetScalarString(mapping, key);
-        return float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float result)
-            ? result
-            : null;
-    }
-
-    private static Vector2 GetVector2(YamlMappingNode mapping, string key, Vector2 fallback)
-    {
-        if (GetNode(mapping, key) is not YamlMappingNode vectorMapping)
-            return fallback;
-
-        return new Vector2(
-            GetScalarFloat(vectorMapping, "x") ?? fallback.X,
-            GetScalarFloat(vectorMapping, "y") ?? fallback.Y);
-    }
-
-    private static Vector4 GetVector4(YamlMappingNode mapping, Vector4 fallback)
-        => new(
-            GetScalarFloat(mapping, "r") ?? GetScalarFloat(mapping, "x") ?? fallback.X,
-            GetScalarFloat(mapping, "g") ?? GetScalarFloat(mapping, "y") ?? fallback.Y,
-            GetScalarFloat(mapping, "b") ?? GetScalarFloat(mapping, "z") ?? fallback.Z,
-            GetScalarFloat(mapping, "a") ?? GetScalarFloat(mapping, "w") ?? fallback.W);
-
-    private static UnityReference ParseReference(YamlNode? node)
-    {
-        if (node is not YamlMappingNode mapping)
-            return default;
-
-        long fileId = 0;
-        string? fileIdValue = GetScalarString(mapping, "fileID");
-        if (!string.IsNullOrWhiteSpace(fileIdValue))
-            long.TryParse(fileIdValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out fileId);
-
-        int? type = null;
-        string? typeValue = GetScalarString(mapping, "type");
-        if (int.TryParse(typeValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedType))
-            type = parsedType;
-
-        return new UnityReference(fileId, GetScalarString(mapping, "guid"), type);
-    }
-
     private static string ResolveUnityProjectRoot(string sourcePath)
     {
         string normalizedPath = Path.GetFullPath(sourcePath);
@@ -1334,126 +1455,5 @@ public static class UnityMaterialImporter
         }
 
         return Path.GetDirectoryName(normalizedPath) ?? normalizedPath;
-    }
-
-    private sealed class UnityMaterialDocument
-    {
-        public string Name { get; init; } = string.Empty;
-        public UnityReference Shader { get; init; }
-        public int CustomRenderQueue { get; init; } = -1;
-        public Dictionary<string, UnityTextureProperty> Textures { get; } = new(StringComparer.Ordinal);
-        public Dictionary<string, float> Floats { get; } = new(StringComparer.Ordinal);
-        public Dictionary<string, int> Ints { get; } = new(StringComparer.Ordinal);
-        public Dictionary<string, Vector4> Vectors { get; } = new(StringComparer.Ordinal);
-
-        public bool HasAnyProperty(string name)
-            => Textures.ContainsKey(name) || Floats.ContainsKey(name) || Ints.ContainsKey(name) || Vectors.ContainsKey(name);
-
-        public bool TryGetFloat(string name, out float value)
-        {
-            if (Floats.TryGetValue(name, out value))
-                return true;
-
-            if (Ints.TryGetValue(name, out int intValue))
-            {
-                value = intValue;
-                return true;
-            }
-
-            value = 0.0f;
-            return false;
-        }
-
-        public bool TryGetInt(string name, out int value)
-        {
-            if (Ints.TryGetValue(name, out value))
-                return true;
-
-            if (Floats.TryGetValue(name, out float floatValue))
-            {
-                value = (int)MathF.Round(floatValue);
-                return true;
-            }
-
-            value = 0;
-            return false;
-        }
-
-        public bool TryGetVector(string name, out Vector4 value)
-            => Vectors.TryGetValue(name, out value);
-
-        public bool TryGetPositive(string name)
-            => TryGetFloat(name, out float value) && value > 0.0001f;
-    }
-
-    private sealed record UnityTextureProperty(UnityReference TextureReference, Vector2 Scale, Vector2 Offset);
-
-    private readonly record struct UnityReference(long FileId, string? Guid, int? Type)
-    {
-        public bool HasExternalGuid => !string.IsNullOrWhiteSpace(Guid);
-    }
-
-    private sealed class UnityAssetResolver(string projectRoot)
-    {
-        private readonly string _projectRoot = Path.GetFullPath(projectRoot);
-        private readonly Dictionary<string, string> _assetPathsByGuid = new(StringComparer.OrdinalIgnoreCase);
-        private bool _indexInitialized;
-
-        public string? Resolve(string? guid)
-        {
-            if (string.IsNullOrWhiteSpace(guid))
-                return null;
-
-            EnsureGuidIndex();
-            return _assetPathsByGuid.TryGetValue(guid, out string? path) ? path : null;
-        }
-
-        private void EnsureGuidIndex()
-        {
-            if (_indexInitialized)
-                return;
-
-            foreach (string root in EnumerateUnitySearchRoots())
-            {
-                foreach (string metaPath in Directory.EnumerateFiles(root, "*.meta", SearchOption.AllDirectories))
-                {
-                    string? guid = TryReadGuid(metaPath);
-                    if (string.IsNullOrWhiteSpace(guid))
-                        continue;
-
-                    string assetPath = metaPath[..^5];
-                    if (File.Exists(assetPath))
-                        _assetPathsByGuid.TryAdd(guid, assetPath);
-                }
-            }
-
-            _indexInitialized = true;
-        }
-
-        private IEnumerable<string> EnumerateUnitySearchRoots()
-        {
-            string assetsRoot = Path.Combine(_projectRoot, "Assets");
-            if (Directory.Exists(assetsRoot))
-                yield return assetsRoot;
-
-            string packagesRoot = Path.Combine(_projectRoot, "Packages");
-            if (Directory.Exists(packagesRoot))
-                yield return packagesRoot;
-
-            if (!Directory.Exists(assetsRoot) && !Directory.Exists(packagesRoot) && Directory.Exists(_projectRoot))
-                yield return _projectRoot;
-        }
-
-        private static string? TryReadGuid(string metaPath)
-        {
-            foreach (string line in File.ReadLines(metaPath))
-            {
-                const string prefix = "guid: ";
-                if (line.StartsWith(prefix, StringComparison.Ordinal))
-                    return line[prefix.Length..].Trim();
-            }
-
-            return null;
-        }
     }
 }

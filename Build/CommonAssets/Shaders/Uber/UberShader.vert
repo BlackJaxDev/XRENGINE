@@ -51,6 +51,9 @@ layout(location = 1) out vec3 FragNorm;        // world-space geometric normal
 layout(location = 2) out vec3 FragTan;         // world-space tangent
 layout(location = 3) out vec3 FragBinorm;      // world-space bitangent
 layout(location = 4) out vec2 FragUV0;         // primary texture coordinates
+layout(location = 5) out vec2 FragUV1;
+layout(location = 6) out vec2 FragUV2;
+layout(location = 7) out vec2 FragUV3;
 layout(location = 12) out vec4 FragColor0;     // per-vertex RGBA color
 layout(location = 20) out vec3 FragPosLocal;   // object/local-space position
 layout(location = 22) out float FragViewIndex; // which eye (0/1) for stereo
@@ -115,6 +118,9 @@ void main() {
 
     // ---- Pass-throughs -----------------------------------------------------
     FragUV0 = TexCoord0;
+    FragUV1 = TexCoord1;
+    FragUV2 = TexCoord2;
+    FragUV3 = TexCoord3;
     FragColor0 = Color0;
 
     // Single-view build — always eye 0.

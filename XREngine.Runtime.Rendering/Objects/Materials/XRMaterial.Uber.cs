@@ -301,29 +301,64 @@ public partial class XRMaterial
     private static XRTexture2D CreateDefaultUberSamplerTexture(string samplerName)
     {
         ColorF4 color = ResolveDefaultUberSamplerColor(samplerName);
-        return new XRTexture2D(1u, 1u, color)
+        bool isIdentityRamp = string.Equals(samplerName, "_ToonRamp", StringComparison.Ordinal);
+        XRTexture2D texture = new(isIdentityRamp ? 2u : 1u, 1u, color)
         {
             Name = samplerName,
             SamplerName = samplerName,
             MagFilter = ETexMagFilter.Linear,
             MinFilter = ETexMinFilter.Linear,
-            UWrap = ETexWrapMode.Repeat,
-            VWrap = ETexWrapMode.Repeat,
+            UWrap = isIdentityRamp ? ETexWrapMode.ClampToEdge : ETexWrapMode.Repeat,
+            VWrap = isIdentityRamp ? ETexWrapMode.ClampToEdge : ETexWrapMode.Repeat,
             AlphaAsTransparency = true,
             AutoGenerateMipmaps = false,
             Resizable = false,
         };
+
+        if (isIdentityRamp)
+        {
+            texture.Mipmaps[0].Data = new DataSource(
+            [
+                0, 0, 0, 255,
+                255, 255, 255, 255,
+            ]);
+        }
+
+        texture.ImportedUsage = ResolveDefaultUberSamplerUsage(samplerName);
+        texture.ImportedColorSpace = texture.ImportedUsage == ETextureImportUsage.Color
+            ? ETextureColorSpace.Srgb
+            : ETextureColorSpace.Linear;
+        texture.AlphaAsTransparency = texture.ImportedUsage == ETextureImportUsage.Color;
+        return texture;
     }
 
     private static ColorF4 ResolveDefaultUberSamplerColor(string samplerName)
     {
         if (samplerName.Contains("Normal", StringComparison.OrdinalIgnoreCase)
             || samplerName.Contains("Bump", StringComparison.OrdinalIgnoreCase))
-        {
             return new ColorF4(0.5f, 0.5f, 1.0f, 1.0f);
-        }
+
+        if (string.Equals(samplerName, "_PBRMetallicMaps", StringComparison.Ordinal) ||
+            string.Equals(samplerName, "_DissolveDetailNoise", StringComparison.Ordinal))
+            return new ColorF4(0.0f, 0.0f, 0.0f, 1.0f);
 
         return ColorF4.White;
+    }
+
+    private static ETextureImportUsage ResolveDefaultUberSamplerUsage(string samplerName)
+    {
+        if (samplerName.Contains("Normal", StringComparison.OrdinalIgnoreCase) ||
+            samplerName.Contains("Bump", StringComparison.OrdinalIgnoreCase))
+            return ETextureImportUsage.Normal;
+
+        if (samplerName.Contains("Mask", StringComparison.OrdinalIgnoreCase) ||
+            samplerName.Contains("Metallic", StringComparison.OrdinalIgnoreCase) ||
+            samplerName.Contains("Smoothness", StringComparison.OrdinalIgnoreCase) ||
+            samplerName.Contains("Noise", StringComparison.OrdinalIgnoreCase) ||
+            samplerName.Contains("Parallax", StringComparison.OrdinalIgnoreCase))
+            return ETextureImportUsage.Data;
+
+        return ETextureImportUsage.Color;
     }
 
     private static void ApplyUberDefaultLiteral(ShaderVar parameter, string? defaultLiteral)

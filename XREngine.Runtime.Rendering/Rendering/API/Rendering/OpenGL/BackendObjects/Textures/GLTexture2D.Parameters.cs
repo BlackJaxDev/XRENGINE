@@ -6,7 +6,6 @@ namespace XREngine.Rendering.OpenGL;
 public partial class GLTexture2D
 {
     private const string TextureFilterAnisotropicExtension = "GL_EXT_texture_filter_anisotropic";
-    private const float DesiredMaxAnisotropy = 8.0f;
     private const GLEnum TextureMaxAnisotropyExt = (GLEnum)0x84FE;
     private const GLEnum MaxTextureMaxAnisotropyExt = (GLEnum)0x84FF;
 
@@ -121,7 +120,7 @@ public partial class GLTexture2D
             return;
 
         float anisotropy = UsesMipmapFiltering(Data.MinFilter)
-            ? MathF.Min(maxSupportedAnisotropy, DesiredMaxAnisotropy)
+            ? MathF.Min(maxSupportedAnisotropy, Data.MaxAnisotropy)
             : 1.0f;
 
         Api.TextureParameter(BindingId, TextureMaxAnisotropyExt, anisotropy);

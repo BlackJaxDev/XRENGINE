@@ -28,6 +28,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="XREngine.UnitTests" />
+    <EmbeddedResource Include="Scene\Importers\Poiyomi\Catalogs\poiyomi-toon-9.3.64.json"
+                      LogicalName="XREngine.Scene.Importers.Poiyomi.Catalogs.poiyomi-toon-9.3.64.json" />
   </ItemGroup>
 
   <Target Name="InvalidateMissingAotFactoryRegistrationOutput"

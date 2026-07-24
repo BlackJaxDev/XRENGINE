@@ -161,9 +161,9 @@ namespace XREngine.Rendering.Shaders.Generator
                 OutputVars.Add(FragBinormName, (3, EShaderVarType._vec3));
             }
 
-            if (_texCoordsUsed > 0)
-                for (int i = 0; i < _texCoordsUsed.ClampMax(8); ++i)
-                    OutputVars.Add(string.Format(FragUVName, i), (4u + (uint)i, EShaderVarType._vec2));
+            int uvOutputs = Math.Max(4, _texCoordsUsed.ClampMax(8));
+            for (int i = 0; i < uvOutputs; ++i)
+                OutputVars.Add(string.Format(FragUVName, i), (4u + (uint)i, EShaderVarType._vec2));
 
             if (_colorsUsed > 0)
                 for (int i = 0; i < _colorsUsed.ClampMax(8); ++i)
@@ -348,9 +348,19 @@ namespace XREngine.Rendering.Shaders.Generator
                 for (int i = 0; i < _colorsUsed.ClampMax(8); ++i)
                     Line($"{string.Format(FragColorName, i)} = {ECommonBufferType.Color}{i};");
 
-            if (_texCoordsUsed != 0)
-                for (int i = 0; i < _texCoordsUsed.ClampMax(8); ++i)
-                    Line($"{string.Format(FragUVName, i)} = {ECommonBufferType.TexCoord}{i};");
+            if (_texCoordsUsed > 0)
+                Line($"{string.Format(FragUVName, 0)} = {ECommonBufferType.TexCoord}0;");
+            else
+                Line($"{string.Format(FragUVName, 0)} = vec2(0.0f);");
+
+            int uvOutputs = Math.Max(4, _texCoordsUsed.ClampMax(8));
+            for (int i = 1; i < uvOutputs; ++i)
+            {
+                string source = i < _texCoordsUsed
+                    ? $"{ECommonBufferType.TexCoord}{i}"
+                    : string.Format(FragUVName, 0);
+                Line($"{string.Format(FragUVName, i)} = {source};");
+            }
 
             // See DefaultVertexShaderGenerator: FragTransformId is purely an FS-pairing aid so
             // one fragment shader serves both the CPU-direct VS (this generator) and the

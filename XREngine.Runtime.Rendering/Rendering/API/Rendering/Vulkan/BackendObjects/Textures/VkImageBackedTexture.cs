@@ -2017,11 +2017,12 @@ public unsafe partial class VulkanRenderer
             float maxAnisotropy = 1f;
             if (Renderer.SamplerAnisotropyEnabled)
             {
+                float requestedAnisotropy = Data is XRTexture2D texture2D ? texture2D.MaxAnisotropy : 1.0f;
                 Api!.GetPhysicalDeviceProperties(PhysicalDevice, out PhysicalDeviceProperties props);
-                if (props.Limits.MaxSamplerAnisotropy > 1f)
+                if (requestedAnisotropy > 1.0f && props.Limits.MaxSamplerAnisotropy > 1f)
                 {
                     anisotropyEnable = Vk.True;
-                    maxAnisotropy = MathF.Min(props.Limits.MaxSamplerAnisotropy, 16f);
+                    maxAnisotropy = MathF.Min(props.Limits.MaxSamplerAnisotropy, requestedAnisotropy);
                 }
             }
 
@@ -2887,11 +2888,12 @@ public unsafe partial class VulkanRenderer
             float maxAnisotropy = 1f;
             if (Renderer.SamplerAnisotropyEnabled)
             {
+                float requestedAnisotropy = Data is XRTexture2D texture2D ? texture2D.MaxAnisotropy : 1.0f;
                 Api!.GetPhysicalDeviceProperties(PhysicalDevice, out PhysicalDeviceProperties props);
-                if (props.Limits.MaxSamplerAnisotropy > 1f)
+                if (requestedAnisotropy > 1.0f && props.Limits.MaxSamplerAnisotropy > 1f)
                 {
                     anisotropyEnable = Vk.True;
-                    maxAnisotropy = MathF.Min(props.Limits.MaxSamplerAnisotropy, 16f);
+                    maxAnisotropy = MathF.Min(props.Limits.MaxSamplerAnisotropy, requestedAnisotropy);
                 }
             }
 

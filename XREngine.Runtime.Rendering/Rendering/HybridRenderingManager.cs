@@ -3406,10 +3406,9 @@ namespace XREngine.Rendering
             sb.AppendLine("layout(location=2) out vec3 FragTan;");
             sb.AppendLine("layout(location=3) out vec3 FragBinorm;");
 
-            for (int i = 0; i < texCoordBindings.Count && i < 8; ++i)
+            int uvOutputCount = Math.Max(4, Math.Min(texCoordBindings.Count, 8));
+            for (int i = 0; i < uvOutputCount; ++i)
                 sb.AppendLine($"layout(location={4 + i}) out vec2 {string.Format(DefaultVertexShaderGenerator.FragUVName, i)};");
-            if (texCoordBindings.Count == 0)
-                sb.AppendLine($"layout(location=4) out vec2 {string.Format(DefaultVertexShaderGenerator.FragUVName, 0)};");
 
             if (colorBindings.Count == 0)
                 sb.AppendLine($"layout(location=12) out vec4 {string.Format(DefaultVertexShaderGenerator.FragColorName, 0)};");
@@ -3546,10 +3545,12 @@ namespace XREngine.Rendering
                 sb.AppendLine("    FragBinorm = vec3(0.0, 1.0, 0.0);");
             }
 
-            for (int i = 0; i < texCoordBindings.Count && i < 8; ++i)
-                sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragUVName, i)} = {texCoordBindings[i]};");
-            if (texCoordBindings.Count == 0)
-                sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragUVName, 0)} = vec2(0.0);");
+            string uv0Source = texCoordBindings.Count > 0 ? texCoordBindings[0] : "vec2(0.0)";
+            for (int i = 0; i < uvOutputCount; ++i)
+            {
+                string source = i < texCoordBindings.Count ? texCoordBindings[i] : uv0Source;
+                sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragUVName, i)} = {source};");
+            }
 
             for (int i = 0; i < colorBindings.Count && i < 8; ++i)
                 sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragColorName, i)} = {colorBindings[i]};");
@@ -4394,10 +4395,9 @@ namespace XREngine.Rendering
             sb.AppendLine("layout(location=2) out vec3 FragTan;");
             sb.AppendLine("layout(location=3) out vec3 FragBinorm;");
 
-            for (int i = 0; i < texCoordBindings.Count && i < 8; ++i)
+            int uvOutputCount = Math.Max(4, Math.Min(texCoordBindings.Count, 8));
+            for (int i = 0; i < uvOutputCount; ++i)
                 sb.AppendLine($"layout(location={4 + i}) out vec2 {string.Format(DefaultVertexShaderGenerator.FragUVName, i)};");
-            if (texCoordBindings.Count == 0)
-                sb.AppendLine($"layout(location=4) out vec2 {string.Format(DefaultVertexShaderGenerator.FragUVName, 0)};");
 
             if (colorBindings.Count == 0)
                 sb.AppendLine($"layout(location=12) out vec4 {string.Format(DefaultVertexShaderGenerator.FragColorName, 0)};");
@@ -4452,10 +4452,12 @@ namespace XREngine.Rendering
                 sb.AppendLine("    FragBinorm = vec3(0.0, 1.0, 0.0);");
             }
 
-            for (int i = 0; i < texCoordBindings.Count && i < 8; ++i)
-                sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragUVName, i)} = {texCoordBindings[i]};");
-            if (texCoordBindings.Count == 0)
-                sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragUVName, 0)} = vec2(0.0);");
+            string uv0Source = texCoordBindings.Count > 0 ? texCoordBindings[0] : "vec2(0.0)";
+            for (int i = 0; i < uvOutputCount; ++i)
+            {
+                string source = i < texCoordBindings.Count ? texCoordBindings[i] : uv0Source;
+                sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragUVName, i)} = {source};");
+            }
 
             for (int i = 0; i < colorBindings.Count && i < 8; ++i)
                 sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragColorName, i)} = {colorBindings[i]};");

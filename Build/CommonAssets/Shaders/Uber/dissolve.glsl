@@ -28,7 +28,7 @@ const int DISSOLVE_DIRECTIONAL = 2;
 // Dissolve Noise Sampling
 // ============================================
 float sampleDissolveNoise(vec2 uv, vec4 textureST) {
-    vec2 noiseUV = uv * textureST.xy + textureST.zw;
+    vec2 noiseUV = uv * textureST.xy + textureST.zw + _DissolveNoiseTexturePan * u_Time;
     return texture(_DissolveNoiseTexture, noiseUV).r;
 }
 
@@ -71,32 +71,41 @@ float calculateGradientDissolve(vec3 localPos, vec3 direction, float progress);
 // Returns: x = dissolve alpha (0 = dissolved, 1 = solid)
 //          y = edge factor (0-1, 1 at edge)
 //          z = raw dissolve value
-vec3 calculateDissolve(vec2 uv, vec3 worldPos, vec3 localPos) {
+vec3 calculateDissolve(vec2 noiseBaseUV, vec2 detailBaseUV, vec2 maskBaseUV, vec3 worldPos, vec3 localPos) {
     float dissolveValue = 0.0;
     int dissolveType = int(_DissolveType);
+
+    float baseNoise = sampleDissolveNoise(noiseBaseUV, _DissolveNoiseTexture_ST);
+    vec2 detailUV = detailBaseUV * _DissolveDetailNoise_ST.xy + _DissolveDetailNoise_ST.zw + _DissolveDetailNoisePan * u_Time;
+    float detailNoise = texture(_DissolveDetailNoise, detailUV).r;
+    float combinedNoise = baseNoise + (detailNoise - 0.5) * 2.0 * _DissolveDetailStrength;
+
+    vec2 maskUV = maskBaseUV * _DissolveMask_ST.xy + _DissolveMask_ST.zw + _DissolveMaskPan * u_Time;
+    float dissolveMask = texture(_DissolveMask, maskUV).r;
+    if (_DissolveMaskInvert > 0.5)
+        dissolveMask = 1.0 - dissolveMask;
     
     // Calculate base dissolve value based on type
     if (dissolveType == DISSOLVE_LINEAR) {
         // Local directional gradient with optional noise detail.
         vec3 direction = _DissolveEndPoint - _DissolveStartPoint;
         float linear = calculateGradientDissolve(localPos, dot(direction, direction) > 0.001 ? direction : vec3(0.0, 1.0, 0.0), _DissolveProgress);
-        float noise = sampleDissolveNoise(uv, _DissolveNoiseTexture_ST);
-        dissolveValue = mix(linear, linear + (noise - 0.5) * 2.0, _DissolveNoiseStrength);
+        dissolveValue = mix(linear, linear + (combinedNoise - 0.5) * 2.0, _DissolveNoiseStrength);
     }
     else if (dissolveType == DISSOLVE_SPHERICAL) {
         // Spherical dissolve from start point
         float maxRadius = length(_DissolveEndPoint - _DissolveStartPoint);
         float spherical = calculateSphericalDissolve(worldPos, _DissolveStartPoint, maxRadius, _DissolveProgress);
-        float noise = sampleDissolveNoise(uv, _DissolveNoiseTexture_ST);
-        dissolveValue = mix(spherical, spherical + (noise - 0.5) * 2.0, _DissolveNoiseStrength);
+        dissolveValue = mix(spherical, spherical + (combinedNoise - 0.5) * 2.0, _DissolveNoiseStrength);
     }
     else if (dissolveType == DISSOLVE_DIRECTIONAL) {
         // World-space point-to-point dissolve.
         float p2p = calculatePoint2PointDissolve(worldPos, _DissolveStartPoint, _DissolveEndPoint, _DissolveProgress);
-        float noise = sampleDissolveNoise(uv, _DissolveNoiseTexture_ST);
-        dissolveValue = mix(p2p, p2p + (noise - 0.5) * 2.0, _DissolveNoiseStrength);
+        dissolveValue = mix(p2p, p2p + (combinedNoise - 0.5) * 2.0, _DissolveNoiseStrength);
     }
     
+
+    dissolveValue *= dissolveMask;
     // Invert if needed
     if (_DissolveInvert > 0.5) {
         dissolveValue = 1.0 - dissolveValue;
@@ -126,8 +135,8 @@ vec3 calculateDissolve(vec2 uv, vec3 worldPos, vec3 localPos) {
 // Apply Dissolve to Fragment
 // ============================================
 // Modifies color and emission, returns true if fragment should be discarded
-bool applyDissolve(vec2 uv, vec3 worldPos, vec3 localPos, inout vec3 color, inout vec3 emission, inout float alpha) {
-    vec3 dissolveResult = calculateDissolve(uv, worldPos, localPos);
+bool applyDissolve(vec2 noiseUV, vec2 detailUV, vec2 maskUV, vec2 edgeBaseUV, vec3 worldPos, vec3 localPos, inout vec3 color, inout vec3 emission, inout float alpha) {
+    vec3 dissolveResult = calculateDissolve(noiseUV, detailUV, maskUV, worldPos, localPos);
     float dissolveAlpha = dissolveResult.x;
     float edgeFactor = dissolveResult.y;
     
@@ -138,11 +147,15 @@ bool applyDissolve(vec2 uv, vec3 worldPos, vec3 localPos, inout vec3 color, inou
     
     // Apply edge color and emission
     if (edgeFactor > 0.0) {
-        // Blend edge color
-        color = mix(color, _DissolveEdgeColor.rgb, edgeFactor * _DissolveEdgeColor.a);
+        vec2 gradientUV = vec2(edgeFactor, 0.5) * _DissolveEdgeGradient_ST.xy + _DissolveEdgeGradient_ST.zw;
+        vec3 edgeGradient = texture(_DissolveEdgeGradient, gradientUV).rgb;
+        vec2 edgeUV = edgeBaseUV * _DissolveEdgeTexture_ST.xy + _DissolveEdgeTexture_ST.zw + _DissolveEdgeTexturePan * u_Time;
+        vec3 edgeTexture = texture(_DissolveEdgeTexture, edgeUV).rgb;
+        vec3 edgeColor = _DissolveEdgeColor.rgb * edgeGradient * edgeTexture;
+        color = mix(color, edgeColor, edgeFactor * _DissolveEdgeColor.a);
         
         // Add edge emission
-        emission += _DissolveEdgeColor.rgb * edgeFactor * _DissolveEdgeEmission;
+        emission += edgeColor * edgeFactor * _DissolveEdgeEmission;
     }
     
     return false;

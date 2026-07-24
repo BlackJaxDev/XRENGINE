@@ -344,6 +344,36 @@ namespace XREngine.Rendering
             _smallestAllowedMipmapLevel = smallestAllowedMipmapLevel;
         }
 
+        private ETextureColorSpace _importedColorSpace = ETextureColorSpace.Linear;
+        /// <summary>
+        /// Transfer function requested by the source texture importer.
+        /// </summary>
+        public ETextureColorSpace ImportedColorSpace
+        {
+            get => _importedColorSpace;
+            set => SetField(ref _importedColorSpace, value);
+        }
+
+        private ETextureImportUsage _importedUsage = ETextureImportUsage.Data;
+        /// <summary>
+        /// Semantic pixel role requested by the source texture importer.
+        /// </summary>
+        public ETextureImportUsage ImportedUsage
+        {
+            get => _importedUsage;
+            set => SetField(ref _importedUsage, value);
+        }
+
+        private bool _importedNormalMapFlipGreen;
+        /// <summary>
+        /// Whether imported normal-map sampling must invert the green channel.
+        /// </summary>
+        public bool ImportedNormalMapFlipGreen
+        {
+            get => _importedNormalMapFlipGreen;
+            set => SetField(ref _importedNormalMapFlipGreen, value);
+        }
+
         private bool _alphaAsTransparency = false;
         public bool AlphaAsTransparency
         {

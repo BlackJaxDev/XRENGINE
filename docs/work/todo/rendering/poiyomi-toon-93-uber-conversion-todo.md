@@ -1,8 +1,8 @@
 # Poiyomi Toon 9.3 To Uber Shader Full Conversion And Authoring-Parity TODO
 
-- Last Updated: 2026-07-22
+- Last Updated: 2026-07-23
 - Owner: Assets / Rendering / Animation / Editor
-- Status: Planned
+- Status: In Progress - Phase 1 complete
 - Target: Poiyomi Toon 9.3.64 free Toon shader, Unity Built-In Render Pipeline
 
 Primary source:
@@ -268,128 +268,128 @@ design decision that proves it.
 
 ## Phase 0 - Pin The Target And Establish The Parity Contract
 
-- [ ] Record the exact Poiyomi repository commit containing 9.3.64 rather than
+- [x] Record the exact Poiyomi repository commit containing 9.3.64 rather than
   relying on the mutable `master` URL.
-- [ ] Pin the exact Poiyomi-embedded ThryEditor source snapshot used by that
+- [x] Pin the exact Poiyomi-embedded ThryEditor source snapshot used by that
   commit; do not define parity against a drifting upstream ThryEditor branch.
-- [ ] Save the shader version, source commit, source URL, and license identity
+- [x] Save the shader version, source commit, source URL, and license identity
   in a machine-readable conversion catalog.
-- [ ] Decide whether locked/generated Poiyomi shader variants are identified by
+- [x] Decide whether locked/generated Poiyomi shader variants are identified by
   embedded source markers, GUID aliases, property signatures, or all three.
-- [ ] Build a deterministic source-inventory report for properties, declared
+- [x] Build a deterministic source-inventory report for properties, declared
   textures, keywords, passes, blend/depth/stencil state, and shader features.
-- [ ] Parse the active ShaderLab property block and generate an exact inventory
+- [x] Parse the active ShaderLab property block and generate an exact inventory
   of every Thry/Poiyomi drawer, decorator, display-string option, condition,
   action, property reference, section marker, and localization key.
-- [ ] Distinguish active annotations from commented examples, dead properties,
+- [x] Distinguish active annotations from commented examples, dead properties,
   and annotations reachable only in other Poiyomi shaders; raw text-match
   counts are not sufficient evidence.
-- [ ] Inventory the embedded ThryEditor implementation behind each used
+- [x] Inventory the embedded ThryEditor implementation behind each used
   annotation and every material-level workflow reachable from the Poiyomi
   inspector, including context menus and auxiliary windows.
-- [ ] Record a coverage row for each active annotation and reachable workflow:
+- [x] Record a coverage row for each active annotation and reachable workflow:
   source location, semantics, current XRENGINE support, target native behavior,
   owner, tests, and exact/native/inactive/unreachable classification.
-- [ ] Classify every property as runtime, render state, animation/locking,
+- [x] Classify every property as runtime, render state, animation/locking,
   integration, inspector-only, compatibility alias, or internal data.
-- [ ] Give every runtime property an initial parity state: exact, native
+- [x] Give every runtime property an initial parity state: exact, native
   equivalent, preserved inactive, or missing.
-- [ ] Define version matching rules that reject or warn on unknown Poiyomi
+- [x] Define version matching rules that reject or warn on unknown Poiyomi
   versions rather than applying a possibly incorrect mapping.
-- [ ] Define conversion diagnostic codes and severities.
-- [ ] Define deterministic naming for generated materials, pass variants,
+- [x] Define conversion diagnostic codes and severities.
+- [x] Define deterministic naming for generated materials, pass variants,
   preserved source metadata, and animation bindings.
-- [ ] Select redistributable material and texture fixtures and record their
+- [x] Select redistributable material and texture fixtures and record their
   licenses before adding them to the repository.
 
 Acceptance criteria:
 
-- [ ] A generated catalog accounts for every 9.3.64 shader property and pass.
-- [ ] A generated UI-usage catalog accounts for every active Thry/Poiyomi
+- [x] A generated catalog accounts for every 9.3.64 shader property and pass.
+- [x] A generated UI-usage catalog accounts for every active Thry/Poiyomi
   annotation and every reachable ThryEditor workflow used by this shader.
-- [ ] Re-running the inventory against unchanged source produces no diff.
-- [ ] Unknown versions and unclassified runtime values produce actionable
+- [x] Re-running the inventory against unchanged source produces no diff.
+- [x] Unknown versions and unclassified runtime values produce actionable
   diagnostics.
 
 ## Phase 1 - Lossless Unity Material And Asset Ingestion
 
-- [ ] Move general Unity material parsing out of the Poiyomi conversion path
+- [x] Move general Unity material parsing out of the Poiyomi conversion path
   where necessary so other Unity shader converters can reuse it.
-- [ ] Parse and preserve `m_Shader`, `m_CustomRenderQueue`, all saved texture,
+- [x] Parse and preserve `m_Shader`, `m_CustomRenderQueue`, all saved texture,
   float, integer, color, and vector values.
-- [ ] Parse valid and invalid shader-keyword collections used by applicable
+- [x] Parse valid and invalid shader-keyword collections used by applicable
   Unity material serialization versions.
-- [ ] Parse disabled shader passes and override tags.
-- [ ] Parse string properties and other serialized values required by Poiyomi
+- [x] Parse disabled shader passes and override tags.
+- [x] Parse string properties and other serialized values required by Poiyomi
   locking or generated shaders.
-- [ ] Resolve the shader GUID to source/path metadata before choosing a shader-
+- [x] Resolve the shader GUID to source/path metadata before choosing a shader-
   specific converter.
-- [ ] Recognize unlocked Poiyomi Toon 9.3 materials.
-- [ ] Recognize locked Poiyomi materials without depending only on the original
+- [x] Recognize unlocked Poiyomi Toon 9.3 materials.
+- [x] Recognize locked Poiyomi materials without depending only on the original
   shader path.
-- [ ] Recognize renamed-animated properties and retain their original binding
+- [x] Recognize renamed-animated properties and retain their original binding
   identity.
-- [ ] Parse Unity texture `.meta` settings required for faithful sampling:
-  - [ ] sRGB versus linear data.
-  - [ ] normal-map type and channel interpretation.
-  - [ ] alpha source and alpha-is-transparency.
-  - [ ] wrap U/V/W.
-  - [ ] point, bilinear, and trilinear filtering.
-  - [ ] mip generation and mip bias where supported.
-  - [ ] anisotropy.
-  - [ ] texture shape: 2D, 2D array, cube, or cube array.
-- [ ] Preserve scale/offset for every texture property, including repeated
+- [x] Parse Unity texture `.meta` settings required for faithful sampling:
+  - [x] sRGB versus linear data.
+  - [x] normal-map type and channel interpretation.
+  - [x] alpha source and alpha-is-transparency.
+  - [x] wrap U/V/W.
+  - [x] point, bilinear, and trilinear filtering.
+  - [x] mip generation and mip bias where supported.
+  - [x] anisotropy.
+  - [x] texture shape: 2D, 2D array, cube, or cube array.
+- [x] Preserve scale/offset for every texture property, including repeated
   feature slots.
-- [ ] Resolve `Texture2DArray` and cubemap assets without flattening them.
-- [ ] Preserve missing references and unsupported asset types in the report.
-- [ ] Store unknown properties losslessly in source metadata.
-- [ ] Add parser fixtures for old/new Unity YAML layouts used by real Poiyomi
+- [x] Resolve `Texture2DArray` and cubemap assets without flattening them.
+- [x] Preserve missing references and unsupported asset types in the report.
+- [x] Store unknown properties losslessly in source metadata.
+- [x] Add parser fixtures for old/new Unity YAML layouts used by real Poiyomi
   materials.
 
 Acceptance criteria:
 
-- [ ] A parse/serialize diagnostic round trip retains all material values and
+- [x] A parse/serialize diagnostic round trip retains all material values and
   references used by the source fixture corpus.
-- [ ] Texture semantic and sampler metadata reach the normalized descriptor.
-- [ ] Locked and unlocked versions of the same material normalize to equivalent
+- [x] Texture semantic and sampler metadata reach the normalized descriptor.
+- [x] Locked and unlocked versions of the same material normalize to equivalent
   semantic descriptors.
 
 ## Phase 2 - Correct The Existing Uber Conversion Baseline
 
-- [ ] Add the `_ToonRamp` sampler to the Poiyomi mapper with correct transform,
+- [x] Add the `_ToonRamp` sampler to the Poiyomi mapper with correct transform,
   color space, default, and feature activation.
-- [ ] Add UV1/UV2/UV3 varyings to all applicable standard, OpenVR, OpenXR, and
+- [x] Add UV1/UV2/UV3 varyings to all applicable standard, OpenVR, OpenXR, and
   Vulkan vertex permutations.
-- [ ] Audit mesh attribute and lightmap-channel ownership so exposing UV1-UV3
+- [x] Audit mesh attribute and lightmap-channel ownership so exposing UV1-UV3
   does not overwrite engine lightmap or backend-specific vertex semantics.
-- [ ] Define behavior and diagnostics when a mesh does not contain a requested
+- [x] Define behavior and diagnostics when a mesh does not contain a requested
   UV channel.
-- [ ] Replace ambiguous texture aliases with property-specific conversions.
-- [ ] Map first and second shade textures independently.
-- [ ] Map metallic and smoothness data independently, respecting packed-channel
+- [x] Replace ambiguous texture aliases with property-specific conversions.
+- [x] Map first and second shade textures independently.
+- [x] Map metallic and smoothness data independently, respecting packed-channel
   layouts.
-- [ ] Distinguish rim color textures from rim masks.
-- [ ] Distinguish dissolve mask, base noise, detail noise, gradient, and edge
+- [x] Distinguish rim color textures from rim masks.
+- [x] Distinguish dissolve mask, base noise, detail noise, gradient, and edge
   data.
-- [ ] Translate every enum through named source-to-destination tables.
-- [ ] Add out-of-range enum diagnostics.
-- [ ] Implement semantic sampler defaults instead of treating every non-normal
+- [x] Translate every enum through named source-to-destination tables.
+- [x] Add out-of-range enum diagnostics.
+- [x] Implement semantic sampler defaults instead of treating every non-normal
   texture as white.
-- [ ] Propagate texture sampling and color-space metadata into `XRTexture`.
-- [ ] Correct feature enable detection using source section toggles, keywords,
+- [x] Propagate texture sampling and color-space metadata into `XRTexture`.
+- [x] Correct feature enable detection using source section toggles, keywords,
   textures, and non-default authored values.
-- [ ] Ensure unused source sections do not enable unnecessary variants.
-- [ ] Replace path-fragile Poiyomi detection with versioned signatures.
-- [ ] Temporarily report outline and integration features as unsupported until
+- [x] Ensure unused source sections do not enable unnecessary variants.
+- [x] Replace path-fragile Poiyomi detection with versioned signatures.
+- [x] Temporarily report outline and integration features as unsupported until
   their actual runtime paths land; do not claim support from uniforms alone.
-- [ ] Add exact tests for each corrected mapping and regression.
+- [x] Add exact tests for each corrected mapping and regression.
 
 Acceptance criteria:
 
-- [ ] Basic opaque, cutout, fade, transparent, ramped-toon, normal-mapped, and
+- [x] Basic opaque, cutout, fade, transparent, ramped-toon, normal-mapped, and
   emissive fixture materials bind the expected textures and values.
 - [ ] UV0-UV3 produce distinguishable reference output on a four-UV test mesh.
-- [ ] The conversion report contains no false claims for features that do not
+- [x] The conversion report contains no false claims for features that do not
   execute.
 
 ## Phase 3 - Render-State And Multi-Pass Material Architecture

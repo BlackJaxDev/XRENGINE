@@ -54,6 +54,9 @@ layout(location = 1) out vec3 FragNorm;
 layout(location = 2) out vec3 FragTan;
 layout(location = 3) out vec3 FragBinorm;
 layout(location = 4) out vec2 FragUV0;
+layout(location = 5) out vec2 FragUV1;
+layout(location = 6) out vec2 FragUV2;
+layout(location = 7) out vec2 FragUV3;
 layout(location = 12) out vec4 FragColor0;
 layout(location = 20) out vec3 FragPosLocal;
 layout(location = 22) out float FragViewIndex;
@@ -118,6 +121,9 @@ void main() {
 	FragBinorm = normalize(normalMatrix * (cross(norm, tan) * tanSign));
 
 	FragUV0 = TexCoord0;
+	FragUV1 = TexCoord1;
+	FragUV2 = TexCoord2;
+	FragUV3 = TexCoord3;
 	FragColor0 = Color0;
 	// FragViewIndex is not per-eye in this single-pass path (we only run
 	// main() once), so leave it at 0; the fragment stage can derive the eye
