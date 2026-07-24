@@ -1,4 +1,3 @@
-using Silk.NET.OpenGL;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -11,7 +10,6 @@ using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Occlusion;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 using static XREngine.Rendering.GpuDispatchLogger;
 

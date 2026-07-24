@@ -12,9 +12,9 @@ public sealed class VulkanPipelineCompilationP05Tests
     public void BackgroundGraphicsCompilation_UsesSharedPipelineCacheAndCompileRequiredProbe()
     {
         string queue = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCompileQueue.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCompileQueue.cs");
         string cache = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCache.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCache.cs");
 
         queue.ShouldContain("pipelineCache: ActivePipelineCache");
         queue.ShouldNotContain("pipelineCache: default");
@@ -48,7 +48,7 @@ public sealed class VulkanPipelineCompilationP05Tests
         changed.Value.ShouldNotBe(first.Value);
 
         string program = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
         int graphicsStart = program.IndexOf("public ulong ComputeGraphicsPipelineFingerprint()", StringComparison.Ordinal);
         int artifactStart = program.IndexOf("private string ComputeProgramArtifactFingerprint()", graphicsStart, StringComparison.Ordinal);
         string persistedFingerprints = program[graphicsStart..artifactStart];
@@ -60,7 +60,7 @@ public sealed class VulkanPipelineCompilationP05Tests
     public void AsyncCompileQueue_IsBoundedAndPublishesCompletedPipelines()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCompileQueue.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCompileQueue.cs");
 
         source.ShouldContain("activeJobCount >= capacity");
         source.ShouldContain("EVulkanPipelineTelemetryEvent.QueueRejected");
@@ -72,7 +72,7 @@ public sealed class VulkanPipelineCompilationP05Tests
     public void EveryMeshRecordingPath_PrewarmsBeforeBeginningCommandRecording()
     {
         string secondarySource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
         int methodStart = secondarySource.IndexOf("private void RecordScheduledMeshCommandChainWorker", StringComparison.Ordinal);
         int methodEnd = secondarySource.IndexOf("private bool TryRecordSecondaryBucket", methodStart, StringComparison.Ordinal);
         string method = secondarySource[methodStart..methodEnd];
@@ -95,7 +95,7 @@ public sealed class VulkanPipelineCompilationP05Tests
         dynamicUiBegin.ShouldBeGreaterThan(dynamicUiPrewarm);
 
         string primarySource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         int primaryMethodStart = primarySource.IndexOf("private bool TryRecordCommandBuffer", StringComparison.Ordinal);
         int primaryMethodEnd = primarySource.IndexOf("internal static bool ShouldRefreshUnwrittenSwapchainForPresent", primaryMethodStart, StringComparison.Ordinal);
         string primaryMethod = primarySource[primaryMethodStart..primaryMethodEnd];
@@ -106,7 +106,7 @@ public sealed class VulkanPipelineCompilationP05Tests
         primaryMethod.ShouldContain("Graphics pipeline prewarm deferred before vkBeginCommandBuffer");
 
         string pipeline = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
         pipeline.ShouldNotContain("materializeKnownWarmCache");
         pipeline.ShouldContain("TryEnqueueVulkanGraphicsPipelineCompile");
     }

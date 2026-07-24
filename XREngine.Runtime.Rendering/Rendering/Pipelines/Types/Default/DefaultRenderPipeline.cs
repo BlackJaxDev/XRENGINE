@@ -13,12 +13,10 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan;
-using XREngine.Rendering.XeSS;
 using XREngine.Scene;
 using static XREngine.RuntimeEngine.Rendering.State;
 
@@ -464,7 +462,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     private static bool RuntimeRequestDlssVendorFeature
         => RuntimeEngine.EffectiveSettings.EnableNvidiaDlss
         || ResolveAntiAliasingMode() == EAntiAliasingMode.Dlaa
-        || NvidiaDlssManager.IsFrameGenerationRequested;
+        || VendorUpscaleRuntime.IsDlssFrameGenerationRequested;
 
     private static bool RuntimeRequestXessVendorFeature
         => ResolveAntiAliasingMode() != EAntiAliasingMode.Dlaa
@@ -1902,9 +1900,9 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
 
     private static bool TryResolveDlssInternalResolutionScale(out float scale)
     {
-        if (RuntimeEngine.EffectiveSettings.EnableNvidiaDlss && NvidiaDlssManager.IsSupported)
+        if (RuntimeEngine.EffectiveSettings.EnableNvidiaDlss && VendorUpscaleRuntime.IsDlssSupported)
         {
-            scale = NvidiaDlssManager.GetRecommendedRenderScale(RuntimeEngine.Rendering.Settings);
+            scale = VendorUpscaleRuntime.GetDlssRecommendedRenderScale(RuntimeEngine.Rendering.Settings);
             return scale < 1.0f;
         }
 
@@ -1914,9 +1912,9 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
 
     private static bool TryResolveXessInternalResolutionScale(out float scale)
     {
-        if (RuntimeEngine.EffectiveSettings.EnableIntelXess && IntelXessManager.IsSupported)
+        if (RuntimeEngine.EffectiveSettings.EnableIntelXess && VendorUpscaleRuntime.IsXessSupported)
         {
-            scale = IntelXessManager.GetRecommendedRenderScale(RuntimeEngine.Rendering.Settings);
+            scale = VendorUpscaleRuntime.GetXessRecommendedRenderScale(RuntimeEngine.Rendering.Settings);
             return scale < 1.0f;
         }
 

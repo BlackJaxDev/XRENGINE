@@ -39,7 +39,7 @@ internal static class ProfilerDiagnosticDumps
         if (!string.IsNullOrWhiteSpace(pipelineName))
         {
             string trimmed = pipelineName.Trim();
-            if (Engine.Rendering.Stats.GpuPipelineProfiler.TryDumpGpuRenderPipelineTimingHistory(trimmed, out string fileName, out string? error))
+            if (RuntimeEngine.Rendering.Stats.GpuPipelineProfiler.TryDumpGpuRenderPipelineTimingHistory(trimmed, out string fileName, out string? error))
                 return new DumpResult(true, $"GPU timing dump written: {fileName}", [fileName]);
 
             string message = string.IsNullOrWhiteSpace(error)
@@ -53,7 +53,7 @@ internal static class ProfilerDiagnosticDumps
 
     public static DumpResult DumpAllGpuRenderPipelineTimingHistories()
     {
-        if (Engine.Rendering.Stats.GpuPipelineProfiler.TryDumpAllGpuRenderPipelineTimingHistories(out string[] fileNames, out string? error))
+        if (RuntimeEngine.Rendering.Stats.GpuPipelineProfiler.TryDumpAllGpuRenderPipelineTimingHistories(out string[] fileNames, out string? error))
         {
             string message = fileNames.Length == 1
                 ? $"GPU timing dump written: {fileNames[0]}"
@@ -69,7 +69,7 @@ internal static class ProfilerDiagnosticDumps
 
     public static string[] GetAvailableGpuRenderPipelineNames()
     {
-        GpuPipelineTimingNodeData[] roots = Engine.Rendering.Stats.GpuPipelineProfiler.GetGpuRenderPipelineTimingRoots();
+        GpuPipelineTimingNodeData[] roots = RuntimeEngine.Rendering.Stats.GpuPipelineProfiler.GetGpuRenderPipelineTimingRoots();
         if (roots.Length == 0)
             return [];
 

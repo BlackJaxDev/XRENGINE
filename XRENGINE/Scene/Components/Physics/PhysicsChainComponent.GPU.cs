@@ -298,7 +298,7 @@ public partial class PhysicsChainComponent
                 _particleTrees[treeIndex].Root.RecalculateMatrixHierarchy(
                     forceWorldRecalc: true,
                     setRenderMatrixNow: true,
-                    childRecalcType: Engine.Rendering.Settings.RecalcChildMatricesLoopType).Wait();
+                    childRecalcType: Engine.EffectiveSettings.RecalcChildMatricesLoopType).Wait();
                 GPUPhysicsChainDispatcher.RecordHierarchyRecalcTicks(System.Diagnostics.Stopwatch.GetTimestamp() - hierarchyStart);
             }
         }

@@ -6,7 +6,6 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Data.Rendering;
-using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering;
 
@@ -49,9 +48,15 @@ internal sealed class ImportedTextureStreamingManager
 
     public static ImportedTextureStreamingManager Instance { get; } = new();
 
-    private readonly ITextureResidencyBackend _tieredBackend = new GLTieredTextureResidencyBackend();
-    private readonly ITextureResidencyBackend _sparseBackend = new GLSparseTextureResidencyBackend();
-    private readonly ITextureResidencyBackend _vulkanDenseBackend = new VulkanDenseTextureResidencyBackend();
+    private static ITextureStreamingBackendProvider OpenGlProvider
+        => TextureStreamingBackendRegistry.GetRequired(RuntimeGraphicsApiKind.OpenGL);
+
+    private static ITextureStreamingBackendProvider VulkanProvider
+        => TextureStreamingBackendRegistry.GetRequired(RuntimeGraphicsApiKind.Vulkan);
+
+    private static ITextureResidencyBackend _tieredBackend => OpenGlProvider.DefaultBackend;
+    private static ITextureResidencyBackend _sparseBackend => OpenGlProvider.SparseBackend;
+    private static ITextureResidencyBackend _vulkanDenseBackend => VulkanProvider.DefaultBackend;
     private readonly TextureStreamingRegistry _registry = new();
     private readonly TextureTransitionQueue _transitionQueue = new();
     private readonly List<ImportedTextureStreamingSnapshot> _evaluateSnapshotScratch = new();
@@ -93,7 +98,7 @@ internal sealed class ImportedTextureStreamingManager
         int activeDecodes = _tieredBackend.ActiveDecodeCount + _sparseBackend.ActiveDecodeCount + _vulkanDenseBackend.ActiveDecodeCount;
         int queuedDecodes = _tieredBackend.QueuedDecodeCount + _sparseBackend.QueuedDecodeCount + _vulkanDenseBackend.QueuedDecodeCount;
         int activeGpuUploads = _tieredBackend.ActiveGpuUploadCount + _sparseBackend.ActiveGpuUploadCount + _vulkanDenseBackend.ActiveGpuUploadCount;
-        bool hasVulkanUploadWork = VulkanTextureUploadService.TryDescribeActiveUploadWork(out string vulkanUploadReason);
+        bool hasVulkanUploadWork = VulkanProvider.TryDescribeActiveUploadWork(out string vulkanUploadReason);
 
         if (pendingTransitions <= 0 &&
             activeDecodes <= 0 &&
@@ -116,7 +121,7 @@ internal sealed class ImportedTextureStreamingManager
     internal bool TryDescribeBlockingOpenXrEyeTextureWork(out string reason)
     {
         int activeGpuUploads = _tieredBackend.ActiveGpuUploadCount + _sparseBackend.ActiveGpuUploadCount;
-        bool hasVulkanBlockingWork = VulkanTextureUploadService.TryDescribeBlockingOpenXrEyeUploadWork(out string vulkanUploadReason);
+        bool hasVulkanBlockingWork = VulkanProvider.TryDescribeBlockingOpenXrEyeUploadWork(out string vulkanUploadReason);
 
         if (activeGpuUploads <= 0 && !hasVulkanBlockingWork)
         {
@@ -1555,11 +1560,11 @@ internal sealed class ImportedTextureStreamingManager
 
     private static string ResolveTelemetryBackendName(ITextureResidencyBackend backend)
     {
-        if (string.Equals(backend.Name, nameof(VulkanDenseTextureResidencyBackend), StringComparison.Ordinal))
-            return "Vulkan dense residency (compat, synchronized upload)";
+        if (VulkanProvider.IsDenseBackend(backend))
+            return VulkanProvider.GetDisplayName(backend);
 
         if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan
-            && string.Equals(backend.Name, nameof(GLTieredTextureResidencyBackend), StringComparison.Ordinal))
+            && ReferenceEquals(backend, OpenGlProvider.DefaultBackend))
         {
             return "Vulkan dense tiered (legacy GL compat backend)";
         }
@@ -1574,7 +1579,7 @@ internal sealed class ImportedTextureStreamingManager
         long currentManagedBytes,
         long availableManagedBytes)
         => RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan
-            && string.Equals(snapshot.Backend.Name, nameof(VulkanDenseTextureResidencyBackend), StringComparison.Ordinal)
+            && VulkanProvider.IsDenseBackend(snapshot.Backend)
             && ShouldPreserveDenseResidentSizeWithoutPressure(
                 snapshot.ResidentMaxDimension,
                 assignedResidentSize,
@@ -1593,7 +1598,7 @@ internal sealed class ImportedTextureStreamingManager
         long currentManagedBytes,
         long availableManagedBytes)
         => RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan
-            && string.Equals(snapshot.Backend.Name, nameof(VulkanDenseTextureResidencyBackend), StringComparison.Ordinal)
+            && VulkanProvider.IsDenseBackend(snapshot.Backend)
             && ShouldPreserveDenseResidentTargetWithoutPressure(
                 currentResidentSize,
                 assignedResidentSize,
@@ -1652,7 +1657,7 @@ internal sealed class ImportedTextureStreamingManager
         // publication; XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD=1 stays
         // experimental and does not bypass this service boundary.
         return RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan
-            || VulkanTextureUploadService.IsSynchronizedImportedTextureStreamingAvailable;
+            || VulkanProvider.IsSynchronizedUploadAvailable;
     }
 
     private static void ClearPendingTransition(

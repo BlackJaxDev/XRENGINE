@@ -11,68 +11,68 @@ public sealed class GpuIndirectPhase10HardeningTests
     [Test]
     public void Stats_ForbiddenFallbackCounters_SwapAndResetOnBeginFrame()
     {
-        bool previousTracking = XREngine.Engine.Rendering.Stats.EnableTracking;
+        bool previousTracking = XREngine.RuntimeEngine.Rendering.Stats.EnableTracking;
         try
         {
-            XREngine.Engine.Rendering.Stats.EnableTracking = true;
+            XREngine.RuntimeEngine.Rendering.Stats.EnableTracking = true;
 
-            XREngine.Engine.Rendering.Stats.BeginFrame();
-            XREngine.Engine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(2);
-            XREngine.Engine.Rendering.Stats.BeginFrame();
+            XREngine.RuntimeEngine.Rendering.Stats.BeginFrame();
+            XREngine.RuntimeEngine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(2);
+            XREngine.RuntimeEngine.Rendering.Stats.BeginFrame();
 
-            XREngine.Engine.Rendering.Stats.GpuFallback.ForbiddenGpuFallbackEvents.ShouldBe(2);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuFallback.ForbiddenGpuFallbackEvents.ShouldBe(2);
 
-            XREngine.Engine.Rendering.Stats.BeginFrame();
-            XREngine.Engine.Rendering.Stats.GpuFallback.ForbiddenGpuFallbackEvents.ShouldBe(0);
+            XREngine.RuntimeEngine.Rendering.Stats.BeginFrame();
+            XREngine.RuntimeEngine.Rendering.Stats.GpuFallback.ForbiddenGpuFallbackEvents.ShouldBe(0);
         }
         finally
         {
-            XREngine.Engine.Rendering.Stats.EnableTracking = previousTracking;
+            XREngine.RuntimeEngine.Rendering.Stats.EnableTracking = previousTracking;
         }
     }
 
     [Test]
     public void Stats_GpuMeshletCounters_SwapAndResetOnBeginFrame()
     {
-        bool previousTracking = XREngine.Engine.Rendering.Stats.EnableTracking;
+        bool previousTracking = XREngine.RuntimeEngine.Rendering.Stats.EnableTracking;
         try
         {
-            XREngine.Engine.Rendering.Stats.EnableTracking = true;
+            XREngine.RuntimeEngine.Rendering.Stats.EnableTracking = true;
 
-            XREngine.Engine.Rendering.Stats.BeginFrame();
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletStrategyRequested(2);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletProductionFrame(1);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletFallback(1);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletDispatchSkipped(3);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletTaskStats(100, 10, 5, 2);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletExpansionOverflow(4);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletBufferBytesResident(4096);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheHit(7);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheMiss(8);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheStale(9);
-            XREngine.Engine.Rendering.Stats.BeginFrame();
+            XREngine.RuntimeEngine.Rendering.Stats.BeginFrame();
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletStrategyRequested(2);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletProductionFrame(1);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletFallback(1);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletDispatchSkipped(3);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletTaskStats(100, 10, 5, 2);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletExpansionOverflow(4);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletBufferBytesResident(4096);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheHit(7);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheMiss(8);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheStale(9);
+            XREngine.RuntimeEngine.Rendering.Stats.BeginFrame();
 
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletRequestedFrames.ShouldBe(2);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletProductionFrames.ShouldBe(1);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletFallbackFrames.ShouldBe(1);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletDispatchSkipped.ShouldBe(3);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsEmitted.ShouldBe(100);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsFrustumCulled.ShouldBe(10);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsConeCulled.ShouldBe(5);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsHiZCulled.ShouldBe(2);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletExpansionOverflowCount.ShouldBe(4);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletBufferBytesResident.ShouldBe(4096);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheHits.ShouldBe(7);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheMisses.ShouldBe(8);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheStale.ShouldBe(9);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletRequestedFrames.ShouldBe(2);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletProductionFrames.ShouldBe(1);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletFallbackFrames.ShouldBe(1);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletDispatchSkipped.ShouldBe(3);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsEmitted.ShouldBe(100);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsFrustumCulled.ShouldBe(10);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsConeCulled.ShouldBe(5);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsHiZCulled.ShouldBe(2);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletExpansionOverflowCount.ShouldBe(4);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletBufferBytesResident.ShouldBe(4096);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheHits.ShouldBe(7);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheMisses.ShouldBe(8);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheStale.ShouldBe(9);
 
-            XREngine.Engine.Rendering.Stats.BeginFrame();
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletRequestedFrames.ShouldBe(0);
-            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsEmitted.ShouldBe(0);
+            XREngine.RuntimeEngine.Rendering.Stats.BeginFrame();
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletRequestedFrames.ShouldBe(0);
+            XREngine.RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsEmitted.ShouldBe(0);
         }
         finally
         {
-            XREngine.Engine.Rendering.Stats.EnableTracking = previousTracking;
+            XREngine.RuntimeEngine.Rendering.Stats.EnableTracking = previousTracking;
         }
     }
 
@@ -101,19 +101,19 @@ public sealed class GpuIndirectPhase10HardeningTests
     [Test]
     public void GoldenScene_RequiresZeroForbiddenFallbacks()
     {
-        bool previousTracking = XREngine.Engine.Rendering.Stats.EnableTracking;
+        bool previousTracking = XREngine.RuntimeEngine.Rendering.Stats.EnableTracking;
         try
         {
-            XREngine.Engine.Rendering.Stats.EnableTracking = true;
-            XREngine.Engine.Rendering.Stats.BeginFrame();
+            XREngine.RuntimeEngine.Rendering.Stats.EnableTracking = true;
+            XREngine.RuntimeEngine.Rendering.Stats.BeginFrame();
 
-            XREngine.Engine.Rendering.Stats.GpuFallback.ForbiddenGpuFallbackEvents.ShouldBe(
+            XREngine.RuntimeEngine.Rendering.Stats.GpuFallback.ForbiddenGpuFallbackEvents.ShouldBe(
                 0,
                 customMessage: "Golden-scene CI requires zero forbidden fallback attempts in ShippingFast profile.");
         }
         finally
         {
-            XREngine.Engine.Rendering.Stats.EnableTracking = previousTracking;
+            XREngine.RuntimeEngine.Rendering.Stats.EnableTracking = previousTracking;
         }
     }
 

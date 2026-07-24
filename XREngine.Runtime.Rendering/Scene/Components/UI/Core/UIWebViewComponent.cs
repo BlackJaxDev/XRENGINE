@@ -7,7 +7,6 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Rendering.UI
 {
@@ -91,8 +90,6 @@ namespace XREngine.Rendering.UI
         private uint _backingHeight = 1;
         private int _currentPboIndex;
         private readonly XRDataBuffer<byte>?[] _pboBuffers = [null, null];
-        private GLFrameBuffer? _cachedGlFbo;
-        
         // Cached mipmap to avoid allocation every frame
         private Mipmap2D? _cachedMipmap;
         private readonly Mipmap2D[] _mipmapArray = new Mipmap2D[1];
@@ -221,21 +218,21 @@ namespace XREngine.Rendering.UI
             _fbo.Material = Material;
             _fbo.Generate();
 
-            // Cache the GLFrameBuffer to avoid LINQ allocation every call
-            _cachedGlFbo = null;
-            foreach (var wrapper in _fbo.APIWrappers)
+            IRuntimeRendererHost? renderer = AbstractRenderer.Current;
+            if (renderer is null ||
+                !renderer.TryGetBackendCapability<IUiFramebufferInteropBackendCapability>(out var capability) ||
+                capability is null ||
+                !capability.TryGetUiFramebufferInterop(_fbo, out UiFramebufferInteropInfo interopInfo))
             {
-                if (wrapper is GLFrameBuffer glFbo)
-                {
-                    _cachedGlFbo = glFbo;
-                    _backend.SetTargetFramebuffer(glFbo.BindingId);
-                    if (!_loggedTargetFramebuffer)
-                    {
-                        Debug.UI($"[UIWebView] Target framebuffer bound: id={glFbo.BindingId}");
-                        _loggedTargetFramebuffer = true;
-                    }
-                    break;
-                }
+                Debug.UIWarning("[UIWebView] Current renderer does not expose UI framebuffer interop.");
+                return;
+            }
+
+            _backend.SetTargetFramebuffer(interopInfo.BindingId);
+            if (!_loggedTargetFramebuffer)
+            {
+                Debug.UI($"[UIWebView] Target framebuffer bound: id={interopInfo.BindingId}");
+                _loggedTargetFramebuffer = true;
             }
         }
 

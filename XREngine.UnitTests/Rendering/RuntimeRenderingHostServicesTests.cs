@@ -18,6 +18,7 @@ using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Shadows;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
 
 namespace XREngine.UnitTests.Rendering;
@@ -170,6 +171,52 @@ public sealed class RuntimeRenderingHostServicesTests
 
     [Test]
     [NonParallelizable]
+    public void EngineHostDepthPreference_DoesNotReenterInstalledFactory()
+    {
+        TestRuntimeRenderingHostServices sentinel = new();
+        RuntimeRenderingHostServices.Current = sentinel;
+        IRuntimeRenderingHostServices engineHost =
+            RuntimeRenderingBootstrap.CreateEngineHostServices();
+
+        XRCamera.EDepthMode resolved =
+            engineHost.ResolveSceneCameraDepthModePreference();
+
+        resolved.ShouldBe(
+            EngineRenderingSettingsApplication
+                .ResolveSceneCameraDepthModePreference());
+        sentinel.ResolveSceneCameraDepthModePreferenceCallCount
+            .ShouldBe(0);
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void EngineHostFrameState_DoesNotReenterInstalledFrameTiming()
+    {
+        TestRuntimeRenderingHostServices sentinel = new();
+        RuntimeRenderingHostServices.Current = sentinel;
+        IRuntimeRenderingHostServices engineHost =
+            RuntimeRenderingBootstrap.CreateEngineHostServices();
+
+        ulong previousFrameId =
+            RuntimeEngine.Rendering.State.RenderFrameId;
+        ulong currentFrameId =
+            RuntimeEngine.Rendering.BeginRenderFrame();
+
+        currentFrameId.ShouldBe(unchecked(previousFrameId + 1UL));
+        engineHost.CurrentRenderFrameId.ShouldBe(currentFrameId);
+        engineHost.CurrentRenderPipelineContext.ShouldBeNull();
+        engineHost.ActiveRenderCommandExecutionState.ShouldBeNull();
+        engineHost.IsShadowPass.ShouldBeFalse();
+
+        sentinel.CurrentRenderFrameIdCallCount.ShouldBe(0);
+        sentinel.CurrentRenderPipelineContextCallCount.ShouldBe(0);
+        sentinel.ActiveRenderCommandExecutionStateCallCount.ShouldBe(0);
+        sentinel.IsRenderThreadCallCount.ShouldBe(0);
+        sentinel.IsShadowPassCallCount.ShouldBe(0);
+    }
+
+    [Test]
+    [NonParallelizable]
     public void FocusedCapabilities_ResolveInstalledCompositeWithoutAdapters()
     {
         TestRuntimeRenderingHostServices services = new();
@@ -236,25 +283,51 @@ public sealed class RuntimeRenderingHostServicesTests
     }
 
     [Test]
-    public void BlendshapePrecombineSettings_UseRuntimeRenderingHostServices()
+    public void BlendshapePrecombineSettings_AreOwnedByRuntimeRendering()
     {
+        bool originalEnablePass = RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass;
+        bool originalEnableDirect = RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombineForDirectVertexPath;
+        bool originalEnablePca = RuntimeEngine.Rendering.Settings.EnableBlendshapePcaBasisCompression;
+        int originalComputeMinimum = RuntimeEngine.Rendering.Settings.BlendshapePrecombineComputeMinActiveShapes;
+        int originalDirectMinimum = RuntimeEngine.Rendering.Settings.BlendshapePrecombineDirectMinActiveShapes;
+        int originalAffectedVerticesMinimum = RuntimeEngine.Rendering.Settings.BlendshapePrecombineMinAffectedVertices;
+
         TestRuntimeRenderingHostServices services = new()
         {
-            EnableBlendshapePrecombinePass = true,
-            EnableBlendshapePrecombineForDirectVertexPath = false,
-            EnableBlendshapePcaBasisCompression = true,
-            BlendshapePrecombineComputeMinActiveShapes = 11,
-            BlendshapePrecombineDirectMinActiveShapes = 13,
-            BlendshapePrecombineMinAffectedVertices = 17,
+            EnableBlendshapePrecombinePass = false,
+            EnableBlendshapePrecombineForDirectVertexPath = true,
+            EnableBlendshapePcaBasisCompression = false,
+            BlendshapePrecombineComputeMinActiveShapes = 2,
+            BlendshapePrecombineDirectMinActiveShapes = 3,
+            BlendshapePrecombineMinAffectedVertices = 4,
         };
         RuntimeRenderingHostServices.Current = services;
 
-        RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass.ShouldBeTrue();
-        RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombineForDirectVertexPath.ShouldBeFalse();
-        RuntimeEngine.Rendering.Settings.EnableBlendshapePcaBasisCompression.ShouldBeTrue();
-        RuntimeEngine.Rendering.Settings.BlendshapePrecombineComputeMinActiveShapes.ShouldBe(11);
-        RuntimeEngine.Rendering.Settings.BlendshapePrecombineDirectMinActiveShapes.ShouldBe(13);
-        RuntimeEngine.Rendering.Settings.BlendshapePrecombineMinAffectedVertices.ShouldBe(17);
+        try
+        {
+            RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass = true;
+            RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombineForDirectVertexPath = false;
+            RuntimeEngine.Rendering.Settings.EnableBlendshapePcaBasisCompression = true;
+            RuntimeEngine.Rendering.Settings.BlendshapePrecombineComputeMinActiveShapes = 11;
+            RuntimeEngine.Rendering.Settings.BlendshapePrecombineDirectMinActiveShapes = 13;
+            RuntimeEngine.Rendering.Settings.BlendshapePrecombineMinAffectedVertices = 17;
+
+            RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass.ShouldBeTrue();
+            RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombineForDirectVertexPath.ShouldBeFalse();
+            RuntimeEngine.Rendering.Settings.EnableBlendshapePcaBasisCompression.ShouldBeTrue();
+            RuntimeEngine.Rendering.Settings.BlendshapePrecombineComputeMinActiveShapes.ShouldBe(11);
+            RuntimeEngine.Rendering.Settings.BlendshapePrecombineDirectMinActiveShapes.ShouldBe(13);
+            RuntimeEngine.Rendering.Settings.BlendshapePrecombineMinAffectedVertices.ShouldBe(17);
+        }
+        finally
+        {
+            RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass = originalEnablePass;
+            RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombineForDirectVertexPath = originalEnableDirect;
+            RuntimeEngine.Rendering.Settings.EnableBlendshapePcaBasisCompression = originalEnablePca;
+            RuntimeEngine.Rendering.Settings.BlendshapePrecombineComputeMinActiveShapes = originalComputeMinimum;
+            RuntimeEngine.Rendering.Settings.BlendshapePrecombineDirectMinActiveShapes = originalDirectMinimum;
+            RuntimeEngine.Rendering.Settings.BlendshapePrecombineMinAffectedVertices = originalAffectedVerticesMinimum;
+        }
     }
 
     [Test]
@@ -466,6 +539,12 @@ public sealed class RuntimeRenderingHostServicesTests
 
     private sealed class TestRuntimeRenderingHostServices : IRuntimeRenderingHostServices
     {
+        public int ResolveSceneCameraDepthModePreferenceCallCount { get; private set; }
+        public int CurrentRenderFrameIdCallCount { get; private set; }
+        public int CurrentRenderPipelineContextCallCount { get; private set; }
+        public int ActiveRenderCommandExecutionStateCallCount { get; private set; }
+        public int IsRenderThreadCallCount { get; private set; }
+        public int IsShadowPassCallCount { get; private set; }
         public RenderPipeline? DefaultPipeline { get; set; }
 
         public string? ResolvedTextureStreamingAuthorityPath { get; set; }
@@ -533,10 +612,24 @@ public sealed class RuntimeRenderingHostServicesTests
         public int ShaderConfigVersion => 0;
         public ERenderClipSpaceYDirection ClipSpaceYDirection { get; set; } = RuntimeRenderingHostServiceDefaults.ClipSpaceYDirection;
         public ERenderClipDepthRange ClipDepthRange { get; set; } = RuntimeRenderingHostServiceDefaults.ClipDepthRange;
-        public bool IsRenderThread => true;
+        public bool IsRenderThread
+        {
+            get
+            {
+                IsRenderThreadCallCount++;
+                return true;
+            }
+        }
         public bool IsRendererActive => false;
         public bool IsOpenXrRuntimeRequested => RuntimeRenderingHostServiceDefaults.IsOpenXrRuntimeRequested;
-        public bool IsShadowPass => false;
+        public bool IsShadowPass
+        {
+            get
+            {
+                IsShadowPassCallCount++;
+                return false;
+            }
+        }
         public bool IsStereoPass => false;
         public bool IsSceneCapturePass => false;
         public bool RenderCullingVolumesEnabled => false;
@@ -601,8 +694,22 @@ public sealed class RuntimeRenderingHostServicesTests
         public bool EnableOpenXrVulkanParallelRendering => RuntimeRenderingHostServiceDefaults.EnableOpenXrVulkanParallelRendering;
         public RuntimeGraphicsApiKind CurrentRenderBackend => RuntimeGraphicsApiKind.Unknown;
         public IRuntimeRendererHost? CurrentRenderer => null;
-        public IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState => null;
-        public IRuntimeRenderPipelineFrameContext? CurrentRenderPipelineContext => null;
+        public IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState
+        {
+            get
+            {
+                ActiveRenderCommandExecutionStateCallCount++;
+                return null;
+            }
+        }
+        public IRuntimeRenderPipelineFrameContext? CurrentRenderPipelineContext
+        {
+            get
+            {
+                CurrentRenderPipelineContextCallCount++;
+                return null;
+            }
+        }
         public bool IsPlayModeTransitioning => false;
         public string PlayModeStateName => "Stopped";
         public EAntiAliasingMode DefaultAntiAliasingMode => EAntiAliasingMode.None;
@@ -611,7 +718,14 @@ public sealed class RuntimeRenderingHostServicesTests
         public float DefaultTsrRenderScale => 1.0f;
         public bool EnableRenderStatisticsTracking => true;
         public bool EnableGpuRenderPipelineProfiling => true;
-        public ulong CurrentRenderFrameId => 0UL;
+        public ulong CurrentRenderFrameId
+        {
+            get
+            {
+                CurrentRenderFrameIdCallCount++;
+                return 0UL;
+            }
+        }
         public bool ProvidesShadowAtlasSettings => false;
         public bool UseSpotShadowAtlas => true;
         public bool UseDirectionalShadowAtlas => true;
@@ -674,7 +788,10 @@ public sealed class RuntimeRenderingHostServicesTests
             => [];
 
         public XRCamera.EDepthMode ResolveSceneCameraDepthModePreference()
-            => XRCamera.EDepthMode.Normal;
+        {
+            ResolveSceneCameraDepthModePreferenceCallCount++;
+            return XRCamera.EDepthMode.Normal;
+        }
 
         public IRuntimeInputControllablePawn? EnsurePawnForCamera(SceneNode sceneNode, CameraComponent camera, ELocalPlayerIndex playerIndex, Type? pawnType = null)
             => null;
@@ -868,22 +985,47 @@ public sealed class RuntimeRenderingHostServicesTests
         }
 
         public void EnqueueRenderThreadTask(Action task)
-            => task();
+            => ExecuteAsRenderThread(task);
 
         public void EnqueueRenderThreadTask(Action task, RenderThreadJobKind renderThreadKind)
-            => task();
+            => ExecuteAsRenderThread(task);
 
         public void EnqueueRenderThreadTask(Action task, string reason)
-            => task();
+            => ExecuteAsRenderThread(task);
 
         public void EnqueueRenderThreadTask(Action task, string reason, RenderThreadJobKind renderThreadKind)
-            => task();
+            => ExecuteAsRenderThread(task);
 
         public T InvokeRenderThreadTask<T>(
             Func<T> task,
             string reason,
             RenderThreadJobKind renderThreadKind = RenderThreadJobKind.Unknown)
-            => task();
+        {
+            int previousRenderThreadId = RuntimeEngine.RenderThreadId;
+            RuntimeEngine.AssignRenderThread(Environment.CurrentManagedThreadId);
+            try
+            {
+                return task();
+            }
+            finally
+            {
+                RuntimeEngine.AssignRenderThread(previousRenderThreadId);
+            }
+        }
+
+        private static void ExecuteAsRenderThread(Action task)
+        {
+            int previousRenderThreadId = RuntimeEngine.RenderThreadId;
+            RuntimeEngine.AssignRenderThread(Environment.CurrentManagedThreadId);
+            try
+            {
+                task();
+            }
+            finally
+            {
+                RuntimeEngine.AssignRenderThread(previousRenderThreadId);
+            }
+        }
 
         public void EnqueueAppThreadTask(Action task)
             => task();

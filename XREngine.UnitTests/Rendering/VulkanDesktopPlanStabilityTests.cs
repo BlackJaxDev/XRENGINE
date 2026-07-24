@@ -112,12 +112,12 @@ public sealed class VulkanDesktopPlanStabilityTests
     {
         string[] nonBlockingSources =
         [
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs",
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs",
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs",
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs",
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs",
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs",
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs",
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs",
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs",
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs",
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs",
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs",
         ];
 
         foreach (string relativePath in nonBlockingSources)
@@ -129,7 +129,7 @@ public sealed class VulkanDesktopPlanStabilityTests
         }
 
         string openXr = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
         string normalOpenXr = SliceBetween(
             openXr,
             "internal bool TryRenderOpenXrEyeSwapchain(",
@@ -211,7 +211,7 @@ public sealed class VulkanDesktopPlanStabilityTests
     public void PlannerCompatibilityExcludesRotatingDesktopTargetFromPhysicalPlanIdentity()
     {
         string planner = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
         string recordingFingerprint = SliceBetween(
             planner,
             "internal static ulong ComputeFrameOpContextRecordingFingerprint",
@@ -232,9 +232,9 @@ public sealed class VulkanDesktopPlanStabilityTests
     public void ConditionalShadowRegistriesRemainStableAndOutputScoped()
     {
         string planner = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
         string state = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs");
         string merge = SliceBetween(
             planner,
             "private RenderResourceRegistry? BuildMergedFrameOpRegistry",
@@ -258,7 +258,7 @@ public sealed class VulkanDesktopPlanStabilityTests
     public void PlanReplacementUsesDeferredRetirementWithoutGlobalDrain()
     {
         string planner = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
         string commit = SliceBetween(
             planner,
             "private void CommitPhysicalAllocatorPlan",
@@ -277,7 +277,7 @@ public sealed class VulkanDesktopPlanStabilityTests
     public void PlannerCapacityEvictionUsesTimelineRetirementWithoutGlobalDrain()
     {
         string planner = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
         string prune = SliceBetween(
             planner,
             "private void PruneFrameOpResourcePlannerStatesToCapacity",
@@ -295,7 +295,7 @@ public sealed class VulkanDesktopPlanStabilityTests
     public void PhysicalPlanCacheAndArenaTelemetryArePublished()
     {
         string planner = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
         string telemetry = ReadWorkspaceFile(
             "XREngine.Runtime.Core/Settings/Contracts/Records/FrameOutputWorkTelemetry.cs");
         string packet = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");
@@ -314,7 +314,7 @@ public sealed class VulkanDesktopPlanStabilityTests
     public void OpenXrPlannerStateRetirementDoesNotDrainOtherOutputFamilies()
     {
         string openXr = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
         string destroy = SliceBetween(
             openXr,
             "private void DestroyOpenXrResourcePlannerState()",
@@ -329,30 +329,34 @@ public sealed class VulkanDesktopPlanStabilityTests
     [Test]
     public void RejectedDesktopFramePublishesOnlyKnownGoodPriorContent()
     {
-        string frameLoop = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
+        string recovery = string.Join(
+            "\n",
+            ReadWorkspaceFile(
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recovery.cs"),
+            ReadWorkspaceFile(
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recovery.Policy.cs"),
+            ReadWorkspaceFile(
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recovery.Recording.cs"),
+            ReadWorkspaceFile(
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recovery.Submission.cs"),
+            ReadWorkspaceFile(
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recovery.Presentation.cs"));
         string swapchain = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
-        string recovery = SliceBetween(
-            frameLoop,
-            "bool TryPresentAbortedDirtyFrame",
-            "stageStartTimestamp = Stopwatch.GetTimestamp();");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
 
         recovery.ShouldContain("ResolveRejectedDesktopFramePolicy(");
         recovery.ShouldContain("if (!policy.ShouldPresent)");
         recovery.ShouldContain("policy=SkipPresent");
-        recovery.ShouldContain("policy=PresentLastCompletedContent");
-        recovery.ShouldContain("finalTargetValid=");
-        recovery.ShouldContain("swapchainWrites=");
+        recovery.ShouldContain("QueueDesktopPresent(");
+        recovery.ShouldContain("RecordDesktopPresentBookkeeping(");
+        recovery.ShouldContain("CompleteDesktopFrameSlot(ref attempt)");
         recovery.ShouldContain("rejectionStage=");
         recovery.ShouldContain("submitResult=");
-        recovery.ShouldContain("lastReplacementAllocation");
-        recovery.ShouldContain("_lastWindowPresentFrameOpContext ?? ActiveLastActiveFrameOpContext");
-        recovery.ShouldContain("exposureOwnedByDesktop=");
-        recovery.ShouldContain("exposureHistoryRetained=");
-        recovery.ShouldContain("presentAccepted=");
-        recovery.ShouldContain("Attempted presentation of previously completed content");
-        recovery.IndexOf("ReleaseUnsubmittedTextureUploadCommandBuffer", StringComparison.Ordinal)
+        recovery.ShouldContain("_lastWindowPresentFrameOpContext");
+        recovery.ShouldContain("ActiveLastActiveFrameOpContext");
+        recovery.ShouldContain("RecordPhase524bInjectedDesktopRejection(");
+        recovery.ShouldContain("ConsumedByRecoveryImagePendingPresent");
+        recovery.IndexOf("ReleaseUnsubmittedDesktopUpload", StringComparison.Ordinal)
             .ShouldBeLessThan(recovery.IndexOf("if (!policy.ShouldPresent)", StringComparison.Ordinal));
         swapchain.ShouldContain("_swapchainImageHasValidPresentedContent = new bool[imageCount];");
         swapchain.ShouldContain("_swapchainImageHasValidPresentedContent = null;");
@@ -361,22 +365,26 @@ public sealed class VulkanDesktopPlanStabilityTests
     [Test]
     public void DescriptorPendingDesktopFrameUsesInitializationClearWithoutImmediateSwapchainRecreate()
     {
-        string frameLoop = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
+        string recoverySource = string.Join(
+            "\n",
+            ReadWorkspaceFile(
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recovery.cs"),
+            ReadWorkspaceFile(
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recovery.Policy.cs"),
+            ReadWorkspaceFile(
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recovery.Recording.cs"));
         string policy = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DesktopPresentationPolicy.cs");
-        string deferredRecovery = SliceBetween(
-            frameLoop,
-            "bool TryPresentAbortedDirtyFrame",
-            "stageStartTimestamp = Stopwatch.GetTimestamp();");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DesktopPresentationPolicy.cs");
 
-        deferredRecovery.ShouldContain("string.Equals(rejectionStage, \"RecordDeferred\"");
-        deferredRecovery.ShouldContain("ERejectedDesktopFrameDisposition.PresentInitializationClear");
-        deferredRecovery.ShouldContain("policy.ShouldClearBeforePresent");
-        deferredRecovery.ShouldContain("CmdClearColorImageTracked");
+        recoverySource.ShouldContain("string.Equals(");
+        recoverySource.ShouldContain("\"RecordDeferred\"");
+        recoverySource.ShouldContain("ERejectedDesktopFrameDisposition");
+        recoverySource.ShouldContain(".PresentInitializationClear");
+        recoverySource.ShouldContain("policy.ShouldClearBeforePresent");
+        recoverySource.ShouldContain("CmdClearColorImageTracked");
         policy.ShouldContain("DeferredInitializationClear");
         policy.ShouldContain("public bool ShouldClearBeforePresent");
-        frameLoop.ShouldNotContain("RecreateSwapchainImmediately(\"Command buffer recording deferred");
+        recoverySource.ShouldNotContain("TryRecreateSwapchainNow(\"Command buffer recording deferred");
     }
 
     [TestCase(false, true, true)]
@@ -397,7 +405,7 @@ public sealed class VulkanDesktopPlanStabilityTests
     public void OpenXrOffscreenMirror_DoesNotTransitionDesktopSwapchainAndResetsReusedQueries()
     {
         string openXr = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
         string reuse = SliceBetween(
             openXr,
             "private bool TryReuseOpenXrMirrorPrimaryCommandBuffer",
@@ -423,13 +431,13 @@ public sealed class VulkanDesktopPlanStabilityTests
     public void DesktopSwapchainRecreation_PreservesExternalOpenXrCommandState()
     {
         string swapchain = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
         string allocation = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs");
         string state = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
         string lowering = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
 
         string swapchainDestroy = SliceBetween(
             swapchain,

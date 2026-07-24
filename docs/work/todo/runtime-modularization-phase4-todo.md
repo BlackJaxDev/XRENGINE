@@ -117,21 +117,21 @@ The current `Runtime.Rendering` project also references `XREngine.Animation`, `X
 
 The legacy `Engine` implementation is a partial type, and partial declarations cannot span assemblies. Extract independently owned Runtime.Rendering types/services and retain only temporary forwarding methods in `XRENGINE` while consumers migrate.
 
-- [ ] Extract rendering state, statistics, frame-output accounting, debug/profiling hooks, render-thread hosting, window management, viewport rebinding, and effective rendering settings into Runtime.Rendering-owned types.
-- [ ] Extract or move the concrete render-object, shader, video-streaming, VR-rendering, renderer/window, and rendering-host capability implementations to `Runtime.Rendering` or the application composition root.
-- [ ] Replace `Engine.Rendering.*`, `Engine.Windows`, and related static/partial call sites with explicit Runtime.Rendering services or narrow contracts.
-- [ ] Preserve startup/shutdown ordering, render-thread affinity, event subscription symmetry, resource teardown, device-loss reporting, and multi-window behavior during extraction.
-- [ ] Remove the rendering-owned legacy `Engine` partials and forwarding members after all production consumers migrate.
-- [ ] Validate `Runtime.Rendering`, `XRENGINE`, Editor, Server, VRClient, rendering statistics/profiler tests, window lifecycle tests, and OpenXR presentation tests.
+- [x] Extract rendering state, statistics, frame-output accounting, debug/profiling hooks, render-thread hosting, window management, viewport rebinding, and effective rendering settings into Runtime.Rendering-owned types.
+- [x] Extract or move the concrete render-object, shader, video-streaming, VR-rendering, renderer/window, and rendering-host capability implementations to `Runtime.Rendering` or the application composition root.
+- [x] Replace `Engine.Rendering.*`, `Engine.Windows`, and related static/partial call sites with explicit Runtime.Rendering services or narrow contracts.
+- [x] Preserve startup/shutdown ordering, render-thread affinity, event subscription symmetry, resource teardown, device-loss reporting, and multi-window behavior during extraction.
+- [x] Remove the rendering-owned legacy `Engine` partials and forwarding members after all production consumers migrate.
+- [x] Validate `Runtime.Rendering`, `XRENGINE`, Editor, Server, VRClient, rendering statistics/profiler tests, window lifecycle tests, and OpenXR presentation tests.
 
 ## P4.7 - Migrate Consumers And Remove Rendering Ownership From XRENGINE
 
-- [ ] Update Editor, Server, VRClient, Bootstrap, integration projects, samples, benchmarks, tests, and tools to reference the final Runtime.Rendering APIs directly.
-- [ ] Remove all rendering implementation, UI, function-graph, compute, import, settings, serialization, host-service, and engine-rendering source from `XRENGINE` after consumers migrate.
-- [ ] Remove obsolete project/package/native/content references from `XRENGINE.csproj` and verify each dependency has exactly one intentional owner.
-- [ ] Remove obsolete compatibility facades, duplicate defaults, type redirects, and reflection fallbacks once their migration window closes.
-- [ ] Verify `Runtime.Core` has no project or source dependency on `Runtime.Rendering` and consumes only approved lower render contracts.
-- [ ] Verify `Runtime.Rendering` has no dependency on `XRENGINE`, Editor, applications, or feature implementations outside the final approved graph.
+- [x] Update Editor, Server, VRClient, Bootstrap, integration projects, samples, benchmarks, tests, and tools to reference the final Runtime.Rendering APIs directly.
+- [x] Remove all rendering implementation, UI, function-graph, compute, import, settings, serialization, host-service, and engine-rendering source from `XRENGINE` after consumers migrate.
+- [x] Remove obsolete project/package/native/content references from `XRENGINE.csproj` and verify each dependency has exactly one intentional owner.
+- [x] Remove obsolete compatibility facades, duplicate defaults, type redirects, and reflection fallbacks once their migration window closes.
+- [x] Verify `Runtime.Core` has no project or source dependency on `Runtime.Rendering` and consumes only approved lower render contracts.
+- [x] Verify `Runtime.Rendering` has no dependency on `XRENGINE`, Editor, applications, or feature implementations outside the final approved graph.
 
 ## P4.8 - Extract OpenGL And Vulkan Leaf Backend DLLs
 
@@ -146,16 +146,16 @@ it here.
 
 ### P4.8a - Mechanical Leaf-Assembly Extraction
 
-- [ ] Create `XREngine.Runtime.Rendering.OpenGL` and move `OpenGLRenderer`, every GL API wrapper, GL resource/program/pipeline implementation, GL ImGui/platform-window integration, shared-context workers, and OpenGL-specific OpenXR/UI/video/native code into it.
-- [ ] Create `XREngine.Runtime.Rendering.Vulkan` and move `VulkanRenderer`, every Vulkan API wrapper, device/swapchain/frame/command/resource/descriptor/pipeline/render-graph implementation, Vulkan ImGui integration, and Vulkan-specific OpenXR/VMA/Streamline/video/native code into it.
-- [ ] Keep backend-neutral assets, render pipelines, logical resource generations, windows/viewports, `AbstractRenderer`, renderer lifecycle, backend module catalog, and replacement contracts in `Runtime.Rendering`.
-- [ ] Move Silk.NET.OpenGL/WGL, Silk.NET.Vulkan/extensions, VMA, generated bindings, native binaries, embedded resources, and content-copy ownership to the final concrete consumer wherever the stable kernel has no remaining use.
-- [ ] Restore targeted builds and source-contract tests after the mechanical move before changing Vulkan frame-loop structure or behavior.
+- [x] Create `XREngine.Runtime.Rendering.OpenGL` and move `OpenGLRenderer`, every GL API wrapper, GL resource/program/pipeline implementation, GL ImGui/platform-window integration, shared-context workers, and OpenGL-specific OpenXR/UI/video/native code into it.
+- [x] Create `XREngine.Runtime.Rendering.Vulkan` and move `VulkanRenderer`, every Vulkan API wrapper, device/swapchain/frame/command/resource/descriptor/pipeline/render-graph implementation, Vulkan ImGui integration, and Vulkan-specific OpenXR/VMA/Streamline/video/native code into it.
+- [x] Keep backend-neutral assets, render pipelines, logical resource generations, windows/viewports, `AbstractRenderer`, renderer lifecycle, backend module catalog, and replacement contracts in `Runtime.Rendering`.
+- [x] Move Silk.NET.OpenGL/WGL, Silk.NET.Vulkan/extensions, VMA, generated bindings, native binaries, embedded resources, and content-copy ownership to the final concrete consumer wherever the stable kernel has no remaining use.
+- [x] Restore targeted builds and source-contract tests after the mechanical move before changing Vulkan frame-loop structure or behavior.
 
 ### P4.8b - Decompose The Vulkan Desktop Frame Loop
 
 - [ ] Fully implement the [Vulkan Desktop Frame Loop Decomposition TODO](rendering/vulkan-desktop-frame-loop-decomposition-todo.md) inside `XREngine.Runtime.Rendering.Vulkan`, rebasing its documented source paths onto the leaf assembly and preserving its own progress, behavioral, synchronization, allocation, desktop, and OpenXR validation gates.
-- [ ] Keep this subphase structurally focused: do not combine frame-loop decomposition with collectible loading, backend reload orchestration, or unrelated rendering behavior changes.
+- [x] Keep this subphase structurally focused: do not combine frame-loop decomposition with collectible loading, backend reload orchestration, or unrelated rendering behavior changes.
 - [ ] Treat the decomposition TODO's final acceptance criteria as a required Phase 4 gate for the Vulkan leaf assembly.
 
 ### P4.8c - Consumer Migration, Registration, Packaging, And Validation

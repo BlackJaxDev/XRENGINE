@@ -1,5 +1,3 @@
-using XREngine.Rendering.Vulkan;
-
 namespace XREngine.Rendering;
 
 /// <summary>
@@ -12,14 +10,19 @@ internal interface IOpenGlVendorUpscaleBackendCapability
 
     bool TryGenerateFrameBuffer(XRFrameBuffer frameBuffer, out string failureReason);
 
-    bool TryExecuteVulkanBridge(
-        VulkanUpscaleBridge bridge,
-        XRFrameBuffer sourceColorFrameBuffer,
-        XRFrameBuffer sourceDepthFrameBuffer,
-        XRFrameBuffer sourceMotionFrameBuffer,
-        XRFrameBuffer? sourceExposureFrameBuffer,
-        in VulkanUpscaleBridgeDispatchParameters parameters,
-        out XRTexture? outputTexture,
-        out TimeSpan dispatchDuration,
-        out string failureReason);
+    void BlitFrameBuffer(
+        XRFrameBuffer source,
+        XRFrameBuffer destination,
+        EReadBufferMode readBuffer,
+        bool colorBit,
+        bool depthBit,
+        bool stencilBit,
+        bool linearFilter);
+
+    bool TryResolveTextureBinding(XRTexture texture, out uint bindingId);
+    bool TryGenerateTexture(XRTexture texture, out string failureReason);
+    uint CreateImportedSemaphore(nint handle);
+    void DeleteSemaphore(uint semaphore);
+    void SignalExternalTextureSemaphore(uint semaphore, ReadOnlySpan<uint> textureIds);
+    void WaitExternalTextureSemaphore(uint semaphore, uint textureId);
 }

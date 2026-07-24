@@ -143,7 +143,7 @@ public static partial class EditorImGuiUI
             // Collect all pipeline instances for ownership lookup
             var pipelineOwnership = new Dictionary<GenericRenderObject, string>(ReferenceEqualityComparer.Instance);
 
-            foreach (var window in Engine.Windows)
+            foreach (var window in RuntimeEngine.Windows)
             {
                 if (window?.Renderer is not AbstractRenderer renderer)
                     continue;
@@ -171,7 +171,7 @@ public static partial class EditorImGuiUI
                     windowTitle = $"Window 0x{window.GetHashCode():X}";
 
                 // Iterate viewports to find pipeline ownership
-                foreach (var viewport in Engine.EnumerateActiveViewports(window))
+                foreach (var viewport in RuntimeEngine.EnumerateActiveViewports(window))
                 {
                     var pipelineInstance = viewport?.RenderPipelineInstance;
                     var pipeline = pipelineInstance?.Pipeline;
@@ -759,7 +759,7 @@ public static partial class EditorImGuiUI
         private static string[] GetSortedOpenGLExtensions()
         {
             // Cache the sorted list so we don't allocate/sort every frame.
-            string[] source = Engine.Rendering.State.OpenGLExtensions;
+            string[] source = RuntimeEngine.Rendering.State.OpenGLExtensions;
             if (ReferenceEquals(_openGlExtensionsSource, source))
                 return _openGlExtensionsSorted;
 

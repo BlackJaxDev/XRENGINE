@@ -22,6 +22,15 @@ namespace XREngine.Rendering;
 /// </summary>
 public interface IRuntimeRenderSchedulingServices
 {
+    /// <summary>
+    /// Subscribes a callback to the host pre-update frame event.
+    /// </summary>
+    void SubscribePreUpdateFrame(Action callback) { }
+
+    /// <summary>
+    /// Unsubscribes a callback from the host pre-update frame event.
+    /// </summary>
+    void UnsubscribePreUpdateFrame(Action callback) { }
 
     /// <summary>
     /// Subscribes a callback to the host viewport swap-buffers frame event.

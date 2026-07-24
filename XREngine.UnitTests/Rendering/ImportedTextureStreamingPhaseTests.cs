@@ -9,12 +9,27 @@ using Shouldly;
 using XREngine;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Rendering;
+using XREngine.Runtime.Bootstrap;
 
 namespace XREngine.UnitTests.Rendering;
 
 [TestFixture]
+[NonParallelizable]
 public sealed class ImportedTextureStreamingPhaseTests
 {
+    private IRuntimeRenderingHostServices? _previousRenderingServices;
+
+    [SetUp]
+    public void SetUp()
+    {
+        _previousRenderingServices = RuntimeRenderingHostServices.Current;
+        RuntimeRenderingHostServices.Current = RuntimeRenderingBootstrap.CreateEngineHostServices();
+    }
+
+    [TearDown]
+    public void TearDown()
+        => RuntimeRenderingHostServices.Current = _previousRenderingServices!;
+
     [Test]
     public void DetermineDesiredResidentSize_WhenPromotionsBlocked_ReturnsPreviewResidentSize()
     {

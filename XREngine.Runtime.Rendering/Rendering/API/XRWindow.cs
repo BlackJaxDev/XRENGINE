@@ -13,7 +13,6 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Input;
 using XREngine.Input.Devices;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 
@@ -26,6 +25,12 @@ namespace XREngine.Rendering
     public sealed class XRWindow : XRBase, IRuntimeRenderWindowHost, IDisposable
     {
         private static readonly TimeSpan RendererShutdownGpuWaitTimeout = TimeSpan.FromSeconds(5);
+
+        /// <summary>
+        /// Creates the runtime-owned adapter used to present this window in an editor scene panel.
+        /// </summary>
+        public static IRuntimeWindowScenePanelAdapter CreateScenePanelAdapter()
+            => new XRWindowScenePanelAdapter();
 
         #region Nested Types
 

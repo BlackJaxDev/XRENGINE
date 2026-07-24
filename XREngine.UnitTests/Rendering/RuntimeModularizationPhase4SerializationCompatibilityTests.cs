@@ -1,11 +1,14 @@
+using MemoryPack;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Components;
 using XREngine.Core;
 using XREngine.Core.Attributes;
+using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.UI;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -106,6 +109,36 @@ public sealed class RuntimeModularizationPhase4SerializationCompatibilityTests
         materialClone.Name.ShouldBe("Phase4Material");
         typeof(Model).Assembly.GetName().Name.ShouldBe("XREngine.Runtime.Rendering");
         typeof(XRMaterial).Assembly.GetName().Name.ShouldBe("XREngine.Runtime.Rendering");
+    }
+
+    [Test]
+    public void RuntimeRenderingSettingsData_IsOwnedAndGeneratedByRuntimeRendering()
+    {
+        GameRenderingOverrides original = new();
+        original.Common.RenderBackendFallbackPolicyOverride =
+            new OverrideableSetting<RenderBackendFallbackPolicy>(
+                RenderBackendFallbackPolicy.RequireRequested,
+                true);
+        original.Vulkan.GpuDrivenProfileOverride =
+            new OverrideableSetting<EVulkanGpuDrivenProfile>(
+                EVulkanGpuDrivenProfile.Diagnostics,
+                true);
+
+        byte[] payload = MemoryPackSerializer.Serialize(original);
+        GameRenderingOverrides clone = MemoryPackSerializer
+            .Deserialize<GameRenderingOverrides>(payload)
+            .ShouldNotBeNull();
+
+        clone.Common.RenderBackendFallbackPolicyOverride.Value
+            .ShouldBe(RenderBackendFallbackPolicy.RequireRequested);
+        clone.Common.RenderBackendFallbackPolicyOverride.HasOverride.ShouldBeTrue();
+        clone.Vulkan.GpuDrivenProfileOverride.Value.ShouldBe(EVulkanGpuDrivenProfile.Diagnostics);
+        clone.Vulkan.GpuDrivenProfileOverride.HasOverride.ShouldBeTrue();
+
+        typeof(GameRenderingOverrides).Assembly.GetName().Name
+            .ShouldBe("XREngine.Runtime.Rendering");
+        typeof(EffectiveRenderSettingsSnapshot).Assembly.GetName().Name
+            .ShouldBe("XREngine.Runtime.Rendering");
     }
 
     private static void AssertRedirect<T>(string legacyTypeName)

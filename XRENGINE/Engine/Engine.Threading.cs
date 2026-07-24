@@ -39,13 +39,8 @@ namespace XREngine
         public static bool IsRenderThread
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => Environment.CurrentManagedThreadId == RenderThreadId;
+            get => RuntimeEngine.IsRenderThread;
         }
-
-        /// <summary>
-        /// Gets the managed thread ID of the render thread.
-        /// </summary>
-        public static int RenderThreadId { get; private set; }
 
         /// <summary>
         /// Gets whether the current thread owns backend native window creation and event pumping.
@@ -53,13 +48,8 @@ namespace XREngine
         public static bool IsWindowThread
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => Environment.CurrentManagedThreadId == WindowThreadId;
+            get => RuntimeEngine.IsWindowThread;
         }
-
-        /// <summary>
-        /// Gets the managed thread ID of the native window/event thread for the current backend mode.
-        /// </summary>
-        public static int WindowThreadId { get; private set; }
 
         /// <summary>
         /// Gets whether the current thread is the app/update thread.
@@ -98,18 +88,6 @@ namespace XREngine
         /// </summary>
         internal static void SetPhysicsThreadId(int threadId)
             => PhysicsThreadId = threadId;
-
-        /// <summary>
-        /// Sets the render thread ID. Called by the render host or collapsed render/window startup path.
-        /// </summary>
-        internal static void SetRenderThreadId(int threadId)
-            => RenderThreadId = threadId;
-
-        /// <summary>
-        /// Sets the native window/event thread ID. Called by the backend-required window host.
-        /// </summary>
-        internal static void SetWindowThreadId(int threadId)
-            => WindowThreadId = threadId;
 
         /// <summary>
         /// Sets the app/update thread ID. Called internally by the engine timer.
@@ -655,7 +633,7 @@ namespace XREngine
                 ? Allocations.BeginScope("RenderThreadJobs.Dispatch", AllocationScopeCategory.GpuUploadPreparation)
                 : default;
 
-            ulong frameId = Rendering.State.RenderFrameId;
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
             if (_renderThreadJobBudgetFrameId != frameId)
             {
                 _renderThreadJobBudgetFrameId = frameId;

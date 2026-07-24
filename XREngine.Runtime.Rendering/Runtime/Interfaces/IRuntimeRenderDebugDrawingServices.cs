@@ -22,6 +22,12 @@ namespace XREngine.Rendering;
 /// </summary>
 public interface IRuntimeRenderDebugDrawingServices
 {
+    /// <summary>
+    /// Records one debug-draw component callback for frame diagnostics.
+    /// </summary>
+    void RecordDebugDrawComponentCallback()
+    {
+    }
 
     /// <summary>
     /// Gets whether the 3D CPU spatial tree debug visualization is enabled by host editor preferences.
@@ -114,6 +120,59 @@ public interface IRuntimeRenderDebugDrawingServices
     void RenderDebugBox(Vector3 halfExtents, Vector3 center, Matrix4x4 transform, bool solid, ColorF4 color);
 
     /// <summary>
+    /// Queues or renders an oriented debug bounding box with an explicit depth-test policy.
+    /// </summary>
+    void RenderDebugBox(
+        Vector3 halfExtents,
+        Vector3 center,
+        Matrix4x4 transform,
+        bool solid,
+        ColorF4 color,
+        bool depthTested)
+        => RenderDebugBox(halfExtents, center, transform, solid, color);
+
+    /// <summary>
+    /// Queues or renders a world-space capsule.
+    /// </summary>
+    void RenderDebugCapsule(Capsule capsule, ColorF4 color)
+    {
+    }
+
+    /// <summary>
+    /// Queues or renders a world-space capsule defined by its segment.
+    /// </summary>
+    void RenderDebugCapsule(Vector3 start, Vector3 end, float radius, bool solid, ColorF4 color)
+    {
+    }
+
+    /// <summary>
+    /// Queues or renders a world-space circle.
+    /// </summary>
+    void RenderDebugCircle(
+        Vector3 center,
+        Quaternion rotation,
+        float radius,
+        bool solid,
+        ColorF4 color,
+        bool depthTested = false)
+    {
+    }
+
+    /// <summary>
+    /// Queues or renders a world-space cylinder.
+    /// </summary>
+    void RenderDebugCylinder(
+        Matrix4x4 transform,
+        Vector3 localUpAxis,
+        float radius,
+        float halfHeight,
+        bool solid,
+        ColorF4 color,
+        bool depthTested = false)
+    {
+    }
+
+    /// <summary>
     /// Queues or renders an oriented debug quad.
     /// </summary>
     void RenderDebugQuad(Vector3 center, Rotator rotation, Vector2 extents, bool solid, ColorF4 color);
@@ -127,6 +186,12 @@ public interface IRuntimeRenderDebugDrawingServices
     /// Queues or renders world-space debug text.
     /// </summary>
     void RenderDebugText(Vector3 position, string text, ColorF4 color);
+
+    /// <summary>
+    /// Queues or renders scaled world-space debug text.
+    /// </summary>
+    void RenderDebugText(Vector3 position, string text, ColorF4 color, float scale)
+        => RenderDebugText(position, text, color);
 
     /// <summary>
     /// Flushes any queued debug shapes through the host debug renderer.

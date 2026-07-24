@@ -33,7 +33,7 @@ internal sealed partial class ViewportSequenceCaptureSession
 
         long nowTimestamp = Stopwatch.GetTimestamp();
         double elapsedSeconds = Stopwatch.GetElapsedTime(_startTimestamp, nowTimestamp).TotalSeconds;
-        ulong renderFrameId = Engine.Rendering.State.RenderFrameId;
+        ulong renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
         int outputWidth = ScaleDimension(captureRegion.Width, _options.OutputScale);
         int outputHeight = ScaleDimension(captureRegion.Height, _options.OutputScale);
         long outputPixels = (long)outputWidth * outputHeight;

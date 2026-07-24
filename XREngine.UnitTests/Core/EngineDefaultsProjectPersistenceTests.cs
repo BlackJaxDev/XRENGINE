@@ -26,9 +26,9 @@ public sealed class EngineDefaultsProjectPersistenceTests
         var previousUserSettings = Engine.UserSettings;
         var previousGlobalEditorPreferences = Engine.GlobalEditorPreferences;
         var previousEditorPreferencesOverrides = Engine.EditorPreferencesOverrides;
-        var previousGlobalEngineDefaults = Engine.Rendering.GlobalDefaultSettings;
-        var previousProjectEngineDefaults = Engine.Rendering.ProjectDefaultSettings;
-        var previousActiveEngineDefaults = Engine.Rendering.Settings;
+        var previousGlobalEngineDefaults = RuntimeEngine.Rendering.GlobalDefaultSettings;
+        var previousProjectEngineDefaults = RuntimeEngine.Rendering.ProjectDefaultSettings;
+        var previousActiveEngineDefaults = RuntimeEngine.Rendering.Settings;
 
         try
         {
@@ -37,28 +37,28 @@ public sealed class EngineDefaultsProjectPersistenceTests
             XRProject project = XRProject.CreateNew(projectFolder, "SampleProject");
             Engine.LoadProject(project).ShouldBeTrue();
 
-            Engine.Rendering.ProjectDefaultSettings.ShouldNotBeNull();
-            Engine.Rendering.Settings.ShouldBeSameAs(Engine.Rendering.ProjectDefaultSettings);
+            RuntimeEngine.Rendering.ProjectDefaultSettings.ShouldNotBeNull();
+            RuntimeEngine.Rendering.Settings.ShouldBeSameAs(RuntimeEngine.Rendering.ProjectDefaultSettings);
 
-            Engine.Rendering.Settings.EnableFrameLogging = false;
-            Engine.Rendering.Settings.JobWorkers = 7;
-            Engine.Rendering.Settings.DefaultFontFolder = "ProjectFonts";
+            RuntimeEngine.Rendering.Settings.EnableFrameLogging = false;
+            RuntimeEngine.Rendering.Settings.JobWorkers = 7;
+            RuntimeEngine.Rendering.Settings.DefaultFontFolder = "ProjectFonts";
 
             Engine.SaveProjectEngineDefaults();
 
             File.Exists(project.EngineDefaultsPath).ShouldBeTrue();
 
-            Engine.Rendering.Settings.EnableFrameLogging = true;
-            Engine.Rendering.Settings.JobWorkers = null;
-            Engine.Rendering.Settings.DefaultFontFolder = "TransientFonts";
+            RuntimeEngine.Rendering.Settings.EnableFrameLogging = true;
+            RuntimeEngine.Rendering.Settings.JobWorkers = null;
+            RuntimeEngine.Rendering.Settings.DefaultFontFolder = "TransientFonts";
 
             Engine.LoadProject(project).ShouldBeTrue();
 
-            Engine.Rendering.Settings.ShouldBeSameAs(Engine.Rendering.ProjectDefaultSettings);
-            Engine.Rendering.Settings.ShouldNotBeSameAs(Engine.Rendering.GlobalDefaultSettings);
-            Engine.Rendering.Settings.EnableFrameLogging.ShouldBeFalse();
-            Engine.Rendering.Settings.JobWorkers.ShouldBe(7);
-            Engine.Rendering.Settings.DefaultFontFolder.ShouldBe("ProjectFonts");
+            RuntimeEngine.Rendering.Settings.ShouldBeSameAs(RuntimeEngine.Rendering.ProjectDefaultSettings);
+            RuntimeEngine.Rendering.Settings.ShouldNotBeSameAs(RuntimeEngine.Rendering.GlobalDefaultSettings);
+            RuntimeEngine.Rendering.Settings.EnableFrameLogging.ShouldBeFalse();
+            RuntimeEngine.Rendering.Settings.JobWorkers.ShouldBe(7);
+            RuntimeEngine.Rendering.Settings.DefaultFontFolder.ShouldBe("ProjectFonts");
         }
         finally
         {
@@ -67,12 +67,12 @@ public sealed class EngineDefaultsProjectPersistenceTests
             Engine.UserSettings = previousUserSettings;
             Engine.GlobalEditorPreferences = previousGlobalEditorPreferences;
             Engine.EditorPreferencesOverrides = previousEditorPreferencesOverrides;
-            Engine.Rendering.GlobalDefaultSettings = previousGlobalEngineDefaults;
-            Engine.Rendering.ProjectDefaultSettings = previousProjectEngineDefaults;
+            RuntimeEngine.Rendering.GlobalDefaultSettings = previousGlobalEngineDefaults;
+            RuntimeEngine.Rendering.ProjectDefaultSettings = previousProjectEngineDefaults;
             if (!ReferenceEquals(previousActiveEngineDefaults, previousGlobalEngineDefaults) &&
                 !ReferenceEquals(previousActiveEngineDefaults, previousProjectEngineDefaults))
             {
-                Engine.Rendering.Settings = previousActiveEngineDefaults;
+                RuntimeEngine.Rendering.Settings = previousActiveEngineDefaults;
             }
             Engine.Assets.GameAssetsPath = previousGameAssetsPath;
             Engine.Assets.GameMetadataPath = previousMetadataPath;

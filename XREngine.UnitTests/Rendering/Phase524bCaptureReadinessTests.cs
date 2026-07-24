@@ -94,7 +94,7 @@ public sealed class Phase524bCaptureReadinessTests
     {
         string source = File.ReadAllText(Path.Combine(
             FindWorkspaceRoot(),
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.StrictSpsBoundaryCapture.cs"));
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.StrictSpsBoundaryCapture.cs"));
         int readinessGate = source.IndexOf(
             "Phase524bCaptureReadinessDiagnostics.IsReady(out string readinessReason)",
             StringComparison.Ordinal);

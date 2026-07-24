@@ -280,7 +280,7 @@ public sealed class GpuMeshBvhPreviewContractTests
         string rendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuBvhDebugLineRenderer.cs");
         string queueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuBvhDebugOverlayQueue.cs");
         string overlaySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderDebugShapes.cs");
-        string engineDebugSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Debug.cs");
+        string engineDebugSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngine.Rendering.Debug.cs");
         string modelPreviewSource = ReadWorkspaceFile("XRENGINE/Scene/Components/Debug/Visualize/ModelBvhPreviewComponent.cs");
 
         componentSource.ShouldContain("=> Interlocked.Exchange(ref _gpuWorkQueued, 1);");
@@ -466,7 +466,7 @@ public sealed class GpuMeshBvhPreviewContractTests
         string gpuMeshBvhSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuMeshBvh.cs");
         string pickSource = ReadWorkspaceFile("XRENGINE/Rendering/XRWorldInstance.cs");
         string editorSource = ReadWorkspaceFile("XREngine.Editor/EditorFlyingCameraPawnComponent.cs");
-        string glDataBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Buffers/GLDataBuffer.cs");
+        string glDataBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Buffers/GLDataBuffer.cs");
         string visualSceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/VisualScene3D.cs");
         string raycastDispatcherSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/BvhRaycastDispatcher.cs");
         string packShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/mesh_bvh_pack_triangles.comp");

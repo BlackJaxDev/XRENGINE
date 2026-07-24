@@ -13,7 +13,6 @@ using XREngine.Data.Vectors;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Materials;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Shaders.Generator;
 using XREngine.Rendering.Vulkan;
 using static XREngine.Rendering.GpuDispatchLogger;

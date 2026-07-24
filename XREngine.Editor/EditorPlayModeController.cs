@@ -344,13 +344,13 @@ public static class EditorPlayModeController
     {
         // Get the world currently being viewed in the editor
         // First try the first window's target world
-        var window = Engine.Windows.FirstOrDefault();
+        var window = RuntimeEngine.Windows.FirstOrDefault();
         return window?.TargetWorldInstance?.TargetWorldObject as XRWorld;
     }
 
     private static void LogPlayerBindings(string phase)
     {
-        Debug.Out($"[EditorPlayModeController] {phase}: SnapshotCount={_editorPossessionSnapshot.Count} Windows={Engine.Windows.Count}");
+        Debug.Out($"[EditorPlayModeController] {phase}: SnapshotCount={_editorPossessionSnapshot.Count} Windows={RuntimeEngine.Windows.Count}");
 
         for (int playerIndex = 0; playerIndex < Engine.State.LocalPlayers.Length; playerIndex++)
         {
@@ -466,8 +466,8 @@ public static class EditorPlayModeController
             // Ensure the player is registered with a valid viewport on a live window.
             // NOTE: localPlayer.Viewport can be non-null but stale across snapshot restore; use the
             // defensive XRWindow helper to repair the player ↔ viewport linkage.
-            var window = Engine.Windows.FirstOrDefault(w => w.Viewports.Any(vp => vp.AssociatedPlayer?.LocalPlayerIndex == playerIndex))
-                ?? Engine.Windows.FirstOrDefault();
+            var window = RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Any(vp => vp.AssociatedPlayer?.LocalPlayerIndex == playerIndex))
+                ?? RuntimeEngine.Windows.FirstOrDefault();
             if (window is null)
             {
                 Debug.Out($"[EditorPlayModeController] Cannot restore editor pawn: no windows exist (player {playerIndex}).");

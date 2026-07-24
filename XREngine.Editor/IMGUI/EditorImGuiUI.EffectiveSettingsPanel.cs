@@ -36,11 +36,11 @@ public static partial class EditorImGuiUI
     }
 
     private static bool IsEngineDefaultsTarget(object? target)
-        => target is Engine.Rendering.EngineSettings;
+        => target is RuntimeEngine.Rendering.EngineSettings;
 
-    private static void DrawEngineDefaultsInspectorNote(Engine.Rendering.EngineSettings settings)
+    private static void DrawEngineDefaultsInspectorNote(RuntimeEngine.Rendering.EngineSettings settings)
     {
-        if (ReferenceEquals(settings, Engine.Rendering.ProjectDefaultSettings) && Engine.CurrentProject is not null)
+        if (ReferenceEquals(settings, RuntimeEngine.Rendering.ProjectDefaultSettings) && Engine.CurrentProject is not null)
         {
             ImGui.TextDisabled("Project engine defaults override the global engine defaults for this project.");
             if (ImGui.Button("Save Project Engine Defaults"))
@@ -48,7 +48,7 @@ public static partial class EditorImGuiUI
             ImGui.SameLine();
             ImGui.TextDisabled($"(Project: {Engine.CurrentProject.ProjectName})");
         }
-        else if (ReferenceEquals(settings, Engine.Rendering.GlobalDefaultSettings))
+        else if (ReferenceEquals(settings, RuntimeEngine.Rendering.GlobalDefaultSettings))
         {
             ImGui.TextDisabled("Global engine defaults are saved outside any project and seed new project defaults.");
             if (ImGui.Button("Save Global Engine Defaults"))
@@ -160,9 +160,9 @@ public static partial class EditorImGuiUI
             .Where(static p => p.GetMethod is not null && p.GetIndexParameters().Length == 0)
             .ToDictionary(static p => p.Name, StringComparer.Ordinal);
 
-        Dictionary<string, PropertyInfo> engineSettingsProperties = typeof(Engine.Rendering.EngineSettings)
+        Dictionary<string, PropertyInfo> engineSettingsProperties = typeof(RuntimeEngine.Rendering.EngineSettings)
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(static p => p.DeclaringType == typeof(Engine.Rendering.EngineSettings))
+            .Where(static p => p.DeclaringType == typeof(RuntimeEngine.Rendering.EngineSettings))
             .Where(static p => p.GetMethod is not null && p.GetIndexParameters().Length == 0)
             .ToDictionary(static p => p.Name, StringComparer.Ordinal);
 
@@ -188,7 +188,7 @@ public static partial class EditorImGuiUI
             return TryReadPropertyValue(row.EffectiveProperty, null, out value);
 
         if (row.EngineSettingsProperty is not null)
-            return TryReadPropertyValue(row.EngineSettingsProperty, Engine.Rendering.Settings, out value);
+            return TryReadPropertyValue(row.EngineSettingsProperty, RuntimeEngine.Rendering.Settings, out value);
 
         value = null;
         return false;
@@ -248,7 +248,7 @@ public static partial class EditorImGuiUI
     }
 
     private static string EngineDefaultSourceName()
-        => Engine.Rendering.ProjectDefaultSettings is not null ? "Project Engine Defaults" : "Global Engine Defaults";
+        => RuntimeEngine.Rendering.ProjectDefaultSettings is not null ? "Project Engine Defaults" : "Global Engine Defaults";
 
     private static string ResolveUnfocusedTargetFrameSource()
     {
@@ -277,13 +277,13 @@ public static partial class EditorImGuiUI
     }
 
     private static string ResolveGlobalEngineDefaultValue(string settingName)
-        => TryFormatReadablePropertyValue(Engine.Rendering.GlobalDefaultSettings, settingName, out string value)
+        => TryFormatReadablePropertyValue(RuntimeEngine.Rendering.GlobalDefaultSettings, settingName, out string value)
             ? value
             : "-";
 
     private static string ResolveProjectEngineDefaultValue(string settingName)
     {
-        Engine.Rendering.EngineSettings? projectDefaults = Engine.Rendering.ProjectDefaultSettings;
+        RuntimeEngine.Rendering.EngineSettings? projectDefaults = RuntimeEngine.Rendering.ProjectDefaultSettings;
         if (projectDefaults is null)
             return "<none>";
 

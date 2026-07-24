@@ -27,13 +27,13 @@ public sealed class VulkanStreamlineProvisioningTests
     public void FrameGenerationProvisioning_UsesAdapterCapabilityAndKeepsExplicitRequestsStrict()
     {
         string nativeSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/DLSS/StreamlineNative.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/DLSS/StreamlineNative.cs");
         nativeSource.ShouldContain("TryLoadExport(\"slIsFeatureSupported\", out _isFeatureSupported)");
         nativeSource.ShouldContain("StreamlineResult supportResult = _isFeatureSupported!(FeatureDlssG, ref adapterInfo);");
         nativeSource.ShouldContain("VkPhysicalDevice = (IntPtr)vulkanPhysicalDevice,");
 
         string requirementsSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanRenderer.StreamlineRequirements.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanRenderer.StreamlineRequirements.cs");
         requirementsSource.ShouldContain("TryCheckFrameGenerationSupport(");
         requirementsSource.ShouldContain("ShouldProvisionOptionalStreamlineFrameGeneration(");
         requirementsSource.ShouldContain("ValidateStreamlineSelectedPhysicalDevice()");
@@ -41,7 +41,7 @@ public sealed class VulkanStreamlineProvisioningTests
         requirementsSource.ShouldContain("if (NvidiaDlssManager.IsFrameGenerationRequested)");
 
         string initializationSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
         int physicalDeviceIndex = initializationSource.IndexOf("PickPhysicalDevice();", StringComparison.Ordinal);
         int capabilityIndex = initializationSource.IndexOf("ValidateStreamlineSelectedPhysicalDevice();", StringComparison.Ordinal);
         int logicalDeviceIndex = initializationSource.IndexOf("CreateLogicalDevice();", StringComparison.Ordinal);
@@ -50,7 +50,7 @@ public sealed class VulkanStreamlineProvisioningTests
         logicalDeviceIndex.ShouldBeGreaterThan(capabilityIndex);
 
         string swapchainSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
         swapchainSource.ShouldContain("if (NvidiaDlssManager.IsFrameGenerationRequested)");
         swapchainSource.ShouldContain("Optional DLSS-G proxy-swapchain provisioning failed");
         swapchainSource.ShouldContain("_streamlineFrameGenerationProvisioned = false;");

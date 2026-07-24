@@ -6,7 +6,7 @@ namespace XREngine.Editor.Mcp
     {
         public static XRWorldInstance? TryGetActiveWorldInstance()
         {
-            foreach (var window in Engine.Windows)
+            foreach (var window in RuntimeEngine.Windows)
             {
                 var instance = window?.TargetWorldInstance as XRWorldInstance;
                 if (instance is not null)

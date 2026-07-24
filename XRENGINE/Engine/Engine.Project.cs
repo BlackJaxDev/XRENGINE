@@ -4,7 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using XREngine.Core.Files;
 using XREngine.Diagnostics;
-using static XREngine.Engine.Rendering;
+using static XREngine.RuntimeEngine.Rendering;
 
 namespace XREngine
 {
@@ -105,7 +105,7 @@ namespace XREngine
         /// </summary>
         public static void UnloadProject()
         {
-            Rendering.ProjectDefaultSettings = null;
+            RuntimeEngine.Rendering.ProjectDefaultSettings = null;
 
             if (CurrentProject is null)
                 return;
@@ -147,8 +147,8 @@ namespace XREngine
         {
             _globalEditorPreferences?.ClearDirty();
             _editorPreferencesOverrides?.ClearDirty();
-            Rendering.GlobalDefaultSettings.ClearDirty();
-            Rendering.ProjectDefaultSettings?.ClearDirty();
+            RuntimeEngine.Rendering.GlobalDefaultSettings.ClearDirty();
+            RuntimeEngine.Rendering.ProjectDefaultSettings?.ClearDirty();
             _userSettings?.ClearDirty();
             _gameSettings?.ClearDirty();
             _gameSettings?.BuildSettings?.ClearDirty();
@@ -333,17 +333,17 @@ namespace XREngine
                     settings.FilePath = settingsPath;
                     settings.Name = "Global Engine Defaults";
                     Assets.EnsureTracked(settings);
-                    Rendering.GlobalDefaultSettings = settings;
+                    RuntimeEngine.Rendering.GlobalDefaultSettings = settings;
                     Debug.Out("Loaded global engine defaults.");
                 }
                 return;
             }
 
-            var created = Rendering.GlobalDefaultSettings;
+            var created = RuntimeEngine.Rendering.GlobalDefaultSettings;
             created.FilePath = settingsPath;
             created.Name = "Global Engine Defaults";
             Assets.EnsureTracked(created);
-            Rendering.GlobalDefaultSettings = created;
+            RuntimeEngine.Rendering.GlobalDefaultSettings = created;
         }
 
         /// <summary>
@@ -356,7 +356,7 @@ namespace XREngine
 
             if (CurrentProject?.EngineDefaultsPath is null)
             {
-                Rendering.ProjectDefaultSettings = null;
+                RuntimeEngine.Rendering.ProjectDefaultSettings = null;
                 return;
             }
 
@@ -370,13 +370,13 @@ namespace XREngine
                     settings.FilePath = settingsPath;
                     settings.Name = "Project Engine Defaults";
                     Assets.EnsureTracked(settings);
-                    Rendering.ProjectDefaultSettings = settings;
+                    RuntimeEngine.Rendering.ProjectDefaultSettings = settings;
                     Debug.Out("Loaded project engine defaults.");
                 }
                 return;
             }
 
-            var created = CloneEngineSettings(Rendering.GlobalDefaultSettings);
+            var created = CloneEngineSettings(RuntimeEngine.Rendering.GlobalDefaultSettings);
             created.FilePath = settingsPath;
             created.Name = "Project Engine Defaults";
 
@@ -385,7 +385,7 @@ namespace XREngine
                 Directory.CreateDirectory(settingsDirectory);
 
             Assets.EnsureTracked(created);
-            Rendering.ProjectDefaultSettings = created;
+            RuntimeEngine.Rendering.ProjectDefaultSettings = created;
         }
 
         private static EngineSettings CloneEngineSettings(EngineSettings source)
@@ -766,7 +766,7 @@ namespace XREngine
             if (Assets is null)
                 return;
 
-            var settings = Rendering.GlobalDefaultSettings;
+            var settings = RuntimeEngine.Rendering.GlobalDefaultSettings;
             if (settings is null)
                 return;
 
@@ -807,11 +807,11 @@ namespace XREngine
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
                 Directory.CreateDirectory(settingsDirectory);
 
-            var settings = Rendering.ProjectDefaultSettings ?? CloneEngineSettings(Rendering.GlobalDefaultSettings);
+            var settings = RuntimeEngine.Rendering.ProjectDefaultSettings ?? CloneEngineSettings(RuntimeEngine.Rendering.GlobalDefaultSettings);
             settings.FilePath = settingsPath;
             settings.Name = "Project Engine Defaults";
             Assets.EnsureTracked(settings);
-            Rendering.ProjectDefaultSettings = settings;
+            RuntimeEngine.Rendering.ProjectDefaultSettings = settings;
 
             Assets.Save(settings);
             Debug.Out("Saved project engine defaults.");

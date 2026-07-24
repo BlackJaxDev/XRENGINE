@@ -73,7 +73,7 @@ public static partial class EditorImGuiUI
     /// </summary>
     private static void DisplayScenePanelImage()
     {
-        XRWindow? window = Engine.Windows.Count > 0 ? Engine.Windows[0] : null;
+        XRWindow? window = RuntimeEngine.Windows.Count > 0 ? RuntimeEngine.Windows[0] : null;
         if (window is null)
             return;
 
@@ -120,10 +120,10 @@ public static partial class EditorImGuiUI
 
     private static void EnsureScenePanelRenderRegionProvider()
     {
-        if (Engine.Rendering.ScenePanelRenderRegionProvider is not null)
+        if (RuntimeEngine.Rendering.ScenePanelRenderRegionProvider is not null)
             return;
 
-        Engine.Rendering.ScenePanelRenderRegionProvider = window =>
+        RuntimeEngine.Rendering.ScenePanelRenderRegionProvider = window =>
         {
             if (!Engine.IsEditor || !Engine.PlayMode.IsEditing)
                 return null;
@@ -140,7 +140,7 @@ public static partial class EditorImGuiUI
 
     private static void UpdateScenePanelRenderRegion()
     {
-        XRWindow? window = Engine.Windows.Count > 0 ? Engine.Windows[0] : null;
+        XRWindow? window = RuntimeEngine.Windows.Count > 0 ? RuntimeEngine.Windows[0] : null;
         if (window is null)
         {
             _scenePanelRenderRegion = null;

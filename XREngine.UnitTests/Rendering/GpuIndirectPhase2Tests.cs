@@ -21,7 +21,7 @@ public class GpuIndirectPhase2Tests
         });
 
         // Reset per-frame stats accumulation.
-        XREngine.Engine.Rendering.Stats.BeginFrame();
+        XREngine.RuntimeEngine.Rendering.Stats.BeginFrame();
     }
 
     [Test]
@@ -58,8 +58,8 @@ public class GpuIndirectPhase2Tests
         instances.ShouldBe(0u);
         overflow.ShouldBe(0u);
 
-        XREngine.Engine.Rendering.Stats.GpuReadback.GpuMappedBuffers.ShouldBe(0);
-        XREngine.Engine.Rendering.Stats.GpuReadback.GpuReadbackBytes.ShouldBe(0);
+        XREngine.RuntimeEngine.Rendering.Stats.GpuReadback.GpuMappedBuffers.ShouldBe(0);
+        XREngine.RuntimeEngine.Rendering.Stats.GpuReadback.GpuReadbackBytes.ShouldBe(0);
     }
 
     [Test]
@@ -85,25 +85,25 @@ public class GpuIndirectPhase2Tests
         // Should remain unchanged since DisableCpuReadbackCount=true.
         pass.VisibleCommandCount.ShouldBe(123u);
 
-        XREngine.Engine.Rendering.Stats.GpuReadback.GpuMappedBuffers.ShouldBe(0);
-        XREngine.Engine.Rendering.Stats.GpuReadback.GpuReadbackBytes.ShouldBe(0);
+        XREngine.RuntimeEngine.Rendering.Stats.GpuReadback.GpuMappedBuffers.ShouldBe(0);
+        XREngine.RuntimeEngine.Rendering.Stats.GpuReadback.GpuReadbackBytes.ShouldBe(0);
     }
 
     [Test]
     public void RenderingStats_ReadbackCounters_ResetEachFrame()
     {
-        XREngine.Engine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped(2);
-        XREngine.Engine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(64);
+        XREngine.RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped(2);
+        XREngine.RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(64);
 
         // BeginFrame swaps last-frame stats and resets current.
-        XREngine.Engine.Rendering.Stats.BeginFrame();
+        XREngine.RuntimeEngine.Rendering.Stats.BeginFrame();
 
-        XREngine.Engine.Rendering.Stats.GpuReadback.GpuMappedBuffers.ShouldBe(2);
-        XREngine.Engine.Rendering.Stats.GpuReadback.GpuReadbackBytes.ShouldBe(64);
+        XREngine.RuntimeEngine.Rendering.Stats.GpuReadback.GpuMappedBuffers.ShouldBe(2);
+        XREngine.RuntimeEngine.Rendering.Stats.GpuReadback.GpuReadbackBytes.ShouldBe(64);
 
         // Next frame with no new records should be zero.
-        XREngine.Engine.Rendering.Stats.BeginFrame();
-        XREngine.Engine.Rendering.Stats.GpuReadback.GpuMappedBuffers.ShouldBe(0);
-        XREngine.Engine.Rendering.Stats.GpuReadback.GpuReadbackBytes.ShouldBe(0);
+        XREngine.RuntimeEngine.Rendering.Stats.BeginFrame();
+        XREngine.RuntimeEngine.Rendering.Stats.GpuReadback.GpuMappedBuffers.ShouldBe(0);
+        XREngine.RuntimeEngine.Rendering.Stats.GpuReadback.GpuReadbackBytes.ShouldBe(0);
     }
 }

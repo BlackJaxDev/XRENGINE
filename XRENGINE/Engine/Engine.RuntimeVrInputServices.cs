@@ -28,8 +28,8 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
 
     public EngineRuntimeVrInputServices()
     {
-        Engine.VRState.ActionsChanged += ForwardActionsChanged;
-        Engine.VRState.OpenXRSessionRunningChanged += OpenXRSessionRunningChanged;
+        RuntimeEngine.VRState.ActionsChanged += ForwardActionsChanged;
+        RuntimeEngine.VRState.OpenXRSessionRunningChanged += OpenXRSessionRunningChanged;
     }
 
     public event Action<Dictionary<string, Dictionary<string, OpenVRAction>>>? ActionsChanged
@@ -39,14 +39,14 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
     }
 
     public Dictionary<string, Dictionary<string, OpenVRAction>> Actions
-        => Engine.VRState.Actions;
+        => RuntimeEngine.VRState.Actions;
 
     public RuntimeVrRuntimeKind ActiveRuntime
-        => Engine.VRState.ActiveRuntime switch
+        => RuntimeEngine.VRState.ActiveRuntime switch
         {
-            Engine.VRState.VRRuntime.OpenVR => RuntimeVrRuntimeKind.OpenVR,
-            Engine.VRState.VRRuntime.OpenXR => RuntimeVrRuntimeKind.OpenXR,
-            _ => Engine.VRState.OpenXRApi is not null ? RuntimeVrRuntimeKind.OpenXR : RuntimeVrRuntimeKind.None,
+            RuntimeVrState.VRRuntime.OpenVR => RuntimeVrRuntimeKind.OpenVR,
+            RuntimeVrState.VRRuntime.OpenXR => RuntimeVrRuntimeKind.OpenXR,
+            _ => RuntimeEngine.VRState.OpenXRApi is not null ? RuntimeVrRuntimeKind.OpenXR : RuntimeVrRuntimeKind.None,
         };
 
     public string ActiveServiceName
@@ -60,7 +60,7 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
     public void Update(float delta)
     {
         RuntimeVrRuntimeKind runtime = ActiveRuntime;
-        if (runtime == RuntimeVrRuntimeKind.OpenXR && Engine.VRState.OpenXRApi is { } openXrApi)
+        if (runtime == RuntimeVrRuntimeKind.OpenXR && RuntimeEngine.VRState.OpenXRApi is { } openXrApi)
         {
             DispatchOpenXrActions(openXrApi);
             return;
@@ -151,12 +151,12 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
 
     public bool TryGetPose(bool leftHand, RuntimeVrPoseKind poseKind, RuntimeVrPoseTiming timing, out RuntimeVrPoseState pose)
     {
-        if (ActiveRuntime == RuntimeVrRuntimeKind.OpenXR && Engine.VRState.OpenXRApi is { } openXrApi)
+        if (ActiveRuntime == RuntimeVrRuntimeKind.OpenXR && RuntimeEngine.VRState.OpenXRApi is { } openXrApi)
             return openXrApi.TryGetControllerPoseState(leftHand, poseKind, MapPoseTiming(openXrApi, timing), out pose);
 
         var controller = leftHand
-            ? Engine.VRState.OpenVRApi.LeftController
-            : Engine.VRState.OpenVRApi.RightController;
+            ? RuntimeEngine.VRState.OpenVRApi.LeftController
+            : RuntimeEngine.VRState.OpenVRApi.RightController;
         if ((timing == RuntimeVrPoseTiming.Recalc ? controller?.RenderDeviceToAbsoluteTrackingMatrix : controller?.DeviceToAbsoluteTrackingMatrix) is Matrix4x4 localPose)
         {
             Matrix4x4.Decompose(localPose, out _, out Quaternion rotation, out Vector3 position);
@@ -170,7 +170,7 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
 
     public bool TryGetHandJoint(bool leftHand, RuntimeVrHandJoint joint, out RuntimeVrHandJointState state)
     {
-        if (Engine.VRState.OpenXRApi is { } openXrApi && openXrApi.TryGetHandJointState(leftHand, joint, out state))
+        if (RuntimeEngine.VRState.OpenXRApi is { } openXrApi && openXrApi.TryGetHandJointState(leftHand, joint, out state))
             return true;
 
         state = default;
@@ -179,7 +179,7 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
 
     public bool TryGetSkeletonSummary(bool leftHand, out RuntimeVrSkeletonSummary summary)
     {
-        if (Engine.VRState.OpenXRApi is { } openXrApi && openXrApi.TryGetSkeletonSummary(leftHand, out summary))
+        if (RuntimeEngine.VRState.OpenXRApi is { } openXrApi && openXrApi.TryGetSkeletonSummary(leftHand, out summary))
             return true;
 
         summary = default;
@@ -188,7 +188,7 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
 
     public bool VibrateAction(string category, string name, double duration, double frequency = 40, double amplitude = 1, double delay = 0)
     {
-        if (ActiveRuntime == RuntimeVrRuntimeKind.OpenXR && Engine.VRState.OpenXRApi is { } openXrApi)
+        if (ActiveRuntime == RuntimeVrRuntimeKind.OpenXR && RuntimeEngine.VRState.OpenXRApi is { } openXrApi)
             return openXrApi.ApplyHapticAction(category, name, duration, frequency, amplitude, delay);
 
         if (TryGetOpenVrAction(category, name, out HapticAction? hapticAction))
@@ -200,7 +200,7 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
 
     public bool StopVibration(string category, string name)
     {
-        if (ActiveRuntime == RuntimeVrRuntimeKind.OpenXR && Engine.VRState.OpenXRApi is { } openXrApi)
+        if (ActiveRuntime == RuntimeVrRuntimeKind.OpenXR && RuntimeEngine.VRState.OpenXRApi is { } openXrApi)
             return openXrApi.StopHapticAction(category, name);
 
         return true;
@@ -357,7 +357,7 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
 
     private bool RuntimeAcceptsAction(RuntimeVrActionValueType valueType, string category, string name)
     {
-        if (Engine.VRState.OpenXRApi is { } openXrApi && openXrApi.IsInputActionKnown(category, name, valueType))
+        if (RuntimeEngine.VRState.OpenXRApi is { } openXrApi && openXrApi.IsInputActionKnown(category, name, valueType))
             return true;
 
         return valueType switch
@@ -368,7 +368,7 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
             RuntimeVrActionValueType.Vector3 => TryGetOpenVrAction(category, name, out Vector3Action? _),
             RuntimeVrActionValueType.Pose => TryGetOpenVrAction(category, name, out PoseAction? _),
             RuntimeVrActionValueType.Haptic => TryGetOpenVrAction(category, name, out HapticAction? _),
-            RuntimeVrActionValueType.HandSkeleton => Engine.VRState.OpenXRApi is not null ||
+            RuntimeVrActionValueType.HandSkeleton => RuntimeEngine.VRState.OpenXRApi is not null ||
                                                      TryGetOpenVrAction(category, name, out HandSkeletonAction? _),
             _ => false,
         };
@@ -378,7 +378,7 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
         where TAction : OpenVRAction
     {
         action = null;
-        if (!Engine.VRState.Actions.TryGetValue(category, out Dictionary<string, OpenVRAction>? actions) ||
+        if (!RuntimeEngine.VRState.Actions.TryGetValue(category, out Dictionary<string, OpenVRAction>? actions) ||
             !actions.TryGetValue(name, out OpenVRAction? raw) ||
             raw is not TAction typed)
         {

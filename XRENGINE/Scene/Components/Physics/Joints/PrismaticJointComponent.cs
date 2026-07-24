@@ -163,9 +163,9 @@ namespace XREngine.Components.Physics
             Vector3 lowerPos = anchorWorldA + axis * _lowerLimit;
             Vector3 upperPos = anchorWorldA + axis * _upperLimit;
 
-            Engine.Rendering.Debug.RenderLine(lowerPos, upperPos, ColorF4.Yellow);
-            Engine.Rendering.Debug.RenderSphere(lowerPos, 0.015f, false, ColorF4.Orange);
-            Engine.Rendering.Debug.RenderSphere(upperPos, 0.015f, false, ColorF4.Orange);
+            RuntimeEngine.Rendering.Debug.RenderLine(lowerPos, upperPos, ColorF4.Yellow);
+            RuntimeEngine.Rendering.Debug.RenderSphere(lowerPos, 0.015f, false, ColorF4.Orange);
+            RuntimeEngine.Rendering.Debug.RenderSphere(upperPos, 0.015f, false, ColorF4.Orange);
         }
     }
 }

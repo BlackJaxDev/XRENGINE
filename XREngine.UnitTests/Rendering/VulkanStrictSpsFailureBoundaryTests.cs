@@ -43,11 +43,11 @@ internal sealed class VulkanStrictSpsFailureBoundaryTests
     public void FaultHooks_AreOrderedAcrossRecordingValidationAndQueueDispatch()
     {
         string openXr = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
         string synchronization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
 
         int recorded = openXr.IndexOf(
             "hasRecorded = TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer",
@@ -99,9 +99,9 @@ internal sealed class VulkanStrictSpsFailureBoundaryTests
     public void UnsubmittedRecording_InvalidatesCachedCommandsBeforeCanceledUploadsRetireResources()
     {
         string openXr = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
         string recording = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
         openXr.ShouldContain("MarkUnsubmittedOpenXrPrimaryCommandBufferDirty");
         openXr.ShouldContain("submissionDisposition == EVulkanQueueSubmissionDisposition.NotSubmitted");
@@ -122,7 +122,7 @@ internal sealed class VulkanStrictSpsFailureBoundaryTests
     public void StrictSpsTransferPublish_RegistersRuntimeOwnedSwapchainImages()
     {
         string openXr = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
 
         int prepare = openXr.IndexOf("private bool TryPrepareStereoLayerBlit(", StringComparison.Ordinal);
         int leftRegistration = openXr.IndexOf(

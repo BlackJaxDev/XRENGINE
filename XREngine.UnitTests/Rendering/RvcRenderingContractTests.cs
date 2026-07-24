@@ -419,14 +419,15 @@ public sealed class RvcRenderingContractTests
     [Test]
     public void SourceContracts_RvcPipelineSettingsAndFallbackStayWired()
     {
-        string contracts = ReadWorkspaceFile("XREngine.Runtime.Core/Settings/RvcRenderingContracts.cs");
-        string runtimeContracts = ReadWorkspaceFile("XREngine.Runtime.Core/Settings/RvcRuntimeContracts.cs");
+        string contracts = ReadWorkspaceDirectory("XREngine.Runtime.Core/Settings/RvcRenderingContracts");
+        string runtimeContracts = ReadWorkspaceDirectory("XREngine.Runtime.Core/Settings/RvcRuntimeContracts");
         string pipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/RvcRenderPipeline.cs");
-        string engineFactory = ReadWorkspaceFile("XREngine/Engine/Subclasses/Rendering/Engine.Rendering.cs");
-        string settings = ReadWorkspaceFile("XREngine/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs");
+        string engineFactory = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/EngineRenderingSettingsApplication.Preferences.cs");
+        string engineSettingsApplication = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/EngineRenderingSettingsApplication.cs");
+        string settings = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs");
         string openXrViewConfiguration = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.ViewConfiguration.cs");
-        string openXrOpenGl = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.OpenGL.cs");
-        string openXrVulkan = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs");
+        string openXrOpenGl = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenXR/OpenGlXrGraphicsBinding.Implementation.cs");
+        string openXrVulkan = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs");
         string openXrState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs");
         string openXrCalls = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.XrCalls.cs");
         string openXrFrameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
@@ -436,7 +437,7 @@ public sealed class RvcRenderingContractTests
         string rvcPass = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_RvcPass.cs");
         string rendererHost = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRendererHost.cs");
         string abstractRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Generic/AbstractRenderer.cs");
-        string vulkanMeshlets = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Meshlets/VulkanRenderer.Meshlets.cs");
+        string vulkanMeshlets = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Meshlets/VulkanRenderer.Meshlets.cs");
 
         contracts.ShouldContain("public enum ERvcPipelineMode");
         contracts.ShouldContain("public static class RvcFrameGraphContract");
@@ -468,7 +469,7 @@ public sealed class RvcRenderingContractTests
         engineFactory.ShouldContain("NewRvcRenderPipeline");
         settings.ShouldContain("public ERvcPipelineMode RvcPipelineMode");
         settings.ShouldContain("public bool RvcStereoReuseEnabled");
-        settings.ShouldContain("IsRvcPipelineSetting");
+        engineSettingsApplication.ShouldContain("IsRvcPipelineSetting");
         openXrViewConfiguration.ShouldContain("InitializeOpenXrViewsForActiveConfiguration");
         openXrViewConfiguration.ShouldContain("PrimaryQuadVarjoViewConfigurationType");
         openXrViewConfiguration.ShouldContain("CacheOpenXrViewConfigurationSnapshots");
@@ -622,5 +623,28 @@ public sealed class RvcRenderingContractTests
         }
 
         throw new FileNotFoundException($"Could not resolve workspace path for '{relativePath}' from test base directory '{AppContext.BaseDirectory}'.");
+    }
+
+    private static string ReadWorkspaceDirectory(string relativePath)
+    {
+        DirectoryInfo? dir = new(AppContext.BaseDirectory);
+        string platformPath = relativePath.Replace('/', Path.DirectorySeparatorChar);
+
+        while (dir is not null)
+        {
+            string fullPath = Path.Combine(dir.FullName, platformPath);
+            if (Directory.Exists(fullPath))
+            {
+                IEnumerable<string> sources = Directory
+                    .EnumerateFiles(fullPath, "*.cs", SearchOption.AllDirectories)
+                    .Order(StringComparer.Ordinal)
+                    .Select(File.ReadAllText);
+                return string.Join('\n', sources).Replace("\r\n", "\n");
+            }
+
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException($"Could not resolve workspace directory for '{relativePath}' from test base directory '{AppContext.BaseDirectory}'.");
     }
 }

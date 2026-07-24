@@ -3,7 +3,6 @@ using System.Runtime.InteropServices;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Rendering.Meshlets
 {

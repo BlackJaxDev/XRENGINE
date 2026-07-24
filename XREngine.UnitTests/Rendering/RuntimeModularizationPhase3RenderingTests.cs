@@ -110,7 +110,7 @@ public sealed class RuntimeModularizationPhase3RenderingTests
         string runtimeHostSource = ReadRuntimeRenderingContracts();
         string runtimeEngineTimerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngineTimer.cs");
         string runtimeTimerFrameSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeTimerFrame.cs");
-        string engineHostSource = ReadWorkspaceFile("XRENGINE/Engine/Engine.RuntimeRenderingHostServices.cs");
+        string engineHostSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
         string skyboxSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Misc/SkyboxComponent.cs");
 
         runtimeHostSource.ShouldContain("double UpdateDeltaSeconds { get; }");

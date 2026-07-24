@@ -1,0 +1,82 @@
+using System;
+using System.Diagnostics;
+using Silk.NET.Vulkan;
+
+namespace XREngine.Rendering.Vulkan
+{
+    public unsafe partial class VulkanRenderer
+    {
+        private bool TrySubmitRejectedDesktopAbort(
+            ref DesktopFrameAttempt attempt,
+            CommandPool commandPool,
+            CommandBuffer commandBuffer,
+            ref bool submitted)
+        {
+            CommandBuffer submittedCommandBuffer = commandBuffer;
+            ulong signalValue = Math.Max(
+                _graphicsTimelineValue + 1,
+                attempt.AcquireTimelineValue + 1);
+            long stageStartTimestamp = Stopwatch.GetTimestamp();
+            Result submitResult;
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                       "Vulkan.FrameLifecycle.DirtyAbortPresentSubmit"))
+            {
+                submitResult = SubmitAcquireSemaphoreBridge(
+                    attempt.AcquireSemaphore,
+                    signalValue,
+                    attempt.PresentSemaphore,
+                    &submittedCommandBuffer,
+                    1);
+            }
+
+            attempt.Timing.AcquireBridgeSubmit +=
+                Stopwatch.GetElapsedTime(stageStartTimestamp);
+            if (submitResult != Result.Success)
+            {
+                if (submitResult == Result.ErrorDeviceLost)
+                {
+                    attempt.TransitionAcquireOwnership(
+                        EVulkanDesktopAcquireOwnership
+                            .IndeterminateAfterDeviceLoss);
+                    throw CreateDeviceLostException(
+                        "Dirty abort QueueSubmit",
+                        submitResult);
+                }
+
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.DirtyAbortPresentSubmitFailed",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Failed to submit skipped-frame present for image {0}: {1}.",
+                    attempt.ImageIndex,
+                    submitResult);
+                return false;
+            }
+
+            submitted = true;
+            attempt.TransitionAcquireOwnership(
+                EVulkanDesktopAcquireOwnership
+                    .ConsumedByRecoveryImagePendingPresent);
+            _graphicsTimelineValue = Math.Max(
+                _graphicsTimelineValue,
+                signalValue);
+            _frameSlotTimelineValues![attempt.FrameSlot] =
+                signalValue;
+            if (_swapchainImageTimelineValues is not null &&
+                attempt.ImageIndex <
+                _swapchainImageTimelineValues.Length)
+            {
+                _swapchainImageTimelineValues[attempt.ImageIndex] =
+                    signalValue;
+            }
+
+            DeferSecondaryCommandBufferFree(
+                attempt.ImageIndex,
+                commandPool,
+                commandBuffer);
+            RuntimeRenderingHostServices.Scheduling
+                .MarkRenderFrameReadyForCollect(XRWindow);
+            attempt.CollectReleased = true;
+            return true;
+        }
+    }
+}

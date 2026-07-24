@@ -211,9 +211,9 @@ namespace XREngine.Editor.Mcp
                     AddFromRoot(root, "editor_scene");
             }
 
-            for (int windowIndex = 0; windowIndex < Engine.Windows.Count; windowIndex++)
+            for (int windowIndex = 0; windowIndex < RuntimeEngine.Windows.Count; windowIndex++)
             {
-                XRWindow window = Engine.Windows[windowIndex];
+                XRWindow window = RuntimeEngine.Windows[windowIndex];
                 for (int viewportIndex = 0; viewportIndex < window.Viewports.Count; viewportIndex++)
                 {
                     XRViewport viewport = window.Viewports[viewportIndex];
@@ -341,8 +341,8 @@ namespace XREngine.Editor.Mcp
             Action? deferredHandler = null;
 
             XRWindow? window = viewport.Window
-                ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
-                ?? Engine.Windows.FirstOrDefault();
+                ?? RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
+                ?? RuntimeEngine.Windows.FirstOrDefault();
             if (window is null)
                 return new McpToolResponse("No window found for the target viewport.", isError: true);
 
@@ -500,8 +500,8 @@ namespace XREngine.Editor.Mcp
             }
 
             XRTexture2D? texture = leftEye
-                ? Engine.VRState.OpenXRApi?.PreviewLeftEyeTexture
-                : Engine.VRState.OpenXRApi?.PreviewRightEyeTexture;
+                ? RuntimeEngine.VRState.OpenXRApi?.PreviewLeftEyeTexture
+                : RuntimeEngine.VRState.OpenXRApi?.PreviewRightEyeTexture;
             if (texture is null)
                 return new McpToolResponse($"OpenXR {(leftEye ? "left" : "right")} eye preview texture is not available.", isError: true);
 
@@ -509,7 +509,7 @@ namespace XREngine.Editor.Mcp
             if (viewport is null)
                 return new McpToolResponse("No viewport found.", isError: true);
 
-            XRWindow? window = viewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
+            XRWindow? window = viewport.Window ?? RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
             if (window is null)
                 return new McpToolResponse("No window found for the target viewport.", isError: true);
 
@@ -654,7 +654,7 @@ namespace XREngine.Editor.Mcp
                 tonemapType = parsedTonemap;
             }
 
-            XRTexture2D? texture = Engine.VRState.OpenXRApi?.DesktopMirrorTexture;
+            XRTexture2D? texture = RuntimeEngine.VRState.OpenXRApi?.DesktopMirrorTexture;
             if (texture is null)
                 return new McpToolResponse("OpenXR desktop mirror texture is not available.", isError: true);
 
@@ -662,7 +662,7 @@ namespace XREngine.Editor.Mcp
             if (viewport is null)
                 return new McpToolResponse("No viewport found.", isError: true);
 
-            XRWindow? window = viewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
+            XRWindow? window = viewport.Window ?? RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
             if (window is null)
                 return new McpToolResponse("No window found for the target viewport.", isError: true);
 

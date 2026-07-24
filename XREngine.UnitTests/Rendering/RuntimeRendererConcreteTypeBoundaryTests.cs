@@ -8,43 +8,18 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class RuntimeRendererConcreteTypeBoundaryTests
 {
     [Test]
-    public void StableRuntimeRendering_RestrictsConcreteRendererReferencesToBackendIntegrationAllowlist()
+    public void StableRuntimeRendering_DoesNotReferenceConcreteRendererTypes()
     {
-        string[] expected =
-        [
-            "Rendering/API/Rendering/OpenXR/Extensions.cs",
-            "Rendering/API/Rendering/OpenXR/Instance.cs",
-            "Rendering/API/Rendering/OpenXR/OpenXRAPI.Foveation.cs",
-            "Rendering/API/Rendering/OpenXR/OpenXRAPI.OpenGL.cs",
-            "Rendering/API/Rendering/OpenXR/OpenXRAPI.Resolution.cs",
-            "Rendering/API/Rendering/OpenXR/OpenXRAPI.RuntimeStateMachine.cs",
-            "Rendering/API/Rendering/OpenXR/OpenXRAPI.StrictSpsBoundaryCapture.cs",
-            "Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs",
-            "Rendering/API/Rendering/OpenXR/XrGraphicsBindings.cs",
-            "Rendering/DLSS/StreamlineNative.cs",
-            "Rendering/PhysicsCompute/OpenGLPhysicsChainComputeBackend.cs",
-            "Rendering/PhysicsCompute/VulkanPhysicsChainComputeBackend.cs",
-            "Scene/Components/UI/Core/UltralightGpuWebRendererBackend.cs",
-        ];
-
         string renderingRoot = Path.Combine(FindWorkspaceRoot(), "XREngine.Runtime.Rendering");
-        string backendRoot = Normalize(Path.Combine(renderingRoot, "Rendering", "API", "Rendering"));
         string[] actual = Directory
             .EnumerateFiles(renderingRoot, "*.cs", SearchOption.AllDirectories)
-            .Where(path =>
-            {
-                string normalized = Normalize(path);
-                if (normalized.StartsWith($"{backendRoot}/OpenGL/", StringComparison.Ordinal) ||
-                    normalized.StartsWith($"{backendRoot}/Vulkan/", StringComparison.Ordinal))
-                    return false;
-
-                return ContainsConcreteRendererType(File.ReadAllText(path));
-            })
+            .Where(static path => !IsBuildOutput(path))
+            .Where(path => ContainsConcreteRendererType(File.ReadAllText(path)))
             .Select(path => Normalize(Path.GetRelativePath(renderingRoot, path)))
             .OrderBy(static path => path, StringComparer.Ordinal)
             .ToArray();
 
-        actual.ShouldBe(expected, ignoreOrder: false);
+        actual.ShouldBeEmpty();
     }
 
     [Test]

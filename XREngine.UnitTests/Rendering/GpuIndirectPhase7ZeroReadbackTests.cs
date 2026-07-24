@@ -12,10 +12,10 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
     [Test]
     public void ZeroReadback_ShippingMode_ZeroGpuReadbackBytes_FullFrame()
     {
-        bool previousTracking = XREngine.Engine.Rendering.Stats.EnableTracking;
+        bool previousTracking = XREngine.RuntimeEngine.Rendering.Stats.EnableTracking;
         try
         {
-            XREngine.Engine.Rendering.Stats.EnableTracking = true;
+            XREngine.RuntimeEngine.Rendering.Stats.EnableTracking = true;
             GPURenderPassCollection.ConfigureIndirectDebug(d =>
             {
                 d.DisableCpuReadbackCount = true;
@@ -24,16 +24,16 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
                 d.ForceCpuIndirectBuild = false;
             });
 
-            XREngine.Engine.Rendering.Stats.BeginFrame();
-            XREngine.Engine.Rendering.Stats.BeginFrame();
+            XREngine.RuntimeEngine.Rendering.Stats.BeginFrame();
+            XREngine.RuntimeEngine.Rendering.Stats.BeginFrame();
 
-            XREngine.Engine.Rendering.Stats.GpuReadback.GpuReadbackBytes.ShouldBe(
+            XREngine.RuntimeEngine.Rendering.Stats.GpuReadback.GpuReadbackBytes.ShouldBe(
                 0L,
                 customMessage: "A representative zero-readback frame must finish without recording GPU->CPU bytes.");
         }
         finally
         {
-            XREngine.Engine.Rendering.Stats.EnableTracking = previousTracking;
+            XREngine.RuntimeEngine.Rendering.Stats.EnableTracking = previousTracking;
         }
 
         string renderPassSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");

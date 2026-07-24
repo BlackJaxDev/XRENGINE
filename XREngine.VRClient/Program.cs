@@ -5,6 +5,7 @@ using System.Management;
 using System.Reflection;
 using XREngine.Native;
 using XREngine.Scene;
+using XREngine.Runtime.Bootstrap;
 
 namespace XREngine.VRClient
 {
@@ -38,6 +39,7 @@ namespace XREngine.VRClient
 
         static void Main(string[] args)
         {
+            RuntimeRenderingBootstrap.InstallEngineHostServices();
             Engine.ConfigureMemoryPolicy(EngineMemoryProfile.VRLowLatency);
             IVRGameStartupSettings settings = GenerateSettings();
 
@@ -70,7 +72,7 @@ namespace XREngine.VRClient
                 Console.In.ReadLine();
             }
             else
-                Engine.VRState.IninitializeClient(actionManifest, vrManifest).GetAwaiter().GetResult();
+                RuntimeEngine.VRState.IninitializeClient(actionManifest, vrManifest).GetAwaiter().GetResult();
 
             // Run the game
             // We don't need to load a game state because this app only sends inputs to the game and receives renders

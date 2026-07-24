@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using NUnit.Framework;
@@ -80,10 +80,10 @@ public sealed class GpuIndirectPhase4HotLayoutTests
     [Test]
     public void Phase4_OverflowTailHandling_SourceContracts_ArePresent()
     {
-        string hybridSource = ReadWorkspaceFile("XRENGINE/Rendering/HybridRenderingManager.cs");
+        string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
         string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
         string sceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.cs");
-        string settingsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs");
+        string settingsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs");
 
         hybridSource.ShouldContain("private static bool TryReadDrawCount(XRDataBuffer? parameterBuffer, out uint drawCount)");
         hybridSource.ShouldContain("private static void ClearIndirectTail(XRDataBuffer indirectDrawBuffer, uint drawCount, uint maxCommands)");

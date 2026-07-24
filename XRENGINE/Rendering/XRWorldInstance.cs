@@ -50,13 +50,13 @@ namespace XREngine.Rendering
         private static readonly ConditionalWeakTable<RenderableMesh, GpuMeshBvhPickState> GpuMeshBvhPickStates = new();
 
         /// <summary>
-        /// When <see cref="Engine.Rendering.EngineSettings.EnableGpuMeshBvhPickLogging"/> is set,
+        /// When <see cref="RuntimeEngine.Rendering.EngineSettings.EnableGpuMeshBvhPickLogging"/> is set,
         /// emits verbose diagnostics for the GPU mesh-BVH pick path: dispatch decisions, ray
         /// transforms, and readback hit/miss results.
         /// </summary>
         private static void GpuPickLog(string message)
         {
-            if (Engine.Rendering.Settings.EnableGpuMeshBvhPickLogging)
+            if (RuntimeEngine.Rendering.Settings.EnableGpuMeshBvhPickLogging)
                 Debug.Out($"[GpuMeshBvhPick] {message}");
         }
 
@@ -387,7 +387,7 @@ namespace XREngine.Rendering
 
         public GameMode? GameMode { get; internal set; }
 
-        public XRWorldInstance() : this(Engine.Rendering.NewVisualScene(), Engine.Rendering.NewPhysicsScene()) { }
+        public XRWorldInstance() : this(RuntimeEngine.Rendering.NewVisualScene(), RuntimeEngine.Rendering.NewPhysicsScene()) { }
         public XRWorldInstance(VisualScene3D visualScene, AbstractPhysicsScene physicsScene)
         {
             _lifecycle = new RuntimeWorldLifecycle(this, OnRootNodeDestroying);
@@ -673,7 +673,7 @@ namespace XREngine.Rendering
 
             //Recalculate all transforms before activating nodes, in case any cross-dependencies exist
             foreach (SceneNode node in roots)
-                await node.Transform.RecalculateMatrixHierarchy(true, true, Engine.Rendering.Settings.RecalcChildMatricesLoopType);
+                await node.Transform.RecalculateMatrixHierarchy(true, true, Engine.EffectiveSettings.RecalcChildMatricesLoopType);
 
             foreach (SceneNode node in roots)
                 if (!IsInEditorScene(node))
@@ -752,7 +752,7 @@ namespace XREngine.Rendering
             Time.Timer.PostUpdateFrame += PostUpdate;
             Time.Timer.FixedUpdate += FixedUpdate;
             Time.Timer.SwapBuffers += GlobalSwapBuffers;
-            Time.Timer.PreCollectVisible += PreCollectVisible;
+            Time.Timer.PreCollectVisible += GlobalPreCollectVisible;
             Time.Timer.CollectVisible += GlobalCollectVisible;
             //Time.Timer.PostUpdateFrame += ProcessTransformQueue;
         }
@@ -764,16 +764,16 @@ namespace XREngine.Rendering
             Time.Timer.PostUpdateFrame -= PostUpdate;
             Time.Timer.FixedUpdate -= FixedUpdate;
             Time.Timer.SwapBuffers -= GlobalSwapBuffers;
-            Time.Timer.PreCollectVisible -= PreCollectVisible;
+            Time.Timer.PreCollectVisible -= GlobalPreCollectVisible;
             Time.Timer.CollectVisible -= GlobalCollectVisible;
             //Time.Timer.PostUpdateFrame -= ProcessTransformQueue;
         }
 
-        private void PreCollectVisible()
+        public void GlobalPreCollectVisible()
         {
             using var profilerScope = Engine.Profiler.Start("WorldInstance.PreCollectVisible");
 
-            Engine.Rendering.Stats.FrameOutputs.RecordSceneSnapshot();
+            RuntimeEngine.Rendering.Stats.FrameOutputs.RecordSceneSnapshot();
             ApplyRenderMatrixChanges();
             RenderableMesh.ProcessPendingRenderMatrixUpdates();
             VisualScene.GlobalCollectVisible();
@@ -797,7 +797,7 @@ namespace XREngine.Rendering
                 applied++;
             }
 
-            Engine.Rendering.Stats.RenderMatrix.RecordRenderMatrixApplied(applied);
+            RuntimeEngine.Rendering.Stats.RenderMatrix.RecordRenderMatrixApplied(applied);
         }
 
         private void GlobalSwapBuffers()
@@ -818,10 +818,10 @@ namespace XREngine.Rendering
                 VisualScene.GlobalSwapBuffers();
             }
 
-            Engine.Rendering.Stats.SkinnedBounds.SwapSkinnedBoundsStats();
+            RuntimeEngine.Rendering.Stats.SkinnedBounds.SwapSkinnedBoundsStats();
             
             // Swap octree stats after octree commands are consumed.
-            Engine.Rendering.Stats.Octree.SwapOctreeStats();
+            RuntimeEngine.Rendering.Stats.Octree.SwapOctreeStats();
             //PhysicsScene.SwapDebugBuffers();
             using (Engine.Profiler.Start("WorldInstance.GlobalSwapBuffers.Lights"))
             {
@@ -829,7 +829,7 @@ namespace XREngine.Rendering
             }
 
             // Swap render-matrix stats after all SwapBuffers work is done.
-            Engine.Rendering.Stats.RenderMatrix.SwapRenderMatrixStats();
+            RuntimeEngine.Rendering.Stats.RenderMatrix.SwapRenderMatrixStats();
         }
 
         /// <summary>
@@ -883,7 +883,7 @@ namespace XREngine.Rendering
         {
             using var profilerScope = Engine.Profiler.Start("WorldInstance.PostUpdate");
 
-            var loopType = Engine.Rendering.Settings.RecalcChildMatricesLoopType;
+            var loopType = Engine.EffectiveSettings.RecalcChildMatricesLoopType;
 
             //Sequentially iterate through each depth of modified transforms, in order
             //This will set each transforms' WorldMatrix, which will push it into the _pendingRenderMatrixChanges queue
@@ -1755,7 +1755,7 @@ namespace XREngine.Rendering
                     return false;
                 }
 
-                bool skinned = xrMesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning;
+                bool skinned = xrMesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning;
                 if (!mesh.PrepareGpuMeshBvh(realtimeSkinned: skinned))
                 {
                     GpuPickLog($"dispatch aborted: PrepareGpuMeshBvh returned false (skinned={skinned}, tris={xrMesh.Triangles?.Count ?? 0}).");
@@ -2072,7 +2072,7 @@ namespace XREngine.Rendering
             if (xrMesh is null)
                 return false;
 
-            bool skinned = xrMesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning;
+            bool skinned = xrMesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning;
 
             var bvh = skinned ? mesh.GetSkinnedBvh(allowRebuild: false) : xrMesh.CachedBVHTree;
             if (bvh is null)

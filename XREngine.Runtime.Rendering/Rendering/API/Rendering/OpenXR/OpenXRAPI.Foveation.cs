@@ -2,7 +2,6 @@ using Silk.NET.OpenXR.Extensions.HTC;
 using System;
 using System.Numerics;
 using XREngine.Rendering;
-using XREngine.Rendering.Vulkan;
 using Debug = XREngine.Debug;
 
 namespace XREngine.Rendering.API.Rendering.OpenXR;
@@ -134,11 +133,13 @@ public unsafe partial class OpenXRAPI
 
         bool openXrQuadViews = IsInstanceExtensionEnabled(VarjoQuadViewsExtensionName);
 
-        if (backend == ERenderLibrary.Vulkan && Window?.Renderer is VulkanRenderer renderer)
+        if (backend == ERenderLibrary.Vulkan &&
+            Window?.Renderer is AbstractRenderer renderer &&
+            TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding))
         {
             return new VrFoveationBackendCapabilities(
-                VulkanFragmentShadingRate: renderer.SupportsVulkanFragmentShadingRate,
-                VulkanFragmentDensityMap: renderer.SupportsVulkanFragmentDensityMap,
+                VulkanFragmentShadingRate: binding.SupportsVulkanFragmentShadingRate(renderer),
+                VulkanFragmentDensityMap: binding.SupportsVulkanFragmentDensityMap(renderer),
                 OpenXrRuntimeFoveation: openXrRuntimeFoveation,
                 OpenXrQuadViews: openXrQuadViews,
                 OpenGlFixedFoveationExtension: false,

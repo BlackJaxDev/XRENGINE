@@ -9,6 +9,30 @@ namespace XREngine.Rendering;
 /// </summary>
 public interface IRenderCaptureBackendCapability
 {
+    bool TryCaptureTexture(
+        XRTexture texture,
+        BoundingRectangle region,
+        Action<MagickImage, int, int> callback,
+        int mipLevel,
+        int layerIndex);
+
+    bool TryCaptureFrameBufferAttachment(
+        XRFrameBuffer frameBuffer,
+        BoundingRectangle region,
+        bool flipY,
+        Action<MagickImage, int> callback,
+        EFrameBufferAttachment attachment);
+
+    bool TryCaptureTextureBytes(
+        XRTexture texture,
+        int mipLevel,
+        int layerIndex,
+        out byte[] data,
+        out EPixelFormat pixelFormat,
+        out EPixelType pixelType,
+        out uint width,
+        out uint height);
+
     void CaptureTexture(
         BoundingRectangle region,
         Action<MagickImage, int, int> callback,

@@ -478,11 +478,6 @@ public unsafe partial class OpenXRAPI
             ? _openXrLeftEyeCamera
             : _openXrRightEyeCamera;
 
-    private XRTexture2D? GetOpenXrPreviewTexture(uint viewIndex)
-        => IsLeftEyeLikeOpenXrView(viewIndex)
-            ? _previewLeftEyeTexture
-            : _previewRightEyeTexture;
-
     private bool TryGetOpenXrViewConfigurationViewCount(
         ViewConfigurationType viewConfigurationType,
         out uint viewCount,

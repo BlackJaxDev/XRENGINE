@@ -376,7 +376,7 @@ public static partial class EditorUnitTests
             persp!.HorizontalFieldOfView = FirstPersonDesktopHorizontalFieldOfView;
             persp.NearZ = 0.1f;
             persp.FarZ = 100000.0f;
-            firstPersonCam.Camera.RenderPipeline = Engine.Rendering.NewRenderPipeline(stereo: false);
+            firstPersonCam.Camera.RenderPipeline = RuntimeEngine.Rendering.NewRenderPipeline(stereo: false);
             firstPersonCam.Camera.RenderPipeline.OverrideProtected = true;
             firstPersonCam.CullWithFrustum = true;
             if (pawn is null)
@@ -720,7 +720,7 @@ public static partial class EditorUnitTests
                         VRControllerTransform? rightController = input.RightHandTransform;
                         VRControllerTransform? leftController = input.LeftHandTransform;
 
-                        float height = Engine.VRState.ModelHeight * Engine.VRState.ModelToRealWorldHeightRatio;
+                        float height = RuntimeEngine.VRState.ModelHeight * RuntimeEngine.VRState.ModelToRealWorldHeightRatio;
                         Vector3 headPos = humanComp.Head!.Node!.Transform.WorldTranslation;
                         headPos.Y = 0.0f; //Set the head position to the ground level
                         headPos.Y += height;

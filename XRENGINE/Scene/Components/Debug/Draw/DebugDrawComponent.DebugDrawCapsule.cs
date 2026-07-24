@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Scene.Transforms;
 
@@ -39,7 +39,7 @@ namespace XREngine.Components
             }
 
             public override void Render(TransformBase transform)
-                => Engine.Rendering.Debug.RenderCapsule(
+                => RuntimeEngine.Rendering.Debug.RenderCapsule(
                     transform.TransformPoint(LocalStartOffset, true),
                     transform.TransformPoint(LocalEndOffset, true),
                     Radius,

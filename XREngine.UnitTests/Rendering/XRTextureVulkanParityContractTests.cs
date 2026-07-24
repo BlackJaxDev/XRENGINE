@@ -11,8 +11,8 @@ public sealed class XRTextureVulkanParityContractTests
     [Test]
     public void VkTextureBase_SubscribeSymmetryMatchesGenericTextureEvents()
     {
-        string glSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture.cs");
-        string vkSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture.cs");
+        string glSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture.cs");
+        string vkSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture.cs");
 
         string[] eventBindings =
         [
@@ -43,8 +43,8 @@ public sealed class XRTextureVulkanParityContractTests
     [Test]
     public void VkImageBackedTexture_SeparatesGeneratedUploadedLayoutAndDescriptorReadiness()
     {
-        string baseSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture.cs");
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string baseSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
 
         source.ShouldContain("public override bool IsGenerated");
         source.ShouldContain("return _image.Handle != 0 || _view.Handle != 0 || _sampler.Handle != 0;");
@@ -64,7 +64,7 @@ public sealed class XRTextureVulkanParityContractTests
     [Test]
     public void VkImageBackedTexture_SamplerChangesRecreateSamplerAndDirtyDescriptors()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
         string textureArraySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/XRTexture2DArray.cs");
 
         textureArraySource.ShouldContain("public float LodBias");
@@ -86,7 +86,7 @@ public sealed class XRTextureVulkanParityContractTests
     [Test]
     public void VkImageBackedTexture_TracksRectangleResizeAndChildArrayTextureChanges()
     {
-        string vkSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string vkSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
         string rectangleSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/Rectangle/XRTextureRectangle.cs");
 
         rectangleSource.ShouldContain("public event Action? Resized;");
@@ -103,8 +103,8 @@ public sealed class XRTextureVulkanParityContractTests
     [Test]
     public void VkTextureBuffer_UploadsSourceBufferBeforeCreatingTexelBufferView()
     {
-        string baseSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture.cs");
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureBuffer.cs");
+        string baseSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureBuffer.cs");
 
         source.ShouldContain("public override bool IsGenerated => _view.Handle != 0;");
         source.ShouldContain("protected override void LinkTextureData()");
@@ -119,10 +119,10 @@ public sealed class XRTextureVulkanParityContractTests
     [Test]
     public void VkTexturePushData_ExposesOpenGlCompatiblePreAndPostCallbacks()
     {
-        string baseSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture.cs");
-        string imageSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
-        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureBuffer.cs");
-        string viewSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureView.cs");
+        string baseSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture.cs");
+        string imageSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureBuffer.cs");
+        string viewSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureView.cs");
 
         baseSource.ShouldContain("public class VulkanPrePushDataCallback");
         baseSource.ShouldContain("public bool ShouldPush { get; set; } = true;");
@@ -144,7 +144,7 @@ public sealed class XRTextureVulkanParityContractTests
     [Test]
     public void VkTextureView_InheritsTextureBaseAndTracksViewedTextureChanges()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureView.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureView.cs");
 
         source.ShouldContain(": VkTexture<XRTextureViewBase>(api, data)");
         source.ShouldContain("protected override void LinkTextureData()");
@@ -160,11 +160,11 @@ public sealed class XRTextureVulkanParityContractTests
     [Test]
     public void VulkanTexturesExposeNativeReadinessUsageResidencyAndViewDiagnostics()
     {
-        string baseSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture.cs");
-        string imageSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
-        string texture2DSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture2D.cs");
-        string viewSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureView.cs");
-        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureBuffer.cs");
+        string baseSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture.cs");
+        string imageSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string texture2DSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture2D.cs");
+        string viewSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureView.cs");
+        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureBuffer.cs");
 
         baseSource.ShouldContain("DescriptorGeneration");
         baseSource.ShouldContain("EnsureDescriptorReadyForVulkanUse");

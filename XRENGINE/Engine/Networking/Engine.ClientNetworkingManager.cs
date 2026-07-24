@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -444,7 +444,7 @@ namespace XREngine
 
                 var instance = XRWorldInstance.GetOrInitWorld(world);
 
-                foreach (var window in Engine.Windows)
+                foreach (var window in RuntimeEngine.Windows)
                 {
                     if (window is null)
                         continue;
@@ -741,7 +741,7 @@ namespace XREngine
 
             private static XRWorldInstance? ResolvePrimaryWorldInstance()
             {
-                foreach (var window in Engine.Windows)
+                foreach (var window in RuntimeEngine.Windows)
                 {
                     if (window?.TargetWorldInstance is XRWorldInstance worldInstance)
                         return worldInstance;

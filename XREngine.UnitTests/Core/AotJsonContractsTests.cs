@@ -91,7 +91,7 @@ public sealed class AotJsonContractsTests
     [Test]
     public void VrInputData_SourceGeneratedContextRoundTrips()
     {
-        Engine.VRState.VRInputData input = new()
+        RuntimeVrState.VRInputData input = new()
         {
             DeviceClass = ETrackedDeviceClass.Controller,
             TrackingResult = ETrackingResult.Running_OK,
@@ -104,8 +104,8 @@ public sealed class AotJsonContractsTests
             ulButtonTouched = 11,
         };
 
-        string json = JsonSerializer.Serialize(input, XREngineRuntimeJsonContext.Default.VRInputData);
-        Engine.VRState.VRInputData? roundTrip = JsonSerializer.Deserialize(json, XREngineRuntimeJsonContext.Default.VRInputData);
+        string json = JsonSerializer.Serialize(input, XREngineRuntimeJsonContext.Default.RuntimeVrInputData);
+        RuntimeVrState.VRInputData? roundTrip = JsonSerializer.Deserialize(json, XREngineRuntimeJsonContext.Default.RuntimeVrInputData);
 
         roundTrip.ShouldNotBeNull();
         roundTrip.Value.DeviceClass.ShouldBe(input.DeviceClass);

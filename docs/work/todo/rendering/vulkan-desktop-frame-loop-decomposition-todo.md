@@ -1,19 +1,19 @@
 # Vulkan Desktop Frame Loop Decomposition TODO
 
-Last Updated: 2026-07-09
+Last Updated: 2026-07-24
 Owner: Rendering / Vulkan
-Status: Proposed
+Status: Implementation Complete; Runtime Validation Pending
 Target Branch: `rendering-vulkan-frame-loop-decomposition`
 
 Related source:
 
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.SyncObjects.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanRenderer.StreamlineInterop.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.SyncObjects.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanRenderer.StreamlineInterop.cs`
 
 Related documentation and work:
 
@@ -544,34 +544,34 @@ Acceptance criteria:
 
 ## Phase 1 - Characterization Tests And Policy Seams
 
-- [ ] **1.1** Add table-driven tests for acquire result classification,
+- [x] **1.1** Add table-driven tests for acquire result classification,
   including the ownership implication of `SuboptimalKhr`.
-- [ ] **1.2** Add table-driven tests for present result classification and
+- [x] **1.2** Add table-driven tests for present result classification and
   recreate/surface-lost/device-lost reactions.
-- [ ] **1.3** Add tests for legal frame-phase transitions and the cleanup
+- [x] **1.3** Add tests for legal frame-phase transitions and the cleanup
   obligation associated with each disposition.
-- [ ] **1.4** Add tests proving an acquired semaphore/image cannot reach
+- [x] **1.4** Add tests proving an acquired semaphore/image cannot reach
   finalization as unresolved and cannot be consumed twice.
-- [ ] **1.5** Add tests for upload command-buffer states: absent, recorded,
+- [x] **1.5** Add tests for upload command-buffer states: absent, recorded,
   submitted/deferred-free, cancelled/freed, and device-lost abandonment.
-- [ ] **1.6** Add a concurrency test for atomic desktop activity publication:
+- [x] **1.6** Add a concurrency test for atomic desktop activity publication:
   OpenXR observes either inactive or the captured active slot, never a later
   mutable slot.
 - [ ] **1.7** Add or expose deterministic fault-injection seams at acquire,
   image preparation, record, overlay record, submit, post-submit auxiliary work,
   present, and post-present auxiliary work without using per-frame delegates in
   production.
-- [ ] **1.8** Update temporary source-contract test readers so splitting the
+- [x] **1.8** Update temporary source-contract test readers so splitting the
   file does not accidentally make assertions inspect an empty or unrelated
   source string.
-- [ ] **1.9** Prove whether desktop callback entry and OpenXR retirement drains
+- [x] **1.9** Prove whether desktop callback entry and OpenXR retirement drains
   are render-thread serialized. If not, add a concurrency test that fails until
   one activity/drain lease excludes entry through the full check-and-destroy
   interval.
 - [ ] **1.10** Characterize OpenXR startup gates for accepted-attempt count,
   observed-tick/completion timestamp, active activity, the 250 ms dirty quiet
   period/two-second bypass, and pending-timeline two-second bypass.
-- [ ] **1.11** Choose and test the `ErrorSurfaceLostKhr` policy. The existing
+- [x] **1.11** Choose and test the `ErrorSurfaceLostKhr` policy. The existing
   `RecreateSwapChain` path does not recreate `SurfaceKHR`; either implement a
   platform-safe surface-plus-swapchain rebuild or fail/restart the renderer
   visibly without an endless swapchain-only retry loop.
@@ -592,36 +592,36 @@ Acceptance criteria:
 
 ## Phase 2 - Establish File Ownership And Shared Frame State
 
-- [ ] **2.1** Move frame-op API methods to
+- [x] **2.1** Move frame-op API methods to
   `Commands/VulkanRenderer.FrameOpApi.cs` without changing bodies.
-- [ ] **2.2** Move render-state API methods to
+- [x] **2.2** Move render-state API methods to
   `Commands/VulkanRenderer.RenderStateApi.cs` without changing bodies.
-- [ ] **2.3** Move `CreateAPIRenderObject` to
+- [x] **2.3** Move `CreateAPIRenderObject` to
   `BackendObjects/VulkanRenderer.RenderObjectFactory.cs` without changing
   dispatch.
-- [ ] **2.4** Add `VulkanRenderer.FrameLoop.State.cs` and move only cross-phase
+- [x] **2.4** Add `VulkanRenderer.FrameLoop.State.cs` and move only cross-phase
   identity/slot/activity fields into it. Move resize constants/state with
   `SwapchainPolicy` and acquire timeouts/counters with `Acquire`. Keep any
   OpenXR readiness/completion timestamp in State/completion policy; move only
   diagnostic-only timing data to Telemetry.
-- [ ] **2.5** Replace ambiguous `currentFrame` use with a clearly named desktop
+- [x] **2.5** Replace ambiguous `currentFrame` use with a clearly named desktop
   frame-slot field or accessor. Audit every reference in resource retirement,
   command state, timing, sync-object creation, OpenXR, and device-loss
   diagnostics before renaming.
-- [ ] **2.6** Introduce the atomic desktop activity API and migrate OpenXR and
+- [x] **2.6** Introduce the atomic desktop activity API and migrate OpenXR and
   diagnostics away from direct gate-plus-slot reads.
-- [ ] **2.7** Make retirement and diagnostic calls accept the captured frame
+- [x] **2.7** Make retirement and diagnostic calls accept the captured frame
   slot/frame id where they describe a particular attempt rather than rereading
   mutable renderer state.
-- [ ] **2.8** Update `Frame/README.md` with the target partial ownership map and
+- [x] **2.8** Update `Frame/README.md` with the target partial ownership map and
   reaffirm that command recording details remain under `Commands/`.
-- [ ] **2.9** If Phase 1 does not prove render-thread serialization, implement a
+- [x] **2.9** If Phase 1 does not prove render-thread serialization, implement a
   shared activity/drain lease and document its lock order with queue operations
   and OpenXR runtime transitions.
-- [ ] **2.10** Replace OpenXR's direct frame-counter/timestamp reads with named
+- [x] **2.10** Replace OpenXR's direct frame-counter/timestamp reads with named
   accessors whose attempt/tick/submitted/presented semantics are explicit while
   preserving the characterized bounded startup policy.
-- [ ] **2.11** Name and preserve the distinct desktop in-flight-slot and OpenXR
+- [x] **2.11** Name and preserve the distinct desktop in-flight-slot and OpenXR
   eye frame-data-slot index domains; do not expose one ambiguous `FrameSlot`
   accessor for both.
 
@@ -639,20 +639,20 @@ Acceptance criteria:
 
 ## Phase 3 - Introduce The Stack-Only Attempt And Coordinator Skeleton
 
-- [ ] **3.1** Add `DesktopFrameAttempt`, timing accumulator, phase,
+- [x] **3.1** Add `DesktopFrameAttempt`, timing accumulator, phase,
   disposition, and reason types to `VulkanRenderer.FrameLoop.State.cs`.
-- [ ] **3.2** Capture frame number, frame slot, and start timestamp once when the
+- [x] **3.2** Capture frame number, frame slot, and start timestamp once when the
   callback enters; stop reading the mutable slot for attempt-specific logs.
-- [ ] **3.3** Pass the attempt by `ref` through phase methods and add a debug/test
+- [x] **3.3** Pass the attempt by `ref` through phase methods and add a debug/test
   transition validator.
-- [ ] **3.4** Add one outer `try/finally` that always publishes timings and
+- [x] **3.4** Add one outer `try/finally` that always publishes timings and
   releases desktop activity.
 - [ ] **3.5** Move the existing body temporarily behind an
   `ExecuteDesktopFrame(ref DesktopFrameAttempt)` seam before extracting phases;
   keep this commit behavior-only-neutral and easy to review.
 - [ ] **3.6** Prove through allocation measurement and generated-code inspection
   where needed that the attempt and phase results remain stack-only.
-- [ ] **3.7** Prohibit local functions that capture the attempt. Use explicit
+- [x] **3.7** Prohibit local functions that capture the attempt. Use explicit
   private partial-class methods with `ref` parameters.
 
 Acceptance criteria:
@@ -666,21 +666,21 @@ Acceptance criteria:
 
 ## Phase 4 - Extract Preflight And Swapchain Policy
 
-- [ ] **4.1** Create `VulkanRenderer.FrameLoop.Preflight.cs`.
-- [ ] **4.2** Create `VulkanRenderer.FrameLoop.SwapchainPolicy.cs` and keep
+- [x] **4.1** Create `VulkanRenderer.FrameLoop.Preflight.cs`.
+- [x] **4.2** Create `VulkanRenderer.FrameLoop.SwapchainPolicy.cs` and keep
   low-level creation/destruction in the existing `VulkanRenderer.Swapchain.cs`.
-- [ ] **4.3** Capture live framebuffer, window, surface, and swapchain sizes once
+- [x] **4.3** Capture live framebuffer, window, surface, and swapchain sizes once
   into the attempt's preflight snapshot.
-- [ ] **4.4** Move resize-pending tracking, settle/debounce policy, immediate
+- [x] **4.4** Move resize-pending tracking, settle/debounce policy, immediate
   recreate scheduling, and mismatched-extent policy into named methods.
-- [ ] **4.5** Replace misleading `RecreateSwapchainImmediately` naming with a
+- [x] **4.5** Replace misleading `RecreateSwapchainImmediately` naming with a
   result-bearing API such as `TryRecreateSwapchainNow`; its current failure path
   schedules deferred recreation and therefore is not unconditionally immediate.
-- [ ] **4.6** Move viewport resource-generation blocker checks and replace
+- [x] **4.6** Move viewport resource-generation blocker checks and replace
   success-path formatted reasons with enums plus on-demand diagnostics.
-- [ ] **4.7** Move zero-surface, incompatible-generation, and skipped-resize
+- [x] **4.7** Move zero-surface, incompatible-generation, and skipped-resize
   frame-op cleanup into explicit pre-acquire dispositions.
-- [ ] **4.8** Move Streamline/DLSS swapchain-mode compatibility preflight into
+- [x] **4.8** Move Streamline/DLSS swapchain-mode compatibility preflight into
   this phase while leaving actual swapchain creation in `Swapchain.cs`.
 - [ ] **4.9** Test stable-size, live mismatch, active interactive resize,
   unsettled resize, zero surface, missing resource generation, compatible
@@ -695,28 +695,28 @@ Acceptance criteria:
 
 ## Phase 5 - Extract Frame Slots, Retirement, Acquire, And Image Preparation
 
-- [ ] **5.1** Create `VulkanRenderer.FrameLoop.FrameSlots.cs` and
+- [x] **5.1** Create `VulkanRenderer.FrameLoop.FrameSlots.cs` and
   `VulkanRenderer.FrameLoop.Acquire.cs`.
-- [ ] **5.2** Move current-slot wait and post-completion resource drains behind a
+- [x] **5.2** Move current-slot wait and post-completion resource drains behind a
   method that takes the captured slot explicitly.
-- [ ] **5.3** Remove the unused parameterless
+- [x] **5.3** Remove the unused parameterless
   `WaitCurrentFrameSlotAndDrainRetiredResources` wrapper and unify its remaining
   logic with the main path without losing
   `DrainCompletedRecordedTextureUploadPublications`.
-- [ ] **5.4** Preserve the interactive-resize busy-slot skip rather than turning
+- [x] **5.4** Preserve the interactive-resize busy-slot skip rather than turning
   it into a blocking timeline wait.
-- [ ] **5.5** Isolate native versus Streamline acquire dispatch from acquire
+- [x] **5.5** Isolate native versus Streamline acquire dispatch from acquire
   result classification.
-- [ ] **5.6** Set the attempt's image/semaphore ownership immediately when the
+- [x] **5.6** Set the attempt's image/semaphore ownership immediately when the
   Vulkan result indicates acquisition, before any later return can occur.
-- [ ] **5.7** Correct the `SuboptimalKhr` acquire path as a successful
+- [x] **5.7** Correct the `SuboptimalKhr` acquire path as a successful
   image-acquiring result, cite the Vulkan reference in code/tests, and add an
   exactly-once cleanup test.
 - [ ] **5.8** Move the consecutive `NotReady`/`Timeout` policy into a named
   method with tests for reset and recreate thresholds.
-- [ ] **5.9** Move swapchain-image timeline wait, timing-query sample, and
+- [x] **5.9** Move swapchain-image timeline wait, timing-query sample, and
   dynamic-uniform-ring reset into an image-preparation method.
-- [ ] **5.10** Preserve OpenXR completed-slot draining semantics: a pending
+- [x] **5.10** Preserve OpenXR completed-slot draining semantics: a pending
   desktop slot uses `continue` so other completed slots still drain, and eye
   frame-data slot indices remain outside the desktop-slot domain.
 
@@ -731,20 +731,20 @@ Acceptance criteria:
 
 ## Phase 6 - Extract Scene And Overlay Recording
 
-- [ ] **6.1** Create `VulkanRenderer.FrameLoop.Recording.cs`.
-- [ ] **6.2** Move ImGui snapshot capture ahead of scene recording and preserve
+- [x] **6.1** Create `VulkanRenderer.FrameLoop.Recording.cs`.
+- [x] **6.2** Move ImGui snapshot capture ahead of scene recording and preserve
   the overlay-owned final-layout decision.
-- [ ] **6.3** Wrap `EnsureCommandBufferRecorded` without moving its detailed
+- [x] **6.3** Wrap `EnsureCommandBufferRecorded` without moving its detailed
   implementation out of `Commands/`.
-- [ ] **6.4** Initialize upload command-buffer/pool ownership in the attempt
+- [x] **6.4** Initialize upload command-buffer/pool ownership in the attempt
   before recording and transfer outputs directly into attempt-visible state (or
   through a result/finally visible on exception). Do not wait for a normal
   return before recovery can see partially produced upload work.
-- [ ] **6.5** Move ImGui overlay and dynamic-text overlay coordination into
+- [x] **6.5** Move ImGui overlay and dynamic-text overlay coordination into
   separate named methods with a shared recording-failure outcome.
-- [ ] **6.6** Move post-record dirty-flag/generation validation into a named
+- [x] **6.6** Move post-record dirty-flag/generation validation into a named
   validation phase that cannot submit stale work.
-- [ ] **6.7** Preserve `RecordCommandBuffer` allocation accounting and overlay
+- [x] **6.7** Preserve `RecordCommandBuffer` allocation accounting and overlay
   frame-output telemetry.
 - [ ] **6.8** Test no-overlay, ImGui-only, dynamic-text-only where valid, both
   overlays, recording deferral, scene-record failure, each overlay failure, and
@@ -766,24 +766,24 @@ Acceptance criteria:
 
 ## Phase 7 - Extract And Unify Post-Acquire Recovery
 
-- [ ] **7.1** Create `VulkanRenderer.FrameLoop.Recovery.cs`.
-- [ ] **7.2** Replace `ReleaseUnsubmittedTextureUploadCommandBuffer` local
+- [x] **7.1** Create `VulkanRenderer.FrameLoop.Recovery.cs`.
+- [x] **7.2** Replace `ReleaseUnsubmittedTextureUploadCommandBuffer` local
   function with an attempt-based exactly-once cleanup method.
-- [ ] **7.3** Replace `ConsumeAcquireSemaphoreForAbortedFrame` local function
+- [x] **7.3** Replace `ConsumeAcquireSemaphoreForAbortedFrame` local function
   with a tracked bridge-submit method that records ownership transition only on
   success.
-- [ ] **7.4** Split `TryPresentAbortedDirtyFrame` into focused recovery
+- [x] **7.4** Split `TryPresentAbortedDirtyFrame` into focused recovery
   operations: prepare the optional present-layout transition, submit abort work,
   publish timeline ownership, release collect, then call the shared Presentation
   primitive and consume its typed result. Keep `PresentInfoKHR`, tracked
   dispatch, Streamline/PCL wrapping, and result classification exclusively in
   `VulkanRenderer.FrameLoop.Presentation.cs`.
-- [ ] **7.5** Remove all captured local recovery functions from
+- [x] **7.5** Remove all captured local recovery functions from
   `WindowRenderCallback` and its phase methods.
-- [ ] **7.6** Route scene failure, overlay failure, recording deferral, dirty
+- [x] **7.6** Route scene failure, overlay failure, recording deferral, dirty
   recording, and healthy-device submit failure through the same recovery state
   machine.
-- [ ] **7.7** Ensure device-loss outcomes bypass all new submit/present/recreate
+- [x] **7.7** Ensure device-loss outcomes bypass all new submit/present/recreate
   calls and preserve the first failing API/context.
 - [ ] **7.8** Add deterministic fault tests at every recovery operation,
   including abort command-buffer begin/end, bridge submit, skipped present, and
@@ -810,32 +810,32 @@ Acceptance criteria:
 
 ## Phase 8 - Extract Submission, Presentation, And Slot Completion
 
-- [ ] **8.1** Create `VulkanRenderer.FrameLoop.Submission.cs` and
+- [x] **8.1** Create `VulkanRenderer.FrameLoop.Submission.cs` and
   `VulkanRenderer.FrameLoop.Presentation.cs`.
-- [ ] **8.2** Build `TimelineSemaphoreSubmitInfo`, `SubmitInfo`, semaphore arrays,
+- [x] **8.2** Build `TimelineSemaphoreSubmitInfo`, `SubmitInfo`, semaphore arrays,
   stage arrays, and command-buffer arrays on the submission helper's stack and
   consume them before returning.
-- [ ] **8.3** Preserve upload/scene/ImGui/dynamic-text submission order. Replace
+- [x] **8.3** Preserve upload/scene/ImGui/dynamic-text submission order. Replace
   the implicit four-entry `stackalloc` assumption with a named capacity and
   checked append or a test/proof that count never exceeds capacity.
-- [ ] **8.4** Build diagnostic metadata from the captured attempt and route the
+- [x] **8.4** Build diagnostic metadata from the captured attempt and route the
   submit through the shared tracked queue gateway.
-- [ ] **8.5** Pass stable explicit queue-operation labels where helper extraction
+- [x] **8.5** Pass stable explicit queue-operation labels where helper extraction
   would otherwise change `[CallerMemberName]` provenance used by queue history
   and first-failure diagnostics.
-- [ ] **8.6** Publish acquire consumption, monotonic global/slot/image timeline
+- [x] **8.6** Publish acquire consumption, monotonic global/slot/image timeline
   values, recorded uploads, and submitted state immediately after submit
   succeeds and before any later fallible marker/diagnostic/trim work. Preserve
   zero timeline values for binary semaphore entries.
-- [ ] **8.7** Preserve collect release before potentially blocking presentation.
+- [x] **8.7** Preserve collect release before potentially blocking presentation.
   Ensure a staging-trim or post-submit marker failure cannot prevent the
   submitted image from reaching presentation/terminal bookkeeping.
-- [ ] **8.8** Build and consume `PresentInfoKHR` entirely inside the presentation
+- [x] **8.8** Build and consume `PresentInfoKHR` entirely inside the presentation
   helper and route native/Streamline presentation through the tracked gateway.
-- [ ] **8.9** Move the shared PCL marker wrapper to
+- [x] **8.9** Move the shared PCL marker wrapper to
   `Features/Upscaling/VulkanRenderer.StreamlineFrameLifecycle.cs` and preserve
   marker ordering around submit/present, including visible marker failures.
-- [ ] **8.10** Centralize present result policy and frame-slot advancement in one
+- [x] **8.10** Centralize present result policy and frame-slot advancement in one
   completion method used by normal and recovered presentation.
 - [ ] **8.11** Test submit/present success and every expected Vulkan error with
   fault injection, including first-error device-loss preservation.
@@ -862,28 +862,28 @@ Acceptance criteria:
 
 ## Phase 9 - Extract Telemetry And Finish The Coordinator
 
-- [ ] **9.1** Create `VulkanRenderer.FrameLoop.Telemetry.cs`.
-- [ ] **9.2** Consolidate lifecycle durations into the attempt timing structure
+- [x] **9.1** Create `VulkanRenderer.FrameLoop.Telemetry.cs`.
+- [x] **9.2** Consolidate lifecycle durations into the attempt timing structure
   while preserving existing profiler scope names and stats APIs.
-- [ ] **9.3** Move frame-gap, size/acquire/submit/present, resize-skip, and overlay
+- [x] **9.3** Move frame-gap, size/acquire/submit/present, resize-skip, and overlay
   diagnostics into gated methods that receive immutable attempt data.
-- [ ] **9.4** Ensure the timing `finally` records every entered attempt,
+- [x] **9.4** Ensure the timing `finally` records every entered attempt,
   including skip, recovery, exception, and device-loss outcomes, without
   throwing over or replacing the primary exception.
-- [ ] **9.5** Reduce `WindowRenderCallback` to the phase coordinator and keep it
+- [x] **9.5** Reduce `WindowRenderCallback` to the phase coordinator and keep it
   within the 60-120-line soft target.
-- [ ] **9.6** Remove obsolete numbered comments, duplicated result ladders,
+- [x] **9.6** Remove obsolete numbered comments, duplicated result ladders,
   superseded fields, and the temporary `ExecuteDesktopFrame` migration seam.
-- [ ] **9.7** Correct stale XML/comments discovered during extraction, including
+- [x] **9.7** Correct stale XML/comments discovered during extraction, including
   the claim that reentrancy throws and the recording-failure comment that says
   the acquire bridge already consumed the semaphore before the catch invokes it.
 - [ ] **9.8** Run an allocation audit over every new phase method and eliminate
   closures, LINQ, boxing, unconditional interpolation, and accidental context
   copies.
-- [ ] **9.9** Run `dotnet format ... --include <touched-files>` only if needed,
+- [x] **9.9** Run `dotnet format ... --include <touched-files>` only if needed,
   or format the touched files through the narrow project command. Do not run an
   unscoped solution-wide formatter or create repository-wide churn.
-- [ ] **9.10** Keep attempt/submitted/presented readiness timestamp publication
+- [x] **9.10** Keep attempt/submitted/presented readiness timestamp publication
   in State/completion policy with explicit thread visibility. Telemetry may read
   those timestamps but must not define OpenXR synchronization semantics.
 
@@ -899,35 +899,35 @@ Acceptance criteria:
 
 ## Phase 10 - Automated Validation
 
-- [ ] **10.1** Add focused behavioral tests in a new
+- [x] **10.1** Add focused behavioral tests in a new
   `VulkanDesktopFrameLoopTests` fixture or equivalently named fixture.
-- [ ] **10.2** Update `VulkanP1ValidationTests` to stop assuming all lifecycle
+- [x] **10.2** Update `VulkanP1ValidationTests` to stop assuming all lifecycle
   text lives in `VulkanRenderer.FrameLoop.cs`.
-- [ ] **10.3** Update `OpenXrTimingPipelineContractTests` for the atomic desktop
+- [x] **10.3** Update `OpenXrTimingPipelineContractTests` for the atomic desktop
   activity API and captured-slot retirement behavior.
-- [ ] **10.4** Update `WindowOwnershipContractTests` across both Preflight and
+- [x] **10.4** Update `WindowOwnershipContractTests` across both Preflight and
   SwapchainPolicy owners without weakening mismatched-swapchain guarantees.
-- [ ] **10.5** Migrate every other hardcoded frame-loop reader found by `rg`,
+- [x] **10.5** Migrate every other hardcoded frame-loop reader found by `rg`,
   including `GpuRenderingBacklogTests`, `VulkanP0ValidationTests`,
   `VulkanDeferredProbeGiFixesTests`, and OpenXR stereo/device-loss contract
   fixtures.
-- [ ] **10.6** Keep `VulkanCoreHardeningPhase21Tests`, OpenXR stereo temporal
+- [x] **10.6** Keep `VulkanCoreHardeningPhase21Tests`, OpenXR stereo temporal
   isolation/completion tests, and queue-gateway/device-state tests green so the
   refactor cannot bypass hardening through a new partial.
-- [ ] **10.7** Replace string-only tests for result policy, state transitions,
+- [x] **10.7** Replace string-only tests for result policy, state transitions,
   reentrancy, and cleanup with callable internal policy tests using the existing
   `InternalsVisibleTo("XREngine.UnitTests")` relationship.
-- [ ] **10.8** Retain a small temporary structure test that verifies the
+- [x] **10.8** Retain a small temporary structure test that verifies the
   coordinator calls phases in order and contains no captured local recovery
   function; remove it when a behavioral orchestration harness provides the
   same protection.
-- [ ] **10.9** Run focused tests:
+- [x] **10.9** Run focused tests:
 
   ```powershell
   dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~VulkanDesktopFrameLoopTests|FullyQualifiedName~VulkanP1ValidationTests|FullyQualifiedName~OpenXrTimingPipelineContractTests|FullyQualifiedName~WindowOwnershipContractTests|FullyQualifiedName~VulkanCoreHardeningPhase21Tests|FullyQualifiedName~OpenXrStereoTemporalIsolationCompletionTests" -v:minimal
   ```
 
-- [ ] **10.10** Run the narrow editor build and check whitespace/errors:
+- [x] **10.10** Run the narrow editor build and check whitespace/errors:
 
   ```powershell
   dotnet build .\XREngine.Editor\XREngine.Editor.csproj
@@ -1013,25 +1013,25 @@ Acceptance criteria:
 
 ## Phase 12 - Documentation And Closeout
 
-- [ ] **12.1** Update `docs/architecture/rendering/vulkan-renderer.md` to replace
+- [x] **12.1** Update `docs/architecture/rendering/vulkan-renderer.md` to replace
   the stale `Drawing.cs`, approximately 180-line, fence-based flow with the final
   partial map, timeline synchronization, typed outcomes, and recovery branch.
-- [ ] **12.2** Update `docs/architecture/rendering/README.md` so its OpenGL versus
+- [x] **12.2** Update `docs/architecture/rendering/README.md` so its OpenGL versus
   Vulkan callback comparison points to the short coordinator and no longer
   reports the obsolete line count.
-- [ ] **12.3** Update `docs/architecture/rendering/code-map.md` with every final
+- [x] **12.3** Update `docs/architecture/rendering/code-map.md` with every final
   frame-loop, command API, BackendObjects factory, and Streamline lifecycle
   source path.
-- [ ] **12.4** Update
+- [x] **12.4** Update
   `docs/architecture/rendering/frame-lifecycle-and-dispatch-paths.md` and
   `window-creation-and-renderer-init.md` with the final entry/phase/finalization
   contract and circuit-breaker interaction.
-- [ ] **12.5** Update `docs/architecture/rendering/openxr-vr-rendering.md` with
+- [x] **12.5** Update `docs/architecture/rendering/openxr-vr-rendering.md` with
   the coherent desktop activity/readiness API, retirement exclusion mechanism,
   distinct slot domains, bounded startup gates, and device-loss behavior.
-- [ ] **12.6** Update the Vulkan Upscale Bridge guide if proxy acquire/present or
+- [x] **12.6** Update the Vulkan Upscale Bridge guide if proxy acquire/present or
   PCL marker ownership/ordering moved or changed.
-- [ ] **12.7** Replace the provisional `Frame/README.md` map from Phase 2 with
+- [x] **12.7** Replace the provisional `Frame/README.md` map from Phase 2 with
   the exact final owners and dependency direction.
 - [ ] **12.8** Finish the tracked progress/validation note with base/final
   commits, decisions, test commands, runtime matrix, visual/log evidence,
@@ -1069,14 +1069,14 @@ Acceptance criteria:
 
 Primary implementation:
 
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs`
 - New `VulkanRenderer.FrameLoop.*.cs` partials listed in the target map
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DeviceLossDiagnostics.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DeviceLossDiagnostics.cs`
 - New/moved command API partials and the `BackendObjects` render-object factory
   partial listed in the target map
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/README.md`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/README.md`
 
 Expected tests:
 

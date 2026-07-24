@@ -12,7 +12,7 @@ public sealed class OpenXrStereoTemporalIsolationCompletionTests
         string contracts = ReadWorkspaceFile(
             "XREngine.Runtime.Core/Settings/VRRenderingContracts/Enums/EVrAutoExposurePolicy.cs");
         string exposure = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_ExposureUpdate.cs");
-        string vulkanExposure = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/VulkanRenderer.AutoExposure.cs");
+        string vulkanExposure = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/VulkanRenderer.AutoExposure.cs");
 
         contracts.ShouldContain("public enum EVrAutoExposurePolicy");
         contracts.ShouldContain("HeadsetShared");
@@ -81,7 +81,7 @@ public sealed class OpenXrStereoTemporalIsolationCompletionTests
     [Test]
     public void ParallelRecordingAndModeSwitching_SurfaceBottlenecksAndResourceKeys()
     {
-        string vulkanOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string vulkanOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
         string pipelineInstance = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs");
         string resourceKey = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Resources/Records/ResourceGenerationKey.cs");
 

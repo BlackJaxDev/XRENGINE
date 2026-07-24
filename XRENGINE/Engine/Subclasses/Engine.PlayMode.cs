@@ -151,12 +151,12 @@ namespace XREngine
                 Debug.Out(
                     $"[PlayTransition] {transition}.{phase}: State={State} TargetWorld={targetWorld?.Name ?? "<null>"} " +
                     $"SnapshotMode={Configuration.StateRestorationMode} SnapshotAvailable={_editModeSnapshot is not null} " +
-                    $"Windows={Windows.Count} WorldInstances={XRWorldInstance.WorldInstances.Count} " +
+                    $"Windows={RuntimeEngine.Windows.Count} WorldInstances={XRWorldInstance.WorldInstances.Count} " +
                     $"ActiveGameMode={_activeGameMode?.GetType().Name ?? "<null>"} TimerRunning={Time.Timer.IsRunning} TimerPaused={Time.Timer.Paused}");
 
-                for (int windowIndex = 0; windowIndex < Windows.Count; windowIndex++)
+                for (int windowIndex = 0; windowIndex < RuntimeEngine.Windows.Count; windowIndex++)
                 {
-                    XRWindow window = Windows[windowIndex];
+                    XRWindow window = RuntimeEngine.Windows[windowIndex];
                     Debug.Out(
                         $"[PlayTransition] {transition}.{phase}: Window[{windowIndex}] Hash={window.GetHashCode()} " +
                         $"TargetWorld={window.TargetWorldInstance?.TargetWorldName ?? "<null>"} Viewports={window.Viewports.Count}");
@@ -542,7 +542,7 @@ namespace XREngine
                     return Configuration.StartupWorld;
 
                 // Priority 2: First window's target world
-                var firstWindow = Windows.FirstOrDefault();
+                var firstWindow = RuntimeEngine.Windows.FirstOrDefault();
                 if (firstWindow?.TargetWorldInstance?.TargetWorldObject is XRWorld firstWindowWorld)
                     return firstWindowWorld;
 

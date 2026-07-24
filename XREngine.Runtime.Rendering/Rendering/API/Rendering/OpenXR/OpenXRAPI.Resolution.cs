@@ -2,7 +2,6 @@ using System;
 using System.Threading;
 using XREngine;
 using XREngine.Rendering;
-using XREngine.Rendering.Vulkan;
 using Debug = XREngine.Debug;
 
 namespace XREngine.Rendering.API.Rendering.OpenXR;
@@ -257,8 +256,11 @@ public unsafe partial class OpenXRAPI
         Volatile.Write(ref _frameSkipRender, 0);
         _sessionBegun = false;
 
-        if (Window?.Renderer is VulkanRenderer vulkanRenderer)
-            vulkanRenderer.ResetOpenXrRenderingResourcesForRuntimeRecreate(reason);
+        if (Window?.Renderer is AbstractRenderer renderer &&
+            TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding))
+        {
+            binding.ResetRenderingResourcesForRuntimeRecreate(renderer, reason);
+        }
 
         TearDownSessionResourcesWithCurrentContext(destroyInstance: true);
         string serviceReason = $"OpenXR eye resolution change: {reason}";

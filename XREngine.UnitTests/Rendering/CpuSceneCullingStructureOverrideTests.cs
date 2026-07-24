@@ -17,7 +17,7 @@ public sealed class CpuSceneCullingStructureOverrideTests
     public void EffectiveSettings_UsesProjectOverrideForCpuSceneCullingStructure()
     {
         var originalGameSettings = Engine.GameSettings;
-        var originalStructure = Engine.Rendering.Settings.CpuSceneCullingStructure;
+        var originalStructure = RuntimeEngine.Rendering.Settings.CpuSceneCullingStructure;
         string? originalEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CpuSceneCullingStructure);
 
         try
@@ -25,12 +25,12 @@ public sealed class CpuSceneCullingStructureOverrideTests
             Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CpuSceneCullingStructure, null);
             EffectiveSettingsEnvOverrides.ReloadForTests();
             Engine.GameSettings = new GameStartupSettings();
-            Engine.Rendering.Settings.CpuSceneCullingStructure = ECpuSceneCullingStructure.Octree;
+            RuntimeEngine.Rendering.Settings.CpuSceneCullingStructure = ECpuSceneCullingStructure.Octree;
 
             Engine.GameSettings.CpuSceneCullingStructureOverride =
                 new OverrideableSetting<ECpuSceneCullingStructure>(ECpuSceneCullingStructure.Bvh, true);
 
-            Engine.Rendering.Settings.CpuSceneCullingStructure.ShouldBe(ECpuSceneCullingStructure.Octree);
+            RuntimeEngine.Rendering.Settings.CpuSceneCullingStructure.ShouldBe(ECpuSceneCullingStructure.Octree);
             Engine.EffectiveSettings.CpuSceneCullingStructure.ShouldBe(ECpuSceneCullingStructure.Bvh);
 
             Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CpuSceneCullingStructure, "Octree");
@@ -41,7 +41,7 @@ public sealed class CpuSceneCullingStructureOverrideTests
         {
             Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CpuSceneCullingStructure, originalEnv);
             EffectiveSettingsEnvOverrides.ReloadForTests();
-            Engine.Rendering.Settings.CpuSceneCullingStructure = originalStructure;
+            RuntimeEngine.Rendering.Settings.CpuSceneCullingStructure = originalStructure;
             Engine.GameSettings = originalGameSettings;
         }
     }

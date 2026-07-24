@@ -11,7 +11,7 @@ namespace XREngine;
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, PropertyNameCaseInsensitive = true, IncludeFields = true)]
 [JsonSerializable(typeof(DiscoveryAnnouncement))]
 [JsonSerializable(typeof(RealtimeJoinHandoffPayload))]
-[JsonSerializable(typeof(Engine.VRState.VRInputData))]
+[JsonSerializable(typeof(RuntimeVrState.VRInputData), TypeInfoPropertyName = "RuntimeVrInputData")]
 public sealed partial class XREngineRuntimeJsonContext : JsonSerializerContext
 {
 }

@@ -17,8 +17,8 @@ internal static class EditorFileDropHandler
             return;
 
         _initialized = true;
-        Engine.Windows.PostAnythingAdded += OnWindowAdded;
-        foreach (var window in Engine.Windows)
+        RuntimeEngine.Windows.PostAnythingAdded += OnWindowAdded;
+        foreach (var window in RuntimeEngine.Windows)
             AttachToWindow(window);
     }
 

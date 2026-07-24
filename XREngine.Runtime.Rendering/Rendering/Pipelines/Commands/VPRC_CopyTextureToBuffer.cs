@@ -1,5 +1,4 @@
 using System;
-using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -60,18 +59,15 @@ namespace XREngine.Rendering.Pipelines.Commands
                 renderer.TryGetBackendCapability<IRenderCaptureBackendCapability>(out var capture) &&
                 capture is not null)
             {
-                IGLTexture? apiTexture = null;
-                foreach (IRenderAPIObject wrapper in texture.APIWrappers)
-                {
-                    if (wrapper is IGLTexture glTexture)
-                    {
-                        apiTexture = glTexture;
-                        break;
-                    }
-                }
-
-                if (apiTexture is not null &&
-                    capture.TryCaptureTextureBytes(apiTexture.BindingId, SourceMipLevel, SourceLayerIndex, out bytes, out _, out _, out _, out _))
+                if (capture.TryCaptureTextureBytes(
+                    texture,
+                    SourceMipLevel,
+                    SourceLayerIndex,
+                    out bytes,
+                    out _,
+                    out _,
+                    out _,
+                    out _))
                 {
                     return true;
                 }

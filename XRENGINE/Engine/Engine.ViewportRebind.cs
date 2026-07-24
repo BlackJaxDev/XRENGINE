@@ -43,7 +43,7 @@ namespace XREngine
                 phase,
                 PlayMode.State,
                 worldName,
-                _windows.Count);
+                RuntimeEngine.Windows.Count);
 
             for (int i = 0; i < State.LocalPlayers.Length; i++)
             {
@@ -76,7 +76,7 @@ namespace XREngine
             if (PlayMode.Configuration.StartupWorld is not null)
                 return PlayMode.Configuration.StartupWorld;
 
-            var firstWindowWorld = Windows.FirstOrDefault()?.TargetWorldInstance?.TargetWorldObject as XRWorld;
+            var firstWindowWorld = RuntimeEngine.Windows.FirstOrDefault()?.TargetWorldInstance?.TargetWorldObject as XRWorld;
             if (firstWindowWorld is not null)
                 return firstWindowWorld;
 
@@ -111,7 +111,7 @@ namespace XREngine
                 DumpWorldHierarchyRootsOncePerPhase(worldInstance, phase);
                 SnapshotDiagnostics.LogWorldInstanceAssetSummary(worldInstance, $"ViewportRebind.{phase}.BeforeWindowRebind");
 
-                foreach (var window in _windows)
+                foreach (var window in RuntimeEngine.Windows)
                 {
                     Debug.RenderingEvery(
                         $"ViewportRebind.{phase}.Window.{window.GetHashCode()}",
@@ -140,7 +140,7 @@ namespace XREngine
                     }
 
                     // Ensure viewports are linked to this window and have a world override.
-                    foreach (var viewport in EnumerateActiveViewports(window))
+                    foreach (var viewport in RuntimeEngine.EnumerateActiveViewports(window))
                     {
                         viewport.Window = window;
 

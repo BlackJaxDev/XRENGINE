@@ -22,6 +22,10 @@ namespace XREngine.Rendering;
 /// </summary>
 public interface IRuntimeRenderStatisticsServices
 {
+    void PublishRenderStatsSnapshot()
+    {
+    }
+
     /// <summary>
     /// Begins per-frame render statistics tracking for the host.
     /// </summary>

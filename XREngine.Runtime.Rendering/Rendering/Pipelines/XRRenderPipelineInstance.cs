@@ -9,7 +9,6 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Pipelines.Commands;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
@@ -320,10 +319,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         foreach (XRTexture tex in Resources.EnumerateTextureInstances())
         {
-            if (tex.APIWrappers.FirstOrDefault(x => x is IGLTexture) is not IGLTexture apiWrapper)
-                continue;
-
-            var whd = apiWrapper.WidthHeightDepth;
+            var whd = tex.WidthHeightDepth;
             BoundingRectangle region = new(0, 0, (int)whd.X, (int)whd.Y);
             for (int i = 0; i < whd.Z; i++)
             {
@@ -341,7 +337,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     image.Write(filePath);
                 }
 
-                capture.CaptureTexture(region, ProcessImage, apiWrapper.BindingId, 0, i);
+                _ = capture.TryCaptureTexture(tex, region, ProcessImage, 0, i);
             }
         }
     }
@@ -360,9 +356,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         foreach (XRFrameBuffer fbo in Resources.EnumerateFrameBufferInstances())
         {
-            if (fbo.Targets is null || 
-                fbo.Targets.Length == 0 || 
-                fbo.APIWrappers.FirstOrDefault(x => x is GLFrameBuffer) is not GLFrameBuffer apiWrapper)
+            if (fbo.Targets is null || fbo.Targets.Length == 0)
                 continue;
 
             foreach (var (Target, Attachment, MipLevel, LayerIndex) in fbo.Targets)
@@ -388,14 +382,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     case XRTexture2D tex2D:
                         {
                             BoundingRectangle region = new(0, 0, (int)tex2D.Width, (int)tex2D.Height);
-                            capture.CaptureFrameBufferAttachment(region, true, ProcessImage, apiWrapper.BindingId, Attachment);
+                            _ = capture.TryCaptureFrameBufferAttachment(fbo, region, true, ProcessImage, Attachment);
                         }
                         break;
                     case XRTexture2DArray tex2DArray:
                         for (int i = 0; i < tex2DArray.Depth; ++i)
                         {
                             BoundingRectangle region = new(0, 0, (int)tex2DArray.Width, (int)tex2DArray.Height);
-                            capture.CaptureFrameBufferAttachment(region, true, ProcessImage, apiWrapper.BindingId, Attachment);
+                            _ = capture.TryCaptureFrameBufferAttachment(fbo, region, true, ProcessImage, Attachment);
                         }
                         break;
                 }    

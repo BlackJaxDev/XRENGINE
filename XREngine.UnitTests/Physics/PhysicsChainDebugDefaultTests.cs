@@ -17,7 +17,7 @@ public sealed class PhysicsChainDebugDefaultTests
 
         fields.ShouldContain("private bool _debugDrawChains;");
         fields.ShouldNotContain("private bool _debugDrawChains = true;");
-        component.ShouldContain("if (!IsActiveInHierarchy || Engine.Rendering.State.IsShadowPass || !DebugDrawChains)");
+        component.ShouldContain("if (!IsActiveInHierarchy || RuntimeEngine.Rendering.State.IsShadowPass || !DebugDrawChains)");
         gpu.ShouldContain("GPUPhysicsChainDispatcher.Instance.RenderSelectedGpuDebug()");
         dispatcherDebug.ShouldContain("if (!request.Component.DebugDrawChains");
         dispatcherDebug.IndexOf("if (!request.Component.DebugDrawChains", StringComparison.Ordinal)

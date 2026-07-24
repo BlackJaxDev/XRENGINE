@@ -322,7 +322,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
                 out IRendererStartupWarmupBackendCapability warmup)
                 ? warmup.PendingStartupWorkCount
                 : 0;
-        int rendererCount = Engine.Rendering.Stats.SceneAssets.VisibleRendererCount;
+        int rendererCount = RuntimeEngine.Rendering.Stats.SceneAssets.VisibleRendererCount;
 
         // There is not yet a backend-neutral pipeline compilation queue. GPU
         // capacity and dispatch readiness are represented by the stable
@@ -1022,8 +1022,8 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
 
     private static FontGlyphSet LoadTitleLabelFont()
         => FontGlyphSet.LoadEngineFont(
-            Engine.Rendering.Settings.DefaultFontFolder,
-            Engine.Rendering.Settings.DefaultFontFileName,
+            RuntimeEngine.Rendering.Settings.DefaultFontFolder,
+            RuntimeEngine.Rendering.Settings.DefaultFontFileName,
             new XRFontImportOptions
             {
                 AtlasMode = EFontAtlasImportMode.Mtsdf,
@@ -1035,8 +1035,8 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
 
     private static FontGlyphSet LoadDetailLabelFont()
         => FontGlyphSet.LoadEngineFont(
-            Engine.Rendering.Settings.DefaultFontFolder,
-            Engine.Rendering.Settings.DefaultFontFileName,
+            RuntimeEngine.Rendering.Settings.DefaultFontFolder,
+            RuntimeEngine.Rendering.Settings.DefaultFontFileName,
             new XRFontImportOptions
             {
                 AtlasMode = EFontAtlasImportMode.Mtsdf,

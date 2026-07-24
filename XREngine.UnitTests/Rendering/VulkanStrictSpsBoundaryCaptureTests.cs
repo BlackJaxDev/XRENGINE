@@ -16,14 +16,14 @@ public sealed class VulkanStrictSpsBoundaryCaptureTests
     {
         XRTexture2DArray stereoArray = CreateStereoArray();
 
-        OpenXRAPI.TryResolveStrictSpsBoundaryReadbackLayer(
+        VulkanXrGraphicsBinding.TryResolveStrictSpsBoundaryReadbackLayer(
                 stereoArray,
                 logicalLayerIndex: 0,
                 expectedLayerCount: 2,
                 out int leftLayer,
                 out string leftFailure)
             .ShouldBeTrue(leftFailure);
-        OpenXRAPI.TryResolveStrictSpsBoundaryReadbackLayer(
+        VulkanXrGraphicsBinding.TryResolveStrictSpsBoundaryReadbackLayer(
                 stereoArray,
                 logicalLayerIndex: 1,
                 expectedLayerCount: 2,
@@ -50,7 +50,7 @@ public sealed class VulkanStrictSpsBoundaryCaptureTests
             array: false,
             multisample: false);
 
-        OpenXRAPI.TryResolveStrictSpsBoundaryReadbackLayer(
+        VulkanXrGraphicsBinding.TryResolveStrictSpsBoundaryReadbackLayer(
                 rightView,
                 logicalLayerIndex: 1,
                 expectedLayerCount: 2,
@@ -102,7 +102,7 @@ public sealed class VulkanStrictSpsBoundaryCaptureTests
     [Test]
     public void BoundaryReadback_RestoresColorAttachmentLayoutForPublishStaging()
     {
-        var stagingState = OpenXRAPI.ResolveStrictSpsBoundaryCaptureSourceState("PublishStaging");
+        var stagingState = VulkanXrGraphicsBinding.ResolveStrictSpsBoundaryCaptureSourceState("PublishStaging");
         stagingState.Layout.ShouldBe(ImageLayout.ColorAttachmentOptimal);
         stagingState.Stage.ShouldBe(PipelineStageFlags.ColorAttachmentOutputBit);
         stagingState.Access.ShouldBe(

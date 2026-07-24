@@ -266,7 +266,7 @@ internal static class RigidBodyEditorShared
                 var worldB = Vector3.Transform(hasOffset ? ApplyShapeOffset(b, offsetTranslation, offsetRotation, hasTranslation, hasRotation) : b, transform);
                 var worldC = Vector3.Transform(hasOffset ? ApplyShapeOffset(c, offsetTranslation, offsetRotation, hasTranslation, hasRotation) : c, transform);
 
-                Engine.Rendering.Debug.RenderTriangle(worldA, worldB, worldC, color, solid: false);
+                RuntimeEngine.Rendering.Debug.RenderTriangle(worldA, worldB, worldC, color, solid: false);
             }
         }
     }

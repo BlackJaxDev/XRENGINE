@@ -746,8 +746,8 @@ public sealed partial class MathBvhTestComponent
                     continue;
 
                 new ReadOnlySpan<uint>(address.Value.Pointer, destination.Length).CopyTo(destination);
-                Engine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
-                Engine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(destination.Length * sizeof(uint));
+                RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
+                RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(destination.Length * sizeof(uint));
                 return true;
             }
         }

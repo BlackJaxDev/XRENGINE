@@ -331,7 +331,7 @@ public static partial class EditorImGuiUI
             {
                 ImGui.Indent();
 
-                var windows = Engine.Windows.ToArray();
+                var windows = RuntimeEngine.Windows.ToArray();
                 ImGui.Text($"Windows: {windows.Length}");
                 ImGui.Spacing();
 

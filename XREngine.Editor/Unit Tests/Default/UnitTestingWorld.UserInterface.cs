@@ -95,17 +95,17 @@ public static partial class EditorUnitTests
             double renderMs = Engine.Time.Timer.Render.Delta * 1000.0;
             double updateMs = Engine.Time.Timer.Update.Delta * 1000.0;
             double fixedMs = Engine.Time.Timer.FixedUpdateDelta * 1000.0;
-            Engine.Rendering.Stats.RenderPassCounters frameCounters = Engine.Rendering.Stats.Frame.LastCounters;
-            Engine.Rendering.Stats.RenderPassCounters vrCounters = Engine.Rendering.Stats.Vr.VrRenderPassCounters;
-            bool vrActive = Engine.VRState.IsInVR || vrCounters.HasAny;
-            Engine.Rendering.Stats.RenderPassCounters desktopCounters = vrActive
-                ? Engine.Rendering.Stats.RenderPassCounters.SubtractClamped(frameCounters, vrCounters)
+            RuntimeEngine.Rendering.Stats.RenderPassCounters frameCounters = RuntimeEngine.Rendering.Stats.Frame.LastCounters;
+            RuntimeEngine.Rendering.Stats.RenderPassCounters vrCounters = RuntimeEngine.Rendering.Stats.Vr.VrRenderPassCounters;
+            bool vrActive = RuntimeEngine.VRState.IsInVR || vrCounters.HasAny;
+            RuntimeEngine.Rendering.Stats.RenderPassCounters desktopCounters = vrActive
+                ? RuntimeEngine.Rendering.Stats.RenderPassCounters.SubtractClamped(frameCounters, vrCounters)
                 : frameCounters;
-            double cpuFrameMs = Engine.Rendering.Stats.Vulkan.VulkanFrameTotalMs;
-            double gpuCmdMs = Engine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs;
+            double cpuFrameMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameTotalMs;
+            double gpuCmdMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs;
             double vrHz = ResolveVrRenderHz();
-            double vrPassMs = Engine.Rendering.Stats.Vr.VrRenderPassTimeMs;
-            int fallbackEvents = Engine.Rendering.Stats.GpuFallback.GpuCpuFallbackEvents;
+            double vrPassMs = RuntimeEngine.Rendering.Stats.Vr.VrRenderPassTimeMs;
+            int fallbackEvents = RuntimeEngine.Rendering.Stats.GpuFallback.GpuCpuFallbackEvents;
             float networkingRttMs = 0.0f;
             float packetsPerSecond = 0.0f;
             int bytesPerSecond = 0;
@@ -205,25 +205,25 @@ public static partial class EditorUnitTests
             AppendFixedOrPlaceholder(builder, vrPassMs, "F2", 6);
             builder.Append("ms");
 
-            if (Engine.VRState.IsOpenXRActive)
+            if (RuntimeEngine.VRState.IsOpenXRActive)
             {
                 builder.Append(" | wait ");
-                AppendFixedOrPlaceholder(builder, Engine.Rendering.Stats.Vr.VrXrWaitFrameBlockTimeMs, "F2", 6);
+                AppendFixedOrPlaceholder(builder, RuntimeEngine.Rendering.Stats.Vr.VrXrWaitFrameBlockTimeMs, "F2", 6);
                 builder.Append("ms | end ");
-                AppendFixedOrPlaceholder(builder, Engine.Rendering.Stats.Vr.VrXrEndFrameSubmitTimeMs, "F2", 6);
+                AppendFixedOrPlaceholder(builder, RuntimeEngine.Rendering.Stats.Vr.VrXrEndFrameSubmitTimeMs, "F2", 6);
                 builder.Append("ms");
             }
-            else if (Engine.VRState.IsOpenVRActive)
+            else if (RuntimeEngine.VRState.IsOpenVRActive)
             {
                 builder.Append(" | runtime cpu ");
-                AppendFixedOrPlaceholder(builder, Engine.VRState.CpuFrametime, "F2", 6);
+                AppendFixedOrPlaceholder(builder, RuntimeEngine.VRState.CpuFrametime, "F2", 6);
                 builder.Append("ms | gpu ");
-                AppendFixedOrPlaceholder(builder, Engine.VRState.GpuFrametime, "F2", 6);
+                AppendFixedOrPlaceholder(builder, RuntimeEngine.VRState.GpuFrametime, "F2", 6);
                 builder.Append("ms");
             }
         }
 
-        private static void AppendVrDrawStats(StringBuilder builder, Engine.Rendering.Stats.RenderPassCounters vrCounters)
+        private static void AppendVrDrawStats(StringBuilder builder, RuntimeEngine.Rendering.Stats.RenderPassCounters vrCounters)
         {
             builder.Append("\nvr draw: calls ");
             builder.Append(FormatCompactCount(vrCounters.DrawCalls, 5));
@@ -232,14 +232,14 @@ public static partial class EditorUnitTests
             builder.Append(" | tris ");
             builder.Append(FormatCompactCount(vrCounters.TrianglesRendered, 6));
             builder.Append(" | eye L/R ");
-            builder.Append(FormatCompactCount(Engine.Rendering.Stats.Vr.VrLeftEyeVisible, 4));
+            builder.Append(FormatCompactCount(RuntimeEngine.Rendering.Stats.Vr.VrLeftEyeVisible, 4));
             builder.Append('/');
-            builder.Append(FormatCompactCount(Engine.Rendering.Stats.Vr.VrRightEyeVisible, 4));
+            builder.Append(FormatCompactCount(RuntimeEngine.Rendering.Stats.Vr.VrRightEyeVisible, 4));
         }
 
         private static string ResolveVrRuntimeLabel()
         {
-            if (Engine.VRState.IsOpenXRActive)
+            if (RuntimeEngine.VRState.IsOpenXRActive)
             {
                 string? runtimeManifest = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
                 return !string.IsNullOrWhiteSpace(runtimeManifest) &&
@@ -248,7 +248,7 @@ public static partial class EditorUnitTests
                         : "OpenXR";
             }
 
-            if (Engine.VRState.IsOpenVRActive)
+            if (RuntimeEngine.VRState.IsOpenVRActive)
                 return "OpenVR";
 
             return "VR";
@@ -256,9 +256,9 @@ public static partial class EditorUnitTests
 
         private static double ResolveVrRenderHz()
         {
-            double hz = Engine.Rendering.Stats.Vr.VrRenderFrameRateHz;
-            if (hz <= 0.0 && Engine.VRState.IsOpenVRActive && Engine.VRState.Framerate > 0.0f)
-                hz = Engine.VRState.Framerate;
+            double hz = RuntimeEngine.Rendering.Stats.Vr.VrRenderFrameRateHz;
+            if (hz <= 0.0 && RuntimeEngine.VRState.IsOpenVRActive && RuntimeEngine.VRState.Framerate > 0.0f)
+                hz = RuntimeEngine.VRState.Framerate;
             return hz;
         }
 
@@ -1015,7 +1015,7 @@ public static partial class EditorUnitTests
         }
 
         private static bool ShouldFlipOpenXrVulkanStereoPreviewUv()
-            => Engine.VRState.IsOpenXRActive
+            => RuntimeEngine.VRState.IsOpenXRActive
             && RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan;
 
         private static bool TryResolveVRStereoPreviewTextures(
@@ -1023,24 +1023,24 @@ public static partial class EditorUnitTests
             out XRTexture? rightTex,
             out bool isArray)
         {
-            if (Engine.VRState.IsOpenXRActive)
+            if (RuntimeEngine.VRState.IsOpenXRActive)
             {
-                leftTex = Engine.VRState.OpenXRApi?.PreviewLeftEyeTexture;
-                rightTex = Engine.VRState.OpenXRApi?.PreviewRightEyeTexture;
+                leftTex = RuntimeEngine.VRState.OpenXRApi?.PreviewLeftEyeTexture;
+                rightTex = RuntimeEngine.VRState.OpenXRApi?.PreviewRightEyeTexture;
                 isArray = false;
                 return leftTex is not null && rightTex is not null;
             }
 
-            if (Engine.VRState.StereoLeftViewTexture is not null && Engine.VRState.StereoRightViewTexture is not null)
+            if (RuntimeEngine.VRState.StereoLeftViewTexture is not null && RuntimeEngine.VRState.StereoRightViewTexture is not null)
             {
-                leftTex = Engine.VRState.StereoLeftViewTexture;
-                rightTex = Engine.VRState.StereoRightViewTexture;
+                leftTex = RuntimeEngine.VRState.StereoLeftViewTexture;
+                rightTex = RuntimeEngine.VRState.StereoRightViewTexture;
                 isArray = true;
                 return true;
             }
 
-            leftTex = Engine.VRState.VRLeftEyeViewTexture;
-            rightTex = Engine.VRState.VRRightEyeViewTexture;
+            leftTex = RuntimeEngine.VRState.VRLeftEyeViewTexture;
+            rightTex = RuntimeEngine.VRState.VRRightEyeViewTexture;
             isArray = false;
             return leftTex is not null && rightTex is not null;
         }

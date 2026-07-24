@@ -7,13 +7,15 @@ namespace XREngine.UnitTests.Physics;
 public sealed class VulkanPhysicsChainParityContractTests
 {
     [Test]
-    public void Dispatcher_ResolvesOpenGlAndVulkanAdaptersThroughFactory()
+    public void Dispatcher_ResolvesBackendAdapterThroughStableCapability()
     {
         string factory = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/PhysicsChainComputeBackendFactory.cs");
         string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
 
-        factory.ShouldContain("OpenGLPhysicsChainComputeBackend.TryCreate");
-        factory.ShouldContain("VulkanPhysicsChainComputeBackend.TryCreate");
+        factory.ShouldContain("IPhysicsChainComputeBackendFactoryCapability");
+        factory.ShouldContain("TryCreatePhysicsChainComputeBackend(out backend)");
+        factory.ShouldNotContain("OpenGLPhysicsChainComputeBackend");
+        factory.ShouldNotContain("VulkanPhysicsChainComputeBackend");
         dispatcher.ShouldContain("PhysicsChainComputeBackendFactory.TryCreate");
         dispatcher.ShouldContain("Capabilities.SupportsCorePipeline");
     }
@@ -21,9 +23,10 @@ public sealed class VulkanPhysicsChainParityContractTests
     [Test]
     public void VulkanBackend_UsesOrderedRendererOperations()
     {
-        string adapter = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/VulkanPhysicsChainComputeBackend.cs");
-        string work = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ComputeWork.cs");
-        string recorder = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string adapter = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/PhysicsCompute/VulkanPhysicsChainComputeBackend.cs");
+        string work = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ComputeWork.cs")
+            + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpApi.cs");
+        string recorder = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
         adapter.ShouldContain("TryDispatchComputeIndirect");
         adapter.ShouldContain("TryEnqueueBufferCopy");
@@ -40,12 +43,12 @@ public sealed class VulkanPhysicsChainParityContractTests
     [Test]
     public void VulkanBackend_UsesTransactionalGroupEnqueueAndFailsAbortedMarkers()
     {
-        string adapter = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/VulkanPhysicsChainComputeBackend.cs");
+        string adapter = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/PhysicsCompute/VulkanPhysicsChainComputeBackend.cs");
         string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
-        string recorder = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
-        string diagnostics = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpDiagnostics.cs");
-        string frameLoop = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
-        string markers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.SubmissionMarkers.cs");
+        string recorder = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string diagnostics = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpDiagnostics.cs");
+        string preflightPolicy = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Preflight.Policy.cs");
+        string markers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.SubmissionMarkers.cs");
 
         adapter.ShouldContain("TryBeginOrderedComputeBatch");
         adapter.ShouldContain("CommitOrderedComputeBatch");
@@ -55,7 +58,7 @@ public sealed class VulkanPhysicsChainParityContractTests
         dispatcher.ShouldContain("backend.RollbackBatch()");
         recorder.ShouldContain("FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps)");
         diagnostics.ShouldContain("or SubmissionMarkerOp");
-        frameLoop.ShouldContain("FailUnsubmittedSubmissionMarkers(droppedOps)");
+        preflightPolicy.ShouldContain("FailUnsubmittedSubmissionMarkers(droppedOps)");
         markers.ShouldContain("marker.Fence.Fail()");
         markers.ShouldContain("RentTimelineGpuFence()");
         markers.ShouldContain("_timelineGpuFencePool");
@@ -65,8 +68,8 @@ public sealed class VulkanPhysicsChainParityContractTests
     [Test]
     public void VulkanCapabilities_FollowOperationalRendererState()
     {
-        string adapter = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/VulkanPhysicsChainComputeBackend.cs");
-        string work = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ComputeWork.cs");
+        string adapter = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/PhysicsCompute/VulkanPhysicsChainComputeBackend.cs");
+        string work = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ComputeWork.cs");
 
         adapter.ShouldContain("_renderer.SupportsOrderedComputeWork");
         adapter.ShouldContain("? SupportedCapabilities");
@@ -93,8 +96,8 @@ public sealed class VulkanPhysicsChainParityContractTests
     [Test]
     public void VulkanOrderedWork_ClassifiesOutsidePassSubmissionAsPreRender()
     {
-        string work = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ComputeWork.cs");
-        string initialization = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
+        string work = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ComputeWork.cs");
+        string initialization = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
 
         work.ShouldContain("passIndex = (int)EDefaultRenderPass.PreRender;");
         work.ShouldContain("TryCompleteOrderedComputePass");
@@ -106,7 +109,7 @@ public sealed class VulkanPhysicsChainParityContractTests
     {
         string barrier = ReadWorkspaceFile("XREngine.Runtime.Rendering/Commands/EMemoryBarrierMask.cs");
         string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
-        string buffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
+        string buffers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
 
         barrier.ShouldContain("GpuReadback");
         dispatcher.ShouldContain("EMemoryBarrierMask.GpuReadback");

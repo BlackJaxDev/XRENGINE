@@ -83,7 +83,7 @@ public static partial class EditorImGuiUI
         PlayerCameraPanelEntries.Clear();
         PlayerCameraPanelSeenCameras.Clear();
 
-        foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
+        foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
             AddViewportCameraEntry(viewport, BuildViewportCameraLabel(viewport), "Active Viewport");
 
         for (int playerIndex = 0; playerIndex < Engine.State.LocalPlayers.Length; playerIndex++)
@@ -113,11 +113,11 @@ public static partial class EditorImGuiUI
                 runtimeOwnedProjection: false);
         }
 
-        var vrInfo = Engine.VRState.ViewInformation;
-        AddVrEyeCameraEntry("XR Left Eye", vrInfo.LeftEyeCamera, Engine.VRState.LeftEyeViewport, vrInfo.HMDNode);
-        AddVrEyeCameraEntry("XR Right Eye", vrInfo.RightEyeCamera, Engine.VRState.RightEyeViewport, vrInfo.HMDNode);
+        var vrInfo = RuntimeEngine.VRState.ViewInformation;
+        AddVrEyeCameraEntry("XR Left Eye", vrInfo.LeftEyeCamera, RuntimeEngine.VRState.LeftEyeViewport, vrInfo.HMDNode);
+        AddVrEyeCameraEntry("XR Right Eye", vrInfo.RightEyeCamera, RuntimeEngine.VRState.RightEyeViewport, vrInfo.HMDNode);
 
-        foreach (XRViewport viewport in Engine.EnumerateActiveViewports(Engine.EViewportEnumerationMode.IncludeVrEyeViewports))
+        foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports(RuntimeEngine.EViewportEnumerationMode.IncludeVrEyeViewports))
             AddViewportCameraEntry(viewport, BuildViewportCameraLabel(viewport), "Active Viewport");
     }
 
@@ -214,7 +214,7 @@ public static partial class EditorImGuiUI
             }
         }
 
-        var vrInfo = Engine.VRState.ViewInformation;
+        var vrInfo = RuntimeEngine.VRState.ViewInformation;
         if (ReferenceEquals(camera, vrInfo.RightEyeCamera) && vrInfo.LeftEyeCamera is not null)
         {
             for (int i = 0; i < pipeline.Instances.Count; i++)

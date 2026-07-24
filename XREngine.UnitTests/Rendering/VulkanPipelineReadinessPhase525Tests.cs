@@ -13,7 +13,7 @@ public sealed class VulkanPipelineReadinessPhase525Tests
     public void CompiledPlanBuildsImmutablePipelineVariantManifestAcrossRequiredAxes()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineVariantManifest.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineVariantManifest.cs");
 
         source.ShouldContain("plan.CompatibilityIdentity");
         source.ShouldContain("EMeshSubmissionStrategy SubmissionStrategy");
@@ -34,7 +34,7 @@ public sealed class VulkanPipelineReadinessPhase525Tests
     public void PipelinePrewarmHappensBeforeCommandBufferBeginAndOptionalNodesDeferLocally()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
         int manifest = source.IndexOf("GetOrBuildPipelineVariantManifest(", StringComparison.Ordinal);
         int begin = source.IndexOf("Api!.BeginCommandBuffer", manifest, StringComparison.Ordinal);
@@ -51,7 +51,7 @@ public sealed class VulkanPipelineReadinessPhase525Tests
         string metadata = ReadWorkspaceFile("XREngine.Runtime.Rendering/RenderGraph/RenderPassMetadata.cs");
         string builder = ReadWorkspaceFile("XREngine.Runtime.Rendering/RenderGraph/RenderPassBuilder.cs");
         string plan = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.VulkanRenderGraphPlan.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.VulkanRenderGraphPlan.cs");
 
         metadata.ShouldContain("public bool RequiresPipelineReady { get; private set; } = true;");
         builder.ShouldContain("AllowPipelineDeferral()");
@@ -63,9 +63,9 @@ public sealed class VulkanPipelineReadinessPhase525Tests
     public void WarmupManifestCacheIsBoundedAndOwnsCompletionState()
     {
         string manifest = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineVariantManifest.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineVariantManifest.cs");
         string recording = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
         manifest.ShouldContain("MaxCachedPipelineVariantManifests = 64");
         manifest.ShouldContain("_pipelineVariantManifestCache.TryGetValue");
@@ -115,11 +115,11 @@ public sealed class VulkanPipelineReadinessPhase525Tests
     public void AsyncPipelinePublicationAvoidsGlobalInvalidationAndUsesTimelineRetirement()
     {
         string compileQueue = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCompileQueue.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCompileQueue.cs");
         string cache = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanGraphicsPipelineCache.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanGraphicsPipelineCache.cs");
         string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
 
         compileQueue.ShouldNotContain("renderer.MarkCommandBuffersDirty()");
         cache.ShouldContain("_sharedGraphicsPipelineGeneration++");
