@@ -439,8 +439,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 RuntimeEngine.Rendering.State.IsStereoPass,
                 Samples);
             */
-            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)region.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)region.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
         }
 
@@ -448,8 +448,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             var instance = ActivePipelineInstance;
             var region = instance.RenderState.CurrentRenderRegion;
-            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)region.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)region.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
         }
 

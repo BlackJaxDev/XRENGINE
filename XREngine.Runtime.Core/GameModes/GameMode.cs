@@ -19,9 +19,12 @@ public abstract class GameMode : XRAsset
     protected Type? _defaultPlayerControllerClass;
     [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
     protected Type? _defaultPlayerPawnClass;
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+    protected Type? _defaultPlayerUserInterfaceClass;
 
     public Type? PlayerControllerClass => _defaultPlayerControllerClass;
     public Type? PlayerPawnClass => _defaultPlayerPawnClass ?? RuntimeGameModeHostServices.Current?.DefaultPawnType;
+    public Type? PlayerUserInterfaceClass => _defaultPlayerUserInterfaceClass;
 
     /// <summary>
     /// True when <see cref="CreateDefaultPawn"/> constructs the pawn at its final spawn pose.
@@ -37,6 +40,7 @@ public abstract class GameMode : XRAsset
     public Dictionary<XRComponent, Queue<ELocalPlayerIndex>> PossessionQueue { get; } = [];
 
     private HashSet<XRComponent> AutoSpawnedPawns { get; } = [];
+    private Dictionary<XRComponent, XRComponent> AutoSpawnedPlayerUserInterfaces { get; } = [];
 
     public bool IsActive { get; private set; }
 
@@ -60,13 +64,19 @@ public abstract class GameMode : XRAsset
 
         PossessionQueue.Clear();
 
+        IRuntimeGameModeHostServices? host = RuntimeGameModeHostServices.Current;
+        if (host is not null)
+            foreach ((XRComponent pawn, XRComponent userInterface) in AutoSpawnedPlayerUserInterfaces)
+                host.DestroyPlayerUserInterface(pawn, userInterface);
+
+        AutoSpawnedPlayerUserInterfaces.Clear();
+
         IRuntimePlayerControllerServices? players = RuntimePlayerControllerServices.Current;
         if (players is not null)
             foreach (IPawnController? player in players.AllLocalPlayers)
                 if (player?.ControlledPawnComponent is not null)
                     player.ControlledPawnComponent = null;
 
-        IRuntimeGameModeHostServices? host = RuntimeGameModeHostServices.Current;
         if (host is not null)
             foreach (XRComponent pawn in AutoSpawnedPawns)
                 host.DestroyPawn(pawn);
@@ -121,9 +131,52 @@ public abstract class GameMode : XRAsset
             (Vector3 position, Quaternion rotation) = GetSpawnPoint(playerIndex);
             RuntimeGameModeHostServices.Current?.ApplySpawnTransform(pawn, position, rotation);
         }
+
+        XRComponent? userInterface = CreateDefaultPlayerUserInterface(playerIndex, pawn);
+        if (userInterface is not null)
+            AutoSpawnedPlayerUserInterfaces[pawn] = userInterface;
+
         ForcePossession(pawn, playerIndex);
         Debug.Out($"Spawned default pawn for player {playerIndex}");
         return pawn;
+    }
+
+    /// <summary>
+    /// Creates the runtime user interface declared by this game mode for a newly spawned player pawn.
+    /// The host binds the returned component to the pawn's camera and input path.
+    /// </summary>
+    public virtual XRComponent? CreateDefaultPlayerUserInterface(
+        ELocalPlayerIndex playerIndex,
+        XRComponent pawn)
+    {
+        Type? userInterfaceType = PlayerUserInterfaceClass;
+        if (userInterfaceType is null)
+            return null;
+
+        if (WorldInstance is null)
+        {
+            Debug.LogWarning("Cannot spawn a player user interface without an active world instance.");
+            return null;
+        }
+
+        IRuntimeGameModeHostServices? host = RuntimeGameModeHostServices.Current;
+        if (host is null)
+        {
+            Debug.LogWarning("Cannot spawn a player user interface without a runtime game-mode host.");
+            return null;
+        }
+
+        XRComponent? userInterface = host.CreatePlayerUserInterface(
+            WorldInstance,
+            $"Player{(int)playerIndex + 1}_UserInterface",
+            userInterfaceType,
+            pawn);
+        if (userInterface is null)
+            Debug.LogWarning(
+                $"Failed to create player user interface of type {userInterfaceType.FullName ?? userInterfaceType.Name} " +
+                $"for player {playerIndex}.");
+
+        return userInterface;
     }
 
     public void ForcePossession(XRComponent pawn, ELocalPlayerIndex possessor)

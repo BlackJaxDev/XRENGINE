@@ -18,7 +18,12 @@ namespace XREngine.Components
     /// </summary>
     [XRComponentEditor("XREngine.Editor.ComponentEditors.UICanvasComponentEditor")]
     [RequiresTransform(typeof(UICanvasTransform))]
-    public class UICanvasComponent : XRComponent, IRenderable, IRuntimeRenderInfo2DRegistrationTarget, IRuntimeScreenSpaceUserInterface
+    public class UICanvasComponent :
+        XRComponent,
+        IRenderable,
+        IRuntimeRenderInfo2DRegistrationTarget,
+        IRuntimeScreenSpaceUserInterface,
+        IRuntimeGameModeUserInterface
     {
         private const float DefaultAutoWorldCanvasDistance = 1500.0f;
 

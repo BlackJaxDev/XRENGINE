@@ -474,7 +474,7 @@ namespace XREngine.Rendering.OpenGL
                         {
                             AdoptLinkedBuildProgram(pendingId);
                             IsLinked = true;
-                            double reflectionMilliseconds = RestoreRuntimeBindingStateAfterBinaryLoad();
+                            double reflectionMilliseconds = ReflectRuntimeBindingStateAfterBinaryLoad();
                             RegisterCurrentLinkedProgramForSharing(asyncResult.CacheKey, asyncResult.Format, pendingId);
                             PublishBackendStatus(
                                 EShaderProgramBackendStage.Ready,
@@ -920,7 +920,7 @@ namespace XREngine.Rendering.OpenGL
                         {
                             AdoptLinkedBuildProgram(bindingId);
                             IsLinked = true;
-                            double reflectionMilliseconds = RestoreRuntimeBindingStateAfterBinaryLoad();
+                            double reflectionMilliseconds = ReflectRuntimeBindingStateAfterBinaryLoad();
                             RegisterCurrentLinkedProgramForSharing(binProg.CacheKey, format, bindingId);
                             PublishBackendStatus(
                                 EShaderProgramBackendStage.Ready,

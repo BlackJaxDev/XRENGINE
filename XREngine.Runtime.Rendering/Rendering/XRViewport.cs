@@ -1943,10 +1943,17 @@ namespace XREngine.Rendering
             if (world is null)
                 return null;
 
+            bool cameraIsInEditorScene = world.IsInEditorScene(camComp.SceneNode);
             IRuntimeScreenSpaceUserInterface? fallback = null;
             foreach (var root in world.RootNodes)
             {
                 if (root is null)
+                    continue;
+
+                // Editor and gameplay UI are separate presentation scopes. A gameplay camera
+                // must never inherit the hidden editor canvas merely because it is the first
+                // active screen-space canvas in the world's combined root list.
+                if (world.IsInEditorScene(root) != cameraIsInEditorScene)
                     continue;
 
                 var canvases = root.FindAllDescendantComponentsAssignableTo<IRuntimeScreenSpaceUserInterface>();

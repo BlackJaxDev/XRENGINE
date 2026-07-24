@@ -14,8 +14,14 @@ public interface IRuntimeGameModeHostServices
     Type? DefaultPawnType { get; }
     string? GetWorldName(object? worldInstance);
     XRComponent? CreatePawn(object worldInstance, string nodeName, Type pawnType);
+    XRComponent? CreatePlayerUserInterface(
+        object worldInstance,
+        string nodeName,
+        Type userInterfaceType,
+        XRComponent pawn);
     (Vector3 Position, Quaternion Rotation) GetSpawnPoint(ELocalPlayerIndex playerIndex);
     void ApplySpawnTransform(XRComponent pawn, Vector3 position, Quaternion rotation);
+    void DestroyPlayerUserInterface(XRComponent pawn, XRComponent userInterface);
     void DestroyPawn(XRComponent pawn);
 }
 

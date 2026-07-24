@@ -107,8 +107,6 @@ public static class EditorPlayModeController
 
         LogPlayerBindings("PreEnterPlay.AfterSnapshot");
 
-        // Notify UI to update
-        PlayModeUIChanged?.Invoke(true);
     }
 
     private static void OnPostEnterPlay()
@@ -145,8 +143,6 @@ public static class EditorPlayModeController
         if (_editorPossessionSnapshot.Count > 0)
             RestoreEditorPawnSnapshot();
 
-        // Notify UI to update
-        PlayModeUIChanged?.Invoke(false);
     }
 
     /// <summary>
@@ -608,12 +604,6 @@ public static class EditorPlayModeController
     #endregion
 
     #region Events
-
-    /// <summary>
-    /// Fired when play mode UI state should change.
-    /// Parameter is true when entering play, false when exiting.
-    /// </summary>
-    public static event Action<bool>? PlayModeUIChanged;
 
     /// <summary>
     /// Fired when pause state changes during play mode.

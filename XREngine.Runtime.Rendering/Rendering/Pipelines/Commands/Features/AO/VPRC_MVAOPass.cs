@@ -483,8 +483,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 region.Height,
                 RuntimeEngine.Rendering.State.IsStereoPass,
                 _kernelSize);
-            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)region.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)region.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
         }
 
@@ -495,8 +495,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 program.Uniform(EEngineUniform.DepthMode.ToStringFast(), (int)camera.DepthMode);
 
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
-            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)region.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)region.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
 
             Debug.RenderingEvery(

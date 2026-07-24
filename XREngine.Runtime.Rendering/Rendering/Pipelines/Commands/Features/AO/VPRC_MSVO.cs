@@ -354,8 +354,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         private void MSVOBlur_SetUniforms(XRRenderProgram program)
         {
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
-            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)region.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)region.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
         }
 

@@ -296,6 +296,51 @@ Evidence:
 
 `Build/_AgentValidation/20260723-physics-lit-depth/mcp-captures/Screenshot_20260723_170424_231_b7d10ff8ffc34fefa760cf46a91de4af.png`
 
+## Follow-up: Game-mode UI ownership
+
+The Physics Testing World switched possession from the editor flying pawn to the
+`LocomotionGameMode` character, but UI ownership did not switch with it. The play-mode UI
+notification had no subscribers, ImGui deliberately continued rendering during Play, and a
+camera without an explicit UI could fall back to the first active screen-space canvas in the
+world's combined root list. Because that list includes hidden editor roots, the gameplay
+camera could inherit the editor canvas.
+
+The game-mode contract now includes an optional runtime player UI component type.
+`LocomotionGameMode` declares an empty screen-space `UICanvasComponent`; the runtime host
+creates and binds it before possession and destroys it at end play. Viewport fallback is
+limited to canvases in the same editor/gameplay scene scope as the active camera. Editor
+ImGui and its docked scene-panel presentation render only in Edit mode.
+
+The first live exit-play check also showed that hidden editor roots were deactivated during
+world teardown and never reactivated. Hidden editor roots now remain outside gameplay
+begin/end callbacks and receive a balanced deactivate/reactivate around visual-scene
+destruction, restoring the editor UI and input registrations on exit.
+
+Validation:
+
+- Editor and isolated-session builds completed with 0 warnings and 0 errors.
+- Focused game-mode UI, editor-scene lifecycle, and Physics Testing serialization tests:
+  4 passed, 0 failed.
+- In Play, MCP reported `PlayerCamera` at
+  `Player1_CharacterPawn/CameraOffset/Camera` with an active screen-space
+  `UICanvasComponent`.
+- Full-window captures at two different gameplay-camera transforms showed the Physics
+  Testing scene with no ImGui editor chrome.
+- After exit, MCP reported `Edit`, `Editor View`, and its active screen-space canvas; the
+  full-window capture showed the restored ImGui editor shell.
+- The final Vulkan session logs contained no error, exception, fatal, VUID, or validation
+  error signature.
+
+Evidence:
+
+`Build/_AgentValidation/mcp-sessions/locomotion-ui-switch-final-20260723/mcp-captures/edit-before-play.png`
+
+`Build/_AgentValidation/mcp-sessions/locomotion-ui-switch-final-20260723/mcp-captures/play-empty-ui.png`
+
+`Build/_AgentValidation/mcp-sessions/locomotion-ui-switch-final-20260723/mcp-captures/play-empty-ui-alt-camera.png`
+
+`Build/_AgentValidation/mcp-sessions/locomotion-ui-switch-final-20260723/mcp-captures/edit-after-play-restored.png`
+
 ## Remaining work
 
 The immediate Physics Testing World behavior is implemented and validated, pending user

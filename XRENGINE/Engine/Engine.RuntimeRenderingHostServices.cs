@@ -1349,6 +1349,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public bool IsWindowScenePanelPresentationEnabled
         => Engine.IsEditor &&
+           Engine.PlayMode.IsEditing &&
            Engine.EditorPreferences.Viewport.PresentationMode == EditorPreferences.EViewportPresentationMode.UseViewportPanel;
 
     public EInteractiveWindowResizeStrategy InteractiveResizeStrategy

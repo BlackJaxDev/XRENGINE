@@ -57,28 +57,6 @@ namespace XREngine.Rendering.OpenGL
                 RebuildActiveSamplerUniforms();
             }
 
-            private bool TryRestoreCachedUniformMetadata(UniformMetadataEntry[]? metadata)
-            {
-                if (metadata is not { Length: > 0 })
-                {
-                    _activeSamplerUniforms = [];
-                    _activeEngineUniformRequirements = EUniformRequirements.None;
-                    return false;
-                }
-
-                _uniformMetadata.Clear();
-                foreach (var entry in metadata)
-                {
-                    if (string.IsNullOrEmpty(entry.Name))
-                        continue;
-
-                    _uniformMetadata[entry.Name] = new UniformInfo(entry.Type, entry.Size);
-                }
-
-                RebuildActiveSamplerUniforms();
-                return _uniformMetadata.Count > 0;
-            }
-
             private void RebuildActiveSamplerUniforms()
             {
                 if (_uniformMetadata.Count == 0)
@@ -142,13 +120,14 @@ namespace XREngine.Rendering.OpenGL
                 if (_cachedProgram is not BinaryProgram cachedProgram)
                     return;
 
-                if (cachedProgram.Uniforms is { Length: > 0 })
+                if (_uniformMetadata.Count == 0)
+                    return;
+
+                if (cachedProgram.Uniforms is { } cachedMetadata &&
+                    CachedUniformMetadataMatchesCurrent(cachedMetadata))
                     return;
 
                 var metadata = SnapshotUniformMetadata();
-                if (metadata.Length == 0)
-                    return;
-
                 var updated = cachedProgram with { Uniforms = metadata };
                 _cachedProgram = updated;
                 if (BinaryCache is not null)
@@ -156,18 +135,40 @@ namespace XREngine.Rendering.OpenGL
                 WriteToBinaryShaderCache(updated);
             }
 
-            private double RestoreRuntimeBindingStateAfterBinaryLoad()
+            private bool CachedUniformMetadataMatchesCurrent(UniformMetadataEntry[] cachedMetadata)
+            {
+                if (cachedMetadata.Length != _uniformMetadata.Count)
+                    return false;
+
+                foreach (var pair in _uniformMetadata)
+                {
+                    bool found = false;
+                    foreach (var entry in cachedMetadata)
+                    {
+                        if (entry.Name != pair.Key ||
+                            entry.Type != pair.Value.Type ||
+                            entry.Size != pair.Value.Size)
+                        {
+                            continue;
+                        }
+
+                        found = true;
+                        break;
+                    }
+
+                    if (!found)
+                        return false;
+                }
+
+                return true;
+            }
+
+            private double ReflectRuntimeBindingStateAfterBinaryLoad()
             {
                 long start = System.Diagnostics.Stopwatch.GetTimestamp();
-                bool restoredMetadata;
-                using (RuntimeEngine.Profiler.Start("GLRenderProgram.Link.RestoreCachedUniformMetadata", ProfilerScopeKind.OneOffInvoke))
-                    restoredMetadata = TryRestoreCachedUniformMetadata(_cachedProgram?.Uniforms);
-                if (!restoredMetadata)
-                {
-                    using var uniformsProf = RuntimeEngine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms", ProfilerScopeKind.OneOffInvoke);
+                using (RuntimeEngine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms", ProfilerScopeKind.OneOffInvoke))
                     CacheActiveUniforms();
-                    PromoteCurrentUniformMetadataToCachedProgram();
-                }
+                PromoteCurrentUniformMetadataToCachedProgram();
 
                 return (System.Diagnostics.Stopwatch.GetTimestamp() - start) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
             }
@@ -509,19 +510,19 @@ namespace XREngine.Rendering.OpenGL
                 if (_locationNameCache.TryGetValue(location, out string? name))
                     return ValidateUniformType(name, location, expectedTypes);
 
-                if (!RenderDiagnosticsFlags.GLDebug)
-                    return true;
-
                 RebuildUniformLocationCachesFromMetadata();
                 if (_locationNameCache.TryGetValue(location, out name))
                     return ValidateUniformType(name, location, expectedTypes);
 
-                string key = $"location:{location}";
-                if (_loggedUniformMismatches.TryAdd(key, 0))
+                if (RenderDiagnosticsFlags.GLDebug)
                 {
-                    string expectedDesc = string.Join(", ", expectedTypes);
-                    string programName = Data?.Name ?? BindingId.ToString();
-                    Debug.OpenGLWarning($"Uniform location {location} in program '{programName}' has no reflected active uniform while receiving upload for {expectedDesc}. Skipping to avoid GL_INVALID_OPERATION.");
+                    string key = $"location:{location}";
+                    if (_loggedUniformMismatches.TryAdd(key, 0))
+                    {
+                        string expectedDesc = string.Join(", ", expectedTypes);
+                        string programName = Data?.Name ?? BindingId.ToString();
+                        Debug.OpenGLWarning($"Uniform location {location} in program '{programName}' has no reflected active uniform while receiving upload for {expectedDesc}. Skipping to avoid GL_INVALID_OPERATION.");
+                    }
                 }
                 return false;
             }
@@ -556,19 +557,19 @@ namespace XREngine.Rendering.OpenGL
 
                 if (!TryGetUniformMetadata(name, out var meta))
                 {
-                    if (!RenderDiagnosticsFlags.GLDebug)
-                        return true;
-
                     CacheActiveUniforms();
                     if (!TryGetUniformMetadata(name, out meta))
                     {
-                        string key = $"metadata:{name}";
-                        if (_loggedUniformMismatches.TryAdd(key, 0))
+                        if (RenderDiagnosticsFlags.GLDebug)
                         {
-                            string expectedDesc = string.Join(", ", expectedTypes);
-                            string locDesc = location.HasValue ? location.Value.ToString() : "unknown";
-                            string programName = Data?.Name ?? BindingId.ToString();
-                            Debug.OpenGLWarning($"Uniform '{name}' (location {locDesc}) in program '{programName}' has no reflected active uniform metadata while receiving upload for {expectedDesc}. Skipping to avoid GL_INVALID_OPERATION.");
+                            string key = $"metadata:{name}";
+                            if (_loggedUniformMismatches.TryAdd(key, 0))
+                            {
+                                string expectedDesc = string.Join(", ", expectedTypes);
+                                string locDesc = location.HasValue ? location.Value.ToString() : "unknown";
+                                string programName = Data?.Name ?? BindingId.ToString();
+                                Debug.OpenGLWarning($"Uniform '{name}' (location {locDesc}) in program '{programName}' has no reflected active uniform metadata while receiving upload for {expectedDesc}. Skipping to avoid GL_INVALID_OPERATION.");
+                            }
                         }
                         return false;
                     }

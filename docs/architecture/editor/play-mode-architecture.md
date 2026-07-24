@@ -12,6 +12,7 @@ The editor/play mode system provides:
 5. **GameMode lifecycle management** with proper begin/end play hooks
 6. **Startup world configuration** for determining what loads when play begins
 7. **Optional user confirmation prompts** for editor-triggered enter/exit requests before the transition starts
+8. **Mode-owned UI presentation** so the editor shell and runtime game UI do not leak into one another
 
 ## Editor Confirmation Prompts
 
@@ -21,6 +22,25 @@ User-triggered play mode requests from the ImGui editor, including `F5`, `Shift+
 - `Confirm Before Exiting Play Mode` controls whether editor-triggered exit-play requests open a confirmation dialog.
 
 These settings live on the top-level editor preferences asset and can also be overridden through editor preference overrides. Programmatic transitions that call `EditorState.EnterPlayMode()` or `EditorState.ExitPlayMode()` directly, including MCP workflow actions, bypass the UI prompt so automation is not blocked by modal dialogs.
+
+## Editor And Runtime UI Ownership
+
+The hidden editor scene owns the editor camera, its canvas, and the ImGui editor shell. ImGui
+renders only while `Engine.PlayMode.IsEditing`; play mode presents the runtime viewport across
+the client area without the docked editor scene-panel region.
+
+A `GameMode` may declare `PlayerUserInterfaceClass`. When its default player pawn is spawned,
+the runtime host creates that UI component, binds its screen-space interface to the pawn's
+camera, binds canvas input to the pawn when applicable, and destroys the UI before destroying
+the pawn at end play. `CustomGameMode.DefaultPlayerUserInterfaceClass` exposes this selection
+for authored game modes. Runtime UI component types must implement
+`IRuntimeGameModeUserInterface`.
+
+Viewport UI fallback is scoped to the active camera's scene ownership: gameplay cameras can
+only discover gameplay canvases, and editor cameras can only discover hidden-editor-scene
+canvases. Hidden editor roots remain outside gameplay begin/end callbacks. They are
+deactivated before the play visual scene is destroyed and reactivated immediately afterward
+so their rendering and input registrations are restored for Edit mode.
 
 ## Mode States
 
