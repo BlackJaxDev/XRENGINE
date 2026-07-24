@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using XREngine.Data.Core;
 using XREngine.Data.Profiling;
 using XREngine.Data.Runtime.Memory;
@@ -399,6 +400,49 @@ namespace XREngine
             if (task is null)
                 return;
             _pendingPhysicsThreadWork.Enqueue(task);
+        }
+
+        /// <summary>
+        /// Runs an action on the physics thread and does not return until it completes.
+        /// </summary>
+        /// <remarks>
+        /// This is a lifecycle barrier for native physics resources. Work already queued for
+        /// the physics thread completes first, so callers can safely create or destroy a scene
+        /// without racing deferred actor mutations.
+        /// </remarks>
+        public static void InvokePhysicsThreadTask(Action task)
+        {
+            ArgumentNullException.ThrowIfNull(task);
+
+            // Unit tests and startup/shutdown paths may not have a physics loop to service
+            // the queue. With no running loop there cannot be a concurrent fixed update.
+            if (IsPhysicsThread || !Time.Timer.IsRunning)
+            {
+                task();
+                return;
+            }
+
+            ExceptionDispatchInfo? exception = null;
+            using ManualResetEventSlim completed = new(false);
+
+            EnqueuePhysicsThreadTask(() =>
+            {
+                try
+                {
+                    task();
+                }
+                catch (Exception ex)
+                {
+                    exception = ExceptionDispatchInfo.Capture(ex);
+                }
+                finally
+                {
+                    completed.Set();
+                }
+            });
+
+            completed.Wait();
+            exception?.Throw();
         }
 
         /// <summary>

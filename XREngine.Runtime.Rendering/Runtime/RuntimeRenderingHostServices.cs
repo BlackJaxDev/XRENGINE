@@ -360,6 +360,9 @@ public static class RuntimeRenderingHostServices
         {
         }
 
+        public bool TryDispatchInteractiveResizeFrame()
+            => false;
+
         public void SubscribePlayModeTransitions(Action callback)
         {
         }
@@ -479,7 +482,7 @@ public static class RuntimeRenderingHostServices
         {
         }
 
-        public void RenderDebugShapes()
+        public void RenderDebugShapes(bool depthTested)
         {
         }
 

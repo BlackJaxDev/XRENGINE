@@ -199,7 +199,7 @@ public class UnitTestingWorldSettings
     public string? VideoStreamingUrl { get; set; } = null;
     public bool UltralightWebView = false;
     public string UltralightWebViewUrl { get; set; } = "https://blackjaxvr.com";
-    public bool EnableProfilerLogging = true;
+    public bool EnableProfilerLogging = false;
     public UnitTestFbxLogVerbosity FbxLogVerbosity { get; set; } = UnitTestFbxLogVerbosity.UseEnvironment;
     public UnitTestingRenderSettings Rendering { get; set; } = new();
     public bool RiveUI = false;

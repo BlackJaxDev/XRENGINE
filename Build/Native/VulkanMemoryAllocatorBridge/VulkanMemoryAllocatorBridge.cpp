@@ -49,7 +49,9 @@ VmaAllocationCreateInfo makeAllocationCreateInfo(std::uint32_t requiredPropertie
     }
 
     if ((requiredProperties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
-        createInfo.flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+        createInfo.flags |=
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
+            VMA_ALLOCATION_CREATE_MAPPED_BIT;
     }
 
     if ((requiredProperties & VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT) != 0) {
@@ -122,6 +124,7 @@ struct XreVmaAllocationInfo {
     std::uint64_t size;
     std::uint32_t memoryTypeIndex;
     std::uint32_t memoryPropertyFlags;
+    void* mappedData;
 };
 
 struct XreVmaBudget {
@@ -193,6 +196,7 @@ __declspec(dllexport) VkResult xre_vma_allocate_for_buffer(
     outAllocationInfo->size = static_cast<std::uint64_t>(allocationInfo.size);
     outAllocationInfo->memoryTypeIndex = allocationInfo.memoryType;
     outAllocationInfo->memoryPropertyFlags = static_cast<std::uint32_t>(memoryProperties);
+    outAllocationInfo->mappedData = allocationInfo.pMappedData;
     return VK_SUCCESS;
 }
 
@@ -229,6 +233,7 @@ __declspec(dllexport) VkResult xre_vma_allocate_for_image(
     outAllocationInfo->size = static_cast<std::uint64_t>(allocationInfo.size);
     outAllocationInfo->memoryTypeIndex = allocationInfo.memoryType;
     outAllocationInfo->memoryPropertyFlags = static_cast<std::uint32_t>(memoryProperties);
+    outAllocationInfo->mappedData = allocationInfo.pMappedData;
     return VK_SUCCESS;
 }
 

@@ -13,6 +13,9 @@ internal sealed class EngineRuntimePhysicsServices : IRuntimePhysicsServices
     public PhysicsVisualizeSettings VisualizeSettings => Engine.Rendering.Settings.PhysicsVisualizeSettings;
     public bool JoltDebugRenderDiagnostics => Engine.EditorPreferences.Diagnostics.General.JoltDebugRenderDiagnostics;
 
+    public void RenderPoint(Vector3 position, ColorF4 color)
+        => Engine.Rendering.Debug.RenderPoint(position, color);
+
     public void RenderLine(Vector3 start, Vector3 end, ColorF4 color)
         => Engine.Rendering.Debug.RenderLine(start, end, color);
 

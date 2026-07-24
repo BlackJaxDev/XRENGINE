@@ -1,3 +1,5 @@
+using XREngine.Rendering;
+
 namespace XREngine;
 
 internal enum EngineRenderThreadHostMode
@@ -9,6 +11,7 @@ internal enum EngineRenderThreadHostMode
 internal sealed class EngineRenderThreadHost
 {
     private readonly object _sync = new();
+    private readonly List<XRWindow> _collapsedWindowPumpSnapshot = [];
     private Thread? _dedicatedThread;
     private Exception? _dedicatedThreadException;
 
@@ -107,12 +110,55 @@ internal sealed class EngineRenderThreadHost
             Engine.WindowThreadId);
 
         started?.Set();
-        Engine.Time.Timer.BlockForRendering(runUntilPredicate);
+        if (mode == EngineRenderThreadHostMode.CollapsedWindowRenderThread)
+            BlockForCollapsedWindowRendering(runUntilPredicate);
+        else
+            Engine.Time.Timer.BlockForRendering(runUntilPredicate);
 
         Debug.Rendering(
             "[RenderThreadHost] Exited render loop mode={0} renderThread={1} windowThread={2}.",
             mode,
             Engine.RenderThreadId,
             Engine.WindowThreadId);
+    }
+
+    /// <summary>
+    /// Pumps collapsed-mode native events before entering a render dispatch.
+    /// </summary>
+    /// <remarks>
+    /// Win32 enters its modal size/move loop from <see cref="XRWindow.PumpNativeWindowEventsFromHost"/>.
+    /// Keeping that call outside <see cref="Timers.EngineTimer.DispatchRender"/> lets modal timer
+    /// messages safely request complete engine frames without nesting inside an existing frame.
+    /// </remarks>
+    private void BlockForCollapsedWindowRendering(Func<bool> runUntilPredicate)
+    {
+        Debug.Out("Blocking for rendering.");
+        while (runUntilPredicate())
+        {
+            PumpCollapsedWindowEvents();
+            Engine.Time.Timer.WaitToRender();
+        }
+        Debug.Out("No longer blocking main thread for rendering.");
+    }
+
+    private void PumpCollapsedWindowEvents()
+    {
+        _collapsedWindowPumpSnapshot.Clear();
+        for (int i = 0; i < Engine.Windows.Count; i++)
+            _collapsedWindowPumpSnapshot.Add(Engine.Windows[i]);
+
+        try
+        {
+            for (int i = 0; i < _collapsedWindowPumpSnapshot.Count; i++)
+            {
+                XRWindow window = _collapsedWindowPumpSnapshot[i];
+                if (!window.IsDisposed && !window.IsNativeEventPumpExternallyOwned)
+                    window.PumpNativeWindowEventsFromHost();
+            }
+        }
+        finally
+        {
+            _collapsedWindowPumpSnapshot.Clear();
+        }
     }
 }

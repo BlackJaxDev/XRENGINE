@@ -1,8 +1,11 @@
 ﻿using System.Numerics;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Scene.Physics.DebugVisualization;
 
 namespace XREngine.Rendering.Physics.Physx
 {
@@ -12,6 +15,10 @@ namespace XREngine.Rendering.Physics.Physx
     public class InstancedDebugVisualizer : XRBase, IDisposable
     {
         public InstancedDebugVisualizer() { }
+        public InstancedDebugVisualizer(bool depthTested)
+        {
+            _depthTested = depthTested;
+        }
         public InstancedDebugVisualizer(float pointSize, float lineWidth)
         {
             _pointSize = pointSize;
@@ -40,6 +47,12 @@ namespace XREngine.Rendering.Physics.Physx
             GetLine = getLine;
             GetTriangle = getTriangle;
         }
+
+        private readonly bool _depthTested;
+        /// <summary>
+        /// Whether primitives test against and update the current scene depth buffer.
+        /// </summary>
+        public bool DepthTested => _depthTested;
 
         private float _pointSize = 0.005f;
         public float PointSize
@@ -147,13 +160,32 @@ namespace XREngine.Rendering.Physics.Physx
             set => SetField(ref _useCompressedBuffers, value);
         }
 
-        private readonly Task?[] _renderTasks = new Task?[3];
         private XRMeshRenderer? _debugPointsRenderer = null;
         private XRMeshRenderer? _debugLinesRenderer = null;
         private XRMeshRenderer? _debugTrianglesRenderer = null;
         private XRDataBuffer? _debugPointsBuffer = null;
         private XRDataBuffer? _debugLinesBuffer = null;
         private XRDataBuffer? _debugTrianglesBuffer = null;
+        private uint _pointCapacity;
+        private uint _lineCapacity;
+        private uint _triangleCapacity;
+        private int _pointUnderuseFrames;
+        private int _lineUnderuseFrames;
+        private int _triangleUnderuseFrames;
+        private uint _pointDirtyBytes;
+        private uint _lineDirtyBytes;
+        private uint _triangleDirtyBytes;
+
+        private const uint MinimumCapacity = 256;
+        private const int ShrinkHysteresisFrames = 600;
+
+        public long BufferResizeCount { get; private set; }
+        public long UploadedBytes { get; private set; }
+        public long UploadTicks { get; private set; }
+        public long DrawCallCount { get; private set; }
+        public uint PointCapacity => _pointCapacity;
+        public uint LineCapacity => _lineCapacity;
+        public uint TriangleCapacity => _triangleCapacity;
 
         /// <summary>
         /// Renders all points, lines, and triangles in the visualizer.
@@ -163,14 +195,65 @@ namespace XREngine.Rendering.Physics.Physx
             if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
                 return;
 
-            if (PointCount > 0)
-                _debugPointsRenderer?.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, PointCount, forceNoStereo: true);
+            if (PointCount > 0 && _debugPointsRenderer is { } pointsRenderer)
+            {
+                pointsRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, PointCount, forceNoStereo: true);
+                DrawCallCount++;
+            }
 
-            if (LineCount > 0)
-                _debugLinesRenderer?.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, LineCount, forceNoStereo: true);
+            if (LineCount > 0 && _debugLinesRenderer is { } linesRenderer)
+            {
+                linesRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, LineCount, forceNoStereo: true);
+                DrawCallCount++;
+            }
 
-            if (TriangleCount > 0)
-                _debugTrianglesRenderer?.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, TriangleCount, forceNoStereo: true);
+            if (TriangleCount > 0 && _debugTrianglesRenderer is { } trianglesRenderer)
+            {
+                trianglesRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, TriangleCount, forceNoStereo: true);
+                DrawCallCount++;
+            }
+        }
+
+        /// <summary>
+        /// Copies a packed backend-neutral frame into persistent CPU mirrors. The three
+        /// dirty ranges are committed lazily by renderer preparation callbacks.
+        /// </summary>
+        public void Upload(in PhysicsDebugFrame frame)
+        {
+            long startTicks = Stopwatch.GetTimestamp();
+            uint previousPointCount = PointCount;
+            uint previousLineCount = LineCount;
+            uint previousTriangleCount = TriangleCount;
+            PointCount = checked((uint)frame.PointCount);
+            LineCount = checked((uint)frame.LineCount);
+            TriangleCount = checked((uint)frame.TriangleCount);
+            if (PointCount == previousPointCount)
+                CreateOrResizePoints(PointCount);
+            if (LineCount == previousLineCount)
+                CreateOrResizeLines(LineCount);
+            if (TriangleCount == previousTriangleCount)
+                CreateOrResizeTriangles(TriangleCount);
+
+            _pointDirtyBytes = CopyPacked(frame.Points, _debugPointsBuffer);
+            _lineDirtyBytes = CopyPacked(frame.Lines, _debugLinesBuffer);
+            _triangleDirtyBytes = CopyPacked(frame.Triangles, _debugTrianglesBuffer);
+            UploadedBytes += _pointDirtyBytes + _lineDirtyBytes + _triangleDirtyBytes;
+            UploadTicks += Stopwatch.GetTimestamp() - startTicks;
+        }
+
+        private static unsafe uint CopyPacked<T>(ReadOnlySpan<T> source, XRDataBuffer? destination)
+            where T : unmanaged
+        {
+            if (source.IsEmpty)
+                return 0;
+            if (destination is null || destination.Address == IntPtr.Zero)
+                throw new InvalidOperationException(
+                    $"Physics debug buffer for {typeof(T).Name} was not created.");
+
+            ReadOnlySpan<byte> sourceBytes = MemoryMarshal.AsBytes(source);
+            Span<byte> destinationBytes = new(destination.Address.Pointer, sourceBytes.Length);
+            sourceBytes.CopyTo(destinationBytes);
+            return checked((uint)sourceBytes.Length);
         }
 
         /// <summary>
@@ -252,136 +335,10 @@ namespace XREngine.Rendering.Physics.Physx
         /// </summary>
         public void PopulateBuffers(EDebugVisualizerPopulationMode mode)
         {
-            switch (mode)
-            {
-                case EDebugVisualizerPopulationMode.TasksWithParallelFor:
-                    PopulateBuffersTasksWithParallelFor();
-                    break;
-                case EDebugVisualizerPopulationMode.Tasks:
-                    PopulateBuffersTasks();
-                    break;
-                case EDebugVisualizerPopulationMode.ParallelFor:
-                    PopulateBuffersParallelFor();
-                    break;
-                case EDebugVisualizerPopulationMode.JobSystem:
-                    PopulateBuffersJobSystem();
-                    break;
-                case EDebugVisualizerPopulationMode.Sequential:
-                default:
-                    PopulateBuffersSequential();
-                    break;
-                case EDebugVisualizerPopulationMode.DirectMemory:
-                    PopulateBuffersDirectMemory();
-                    break;
-            }
-        }
-
-        /// <summary>
-        /// Legacy path: Task.Run wrapping Parallel.For per type + Task.WaitAll.
-        /// </summary>
-        private void PopulateBuffersTasksWithParallelFor()
-        {
-            for (int i = 0; i < 3; i++)
-                _renderTasks[i] = null;
-
-            if (PointCount > 0 && GetPoint is not null)
-                _renderTasks[0] = Task.Run(() => Parallel.For(0, (int)PointCount, SetPointAt));
-
-            if (LineCount > 0 && GetLine is not null)
-                _renderTasks[1] = Task.Run(() => Parallel.For(0, (int)LineCount, SetLineAt));
-
-            if (TriangleCount > 0 && GetTriangle is not null)
-                _renderTasks[2] = Task.Run(() => Parallel.For(0, (int)TriangleCount, SetTriangleAt));
-
-            Task.WaitAll(_renderTasks.Where(x => x is not null).Select(x => x!));
-        }
-
-        /// <summary>
-        /// Task.Run per type with sequential inner loop + Task.WaitAll.
-        /// </summary>
-        private void PopulateBuffersTasks()
-        {
-            for (int i = 0; i < 3; i++)
-                _renderTasks[i] = null;
-
-            int ptCount = (int)PointCount;
-            int lnCount = (int)LineCount;
-            int triCount = (int)TriangleCount;
-
-            if (ptCount > 0 && GetPoint is not null)
-                _renderTasks[0] = Task.Run(() =>
-                {
-                    for (int i = 0; i < ptCount; i++)
-                        SetPointAt(i);
-                });
-
-            if (lnCount > 0 && GetLine is not null)
-                _renderTasks[1] = Task.Run(() =>
-                {
-                    for (int i = 0; i < lnCount; i++)
-                        SetLineAt(i);
-                });
-
-            if (triCount > 0 && GetTriangle is not null)
-                _renderTasks[2] = Task.Run(() =>
-                {
-                    for (int i = 0; i < triCount; i++)
-                        SetTriangleAt(i);
-                });
-
-            Task.WaitAll(_renderTasks.Where(x => x is not null).Select(x => x!));
-        }
-
-        /// <summary>
-        /// Parallel.For per type, run sequentially type-by-type.
-        /// </summary>
-        private void PopulateBuffersParallelFor()
-        {
-            if (PointCount > 0 && GetPoint is not null)
-                Parallel.For(0, (int)PointCount, SetPointAt);
-
-            if (LineCount > 0 && GetLine is not null)
-                Parallel.For(0, (int)LineCount, SetLineAt);
-
-            if (TriangleCount > 0 && GetTriangle is not null)
-                Parallel.For(0, (int)TriangleCount, SetTriangleAt);
-        }
-
-        /// <summary>
-        /// Schedules ActionJobs on engine persistent worker threads.
-        /// </summary>
-        private void PopulateBuffersJobSystem()
-        {
-            int ptCount = (int)PointCount;
-            int lnCount = (int)LineCount;
-            int triCount = (int)TriangleCount;
-
-            JobHandle hp = default, hl = default, ht = default;
-
-            if (ptCount > 0 && GetPoint is not null)
-                hp = Engine.Jobs.Schedule(new ActionJob(() =>
-                {
-                    for (int i = 0; i < ptCount; i++)
-                        SetPointAt(i);
-                }), JobPriority.High);
-
-            if (lnCount > 0 && GetLine is not null)
-                hl = Engine.Jobs.Schedule(new ActionJob(() =>
-                {
-                    for (int i = 0; i < lnCount; i++)
-                        SetLineAt(i);
-                }), JobPriority.High);
-
-            if (triCount > 0 && GetTriangle is not null)
-                ht = Engine.Jobs.Schedule(new ActionJob(() =>
-                {
-                    for (int i = 0; i < triCount; i++)
-                        SetTriangleAt(i);
-                }), JobPriority.High);
-
-            hp.Wait();
-            hl.Wait();
-            ht.Wait();
+            if (mode == EDebugVisualizerPopulationMode.DirectMemory)
+                PopulateBuffersDirectMemory();
+            else
+                PopulateBuffersSequential();
         }
 
         /// <summary>
@@ -463,7 +420,8 @@ namespace XREngine.Rendering.Physics.Physx
 
         private bool _fullPushTriangles = true;
         private void MarkTrianglesDirty()
-            => _fullPushTriangles = true;
+            => _triangleDirtyBytes = checked(
+                TriangleCount * (_useCompressedBuffers ? 10u : 16u) * sizeof(float));
 
         public void PushTrianglesBuffer()
         {
@@ -475,13 +433,16 @@ namespace XREngine.Rendering.Physics.Physx
                 _debugTrianglesBuffer.PushData();
                 _fullPushTriangles = false;
             }
-            else
-                _debugTrianglesBuffer.PushSubData();
+            else if (_triangleDirtyBytes > 0)
+                _debugTrianglesBuffer.CommitDirtyBytes(0u, _triangleDirtyBytes);
+
+            _triangleDirtyBytes = 0;
         }
 
         private bool _fullPushLines = true;
         private void MarkLinesDirty()
-            => _fullPushLines = true;
+            => _lineDirtyBytes = checked(
+                LineCount * (_useCompressedBuffers ? 7u : 12u) * sizeof(float));
 
         public void PushLinesBuffer()
         {
@@ -493,13 +454,16 @@ namespace XREngine.Rendering.Physics.Physx
                 _debugLinesBuffer.PushData();
                 _fullPushLines = false;
             }
-            else
-                _debugLinesBuffer.PushSubData();
+            else if (_lineDirtyBytes > 0)
+                _debugLinesBuffer.CommitDirtyBytes(0u, _lineDirtyBytes);
+
+            _lineDirtyBytes = 0;
         }
 
         private bool _fullPushPoints = true;
         private void MarkPointsDirty()
-            => _fullPushPoints = true;
+            => _pointDirtyBytes = checked(
+                PointCount * (_useCompressedBuffers ? 4u : 8u) * sizeof(float));
 
         public void PushPointsBuffer()
         {
@@ -511,8 +475,10 @@ namespace XREngine.Rendering.Physics.Physx
                 _debugPointsBuffer.PushData();
                 _fullPushPoints = false;
             }
-            else
-                _debugPointsBuffer.PushSubData();
+            else if (_pointDirtyBytes > 0)
+                _debugPointsBuffer.CommitDirtyBytes(0u, _pointDirtyBytes);
+
+            _pointDirtyBytes = 0;
         }
 
         private void SetPointAt(int i)
@@ -651,7 +617,9 @@ namespace XREngine.Rendering.Physics.Physx
         {
             _debugPointsRenderer?.Material?.SetInt(0, (int)count);
 
-            if (count == 0)
+            uint previousCapacity = _pointCapacity;
+            UpdateCapacity(count, ref _pointCapacity, ref _pointUnderuseFrames);
+            if (count == 0 && _debugPointsBuffer is null)
                 return;
 
             bool createdRenderer = _debugPointsRenderer is null;
@@ -660,13 +628,19 @@ namespace XREngine.Rendering.Physics.Physx
             // Expanded: 8 floats (pos3 + pad + color4). Compressed: 4 floats (pos3 + packedColor).
             uint componentsPerElement = _useCompressedBuffers ? 4u : 8u;
             if (_debugPointsBuffer is not null)
-                _fullPushPoints |= _debugPointsBuffer.Resize(count, true, true);
+            {
+                if (_pointCapacity != previousCapacity)
+                {
+                    _fullPushPoints |= _debugPointsBuffer.Resize(_pointCapacity, true, true);
+                    BufferResizeCount++;
+                }
+            }
             else
             {
                 _debugPointsBuffer = new XRDataBuffer(
                     "PointsBuffer",
                     EBufferTarget.ShaderStorageBuffer,
-                    count,
+                    _pointCapacity,
                     EComponentType.Float,
                     componentsPerElement,
                     false,
@@ -692,17 +666,25 @@ namespace XREngine.Rendering.Physics.Physx
         {
             _debugLinesRenderer?.Material?.SetInt(0, (int)count);
 
-            if (count == 0)
+            uint previousCapacity = _lineCapacity;
+            UpdateCapacity(count, ref _lineCapacity, ref _lineUnderuseFrames);
+            if (count == 0 && _debugLinesBuffer is null)
                 return;
 
             bool createdRenderer = _debugLinesRenderer is null;
             _debugLinesRenderer ??= MakeLineRenderer();
 
             // Expanded: 3 vec4s per line (count*3 elements, 4 components). Compressed: 7 floats (count elements, 7 components).
-            uint elementCount = _useCompressedBuffers ? count : count * 3;
+            uint elementCount = _useCompressedBuffers ? _lineCapacity : _lineCapacity * 3;
             uint componentsPerElement = _useCompressedBuffers ? 7u : 4u;
             if (_debugLinesBuffer is not null)
-                _fullPushLines |= _debugLinesBuffer.Resize(elementCount, true, true);
+            {
+                if (_lineCapacity != previousCapacity)
+                {
+                    _fullPushLines |= _debugLinesBuffer.Resize(elementCount, true, true);
+                    BufferResizeCount++;
+                }
+            }
             else
             {
                 _debugLinesBuffer = new XRDataBuffer(
@@ -734,7 +716,9 @@ namespace XREngine.Rendering.Physics.Physx
         {
             _debugTrianglesRenderer?.Material?.SetInt(0, (int)count);
 
-            if (count == 0)
+            uint previousCapacity = _triangleCapacity;
+            UpdateCapacity(count, ref _triangleCapacity, ref _triangleUnderuseFrames);
+            if (count == 0 && _debugTrianglesBuffer is null)
                 return;
 
             bool createdRenderer = _debugTrianglesRenderer is null;
@@ -743,13 +727,19 @@ namespace XREngine.Rendering.Physics.Physx
             // Expanded: 16 floats per triangle. Compressed: 10 floats per triangle.
             uint componentsPerElement = _useCompressedBuffers ? 10u : 16u;
             if (_debugTrianglesBuffer is not null)
-                _fullPushTriangles |= _debugTrianglesBuffer.Resize(count, true, true);
+            {
+                if (_triangleCapacity != previousCapacity)
+                {
+                    _fullPushTriangles |= _debugTrianglesBuffer.Resize(_triangleCapacity, true, true);
+                    BufferResizeCount++;
+                }
+            }
             else
             {
                 _debugTrianglesBuffer = new XRDataBuffer(
                     "TrianglesBuffer",
                     EBufferTarget.ShaderStorageBuffer,
-                    count,
+                    _triangleCapacity,
                     EComponentType.Float,
                     componentsPerElement,
                     false,
@@ -769,6 +759,43 @@ namespace XREngine.Rendering.Physics.Physx
 
             if (createdRenderer)
                 ConfigureDebugRenderer(_debugTrianglesRenderer);
+        }
+
+        private static void UpdateCapacity(uint count, ref uint capacity, ref int underuseFrames)
+        {
+            if (count > capacity)
+            {
+                uint grown = Math.Max(capacity, MinimumCapacity);
+                while (grown < count)
+                    grown = checked(grown + Math.Max(grown >> 1, 1u));
+                capacity = grown;
+                underuseFrames = 0;
+                return;
+            }
+
+            if (capacity <= MinimumCapacity || count >= capacity / 4u)
+            {
+                underuseFrames = 0;
+                return;
+            }
+
+            if (++underuseFrames < ShrinkHysteresisFrames)
+                return;
+
+            uint target = Math.Max(MinimumCapacity, Math.Max(count * 2u, 1u));
+            capacity = RoundUpPowerOfTwo(target);
+            underuseFrames = 0;
+        }
+
+        private static uint RoundUpPowerOfTwo(uint value)
+        {
+            value--;
+            value |= value >> 1;
+            value |= value >> 2;
+            value |= value >> 4;
+            value |= value >> 8;
+            value |= value >> 16;
+            return value + 1;
         }
 
         private XRMeshRenderer MakePointsRenderer()
@@ -884,7 +911,7 @@ namespace XREngine.Rendering.Physics.Physx
                 mat.RenderOptions.CullMode = ECullMode.None;
                 mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
                 mat.EnableTransparency((int)EDefaultRenderPass.OnTopForward);
-                XRMaterial.ConfigureGizmoMaterial(mat);
+                ConfigureDebugMaterial(mat);
                 return mat;
             }
             catch (Exception e)
@@ -921,7 +948,7 @@ namespace XREngine.Rendering.Physics.Physx
                 mat.RenderOptions.CullMode = ECullMode.None;
                 mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
                 mat.EnableTransparency((int)EDefaultRenderPass.OnTopForward);
-                XRMaterial.ConfigureGizmoMaterial(mat);
+                ConfigureDebugMaterial(mat);
                 return mat;
             }
             catch (Exception e)
@@ -955,7 +982,7 @@ namespace XREngine.Rendering.Physics.Physx
                     EUniformRequirements.ClipSpacePolicy;
                 mat.RenderOptions.CullMode = ECullMode.None;
                 mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
-                XRMaterial.ConfigureGizmoMaterial(mat);
+                ConfigureDebugMaterial(mat);
                 return mat;
             }
             catch (Exception e)
@@ -964,6 +991,17 @@ namespace XREngine.Rendering.Physics.Physx
                 Engine.Rendering.State.DebugInstanceRenderingAvailable = false;
                 return null;
             }
+        }
+
+        private void ConfigureDebugMaterial(XRMaterial material)
+        {
+            XRMaterial.ConfigureGizmoMaterial(material);
+            if (!DepthTested)
+                return;
+
+            material.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
+            material.RenderOptions.DepthTest.UpdateDepth = true;
+            material.RenderOptions.DepthTest.Function = EComparison.Lequal;
         }
     }
 }

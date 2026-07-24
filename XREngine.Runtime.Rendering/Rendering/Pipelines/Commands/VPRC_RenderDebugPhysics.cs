@@ -1,6 +1,7 @@
 using System;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Scene.Physics.DebugVisualization;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -8,6 +9,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     public class VPRC_RenderDebugPhysics : ViewportRenderCommand
     {
         public string? RenderGraphPassName { get; set; }
+        public PhysicsDebugDepthMode DepthMode { get; set; } = PhysicsDebugDepthMode.DepthTested;
 
         protected override void Execute()
         {
@@ -16,7 +18,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(ResolveRenderGraphPassIndex()))
             using (ActivePipelineInstance.RenderState.PushRenderingCamera(ActivePipelineInstance.RenderState.SceneCamera))
-                ActivePipelineInstance.RenderState.WindowViewport?.World?.DebugRenderPhysics();
+                ActivePipelineInstance.RenderState.WindowViewport?.World?.DebugRenderPhysics(DepthMode);
         }
 
         private int ResolveRenderGraphPassIndex()
@@ -31,7 +33,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
             }
 
-            return (int)EDefaultRenderPass.OnTopForward;
+            return DepthMode == PhysicsDebugDepthMode.DepthTested
+                ? (int)EDefaultRenderPass.OpaqueForward
+                : (int)EDefaultRenderPass.OnTopForward;
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

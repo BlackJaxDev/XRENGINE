@@ -1,15 +1,70 @@
 using System;
+using System.Numerics;
+using System.Runtime.ExceptionServices;
 using System.Text;
+using MemoryPack;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Core.Files;
 using XREngine.Rendering;
+using XREngine.Scene.Physics;
 
 namespace XREngine.UnitTests.Core;
 
 [TestFixture]
 public sealed class RuntimeCookedBinarySerializerTests
 {
+    [Test]
+    [NonParallelizable]
+    public void ObjectFallback_CachesUnsupportedMemoryPackTypeAfterFirstProbe()
+    {
+        int memoryPackExceptionCount = 0;
+        EventHandler<FirstChanceExceptionEventArgs> handler = (_, args) =>
+        {
+            if (args.Exception is MemoryPackSerializationException)
+                Interlocked.Increment(ref memoryPackExceptionCount);
+        };
+
+        AppDomain.CurrentDomain.FirstChanceException += handler;
+        byte[] firstPayload;
+        byte[] secondPayload;
+        try
+        {
+            firstPayload = CookedBinarySerializer.Serialize(
+                new UnsupportedMemoryPackPayload { Value = 41 });
+            secondPayload = CookedBinarySerializer.Serialize(
+                new UnsupportedMemoryPackPayload { Value = 42 });
+        }
+        finally
+        {
+            AppDomain.CurrentDomain.FirstChanceException -= handler;
+        }
+
+        memoryPackExceptionCount.ShouldBe(1);
+        var firstClone = CookedBinarySerializer.Deserialize(
+            typeof(UnsupportedMemoryPackPayload),
+            firstPayload).ShouldBeOfType<UnsupportedMemoryPackPayload>();
+        var secondClone = CookedBinarySerializer.Deserialize(
+            typeof(UnsupportedMemoryPackPayload),
+            secondPayload).ShouldBeOfType<UnsupportedMemoryPackPayload>();
+        firstClone.Value.ShouldBe(41);
+        secondClone.Value.ShouldBe(42);
+    }
+
+    [Test]
+    public void ObjectFallback_ReflectionOnlyValueTypePreservesPublicFields()
+    {
+        var source = new IPhysicsGeometry.Capsule(radius: 0.75f, halfHeight: 1.25f);
+
+        byte[] payload = CookedBinarySerializer.Serialize(source);
+        var clone = CookedBinarySerializer
+            .Deserialize(typeof(IPhysicsGeometry.Capsule), payload)
+            .ShouldBeOfType<IPhysicsGeometry.Capsule>();
+
+        clone.Radius.ShouldBe(source.Radius);
+        clone.HalfHeight.ShouldBe(source.HalfHeight);
+    }
+
     [Test]
     public void Deserialize_UnwrapsCookedYamlEnvelope_WithUtf8Bom()
     {
@@ -58,5 +113,10 @@ public sealed class RuntimeCookedBinarySerializerTests
         Array.Copy(bom, 0, payload, 0, bom.Length);
         Array.Copy(bytes, 0, payload, bom.Length, bytes.Length);
         return payload;
+    }
+
+    private sealed class UnsupportedMemoryPackPayload
+    {
+        public int Value { get; set; }
     }
 }

@@ -180,6 +180,7 @@ namespace XREngine.Components.Lights
         /// <summary>
         /// Optional user-authored receiver-bias override for a cascade.
         /// </summary>
+        [CookedBinaryReflectionOnly]
         public readonly record struct CascadeShadowBiasOverride(
             bool Enabled,
             float BiasMin,

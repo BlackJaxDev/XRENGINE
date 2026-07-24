@@ -427,6 +427,22 @@ namespace XREngine.Scene.Physics.Physx
                 elapsedTime));
 
         /// <summary>
+        /// Teleports the native controller and optionally clears all movement and
+        /// support state that belonged to its previous pose.
+        /// </summary>
+        public void Teleport(Vector3 position, bool clearMotion = true)
+        {
+            if (IsReleased || !IsFinite(position))
+                return;
+
+            if (clearMotion)
+                ResetMotionState();
+
+            Position = position;
+            InvalidateCache();
+        }
+
+        /// <summary>
         /// Consumes all queued movement inputs and applies them in a single move operation.
         /// Should be called from the physics simulation thread.
         /// </summary>
@@ -580,6 +596,34 @@ namespace XREngine.Scene.Physics.Physx
             _groundVelocity = _groundActor.LinearVelocity
                 + Vector3.Cross(_groundActor.AngularVelocity, _lastGroundPoint - center);
         }
+
+        private void ResetMotionState()
+        {
+            _motionBuffer.Clear();
+            _lastMotionCommand = default;
+            _requestedVelocity = Vector3.Zero;
+            _effectiveVelocity = Vector3.Zero;
+            _supportState = CharacterSupportState.Unknown;
+            _groundNormal = UpDirection;
+            _groundVelocity = Vector3.Zero;
+            _groundActor = null;
+            _lastGroundPoint = Vector3.Zero;
+            _moveGroundNormal = Vector3.Zero;
+            _moveGroundPoint = Vector3.Zero;
+            _moveGroundActor = null;
+            _hasMoveGroundContact = false;
+            _wasSupported = false;
+            _lastSupportedGroundVelocity = Vector3.Zero;
+            _inheritedGroundVelocity = Vector3.Zero;
+            CollidingSides = false;
+            CollidingUp = false;
+            CollidingDown = false;
+        }
+
+        private static bool IsFinite(in Vector3 value)
+            => float.IsFinite(value.X)
+                && float.IsFinite(value.Y)
+                && float.IsFinite(value.Z);
 
         private void RecordShapeHit(PxControllerShapeHit* hit)
         {

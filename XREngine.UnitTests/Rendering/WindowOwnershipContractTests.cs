@@ -1,7 +1,10 @@
 using System;
 using System.IO;
 using NUnit.Framework;
+using Silk.NET.Maths;
 using Shouldly;
+using XREngine.Data.Geometry;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -44,9 +47,10 @@ public sealed class WindowOwnershipContractTests
     }
 
     [Test]
-    public void XRWindow_CollapsedWindowEventPumpPublishesInputSnapshotAfterDoEvents()
+    public void CollapsedWindowHost_PumpsNativeEventsBeforeEnteringRenderDispatch()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs").Replace("\r\n", "\n");
+        string host = ReadWorkspaceFile("XRENGINE/Engine/Engine.RenderThreadHost.cs").Replace("\r\n", "\n");
 
         int renderStart = source.IndexOf("private void RenderFrame()", StringComparison.Ordinal);
         renderStart.ShouldBeGreaterThanOrEqualTo(0);
@@ -54,7 +58,24 @@ public sealed class WindowOwnershipContractTests
         consumeStart.ShouldBeGreaterThan(renderStart);
         string renderPumpBody = source[renderStart..consumeStart];
 
-        renderPumpBody.ShouldContain("Window.DoEvents();\n                PublishWindowInputSnapshot();");
+        renderPumpBody.ShouldNotContain("Window.DoEvents()");
+
+        int pumpStart = source.IndexOf("public void PumpNativeWindowEventsFromHost()", StringComparison.Ordinal);
+        pumpStart.ShouldBeGreaterThanOrEqualTo(0);
+        int nextPumpMethod = source.IndexOf("private void ApplyVSyncModeOnRenderThread", pumpStart, StringComparison.Ordinal);
+        nextPumpMethod.ShouldBeGreaterThan(pumpStart);
+        string pumpBody = source[pumpStart..nextPumpMethod];
+        pumpBody.ShouldContain("Window.DoEvents();");
+        pumpBody.ShouldContain("PublishWindowSurfaceSnapshot(");
+        pumpBody.ShouldContain("PublishWindowInputSnapshot();");
+
+        int collapsedLoopStart = host.IndexOf("private void BlockForCollapsedWindowRendering", StringComparison.Ordinal);
+        collapsedLoopStart.ShouldBeGreaterThanOrEqualTo(0);
+        int pumpMethodStart = host.IndexOf("private void PumpCollapsedWindowEvents()", collapsedLoopStart, StringComparison.Ordinal);
+        pumpMethodStart.ShouldBeGreaterThan(collapsedLoopStart);
+        string collapsedLoopBody = host[collapsedLoopStart..pumpMethodStart];
+        collapsedLoopBody.IndexOf("PumpCollapsedWindowEvents();", StringComparison.Ordinal)
+            .ShouldBeLessThan(collapsedLoopBody.IndexOf("Engine.Time.Timer.WaitToRender();", StringComparison.Ordinal));
 
         int endTickStart = source.IndexOf("private void EndTick()", StringComparison.Ordinal);
         endTickStart.ShouldBeGreaterThanOrEqualTo(0);
@@ -62,11 +83,11 @@ public sealed class WindowOwnershipContractTests
         swapStart.ShouldBeGreaterThan(endTickStart);
         string endTickBody = source[endTickStart..swapStart];
 
-        endTickBody.ShouldContain("Window.DoEvents();\n                }\n\n                PublishWindowInputSnapshot();");
+        endTickBody.ShouldNotContain("Window.DoEvents()");
     }
 
     [Test]
-    public void XRWindow_ConsumedNativeSnapshotsUseCheapOutputResizeBeforeFullInternalGeneration()
+    public void XRWindow_ConsumedInteractiveSnapshotsDeferFullInternalGenerationUntilSettled()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");
         int consumeStart = source.IndexOf("private void ConsumeLatestWindowSurfaceSnapshotForRenderFrame()", StringComparison.Ordinal);
@@ -77,8 +98,12 @@ public sealed class WindowOwnershipContractTests
         string consumeBody = source[consumeStart..nextMethod];
 
         consumeBody.ShouldContain("ApplyInteractivePresentationResize");
+        consumeBody.ShouldContain("if (snapshot.IsInteractiveResize)");
+        consumeBody.ShouldContain("return;");
         consumeBody.ShouldContain("QueueFullInternalResize");
-        consumeBody.ShouldContain("force: !snapshot.IsInteractiveResize");
+        consumeBody.ShouldContain("force: true");
+        consumeBody.ShouldContain("\"native-snapshot-consumed-settled\"");
+        consumeBody.ShouldNotContain("native-snapshot-consumed-live-policy");
     }
 
     [Test]
@@ -97,6 +122,71 @@ public sealed class WindowOwnershipContractTests
         renderBody.ShouldNotContain("Interlocked.CompareExchange(ref _interactiveResizeRenderActive, 1, 0) != 0 ||");
         renderBody.ShouldContain("InteractiveResizeDiagnostics.RecordSuppressedRender(reason + \":interactive-active\");");
         renderBody.ShouldContain("Volatile.Write(ref _interactiveResizeRenderActive, 0);\n                InteractiveResizeDiagnostics.RecordSuppressedRender(reason + \":normal-render-active\");");
+        renderBody.ShouldContain("RuntimeRenderingHostServices.Current.TryDispatchInteractiveResizeFrame()");
+        renderBody.ShouldNotContain("Window.DoRender()");
+        renderBody.ShouldNotContain("ProcessPendingInteractivePresentationResize()");
+    }
+
+    [Test]
+    public void EngineTimer_InteractiveResizeDispatchUsesNormalFrameAndCollectPublication()
+    {
+        string source = ReadWorkspaceFile("XRENGINE/Core/Time/EngineTimer.cs");
+        int dispatchStart = source.IndexOf("public bool TryDispatchInteractiveResizeFrame()", StringComparison.Ordinal);
+        dispatchStart.ShouldBeGreaterThanOrEqualTo(0);
+        int normalDispatchStart = source.IndexOf("public bool DispatchRender()", dispatchStart, StringComparison.Ordinal);
+        normalDispatchStart.ShouldBeGreaterThan(dispatchStart);
+
+        string interactiveDispatch = source[dispatchStart..normalDispatchStart];
+        interactiveDispatch.ShouldContain("Engine.IsDispatchingRenderFrame");
+        interactiveDispatch.ShouldContain("WaitToRender()");
+        interactiveDispatch.ShouldContain("PresentFrameId != previousPresentFrameId");
+        interactiveDispatch.ShouldNotContain("DispatchRender()");
+        interactiveDispatch.ShouldNotContain("_visibilityGenerationGate");
+    }
+
+    [Test]
+    public void InteractiveResizeStrategies_UseHostRenderCadenceInsteadOfFixedSixtyHertz()
+    {
+        string win32 = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/InteractiveResize/Win32ModalLoopTimerInteractiveResizeStrategy.cs");
+        string glfw = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/InteractiveResize/GlfwResizeCallbackInteractiveResizeStrategy.cs");
+
+        win32.ShouldContain("case WM_PAINT:");
+        win32.ShouldContain("RecordCallbackAndRenderImmediate(\"win32-paint\")");
+        win32.ShouldContain("RequestInteractiveResizePaint()");
+        win32.ShouldContain("case WM_SIZING:");
+        win32.ShouldContain("ApplyCoalescedClientPresentationResize(\"win32-sizing-live\")");
+        win32.ShouldContain("RecordCallbackAndRenderImmediate(\"win32-sizing-live\")");
+        win32.ShouldContain("EngineTimer.WaitToRender remains");
+        win32.ShouldNotContain("RecordCallbackAndRenderImmediate(\"win32-timer\")");
+        win32.ShouldNotContain("RecordCallbackAndRenderImmediate(\"win32-windowposchanged-live\")");
+        win32.ShouldNotContain("ActiveSizingRenderHz");
+        win32.ShouldNotContain("ShouldRenderByRateLimit");
+        glfw.ShouldNotContain("TargetRenderHz");
+        glfw.ShouldNotContain("ShouldRenderByRateLimit");
+    }
+
+    [Test]
+    public void RenderPipeline_FreezesAutomaticInternalResolutionDuringInteractiveResize()
+    {
+        string source = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs");
+        int automaticResizeStart = source.IndexOf(
+            "if (viewport.AllowAutomaticInternalResolution &&",
+            StringComparison.Ordinal);
+        automaticResizeStart.ShouldBeGreaterThanOrEqualTo(0);
+        int renderScopeStart = source.IndexOf(
+            "using (hostServices.PushRenderingPipeline(this))",
+            automaticResizeStart,
+            StringComparison.Ordinal);
+        renderScopeStart.ShouldBeGreaterThan(automaticResizeStart);
+
+        string automaticResizeBody = source[automaticResizeStart..renderScopeStart];
+
+        automaticResizeBody.ShouldContain(
+            "!ShouldDeferResourceGenerationForInteractiveWindowResize(viewport)");
+        automaticResizeBody.ShouldContain("viewport.SetInternalResolution");
     }
 
     [Test]
@@ -151,10 +241,11 @@ public sealed class WindowOwnershipContractTests
         string renderbuffer = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkRenderBuffer.cs");
 
-        retirement.ShouldContain("private readonly List<Framebuffer>[] _retiredFramebuffers");
-        retirement.ShouldContain("private readonly List<RetiredImageResources>[] _retiredImages");
+        retirement.ShouldContain("private readonly List<RetiredFramebuffer>[] _retiredFramebuffers");
+        retirement.ShouldContain("private readonly List<RetiredImageResourceEntry>[] _retiredImages");
         retirement.ShouldContain("internal void RetireFramebuffer(Framebuffer framebuffer)");
-        retirement.ShouldContain("internal void RetireImageResources(in RetiredImageResources resources)");
+        retirement.ShouldContain("internal void RetireImageResources(");
+        retirement.ShouldContain("in RetiredImageResources resources");
         retirement.ShouldContain("private void DrainRetiredFramebuffers");
         retirement.ShouldContain("private void DrainRetiredImages");
         framebuffer.ShouldContain("Renderer.RetireFramebuffer(_frameBuffer);");
@@ -175,17 +266,117 @@ public sealed class WindowOwnershipContractTests
     }
 
     [Test]
-    public void VulkanMismatchedSwapchainPresentIsGatedBehindPresentScalingValidation()
+    public void VulkanMismatchedSwapchainPresentUsesValidatedPresentScaling()
+    {
+        string frameLoop = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
+        string presentScaling = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.PresentScaling.cs");
+        string swapchain = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
+        string extensions = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs");
+        string logicalDevice = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
+
+        presentScaling.ShouldContain("VK_KHR_get_surface_capabilities2");
+        presentScaling.ShouldContain("VK_EXT_surface_maintenance1");
+        presentScaling.ShouldContain("VK_EXT_swapchain_maintenance1");
+        extensions.ShouldContain("GetSurfaceCapabilities2ExtensionName");
+        extensions.ShouldContain("SurfaceMaintenance1ExtensionName");
+        extensions.ShouldContain("SwapchainMaintenance1ExtensionName");
+        logicalDevice.ShouldContain("PhysicalDeviceSwapchainMaintenance1FeaturesEXT");
+        logicalDevice.ShouldContain("_swapchainMaintenance1Enabled = enableSwapchainMaintenance1Feature;");
+
+        presentScaling.ShouldContain("SurfacePresentScalingCapabilitiesEXT");
+        presentScaling.ShouldContain("PresentScalingFlagsKHR.StretchBitExt");
+        presentScaling.ShouldContain("SwapchainPresentScalingCreateInfoEXT");
+        presentScaling.ShouldContain("IsSwapchainPresentScalingExtentSupported");
+        swapchain.ShouldContain("TryGetSwapchainPresentScalingConfiguration(");
+        swapchain.ShouldContain("createInfo.PNext = &presentScalingCreateInfo;");
+        swapchain.ShouldContain("_swapchainPresentScalingActive = usePresentScaling;");
+
+        frameLoop.ShouldContain("private bool CanPresentMismatchedSwapchainExtent(");
+        frameLoop.ShouldContain("bool canPresentMismatchedSwapchainExtent = liveSurfaceValid &&");
+        frameLoop.ShouldContain("if (interactiveResize && canPresentMismatchedSwapchainExtent)");
+        frameLoop.ShouldContain("Presenting through validated WSI scaling during interactive resize.");
+        frameLoop.ShouldContain("if (_frameBufferInvalidated || (!surfaceMatchesSwapchain && !canPresentMismatchedSwapchainExtent))");
+        frameLoop.ShouldContain("private bool ShouldKeepPresentScalingSwapchain(Result result, bool interactiveResize)");
+        frameLoop.ShouldContain("if (!ShouldKeepPresentScalingSwapchain(result, interactiveResize))");
+    }
+
+    [Test]
+    public void VulkanScaledPresentMapsLiveSceneAndImGuiToFixedSwapchainRasterSpace()
+    {
+        var presentationExtent = new Vector2D<int>(1142, 724);
+        var backbufferExtent = new Vector2D<int>(1338, 794);
+        const int sharedPresentationEdge = 371;
+
+        BoundingRectangle full = VulkanRenderer.ScalePresentationRegionToBackbuffer(
+            new BoundingRectangle(0, 0, presentationExtent.X, presentationExtent.Y),
+            presentationExtent,
+            backbufferExtent);
+        BoundingRectangle left = VulkanRenderer.ScalePresentationRegionToBackbuffer(
+            new BoundingRectangle(0, 0, sharedPresentationEdge, presentationExtent.Y),
+            presentationExtent,
+            backbufferExtent);
+        BoundingRectangle right = VulkanRenderer.ScalePresentationRegionToBackbuffer(
+            new BoundingRectangle(
+                sharedPresentationEdge,
+                0,
+                presentationExtent.X - sharedPresentationEdge,
+                presentationExtent.Y),
+            presentationExtent,
+            backbufferExtent);
+
+        full.ShouldBe(new BoundingRectangle(0, 0, backbufferExtent.X, backbufferExtent.Y));
+        left.X.ShouldBe(0);
+        left.Y.ShouldBe(0);
+        left.Height.ShouldBe(backbufferExtent.Y);
+        right.Y.ShouldBe(0);
+        right.Height.ShouldBe(backbufferExtent.Y);
+        (left.X + left.Width).ShouldBe(right.X);
+        (right.X + right.Width).ShouldBe(backbufferExtent.X);
+
+        string presentCommand = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderToWindow.cs");
+        string viewportRenderArea = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/State/VPRC_PushViewportRenderArea.cs");
+        string imgui = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs");
+
+        presentCommand.ShouldContain("renderer.MapWindowPresentationRegionToBackbuffer(region)");
+        viewportRenderArea.ShouldContain("!UseInternalResolution &&");
+        viewportRenderArea.ShouldContain("!externalRegion.HasValue &&");
+        viewportRenderArea.ShouldContain("!outputRegion.HasValue &&");
+        viewportRenderArea.ShouldContain("res = renderer.MapWindowPresentationRegionToBackbuffer(res);");
+        imgui.ShouldContain("_swapchainPresentScalingActive &&");
+        imgui.ShouldContain("XRWindow.IsInteractiveResizeInProgress");
+        imgui.ShouldContain("uint fbWidth = swapChainExtent.Width;");
+        imgui.ShouldContain("Vector2 snapshotToRasterScale");
+        imgui.ShouldContain("Vector2 clipScale = drawData.FramebufferScale * snapshotToRasterScale;");
+    }
+
+    [Test]
+    public void FailedRenderResourceGenerationFenceDoesNotPermanentlyBlockRetirementQueue()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
+            "XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs");
 
-        source.ShouldContain("private bool CanPresentMismatchedSwapchainExtent(");
-        source.ShouldContain("VkSwapchainPresentScalingCreateInfoKHR support is queried");
-        source.ShouldContain("return false;");
-        source.ShouldContain("bool canPresentMismatchedSwapchainExtent = liveSurfaceValid &&");
-        source.ShouldContain("CanPresentMismatchedSwapchainExtent(");
-        source.ShouldContain("if (_frameBufferInvalidated || (!surfaceMatchesSwapchain && !canPresentMismatchedSwapchainExtent))");
+        int failureStart = source.IndexOf(
+            "if (fenceStatus == EGpuFenceStatus.Failed)",
+            StringComparison.Ordinal);
+        failureStart.ShouldBeGreaterThanOrEqualTo(0);
+        int dequeueStart = source.IndexOf(
+            "_retiredGenerations.Dequeue();",
+            failureStart,
+            StringComparison.Ordinal);
+        dequeueStart.ShouldBeGreaterThan(failureStart);
+        string failurePath = source[failureStart..dequeueStart];
+
+        failurePath.ShouldContain("RetiredRenderResourceGenerationFenceFailed");
+        failurePath.ShouldContain("PrepareForPhysicalResourceDestruction");
+        failurePath.ShouldNotContain("return;");
     }
 
     [Test]

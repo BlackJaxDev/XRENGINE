@@ -25,11 +25,16 @@ public static class BootstrapPhysicsTestWorldBuilder
     private const ushort CollisionGroup = 1;
     private static readonly PhysicsGroupsMask CollisionMask = new(0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF);
 
-    public static SceneNode AddPlayground(SceneNode rootNode, int sphereCount = 10)
+    public static SceneNode AddPlayground(
+        SceneNode rootNode,
+        int sphereCount = 10,
+        bool drawPhysicsGizmos = true)
     {
         ArgumentNullException.ThrowIfNull(rootNode);
 
         SceneNode playground = rootNode.NewChild("Physics Playground");
+        LitBoxBatchComponent boxVisualBatch = playground.AddComponent<LitBoxBatchComponent>()
+            ?? throw new InvalidOperationException("Unable to create the Physics Playground lit box batch.");
         PhysicsMaterialDefinition defaultMaterial = CreateMaterial(0.6f, 0.5f, 0.1f);
 
         AddStaticEnvironment(playground, defaultMaterial);
@@ -37,6 +42,13 @@ public static class BootstrapPhysicsTestWorldBuilder
         AddJointZone(playground, defaultMaterial);
         AddCharacterControllerCourse(playground, defaultMaterial);
         AddReferenceAxes(playground);
+        boxVisualBatch.Build();
+
+        if (!drawPhysicsGizmos)
+            playground.IterateComponents<PhysicsJointComponent>(
+                static joint => joint.DrawGizmos = false,
+                iterateChildHierarchy: true);
+
         return playground;
     }
 
@@ -162,12 +174,17 @@ public static class BootstrapPhysicsTestWorldBuilder
         ConfigureDynamicBody(body, density: 1.0f);
 
         AddBoxVisual(node, new Vector3(0.5f), ColorF4.LightGray);
-        DebugDrawComponent debug = node.AddComponent<DebugDrawComponent>()!;
-        debug.AddSphere(0.45f, -Vector3.UnitX, ColorF4.LightBlue, solid: true);
-        debug.AddSphere(0.45f, Vector3.UnitX, ColorF4.LightBlue, solid: true);
+        AddSphereVisuals(
+            node,
+            0.45f,
+            ColorF4.LightBlue,
+            -Vector3.UnitX,
+            Vector3.UnitX);
     }
 
-    private static void AddJointZone(SceneNode playground, PhysicsMaterialDefinition material)
+    private static void AddJointZone(
+        SceneNode playground,
+        PhysicsMaterialDefinition material)
     {
         SceneNode zone = playground.NewChild("Joints");
         AddFixedJointFixture(zone, material);
@@ -340,20 +357,31 @@ public static class BootstrapPhysicsTestWorldBuilder
                 ColorF4.LightGray);
         }
 
+        Vector3 walkableRampHalfExtents = new(1.5f, 0.2f, 3.0f);
+        float walkableRampAngle = XRMath.DegToRad(-25.0f);
         AddStaticBox(
             zone,
             "Walkable Ramp 25 Degrees",
-            new Vector3(1.5f, 0.2f, 3.0f),
-            new Vector3(0.0f, 1.2f, 10.5f),
-            Quaternion.CreateFromAxisAngle(Vector3.UnitX, XRMath.DegToRad(-25.0f)),
+            walkableRampHalfExtents,
+            new Vector3(
+                0.0f,
+                GetRampCenterHeightForFloorContact(walkableRampHalfExtents, walkableRampAngle),
+                10.5f),
+            Quaternion.CreateFromAxisAngle(Vector3.UnitX, walkableRampAngle),
             material,
             ColorF4.LightGreen);
+
+        Vector3 steepRampHalfExtents = new(1.5f, 0.2f, 3.0f);
+        float steepRampAngle = XRMath.DegToRad(-55.0f);
         AddStaticBox(
             zone,
             "Steep Ramp 55 Degrees",
-            new Vector3(1.5f, 0.2f, 3.0f),
-            new Vector3(4.0f, 1.8f, 10.5f),
-            Quaternion.CreateFromAxisAngle(Vector3.UnitX, XRMath.DegToRad(-55.0f)),
+            steepRampHalfExtents,
+            new Vector3(
+                4.0f,
+                GetRampCenterHeightForFloorContact(steepRampHalfExtents, steepRampAngle),
+                10.5f),
+            Quaternion.CreateFromAxisAngle(Vector3.UnitX, steepRampAngle),
             material,
             ColorF4.Red);
         AddStaticBox(
@@ -391,6 +419,10 @@ public static class BootstrapPhysicsTestWorldBuilder
         platformJoint.LimitRestitution = 1.0f;
         SetInitialVelocity(movingGround.SceneNode, movingGround, Vector3.UnitX, Vector3.Zero);
     }
+
+    private static float GetRampCenterHeightForFloorContact(Vector3 halfExtents, float angleRadians)
+        => MathF.Abs(MathF.Cos(angleRadians)) * halfExtents.Y
+            + MathF.Abs(MathF.Sin(angleRadians)) * halfExtents.Z;
 
     private static DynamicRigidBodyComponent AddDynamicBox(
         SceneNode parent,
@@ -443,8 +475,7 @@ public static class BootstrapPhysicsTestWorldBuilder
         body.MaterialDefinition = material;
         ConfigureDynamicBody(body, density: 1.0f);
 
-        DebugDrawComponent debug = node.AddComponent<DebugDrawComponent>()!;
-        debug.AddCapsule(radius, -Vector3.UnitY * halfHeight, Vector3.UnitY * halfHeight, color, solid: true);
+        AddCapsuleVisual(node, radius, halfHeight, color);
         return body;
     }
 
@@ -519,18 +550,60 @@ public static class BootstrapPhysicsTestWorldBuilder
 
     private static void AddBoxVisual(SceneNode node, Vector3 halfExtents, ColorF4 color)
     {
-        XRMaterial material = XRMaterial.CreateLitColorMaterial(color);
-        material.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
-        ModelComponent model = node.AddComponent<ModelComponent>()!;
-        model.Model = new Model([new SubMesh(XRMesh.Shapes.SolidBox(Vector3.Zero, halfExtents * 2.0f), material)]);
+        // The playground contains many independently moving boxes. Keep them in one retained
+        // opaque batch so they write the scene G-buffer/depth and receive lighting without
+        // restoring one ModelComponent and draw command per fixture.
+        ResolveBoxVisualBatch(node).AddBox(node.Transform, halfExtents, color);
+    }
+
+    private static LitBoxBatchComponent ResolveBoxVisualBatch(SceneNode node)
+    {
+        for (SceneNode? current = node; current is not null; current = current.Parent)
+            if (current.GetComponent<LitBoxBatchComponent>() is { } batch)
+                return batch;
+
+        throw new InvalidOperationException(
+            $"Physics fixture '{node.Name}' is not under a node containing a {nameof(LitBoxBatchComponent)}.");
     }
 
     private static void AddSphereVisual(SceneNode node, float radius, ColorF4 color)
+        => AddSphereVisuals(node, radius, color, Vector3.Zero);
+
+    private static void AddSphereVisuals(
+        SceneNode node,
+        float radius,
+        ColorF4 color,
+        params Vector3[] centers)
+    {
+        XRMaterial material = XRMaterial.CreateLitColorMaterial(color);
+        material.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
+        SubMesh[] meshes = new SubMesh[centers.Length];
+        for (int index = 0; index < centers.Length; index++)
+            meshes[index] = new SubMesh(XRMesh.Shapes.SolidSphere(centers[index], radius, 24), material);
+
+        ModelComponent model = node.AddComponent<ModelComponent>()!;
+        model.Model = new Model(meshes);
+    }
+
+    private static void AddCapsuleVisual(
+        SceneNode node,
+        float radius,
+        float halfHeight,
+        ColorF4 color)
     {
         XRMaterial material = XRMaterial.CreateLitColorMaterial(color);
         material.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
         ModelComponent model = node.AddComponent<ModelComponent>()!;
-        model.Model = new Model([new SubMesh(XRMesh.Shapes.SolidSphere(Vector3.Zero, radius, 24), material)]);
+        model.Model = new Model(
+        [
+            new SubMesh(
+                XRMesh.Shapes.SolidCapsule(
+                    Vector3.Zero,
+                    Vector3.UnitY,
+                    radius,
+                    halfHeight),
+                material),
+        ]);
     }
 
     private static void AddReferenceAxes(SceneNode playground)

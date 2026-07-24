@@ -26,6 +26,7 @@ internal static class VulkanVmaNative
         public ulong Size;
         public uint MemoryTypeIndex;
         public uint MemoryPropertyFlags;
+        public nint MappedData;
     }
 
     [StructLayout(LayoutKind.Sequential)]

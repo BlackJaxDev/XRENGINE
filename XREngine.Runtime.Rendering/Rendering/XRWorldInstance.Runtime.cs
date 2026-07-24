@@ -11,6 +11,7 @@ using XREngine.Rendering.Models;
 using XREngine.Rendering.Picking;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using XREngine.Scene.Physics.DebugVisualization;
 
 namespace XREngine.Rendering;
 
@@ -85,7 +86,7 @@ public sealed class RuntimeRenderWorldInstance : XRObjectBase, IRuntimeRenderWor
     {
     }
 
-    public void DebugRenderPhysics()
+    public void DebugRenderPhysics(PhysicsDebugDepthMode depthMode)
         => PhysicsScene.DebugRender();
 
     public void OnRootNodeDestroying(SceneNode node)

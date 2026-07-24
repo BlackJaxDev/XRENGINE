@@ -1,4 +1,6 @@
+using System.Numerics;
 using XREngine.Components;
+using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.Bootstrap.Builders;
@@ -12,9 +14,6 @@ public static partial class EditorUnitTests
     {
         ApplyRenderSettingsFromToggles();
 
-        // Make it easy to see what's going on.
-        Engine.Rendering.Settings.PhysicsVisualizeSettings.SetAllTrue();
-
         var scene = new XRScene("Physics Testing Scene");
         var rootNode = new SceneNode("Root Node");
         scene.RootNodes.Add(rootNode);
@@ -26,9 +25,20 @@ public static partial class EditorUnitTests
 
         BootstrapPhysicsTestWorldBuilder.AddPlayground(
             rootNode,
-            RuntimeBootstrapState.Settings.PhysicsBallCount);
+            RuntimeBootstrapState.Settings.PhysicsBallCount,
+            RuntimeBootstrapState.Settings.RenderPhysicsDebug);
 
-        return CreateTrackedWorld("Physics Testing World", scene);
+        // Keep the flying editor pawn for scene inspection, but spawn and possess a
+        // collision-aware character pawn at the start of its authored test course.
+        var gameMode = new LocomotionGameMode
+        {
+            SpawnPositionOverride = new Vector3(0.0f, 2.0f, 1.5f),
+            SpawnRotationOverride = Quaternion.CreateFromYawPitchRoll(
+                MathF.PI,
+                XRMath.DegToRad(-10.0f),
+                0.0f),
+        };
+        return CreateTrackedWorld("Physics Testing World", scene, gameMode);
     }
 
     public static XRWorld CreatePhysxTestingWorld(bool setUI, bool isServer)

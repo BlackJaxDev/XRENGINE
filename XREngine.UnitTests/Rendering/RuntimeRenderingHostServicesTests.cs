@@ -713,6 +713,9 @@ public sealed class RuntimeRenderingHostServicesTests
         {
         }
 
+        public bool TryDispatchInteractiveResizeFrame()
+            => false;
+
         public void SubscribePlayModeTransitions(Action callback)
         {
         }
@@ -825,7 +828,7 @@ public sealed class RuntimeRenderingHostServicesTests
         {
         }
 
-        public void RenderDebugShapes()
+        public void RenderDebugShapes(bool depthTested)
         {
         }
 

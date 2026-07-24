@@ -4,6 +4,7 @@ using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Scene.Physics;
+using XREngine.Scene.Physics.DebugVisualization;
 using XREngine.Scene.Physics.Joints;
 
 namespace XREngine.Scene
@@ -31,6 +32,42 @@ namespace XREngine.Scene
 
     public abstract class AbstractPhysicsScene : XRBase
     {
+        /// <summary>
+        /// Publishes immutable backend-neutral debug frames after fixed-step simulation.
+        /// </summary>
+        public PhysicsDebugFramePublisher DebugFrames { get; } = new();
+        private readonly Lock _debugCullBoundsLock = new();
+        private AABB _pendingDebugCullBounds;
+        private bool _hasPendingDebugCullBounds;
+
+        /// <summary>
+        /// Adds one active view to the conservative native-debug culling union.
+        /// The physics step consumes the complete union once.
+        /// </summary>
+        public void IncludeDebugRenderViewBounds(AABB bounds)
+        {
+            lock (_debugCullBoundsLock)
+            {
+                _pendingDebugCullBounds = _hasPendingDebugCullBounds
+                    ? AABB.Union(_pendingDebugCullBounds, bounds)
+                    : bounds;
+                _hasPendingDebugCullBounds = true;
+            }
+        }
+
+        protected bool TryConsumeDebugRenderViewBounds(out AABB bounds)
+        {
+            lock (_debugCullBoundsLock)
+            {
+                bounds = _pendingDebugCullBounds;
+                if (!_hasPendingDebugCullBounds)
+                    return false;
+
+                _hasPendingDebugCullBounds = false;
+                return true;
+            }
+        }
+
         public interface IAbstractQueryFilter : IPhysicsQueryFilter
         {
         }

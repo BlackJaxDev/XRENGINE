@@ -304,7 +304,7 @@ public sealed class GpuMeshBvhPreviewContractTests
         rendererSource.ShouldContain("internal static void RenderQueued(");
         rendererSource.ShouldNotContain("PushRenderGraphPassIndex(");
         int baseOverlay = overlaySource.IndexOf("BvhDebugOverlayLayer.Base", StringComparison.Ordinal);
-        int debugShapes = overlaySource.IndexOf("RuntimeEngine.Rendering.Debug.RenderShapes();", StringComparison.Ordinal);
+        int debugShapes = overlaySource.IndexOf("RuntimeEngine.Rendering.Debug.RenderShapes(DepthTested);", StringComparison.Ordinal);
         int highlightOverlay = overlaySource.IndexOf("BvhDebugOverlayLayer.Highlight", StringComparison.Ordinal);
         baseOverlay.ShouldBeGreaterThanOrEqualTo(0);
         debugShapes.ShouldBeGreaterThan(baseOverlay);
@@ -315,7 +315,7 @@ public sealed class GpuMeshBvhPreviewContractTests
         engineDebugSource.ShouldContain("public static void RenderOverlayBox(");
         string cpuOverlayDraw = Slice(
             engineDebugSource,
-            "public static void RenderShapes()",
+            "public static void RenderShapes(bool depthTested)",
             "private static DebugPrimitiveSceneState ResolveDebugPrimitiveSceneState",
             StringComparison.Ordinal);
         int cpuBaseOverlay = cpuOverlayDraw.IndexOf("scene.BaseOverlayLines.Render();", StringComparison.Ordinal);

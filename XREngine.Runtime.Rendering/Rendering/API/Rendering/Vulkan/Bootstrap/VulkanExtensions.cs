@@ -847,6 +847,7 @@ namespace XREngine.Rendering.Vulkan
             "VK_EXT_shader_object",
             "VK_EXT_memory_budget",
             "VK_EXT_memory_priority",
+            SwapchainMaintenance1ExtensionName,
             "VK_NV_memory_decompression",
             "VK_NV_copy_memory_indirect"
         ];
@@ -913,6 +914,18 @@ namespace XREngine.Rendering.Vulkan
             _supportsSwapchainColorspace = IsInstanceExtensionAvailable(ExtSwapchainColorspaceExtensionName);
             if (_supportsSwapchainColorspace)
                 extensions = [.. extensions, ExtSwapchainColorspaceExtensionName];
+            _surfacePresentScalingInstanceExtensionsEnabled =
+                IsInstanceExtensionAvailable(GetSurfaceCapabilities2ExtensionName) &&
+                IsInstanceExtensionAvailable(SurfaceMaintenance1ExtensionName);
+            if (_surfacePresentScalingInstanceExtensionsEnabled)
+            {
+                extensions =
+                [
+                    .. extensions,
+                    GetSurfaceCapabilities2ExtensionName,
+                    SurfaceMaintenance1ExtensionName,
+                ];
+            }
             var openXrRequirements = OpenXRAPI.GetRequestedVulkanRuntimeRequirements();
             if (openXrRequirements.InstanceExtensions.Length > 0)
                 extensions = [.. extensions, .. openXrRequirements.InstanceExtensions];

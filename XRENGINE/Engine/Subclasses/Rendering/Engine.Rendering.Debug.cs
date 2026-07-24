@@ -9,6 +9,7 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Rendering;
 using XREngine.Rendering.Compute;
+using XREngine.Rendering.Debugging;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
@@ -26,6 +27,12 @@ namespace XREngine
             /// </summary>
             public static class Debug
             {
+                private static long _debugDrawComponentCallbacks;
+                public static long LastDebugDrawComponentCallbackCount { get; private set; }
+
+                public static void RecordDebugDrawComponentCallback()
+                    => Interlocked.Increment(ref _debugDrawComponentCallbacks);
+
                 static Debug()
                 {
                     Engine.Time.Timer.PreUpdateFrame += PreUpdate;
@@ -189,17 +196,25 @@ namespace XREngine
                 private sealed class DebugPrimitiveSceneState
                 {
                     public readonly ConcurrentBag<(Vector3 pos, ColorF4 color)> Points = [];
+                    public readonly ConcurrentBag<(Vector3 pos, ColorF4 color)> DepthTestedPoints = [];
                     public readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, ColorF4 color)> Lines = [];
+                    public readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, ColorF4 color)> DepthTestedLines = [];
                     public readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> Triangles = [];
+                    public readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> DepthTestedTriangles = [];
 
                     public readonly ConcurrentQueue<(Vector3 pos, ColorF4 color)> PointQueue = [];
+                    public readonly ConcurrentQueue<(Vector3 pos, ColorF4 color)> DepthTestedPointQueue = [];
                     public readonly ConcurrentQueue<(Vector3 pos0, Vector3 pos1, ColorF4 color)> LineQueue = [];
+                    public readonly ConcurrentQueue<(Vector3 pos0, Vector3 pos1, ColorF4 color)> DepthTestedLineQueue = [];
                     public readonly ConcurrentQueue<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> TriangleQueue = [];
+                    public readonly ConcurrentQueue<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> DepthTestedTriangleQueue = [];
+                    public readonly ConcurrentQueue<DebugShapeInstance> ShapeInstanceQueue = [];
 
                     public readonly ConcurrentDictionary<int, (UIText text, float lastUpdatedTime)> Texts = new();
                     public readonly ConcurrentQueue<(Vector3 pos, string text, ColorF4 color, float scale)> TextUpdateQueue = [];
 
                     public readonly InstancedDebugVisualizer Visualizer = new();
+                    public readonly InstancedDebugVisualizer DepthTestedVisualizer = new(depthTested: true);
                     public readonly DebugLineOverlayState BaseOverlayLines = new();
                     public readonly DebugLineOverlayState HighlightOverlayLines = new();
 
@@ -207,8 +222,12 @@ namespace XREngine
                     {
                         TextUpdateQueue.Clear();
                         PointQueue.Clear();
+                        DepthTestedPointQueue.Clear();
                         LineQueue.Clear();
+                        DepthTestedLineQueue.Clear();
                         TriangleQueue.Clear();
+                        DepthTestedTriangleQueue.Clear();
+                        ShapeInstanceQueue.Clear();
                         BaseOverlayLines.ClearQueues();
                         HighlightOverlayLines.ClearQueues();
                     }
@@ -216,8 +235,11 @@ namespace XREngine
                     public void ClearBags()
                     {
                         Points.Clear();
+                        DepthTestedPoints.Clear();
                         Lines.Clear();
+                        DepthTestedLines.Clear();
                         Triangles.Clear();
+                        DepthTestedTriangles.Clear();
                         BaseOverlayLines.ClearBags();
                         HighlightOverlayLines.ClearBags();
                     }
@@ -225,6 +247,7 @@ namespace XREngine
                     public void ClearVisuals()
                     {
                         Visualizer.Clear();
+                        DepthTestedVisualizer.Clear();
                         BaseOverlayLines.ClearVisuals();
                         HighlightOverlayLines.ClearVisuals();
                     }
@@ -232,10 +255,16 @@ namespace XREngine
 
                 private static readonly DebugPrimitiveSceneState _debug3D = new();
                 private static readonly DebugPrimitiveSceneState _debug2D = new();
+                [ThreadStatic]
+                private static DebugPrimitiveSceneState? _expandingShapeScene;
+                [ThreadStatic]
+                private static bool _expandingShapeDepthTested;
 
                 public static void SwapBuffers()
                 {
                     using var sample = Engine.Profiler.Start("Rendering.Debug.SwapBuffers");
+                    LastDebugDrawComponentCallbackCount =
+                        Interlocked.Exchange(ref _debugDrawComponentCallbacks, 0);
 
                     if (Engine.ShuttingDown)
                     {
@@ -264,13 +293,12 @@ namespace XREngine
                         switch (mode)
                         {
                             case EDebugShapePopulationMode.Tasks:
-                                PopulateSceneTasks(_debug3D);
-                                PopulateSceneTasks(_debug2D);
+                                PopulateDebugScene(_debug3D);
+                                PopulateDebugScene(_debug2D);
                                 break;
                             case EDebugShapePopulationMode.ParallelInvoke:
-                                Parallel.Invoke(
-                                    () => PopulateDebugScene(_debug3D),
-                                    () => PopulateDebugScene(_debug2D));
+                                PopulateDebugScene(_debug3D);
+                                PopulateDebugScene(_debug2D);
                                 break;
                             case EDebugShapePopulationMode.Sequential:
                             default:
@@ -329,16 +357,12 @@ namespace XREngine
 
                     _debug3D.Visualizer.PointSize = debug.DebugPointSize;
                     _debug3D.Visualizer.LineWidth = debug.DebugLineWidth;
+                    _debug3D.DepthTestedVisualizer.PointSize = debug.DebugPointSize;
+                    _debug3D.DepthTestedVisualizer.LineWidth = debug.DebugLineWidth;
                     _debug2D.Visualizer.PointSize = debug.DebugPointSize;
                     _debug2D.Visualizer.LineWidth = debug.DebugLineWidth;
-                }
-
-                private static void PopulateSceneTasks(DebugPrimitiveSceneState scene)
-                {
-                    Task tp = Task.Run(() => PopulatePoints(scene));
-                    Task tl = Task.Run(() => PopulateLines(scene));
-                    Task tt = Task.Run(() => PopulateTriangles(scene));
-                    Task.WaitAll(tp, tl, tt);
+                    _debug2D.DepthTestedVisualizer.PointSize = debug.DebugPointSize;
+                    _debug2D.DepthTestedVisualizer.LineWidth = debug.DebugLineWidth;
                 }
 
                 private static void PopulateDebugScene(DebugPrimitiveSceneState scene)
@@ -357,34 +381,52 @@ namespace XREngine
                 private static void PopulateTriangles(DebugPrimitiveSceneState scene)
                 {
                     scene.Visualizer.TriangleCount = (uint)scene.Triangles.Count;
+                    scene.DepthTestedVisualizer.TriangleCount = (uint)scene.DepthTestedTriangles.Count;
 
                     int i = 0;
                     foreach (var (pos0, pos1, pos2, color) in scene.Triangles)
                         scene.Visualizer.SetTriangleAt(i++, pos0, pos1, pos2, color);
 
+                    i = 0;
+                    foreach (var (pos0, pos1, pos2, color) in scene.DepthTestedTriangles)
+                        scene.DepthTestedVisualizer.SetTriangleAt(i++, pos0, pos1, pos2, color);
+
                     scene.Triangles.Clear();
+                    scene.DepthTestedTriangles.Clear();
                 }
 
                 private static void PopulateLines(DebugPrimitiveSceneState scene)
                 {
                     scene.Visualizer.LineCount = (uint)scene.Lines.Count;
+                    scene.DepthTestedVisualizer.LineCount = (uint)scene.DepthTestedLines.Count;
 
                     int i = 0;
                     foreach (var (pos0, pos1, color) in scene.Lines)
                         scene.Visualizer.SetLineAt(i++, pos0, pos1, color);
 
+                    i = 0;
+                    foreach (var (pos0, pos1, color) in scene.DepthTestedLines)
+                        scene.DepthTestedVisualizer.SetLineAt(i++, pos0, pos1, color);
+
                     scene.Lines.Clear();
+                    scene.DepthTestedLines.Clear();
                 }
 
                 private static void PopulatePoints(DebugPrimitiveSceneState scene)
                 {
                     scene.Visualizer.PointCount = (uint)scene.Points.Count;
+                    scene.DepthTestedVisualizer.PointCount = (uint)scene.DepthTestedPoints.Count;
 
                     int i = 0;
                     foreach (var (pos, color) in scene.Points)
                         scene.Visualizer.SetPointAt(i++, pos, color);
 
+                    i = 0;
+                    foreach (var (pos, color) in scene.DepthTestedPoints)
+                        scene.DepthTestedVisualizer.SetPointAt(i++, pos, color);
+
                     scene.Points.Clear();
+                    scene.DepthTestedPoints.Clear();
                 }
 
                 private static XRMeshRenderer? _lineRenderer = null;
@@ -417,7 +459,7 @@ namespace XREngine
                 }
 
                 private static readonly Lock _debugShapeQueueLock = new();
-                public static void RenderShapes()
+                public static void RenderShapes(bool depthTested)
                 {
                     if (!Engine.Rendering.State.IsMainPass)
                         return;
@@ -427,35 +469,47 @@ namespace XREngine
                         return;
 
                     DebugPrimitiveSceneState scene = ResolveDebugPrimitiveSceneState();
-                    DequeueDebugTextItems(scene);
+                    if (!depthTested)
+                        DequeueDebugTextItems(scene);
 
-                    var hashes = scene.Texts.Keys.ToArray();
-                    for (int i = 0; i < hashes.Length; i++)
+                    if (!depthTested && !scene.Texts.IsEmpty)
                     {
-                        var hash = hashes[i];
-                        if (!scene.Texts.TryGetValue(hash, out var text))
-                            continue;
+                        var hashes = scene.Texts.Keys.ToArray();
+                        for (int i = 0; i < hashes.Length; i++)
+                        {
+                            var hash = hashes[i];
+                            if (!scene.Texts.TryGetValue(hash, out var text))
+                                continue;
 
-                        text.text.Render();
+                            text.text.Render();
 
-                        float nowTime = Engine.Time.Timer.Time();
-                        float lastTime = text.lastUpdatedTime;
-                        if (nowTime - lastTime > Engine.EditorPreferences.Debug.DebugTextMaxLifespan && scene.Texts.TryRemove(hash, out (UIText text, float lastUpdatedTime) item))
-                            TextPool.Release(item.text);
+                            float nowTime = Engine.Time.Timer.Time();
+                            float lastTime = text.lastUpdatedTime;
+                            if (nowTime - lastTime > Engine.EditorPreferences.Debug.DebugTextMaxLifespan && scene.Texts.TryRemove(hash, out (UIText text, float lastUpdatedTime) item))
+                                TextPool.Release(item.text);
+                        }
                     }
 
                     if (Engine.Rendering.State.DebugInstanceRenderingAvailable)
                     {
-                        scene.BaseOverlayLines.Render();
-                        scene.Visualizer.Render();
-                        scene.HighlightOverlayLines.Render();
+                        if (depthTested)
+                        {
+                            scene.DepthTestedVisualizer.Render();
+                        }
+                        else
+                        {
+                            scene.BaseOverlayLines.Render();
+                            scene.Visualizer.Render();
+                            scene.HighlightOverlayLines.Render();
+                        }
                     }
                 }
 
                 private static DebugPrimitiveSceneState ResolveDebugPrimitiveSceneState()
-                    => ResolveDebugPrimitiveSceneKind() == EDebugPrimitiveSceneKind.Scene2D
+                    => _expandingShapeScene ??
+                    (ResolveDebugPrimitiveSceneKind() == EDebugPrimitiveSceneKind.Scene2D
                         ? _debug2D
-                        : _debug3D;
+                        : _debug3D);
 
                 private static EDebugPrimitiveSceneKind ResolveDebugPrimitiveSceneKind()
                     => Engine.IsRenderThread &&
@@ -479,12 +533,68 @@ namespace XREngine
                 {
                     while (scene.PointQueue.TryDequeue(out var point))
                         scene.Points.Add(point);
+                    while (scene.DepthTestedPointQueue.TryDequeue(out var point))
+                        scene.DepthTestedPoints.Add(point);
                     while (scene.LineQueue.TryDequeue(out var line))
                         scene.Lines.Add(line);
+                    while (scene.DepthTestedLineQueue.TryDequeue(out var line))
+                        scene.DepthTestedLines.Add(line);
                     while (scene.TriangleQueue.TryDequeue(out var triangle))
                         scene.Triangles.Add(triangle);
+                    while (scene.DepthTestedTriangleQueue.TryDequeue(out var triangle))
+                        scene.DepthTestedTriangles.Add(triangle);
+                    ExpandShapeInstances(scene);
                     scene.BaseOverlayLines.DequeueLines();
                     scene.HighlightOverlayLines.DequeueLines();
+                }
+
+                private static void ExpandShapeInstances(DebugPrimitiveSceneState scene)
+                {
+                    _expandingShapeScene = scene;
+                    try
+                    {
+                        while (scene.ShapeInstanceQueue.TryDequeue(out DebugShapeInstance shape))
+                        {
+                            _expandingShapeDepthTested = shape.DepthTested;
+                            switch (shape.Kind)
+                            {
+                                case EDebugShapeInstanceKind.Circle:
+                                    RenderCircleImmediate(
+                                        shape.Position,
+                                        Quaternion.CreateFromRotationMatrix(shape.Transform),
+                                        shape.Radius,
+                                        shape.Solid,
+                                        shape.Color);
+                                    break;
+                                case EDebugShapeInstanceKind.Quad:
+                                    RenderQuadImmediate(shape.Position, shape.Rotation, shape.Extents, shape.Solid, shape.Color);
+                                    break;
+                                case EDebugShapeInstanceKind.Sphere:
+                                    RenderSphereImmediate(shape.Position, shape.Radius, shape.Solid, shape.Color);
+                                    break;
+                                case EDebugShapeInstanceKind.Capsule:
+                                    RenderCapsuleImmediate(shape.Position, shape.Axis, shape.Radius, shape.Height, shape.Solid, shape.Color);
+                                    break;
+                                case EDebugShapeInstanceKind.Cylinder:
+                                    RenderCylinderImmediate(shape.Transform, shape.Axis, shape.Radius, shape.Height, shape.Solid, shape.Color);
+                                    break;
+                                case EDebugShapeInstanceKind.Cone:
+                                    RenderConeImmediate(shape.Position, shape.Axis, shape.Radius, shape.Height, shape.Solid, shape.Color);
+                                    break;
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        _expandingShapeScene = null;
+                        _expandingShapeDepthTested = false;
+                    }
+                }
+
+                private static void SubmitShape(in DebugShapeInstance shape)
+                {
+                    DebugPrimitiveSceneState scene = ResolveDebugPrimitiveSceneState();
+                    scene.ShapeInstanceQueue.Enqueue(shape);
                 }
 
                 private static Matrix4x4 CalculateLineMatrix(Vector3 pos0, Vector3 pos1, float lineWidth, Vector3 camForward, Vector3 camUp, Vector3 camRight)
@@ -520,48 +630,79 @@ namespace XREngine
                     //    vpPos.Z < playerCam.FarZ;
                 }
 
-                public static void RenderPoint(Vector3 position, ColorF4 color)
+                public static void RenderPoint(
+                    Vector3 position,
+                    ColorF4 color,
+                    bool depthTested = false)
                 {
+                    depthTested |= _expandingShapeDepthTested;
                     if (!InCamera(position))
                         return;
 
                     DebugPrimitiveSceneState scene = ResolveDebugPrimitiveSceneState();
                     if (IsRenderThread)
-                        scene.Points.Add((position, color));
+                    {
+                        if (depthTested)
+                            scene.DepthTestedPoints.Add((position, color));
+                        else
+                            scene.Points.Add((position, color));
+                    }
                     else
                     {
                         using (_debugShapeQueueLock.EnterScope())
-                            scene.PointQueue.Enqueue((position, color));
+                        {
+                            if (depthTested)
+                                scene.DepthTestedPointQueue.Enqueue((position, color));
+                            else
+                                scene.PointQueue.Enqueue((position, color));
+                        }
                     }
                 }
 
                 public static void RenderRay(Vector3 position, Vector3 direction, ColorF4 color)
                     => RenderLine(position, position + direction, color);
 
-                public static unsafe void RenderLine(Vector3 start, Vector3 end, ColorF4 color)
+                public static unsafe void RenderLine(
+                    Vector3 start,
+                    Vector3 end,
+                    ColorF4 color,
+                    bool depthTested = false)
                 {
+                    depthTested |= _expandingShapeDepthTested;
                     if (!InCamera(start) && !InCamera(end))
                         return;
 
                     DebugPrimitiveSceneState scene = ResolveDebugPrimitiveSceneState();
                     if (IsRenderThread)
-                        scene.Lines.Add((start, end, color));
+                    {
+                        if (depthTested)
+                            scene.DepthTestedLines.Add((start, end, color));
+                        else
+                            scene.Lines.Add((start, end, color));
+                    }
                     else
                     {
                         using (_debugShapeQueueLock.EnterScope())
-                            scene.LineQueue.Enqueue((start, end, color));
+                        {
+                            if (depthTested)
+                                scene.DepthTestedLineQueue.Enqueue((start, end, color));
+                            else
+                                scene.LineQueue.Enqueue((start, end, color));
+                        }
                     }
                 }
 
-                public static void RenderTriangle(Triangle triangle, ColorF4 color, bool solid)
-                    => RenderTriangle(triangle.A, triangle.B, triangle.C, color, solid);
+                public static void RenderTriangle(Triangle triangle, ColorF4 color, bool solid, bool depthTested = false)
+                    => RenderTriangle(triangle.A, triangle.B, triangle.C, color, solid, depthTested);
                 public static void RenderTriangle(
                     Vector3 A,
                     Vector3 B,
                     Vector3 C,
                     ColorF4 color,
-                    bool solid)
+                    bool solid,
+                    bool depthTested = false)
                 {
+                    depthTested |= _expandingShapeDepthTested;
                     if (!(InCamera(A) || InCamera(B) || InCamera(C)))
                         return;
 
@@ -569,18 +710,28 @@ namespace XREngine
                     {
                         DebugPrimitiveSceneState scene = ResolveDebugPrimitiveSceneState();
                         if (IsRenderThread)
-                            scene.Triangles.Add((A, B, C, color));
+                        {
+                            if (depthTested)
+                                scene.DepthTestedTriangles.Add((A, B, C, color));
+                            else
+                                scene.Triangles.Add((A, B, C, color));
+                        }
                         else
                         {
                             using (_debugShapeQueueLock.EnterScope())
-                                scene.TriangleQueue.Enqueue((A, B, C, color));
+                            {
+                                if (depthTested)
+                                    scene.DepthTestedTriangleQueue.Enqueue((A, B, C, color));
+                                else
+                                    scene.TriangleQueue.Enqueue((A, B, C, color));
+                            }
                         }
                     }
                     else
                     {
-                        RenderLine(A, B, color);
-                        RenderLine(B, C, color);
-                        RenderLine(C, A, color);
+                        RenderLine(A, B, color, depthTested);
+                        RenderLine(B, C, color, depthTested);
+                        RenderLine(C, A, color, depthTested);
                     }
                 }
 
@@ -598,19 +749,39 @@ namespace XREngine
                     Quaternion rotation,
                     float radius,
                     bool solid,
+                    ColorF4 color,
+                    bool depthTested = false)
+                    => SubmitShape(new DebugShapeInstance(
+                        EDebugShapeInstanceKind.Circle,
+                        Matrix4x4.CreateFromQuaternion(rotation),
+                        centerPosition,
+                        Vector3.Zero,
+                        Rotator.GetZero(),
+                        Vector2.Zero,
+                        radius,
+                        0.0f,
+                        solid,
+                        depthTested,
+                        color));
+
+                private static void RenderCircleImmediate(
+                    Vector3 centerPosition,
+                    Quaternion rotation,
+                    float radius,
+                    bool solid,
                     ColorF4 color)
                 {
-                    const int segments = 20;
+                    const int segments = DebugPrimitiveTopologyCache.CircleSegments;
+                    ReadOnlySpan<Vector2> unitCircle = DebugPrimitiveTopologyCache.UnitCircle;
 
                     if (solid)
                     {
                         // Generate circle points for a triangle fan.
-                        Vector3[] circlePoints = new Vector3[segments + 1];
+                        Span<Vector3> circlePoints = stackalloc Vector3[segments + 1];
                         for (int i = 0; i <= segments; i++)
                         {
-                            float angle = 2 * MathF.PI * i / segments;
-                            float x = MathF.Cos(angle) * radius;
-                            float z = MathF.Sin(angle) * radius;
+                            float x = unitCircle[i].X * radius;
+                            float z = unitCircle[i].Y * radius;
                             Vector3 localPoint = new(x, 0, z);
                             circlePoints[i] = Vector3.Transform(localPoint, rotation) + centerPosition;
                         }
@@ -627,12 +798,11 @@ namespace XREngine
                     else
                     {
                         // Render circle outline using lines.
-                        Vector3[] circlePoints = new Vector3[segments + 1];
+                        Span<Vector3> circlePoints = stackalloc Vector3[segments + 1];
                         for (int i = 0; i <= segments; i++)
                         {
-                            float angle = 2 * MathF.PI * i / segments;
-                            float x = MathF.Cos(angle) * radius;
-                            float z = MathF.Sin(angle) * radius;
+                            float x = unitCircle[i].X * radius;
+                            float z = unitCircle[i].Y * radius;
                             Vector3 localPoint = new Vector3(x, 0, z);
                             circlePoints[i] = Vector3.Transform(localPoint, rotation) + centerPosition;
                         }
@@ -646,17 +816,35 @@ namespace XREngine
                     Rotator rotation,
                     Vector2 extents,
                     bool solid,
+                    ColorF4 color,
+                    bool depthTested = false)
+                    => SubmitShape(new DebugShapeInstance(
+                        EDebugShapeInstanceKind.Quad,
+                        Matrix4x4.Identity,
+                        centerTranslation,
+                        Vector3.Zero,
+                        rotation,
+                        extents,
+                        0.0f,
+                        0.0f,
+                        solid,
+                        depthTested,
+                        color));
+
+                private static void RenderQuadImmediate(
+                    Vector3 centerTranslation,
+                    Rotator rotation,
+                    Vector2 extents,
+                    bool solid,
                     ColorF4 color)
                 {
                     if (solid)
                     {
-                        Vector3[] quadPoints =
-                        [
-                            new Vector3(-extents.X, 0, -extents.Y),
-                            new Vector3(extents.X, 0, -extents.Y),
-                            new Vector3(extents.X, 0, extents.Y),
-                            new Vector3(-extents.X, 0, extents.Y),
-                        ];
+                        Span<Vector3> quadPoints = stackalloc Vector3[4];
+                        quadPoints[0] = new Vector3(-extents.X, 0, -extents.Y);
+                        quadPoints[1] = new Vector3(extents.X, 0, -extents.Y);
+                        quadPoints[2] = new Vector3(extents.X, 0, extents.Y);
+                        quadPoints[3] = new Vector3(-extents.X, 0, extents.Y);
                         Matrix4x4 rotMatrix = rotation.GetMatrix();
                         for (int i = 0; i < 4; i++)
                             quadPoints[i] = Vector3.Transform(quadPoints[i], rotMatrix) + centerTranslation;
@@ -665,13 +853,11 @@ namespace XREngine
                     }
                     else
                     {
-                        Vector3[] quadPoints =
-                        [
-                            new Vector3(-extents.X, 0, -extents.Y),
-                            new Vector3(extents.X, 0, -extents.Y),
-                            new Vector3(extents.X, 0, extents.Y),
-                            new Vector3(-extents.X, 0, extents.Y),
-                        ];
+                        Span<Vector3> quadPoints = stackalloc Vector3[4];
+                        quadPoints[0] = new Vector3(-extents.X, 0, -extents.Y);
+                        quadPoints[1] = new Vector3(extents.X, 0, -extents.Y);
+                        quadPoints[2] = new Vector3(extents.X, 0, extents.Y);
+                        quadPoints[3] = new Vector3(-extents.X, 0, extents.Y);
                         Matrix4x4 rotMatrix = rotation.GetMatrix();
                         for (int i = 0; i < 4; i++)
                             quadPoints[i] = Vector3.Transform(quadPoints[i], rotMatrix) + centerTranslation;
@@ -686,25 +872,37 @@ namespace XREngine
                     Vector3 center,
                     float radius,
                     bool solid,
+                    ColorF4 color,
+                    bool depthTested = false)
+                    => SubmitShape(new DebugShapeInstance(
+                        EDebugShapeInstanceKind.Sphere,
+                        Matrix4x4.Identity,
+                        center,
+                        Vector3.Zero,
+                        Rotator.GetZero(),
+                        Vector2.Zero,
+                        radius,
+                        0.0f,
+                        solid,
+                        depthTested,
+                        color));
+
+                private static void RenderSphereImmediate(
+                    Vector3 center,
+                    float radius,
+                    bool solid,
                     ColorF4 color)
                 {
-                    const int segments = 20;
-                    const int rings = 20;
+                    const int segments = DebugPrimitiveTopologyCache.SphereSegments;
+                    const int rings = DebugPrimitiveTopologyCache.SphereRings;
 
-                    Vector3[] spherePoints = new Vector3[segments * rings];
+                    Span<Vector3> spherePoints = stackalloc Vector3[segments * rings];
+                    ReadOnlySpan<Vector3> unitSphere = DebugPrimitiveTopologyCache.UnitSphere;
                     for (int i = 0; i < rings; i++)
                     {
-                        float theta = MathF.PI * i / rings;
-                        float sinTheta = MathF.Sin(theta);
-                        float cosTheta = MathF.Cos(theta);
                         for (int j = 0; j < segments; j++)
-                        {
-                            float phi = 2 * MathF.PI * j / segments;
-                            float sinPhi = MathF.Sin(phi);
-                            float cosPhi = MathF.Cos(phi);
-                            Vector3 localPoint = new(cosPhi * sinTheta, cosTheta, sinPhi * sinTheta);
-                            spherePoints[i * segments + j] = localPoint * radius + center;
-                        }
+                            spherePoints[i * segments + j] =
+                                unitSphere[i * segments + j] * radius + center;
                     }
 
                     if (solid)
@@ -712,15 +910,16 @@ namespace XREngine
                         // Build triangle fan: center + each adjacent edge.
                         for (int i = 0; i < rings - 1; i++)
                         {
-                            for (int j = 0; j < segments - 1; j++)
+                            for (int j = 0; j < segments; j++)
                             {
+                                int next = (j + 1) % segments;
                                 Vector3 pos0 = spherePoints[i * segments + j];
-                                Vector3 pos1 = spherePoints[i * segments + j + 1];
+                                Vector3 pos1 = spherePoints[i * segments + next];
                                 Vector3 pos2 = spherePoints[(i + 1) * segments + j];
                                 RenderTriangle(pos0, pos1, pos2, color, true);
 
-                                pos0 = spherePoints[i * segments + j + 1];
-                                pos1 = spherePoints[(i + 1) * segments + j + 1];
+                                pos0 = spherePoints[i * segments + next];
+                                pos1 = spherePoints[(i + 1) * segments + next];
                                 pos2 = spherePoints[(i + 1) * segments + j];
                                 RenderTriangle(pos0, pos1, pos2, color, true);
                             }
@@ -795,25 +994,26 @@ namespace XREngine
                     Vector3 center,
                     Matrix4x4 transform,
                     bool solid,
-                    ColorF4 color)
+                    ColorF4 color,
+                    bool depthTested = false)
                 {
                     Span<Vector3> boxPoints = stackalloc Vector3[8];
                     FillBoxPoints(boxPoints, halfExtents, center, transform);
 
                     if (solid)
                     {
-                        RenderTriangle(boxPoints[0], boxPoints[1], boxPoints[2], color, true);
-                        RenderTriangle(boxPoints[0], boxPoints[2], boxPoints[3], color, true);
-                        RenderTriangle(boxPoints[4], boxPoints[5], boxPoints[6], color, true);
-                        RenderTriangle(boxPoints[4], boxPoints[6], boxPoints[7], color, true);
-                        RenderTriangle(boxPoints[0], boxPoints[1], boxPoints[5], color, true);
-                        RenderTriangle(boxPoints[0], boxPoints[5], boxPoints[4], color, true);
-                        RenderTriangle(boxPoints[2], boxPoints[3], boxPoints[7], color, true);
-                        RenderTriangle(boxPoints[2], boxPoints[7], boxPoints[6], color, true);
-                        RenderTriangle(boxPoints[1], boxPoints[2], boxPoints[6], color, true);
-                        RenderTriangle(boxPoints[1], boxPoints[6], boxPoints[5], color, true);
-                        RenderTriangle(boxPoints[0], boxPoints[3], boxPoints[7], color, true);
-                        RenderTriangle(boxPoints[0], boxPoints[7], boxPoints[4], color, true);
+                        RenderTriangle(boxPoints[0], boxPoints[1], boxPoints[2], color, true, depthTested);
+                        RenderTriangle(boxPoints[0], boxPoints[2], boxPoints[3], color, true, depthTested);
+                        RenderTriangle(boxPoints[4], boxPoints[5], boxPoints[6], color, true, depthTested);
+                        RenderTriangle(boxPoints[4], boxPoints[6], boxPoints[7], color, true, depthTested);
+                        RenderTriangle(boxPoints[0], boxPoints[1], boxPoints[5], color, true, depthTested);
+                        RenderTriangle(boxPoints[0], boxPoints[5], boxPoints[4], color, true, depthTested);
+                        RenderTriangle(boxPoints[2], boxPoints[3], boxPoints[7], color, true, depthTested);
+                        RenderTriangle(boxPoints[2], boxPoints[7], boxPoints[6], color, true, depthTested);
+                        RenderTriangle(boxPoints[1], boxPoints[2], boxPoints[6], color, true, depthTested);
+                        RenderTriangle(boxPoints[1], boxPoints[6], boxPoints[5], color, true, depthTested);
+                        RenderTriangle(boxPoints[0], boxPoints[3], boxPoints[7], color, true, depthTested);
+                        RenderTriangle(boxPoints[0], boxPoints[7], boxPoints[4], color, true, depthTested);
                     }
                     else
                     {
@@ -882,6 +1082,27 @@ namespace XREngine
                     float radius,
                     float halfHeight,
                     bool solid,
+                    ColorF4 color,
+                    bool depthTested = false)
+                    => SubmitShape(new DebugShapeInstance(
+                        EDebugShapeInstanceKind.Capsule,
+                        Matrix4x4.Identity,
+                        center,
+                        localUpAxis,
+                        Rotator.GetZero(),
+                        Vector2.Zero,
+                        radius,
+                        halfHeight,
+                        solid,
+                        depthTested,
+                        color));
+
+                private static void RenderCapsuleImmediate(
+                    Vector3 center,
+                    Vector3 localUpAxis,
+                    float radius,
+                    float halfHeight,
+                    bool solid,
                     ColorF4 color)
                 {
                     if (solid)
@@ -889,7 +1110,7 @@ namespace XREngine
                         const int segments = 10;
                         const int rings = 10;
 
-                        Vector3[] capsulePoints = new Vector3[segments * rings];
+                        Span<Vector3> capsulePoints = stackalloc Vector3[segments * rings];
                         for (int i = 0; i < rings; i++)
                         {
                             float theta = MathF.PI * i / rings;
@@ -925,7 +1146,7 @@ namespace XREngine
                     else
                     {
                         // Render a wireframe capsule using circles and lines
-                        const int segments = 16; // Number of segments around the circumference
+                        const int segments = DebugPrimitiveTopologyCache.CircleSegments;
                         const int arcSegments = 8; // Number of segments for the hemisphere arcs
 
                         // Compute orthonormal basis for drawing circles perpendicular to localUpAxis
@@ -937,12 +1158,12 @@ namespace XREngine
                         Vector3 bottomCenter = center - localUpAxis * halfHeight;
 
                         // Build circle points at top and bottom (reused for arcs)
-                        Vector3[] circlePoints = new Vector3[segments];
+                        Span<Vector3> circlePoints = stackalloc Vector3[segments];
+                        ReadOnlySpan<Vector2> unitCircle = DebugPrimitiveTopologyCache.UnitCircle;
                         for (int i = 0; i < segments; i++)
                         {
-                            float angle = 2 * MathF.PI * i / segments;
-                            float cos = MathF.Cos(angle);
-                            float sin = MathF.Sin(angle);
+                            float cos = unitCircle[i].X;
+                            float sin = unitCircle[i].Y;
                             Vector3 offset = tangent * cos * radius + bitangent * sin * radius;
                             circlePoints[i] = offset; // Store just the offset for reuse
                         }
@@ -1013,16 +1234,37 @@ namespace XREngine
                     float radius,
                     float halfHeight,
                     bool solid,
+                    ColorF4 color,
+                    bool depthTested = false)
+                    => SubmitShape(new DebugShapeInstance(
+                        EDebugShapeInstanceKind.Cylinder,
+                        transform,
+                        Vector3.Zero,
+                        localUpAxis,
+                        Rotator.GetZero(),
+                        Vector2.Zero,
+                        radius,
+                        halfHeight,
+                        solid,
+                        depthTested,
+                        color));
+
+                private static void RenderCylinderImmediate(
+                    Matrix4x4 transform,
+                    Vector3 localUpAxis,
+                    float radius,
+                    float halfHeight,
+                    bool solid,
                     ColorF4 color)
                 {
-                    const int segments = 20;
+                    const int segments = DebugPrimitiveTopologyCache.CircleSegments;
 
-                    Vector3[] cylinderPoints = new Vector3[segments * 2];
+                    Span<Vector3> cylinderPoints = stackalloc Vector3[segments * 2];
+                    ReadOnlySpan<Vector2> unitCircle = DebugPrimitiveTopologyCache.UnitCircle;
                     for (int i = 0; i < segments; i++)
                     {
-                        float angle = 2 * MathF.PI * i / segments;
-                        float x = MathF.Cos(angle) * radius;
-                        float z = MathF.Sin(angle) * radius;
+                        float x = unitCircle[i].X * radius;
+                        float z = unitCircle[i].Y * radius;
                         Vector3 localPoint = new(x, 0, z);
                         cylinderPoints[i] = Vector3.Transform(localPoint, transform) + localUpAxis * halfHeight;
                         cylinderPoints[i + segments] = Vector3.Transform(localPoint, transform) - localUpAxis * halfHeight;
@@ -1076,9 +1318,30 @@ namespace XREngine
                     float radius,
                     float height,
                     bool solid,
+                    ColorF4 color,
+                    bool depthTested = false)
+                    => SubmitShape(new DebugShapeInstance(
+                        EDebugShapeInstanceKind.Cone,
+                        Matrix4x4.Identity,
+                        baseCenter,
+                        localUpAxis,
+                        Rotator.GetZero(),
+                        Vector2.Zero,
+                        radius,
+                        height,
+                        solid,
+                        depthTested,
+                        color));
+
+                private static void RenderConeImmediate(
+                    Vector3 baseCenter,
+                    Vector3 localUpAxis,
+                    float radius,
+                    float height,
+                    bool solid,
                     ColorF4 color)
                 {
-                    const int segments = 20;
+                    const int segments = DebugPrimitiveTopologyCache.CircleSegments;
 
                     localUpAxis = localUpAxis.LengthSquared() > 1e-12f
                         ? Vector3.Normalize(localUpAxis)
@@ -1091,12 +1354,12 @@ namespace XREngine
                     Vector3 bitangent = Vector3.Cross(tangent, localUpAxis);
                     Vector3 tip = baseCenter + localUpAxis * height;
 
-                    Vector3[] conePoints = new Vector3[segments + 1];
+                    Span<Vector3> conePoints = stackalloc Vector3[segments + 1];
+                    ReadOnlySpan<Vector2> unitCircle = DebugPrimitiveTopologyCache.UnitCircle;
                     for (int i = 0; i <= segments; i++)
                     {
-                        float angle = 2 * MathF.PI * i / segments;
-                        Vector3 radial = tangent * (MathF.Cos(angle) * radius) +
-                            bitangent * (MathF.Sin(angle) * radius);
+                        Vector3 radial = tangent * (unitCircle[i].X * radius) +
+                            bitangent * (unitCircle[i].Y * radius);
                         conePoints[i] = baseCenter + radial;
                     }
 

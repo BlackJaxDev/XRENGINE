@@ -15,6 +15,7 @@ public interface IRuntimePhysicsServices
     PhysicsVisualizeSettings VisualizeSettings { get; }
     bool JoltDebugRenderDiagnostics { get; }
 
+    void RenderPoint(Vector3 position, ColorF4 color);
     void RenderLine(Vector3 start, Vector3 end, ColorF4 color);
     void RenderSphere(Vector3 center, float radius, bool solid, ColorF4 color);
     void RenderCapsule(Vector3 start, Vector3 end, float radius, bool solid, ColorF4 color);
@@ -41,6 +42,7 @@ public static class RuntimePhysicsServices
         public PhysicsVisualizeSettings VisualizeSettings => _visualizeSettings;
         public bool JoltDebugRenderDiagnostics => false;
 
+        public void RenderPoint(Vector3 position, ColorF4 color) { }
         public void RenderLine(Vector3 start, Vector3 end, ColorF4 color) { }
         public void RenderSphere(Vector3 center, float radius, bool solid, ColorF4 color) { }
         public void RenderCapsule(Vector3 start, Vector3 end, float radius, bool solid, ColorF4 color) { }

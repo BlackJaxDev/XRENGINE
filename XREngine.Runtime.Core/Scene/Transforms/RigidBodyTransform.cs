@@ -1,9 +1,11 @@
-using XREngine.Extensions;
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Numerics;
+using MemoryPack;
 using XREngine.Components;
 using XREngine.Data.Core;
+using XREngine.Extensions;
 using XREngine.Scene.Physics;
-using System.Diagnostics;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Scene.Transforms
@@ -12,6 +14,12 @@ namespace XREngine.Scene.Transforms
     public class RigidBodyTransform : TransformBase
     {
         private IAbstractRigidPhysicsActor? _rigidBody;
+
+        /// <summary>
+        /// Native physics actor currently driving this transform. The owning rigid-body component
+        /// reconstructs this transient backend link when the scene is activated.
+        /// </summary>
+        [Browsable(false), RuntimeOnly, YamlIgnore, MemoryPackIgnore]
         public IAbstractRigidPhysicsActor? RigidBody
         {
             get => _rigidBody;

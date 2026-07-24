@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using Silk.NET.Core.Contexts;
 using Silk.NET.Maths;
 using Silk.NET.Windowing;
 
@@ -11,6 +10,7 @@ internal sealed class Win32ModalLoopTimerInteractiveResizeStrategy : Interactive
     private const int GWLP_WNDPROC = -4;
     private const uint WM_DESTROY = 0x0002;
     private const uint WM_SIZE = 0x0005;
+    private const uint WM_PAINT = 0x000F;
     private const uint WM_CLOSE = 0x0010;
     private const uint WM_NCDESTROY = 0x0082;
     private const uint WM_TIMER = 0x0113;
@@ -19,9 +19,8 @@ internal sealed class Win32ModalLoopTimerInteractiveResizeStrategy : Interactive
     private const uint WM_EXITSIZEMOVE = 0x0232;
     private const uint WM_WINDOWPOSCHANGED = 0x0047;
     private const nuint TimerId = 0x5852454Eu;
-    private const uint DefaultTimerIntervalMs = 16;
-    private const int OpenGlActiveSizingRenderHz = 60;
-    private const int VulkanActiveSizingRenderHz = 60;
+    private const uint DefaultTimerIntervalMs = 1;
+    private const uint MaximumTimerIntervalMs = 250;
     private const string TimerIntervalEnvironmentVariable = XREngineEnvironmentVariables.Win32InteractiveResizeTimerMs;
 
     private static readonly object s_hookSync = new();
@@ -34,7 +33,6 @@ internal sealed class Win32ModalLoopTimerInteractiveResizeStrategy : Interactive
     private bool _timerActive;
     private bool _inSizeMove;
     private bool _windowClosing;
-    private long _lastSizingRenderTimestamp;
     private int _pendingClientWidth;
     private int _pendingClientHeight;
     private bool _hasPendingClientSize;
@@ -221,6 +219,7 @@ internal sealed class Win32ModalLoopTimerInteractiveResizeStrategy : Interactive
                 ResetCoalescedClientSize();
                 CaptureCurrentClientSize();
                 StartTimer();
+                RequestInteractiveResizePaint();
                 break;
             case WM_SIZE:
                 if (_inSizeMove)
@@ -235,21 +234,35 @@ internal sealed class Win32ModalLoopTimerInteractiveResizeStrategy : Interactive
                 break;
             case WM_SIZING:
                 CaptureCurrentClientSize();
+                ApplyCoalescedClientPresentationResize("win32-sizing-live");
+                RecordCallbackAndRenderImmediate("win32-sizing-live");
                 break;
             case WM_WINDOWPOSCHANGED:
                 if (_inSizeMove)
                     CaptureCurrentClientSize();
                 else
+                {
                     QueueClientResize("win32-windowposchanged");
-
-                if (!_inSizeMove)
                     RecordCallbackAndRenderImmediate("win32-windowposchanged");
+                }
                 break;
             case WM_TIMER:
                 if (wParam == new UIntPtr(TimerId))
                 {
-                    ApplyCoalescedClientPresentationResize("win32-timer");
-                    RecordCallbackAndRenderRateLimited("win32-timer");
+                    CaptureCurrentClientSize();
+                    if (!RequestInteractiveResizePaint())
+                    {
+                        ApplyCoalescedClientPresentationResize("win32-timer-fallback");
+                        RecordCallbackAndRenderImmediate("win32-timer-fallback");
+                    }
+                }
+                break;
+            case WM_PAINT:
+                if (_inSizeMove)
+                {
+                    ApplyCoalescedClientPresentationResize("win32-paint");
+                    RecordCallbackAndRenderImmediate("win32-paint");
+                    RequestInteractiveResizePaint();
                 }
                 break;
             case WM_EXITSIZEMOVE:
@@ -289,6 +302,7 @@ internal sealed class Win32ModalLoopTimerInteractiveResizeStrategy : Interactive
         if (_timerActive || _hwnd == IntPtr.Zero)
             return;
 
+        _timerIntervalMs = ResolveTimerIntervalMs();
         UIntPtr result = SetTimer(_hwnd, TimerId, _timerIntervalMs, IntPtr.Zero);
         _timerActive = result != UIntPtr.Zero;
 
@@ -324,6 +338,17 @@ internal sealed class Win32ModalLoopTimerInteractiveResizeStrategy : Interactive
             _timerActive = false;
         }
     }
+
+    /// <summary>
+    /// Keeps Win32 producing low-priority paint work throughout its modal
+    /// size/move loop. Input and size messages remain ahead of WM_PAINT, while
+    /// each accepted paint enters the normal EngineTimer frame lifecycle.
+    /// </summary>
+    private bool RequestInteractiveResizePaint()
+        => _inSizeMove &&
+           !_windowClosing &&
+           _hwnd != IntPtr.Zero &&
+           InvalidateRect(_hwnd, IntPtr.Zero, erase: false);
 
     private void QueueClientResize(string reason)
     {
@@ -444,21 +469,7 @@ internal sealed class Win32ModalLoopTimerInteractiveResizeStrategy : Interactive
         window.EndInteractiveResize(GetCurrentFramebufferSize(window.Window), reason);
     }
 
-    private void RecordCallbackAndRenderRateLimited(string reason)
-    {
-        if (ShouldRenderByRateLimit(ref _lastSizingRenderTimestamp, ResolveActiveSizingRenderHz()))
-            RecordCallbackAndRenderImmediate(reason);
-    }
-
-    private int ResolveActiveSizingRenderHz()
-        => Window?.Window.API.API == ContextAPI.Vulkan
-            ? VulkanActiveSizingRenderHz
-            : OpenGlActiveSizingRenderHz;
-
     private void RecordCallbackAndRenderImmediate(string reason)
-        => RecordCallbackAndRenderImmediate(reason, deferWhenOnRenderThread: false);
-
-    private void RecordCallbackAndRenderImmediate(string reason, bool deferWhenOnRenderThread)
     {
         XRWindow? window = Window;
         if (window is null)
@@ -471,10 +482,7 @@ internal sealed class Win32ModalLoopTimerInteractiveResizeStrategy : Interactive
         }
 
         window.InteractiveResizeDiagnostics.RecordCallback(reason);
-        window.RenderInteractiveResizeFrame(
-            reason,
-            allowCurrentThread: !deferWhenOnRenderThread,
-            deferWhenOnRenderThread: deferWhenOnRenderThread);
+        window.RenderInteractiveResizeFrame(reason, allowCurrentThread: true);
     }
 
     private static bool TryGetSizeMessageClientSize(IntPtr lParam, out Vector2D<int> size)
@@ -511,7 +519,7 @@ internal sealed class Win32ModalLoopTimerInteractiveResizeStrategy : Interactive
     private static uint ResolveTimerIntervalMs()
     {
         string? rawValue = Environment.GetEnvironmentVariable(TimerIntervalEnvironmentVariable);
-        if (uint.TryParse(rawValue, out uint value) && value is >= 1 and <= 250)
+        if (uint.TryParse(rawValue, out uint value) && value is >= 1 and <= MaximumTimerIntervalMs)
             return value;
 
         if (!string.IsNullOrWhiteSpace(rawValue))
@@ -522,6 +530,8 @@ internal sealed class Win32ModalLoopTimerInteractiveResizeStrategy : Interactive
                 rawValue);
         }
 
+        // This timer only watchdogs the self-sustaining WM_PAINT sequence.
+        // EngineTimer.WaitToRender remains the sole cadence authority.
         return DefaultTimerIntervalMs;
     }
 
@@ -566,6 +576,9 @@ internal sealed class Win32ModalLoopTimerInteractiveResizeStrategy : Interactive
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool GetClientRect(IntPtr hwnd, out RECT lpRect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool InvalidateRect(IntPtr hwnd, IntPtr lpRect, [MarshalAs(UnmanagedType.Bool)] bool erase);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern UIntPtr SetTimer(IntPtr hwnd, nuint nIDEvent, uint uElapse, IntPtr lpTimerFunc);

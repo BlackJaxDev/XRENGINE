@@ -162,7 +162,10 @@ namespace XREngine
 
             private static void HandlePhysicsVisualizeSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
             {
-                SettingsChanged?.Invoke();
+                // Physics scenes subscribe to this asset directly. Forwarding these
+                // diagnostic-only changes through SettingsChanged rebuilds every render
+                // target and shader-dependent resource, which is both unnecessary and
+                // capable of exhausting Vulkan memory while a prior generation is active.
             }
 
             private static void HandlePhysicsGpuMemorySettingsChanged(object? sender, IXRPropertyChangedEventArgs e)

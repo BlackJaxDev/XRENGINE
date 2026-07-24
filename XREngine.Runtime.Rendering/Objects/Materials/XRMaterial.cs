@@ -1671,6 +1671,40 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// Creates a deferred, depth-writing material whose base color comes from the mesh's
+        /// first vertex-color channel. This combines differently colored opaque geometry into
+        /// one draw without giving up normal G-buffer lighting or depth behavior.
+        /// </summary>
+        public static XRMaterial CreateLitVertexColorMaterialDeferred(
+            float opacity = 1.0f,
+            float specular = 0.2f,
+            float roughness = 1.0f,
+            float metallic = 0.0f,
+            float emission = 0.0f)
+        {
+            ShaderVar[] parameters =
+            [
+                new ShaderFloat(opacity, "Opacity"),
+                new ShaderFloat(specular, "Specular"),
+                new ShaderFloat(roughness, "Roughness"),
+                new ShaderFloat(metallic, "Metallic"),
+                new ShaderFloat(emission, "Emission"),
+            ];
+
+            XRMaterial material = new(parameters, ShaderHelper.LitVertexColorFragDeferred())
+            {
+                RenderPass = (int)EDefaultRenderPass.OpaqueDeferred
+            };
+            material.RenderOptions.DepthTest = new DepthTest
+            {
+                Enabled = ERenderParamUsage.Enabled,
+                Function = EComparison.Lequal,
+                UpdateDepth = true,
+            };
+            return material;
+        }
+
+        /// <summary>
         /// Creates a transparent forward water material that combines GPU tessellation subdivision,
         /// procedural ocean waves, grab-pass depth-aware blur refraction, fake caustics, foam controls,
         /// and sphere/capsule driven eddy interaction masks.

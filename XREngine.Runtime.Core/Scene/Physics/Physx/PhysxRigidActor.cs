@@ -144,6 +144,9 @@ namespace XREngine.Scene.Physics.Physx
 
         public void RefreshShapeFilterData(bool includeQueryData = true)
         {
+            if (IsReleased)
+                return;
+
             int shapeCount = (int)ShapeCount;
             if (shapeCount == 0)
             {
@@ -151,16 +154,30 @@ namespace XREngine.Scene.Physics.Physx
                 return;
             }
 
-            PxFilterData filterData = BuildFilterData();
+            // PxDefaultSimulationFilterShader expects the layout produced by PhysX's
+            // own group helpers. Do not replace it with an engine-specific encoding.
+            ActorPtr->PhysPxSetGroup(CollisionGroup);
+            PxGroupsMask groupsMask = GroupsMask;
+            ActorPtr->PhysPxSetGroupsMask(&groupsMask);
+
             PxShape** shapes = stackalloc PxShape*[shapeCount];
             RigidActorPtr->GetShapes(shapes, (uint)shapeCount, 0);
+            PxFilterData firstFilterData = default;
+            bool hasFilterData = false;
             for (int i = 0; i < shapeCount; i++)
             {
                 var shapePtr = shapes[i];
                 if (shapePtr is null)
                     continue;
+
                 Scene?.GetShape(shapePtr);
-                shapePtr->SetSimulationFilterDataMut(&filterData);
+                PxFilterData filterData = shapePtr->GetSimulationFilterData();
+                if (!hasFilterData)
+                {
+                    firstFilterData = filterData;
+                    hasFilterData = true;
+                }
+
                 if (includeQueryData)
                     shapePtr->SetQueryFilterDataMut(&filterData);
 
@@ -180,31 +197,12 @@ namespace XREngine.Scene.Physics.Physx
                 "[PhysxRigidActor] Refreshed filter data actorType={0} shapes={1} word0=0x{2:X8} word1=0x{3:X8} word2=0x{4:X8} group={5} mask={6}",
                 GetType().Name,
                 shapeCount,
-                filterData.word0,
-                filterData.word1,
-                filterData.word2,
+                firstFilterData.word0,
+                firstFilterData.word1,
+                firstFilterData.word2,
                 CollisionGroup,
                 FormatGroupsMask(GroupsMask));
         }
-
-        private PxFilterData BuildFilterData()
-        {
-            PxFilterData data = default;
-            data.word0 = BuildGroupBits(CollisionGroup);
-            var mask = GroupsMask;
-            data.word1 = CombineMaskBits(mask.bits0, mask.bits1);
-            data.word2 = CombineMaskBits(mask.bits2, mask.bits3);
-            if (data.word1 == 0 && data.word2 == 0)
-                data.word1 = uint.MaxValue;
-            data.word3 = 0;
-            return data;
-        }
-
-        private static uint BuildGroupBits(ushort group)
-            => group < 32 ? 1u << group : group;
-
-        private static uint CombineMaskBits(ushort low, ushort high)
-            => (uint)low | ((uint)high << 16);
 
         private static string FormatGroupsMask(PxGroupsMask mask)
             => $"{mask.bits0:X4}:{mask.bits1:X4}:{mask.bits2:X4}:{mask.bits3:X4}";

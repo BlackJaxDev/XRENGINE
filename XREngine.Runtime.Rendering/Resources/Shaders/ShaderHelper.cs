@@ -231,6 +231,12 @@ public static class ShaderHelper
     public static XRShader? LitColorFragDeferred()
         => LoadEngineShader(Path.Combine("Common", "ColoredDeferred.fs"));
 
+    /// <summary>
+    /// Deferred lit shader whose albedo and opacity come from the mesh's first vertex-color channel.
+    /// </summary>
+    public static XRShader LitVertexColorFragDeferred()
+        => LoadEngineShader(Path.Combine("Common", "ColoredVertexDeferred.fs"));
+
     public static XRShader LitTextureNormalFragDeferred()
         => LoadEngineShader(Path.Combine("Common", "TexturedNormalDeferred.fs"));
 

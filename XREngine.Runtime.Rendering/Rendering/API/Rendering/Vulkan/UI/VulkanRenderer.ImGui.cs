@@ -1528,8 +1528,13 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        if (drawData.FramebufferWidth != swapChainExtent.Width ||
-            drawData.FramebufferHeight != swapChainExtent.Height)
+        bool snapshotMatchesSwapchain =
+            drawData.FramebufferWidth == swapChainExtent.Width &&
+            drawData.FramebufferHeight == swapChainExtent.Height;
+        bool canMapLiveSnapshotToScaledSwapchain =
+            _swapchainPresentScalingActive &&
+            XRWindow.IsInteractiveResizeInProgress;
+        if (!snapshotMatchesSwapchain && !canMapLiveSnapshotToScaledSwapchain)
         {
             ResetImGuiFrameMarker();
 
@@ -1543,6 +1548,18 @@ public unsafe partial class VulkanRenderer
                 swapChainExtent.Height);
             drawData = null;
             return false;
+        }
+
+        if (!snapshotMatchesSwapchain)
+        {
+            Debug.VulkanEvery(
+                $"Vulkan.ImGui.ScaledSnapshot.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Mapping live ImGui snapshot to scaled-present swapchain. Snapshot={0}x{1} Swapchain={2}x{3}.",
+                drawData.FramebufferWidth,
+                drawData.FramebufferHeight,
+                swapChainExtent.Width,
+                swapChainExtent.Height);
         }
 
         return true;
@@ -1904,7 +1921,6 @@ public unsafe partial class VulkanRenderer
         BindIndexBufferTracked(commandBuffer, buffers.IndexBuffer, 0, IndexType.Uint16);
 
         Vector2 clipOff = drawData.DisplayPos;
-        Vector2 clipScale = drawData.FramebufferScale;
         Vector2 displaySize = drawData.DisplaySize;
 
         if (displaySize.X <= 0f || displaySize.Y <= 0f)
@@ -1920,10 +1936,15 @@ public unsafe partial class VulkanRenderer
 
         PushConstantsTracked(commandBuffer, _imguiPipelineLayout, ShaderStageFlags.VertexBit, 0, pushConstants);
 
-        uint fbWidth = drawData.FramebufferWidth;
-        uint fbHeight = drawData.FramebufferHeight;
+        uint fbWidth = swapChainExtent.Width;
+        uint fbHeight = swapChainExtent.Height;
         if (fbWidth == 0 || fbHeight == 0)
             return;
+
+        Vector2 snapshotToRasterScale = new(
+            fbWidth / (float)drawData.FramebufferWidth,
+            fbHeight / (float)drawData.FramebufferHeight);
+        Vector2 clipScale = drawData.FramebufferScale * snapshotToRasterScale;
 
         Viewport imguiViewport = CreateImGuiViewport(fbWidth, fbHeight);
         Api.CmdSetViewport(commandBuffer, 0, 1, &imguiViewport);

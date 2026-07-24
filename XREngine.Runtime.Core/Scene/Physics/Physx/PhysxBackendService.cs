@@ -125,6 +125,9 @@ internal sealed class PhysxBackendService(PhysxScene scene) : IPhysicsBackendSer
                 minDist,
                 elapsedTime));
 
+        public void Teleport(Vector3 position, bool clearMotion = true)
+            => controller.Teleport(position, clearMotion);
+
         public void Resize(float totalHeight)
             => controller.Resize(MathF.Max(0.0f, totalHeight - 2.0f * controller.Radius));
 

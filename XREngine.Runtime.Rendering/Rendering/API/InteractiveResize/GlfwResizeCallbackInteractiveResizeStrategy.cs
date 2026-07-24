@@ -4,9 +4,6 @@ namespace XREngine.Rendering;
 
 internal sealed class GlfwResizeCallbackInteractiveResizeStrategy : InteractiveResizeStrategyBase
 {
-    private const int TargetRenderHz = 60;
-    private long _lastRenderTimestamp;
-
     public override EInteractiveWindowResizeStrategy Kind => EInteractiveWindowResizeStrategy.GlfwResizeCallbackRender;
 
     public override void Install(XRWindow window)
@@ -36,12 +33,7 @@ internal sealed class GlfwResizeCallbackInteractiveResizeStrategy : InteractiveR
     }
 
     public override void OnFramebufferResizeQueued(Vector2D<int> framebufferSize)
-    {
-        if (!ShouldRenderByRateLimit(ref _lastRenderTimestamp, TargetRenderHz))
-            return;
-
-        RecordCallbackAndRender("glfw-framebuffer-resize");
-    }
+        => RecordCallbackAndRender("glfw-framebuffer-resize");
 
     private void OnWindowResize(Vector2D<int> size)
     {
@@ -51,10 +43,6 @@ internal sealed class GlfwResizeCallbackInteractiveResizeStrategy : InteractiveR
 
         window.QueueCurrentFramebufferResize("glfw-window-resize");
         window.InteractiveResizeDiagnostics.RecordCallback("glfw-window-resize");
-
-        if (!ShouldRenderByRateLimit(ref _lastRenderTimestamp, TargetRenderHz))
-            return;
-
         window.RenderInteractiveResizeFrame("glfw-window-resize");
     }
 }

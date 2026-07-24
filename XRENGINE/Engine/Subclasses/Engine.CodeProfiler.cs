@@ -190,6 +190,9 @@ namespace XREngine
             private readonly long[] _renderThreadScopeStartTicks = new long[RenderThreadScopeStackCapacity];
             private long _lastSnapshotTicks = -1L;
             private float _lastFpsDropProcessedFrameTime = float.NegativeInfinity;
+            private const long FpsDropLogCooldownMilliseconds = 1_000L;
+            private long _lastFpsDropLogMilliseconds;
+            private int _suppressedFpsDropLogCount;
             private int _renderThreadScopeDepth;
             private long _lastCompletedRenderFrameTicks;
             private float _lastCompletedRenderThreadTotalMs;
@@ -1102,6 +1105,18 @@ namespace XREngine
                 if (frame.Threads.Count == 0)
                     return;
 
+                ProfilerThreadSnapshot? worstThread = null;
+                float worstCurrentMs = 0.0f;
+                float worstPreviousMs = 0.0f;
+                float worstBaselineMs = 0.0f;
+                float worstCurrentFps = 0.0f;
+                float worstPreviousFps = 0.0f;
+                float worstBaselineFps = 0.0f;
+                float worstComparisonFps = 0.0f;
+                float worstDeltaMs = 0.0f;
+                float worstDeltaFps = 0.0f;
+                float worstDropFraction = 0.0f;
+
                 foreach (var thread in frame.Threads)
                 {
                     if (!history.TryGetValue(thread.ThreadId, out float[]? samples) || samples.Length < 2)
@@ -1135,53 +1150,91 @@ namespace XREngine
                         continue;
 
                     float dropFraction = Math.Clamp(deltaFps / comparisonFps, 0f, 1f);
-                    string hotPath = GetHottestPath(thread.RootNodes, out float hotPathMs, out ProfilerScopeKind hotPathScopeKind);
-
-                    var builder = new StringBuilder(1024);
-                    builder.Append("[").Append(DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz")).AppendLine("] FPS drop detected");
-                    builder.Append("FrameTimeSeconds: ").Append(frame.FrameTime.ToString("F6")).AppendLine();
-                    builder.Append("ThreadId: ").Append(thread.ThreadId).AppendLine();
-                    builder.Append("ThreadWorkTimeMs: ").Append(thread.TotalTimeMs.ToString("F3")).AppendLine();
-                    builder.Append("ThreadWallTimeMs: ").Append(thread.WallTimeMs.ToString("F3")).AppendLine();
-                    builder.Append("ThreadDownstreamRenderPressureMs: ").Append(thread.DownstreamRenderPressureMs.ToString("F3")).AppendLine();
-                    builder.Append("CurrentMs: ").Append(currentMs.ToString("F3")).AppendLine();
-                    builder.Append("PreviousMs: ").Append(previousMs.ToString("F3")).AppendLine();
-                    builder.Append("BaselineMs: ").Append(baselineMs.ToString("F3")).AppendLine();
-                    builder.Append("CurrentFps: ").Append(currentFps.ToString("F2")).AppendLine();
-                    builder.Append("PreviousFps: ").Append(previousFps.ToString("F2")).AppendLine();
-                    builder.Append("BaselineFps: ").Append(baselineFps.ToString("F2")).AppendLine();
-                    builder.Append("ComparisonFps: ").Append(comparisonFps.ToString("F2")).AppendLine();
-                    builder.Append("DeltaMs: ").Append(deltaMs.ToString("F3")).AppendLine();
-                    builder.Append("DeltaFps: ").Append(deltaFps.ToString("F2")).AppendLine();
-                    builder.Append("DropPercent: ").Append((dropFraction * 100.0f).ToString("F1")).AppendLine();
-                    builder.Append("HotPathMs: ").Append(hotPathMs.ToString("F3")).AppendLine();
-                    builder.Append("HotPathScopeKind: ").Append(hotPathScopeKind).AppendLine();
-                    builder.Append("HotPathLoggingPolicy: ").Append(GetScopeLoggingPolicy(hotPathScopeKind)).AppendLine();
-                    builder.Append("HotPath: ").Append(hotPath).AppendLine();
-
-                    if (hotPath.Contains("WaitForRender", StringComparison.Ordinal)
-                        && TryGetLikelyBlockingThread(frame.Threads, thread.ThreadId, out var blockingThread))
+                    if (worstThread is not null &&
+                        (deltaMs < worstDeltaMs ||
+                         (deltaMs == worstDeltaMs && dropFraction <= worstDropFraction)))
                     {
-                        string blockingHotPath = GetHottestPath(blockingThread.RootNodes, out float blockingHotPathMs, out ProfilerScopeKind blockingHotPathScopeKind);
-                        builder.Append("LikelyBlockingThreadId: ").Append(blockingThread.ThreadId).AppendLine();
-                        builder.Append("LikelyBlockingThreadWorkTimeMs: ").Append(blockingThread.TotalTimeMs.ToString("F3")).AppendLine();
-                        builder.Append("LikelyBlockingThreadWallTimeMs: ").Append(blockingThread.WallTimeMs.ToString("F3")).AppendLine();
-                        builder.Append("LikelyBlockingThreadDownstreamRenderPressureMs: ").Append(blockingThread.DownstreamRenderPressureMs.ToString("F3")).AppendLine();
-                        builder.Append("LikelyBlockingHotPathMs: ").Append(blockingHotPathMs.ToString("F3")).AppendLine();
-                        builder.Append("LikelyBlockingHotPathScopeKind: ").Append(blockingHotPathScopeKind).AppendLine();
-                        builder.Append("LikelyBlockingHotPath: ").Append(blockingHotPath).AppendLine();
+                        continue;
                     }
 
-                    AppendRootScopeKindSummary(builder, thread.RootNodes);
-                    AppendTopRootTimings(builder, thread.RootNodes, 5);
-                    AppendTopFrameThreads(builder, frame.Threads, thread.ThreadId, 5);
-                    AppendTopComponentTimings(builder, frame.ComponentTimings?.Components, 5);
-                    AppendRenderMatrixStatsSnapshot(builder);
-                    AppendSkinnedBoundsStatsSnapshot(builder);
-                    AppendOctreeStatsSnapshot(builder);
-                    XRTexture2D.AppendRenderWorkBudgetProfilerSummary(builder);
-                    Debug.WriteAuxiliaryLog("profiler-fps-drops.log", builder.ToString());
+                    worstThread = thread;
+                    worstCurrentMs = currentMs;
+                    worstPreviousMs = previousMs;
+                    worstBaselineMs = baselineMs;
+                    worstCurrentFps = currentFps;
+                    worstPreviousFps = previousFps;
+                    worstBaselineFps = baselineFps;
+                    worstComparisonFps = comparisonFps;
+                    worstDeltaMs = deltaMs;
+                    worstDeltaFps = deltaFps;
+                    worstDropFraction = dropFraction;
                 }
+
+                if (worstThread is null)
+                    return;
+
+                long nowMilliseconds = Environment.TickCount64;
+                if (_lastFpsDropLogMilliseconds != 0L &&
+                    nowMilliseconds - _lastFpsDropLogMilliseconds < FpsDropLogCooldownMilliseconds)
+                {
+                    _suppressedFpsDropLogCount++;
+                    return;
+                }
+
+                int suppressedDropCount = _suppressedFpsDropLogCount;
+                _suppressedFpsDropLogCount = 0;
+                _lastFpsDropLogMilliseconds = nowMilliseconds;
+
+                string hotPath = GetHottestPath(
+                    worstThread.RootNodes,
+                    out float hotPathMs,
+                    out ProfilerScopeKind hotPathScopeKind);
+
+                var builder = new StringBuilder(1024);
+                builder.Append("[").Append(DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz")).AppendLine("] FPS drop detected");
+                builder.Append("FrameTimeSeconds: ").Append(frame.FrameTime.ToString("F6")).AppendLine();
+                builder.Append("ThreadId: ").Append(worstThread.ThreadId).AppendLine();
+                builder.Append("ThreadWorkTimeMs: ").Append(worstThread.TotalTimeMs.ToString("F3")).AppendLine();
+                builder.Append("ThreadWallTimeMs: ").Append(worstThread.WallTimeMs.ToString("F3")).AppendLine();
+                builder.Append("ThreadDownstreamRenderPressureMs: ").Append(worstThread.DownstreamRenderPressureMs.ToString("F3")).AppendLine();
+                builder.Append("CurrentMs: ").Append(worstCurrentMs.ToString("F3")).AppendLine();
+                builder.Append("PreviousMs: ").Append(worstPreviousMs.ToString("F3")).AppendLine();
+                builder.Append("BaselineMs: ").Append(worstBaselineMs.ToString("F3")).AppendLine();
+                builder.Append("CurrentFps: ").Append(worstCurrentFps.ToString("F2")).AppendLine();
+                builder.Append("PreviousFps: ").Append(worstPreviousFps.ToString("F2")).AppendLine();
+                builder.Append("BaselineFps: ").Append(worstBaselineFps.ToString("F2")).AppendLine();
+                builder.Append("ComparisonFps: ").Append(worstComparisonFps.ToString("F2")).AppendLine();
+                builder.Append("DeltaMs: ").Append(worstDeltaMs.ToString("F3")).AppendLine();
+                builder.Append("DeltaFps: ").Append(worstDeltaFps.ToString("F2")).AppendLine();
+                builder.Append("DropPercent: ").Append((worstDropFraction * 100.0f).ToString("F1")).AppendLine();
+                builder.Append("SuppressedDropsSincePreviousLog: ").Append(suppressedDropCount).AppendLine();
+                builder.Append("HotPathMs: ").Append(hotPathMs.ToString("F3")).AppendLine();
+                builder.Append("HotPathScopeKind: ").Append(hotPathScopeKind).AppendLine();
+                builder.Append("HotPathLoggingPolicy: ").Append(GetScopeLoggingPolicy(hotPathScopeKind)).AppendLine();
+                builder.Append("HotPath: ").Append(hotPath).AppendLine();
+
+                if (hotPath.Contains("WaitForRender", StringComparison.Ordinal)
+                    && TryGetLikelyBlockingThread(frame.Threads, worstThread.ThreadId, out var blockingThread))
+                {
+                    string blockingHotPath = GetHottestPath(blockingThread.RootNodes, out float blockingHotPathMs, out ProfilerScopeKind blockingHotPathScopeKind);
+                    builder.Append("LikelyBlockingThreadId: ").Append(blockingThread.ThreadId).AppendLine();
+                    builder.Append("LikelyBlockingThreadWorkTimeMs: ").Append(blockingThread.TotalTimeMs.ToString("F3")).AppendLine();
+                    builder.Append("LikelyBlockingThreadWallTimeMs: ").Append(blockingThread.WallTimeMs.ToString("F3")).AppendLine();
+                    builder.Append("LikelyBlockingThreadDownstreamRenderPressureMs: ").Append(blockingThread.DownstreamRenderPressureMs.ToString("F3")).AppendLine();
+                    builder.Append("LikelyBlockingHotPathMs: ").Append(blockingHotPathMs.ToString("F3")).AppendLine();
+                    builder.Append("LikelyBlockingHotPathScopeKind: ").Append(blockingHotPathScopeKind).AppendLine();
+                    builder.Append("LikelyBlockingHotPath: ").Append(blockingHotPath).AppendLine();
+                }
+
+                AppendRootScopeKindSummary(builder, worstThread.RootNodes);
+                AppendTopRootTimings(builder, worstThread.RootNodes, 5);
+                AppendTopFrameThreads(builder, frame.Threads, worstThread.ThreadId, 5);
+                AppendTopComponentTimings(builder, frame.ComponentTimings?.Components, 5);
+                AppendRenderMatrixStatsSnapshot(builder);
+                AppendSkinnedBoundsStatsSnapshot(builder);
+                AppendOctreeStatsSnapshot(builder);
+                XRTexture2D.AppendRenderWorkBudgetProfilerSummary(builder);
+                Debug.WriteAuxiliaryLog("profiler-fps-drops.log", builder.ToString());
             }
 
             private static void AppendTopRootTimings(StringBuilder builder, IReadOnlyList<ProfilerNodeSnapshot> roots, int maxCount)

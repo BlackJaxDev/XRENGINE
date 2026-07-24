@@ -22,11 +22,11 @@ public static partial class EditorUnitTests
 {
     private static bool _emulatedVrStereoPreviewHooked;
 
-    // Unit-test worlds create and possess their own pawn during scene setup.
-    // Prevent play-mode fallback from spawning a second default pawn over it.
-    private static XRWorld CreateTrackedWorld(string name, XRScene scene)
+    // Most unit-test worlds create and possess their own pawn during scene setup.
+    // A world may override this when play mode needs a purpose-built gameplay pawn.
+    private static XRWorld CreateTrackedWorld(string name, XRScene scene, GameMode? gameMode = null)
     {
-        var world = new XRWorld(name, CreatePreplacedPawnGameMode(), scene);
+        var world = new XRWorld(name, gameMode ?? CreatePreplacedPawnGameMode(), scene);
         world.Settings.PreviewOctrees = Toggles.VisualizeOctree;
         world.Settings.PreviewQuadtrees = Toggles.VisualizeQuadtree;
         Undo.TrackWorld(world);
@@ -173,14 +173,69 @@ public static partial class EditorUnitTests
             if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLParallelShaderCompileProbeTimeoutMs)))
                 s.OpenGLParallelShaderCompileProbeTimeoutMs = Toggles.OpenGLParallelShaderCompileProbeTimeoutMs;
         }
-        if (Toggles.RenderPhysicsDebug)
-            s.PhysicsVisualizeSettings.SetAllTrue();
-
-        // Profiler frame logging is driven by EditorPreferences.Debug.EnableProfilerFrameLogging,
-        // whose setter syncs Engine.Profiler.EnableFrameLogging automatically.
-        // Do not override it here â€” that would discard the user's saved preference.
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderPhysicsDebug)))
+        {
+            if (Toggles.RenderPhysicsDebug)
+                s.PhysicsVisualizeSettings.SetAllTrue();
+            else
+                s.PhysicsVisualizeSettings.SetAllFalse();
+        }
+        ApplyPhysicsDebugBenchmarkPreset(s.PhysicsVisualizeSettings);
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.EnableProfilerLogging)))
+        {
+            // Unit-testing settings are process-scoped launch controls. Apply them directly to
+            // the profiler so a test run does not overwrite the user's persisted editor preference.
+            Engine.Profiler.EnableFrameLogging = Toggles.EnableProfilerLogging;
+        }
 
         EnsureEmulatedVRStereoPreviewRenderingHooked();
+    }
+
+    private static void ApplyPhysicsDebugBenchmarkPreset(PhysicsVisualizeSettings settings)
+    {
+        string? preset = Environment.GetEnvironmentVariable("XRE_PHYSICS_DEBUG_PRESET");
+        if (string.IsNullOrWhiteSpace(preset))
+            return;
+
+        settings.SetAllFalse();
+        switch (preset.Trim().ToLowerInvariant())
+        {
+            case "disabled":
+                return;
+            case "shapes":
+            case "shapes-only":
+                settings.VisualizeEnabled = true;
+                settings.VisualizeCollisionShapes = true;
+                settings.VisualizeCollisionStatic = true;
+                settings.VisualizeCollisionDynamic = true;
+                return;
+            case "contacts":
+                settings.VisualizeEnabled = true;
+                settings.VisualizeCollisionShapes = true;
+                settings.VisualizeContactPoint = true;
+                settings.VisualizeContactNormal = true;
+                settings.VisualizeContactError = true;
+                return;
+            case "joints":
+                settings.VisualizeEnabled = true;
+                settings.VisualizeCollisionShapes = true;
+                settings.VisualizeJointLocalFrames = true;
+                settings.VisualizeJointLimits = true;
+                return;
+            case "simulation":
+            case "simulation-meshes":
+                settings.VisualizeEnabled = true;
+                settings.VisualizeSimulationMesh = true;
+                settings.VisualizeCollisionEdges = true;
+                return;
+            case "all":
+                settings.SetAllTrue();
+                return;
+            default:
+                throw new InvalidOperationException(
+                    $"Unknown XRE_PHYSICS_DEBUG_PRESET '{preset}'. " +
+                    "Expected Disabled, Shapes, Contacts, Joints, Simulation, or All.");
+        }
     }
 
     public static XRWorld CreateUberShaderWorld(bool setUI, bool isServer)

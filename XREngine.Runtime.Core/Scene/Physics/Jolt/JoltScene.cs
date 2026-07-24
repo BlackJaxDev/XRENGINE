@@ -6,6 +6,7 @@ using XREngine.Components.Physics;
 using XREngine.Data.Geometry;
 using XREngine.Scene;
 using XREngine.Scene.Physics.Joints;
+using XREngine.Scene.Physics.DebugVisualization;
 using XREngine.Data.Colors;
 using Ray = JoltPhysicsSharp.Ray;
 
@@ -1192,6 +1193,7 @@ namespace XREngine.Scene.Physics.Jolt
             }
 
             _physicsSystem.Update(RuntimePhysicsServices.Current.FixedDeltaSeconds, 3, _jobSystem);
+            PublishDebugFrame();
 
             foreach (JoltDynamicRigidBody body in _dynamicBodies.Values)
                 if (body.OwningComponent is IRuntimePhysicsStepListener listener)
@@ -1679,12 +1681,10 @@ namespace XREngine.Scene.Physics.Jolt
             }
         }
 
-        public override void DebugRenderCollect()
+        private void PublishDebugFrame()
         {
             PhysicsVisualizeSettings settings = RuntimePhysicsServices.Current.VisualizeSettings;
             bool diagnosticsEnabled = RuntimePhysicsServices.Current.JoltDebugRenderDiagnostics;
-            if (!settings.VisualizeEnabled && !diagnosticsEnabled)
-                return;
 
             JoltPhysicsDiagnostics diagnostics = GetDiagnostics();
             if (diagnosticsEnabled)
@@ -1694,63 +1694,104 @@ namespace XREngine.Scene.Physics.Jolt
                     $"[JoltScene] DebugRenderCollect actors={diagnostics.ActorCount} rigid={diagnostics.RigidActorCount} static={diagnostics.StaticBodyCount} dynamic={diagnostics.DynamicBodyCount} controllers={diagnostics.CharacterControllerCount} joints={diagnostics.JointCount} contacts={snapshot.ContactCount}");
             }
 
-            if (!settings.VisualizeEnabled || _physicsSystem is null)
+            PhysicsDebugFrameWriter? writer = DebugFrames.BeginWrite(
+                PhysicsDebugSource.Jolt,
+                PhysicsDebugDepthMode.DepthTested);
+            if (writer is null)
                 return;
+
+            if (!settings.VisualizeEnabled || _physicsSystem is null)
+            {
+                writer.CompleteSourceCountsFromPublished();
+                writer.Publish();
+                return;
+            }
 
             _debugRenderer ??= new JoltEngineDebugRenderer();
             _debugRenderer.NextFrame();
+            _debugRenderer.BeginFrame(writer);
 
-            DrawSettings drawSettings = new()
+            try
             {
-                DrawShape = settings.VisualizeCollisionShapes || settings.VisualizeSimulationMesh,
-                DrawShapeWireframe = true,
-                DrawBoundingBox = settings.VisualizeCollisionAabbs,
-                DrawCenterOfMassTransform = settings.VisualizeBodyMassAxes,
-                DrawWorldTransform = settings.VisualizeBodyAxes || settings.VisualizeActorAxes,
-                DrawVelocity = settings.VisualizeBodyLinearVelocity || settings.VisualizeBodyAngularVelocity,
-            };
-            _physicsSystem.DrawBodies(drawSettings, _debugRenderer);
-
-            if (settings.VisualizeJointLocalFrames || settings.VisualizeJointLimits)
-            {
-                _physicsSystem.DrawConstraints(_debugRenderer);
-                if (settings.VisualizeJointLocalFrames)
-                    _physicsSystem.DrawConstraintReferenceFrame(_debugRenderer);
-                if (settings.VisualizeJointLimits)
-                    _physicsSystem.DrawConstraintLimits(_debugRenderer);
-            }
-
-            foreach (IJoltCharacterController controller in _characterControllers)
-            {
-                Vector3 up = controller.UpDirection;
-                float halfCylinderHeight = MathF.Max(
-                    0.0f,
-                    controller.TotalHeight - 2.0f * controller.Radius) * 0.5f;
-                Vector3 start = controller.Position - up * halfCylinderHeight;
-                Vector3 end = controller.Position + up * halfCylinderHeight;
-                RuntimePhysicsServices.Current.RenderCapsule(start, end, controller.Radius, false, ColorF4.Cyan);
-            }
-
-            if (settings.VisualizeContactPoint || settings.VisualizeContactNormal || settings.VisualizeContactError)
-            {
-                lock (_debugContactsLock)
+                DrawSettings drawSettings = new()
                 {
-                    for (int index = 0; index < _debugContactCount; index++)
+                    DrawShape = settings.VisualizeCollisionShapes || settings.VisualizeSimulationMesh,
+                    DrawShapeWireframe = true,
+                    DrawBoundingBox = settings.VisualizeCollisionAabbs,
+                    DrawCenterOfMassTransform = settings.VisualizeBodyMassAxes,
+                    DrawWorldTransform = settings.VisualizeBodyAxes || settings.VisualizeActorAxes,
+                    DrawVelocity = settings.VisualizeBodyLinearVelocity || settings.VisualizeBodyAngularVelocity,
+                };
+                _physicsSystem.DrawBodies(drawSettings, _debugRenderer);
+
+                if (settings.VisualizeJointLocalFrames || settings.VisualizeJointLimits)
+                {
+                    _physicsSystem.DrawConstraints(_debugRenderer);
+                    if (settings.VisualizeJointLocalFrames)
+                        _physicsSystem.DrawConstraintReferenceFrame(_debugRenderer);
+                    if (settings.VisualizeJointLimits)
+                        _physicsSystem.DrawConstraintLimits(_debugRenderer);
+                }
+
+                uint cyan = PhysicsDebugColor.Pack(ColorF4.Cyan);
+                foreach (IJoltCharacterController controller in _characterControllers)
+                {
+                    Vector3 up = controller.UpDirection;
+                    float halfCylinderHeight = MathF.Max(
+                        0.0f,
+                        controller.TotalHeight - 2.0f * controller.Radius) * 0.5f;
+                    Vector3 start = controller.Position - up * halfCylinderHeight;
+                    Vector3 end = controller.Position + up * halfCylinderHeight;
+                    PhysicsDebugGeometryWriter.AddCapsule(
+                        writer,
+                        start,
+                        end,
+                        controller.Radius,
+                        cyan);
+                }
+
+                if (settings.VisualizeContactPoint || settings.VisualizeContactNormal || settings.VisualizeContactError)
+                {
+                    uint yellow = PhysicsDebugColor.Pack(ColorF4.Yellow);
+                    uint green = PhysicsDebugColor.Pack(ColorF4.Green);
+                    uint red = PhysicsDebugColor.Pack(ColorF4.Red);
+                    lock (_debugContactsLock)
                     {
-                        JoltDebugContact contact = _debugContacts[index];
-                        if (settings.VisualizeContactPoint)
-                            RuntimePhysicsServices.Current.RenderSphere(contact.Position, 0.015f, false, ColorF4.Yellow);
-                        if (settings.VisualizeContactNormal)
-                            RuntimePhysicsServices.Current.RenderLine(contact.Position, contact.Position + contact.Normal * 0.2f, ColorF4.Green);
-                        if (settings.VisualizeContactError && contact.PenetrationDepth > 0.0f)
-                            RuntimePhysicsServices.Current.RenderLine(contact.Position, contact.Position - contact.Normal * contact.PenetrationDepth, ColorF4.Red);
+                        for (int index = 0; index < _debugContactCount; index++)
+                        {
+                            JoltDebugContact contact = _debugContacts[index];
+                            if (settings.VisualizeContactPoint)
+                                PhysicsDebugGeometryWriter.AddSphere(writer, contact.Position, 0.015f, yellow);
+                            if (settings.VisualizeContactNormal)
+                                writer.AddLine(new PhysicsDebugLine(
+                                    contact.Position,
+                                    contact.Position + contact.Normal * 0.2f,
+                                    green));
+                            if (settings.VisualizeContactError && contact.PenetrationDepth > 0.0f)
+                                writer.AddLine(new PhysicsDebugLine(
+                                    contact.Position,
+                                    contact.Position - contact.Normal * contact.PenetrationDepth,
+                                    red));
+                        }
                     }
                 }
             }
+            finally
+            {
+                _debugRenderer.EndFrame();
+            }
+
+            writer.CompleteSourceCountsFromPublished();
+            writer.Publish();
         }
 
+        public override void DebugRenderCollect()
+            => PublishDebugFrame();
+
         public override void DebugRender()
-            => DebugRenderCollect();
+        {
+            // Fixed-step publication owns collection; render views only consume DebugFrames.
+        }
 
         private void OnContactAdded(
             PhysicsSystem system,

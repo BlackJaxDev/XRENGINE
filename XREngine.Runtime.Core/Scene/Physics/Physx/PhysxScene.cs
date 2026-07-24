@@ -14,6 +14,7 @@ using XREngine.Data.Geometry;
 using XREngine.Scene.Physics.Physx.Joints;
 using XREngine.Scene;
 using XREngine.Scene.Physics.Joints;
+using XREngine.Scene.Physics.DebugVisualization;
 using static MagicPhysX.NativeMethods;
 using Quaternion = System.Numerics.Quaternion;
 
@@ -92,6 +93,11 @@ namespace XREngine.Scene.Physics.Physx
             if (_scene is not null)
             {
                 Debug.Log(ELogCategory.Physics, "[PhysxScene] Clearing caches shapes={0} joints={1}", Shapes.Count, Joints.Count);
+
+                // PxControllerManager is owned by this PxScene. It must be released before
+                // PxScene::release(); otherwise the managed manager survives with a dangling
+                // native scene pointer and the next play session crashes in createController().
+                ReleaseControllerManager();
 
                 // Mark all actors owned by this scene as released BEFORE destroying the
                 // native scene. PxScene::release() frees every actor, so any deferred
@@ -326,9 +332,9 @@ namespace XREngine.Scene.Physics.Physx
             ConfigureSimulationEventCallbacks(ref sceneDesc);
 
             sceneDesc.filterShader = get_default_simulation_filter_shader();
-            // Custom filter shader callback (managed -> native function pointer).
-            // This applies the engine's group/mask filtering encoded into PxFilterData by PhysxRigidActor.RefreshShapeFilterData().
-            // Keep this callback simple and conservative: if filter data is unset, allow the pair.
+            // PhysX's fixed-function filter does not express the engine's symmetric
+            // collision-group mask contract. Install a compact shader over the native
+            // PxSetGroup/PxSetGroupsMask layout used by PhysxRigidActor.
             var filterShaderCallback = (delegate* unmanaged[Cdecl]<FilterShaderCallbackInfo*, PxFilterFlags>)&CustomSimulationFilterShader;
             enable_custom_filter_shader(&sceneDesc, filterShaderCallback, 0u);
 
@@ -410,35 +416,11 @@ namespace XREngine.Scene.Physics.Physx
             Debug.Log(ELogCategory.Physics, "[PhysxScene] OnEnterPlayMode: owned={0} ensuredInScene={1} woken={2}", owned.Count, ensuredInScene, woken);
         }
 
-        private static bool IsUnsetFilterData(in PxFilterData fd)
-            => fd.word0 == 0 && fd.word1 == 0 && fd.word2 == 0 && fd.word3 == 0;
-
         private static ulong Mask64FromFilterData(in PxFilterData fd)
-            => ((ulong)fd.word2 << 32) | fd.word1;
+            => ((ulong)fd.word3 << 32) | fd.word2;
 
         private static ulong GroupBit64FromFilterData(in PxFilterData fd)
-        {
-            uint w0 = fd.word0;
-            if (w0 == 0)
-                return 0;
-
-            // If word0 is a bitmask (power-of-two), interpret it as such (supports groups 0..31).
-            // Otherwise interpret word0 as a group index (supports groups 0..63).
-            int groupIndex;
-            if ((w0 & (w0 - 1)) == 0)
-            {
-                groupIndex = BitOperations.TrailingZeroCount(w0);
-            }
-            else
-            {
-                groupIndex = unchecked((int)w0);
-            }
-
-            if ((uint)groupIndex >= 64u)
-                return 0;
-
-            return 1UL << groupIndex;
-        }
+            => fd.word0 < 64u ? 1UL << (int)fd.word0 : 0;
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static unsafe PxFilterFlags CustomSimulationFilterShader(FilterShaderCallbackInfo* info)
@@ -460,22 +442,21 @@ namespace XREngine.Scene.Physics.Physx
                 return 0;
             }
 
-            // If filter data is missing/uninitialized for either shape, don't unexpectedly suppress the pair.
-            // This keeps CCT/internal shapes from breaking if they don't populate PxFilterData.
             PxFilterData fd0 = info->filterData0;
             PxFilterData fd1 = info->filterData1;
-            if (IsUnsetFilterData(fd0) || IsUnsetFilterData(fd1))
-            {
-                *info->pairFlags = PxPairFlags.ContactDefault | PxPairFlags.DetectCcdContact;
-                return 0;
-            }
 
             ulong group0 = GroupBit64FromFilterData(fd0);
             ulong group1 = GroupBit64FromFilterData(fd1);
             ulong mask0 = Mask64FromFilterData(fd0);
             ulong mask1 = Mask64FromFilterData(fd1);
 
-            // Conservative fallback: if either group resolves to 0, allow.
+            // Empty is the component default and means "unfiltered", which also keeps
+            // PhysX-owned internal/controller shapes interoperable with engine actors.
+            if (mask0 == 0)
+                mask0 = ulong.MaxValue;
+            if (mask1 == 0)
+                mask1 = ulong.MaxValue;
+
             if (group0 == 0 || group1 == 0)
             {
                 *info->pairFlags = PxPairFlags.ContactDefault | PxPairFlags.DetectCcdContact;
@@ -525,6 +506,9 @@ namespace XREngine.Scene.Physics.Physx
             if (controllers is not null)
                 foreach (var controller in controllers)
                     controller.ConsumeInputBuffer(dt);
+
+            if (TryConsumeDebugRenderViewBounds(out AABB debugCullBounds))
+                VisualizationCullingBox = debugCullBounds;
             
             Simulate(dt, null, true);
             if (!FetchResults(true, out uint error))
@@ -533,14 +517,12 @@ namespace XREngine.Scene.Physics.Physx
                 return;
             }
 
-            if (VisualizeEnabled)
-                PopulateDebugBuffers();
+            PublishDebugFrame();
 
             uint count;
             var ptr = _scene->GetActiveActorsMut(&count);
             for (int i = 0; i < count; i++)
                 UpdatePhysicsActor(ptr, i);
-            //Task.WaitAll(Enumerable.Range(0, (int)count).Select(i => Task.Run(() => UpdatePhysicsActor(ptr, i))));
             NotifySimulationStepped();
         }
 
@@ -1489,6 +1471,13 @@ namespace XREngine.Scene.Physics.Physx
             _controllerManager.ControllerManagerPtr->ReleaseMut();
             //Debug.Log(ELogCategory.Physics, "[PhysxObj] - ControllerManager ptr=0x{0:X}", (nint)_controllerManager.ControllerManagerPtr);
             _controllerManager = null;
+
+            // RequestRelease queues controllers for the next step. They were released
+            // synchronously above because the scene is being destroyed, so discard those
+            // now-idempotent requests and do not retain old-session controller wrappers.
+            while (_pendingControllerReleases.TryDequeue(out _))
+            {
+            }
         }
 
         public bool RaycastAny(
@@ -2617,207 +2606,253 @@ namespace XREngine.Scene.Physics.Physx
             }
         }
 
-        private PxDebugPoint* _debugPoints;
-        private PxDebugLine* _debugLines;
-        private PxDebugTriangle* _debugTriangles;
-
-        private static ColorF4 ToColorF4(uint c) => new(
-            ((c >> 00) & 0xFF) / 255.0f,
-            ((c >> 08) & 0xFF) / 255.0f,
-            ((c >> 16) & 0xFF) / 255.0f,
-            ((c >> 24) & 0xFF) / 255.0f);
-
-        #region Bulk direct-memory writers (no per-element delegate dispatch)
-
-        private unsafe void BulkWritePoints(IntPtr dest, int count)
+        /// <summary>
+        /// Copies the native render buffer exactly once while PhysX guarantees its lifetime,
+        /// then atomically publishes a backend-neutral frame for every render view.
+        /// </summary>
+        private void PublishDebugFrame()
         {
-            float* d = (float*)dest;
-            PxDebugPoint* src = _debugPoints;
-            const float inv = 1.0f / 255.0f;
-            for (int i = 0; i < count; i++)
+            if (_scene is null)
+                return;
+
+            bool enabled = RuntimePhysicsServices.Current.VisualizeSettings.VisualizeEnabled;
+            if (!enabled)
             {
-                int x = i * 8;
-                ref PxDebugPoint p = ref src[i];
-                d[x + 0] = p.pos.x;
-                d[x + 1] = p.pos.y;
-                d[x + 2] = p.pos.z;
-                d[x + 3] = 0.0f;
-                uint c = p.color;
-                d[x + 4] = ((c >> 00) & 0xFF) * inv;
-                d[x + 5] = ((c >> 08) & 0xFF) * inv;
-                d[x + 6] = ((c >> 16) & 0xFF) * inv;
-                d[x + 7] = ((c >> 24) & 0xFF) * inv;
+                PhysicsDebugFrameWriter? emptyWriter = DebugFrames.BeginWrite(
+                    PhysicsDebugSource.PhysX,
+                    PhysicsDebugDepthMode.DepthTested);
+                emptyWriter?.Publish();
+                return;
+            }
+
+            PxRenderBuffer* buffer = RenderBuffer;
+            int pointCount = checked((int)buffer->GetNbPoints());
+            int lineCount = checked((int)buffer->GetNbLines());
+            int triangleCount = checked((int)buffer->GetNbTriangles());
+            PhysicsDebugFrameWriter? writer = DebugFrames.BeginWrite(
+                PhysicsDebugSource.PhysX,
+                PhysicsDebugDepthMode.DepthTested,
+                pointCount,
+                lineCount,
+                triangleCount);
+            if (writer is null)
+                return;
+
+            PxDebugPoint* points = buffer->GetPoints();
+            PxDebugLine* lines = buffer->GetLines();
+            PxDebugTriangle* triangles = buffer->GetTriangles();
+            PhysxDebugFrameAdapter.Copy(
+                points,
+                pointCount,
+                lines,
+                lineCount,
+                triangles,
+                triangleCount,
+                writer);
+
+            writer.Publish();
+        }
+
+        /// <summary>
+        /// Builds an authoring-time preview directly from native scene shapes. PhysX only
+        /// produces its render buffer after simulation, so Edit mode needs a non-simulating
+        /// path that cannot advance bodies or invalidate their Play-start state.
+        /// </summary>
+        private void PublishEditModeDebugFrame()
+        {
+            if (_scene is null)
+                return;
+
+            PhysicsVisualizeSettings settings = RuntimePhysicsServices.Current.VisualizeSettings;
+            PhysicsDebugFrameWriter? writer = DebugFrames.BeginWrite(
+                PhysicsDebugSource.PhysX,
+                PhysicsDebugDepthMode.DepthTested);
+            if (writer is null)
+                return;
+
+            if (!settings.VisualizeEnabled)
+            {
+                writer.CompleteSourceCountsFromPublished();
+                writer.Publish();
+                return;
+            }
+
+            if (settings.VisualizeWorldAxes)
+                PhysicsDebugGeometryWriter.AddAxes(writer, Vector3.Zero, Quaternion.Identity, 1.0f);
+
+            const PxActorTypeFlags rigidActorTypes =
+                PxActorTypeFlags.RigidStatic |
+                PxActorTypeFlags.RigidDynamic;
+            const int ActorBatchCapacity = 256;
+            uint actorCount = _scene->GetNbActors(rigidActorTypes);
+            PxActor** actorBatch = stackalloc PxActor*[ActorBatchCapacity];
+            for (uint actorStart = 0; actorStart < actorCount; actorStart += ActorBatchCapacity)
+            {
+                uint requested = Math.Min((uint)ActorBatchCapacity, actorCount - actorStart);
+                uint written = _scene->GetActors(
+                    rigidActorTypes,
+                    actorBatch,
+                    requested,
+                    actorStart);
+                for (uint actorIndex = 0; actorIndex < written; actorIndex++)
+                {
+                    PhysxRigidActor? actor = PhysxRigidActor.Get((PxRigidActor*)actorBatch[actorIndex]);
+                    if (actor is null || actor.IsReleased || actor.ScenePtr != _scene)
+                        continue;
+
+                    AppendEditModeActorDebug(writer, actor, settings);
+                }
+            }
+
+            writer.CompleteSourceCountsFromPublished();
+            writer.Publish();
+        }
+
+        private static void AppendEditModeActorDebug(
+            PhysicsDebugFrameWriter writer,
+            PhysxRigidActor actor,
+            PhysicsVisualizeSettings settings)
+        {
+            bool isDynamic = actor is PhysxDynamicRigidBody;
+            if (isDynamic && settings.VisualizeCollisionStatic && !settings.VisualizeCollisionDynamic)
+                return;
+            if (!isDynamic && settings.VisualizeCollisionDynamic && !settings.VisualizeCollisionStatic)
+                return;
+
+            (Vector3 actorPosition, Quaternion actorRotation) = actor.Transform;
+            if (settings.VisualizeActorAxes || settings.VisualizeBodyAxes)
+                PhysicsDebugGeometryWriter.AddAxes(writer, actorPosition, actorRotation, 0.5f);
+
+            if (isDynamic && settings.VisualizeBodyLinearVelocity &&
+                actor.LinearVelocity.LengthSquared() > float.Epsilon)
+            {
+                writer.AddLine(new PhysicsDebugLine(
+                    actorPosition,
+                    actorPosition + actor.LinearVelocity,
+                    0xFF00FFFFu));
+            }
+
+            if (isDynamic && settings.VisualizeBodyAngularVelocity &&
+                actor.AngularVelocity.LengthSquared() > float.Epsilon)
+            {
+                writer.AddLine(new PhysicsDebugLine(
+                    actorPosition,
+                    actorPosition + actor.AngularVelocity,
+                    0xFFFF00FFu));
+            }
+
+            bool drawShapes = settings.VisualizeCollisionShapes || settings.VisualizeSimulationMesh;
+            bool drawBounds = settings.VisualizeCollisionAabbs;
+            if (!drawShapes && !drawBounds)
+                return;
+
+            const int ShapeBatchCapacity = 32;
+            uint shapeCount = actor.ShapeCount;
+            PxShape** shapeBatch = stackalloc PxShape*[ShapeBatchCapacity];
+            for (uint shapeStart = 0; shapeStart < shapeCount; shapeStart += ShapeBatchCapacity)
+            {
+                uint requested = Math.Min((uint)ShapeBatchCapacity, shapeCount - shapeStart);
+                uint written = actor.RigidActorPtr->GetShapes(
+                    shapeBatch,
+                    requested,
+                    shapeStart);
+                for (uint shapeIndex = 0; shapeIndex < written; shapeIndex++)
+                {
+                    PxShape* shape = shapeBatch[shapeIndex];
+                    if (shape is null ||
+                        !shape->GetFlags().HasFlag(PxShapeFlags.Visualization))
+                        continue;
+
+                    uint color = isDynamic ? 0xFF40FF40u : 0xFFFFC040u;
+                    if (drawShapes)
+                        AppendEditModeShapeGeometry(writer, actor, shape, color);
+                    if (drawBounds)
+                        AppendEditModeShapeBounds(writer, actor, shape, 0xFF00FFFFu);
+                }
             }
         }
 
-        private unsafe void BulkWriteLines(IntPtr dest, int count)
+        private static void AppendEditModeShapeGeometry(
+            PhysicsDebugFrameWriter writer,
+            PhysxRigidActor actor,
+            PxShape* shape,
+            uint color)
         {
-            float* d = (float*)dest;
-            PxDebugLine* src = _debugLines;
-            const float inv = 1.0f / 255.0f;
-            for (int i = 0; i < count; i++)
+            PxGeometry* geometry = shape->GetGeometry();
+            PxTransform pose = shape->ExtGetGlobalPose(actor.RigidActorPtr);
+            Vector3 position = pose.p;
+            Quaternion rotation = pose.q;
+            switch (PxGeometry_getType(geometry))
             {
-                int x = i * 12;
-                ref PxDebugLine ln = ref src[i];
-                d[x + 0] = ln.pos0.x;
-                d[x + 1] = ln.pos0.y;
-                d[x + 2] = ln.pos0.z;
-                d[x + 3] = 0.0f;
-                d[x + 4] = ln.pos1.x;
-                d[x + 5] = ln.pos1.y;
-                d[x + 6] = ln.pos1.z;
-                d[x + 7] = 0.0f;
-                uint c = ln.color0;
-                d[x + 8] = ((c >> 00) & 0xFF) * inv;
-                d[x + 9] = ((c >> 08) & 0xFF) * inv;
-                d[x + 10] = ((c >> 16) & 0xFF) * inv;
-                d[x + 11] = ((c >> 24) & 0xFF) * inv;
+                case PxGeometryType.Sphere:
+                    PhysicsDebugGeometryWriter.AddSphere(
+                        writer,
+                        position,
+                        ((PxSphereGeometry*)geometry)->radius,
+                        color);
+                    break;
+                case PxGeometryType.Capsule:
+                    PxCapsuleGeometry* capsule = (PxCapsuleGeometry*)geometry;
+                    Vector3 axis = Vector3.Transform(Vector3.UnitX, rotation);
+                    PhysicsDebugGeometryWriter.AddCapsule(
+                        writer,
+                        position - axis * capsule->halfHeight,
+                        position + axis * capsule->halfHeight,
+                        capsule->radius,
+                        color);
+                    break;
+                case PxGeometryType.Box:
+                    PhysicsDebugGeometryWriter.AddBox(
+                        writer,
+                        position,
+                        rotation,
+                        ((PxBoxGeometry*)geometry)->halfExtents,
+                        color);
+                    break;
+                default:
+                    AppendEditModeShapeBounds(writer, actor, shape, color);
+                    break;
             }
         }
 
-        private unsafe void BulkWriteTriangles(IntPtr dest, int count)
+        private static void AppendEditModeShapeBounds(
+            PhysicsDebugFrameWriter writer,
+            PhysxRigidActor actor,
+            PxShape* shape,
+            uint color)
         {
-            float* d = (float*)dest;
-            PxDebugTriangle* src = _debugTriangles;
-            const float inv = 1.0f / 255.0f;
-            for (int i = 0; i < count; i++)
-            {
-                int x = i * 16;
-                ref PxDebugTriangle tri = ref src[i];
-                d[x + 0] = tri.pos0.x;
-                d[x + 1] = tri.pos0.y;
-                d[x + 2] = tri.pos0.z;
-                d[x + 3] = 0.0f;
-                d[x + 4] = tri.pos1.x;
-                d[x + 5] = tri.pos1.y;
-                d[x + 6] = tri.pos1.z;
-                d[x + 7] = 0.0f;
-                d[x + 8] = tri.pos2.x;
-                d[x + 9] = tri.pos2.y;
-                d[x + 10] = tri.pos2.z;
-                d[x + 11] = 0.0f;
-                uint c = tri.color0;
-                d[x + 12] = ((c >> 00) & 0xFF) * inv;
-                d[x + 13] = ((c >> 08) & 0xFF) * inv;
-                d[x + 14] = ((c >> 16) & 0xFF) * inv;
-                d[x + 15] = ((c >> 24) & 0xFF) * inv;
-            }
+            PxBounds3 bounds = shape->ExtGetWorldBounds(actor.RigidActorPtr, 1.001f);
+            Vector3 minimum = bounds.minimum;
+            Vector3 maximum = bounds.maximum;
+            if (!IsFiniteReasonableBounds(minimum, maximum))
+                return;
+
+            PhysicsDebugGeometryWriter.AddAabb(writer, minimum, maximum, color);
         }
 
-        #endregion
-
-        #region Compressed bulk direct-memory writers (packed uint color, no padding)
-
-        private unsafe void BulkWritePointsCompressed(IntPtr dest, int count)
+        private static bool IsFiniteReasonableBounds(Vector3 minimum, Vector3 maximum)
         {
-            float* d = (float*)dest;
-            PxDebugPoint* src = _debugPoints;
-            for (int i = 0; i < count; i++)
-            {
-                int x = i * 4;
-                ref PxDebugPoint p = ref src[i];
-                d[x + 0] = p.pos.x;
-                d[x + 1] = p.pos.y;
-                d[x + 2] = p.pos.z;
-                ((uint*)d)[x + 3] = p.color; // RGBA8 packed uint - no conversion needed
-            }
+            Vector3 extent = maximum - minimum;
+            return float.IsFinite(minimum.X) &&
+                float.IsFinite(minimum.Y) &&
+                float.IsFinite(minimum.Z) &&
+                float.IsFinite(maximum.X) &&
+                float.IsFinite(maximum.Y) &&
+                float.IsFinite(maximum.Z) &&
+                extent.X >= 0.0f &&
+                extent.Y >= 0.0f &&
+                extent.Z >= 0.0f &&
+                extent.X < 1_000_000.0f &&
+                extent.Y < 1_000_000.0f &&
+                extent.Z < 1_000_000.0f;
         }
 
-        private unsafe void BulkWriteLinesCompressed(IntPtr dest, int count)
-        {
-            float* d = (float*)dest;
-            PxDebugLine* src = _debugLines;
-            for (int i = 0; i < count; i++)
-            {
-                int x = i * 7;
-                ref PxDebugLine ln = ref src[i];
-                d[x + 0] = ln.pos0.x;
-                d[x + 1] = ln.pos0.y;
-                d[x + 2] = ln.pos0.z;
-                d[x + 3] = ln.pos1.x;
-                d[x + 4] = ln.pos1.y;
-                d[x + 5] = ln.pos1.z;
-                ((uint*)d)[x + 6] = ln.color0;
-            }
-        }
-
-        private unsafe void BulkWriteTrianglesCompressed(IntPtr dest, int count)
-        {
-            float* d = (float*)dest;
-            PxDebugTriangle* src = _debugTriangles;
-            for (int i = 0; i < count; i++)
-            {
-                int x = i * 10;
-                ref PxDebugTriangle tri = ref src[i];
-                d[x + 0] = tri.pos0.x;
-                d[x + 1] = tri.pos0.y;
-                d[x + 2] = tri.pos0.z;
-                d[x + 3] = tri.pos1.x;
-                d[x + 4] = tri.pos1.y;
-                d[x + 5] = tri.pos1.z;
-                d[x + 6] = tri.pos2.x;
-                d[x + 7] = tri.pos2.y;
-                d[x + 8] = tri.pos2.z;
-                ((uint*)d)[x + 9] = tri.color0;
-            }
-        }
-
-        #endregion
-
-        private void PopulateDebugBuffers()
-        {
-            var rb = RenderBuffer;
-            _debugPoints = rb->GetPoints();
-            _debugLines = rb->GetLines();
-            _debugTriangles = rb->GetTriangles();
-        }
+        public override void DebugRenderCollect()
+            => PublishEditModeDebugFrame();
 
         public override void DebugRender()
         {
-            PxRenderBuffer* buffer = RenderBuffer;
-            IRuntimePhysicsServices services = RuntimePhysicsServices.Current;
-            _debugPoints = buffer->GetPoints();
-            _debugLines = buffer->GetLines();
-            _debugTriangles = buffer->GetTriangles();
-
-            uint pointCount = buffer->GetNbPoints();
-            for (int index = 0; index < pointCount; index++)
-            {
-                (Vector3 position, ColorF4 color) = GetPoint(index);
-                services.RenderSphere(position, 0.01f, solid: true, color);
-            }
-
-            uint lineCount = buffer->GetNbLines();
-            for (int index = 0; index < lineCount; index++)
-            {
-                (Vector3 start, Vector3 end, ColorF4 color) = GetLine(index);
-                services.RenderLine(start, end, color);
-            }
-
-            uint triangleCount = buffer->GetNbTriangles();
-            for (int index = 0; index < triangleCount; index++)
-            {
-                (Vector3 first, Vector3 second, Vector3 third, ColorF4 color) = GetTriangle(index);
-                services.RenderLine(first, second, color);
-                services.RenderLine(second, third, color);
-                services.RenderLine(third, first, color);
-            }
-        }
-
-        private (Vector3 pos, ColorF4 color) GetPoint(int i)
-        {
-            var p = _debugPoints[i];
-            return ((Vector3)p.pos, ToColorF4(p.color));
-        }
-        private (Vector3 pos0, Vector3 pos1, ColorF4 color) GetLine(int i)
-        {
-            var p = _debugLines[i];
-            return ((Vector3)p.pos0, (Vector3)p.pos1, ToColorF4(p.color0));
-        }
-        private (Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color) GetTriangle(int i)
-        {
-            var p = _debugTriangles[i];
-            return ((Vector3)p.pos0, (Vector3)p.pos1, (Vector3)p.pos2, ToColorF4(p.color0));
+            // Rendering consumes DebugFrames. Native extraction must never run per view.
         }
 
         private static Queue<(Vector3 delta, float minDist, float elapsedTime)> _moveQueue = new();

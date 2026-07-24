@@ -37,13 +37,14 @@ namespace XREngine.Scene
 
         private float _physicsResetMinYDist = 100.0f;
         /// <summary>
-        /// If greater than zero, dynamic physics bodies will be reset to their initial poses when any body
-        /// passes a gravity-aligned plane this far away along the gravity direction.
+        /// If greater than zero, dynamic physics bodies and locomotion character controllers
+        /// reset to their Play-start poses when they pass a gravity-aligned plane this far
+        /// away along the gravity direction.
         /// The plane normal is -Gravity (i.e., aligned to "up"), and the scalar "Y" used for the check is
         /// the projection of world position onto that up axis.
         /// </summary>
         [Category("Physics")]
-        [Description("If > 0, resets dynamic physics bodies to their initial poses when any body falls past a gravity-aligned plane this distance away.")]
+        [Description("If > 0, resets dynamic bodies and locomotion controllers to their Play-start poses after they fall past this gravity-aligned distance.")]
         public float PhysicsResetMinYDist
         {
             get => _physicsResetMinYDist;

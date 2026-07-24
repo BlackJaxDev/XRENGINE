@@ -1122,7 +1122,7 @@ public static partial class CookedBinarySerializer
     }
 
     private static readonly ConcurrentDictionary<Type, byte> LoggedTypeDeserializationFailures = new();
-    private static readonly ConcurrentDictionary<Type, byte> LoggedMemoryPackSerializationFailures = new();
+    private static readonly ConcurrentDictionary<Type, byte> UnsupportedMemoryPackTypes = new();
 
     private static void LogTypeDeserializationFailure(Type type, Exception ex)
     {
@@ -1134,7 +1134,7 @@ public static partial class CookedBinarySerializer
 
     private static void LogMemoryPackSerializationFailure(Type type, Exception ex)
     {
-        if (!LoggedMemoryPackSerializationFailures.TryAdd(type, 0))
+        if (!UnsupportedMemoryPackTypes.TryAdd(type, 0))
             return;
 
         Debug.LogWarning($"[MEMORYPACK SERIALIZE FAIL] Type '{type.FullName}' is not supported by MemoryPack. " +
@@ -1822,7 +1822,8 @@ public static partial class CookedBinarySerializer
     private static bool TrySerializeWithMemoryPack(object value, Type runtimeType, out byte[]? data)
     {
         // Re-entrancy guard prevents XRAsset envelope from recursing back into MemoryPack.
-        if (IsMemoryPackSuppressed)
+        if (IsMemoryPackSuppressed ||
+            UnsupportedMemoryPackTypes.ContainsKey(runtimeType))
         {
             data = null;
             return false;
@@ -1863,7 +1864,23 @@ public static partial class CookedBinarySerializer
             static type =>
                 type.IsAssignableTo(typeof(SceneNode)) ||
                 type.IsAssignableTo(typeof(TransformBase)) ||
-                type.GetCustomAttribute<CookedBinaryReflectionOnlyAttribute>(inherit: true) is not null);
+                type.IsAssignableTo(typeof(XRComponent)) ||
+                type.GetCustomAttribute<CookedBinaryReflectionOnlyAttribute>(inherit: true) is not null ||
+                IsNonAssetEngineObjectWithoutMemoryPackContract(type));
+
+    /// <summary>
+    /// Engine object models without an explicit MemoryPack contract are authored for the cooked
+    /// reflection serializer. Routing them directly avoids using exceptions as formatter discovery.
+    /// XRAsset instances remain on their dedicated MemoryPack envelope path.
+    /// </summary>
+    private static bool IsNonAssetEngineObjectWithoutMemoryPackContract(Type type)
+        => type.IsAssignableTo(typeof(XRBase)) &&
+           !type.IsAssignableTo(typeof(XRAsset)) &&
+           type.GetCustomAttribute<MemoryPackableAttribute>(inherit: false) is null &&
+           !type.GetInterfaces().Any(
+               static interfaceType =>
+                   interfaceType.IsGenericType &&
+                   interfaceType.GetGenericTypeDefinition() == typeof(IMemoryPackable<>));
 
     private static readonly ConcurrentDictionary<Type, bool> ReflectionObjectEncodingTypeCache = new();
 
@@ -2033,8 +2050,21 @@ public static partial class CookedBinarySerializer
                                   .Where(m => m.IsValid)
                                   .ToArray();
 
-            Members = properties;
-            _membersByName = properties.ToDictionary(m => m.Name, StringComparer.Ordinal);
+            MemberMetadata[] fields = type.IsValueType
+                ? type.GetFields(BindingFlags.Instance | BindingFlags.Public)
+                      .Where(f => !f.IsInitOnly)
+                      .Where(f =>
+                          f.GetCustomAttribute<YamlIgnoreAttribute>() is null &&
+                          f.GetCustomAttribute<RuntimeOnlyAttribute>() is null &&
+                          f.GetCustomAttribute<MemoryPackIgnoreAttribute>() is null &&
+                          !IsRuntimeOnlyType(f.FieldType))
+                      .Select(f => new MemberMetadata(f))
+                      .Where(m => m.IsValid)
+                      .ToArray()
+                : [];
+
+            Members = [.. properties, .. fields];
+            _membersByName = Members.ToDictionary(m => m.Name, StringComparer.Ordinal);
         }
 
         private readonly Dictionary<string, MemberMetadata> _membersByName;
@@ -2049,6 +2079,8 @@ public static partial class CookedBinarySerializer
     [RequiresDynamicCode(ReflectionWarningMessage)]
     private sealed class MemberMetadata
     {
+        private readonly FieldInfo? _field;
+
         public MemberMetadata(PropertyInfo property)
         {
             Name = property.Name;
@@ -2058,6 +2090,14 @@ public static partial class CookedBinarySerializer
             IsValid = Getter is not null && Setter is not null;
         }
 
+        public MemberMetadata(FieldInfo field)
+        {
+            _field = field;
+            Name = field.Name;
+            MemberType = field.FieldType;
+            IsValid = !field.IsInitOnly;
+        }
+
         public string Name { get; }
         public Type MemberType { get; }
         public MethodInfo? Getter { get; }
@@ -2065,10 +2105,18 @@ public static partial class CookedBinarySerializer
         public bool IsValid { get; }
 
         public object? GetValue(object instance)
-            => Getter?.Invoke(instance, null);
+            => _field is not null
+                ? _field.GetValue(instance)
+                : Getter?.Invoke(instance, null);
 
         public void SetValue(object instance, object? value)
         {
+            if (_field is not null)
+            {
+                _field.SetValue(instance, value);
+                return;
+            }
+
             if (Setter is null)
                 return;
 

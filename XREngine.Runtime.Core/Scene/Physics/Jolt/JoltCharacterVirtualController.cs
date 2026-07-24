@@ -476,6 +476,38 @@ namespace XREngine.Scene.Physics.Jolt
                 elapsedTime));
 
         /// <summary>
+        /// Teleports the virtual character and optionally clears movement inherited
+        /// from its previous pose.
+        /// </summary>
+        public void Teleport(Vector3 position, bool clearMotion = true)
+        {
+            if (IsReleased || !IsFinite(position))
+                return;
+
+            if (clearMotion)
+            {
+                _motionBuffer.Clear();
+                _lastMotionCommand = default;
+                _requestedVelocity = Vector3.Zero;
+                _effectiveVelocity = Vector3.Zero;
+                _supportState = CharacterSupportState.Unknown;
+                _groundNormal = UpDirection;
+                _groundVelocity = Vector3.Zero;
+                _groundActor = null;
+                _wasSupported = false;
+                _lastSupportedGroundVelocity = Vector3.Zero;
+                _inheritedGroundVelocity = Vector3.Zero;
+                _collidingUp = false;
+                _collidingDown = false;
+                _collidingSides = false;
+                if (_character is not null)
+                    _character.LinearVelocity = Vector3.Zero;
+            }
+
+            Position = position;
+        }
+
+        /// <summary>
         /// Consumes the input buffer and applies the accumulated movement to the character controller for the given fixed delta time.
         /// </summary>
         /// <param name="fixedDelta">The fixed delta time for the physics update.</param>

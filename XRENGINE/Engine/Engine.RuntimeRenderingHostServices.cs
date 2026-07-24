@@ -421,6 +421,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         Engine.Time.Timer.RenderFrame -= renderFrame;
     }
 
+    public bool TryDispatchInteractiveResizeFrame()
+        => Engine.Time.Timer.TryDispatchInteractiveResizeFrame();
+
     public void SubscribePlayModeTransitions(Action callback)
     {
         Engine.PlayMode.PreEnterPlay += callback;
@@ -570,8 +573,8 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RenderDebugText(Vector3 position, string text, ColorF4 color)
         => Engine.Rendering.Debug.RenderText(position, text, color);
 
-    public void RenderDebugShapes()
-        => Engine.Rendering.Debug.RenderShapes();
+    public void RenderDebugShapes(bool depthTested)
+        => Engine.Rendering.Debug.RenderShapes(depthTested);
 
     public TAsset? LoadAsset<TAsset>(string filePath) where TAsset : XRAsset, new()
         => Engine.Assets?.Load<TAsset>(filePath);
