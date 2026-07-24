@@ -44,7 +44,7 @@ public sealed class UnityPoiyomiMaterialImporterTests
         string matcapPath = CreateUnityAsset(projectRoot, "Assets/Textures/body_matcap.png", "55555555555555555555555555555555");
 
         Directory.CreateDirectory(Path.GetDirectoryName(shaderPath)!);
-        File.WriteAllText(shaderPath, "Shader \".poiyomi/Poiyomi Toon\" { // Poiyomi 9.3 }\n");
+        File.WriteAllText(shaderPath, "Shader \".poiyomi/Poiyomi Toon\" { // Poiyomi 9.3.64 }\n");
         WriteUnityMeta(shaderPath, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 
         Directory.CreateDirectory(Path.GetDirectoryName(materialPath)!);

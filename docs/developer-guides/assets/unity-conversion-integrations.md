@@ -32,7 +32,7 @@ Current limits are important: the `.anim` path imports serialized clip curves, b
 
 Generic Unity materials import their common base color and main texture data when standard properties such as `_BaseColor`, `_Color`, `_BaseMap`, and `_MainTex` are present.
 
-Recognized Poiyomi Toon 9.3 and lilToon materials are converted to XRENGINE's forward-plus Uber shader path. The converter maps supported texture slots, scalar properties, color properties, feature toggles, transparency mode, alpha cutoff, culling mode, and texture transforms into engine material parameters.
+Recognized Poiyomi Toon 9.3.64 and lilToon materials are converted to XRENGINE's forward-plus Uber shader path. The converter maps supported texture slots, scalar properties, color properties, feature toggles, transparency mode, alpha cutoff, culling mode, and texture transforms into engine material parameters.
 
 Supported conversion categories include:
 
@@ -46,22 +46,30 @@ Supported conversion categories include:
 - Rim lighting.
 - Specular and smoothness controls.
 - Detail textures and detail normals.
-- Outline masks.
+- Outline authoring is preserved and reported as unsupported until the inverse-hull pass is implemented.
 - Backface and backlight/subsurface controls.
 - Glitter.
 - Flipbook textures for Poiyomi where present.
 - Dissolve.
 - Parallax.
 
-Shader-specific parity is best-effort. Unsupported source properties are ignored, and failed Poiyomi/lilToon conversions fall back to the generic Unity material importer with warnings.
+Shader-specific parity is still incremental. Failed Poiyomi/lilToon conversions fall back to the generic Unity material importer with warnings. The ingestion layer now retains the exact Unity YAML, unknown fields, unresolved references, and unsupported texture shapes in source metadata and structured diagnostics instead of silently discarding them.
+
+The Poiyomi baseline keeps toon ramps, first/second shade maps, metallic/smoothness data, rim color/masks, and dissolve noise/mask/edge inputs in independent sampler slots. UV0-UV3 are available to the uber path. If a mesh lacks an authored UV channel, conversion reports the mismatch and rendering falls back to UV0, or (0,0) when the mesh has no UVs. TextureImporter color-space, normal/data role, alpha, wrapping, filtering, mip, bias, and anisotropy settings are carried into runtime textures. Explicitly disabled Poiyomi sections stay out of the compiled uber variant even when Unity retains dormant texture assignments.
+
+### Lossless Material Metadata
+
+`UnityMaterialDocumentParser` is reusable by any Unity shader converter. It preserves shader references, render queues, old and new keyword layouts, disabled passes, override tags, texture transforms, scalar/vector/string properties, and unrecognized serialized fields. `UnityTextureImportDocumentParser` preserves sampling metadata from TextureImporter `.meta` files, including color space, normal/alpha interpretation, wrapping, filtering, mips, anisotropy, and 2D/array/cube shape.
+
+`UnityMaterialImportResult` exposes the parsed `SourceDocument`, resolved `ShaderAsset`, and normalized `PoiyomiDescriptor` for diagnostics and future reconversion. Texture arrays and cubes are resolved and retained as their native shapes; conversion phases that do not yet bind those shapes report them rather than flattening them.
 
 ## Poiyomi and lilToon Detection
 
-Poiyomi Toon detection currently targets Poiyomi Toon 9.3 shader paths and shader text, with a property-based fallback for materials that expose the expected Poiyomi property set.
+Poiyomi Toon conversion is pinned to the cataloged 9.3.64 shader. Unlocked materials are recognized by the pinned shader GUID or exact source evidence. Optimizer-generated materials can be recognized through their `OriginalShaderGUID` override tag even when the generated shader has a different path. Renamed animated properties retain both their serialized generated-shader name and original semantic binding.
 
 lilToon detection checks canonical `lilToon/Shader/` shader paths, shader text markers such as `_lilToonVersion`, and a property-based fallback for common lilToon feature properties.
 
-Detection depends on shader GUID resolution through `.meta` files. Keep shader package folders and their `.meta` files with the imported content whenever possible.
+Detection resolves shader GUID metadata before choosing a shader-specific converter. Keep shader package folders and their `.meta` files with imported content whenever possible; missing references remain visible in the import report.
 
 ## Related Documentation
 

@@ -1090,6 +1090,11 @@ namespace XREngine.Rendering
             target.UWrap = source.UWrap;
             target.VWrap = source.VWrap;
             target.LodBias = source.LodBias;
+            target.MaxAnisotropy = source.MaxAnisotropy;
+            target.ImportedColorSpace = source.ImportedColorSpace;
+            target.ImportedUsage = source.ImportedUsage;
+            target.ImportedNormalMapFlipGreen = source.ImportedNormalMapFlipGreen;
+            target.AlphaAsTransparency = source.AlphaAsTransparency;
         }
 
         private static bool IsTextureAssetLoadFailure(Exception ex)
@@ -1309,6 +1314,7 @@ namespace XREngine.Rendering
         private ETexWrapMode _uWrap = ETexWrapMode.Repeat;
         private ETexWrapMode _vWrap = ETexWrapMode.Repeat;
         private float _lodBias = 0.0f;
+        private float _maxAnisotropy = 1.0f;
         private bool _resizable = true;
         private bool _exclusiveSharing = true;
         private GrabPassInfo? _grabPass;
@@ -1495,6 +1501,14 @@ namespace XREngine.Rendering
         {
             get => _lodBias;
             set => SetField(ref _lodBias, value);
+        }
+        /// <summary>
+        /// Maximum anisotropy requested by the source texture importer.
+        /// </summary>
+        public float MaxAnisotropy
+        {
+            get => _maxAnisotropy;
+            set => SetField(ref _maxAnisotropy, Math.Max(1.0f, value));
         }
         /// <summary>
         /// When true, sampling this texture performs a depth comparison against a reference value

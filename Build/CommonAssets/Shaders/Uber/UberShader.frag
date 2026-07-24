@@ -99,6 +99,9 @@ layout(location = 1) in vec3 FragNorm;        // world-space geometric normal
 layout(location = 2) in vec3 FragTan;         // world-space tangent
 layout(location = 3) in vec3 FragBinorm;      // world-space bitangent
 layout(location = 4) in vec2 FragUV0;         // primary texture coordinates
+layout(location = 5) in vec2 FragUV1;
+layout(location = 6) in vec2 FragUV2;
+layout(location = 7) in vec2 FragUV3;
 layout(location = 12) in vec4 FragColor0;     // per-vertex RGBA color
 layout(location = 20) in vec3 FragPosLocal;   // object-space position
 #if defined(XRENGINE_DEPTH_NORMAL_PREPASS)
@@ -498,30 +501,47 @@ float calculateAlpha(vec4 baseColor, ToonMesh mesh) {
 // ============================================
 // Forward Lighting Helpers
 // ============================================
-// Populates a PBRData from the coarse material knobs exposed by this uber
-// variant. There's no metallic/roughness map here, so we derive a reasonable
-// dielectric default from _SpecularSmoothness. The 0.04 floor keeps the
-// surface from becoming a perfect mirror, which would break most BRDF math
-// and image-based-lighting filtering.
-PBRData buildSurfacePbrData(vec2 uv, vec3 baseColor) {
+PBRData buildSurfacePbrData(ToonMesh mesh, vec3 baseColor) {
     PBRData pbr;
     pbr.metallic = 0.0;
     pbr.perceptualRoughness = clamp(1.0 - _SpecularSmoothness, 0.04, 1.0);
     pbr.roughness = pbr.perceptualRoughness * pbr.perceptualRoughness;
     pbr.reflectionMask = 1.0;
     pbr.specularMask = 1.0;
-    pbr.F0 = vec3(0.04);             // generic dielectric Fresnel at normal incidence
+    pbr.F0 = vec3(0.04);
     pbr.diffuseColor = baseColor;
     pbr.specularColor = vec3(1.0);
 
 #ifndef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR
-    vec4 specTex = texture(_SpecularMap, transformUV(uv, _SpecularMap_ST));
+    vec2 metallicUV = transformUV(getUV(_PBRMetallicMapsUV, mesh), _PBRMetallicMaps_ST);
+    metallicUV = panUV(metallicUV, _PBRMetallicMapsPan, u_Time);
+    vec4 metallicTex = texture(_PBRMetallicMaps, metallicUV);
+    float metallic = metallicTex[clamp(_PBRMetallicMapsMetallicChannel, 0, 3)];
+    if (_PBRMetallicMapInvert > 0.5)
+        metallic = 1.0 - metallic;
+
+    vec2 smoothnessUV = transformUV(getUV(_PBRSmoothnessMapsUV, mesh), _PBRSmoothnessMaps_ST);
+    smoothnessUV = panUV(smoothnessUV, _PBRSmoothnessMapsPan, u_Time);
+    vec4 smoothnessTex = texture(_PBRSmoothnessMaps, smoothnessUV);
+    float smoothness = smoothnessTex[clamp(_PBRSmoothnessMapsChannel, 0, 3)];
+    if (_PBRSmoothnessMapInvert > 0.5)
+        smoothness = 1.0 - smoothness;
+
+    pbr.metallic = saturate(metallic * _PBRMetallicMultiplier);
+    pbr.perceptualRoughness = clamp(1.0 - smoothness * _PBRRoughnessMultiplier, 0.04, 1.0);
+    pbr.roughness = pbr.perceptualRoughness * pbr.perceptualRoughness;
+    pbr.F0 = mix(vec3(0.04), baseColor, pbr.metallic);
+    pbr.diffuseColor = baseColor * (1.0 - pbr.metallic);
+    pbr.specularColor = mix(vec3(1.0), baseColor, pbr.metallic);
+
+    vec4 specTex = texture(_SpecularMap, transformUV(mesh.uv[0], _SpecularMap_ST));
     float specMask = saturate(max(max(specTex.r, specTex.g), max(specTex.b, specTex.a)));
     pbr.specularMask *= specMask;
-    pbr.specularColor = max(specTex.rgb * _SpecularTint.rgb, vec3(0.0));
-    pbr.F0 = clamp(vec3(0.04) * pbr.specularColor * max(_SpecularTint.a, 0.0), vec3(0.0), vec3(1.0));
+    pbr.specularColor *= max(specTex.rgb * _SpecularTint.rgb, vec3(0.0));
+    pbr.F0 = clamp(pbr.F0 * pbr.specularColor * max(_SpecularTint.a, 0.0), vec3(0.0), vec3(1.0));
 
-    if (_SpecularType == 2) {
+    if (_SpecularType == 2)
+    {
         pbr.perceptualRoughness = clamp(pbr.perceptualRoughness * 0.75, 0.04, 1.0);
         pbr.roughness = pbr.perceptualRoughness * pbr.perceptualRoughness;
     }
@@ -913,7 +933,10 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
         case 0: // Texture Ramp
         {
             float rampUV = saturate(light.lightMap + _ShadowOffset);
-            vec3 rampColor = texture(_ToonRamp, vec2(rampUV, 0.5)).rgb;
+            vec2 rampCoord = vec2(rampUV, getUV(_ToonRampUV, mesh).y);
+            rampCoord = transformUV(rampCoord, _ToonRamp_ST);
+            rampCoord = panUV(rampCoord, _ToonRampPan, u_Time);
+            vec3 rampColor = texture(_ToonRamp, rampCoord).rgb;
             shadow = luminance(rampColor);
             finalLight = light.color * rampColor;
             break;
@@ -925,9 +948,15 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
             float blur = _ShadowBlur;
             shadow = smoothstep(border - blur, border + blur, light.lightMap);
             
-            vec4 shadowTex = texture(_ShadowColorTex, mesh.uv[0]);
-            vec3 shadowColor = _ShadowColor.rgb * _ShadowColor.a * shadowTex.rgb;
-            finalLight = mix(light.color * shadowColor, light.color, shadow);
+            vec2 firstUV = panUV(transformUV(getUV(_FirstShadeMapUV, mesh), _FirstShadeMap_ST), _FirstShadeMapPan, u_Time);
+            vec2 secondUV = panUV(transformUV(getUV(_SecondShadeMapUV, mesh), _SecondShadeMap_ST), _SecondShadeMapPan, u_Time);
+            vec4 firstShade = texture(_FirstShadeMap, firstUV);
+            vec4 secondShade = texture(_SecondShadeMap, secondUV);
+            float secondBand = smoothstep(border * 0.5 - blur, border * 0.5 + blur, light.lightMap);
+            vec3 deepShade = _ShadowColor.rgb * _ShadowColor.a * secondShade.rgb;
+            vec3 firstShadeColor = _ShadowColor.rgb * _ShadowColor.a * firstShade.rgb;
+            vec3 layeredShade = mix(deepShade, firstShadeColor, secondBand);
+            finalLight = mix(light.color * layeredShade, light.color, shadow);
             break;
         }
         
@@ -957,7 +986,8 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
 
         case 4: // ShadeMap
         {
-            vec4 shadeMap = texture(_ShadowColorTex, mesh.uv[0]);
+            vec2 shadeUV = panUV(transformUV(getUV(_FirstShadeMapUV, mesh), _FirstShadeMap_ST), _FirstShadeMapPan, u_Time);
+            vec4 shadeMap = texture(_FirstShadeMap, shadeUV);
             shadow = smoothstep(_ShadowBorder - _ShadowBlur, _ShadowBorder + _ShadowBlur, light.lightMap);
             vec3 shadeColor = mix(_LightingShadowColor, shadeMap.rgb, shadeMap.a);
             finalLight = mix(light.color * shadeColor, light.color, shadow);
@@ -1304,7 +1334,7 @@ vec3 calculateRimLight(ToonMesh mesh, vec3 normal, ToonLight light) {
     }
     
     // Sample mask
-    vec2 maskUV = transformUV(mesh.uv[0], _RimMask_ST);
+    vec2 maskUV = transformUV(getUV(_RimMaskUV, mesh), _RimMask_ST);
     float mask = texture(_RimMask, maskUV)[_RimMaskChannel];
     rim *= mask;
     
@@ -1312,7 +1342,10 @@ vec3 calculateRimLight(ToonMesh mesh, vec3 normal, ToonLight light) {
     rim *= mix(1.0, light.lightMap, _RimHideInShadow);
     
     // Apply color
-    vec3 rimColor = _RimLightColor.rgb * rim;
+    vec2 colorUV = transformUV(getUV(_RimColorTextureUV, mesh), _RimColorTexture_ST);
+    colorUV = panUV(colorUV, _RimColorTexturePan, u_Time);
+    vec3 rimTextureColor = texture(_RimColorTexture, colorUV).rgb;
+    vec3 rimColor = _RimLightColor.rgb * rimTextureColor * rim;
     
     // Mix with light color
     rimColor = mix(rimColor, rimColor * light.color, _RimLightColorBias);
@@ -1382,12 +1415,10 @@ vec3 calculateAdvancedSpecular(ToonMesh mesh, vec3 normal, ToonLight light, PBRD
 void main() {
     // ---- 1. Build ToonMesh --------------------------------------------------
     ToonMesh mesh;
-    // This variant only streams UV0; mirror it into the other UV slots so
-    // features that request a higher channel still get something sensible.
     mesh.uv[0] = FragUV0;
-    mesh.uv[1] = FragUV0;
-    mesh.uv[2] = FragUV0;
-    mesh.uv[3] = FragUV0;
+    mesh.uv[1] = FragUV1;
+    mesh.uv[2] = FragUV2;
+    mesh.uv[3] = FragUV3;
     mesh.worldPos = FragPos;
     mesh.localPos = FragPosLocal;
 #if !defined(XRENGINE_UBER_DISABLE_FORWARD_LIGHTING) && !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
@@ -1475,7 +1506,16 @@ void main() {
     // Dissolve may rewrite baseColor/emission/alpha and can discard entirely
     // for fully-dissolved fragments.
 #ifndef XRENGINE_UBER_DISABLE_DISSOLVE
-    if (applyDissolve(mesh.uv[0], mesh.worldPos, mesh.localPos, fragData.baseColor, fragData.emission, fragData.alpha)) {
+    if (applyDissolve(
+        getUV(_DissolveNoiseTextureUV, mesh),
+        getUV(_DissolveDetailNoiseUV, mesh),
+        getUV(_DissolveMaskUV, mesh),
+        getUV(_DissolveEdgeTextureUV, mesh),
+        mesh.worldPos,
+        mesh.localPos,
+        fragData.baseColor,
+        fragData.emission,
+        fragData.alpha)) {
         discard;
     }
 #endif
@@ -1524,7 +1564,7 @@ void main() {
     float materialAmbientOcclusion = 1.0;
 #endif
     float combinedAmbientOcclusion = saturate(screenAmbientOcclusion * materialAmbientOcclusion);
-    PBRData surfacePbr = buildSurfacePbrData(mesh.uv[0], fragData.baseColor);
+    PBRData surfacePbr = buildSurfacePbrData(mesh, fragData.baseColor);
     vec3 ambientLighting = calculateForwardAmbientLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, combinedAmbientOcclusion);
     ToonLight light = calculateLighting(mesh, mesh.worldNormal, ambientLighting);
 #endif

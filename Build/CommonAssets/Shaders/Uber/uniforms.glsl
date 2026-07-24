@@ -192,6 +192,9 @@ uniform float _LightingIgnoreAmbientColor;
 // Texture Ramp shading (Mode 0)
 //@property(name="_ToonRamp", display="Ramp Texture", slot=texture)
 uniform sampler2D _ToonRamp;
+uniform vec4 _ToonRamp_ST;
+uniform vec2 _ToonRampPan;
+uniform int _ToonRampUV;
 //@property(name="_ShadowOffset", display="Shadow Offset", mode=static, range=[-1,1])
 uniform float _ShadowOffset;
 
@@ -204,6 +207,17 @@ uniform float _ForceFlatRampedLightmap;
 //@property(name="_ShadowColorTex", display="Shadow Color Map", slot=texture)
 uniform sampler2D _ShadowColorTex;
 //@property(name="_ShadowColor", display="Shadow Color", mode=static)
+//@property(name="_FirstShadeMap", display="First Shade Map", slot=texture)
+uniform sampler2D _FirstShadeMap;
+uniform vec4 _FirstShadeMap_ST;
+uniform vec2 _FirstShadeMapPan;
+uniform int _FirstShadeMapUV;
+//@property(name="_SecondShadeMap", display="Second Shade Map", slot=texture)
+uniform sampler2D _SecondShadeMap;
+uniform vec4 _SecondShadeMap_ST;
+uniform vec2 _SecondShadeMapPan;
+uniform int _SecondShadeMapUV;
+
 uniform vec4 _ShadowColor;
 //@property(name="_ShadowBorder", display="Shadow Border", mode=static, range=[0,1])
 uniform float _ShadowBorder;
@@ -343,6 +357,13 @@ uniform sampler2D _RimMask;
 uniform vec4 _RimMask_ST;
 //@property(name="_RimMaskChannel", display="Mask Channel", mode=static, enum="0:R|1:G|2:B|3:A", default="0")
 uniform int _RimMaskChannel;
+uniform int _RimMaskUV;
+//@property(name="_RimColorTexture", display="Rim Color Texture", slot=texture)
+uniform sampler2D _RimColorTexture;
+uniform vec4 _RimColorTexture_ST;
+uniform vec2 _RimColorTexturePan;
+uniform int _RimColorTextureUV;
+
 #endif
 
 // ============================================
@@ -365,7 +386,24 @@ uniform vec4 _SpecularMap_ST;
 uniform vec4 _SpecularTint;
 //@property(name="_SpecularType", display="Specular Model", mode=static, enum="0:Realistic|1:Toon|2:Anisotropic")
 uniform int _SpecularType;          // 0: Realistic, 1: Toon, 2: Anisotropic
+//@property(name="_PBRMetallicMaps", display="Metallic Data", slot=texture)
+uniform sampler2D _PBRMetallicMaps;
+uniform vec4 _PBRMetallicMaps_ST;
+uniform vec2 _PBRMetallicMapsPan;
+uniform int _PBRMetallicMapsUV;
+uniform int _PBRMetallicMapsMetallicChannel;
+uniform float _PBRMetallicMapInvert;
+uniform float _PBRMetallicMultiplier;
+//@property(name="_PBRSmoothnessMaps", display="Smoothness Data", slot=texture)
+uniform sampler2D _PBRSmoothnessMaps;
+uniform vec4 _PBRSmoothnessMaps_ST;
+uniform vec2 _PBRSmoothnessMapsPan;
+uniform int _PBRSmoothnessMapsUV;
+uniform int _PBRSmoothnessMapsChannel;
+uniform float _PBRSmoothnessMapInvert;
+uniform float _PBRRoughnessMultiplier;
 #endif
+
 
 // ============================================
 // Detail Textures
@@ -561,6 +599,30 @@ uniform vec3 _DissolveEndPoint;
 //@property(name="_DissolveInvert", display="Invert", mode=static, range=[0,1], toggle=true)
 uniform float _DissolveInvert;
 //@property(name="_DissolveCutoff", display="Cutoff", mode=static, range=[0,1])
+uniform vec2 _DissolveNoiseTexturePan;
+uniform int _DissolveNoiseTextureUV;
+//@property(name="_DissolveDetailNoise", display="Detail Noise", slot=texture)
+uniform sampler2D _DissolveDetailNoise;
+uniform vec4 _DissolveDetailNoise_ST;
+uniform vec2 _DissolveDetailNoisePan;
+uniform int _DissolveDetailNoiseUV;
+uniform float _DissolveDetailStrength;
+//@property(name="_DissolveMask", display="Dissolve Mask", slot=texture)
+uniform sampler2D _DissolveMask;
+uniform vec4 _DissolveMask_ST;
+uniform vec2 _DissolveMaskPan;
+uniform int _DissolveMaskUV;
+uniform float _DissolveMaskInvert;
+//@property(name="_DissolveEdgeGradient", display="Edge Gradient", slot=texture)
+uniform sampler2D _DissolveEdgeGradient;
+uniform vec4 _DissolveEdgeGradient_ST;
+//@property(name="_DissolveEdgeTexture", display="Edge Texture", slot=texture)
+uniform sampler2D _DissolveEdgeTexture;
+uniform vec4 _DissolveEdgeTexture_ST;
+uniform vec2 _DissolveEdgeTexturePan;
+uniform int _DissolveEdgeTextureUV;
+
+
 uniform float _DissolveCutoff;
 #endif
 

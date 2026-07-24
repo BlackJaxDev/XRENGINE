@@ -12,6 +12,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Scene.Prefabs;
+using XREngine.Scene.Importers.Poiyomi;
 using XREngine.Scene.Transforms;
 using YamlDotNet.RepresentationModel;
 
@@ -554,6 +555,7 @@ internal static partial class UnitySceneImporter
         }
 
         XRMaterial material = ResolveMaterialForSubMesh(materialReferences, 0, state, fallbackMaterial: null);
+        LogPoiyomiMeshDiagnostics(material, mesh);
         model = new Model(new SubMesh(new SubMeshLOD(material, mesh, 0.0f)))
         {
             Name = $"UnityBuiltIn_{meshReference.FileId}",
@@ -625,6 +627,7 @@ internal static partial class UnitySceneImporter
             };
 
             XRMaterial material = ResolveMaterialForSubMesh(materialReferences, subMeshIndex, state, fallbackMaterial: null);
+            LogPoiyomiMeshDiagnostics(material, xrMesh);
             var lod = new SubMeshLOD(material, xrMesh, 0.0f);
             var subMesh = new SubMesh(lod)
             {
@@ -664,6 +667,7 @@ internal static partial class UnitySceneImporter
                     RemapMeshBonesToTarget(clonedMesh, sourceRoot, targetRoot);
 
                 XRMaterial material = ResolveMaterialForSubMesh(materialReferences, subMeshIndex, state, sourceLod.Material);
+                LogPoiyomiMeshDiagnostics(material, clonedMesh);
                 var clonedLod = new SubMeshLOD(material, clonedMesh, sourceLod.MaxVisibleDistance)
                 {
                     GenerateAsync = sourceLod.GenerateAsync,
@@ -877,6 +881,18 @@ internal static partial class UnitySceneImporter
 
         AssetManager? assets = Engine.Assets;
         return assets?.Load<XRMaterial>(assetPath);
+    }
+
+    private static void LogPoiyomiMeshDiagnostics(XRMaterial material, XRMesh? mesh)
+    {
+        if (mesh is null)
+            return;
+
+        foreach (MaterialConversionDiagnostic diagnostic in
+                 UnityMaterialImporter.ValidateMeshCompatibility(material, mesh.TexCoordCount))
+        {
+            Debug.LogWarning(diagnostic.ToString());
+        }
     }
 
     private static XRMaterial? LoadUnityMaterial(string materialPath, ImportState state)
