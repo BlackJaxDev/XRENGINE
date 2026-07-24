@@ -159,7 +159,13 @@ internal static class RenderWorkBudgetCoordinator
         builder.Append("RenderWorkLastShadowMs: ").Append(snapshot.LastShadowAtlasMilliseconds.ToString("F3")).AppendLine();
         builder.Append("RenderWorkStartupBoostActive: ").Append(snapshot.StartupBoostActive).AppendLine();
         XRBufferWriteTelemetry.AppendProfilerSummary(builder);
-        Vulkan.VulkanTextureUploadService.AppendProfilerSummary(builder);
+        if (TextureStreamingBackendRegistry.TryGet(
+                RuntimeGraphicsApiKind.Vulkan,
+                out ITextureStreamingBackendProvider? textureStreaming)
+            && textureStreaming is not null)
+        {
+            textureStreaming.AppendProfilerSummary(builder);
+        }
     }
 
     private static void EnsureFrame()

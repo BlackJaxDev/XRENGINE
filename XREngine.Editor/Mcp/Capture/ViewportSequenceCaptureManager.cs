@@ -28,7 +28,7 @@ internal sealed class ViewportSequenceCaptureManager
         error = null;
 
         XRWindow? window = viewport.Window
-            ?? Engine.Windows.FirstOrDefault(candidate => candidate.Viewports.Contains(viewport));
+            ?? RuntimeEngine.Windows.FirstOrDefault(candidate => candidate.Viewports.Contains(viewport));
         if (window is null || window.IsDisposed)
         {
             error = "No live window owns the target viewport.";
@@ -75,7 +75,7 @@ internal sealed class ViewportSequenceCaptureManager
             return false;
         }
 
-        int windowIndex = FindIndex(Engine.Windows, window);
+        int windowIndex = FindIndex(RuntimeEngine.Windows, window);
         int viewportIndex = FindIndex(window.Viewports, viewport);
         string backend = renderer?.GetType().Name ?? "Unknown";
         var createdSession = new ViewportSequenceCaptureSession(

@@ -4,9 +4,7 @@ using XREngine;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.RenderGraph;
-using Silk.NET.OpenGL;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {

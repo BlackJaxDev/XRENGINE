@@ -2,7 +2,7 @@ using XREngine.Rendering;
 
 namespace XREngine;
 
-internal sealed class RuntimeVulkanRobustnessSettings
+public sealed class RuntimeVulkanRobustnessSettings
 {
     private EVulkanAllocatorBackend _allocatorBackend = EVulkanAllocatorBackend.Vma;
     private EVulkanSynchronizationBackend _synchronizationBackend = EVulkanSynchronizationBackend.Sync2;

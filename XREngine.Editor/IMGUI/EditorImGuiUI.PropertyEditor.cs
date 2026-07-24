@@ -3826,8 +3826,8 @@ public static partial class EditorImGuiUI
         }
 
         private static bool IsNvidiaDlssFrameGenerationMember(MemberInfo member)
-            => string.Equals(member.Name, nameof(Engine.Rendering.EngineSettings.EnableNvidiaDlssFrameGeneration), StringComparison.Ordinal)
-            || string.Equals(member.Name, nameof(Engine.Rendering.EngineSettings.NvidiaDlssFrameGenerationMode), StringComparison.Ordinal);
+            => string.Equals(member.Name, nameof(RuntimeEngine.Rendering.EngineSettings.EnableNvidiaDlssFrameGeneration), StringComparison.Ordinal)
+            || string.Equals(member.Name, nameof(RuntimeEngine.Rendering.EngineSettings.NvidiaDlssFrameGenerationMode), StringComparison.Ordinal);
 
         private static void DrawDlssRuntimeWarningTooltip(string warning)
         {

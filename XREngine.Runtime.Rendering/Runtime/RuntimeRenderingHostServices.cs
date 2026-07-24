@@ -64,7 +64,6 @@ public static class RuntimeRenderingHostServices
             _presentation = installed ? current : null;
             _backendInterop = installed ? current : null;
             RuntimeEngine.Time.Timer.RebindHost(previous, current);
-            RuntimeEngine.Rendering.RebindSettingsChangedHandlers(previous, current);
         }
     }
 

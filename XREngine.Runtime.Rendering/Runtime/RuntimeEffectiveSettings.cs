@@ -28,7 +28,7 @@ namespace XREngine;
 
 internal sealed class RuntimeEffectiveSettings
 {
-    private RuntimeRenderSettings Settings => RuntimeEngine.Rendering.Settings;
+    private RuntimeEngine.Rendering.EngineSettings Settings => RuntimeEngine.Rendering.Settings;
     private bool _enableVulkanBindlessMaterialTable = RuntimeRenderingHostServiceDefaults.EnableVulkanBindlessMaterialTable;
     private bool _enableVulkanDescriptorIndexing = RuntimeRenderingHostServiceDefaults.EnableVulkanDescriptorIndexing;
     private bool _validateVulkanDescriptorContracts = RuntimeRenderingHostServiceDefaults.ValidateVulkanDescriptorContracts;

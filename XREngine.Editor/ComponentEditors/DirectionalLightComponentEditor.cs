@@ -153,7 +153,7 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
             ImGui.Text($"Cascade Texture: {tex.Width}x{tex.Height} x {tex.Depth} layers");
         else
             ImGui.TextDisabled("Cascade texture not allocated.");
-        bool atlasActive = Engine.Rendering.Settings.UseDirectionalShadowAtlas;
+        bool atlasActive = RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas;
         ImGui.Text($"Directional Atlas: {(atlasActive ? "Active" : "Disabled")}");
 
         if (activeCascades == 0)

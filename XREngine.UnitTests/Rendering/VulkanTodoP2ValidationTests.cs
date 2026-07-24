@@ -139,26 +139,26 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
         const int pass = (int)EDefaultRenderPass.TransparentForward;
         int drawCalls = 0;
         RenderCommandCollection commands = canvas.RenderPipelineInstance.MeshRenderCommands;
-        bool previousTracking = Engine.Rendering.Stats.EnableTracking;
+        bool previousTracking = RuntimeEngine.Rendering.Stats.EnableTracking;
         try
         {
-            Engine.Rendering.Stats.EnableTracking = true;
-            Engine.Rendering.Stats.BeginFrame();
+            RuntimeEngine.Rendering.Stats.EnableTracking = true;
+            RuntimeEngine.Rendering.Stats.BeginFrame();
 
             commands.AddCPU(new RenderCommandMethod2D(pass, () =>
             {
                 drawCalls++;
-                Engine.Rendering.Stats.Frame.IncrementDrawCalls();
+                RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
             }));
             commands.AddCPU(new RenderCommandMethod2D(pass, () =>
             {
                 drawCalls++;
-                Engine.Rendering.Stats.Frame.IncrementDrawCalls();
+                RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
             }));
             commands.AddCPU(new RenderCommandMethod2D(pass, () =>
             {
                 drawCalls++;
-                Engine.Rendering.Stats.Frame.IncrementDrawCalls();
+                RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
             }));
             commands.SwapBuffers();
 
@@ -167,7 +167,7 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
                 RenderPass = pass
             };
 
-            using (Engine.Rendering.State.PushRenderingPipeline(canvas.RenderPipelineInstance))
+            using (RuntimeEngine.Rendering.State.PushRenderingPipeline(canvas.RenderPipelineInstance))
             using (canvas.RenderPipelineInstance.RenderState.PushMainAttributes(
                        viewport: null,
                        scene: new VisualScene2D(),
@@ -183,16 +183,16 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
                 renderUiBatched.ExecuteIfShould();
             }
 
-            Engine.Rendering.Stats.BeginFrame();
+            RuntimeEngine.Rendering.Stats.BeginFrame();
 
             drawCalls.ShouldBe(3);
-            Engine.Rendering.Stats.Frame.DrawCalls.ShouldBe(3);
+            RuntimeEngine.Rendering.Stats.Frame.DrawCalls.ShouldBe(3);
             canvas.BatchCollector.Enabled.ShouldBeFalse();
             canvas.BatchCollector.HasBatchData.ShouldBeFalse();
         }
         finally
         {
-            Engine.Rendering.Stats.EnableTracking = previousTracking;
+            RuntimeEngine.Rendering.Stats.EnableTracking = previousTracking;
         }
     }
 
@@ -259,13 +259,13 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
     [Test]
     public void PipelinePrewarmDatabase_CapturesRuntimeMissesAndProfilerSummaries()
     {
-        string prewarmSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelinePrewarmDatabase.cs");
-        string pipelineCacheSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCache.cs");
-        string meshPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
-        string meshDrawSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
-        string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
-        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
-        string statsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.Vulkan.cs");
+        string prewarmSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelinePrewarmDatabase.cs");
+        string pipelineCacheSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCache.cs");
+        string meshPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
+        string meshDrawSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
+        string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string statsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.cs");
         string packetSource = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");
         string senderSource = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfilerSender.cs");
         string editorSource = ReadWorkspaceFile("XRENGINE.Editor/EngineProfilerDataSource.cs");
@@ -291,8 +291,8 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
         statsSource.ShouldContain("RecordVulkanPipelineCacheMiss");
         statsSource.ShouldContain("VulkanPipelineCacheMissSummary");
         packetSource.ShouldContain("VulkanPipelineCacheMissSummary");
-        senderSource.ShouldContain("VulkanPipelineCacheMissSummary = Rendering.Stats.Vulkan.VulkanPipelineCacheMissSummary");
-        editorSource.ShouldContain("VulkanPipelineCacheMissSummary = Engine.Rendering.Stats.Vulkan.VulkanPipelineCacheMissSummary");
+        senderSource.ShouldContain("VulkanPipelineCacheMissSummary = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPipelineCacheMissSummary");
+        editorSource.ShouldContain("VulkanPipelineCacheMissSummary = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPipelineCacheMissSummary");
         profilerUiSource.ShouldContain("Vulkan Pipeline Misses");
     }
 
@@ -334,7 +334,7 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
 
         protected override void Execute()
         {
-            using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(PassIndexToPush);
+            using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(PassIndexToPush);
         }
     }
 

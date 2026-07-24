@@ -13,8 +13,8 @@ internal sealed class EngineRuntimeAnimationHostServices : IRuntimeAnimationHost
     public float TargetRenderFrequency => Engine.Time.Timer.TargetRenderFrequency;
     public long UpdateDeltaTicks => Engine.Time.Timer.Update.DeltaTicks;
     public long ElapsedTicks => Engine.ElapsedTicks;
-    public bool IsShadowPass => Engine.Rendering.State.IsShadowPass;
-    public ELoopType ChildRecalculationLoopType => Engine.Rendering.Settings.RecalcChildMatricesLoopType;
+    public bool IsShadowPass => RuntimeEngine.Rendering.State.IsShadowPass;
+    public ELoopType ChildRecalculationLoopType => Engine.EffectiveSettings.RecalcChildMatricesLoopType;
     public bool HumanoidPoseTransportAvailable => Engine.Networking is BaseNetworkingManager;
 
     public event Action<HumanoidPoseFrame>? HumanoidPoseFrameReceived
@@ -41,13 +41,13 @@ internal sealed class EngineRuntimeAnimationHostServices : IRuntimeAnimationHost
         => Engine.LoadOrGenerateAsset(generateFactory, assetName, allowLoading, folderNames);
 
     public void RenderLine(Vector3 start, Vector3 end, ColorF4 color)
-        => Engine.Rendering.Debug.RenderLine(start, end, color);
+        => RuntimeEngine.Rendering.Debug.RenderLine(start, end, color);
 
     public void RenderPoint(Vector3 position, ColorF4 color)
-        => Engine.Rendering.Debug.RenderPoint(position, color);
+        => RuntimeEngine.Rendering.Debug.RenderPoint(position, color);
 
     public void RenderText(Vector3 position, string text, ColorF4 color, float scale = 0.0012f)
-        => Engine.Rendering.Debug.RenderText(position, text, color, scale);
+        => RuntimeEngine.Rendering.Debug.RenderText(position, text, color, scale);
 
     public bool BroadcastHumanoidPoseFrame(HumanoidPoseFrame frame, bool compress = false)
     {

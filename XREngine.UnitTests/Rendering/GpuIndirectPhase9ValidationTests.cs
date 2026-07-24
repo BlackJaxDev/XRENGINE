@@ -56,67 +56,67 @@ public sealed class GpuIndirectPhase9ValidationTests
     [Test]
     public void Stats_IndirectEffectivenessCounters_SwapOnBeginFrame()
     {
-        bool previousTracking = XREngine.Engine.Rendering.Stats.EnableTracking;
+        bool previousTracking = XREngine.RuntimeEngine.Rendering.Stats.EnableTracking;
         try
         {
-            XREngine.Engine.Rendering.Stats.EnableTracking = true;
+            XREngine.RuntimeEngine.Rendering.Stats.EnableTracking = true;
 
-            XREngine.Engine.Rendering.Stats.BeginFrame();
-            XREngine.Engine.Rendering.Stats.Vulkan.RecordVulkanIndirectEffectiveness(
+            XREngine.RuntimeEngine.Rendering.Stats.BeginFrame();
+            XREngine.RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanIndirectEffectiveness(
                 requestedDraws: 100,
                 culledDraws: 60,
                 emittedIndirectDraws: 40,
                 consumedDraws: 39,
                 overflowCount: 1);
 
-            XREngine.Engine.Rendering.Stats.BeginFrame();
+            XREngine.RuntimeEngine.Rendering.Stats.BeginFrame();
 
-            XREngine.Engine.Rendering.Stats.Vulkan.VulkanRequestedDraws.ShouldBe(100);
-            XREngine.Engine.Rendering.Stats.Vulkan.VulkanCulledDraws.ShouldBe(60);
-            XREngine.Engine.Rendering.Stats.Vulkan.VulkanEmittedIndirectDraws.ShouldBe(40);
-            XREngine.Engine.Rendering.Stats.Vulkan.VulkanConsumedDraws.ShouldBe(39);
-            XREngine.Engine.Rendering.Stats.Vulkan.VulkanOverflowCount.ShouldBe(1);
-            XREngine.Engine.Rendering.Stats.Vulkan.VulkanCullEfficiency.ShouldBe(0.4, 0.0001);
+            XREngine.RuntimeEngine.Rendering.Stats.Vulkan.VulkanRequestedDraws.ShouldBe(100);
+            XREngine.RuntimeEngine.Rendering.Stats.Vulkan.VulkanCulledDraws.ShouldBe(60);
+            XREngine.RuntimeEngine.Rendering.Stats.Vulkan.VulkanEmittedIndirectDraws.ShouldBe(40);
+            XREngine.RuntimeEngine.Rendering.Stats.Vulkan.VulkanConsumedDraws.ShouldBe(39);
+            XREngine.RuntimeEngine.Rendering.Stats.Vulkan.VulkanOverflowCount.ShouldBe(1);
+            XREngine.RuntimeEngine.Rendering.Stats.Vulkan.VulkanCullEfficiency.ShouldBe(0.4, 0.0001);
         }
         finally
         {
-            XREngine.Engine.Rendering.Stats.EnableTracking = previousTracking;
+            XREngine.RuntimeEngine.Rendering.Stats.EnableTracking = previousTracking;
         }
     }
 
     [Test]
     public void Stats_VulkanStageTiming_SwapOnBeginFrame()
     {
-        bool previousTracking = XREngine.Engine.Rendering.Stats.EnableTracking;
+        bool previousTracking = XREngine.RuntimeEngine.Rendering.Stats.EnableTracking;
         try
         {
-            XREngine.Engine.Rendering.Stats.EnableTracking = true;
+            XREngine.RuntimeEngine.Rendering.Stats.EnableTracking = true;
 
-            XREngine.Engine.Rendering.Stats.BeginFrame();
-            XREngine.Engine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(XREngine.Engine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Reset, TimeSpan.FromMilliseconds(1));
-            XREngine.Engine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(XREngine.Engine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Cull, TimeSpan.FromMilliseconds(2));
-            XREngine.Engine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(XREngine.Engine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Occlusion, TimeSpan.FromMilliseconds(3));
-            XREngine.Engine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(XREngine.Engine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Indirect, TimeSpan.FromMilliseconds(4));
-            XREngine.Engine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(XREngine.Engine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Draw, TimeSpan.FromMilliseconds(5));
+            XREngine.RuntimeEngine.Rendering.Stats.BeginFrame();
+            XREngine.RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(XREngine.RuntimeEngine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Reset, TimeSpan.FromMilliseconds(1));
+            XREngine.RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(XREngine.RuntimeEngine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Cull, TimeSpan.FromMilliseconds(2));
+            XREngine.RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(XREngine.RuntimeEngine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Occlusion, TimeSpan.FromMilliseconds(3));
+            XREngine.RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(XREngine.RuntimeEngine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Indirect, TimeSpan.FromMilliseconds(4));
+            XREngine.RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(XREngine.RuntimeEngine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Draw, TimeSpan.FromMilliseconds(5));
 
-            XREngine.Engine.Rendering.Stats.BeginFrame();
+            XREngine.RuntimeEngine.Rendering.Stats.BeginFrame();
 
-            XREngine.Engine.Rendering.Stats.Vulkan.VulkanResetStageMs.ShouldBeGreaterThan(0.5);
-            XREngine.Engine.Rendering.Stats.Vulkan.VulkanCullStageMs.ShouldBeGreaterThan(1.5);
-            XREngine.Engine.Rendering.Stats.Vulkan.VulkanOcclusionStageMs.ShouldBeGreaterThan(2.5);
-            XREngine.Engine.Rendering.Stats.Vulkan.VulkanIndirectStageMs.ShouldBeGreaterThan(3.5);
-            XREngine.Engine.Rendering.Stats.Vulkan.VulkanDrawStageMs.ShouldBeGreaterThan(4.5);
+            XREngine.RuntimeEngine.Rendering.Stats.Vulkan.VulkanResetStageMs.ShouldBeGreaterThan(0.5);
+            XREngine.RuntimeEngine.Rendering.Stats.Vulkan.VulkanCullStageMs.ShouldBeGreaterThan(1.5);
+            XREngine.RuntimeEngine.Rendering.Stats.Vulkan.VulkanOcclusionStageMs.ShouldBeGreaterThan(2.5);
+            XREngine.RuntimeEngine.Rendering.Stats.Vulkan.VulkanIndirectStageMs.ShouldBeGreaterThan(3.5);
+            XREngine.RuntimeEngine.Rendering.Stats.Vulkan.VulkanDrawStageMs.ShouldBeGreaterThan(4.5);
         }
         finally
         {
-            XREngine.Engine.Rendering.Stats.EnableTracking = previousTracking;
+            XREngine.RuntimeEngine.Rendering.Stats.EnableTracking = previousTracking;
         }
     }
 
     [Test]
     public void VulkanNonCount_DefaultPath_DoesNotUsePerDrawLoopAntiPattern()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
         source.ShouldContain("Api!.CmdDrawIndexedIndirect(");
         source.ShouldContain("usedLoopFallback: false");

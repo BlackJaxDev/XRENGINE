@@ -514,7 +514,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         if (!state.Enabled)
             return;
 
-        if (Engine.Rendering.State.IsShadowPass)
+        if (RuntimeEngine.Rendering.State.IsShadowPass)
             return;
 
         TryRenderGpuMeshTree(mesh, state);
@@ -2946,7 +2946,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
     private static bool ShouldEditorApplyAssetCullingBounds(RenderableMesh? runtimeMesh)
         => runtimeMesh is not null &&
-           (!runtimeMesh.IsSkinned || !Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader);
+           (!runtimeMesh.IsSkinned || !RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader);
 
     private static void UpdateLodDistance(
         SubMesh subMesh,

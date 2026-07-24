@@ -4,6 +4,11 @@ namespace XREngine.Rendering.Compute;
 internal static class PhysicsChainComputeBackendFactory
 {
     public static bool TryCreate(AbstractRenderer? renderer, out IPhysicsChainComputeBackend? backend)
-        => OpenGLPhysicsChainComputeBackend.TryCreate(renderer, out backend)
-        || VulkanPhysicsChainComputeBackend.TryCreate(renderer, out backend);
+    {
+        backend = null;
+        return renderer is IRuntimeRendererHost rendererHost
+            && rendererHost.TryGetBackendCapability<IPhysicsChainComputeBackendFactoryCapability>(out var factory)
+            && factory is not null
+            && factory.TryCreatePhysicsChainComputeBackend(out backend);
+    }
 }

@@ -92,7 +92,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         VulkanRenderer.IndirectCommandChainSecondaryRecordingSafe.ShouldBeFalse();
 
         string recording = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         recording.ShouldContain("if (!IndirectCommandChainSecondaryRecordingSafe ||");
         recording.ShouldContain("RecordIndirectDrawIntoCommandBuffer(commandBuffer, indirectOp, opPassIndex);");
         recording.ShouldContain("usedSecondary: false");
@@ -102,9 +102,9 @@ public sealed class VulkanStablePacketAndDescriptorTests
     public void MutableGpuDrivenPrimaries_AreNeverCleanReuseCandidates()
     {
         string recording = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string diagnostics = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpDiagnostics.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpDiagnostics.cs");
 
         recording.ShouldContain("bool hasMutableGpuDrivenFrameOps = hasStaticFrameOps && HasMutableGpuDrivenFrameOps(ops);");
         recording.ShouldContain("!hasMutableGpuDrivenFrameOps &&");
@@ -119,7 +119,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         VulkanRenderer.VulkanPrimaryCommandBufferReuseSafe.ShouldBeTrue();
 
         string state = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
         state.ShouldContain("VulkanPrimaryCommandBufferReuseSafe &&");
         state.ShouldContain("immutable dependency");
         state.ShouldContain("RuntimeRenderingHostServices.Current.EnableVulkanPrimaryCommandBufferReuse");
@@ -129,7 +129,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
     public void MutableGpuDrivenFrames_BypassCommandChainSecondaries()
     {
         string lowering = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
 
         lowering.ShouldContain("ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy()");
         lowering.ShouldContain("HasMutableGpuDrivenFrameOps(staticOps) || HasMutableGpuDrivenFrameOps(volatileOps)");
@@ -175,9 +175,9 @@ public sealed class VulkanStablePacketAndDescriptorTests
     public void VulkanRecording_UsesPacketSecondariesWithoutSimultaneousUse()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string secondarySource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
         int workerStart = secondarySource.IndexOf("private void RecordScheduledMeshCommandChainWorker", StringComparison.Ordinal);
         int workerEnd = secondarySource.IndexOf("private bool TryRecordSecondaryBucket", workerStart, StringComparison.Ordinal);
         string worker = secondarySource[workerStart..workerEnd];
@@ -202,7 +202,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
     public void WorkerDispatch_RecordsOnlyCommandBuffersOwnedByThatWorkerPool()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
 
         source.ShouldContain("public int[] RecordJobWorkerIndices = [];");
         source.ShouldContain("if (batch.RecordJobWorkerIndices[jobIndex] != worker.WorkerIndex)");
@@ -299,9 +299,9 @@ public sealed class VulkanStablePacketAndDescriptorTests
     public void WorkerDispatch_UsesStablePoolCapacityAndRejectsIncompleteBatches()
     {
         string workers = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
         string recording = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
         workers.ShouldContain("workerCount = workers.Length;");
         workers.ShouldContain("private const bool ParallelCommandChainWorkerRecordingSafe = false;");
@@ -318,13 +318,13 @@ public sealed class VulkanStablePacketAndDescriptorTests
     public void CommandBufferReuse_GuardsNativeResetAndReplacesPendingSecondaries()
     {
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
         string lowering = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
         string recording = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string secondaries = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
 
         lifetime.ShouldContain("private bool CanResetVulkanCommandBuffer(");
         lifetime.IndexOf("CanResetVulkanCommandBuffer(commandBuffer, out string reason)", StringComparison.Ordinal)
@@ -338,9 +338,9 @@ public sealed class VulkanStablePacketAndDescriptorTests
     public void CompatiblePublication_StillInvalidatesCommandBuffersThatRecordedAnUpdatedSet()
     {
         string lowering = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
         string descriptors = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorSets.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorSets.cs");
         string pipeline = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs");
 
@@ -395,9 +395,9 @@ public sealed class VulkanStablePacketAndDescriptorTests
     public void CapturedDescriptorReuse_RefreshesNonUpdateAfterBindSetsOnlyAfterTheirSlotCompletes()
     {
         string descriptors = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
         string state = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
 
         descriptors.ShouldContain(
             "bool allowCompletedDescriptorSlotRefresh = refreshFrameIndex is { } completedFrameIndex &&");
@@ -440,7 +440,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
     public void MaterialDescriptorPublication_IsPerSlotAndWorkerSafe()
     {
         string material = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Materials/VkMaterial.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Materials/VkMaterial.cs");
 
         material.ShouldContain("lock (_stateSync)");
         material.ShouldContain("UpdateFrameDescriptorSet(state, resolvedFrame)");
@@ -452,7 +452,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
     public void DescriptorContents_AreSnapshottedPerSubmissionNotBakedIntoCommandDependencies()
     {
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
 
         lifetime.ShouldContain("commandLifetime.RefreshTouchedDependencies();");
         lifetime.ShouldContain("TryAppendSubmittedDescriptorDependency_NoLock");

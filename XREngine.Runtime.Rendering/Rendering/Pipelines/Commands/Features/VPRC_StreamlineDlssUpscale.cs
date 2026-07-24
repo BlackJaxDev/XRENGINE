@@ -1,6 +1,4 @@
 using System;
-using XREngine.Rendering.DLSS;
-
 namespace XREngine.Rendering.Pipelines.Commands
 {
     /// <summary>
@@ -40,9 +38,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (!RuntimeEngine.EffectiveSettings.EnableNvidiaDlss)
                 return false;
 
-            if (!NvidiaDlssManager.IsSupported)
+            if (!VendorUpscaleRuntime.IsDlssSupported)
             {
-                failureReason = NvidiaDlssManager.LastError ?? "NVIDIA DLSS support probe failed.";
+                failureReason = VendorUpscaleRuntime.DlssLastError ?? "NVIDIA DLSS support probe failed.";
                 return false;
             }
 
@@ -77,18 +75,19 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ? ActivePipelineInstance.GetTexture<XRTexture>(MotionTextureName)
                 : null;
 
-            bool ok = NvidiaDlssManager.Native.TryDispatchUpscale(
+            bool ok = VendorUpscaleRuntime.TryDispatchDlssUpscale(
                 viewport,
                 sourceFbo,
                 destination,
                 depth,
                 motion,
-                out int errorCode);
+                out int errorCode,
+                out string? dispatchFailure);
 
             if (!ok && !_reportedFailure)
             {
                 _reportedFailure = true;
-                failureReason = NvidiaDlssManager.Native.LastError ?? $"errorCode={errorCode}";
+                failureReason = dispatchFailure ?? $"errorCode={errorCode}";
                 Debug.RenderingError($"Streamline DLSS upscale failed ({failureReason}).");
             }
 

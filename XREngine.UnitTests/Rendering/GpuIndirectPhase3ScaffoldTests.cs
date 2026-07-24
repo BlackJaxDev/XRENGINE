@@ -12,7 +12,7 @@ public class GpuIndirectPhase3ScaffoldTests
     [Test]
     public void EngineSettings_OcclusionMode_DefaultsToGpuHiZ()
     {
-        var settings = new XREngine.Engine.Rendering.EngineSettings();
+        var settings = new XREngine.RuntimeEngine.Rendering.EngineSettings();
 
         settings.GpuOcclusionCullingMode.ShouldBe(EOcclusionCullingMode.GpuHiZ);
     }
@@ -20,7 +20,7 @@ public class GpuIndirectPhase3ScaffoldTests
     [Test]
     public void EngineSettings_OcclusionMode_CanSwitchBetweenModes()
     {
-        var settings = new XREngine.Engine.Rendering.EngineSettings();
+        var settings = new XREngine.RuntimeEngine.Rendering.EngineSettings();
 
         settings.GpuOcclusionCullingMode = EOcclusionCullingMode.GpuHiZ;
         settings.GpuOcclusionCullingMode.ShouldBe(EOcclusionCullingMode.GpuHiZ);
@@ -45,7 +45,7 @@ public class GpuIndirectPhase3ScaffoldTests
         {
             Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.OcclusionCullingMode, "Disabled");
 
-            var settings = new XREngine.Engine.Rendering.EngineSettings
+            var settings = new XREngine.RuntimeEngine.Rendering.EngineSettings
             {
                 GpuOcclusionCullingMode = EOcclusionCullingMode.CpuQueryAsync
             };

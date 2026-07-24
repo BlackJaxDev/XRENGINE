@@ -4,7 +4,7 @@ namespace XREngine.Data.Profiling;
 
 /// <summary>
 /// Per-frame rendering statistics snapshot.
-/// Mirrors Engine.Rendering.Stats.
+/// Mirrors RuntimeEngine.Rendering.Stats.
 /// </summary>
 [MemoryPackable]
 public sealed partial class RenderStatsPacket

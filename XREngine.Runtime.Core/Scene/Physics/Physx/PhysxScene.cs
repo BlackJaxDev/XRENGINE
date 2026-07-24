@@ -347,7 +347,7 @@ namespace XREngine.Scene.Physics.Physx
             // Use SAP broadphase like the working smoke test (GPU broadphase may have issues with CCT)
             sceneDesc.broadPhaseType = PxBroadPhaseType.Sap;
             // GPU memory config only applies to GPU broadphase, skip for SAP
-            // var gpuMemorySettings = Engine.Rendering.Settings.PhysicsGpuMemorySettings;
+            // var gpuMemorySettings = physicsSettings.GpuMemory;
             // sceneDesc.gpuDynamicsConfig = new PxgDynamicsMemoryConfig { ... };
             _scene = _physicsPtr->CreateSceneMut(&sceneDesc);
             PhysxObjectLog.Created(this, (nint)_scene, "scene-created");

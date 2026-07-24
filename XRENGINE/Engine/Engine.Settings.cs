@@ -463,7 +463,7 @@ namespace XREngine
             if (applyEditorPreferences)
             {
                 ApplyEditorPreferencesRuntimeSideEffects();
-                Rendering.ApplyEditorPreferencesChange(null);
+                EngineRenderingSettingsApplication.ApplyEditorPreferencesChange(null);
             }
 
             if (applyRuntimeSettings)
@@ -488,18 +488,18 @@ namespace XREngine
             var h = new Dictionary<string, Action>(StringComparer.Ordinal);
 
             // ── GI ──
-            static void ApplyGI() => Rendering.ApplyGlobalIlluminationModePreference();
+            static void ApplyGI() => EngineRenderingSettingsApplication.ApplyGlobalIlluminationModePreference();
             h[nameof(UserSettings.GlobalIlluminationMode)] = ApplyGI;
             h[nameof(UserSettings.GlobalIlluminationModeOverride)] = ApplyGI;     // also matches GameStartup's identically-named property
 
             // ── GPU render dispatch ──
             static void ApplyGpuDispatchSettings()
             {
-                Rendering.ApplyGpuRenderDispatchPreference();
-                Rendering.LogVulkanFeatureProfileFingerprint();
+                EngineRenderingSettingsApplication.ApplyGpuRenderDispatchPreference();
+                EngineRenderingSettingsApplication.LogVulkanFeatureProfileFingerprint();
             }
-            h[nameof(GameStartupSettings.GPURenderDispatch)] = Rendering.ApplyGpuRenderDispatchPreference;
-            h[nameof(UserSettings.GPURenderDispatchOverride)] = Rendering.ApplyGpuRenderDispatchPreference;
+            h[nameof(GameStartupSettings.GPURenderDispatch)] = EngineRenderingSettingsApplication.ApplyGpuRenderDispatchPreference;
+            h[nameof(UserSettings.GPURenderDispatchOverride)] = EngineRenderingSettingsApplication.ApplyGpuRenderDispatchPreference;
             h[nameof(GameStartupSettings.EnableGpuIndirectDebugLoggingOverride)] = ApplyGpuDispatchSettings;
             h[nameof(GameStartupSettings.EnableGpuIndirectCpuFallbackOverride)] = ApplyGpuDispatchSettings;
             h[nameof(GameStartupSettings.EnableGpuIndirectValidationLoggingOverride)] = ApplyGpuDispatchSettings;
@@ -512,13 +512,13 @@ namespace XREngine
             h[nameof(UserSettings.ZeroReadbackMaterialDrawPathOverride)] = ApplyGpuDispatchSettings;
 
             // ── Scene culling hierarchy ──
-            h[nameof(GameStartupSettings.CpuSceneCullingStructureOverride)] = Rendering.ApplyCpuSceneCullingStructurePreference;
+            h[nameof(GameStartupSettings.CpuSceneCullingStructureOverride)] = EngineRenderingSettingsApplication.ApplyCpuSceneCullingStructurePreference;
 
             // ── Vulkan GPU-driven profile (compound) ──
             static void ApplyVulkanProfileSettings()
             {
-                Rendering.ApplyGpuRenderDispatchPreference();
-                Rendering.LogVulkanFeatureProfileFingerprint();
+                EngineRenderingSettingsApplication.ApplyGpuRenderDispatchPreference();
+                EngineRenderingSettingsApplication.LogVulkanFeatureProfileFingerprint();
             }
             h[nameof(GameStartupSettings.VulkanGpuDrivenProfileOverride)] = ApplyVulkanProfileSettings;
             h[nameof(GameStartupSettings.VulkanRenderTargetModeOverride)] = ApplyVulkanProfileSettings;
@@ -528,17 +528,17 @@ namespace XREngine
             h[nameof(UserSettings.RenderLibrary)] = ApplyVulkanProfileSettings;
 
             // ── NVIDIA DLSS ──
-            h[nameof(UserSettings.EnableNvidiaDlssOverride)] = Rendering.ApplyNvidiaDlssPreference;
-            h[nameof(UserSettings.DlssQualityOverride)] = Rendering.ApplyNvidiaDlssPreference;
-            h[nameof(UserSettings.EnableNvidiaDlssFrameGenerationOverride)] = Rendering.ApplyNvidiaDlssPreference;
-            h[nameof(UserSettings.NvidiaDlssFrameGenerationModeOverride)] = Rendering.ApplyNvidiaDlssPreference;
+            h[nameof(UserSettings.EnableNvidiaDlssOverride)] = EngineRenderingSettingsApplication.ApplyNvidiaDlssPreference;
+            h[nameof(UserSettings.DlssQualityOverride)] = EngineRenderingSettingsApplication.ApplyNvidiaDlssPreference;
+            h[nameof(UserSettings.EnableNvidiaDlssFrameGenerationOverride)] = EngineRenderingSettingsApplication.ApplyNvidiaDlssPreference;
+            h[nameof(UserSettings.NvidiaDlssFrameGenerationModeOverride)] = EngineRenderingSettingsApplication.ApplyNvidiaDlssPreference;
 
             // ── Intel XeSS ──
-            h[nameof(UserSettings.EnableIntelXessOverride)] = Rendering.ApplyIntelXessPreference;
-            h[nameof(UserSettings.XessQualityOverride)] = Rendering.ApplyIntelXessPreference;
+            h[nameof(UserSettings.EnableIntelXessOverride)] = EngineRenderingSettingsApplication.ApplyIntelXessPreference;
+            h[nameof(UserSettings.XessQualityOverride)] = EngineRenderingSettingsApplication.ApplyIntelXessPreference;
 
             // ── Anti-aliasing ──
-            Action applyAA = Rendering.ApplyAntiAliasingPreference;
+            Action applyAA = EngineRenderingSettingsApplication.ApplyAntiAliasingPreference;
             h[nameof(UserSettings.AntiAliasingModeOverride)] = applyAA;           // also matches GameStartup
             h[nameof(UserSettings.MsaaSampleCountOverride)] = applyAA;            // also matches GameStartup
 
@@ -571,18 +571,18 @@ namespace XREngine
             h[nameof(EditorPreferencesOverrides.AudioSampleRateOverride)] = applyAudio;
 
             // ── Camera depth mode ──
-            Action applyDepthMode = Rendering.ApplySceneCameraDepthModePreference;
+            Action applyDepthMode = EngineRenderingSettingsApplication.ApplySceneCameraDepthModePreference;
             h[nameof(GameStartupSettings.DepthModeOverride)] = applyDepthMode;
 
             // ── Parallel tick ──
-            h[nameof(UserSettings.TickGroupedItemsInParallelOverride)] = Rendering.ApplyTickGroupedItemsInParallelPreference;
+            h[nameof(UserSettings.TickGroupedItemsInParallelOverride)] = EngineRenderingSettingsApplication.ApplyTickGroupedItemsInParallelPreference;
             // GameStartup's identically-named property matches the same key
 
             // ── Technical / compute overrides (GameStartup → Engine push) ──
-            h[nameof(GameStartupSettings.AllowShaderPipelinesOverride)] = Rendering.ApplyAllowShaderPipelinesPreference;
-            h[nameof(GameStartupSettings.AllowSkinningOverride)] = Rendering.ApplyAllowSkinningPreference;
-            h[nameof(GameStartupSettings.RecalcChildMatricesLoopTypeOverride)] = Rendering.ApplyRecalcChildMatricesLoopTypePreference;
-            Action applyCompute = Rendering.ApplyComputeRenderingPreference;
+            h[nameof(GameStartupSettings.AllowShaderPipelinesOverride)] = EngineRenderingSettingsApplication.ApplyAllowShaderPipelinesPreference;
+            h[nameof(GameStartupSettings.AllowSkinningOverride)] = EngineRenderingSettingsApplication.ApplyAllowSkinningPreference;
+            h[nameof(GameStartupSettings.RecalcChildMatricesLoopTypeOverride)] = EngineRenderingSettingsApplication.ApplyRecalcChildMatricesLoopTypePreference;
+            Action applyCompute = EngineRenderingSettingsApplication.ApplyComputeRenderingPreference;
             h[nameof(GameStartupSettings.CalculateSkinningInComputeShaderOverride)] = applyCompute;
             h[nameof(GameStartupSettings.CalculateBlendshapesInComputeShaderOverride)] = applyCompute;
             h[nameof(GameStartupSettings.UseDetailPreservingComputeMipmapsOverride)] = applyCompute;
@@ -607,7 +607,7 @@ namespace XREngine
 #if XRE_PUBLISHED
             Engine.Profiler.EnableFrameLogging = false;
             Engine.Profiler.EnableComponentTiming = false;
-            Engine.Rendering.Stats.EnableTracking = false;
+            RuntimeEngine.Rendering.Stats.EnableTracking = false;
             UdpProfilerSender.Stop();
 #else
             var debug = _editorPreferences.Debug;
@@ -616,7 +616,7 @@ namespace XREngine
             else if (changedPropertyName == nameof(EditorDebugOptions.EnableProfilerComponentTiming))
                 Engine.Profiler.EnableComponentTiming = debug.EnableProfilerComponentTiming;
             else if (changedPropertyName == nameof(EditorDebugOptions.EnableRenderStatisticsTracking))
-                Engine.Rendering.Stats.EnableTracking = debug.EnableRenderStatisticsTracking;
+                RuntimeEngine.Rendering.Stats.EnableTracking = debug.EnableRenderStatisticsTracking;
             else if (changedPropertyName == nameof(EditorDebugOptions.EnableProfilerUdpSending))
             {
                 if (debug.EnableProfilerUdpSending)
@@ -680,18 +680,18 @@ namespace XREngine
         /// </summary>
         private static void ApplyEffectiveSettingsRuntime()
         {
-            Rendering.ApplyRenderPipelinePreference();
-            Rendering.ApplyGlobalIlluminationModePreference();
-            Rendering.ApplyAntiAliasingPreference();
-            Rendering.ApplyGpuRenderDispatchPreference();
-            Rendering.ApplyCpuSceneCullingStructurePreference();
-            Rendering.ApplyNvidiaDlssPreference();
-            Rendering.ApplyIntelXessPreference();
-            Rendering.ApplyTickGroupedItemsInParallelPreference();
-            Rendering.ApplyAllowShaderPipelinesPreference();
-            Rendering.ApplyAllowSkinningPreference();
-            Rendering.ApplyRecalcChildMatricesLoopTypePreference();
-            Rendering.ApplyComputeRenderingPreference();
+            EngineRenderingSettingsApplication.ApplyRenderPipelinePreference();
+            EngineRenderingSettingsApplication.ApplyGlobalIlluminationModePreference();
+            EngineRenderingSettingsApplication.ApplyAntiAliasingPreference();
+            EngineRenderingSettingsApplication.ApplyGpuRenderDispatchPreference();
+            EngineRenderingSettingsApplication.ApplyCpuSceneCullingStructurePreference();
+            EngineRenderingSettingsApplication.ApplyNvidiaDlssPreference();
+            EngineRenderingSettingsApplication.ApplyIntelXessPreference();
+            EngineRenderingSettingsApplication.ApplyTickGroupedItemsInParallelPreference();
+            EngineRenderingSettingsApplication.ApplyAllowShaderPipelinesPreference();
+            EngineRenderingSettingsApplication.ApplyAllowSkinningPreference();
+            EngineRenderingSettingsApplication.ApplyRecalcChildMatricesLoopTypePreference();
+            EngineRenderingSettingsApplication.ApplyComputeRenderingPreference();
             ApplyTimerSettings();
             ApplyAudioPreferences();
         }
@@ -1006,7 +1006,7 @@ namespace XREngine
             else
             {
                 ApplyEditorPreferencesRuntimeSideEffects(normalizedPropertyName);
-                Rendering.ApplyEditorPreferencesChange(normalizedPropertyName);
+                EngineRenderingSettingsApplication.ApplyEditorPreferencesChange(normalizedPropertyName);
                 ApplyAudioPreferences();
             }
 

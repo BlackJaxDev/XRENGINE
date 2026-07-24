@@ -244,7 +244,7 @@ namespace XREngine
                     // Preserve runtime-only bindings when swapping controller types so input devices,
                     // viewports, and already-constructed editor pawns stay wired up.
                     XRComponent? controlledPawn = existing.ControlledPawnComponent;
-                    var viewportsToReassign = _windows
+                    var viewportsToReassign = RuntimeEngine.Windows
                         .SelectMany(w => w.Viewports)
                         .Where(vp => vp.AssociatedPlayer == existing)
                         .ToArray();

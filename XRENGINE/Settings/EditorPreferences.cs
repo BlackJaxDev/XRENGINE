@@ -1767,7 +1767,7 @@ namespace XREngine
 
         [Category("Debug")]
         [DisplayName("Debug Point Size")]
-        [Description("Camera-relative size for Engine.Rendering.Debug point primitives.")]
+        [Description("Camera-relative size for RuntimeEngine.Rendering.Debug point primitives.")]
         public float DebugPointSize
         {
             get => _debugPointSize;
@@ -1776,7 +1776,7 @@ namespace XREngine
 
         [Category("Debug")]
         [DisplayName("Debug Line Width")]
-        [Description("Screen-relative width for Engine.Rendering.Debug line primitives.")]
+        [Description("Screen-relative width for RuntimeEngine.Rendering.Debug line primitives.")]
         public float DebugLineWidth
         {
             get => _debugLineWidth;
@@ -2636,10 +2636,10 @@ namespace XREngine
             {
 #if XRE_PUBLISHED
                 if (SetField(ref _enableRenderStatisticsTracking, false))
-                    Engine.Rendering.Stats.EnableTracking = false;
+                    RuntimeEngine.Rendering.Stats.EnableTracking = false;
 #else
                 if (SetField(ref _enableRenderStatisticsTracking, value))
-                    Engine.Rendering.Stats.EnableTracking = value;
+                    RuntimeEngine.Rendering.Stats.EnableTracking = value;
 #endif
             }
         }
@@ -3172,13 +3172,13 @@ namespace XREngine
 #if XRE_PUBLISHED
             Engine.Profiler.EnableFrameLogging = false;
             Engine.Profiler.EnableComponentTiming = false;
-            Engine.Rendering.Stats.EnableTracking = false;
+            RuntimeEngine.Rendering.Stats.EnableTracking = false;
             XREngine.Rendering.UI.UILayoutSystem.EnableDebugLogging = false;
             UdpProfilerSender.Stop();
 #else
             Engine.Profiler.EnableFrameLogging = EnableProfilerFrameLogging;
             Engine.Profiler.EnableComponentTiming = EnableProfilerComponentTiming;
-            Engine.Rendering.Stats.EnableTracking = EnableRenderStatisticsTracking;
+            RuntimeEngine.Rendering.Stats.EnableTracking = EnableRenderStatisticsTracking;
             XREngine.Rendering.UI.UILayoutSystem.EnableDebugLogging = EnableUILayoutDebugLogging;
 
             if (EnableProfilerUdpSending)

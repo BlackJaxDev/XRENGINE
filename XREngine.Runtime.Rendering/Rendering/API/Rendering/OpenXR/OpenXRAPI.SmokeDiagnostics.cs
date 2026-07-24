@@ -251,7 +251,7 @@ public unsafe partial class OpenXRAPI
 
     private void ResetSmokeDiagnostics()
     {
-        ResetStrictSpsBoundaryCaptureDiagnostics();
+        ResetGraphicsBackendDiagnostics();
         lock (_smokeDiagnosticsLock)
         {
             _smokeRuntimeStateTransitions.Clear();

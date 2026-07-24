@@ -6,7 +6,7 @@ namespace XREngine;
 internal sealed class EngineRuntimeModelImportServices : IRuntimeModelImportServices
 {
     public int WorkerCount => Engine.Jobs.WorkerCount;
-    public bool ProcessMeshesAsynchronously => Engine.Rendering.Settings.ProcessMeshImportsAsynchronously;
+    public bool ProcessMeshesAsynchronously => RuntimeEngine.Rendering.Settings.ProcessMeshImportsAsynchronously;
     public FbxImportBackend PreferredFbxBackend => Engine.EditorPreferences?.FbxImporterBackend ?? FbxImportBackend.Auto;
     public GltfImportBackend PreferredGltfBackend => Engine.EditorPreferences?.GltfImporterBackend ?? GltfImportBackend.Auto;
 

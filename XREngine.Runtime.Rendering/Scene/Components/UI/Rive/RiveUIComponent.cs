@@ -1,6 +1,5 @@
 #if XRENGINE_HAS_RIVESHARP
 using RiveSharp;
-using Silk.NET.OpenGL;
 using SkiaSharp;
 using System.Collections.Concurrent;
 using System.Numerics;
@@ -13,7 +12,6 @@ using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.UI;
 using Renderer = RiveSharp.Renderer;
 
@@ -507,7 +505,12 @@ public class RiveUIComponent : UIInteractableComponent
         IRuntimeRendererHost? current = AbstractRenderer.Current;
         if (current is null ||
             !current.TryGetBackendCapability<IRenderSurfaceSampleBackendCapability>(out var surfaceCapability) ||
-            surfaceCapability is null)
+            surfaceCapability is null ||
+            !current.TryGetBackendCapability<IUiFramebufferInteropBackendCapability>(out var framebufferCapability) ||
+            framebufferCapability is null ||
+            !framebufferCapability.TryGetUiFramebufferInterop(
+                _renderFBO!,
+                out UiFramebufferInteropInfo framebufferInterop))
         {
             Debug.UIWarning("No current renderer found. Cannot create backend texture.");
             return false;
@@ -518,8 +521,8 @@ public class RiveUIComponent : UIInteractableComponent
             sKSizeI.Width,
             sKSizeI.Height,
             GetSampleCount(surfaceCapability),
-            GetSurfaceStencilBits(_renderFBO!),
-            GetFBOInfo());
+            framebufferInterop.StencilBits,
+            GetFBOInfo(framebufferInterop.BindingId));
 
         //Recreate surface
         _surface = null;
@@ -527,22 +530,11 @@ public class RiveUIComponent : UIInteractableComponent
         return true;
     }
 
-    private GRGlFramebufferInfo GetFBOInfo()
+    private static GRGlFramebufferInfo GetFBOInfo(uint bindingId)
     {
-        var bindingID = (_renderFBO?.APIWrappers?.FirstOrDefault() as GLFrameBuffer)?.BindingId ?? 0u;
-        if (bindingID == 0)
+        if (bindingId == 0)
             Debug.UIWarning("Framebuffer binding ID is invalid");
-        return new GRGlFramebufferInfo(bindingID, SKColorType.Rgba8888.ToGlSizedFormat());
-    }
-
-    private static int GetSurfaceStencilBits(XRFrameBuffer fbo)
-    {
-        if (fbo.APIWrappers.FirstOrDefault() is not GLFrameBuffer glFBO)
-        {
-            Debug.UIWarning("Framebuffer is not a GL framebuffer. Cannot get stencil bits.");
-            return 0;
-        }
-        return glFBO?.GetAttachmentParameter(GLEnum.ColorAttachment0, GLEnum.FramebufferAttachmentStencilSize) ?? 0;
+        return new GRGlFramebufferInfo(bindingId, SKColorType.Rgba8888.ToGlSizedFormat());
     }
 
     private int GetSampleCount(IRenderSurfaceSampleBackendCapability capability)

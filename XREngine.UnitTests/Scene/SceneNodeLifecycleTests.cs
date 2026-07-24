@@ -9,6 +9,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Editor;
 using XREngine.Rendering;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Scene.Physics.Jitter2;
 using XREngine.Scene.Physics.Physx;
 using XREngine.Scene;
@@ -31,7 +32,7 @@ public class SceneNodeLifecycleTests
     {
         _previousRenderingServices = RuntimeRenderingHostServices.Current;
         _previousShaderServices = RuntimeShaderServices.Current;
-        RuntimeRenderingHostServices.Current = new EngineRuntimeRenderingHostServices();
+        RuntimeRenderingHostServices.Current = RuntimeRenderingBootstrap.CreateEngineHostServices();
         RuntimeShaderServices.Current = new XREngine.UnitTests.Rendering.GltfImportTestUtilities.TestRuntimeShaderServices();
     }
 

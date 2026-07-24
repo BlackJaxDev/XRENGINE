@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering.Compute

@@ -244,14 +244,14 @@ namespace XREngine.Components.Physics
                 float t1 = _lowerAngleRadians + range * (i + 1) / arcSegments;
                 Vector3 p0 = anchorWorldA + Vector3.Transform(refDir, Quaternion.CreateFromAxisAngle(axis, t0)) * arcRadius;
                 Vector3 p1 = anchorWorldA + Vector3.Transform(refDir, Quaternion.CreateFromAxisAngle(axis, t1)) * arcRadius;
-                Engine.Rendering.Debug.RenderLine(p0, p1, ColorF4.Yellow);
+                RuntimeEngine.Rendering.Debug.RenderLine(p0, p1, ColorF4.Yellow);
             }
 
             // Draw limit boundary lines
             Vector3 lower = anchorWorldA + Vector3.Transform(refDir, Quaternion.CreateFromAxisAngle(axis, _lowerAngleRadians)) * arcRadius;
             Vector3 upper = anchorWorldA + Vector3.Transform(refDir, Quaternion.CreateFromAxisAngle(axis, _upperAngleRadians)) * arcRadius;
-            Engine.Rendering.Debug.RenderLine(anchorWorldA, lower, ColorF4.Orange);
-            Engine.Rendering.Debug.RenderLine(anchorWorldA, upper, ColorF4.Orange);
+            RuntimeEngine.Rendering.Debug.RenderLine(anchorWorldA, lower, ColorF4.Orange);
+            RuntimeEngine.Rendering.Debug.RenderLine(anchorWorldA, upper, ColorF4.Orange);
         }
     }
 }

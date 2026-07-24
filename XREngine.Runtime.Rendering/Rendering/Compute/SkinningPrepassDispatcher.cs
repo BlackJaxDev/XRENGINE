@@ -2,14 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Numerics;
-using Silk.NET.OpenGL;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using State = XREngine.RuntimeEngine.Rendering.State;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering.Compute;

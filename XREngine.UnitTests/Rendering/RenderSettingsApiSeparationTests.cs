@@ -16,7 +16,7 @@ public sealed class RenderSettingsApiSeparationTests
     [Test]
     public void EngineSettings_OpenGLLegacyAliasesForwardToGroupedSettings()
     {
-        var settings = new Engine.Rendering.EngineSettings();
+        var settings = new RuntimeEngine.Rendering.EngineSettings();
 
         settings.AllowShaderPipelines = false;
         settings.OpenGL.AllowProgramPipelines.ShouldBeFalse();
@@ -37,7 +37,7 @@ public sealed class RenderSettingsApiSeparationTests
     [Test]
     public void EngineSettings_VulkanLegacyAliasesForwardToGroupedSettings()
     {
-        var settings = new Engine.Rendering.EngineSettings();
+        var settings = new RuntimeEngine.Rendering.EngineSettings();
 
         settings.VulkanGpuDrivenProfile = EVulkanGpuDrivenProfile.ShippingFast;
         settings.Vulkan.GpuDriven.Profile.ShouldBe(EVulkanGpuDrivenProfile.ShippingFast);
@@ -174,12 +174,12 @@ public sealed class RenderSettingsApiSeparationTests
     {
         string effective = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Engine.EffectiveSettings.cs");
         string windows = ReadWorkspaceFile("XRENGINE/Engine/Engine.Windows.cs");
-        string mode = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanRenderTargetMode.cs");
+        string mode = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanRenderTargetMode.cs");
         string runtimeServices = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderSettingsServices.cs");
 
         effective.ShouldContain("public static ERenderLibrary PreferredRenderBackend");
         effective.ShouldContain("public static RenderBackendFallbackPolicy RenderBackendFallbackPolicy");
-        effective.ShouldContain("Rendering.Settings.Vulkan.Startup.FallbackPolicy");
+        effective.ShouldContain("RuntimeEngine.Rendering.Settings.Vulkan.Startup.FallbackPolicy");
         effective.ShouldContain("GameSettings?.RenderBackendFallbackPolicyOverride");
         effective.ShouldContain("UserSettings?.RenderBackendFallbackPolicyOverride");
         effective.ShouldContain("public static EVulkanRenderTargetMode VulkanRenderTargetMode");
@@ -192,7 +192,7 @@ public sealed class RenderSettingsApiSeparationTests
         windows.ShouldContain("Vulkan initialization failed and render backend fallback is not permitted.");
         windows.ShouldContain("[StartupWindow] Ignoring render backend fallback policy");
 
-        mode.ShouldContain(XREngineEnvironmentVariables.VkRenderTargetMode);
+        mode.ShouldContain("XREngineEnvironmentVariables.VkRenderTargetMode");
         mode.ShouldContain("RuntimeEngine.EffectiveSettings.VulkanRenderTargetMode");
         mode.ShouldContain("dynamic rendering was explicitly requested");
 

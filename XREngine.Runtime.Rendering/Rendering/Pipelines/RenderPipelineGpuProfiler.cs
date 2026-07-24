@@ -6,8 +6,6 @@ using System.Text;
 using System.Threading;
 using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
-using XREngine.Rendering.OpenGL;
-using XREngine.Rendering.Vulkan;
 using XREngine.Rendering.Pipelines.Commands;
 
 namespace XREngine.Rendering;
@@ -364,8 +362,18 @@ internal sealed class RenderPipelineGpuProfiler
     public bool IsProfilingActive
         => Volatile.Read(ref _enabled) != 0 || IsProfilingRequested();
 
+    /// <summary>
+    /// Returns whether command execution should emit query objects through the
+    /// immediate backend capability. Vulkan owns command-buffer timestamp pools
+    /// and must not also enqueue one arena-backed query object per scope.
+    /// </summary>
     public bool ShouldInstrumentCommandScopes
-        => IsProfilingActive && TryGetQueryCapability(out _);
+        => IsProfilingActive &&
+           UsesImmediateTimestampQueryObjects(AbstractRenderer.Current?.BackendId ?? default) &&
+           TryGetQueryCapability(out _);
+
+    internal static bool UsesImmediateTimestampQueryObjects(RendererBackendId backendId)
+        => backendId == RendererBackendId.OpenGL;
 
     private readonly struct UserScopeHandle(ulong frameId, string[] path, XRRenderQuery startQuery)
     {

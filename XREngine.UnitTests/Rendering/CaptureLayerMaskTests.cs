@@ -11,8 +11,8 @@ public sealed class CaptureLayerMaskTests
     [Test]
     public void ShadowCaptureCameras_ExcludeGizmoLayer()
     {
-        string oneViewSource = ReadWorkspaceFile("XRENGINE/Scene/Components/Lights/Types/OneViewLightComponent.cs");
-        string pointLightSource = ReadWorkspaceFile("XRENGINE/Scene/Components/Lights/Types/PointLightComponent.cs");
+        string oneViewSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Lights/Types/OneViewLightComponent.cs");
+        string pointLightSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Lights/Types/PointLightComponent.cs");
 
         oneViewSource.ShouldContain("cam.CullingMask = DefaultLayers.EverythingExceptGizmos;");
         pointLightSource.ShouldContain("cam.CullingMask = DefaultLayers.EverythingExceptGizmos;");
@@ -21,9 +21,9 @@ public sealed class CaptureLayerMaskTests
     [Test]
     public void GlobalDebugShapes_HonorCameraGizmoMask()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Debug.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngine.Rendering.Debug.cs");
 
-        source.ShouldContain("Engine.Rendering.State.RenderingCamera is { } camera");
+        source.ShouldContain("RuntimeEngine.Rendering.State.RenderingCamera is { } camera");
         source.ShouldContain("!camera.CullingMask.Contains(XREngine.Components.Scene.Transforms.DefaultLayers.GizmosIndex)");
     }
 

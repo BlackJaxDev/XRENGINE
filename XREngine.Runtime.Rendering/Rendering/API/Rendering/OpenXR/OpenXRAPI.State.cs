@@ -1,4 +1,3 @@
-using Silk.NET.OpenGL;
 using Silk.NET.OpenXR;
 using System;
 using System.Diagnostics;
@@ -70,7 +69,6 @@ public unsafe partial class OpenXRAPI
     private int _trackingLossStreakLogged;
     private int _freezeFallbackStreakLogged;
     private FrameState _frameState;
-    private GL? _gl;
     private System.Action? _deferredOpenGlInit;
 
     private bool _sessionBegun;
@@ -327,51 +325,13 @@ public unsafe partial class OpenXRAPI
         return (double)dt * 1000.0 / Stopwatch.Frequency;
     }
 
-    private nint _openXrSessionHdc;
-    private nint _openXrSessionHglrc;
-    private string _openXrSessionGlBindingTag = string.Empty;
-
     #endregion
 
     #region Mirror blit (desktop viewport)
 
-    private XRTexture2D? _viewportMirrorColor;
-    private XRRenderBuffer? _viewportMirrorDepth;
-    private XRFrameBuffer? _viewportMirrorFbo;
-    private uint _viewportMirrorWidth;
-    private uint _viewportMirrorHeight;
-
-    private readonly XRTexture2D?[] _vulkanEyeMirrorColors = new XRTexture2D?[2];
-    private readonly XRRenderBuffer?[] _vulkanEyeMirrorDepths = new XRRenderBuffer?[2];
-    private readonly XRFrameBuffer?[] _vulkanEyeMirrorFbos = new XRFrameBuffer?[2];
-    private uint _vulkanEyeMirrorWidth;
-    private uint _vulkanEyeMirrorHeight;
-
-    private XRTexture2DArray? _vulkanStereoColorArray;
-    private XRTexture2DArray? _vulkanStereoDepthArray;
-    private XRTexture2DArrayView? _vulkanStereoLeftColorView;
-    private XRTexture2DArrayView? _vulkanStereoRightColorView;
-    private XRFrameBuffer? _vulkanStereoFbo;
-    private uint _vulkanStereoWidth;
-    private uint _vulkanStereoHeight;
-    private Silk.NET.Vulkan.Format _vulkanStereoColorFormat;
-
-    private XRTexture2D? _previewLeftEyeTexture;
-    private XRTexture2D? _previewRightEyeTexture;
-    private uint _previewEyeTextureWidth;
-    private uint _previewEyeTextureHeight;
-    private EPixelInternalFormat _previewEyeTextureInternalFormat = EPixelInternalFormat.Rgba8;
-    private ESizedInternalFormat _previewEyeTextureSizedFormat = ESizedInternalFormat.Rgba8;
-
-    public XRTexture2D? PreviewLeftEyeTexture => _previewLeftEyeTexture;
-    public XRTexture2D? PreviewRightEyeTexture => _previewRightEyeTexture;
-    public XRTexture2D? DesktopMirrorTexture => _viewportMirrorColor;
-
-    private uint _blitReadFbo;
-    private uint _blitDrawFbo;
-
-    private nint _blitFboHglrc;
-    private uint _openXrCurrentSwapchainFramebuffer;
+    public XRTexture2D? PreviewLeftEyeTexture => _graphicsBinding?.PreviewLeftEyeTexture;
+    public XRTexture2D? PreviewRightEyeTexture => _graphicsBinding?.PreviewRightEyeTexture;
+    public XRTexture2D? DesktopMirrorTexture => _graphicsBinding?.DesktopMirrorTexture;
 
     #endregion
 
@@ -441,16 +401,6 @@ public unsafe partial class OpenXRAPI
     private readonly Swapchain[] _swapchains = new Swapchain[RenderFrameViewSet.MaxViewCount];
 
     /// <summary>
-    /// OpenGL swapchain image pointers for each view.
-    /// </summary>
-    private readonly SwapchainImageOpenGLKHR*[] _swapchainImagesGL = new SwapchainImageOpenGLKHR*[RenderFrameViewSet.MaxViewCount];
-
-    /// <summary>
-    /// OpenGL framebuffer handles for each swapchain image.
-    /// </summary>
-    private readonly uint[]?[] _swapchainFramebuffers = new uint[]?[RenderFrameViewSet.MaxViewCount];
-
-    /// <summary>
     /// Number of swapchain images per view.
     /// </summary>
     private readonly uint[] _swapchainImageCounts = new uint[RenderFrameViewSet.MaxViewCount];
@@ -468,28 +418,11 @@ public unsafe partial class OpenXRAPI
     private int _openXrEyeResolutionRecreateQueued;
 
     /// <summary>
-    /// Vulkan swapchain image pointers for each view.
-    /// </summary>
-    private readonly SwapchainImageVulkan2KHR*[] _swapchainImagesVK = new SwapchainImageVulkan2KHR*[RenderFrameViewSet.MaxViewCount];
-
-    /// <summary>
     /// DirectX swapchain image pointers for each view.
     /// </summary>
     private readonly SwapchainImageD3D12KHR*[] _swapchainImagesDX = new SwapchainImageD3D12KHR*[RenderFrameViewSet.MaxViewCount];
 
     #endregion
-
-    internal bool TryGetGl(out GL gl)
-    {
-        if (_gl is not null)
-        {
-            gl = _gl;
-            return true;
-        }
-
-        gl = null!;
-        return false;
-    }
 
     #region Pipeline helpers
 

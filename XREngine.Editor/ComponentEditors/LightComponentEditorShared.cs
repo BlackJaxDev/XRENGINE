@@ -130,9 +130,9 @@ internal static class LightComponentEditorShared
 
         if (light is SpotLightComponent spotLight)
         {
-            bool useSpotAtlas = Engine.Rendering.Settings.UseSpotShadowAtlas;
+            bool useSpotAtlas = RuntimeEngine.Rendering.Settings.UseSpotShadowAtlas;
             if (ImGui.Checkbox("Use Spot Shadow Atlas", ref useSpotAtlas))
-                Engine.Rendering.Settings.UseSpotShadowAtlas = useSpotAtlas;
+                RuntimeEngine.Rendering.Settings.UseSpotShadowAtlas = useSpotAtlas;
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Global renderer setting. When enabled, dynamic spot lights render and sample through the dynamic shadow atlas.");
 
@@ -159,9 +159,9 @@ internal static class LightComponentEditorShared
 
         if (light is PointLightComponent)
         {
-            bool usePointAtlas = Engine.Rendering.Settings.UsePointShadowAtlas;
+            bool usePointAtlas = RuntimeEngine.Rendering.Settings.UsePointShadowAtlas;
             if (ImGui.Checkbox("Use Point Shadow Atlas", ref usePointAtlas))
-                Engine.Rendering.Settings.UsePointShadowAtlas = usePointAtlas;
+                RuntimeEngine.Rendering.Settings.UsePointShadowAtlas = usePointAtlas;
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Global renderer setting. When enabled, dynamic point lights render six atlas face tiles instead of a legacy cubemap.");
 
@@ -182,9 +182,9 @@ internal static class LightComponentEditorShared
 
         if (light is DirectionalLightComponent)
         {
-            bool useDirectionalAtlas = Engine.Rendering.Settings.UseDirectionalShadowAtlas;
+            bool useDirectionalAtlas = RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas;
             if (ImGui.Checkbox("Use Directional Shadow Atlas", ref useDirectionalAtlas))
-                Engine.Rendering.Settings.UseDirectionalShadowAtlas = useDirectionalAtlas;
+                RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas = useDirectionalAtlas;
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Global renderer setting. When enabled, directional shadow maps and cascades render and sample through the dynamic shadow atlas.");
 
@@ -206,10 +206,10 @@ internal static class LightComponentEditorShared
         => light is SpotLightComponent spot && spot.UsesSpotShadowAtlasForCurrentEncoding;
 
     private static bool IsPointShadowAtlasActive(LightComponent light)
-        => light is PointLightComponent && Engine.Rendering.Settings.UsePointShadowAtlas;
+        => light is PointLightComponent && RuntimeEngine.Rendering.Settings.UsePointShadowAtlas;
 
     private static bool IsDirectionalShadowAtlasActive(LightComponent light)
-        => light is DirectionalLightComponent && Engine.Rendering.Settings.UseDirectionalShadowAtlas;
+        => light is DirectionalLightComponent && RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas;
 
     private static void DrawShadowMapControls(LightComponent light, bool showCascadedOptions)
     {

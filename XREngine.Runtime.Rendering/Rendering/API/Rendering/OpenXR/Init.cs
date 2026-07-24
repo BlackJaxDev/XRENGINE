@@ -1,6 +1,5 @@
 using Silk.NET.Core;
 using Silk.NET.Core.Native;
-using Silk.NET.OpenGL;
 using Silk.NET.OpenXR;
 using Silk.NET.OpenXR.Extensions.KHR;
 using Silk.NET.Windowing;
@@ -13,8 +12,6 @@ using XREngine;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
-using XREngine.Rendering.Vulkan;
 using XREngine.Scene.Transforms;
 using Debug = XREngine.Debug;
 

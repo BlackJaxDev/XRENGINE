@@ -11,6 +11,9 @@ namespace XREngine;
 
 internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices
 {
+    public EngineRuntimeVrStateServices()
+        => RuntimeEngine.VRState.LifecycleServices = new EngineRuntimeVrLifecycleServices();
+
     public event Action? FrameAdvanced
     {
         add
@@ -30,12 +33,12 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices
         add
         {
             if (value is not null)
-                Engine.VRState.RecalcMatrixOnDraw += value;
+                RuntimeEngine.VRState.RecalcMatrixOnDraw += value;
         }
         remove
         {
             if (value is not null)
-                Engine.VRState.RecalcMatrixOnDraw -= value;
+                RuntimeEngine.VRState.RecalcMatrixOnDraw -= value;
         }
     }
 
@@ -44,12 +47,12 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices
         add
         {
             if (value is not null)
-                Engine.VRState.IPDScalarChanged += value;
+                RuntimeEngine.VRState.IPDScalarChanged += value;
         }
         remove
         {
             if (value is not null)
-                Engine.VRState.IPDScalarChanged -= value;
+                RuntimeEngine.VRState.IPDScalarChanged -= value;
         }
     }
 
@@ -58,12 +61,12 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices
         add
         {
             if (value is not null)
-                Engine.VRState.RealWorldHeightChanged += value;
+                RuntimeEngine.VRState.RealWorldHeightChanged += value;
         }
         remove
         {
             if (value is not null)
-                Engine.VRState.RealWorldHeightChanged -= value;
+                RuntimeEngine.VRState.RealWorldHeightChanged -= value;
         }
     }
 
@@ -72,12 +75,12 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices
         add
         {
             if (value is not null)
-                Engine.VRState.DesiredAvatarHeightChanged += value;
+                RuntimeEngine.VRState.DesiredAvatarHeightChanged += value;
         }
         remove
         {
             if (value is not null)
-                Engine.VRState.DesiredAvatarHeightChanged -= value;
+                RuntimeEngine.VRState.DesiredAvatarHeightChanged -= value;
         }
     }
 
@@ -86,12 +89,12 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices
         add
         {
             if (value is not null)
-                Engine.VRState.ModelHeightChanged += value;
+                RuntimeEngine.VRState.ModelHeightChanged += value;
         }
         remove
         {
             if (value is not null)
-                Engine.VRState.ModelHeightChanged -= value;
+                RuntimeEngine.VRState.ModelHeightChanged -= value;
         }
     }
 
@@ -100,58 +103,58 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices
         add
         {
             if (value is not null)
-                Engine.VRState.OpenVRApi.DeviceDetected += value;
+                RuntimeEngine.VRState.OpenVRApi.DeviceDetected += value;
         }
         remove
         {
             if (value is not null)
-                Engine.VRState.OpenVRApi.DeviceDetected -= value;
+                RuntimeEngine.VRState.OpenVRApi.DeviceDetected -= value;
         }
     }
 
     public RuntimeVrRuntimeKind ActiveRuntime
-        => Engine.VRState.ActiveRuntime switch
+        => RuntimeEngine.VRState.ActiveRuntime switch
         {
-            Engine.VRState.VRRuntime.OpenVR => RuntimeVrRuntimeKind.OpenVR,
-            Engine.VRState.VRRuntime.OpenXR => RuntimeVrRuntimeKind.OpenXR,
+            RuntimeVrState.VRRuntime.OpenVR => RuntimeVrRuntimeKind.OpenVR,
+            RuntimeVrState.VRRuntime.OpenXR => RuntimeVrRuntimeKind.OpenXR,
             _ => RuntimeVrRuntimeKind.None,
         };
 
     public bool IsOpenXRActive
-        => Engine.VRState.IsOpenXRActive;
+        => RuntimeEngine.VRState.IsOpenXRActive;
 
     public bool IsInVR
-        => Engine.VRState.IsInVR;
+        => RuntimeEngine.VRState.IsInVR;
 
     public object? CalibrationSettings
-        => Engine.VRState.CalibrationSettings;
+        => RuntimeEngine.VRState.CalibrationSettings;
 
     public float RealWorldIPD
-        => Engine.VRState.RealWorldIPD;
+        => RuntimeEngine.VRState.RealWorldIPD;
 
     public float ScaledIPD
-        => Engine.VRState.ScaledIPD;
+        => RuntimeEngine.VRState.ScaledIPD;
 
     public float ModelToRealWorldHeightRatio
-        => Engine.VRState.ModelToRealWorldHeightRatio;
+        => RuntimeEngine.VRState.ModelToRealWorldHeightRatio;
 
     public float ModelHeight
     {
-        get => Engine.VRState.ModelHeight;
-        set => Engine.VRState.ModelHeight = value;
+        get => RuntimeEngine.VRState.ModelHeight;
+        set => RuntimeEngine.VRState.ModelHeight = value;
     }
 
     public VrDevice? Headset
-        => Engine.VRState.OpenVRApi.Headset;
+        => RuntimeEngine.VRState.OpenVRApi.Headset;
 
     public VrDevice? LeftController
-        => Engine.VRState.OpenVRApi.LeftController;
+        => RuntimeEngine.VRState.OpenVRApi.LeftController;
 
     public VrDevice? RightController
-        => Engine.VRState.OpenVRApi.RightController;
+        => RuntimeEngine.VRState.OpenVRApi.RightController;
 
     public IEnumerable<VrDevice> TrackedDevices
-        => Engine.VRState.OpenVRApi.TrackedDevices;
+        => RuntimeEngine.VRState.OpenVRApi.TrackedDevices;
 
     public string[] GetKnownOpenXrTrackerUserPaths()
         => TryGetOpenXr(out OpenXRAPI? openXrApi)
@@ -164,7 +167,7 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices
             : [];
 
     public bool IsGenericTracker(uint deviceIndex)
-        => Engine.VRState.OpenVRApi.CVR is { } cvr &&
+        => RuntimeEngine.VRState.OpenVRApi.CVR is { } cvr &&
             cvr.GetTrackedDeviceClass(deviceIndex) == ETrackedDeviceClass.GenericTracker;
 
     public bool TryGetHeadLocalPose(RuntimeVrPoseTiming timing, out Matrix4x4 pose)
@@ -223,7 +226,7 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices
             return false;
         }
 
-        if (Engine.VRState.IsInVR && Engine.VRState.OpenVRApi.CVR is { } cvr)
+        if (RuntimeEngine.VRState.IsInVR && RuntimeEngine.VRState.OpenVRApi.CVR is { } cvr)
         {
             EVREye eye = leftEye ? EVREye.Eye_Left : EVREye.Eye_Right;
             pose = ToNumerics(cvr.GetEyeToHeadTransform(eye)).Transposed().Inverted();
@@ -243,7 +246,7 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices
 
     private static bool TryGetOpenXr([NotNullWhen(true)] out OpenXRAPI? openXrApi)
     {
-        openXrApi = Engine.VRState.IsOpenXRActive ? Engine.VRState.OpenXRApi : null;
+        openXrApi = RuntimeEngine.VRState.IsOpenXRActive ? RuntimeEngine.VRState.OpenXRApi : null;
         return openXrApi is not null;
     }
 

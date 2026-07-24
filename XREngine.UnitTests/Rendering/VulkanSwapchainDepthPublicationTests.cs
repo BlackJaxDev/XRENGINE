@@ -12,7 +12,7 @@ public sealed class VulkanSwapchainDepthPublicationTests
     public void SwapchainDepth_IsPublishedAndRetiredAsOneImmutableGeneration()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
 
         source.ShouldContain("private VulkanSwapchainDepthResources? _swapchainDepthResources;");
         source.ShouldContain("private readonly object _swapchainDepthMutationLock = new();");
@@ -37,11 +37,11 @@ public sealed class VulkanSwapchainDepthPublicationTests
     public void FrameRecordingAndReadback_CaptureOneDepthGeneration()
     {
         string recording = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string readback = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Readback.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Readback.cs");
         string blit = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Blit.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Blit.cs");
 
         recording.ShouldContain("VulkanSwapchainDepthResources? depth = CurrentSwapchainDepthResources;");
         recording.ShouldContain("depth?.Image ?? default");
@@ -56,11 +56,11 @@ public sealed class VulkanSwapchainDepthPublicationTests
     public void SwapchainReplacement_DetachesExternalImageGenerationsBeforeHandleReuse()
     {
         string swapchain = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
         string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.RetiredSwapchainGeneration.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.RetiredSwapchainGeneration.cs");
 
         int detachIndex = swapchain.IndexOf(
             "DetachSwapchainImageLifetimesForHandleReuse(oldImages)",
@@ -86,11 +86,11 @@ public sealed class VulkanSwapchainDepthPublicationTests
     public void DeferredImageViewRetirement_IsQualifiedByHandleGeneration()
     {
         string entry = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.RetiredImageResourceEntry.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.RetiredImageResourceEntry.cs");
         string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
         string imageViews = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Textures/VulkanRenderer.ImageViewLifetime.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Textures/VulkanRenderer.ImageViewLifetime.cs");
 
         entry.ShouldContain("ulong PrimaryViewGeneration");
         entry.ShouldContain("ulong[] AttachmentViewGenerations");
@@ -109,9 +109,9 @@ public sealed class VulkanSwapchainDepthPublicationTests
     public void DynamicRendering_RejectsRetiredAttachmentsBeforeNativeBegin()
     {
         string extensions = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs");
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
 
         int guardIndex = extensions.IndexOf(
             "EnsureVulkanImageViewAvailableForCommandRecording(",
@@ -133,17 +133,20 @@ public sealed class VulkanSwapchainDepthPublicationTests
     public void SwapchainAttachmentRetirement_AbortsFrameWithoutImmediateRecordingRetry()
     {
         string recording = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
-        string frameLoop = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string recordingPolicy =
+            ReadWorkspaceFile(
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recording.cs") +
+            ReadWorkspaceFile(
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recording.Failures.cs");
 
         recording.ShouldContain(
             "!IsTransientResourceRetirementRecordingFailure(recordingDeferredReason) ||");
         recording.ShouldContain(
             "IsSwapchainResourceRetirementRecordingFailure(recordingDeferredReason)");
-        frameLoop.ShouldContain(
+        recordingPolicy.ShouldContain(
             "IsSwapchainResourceRetirementRecordingFailure(");
-        frameLoop.ShouldContain(
+        recordingPolicy.ShouldContain(
             "A generation-bound swapchain attachment retired during command recording");
     }
 

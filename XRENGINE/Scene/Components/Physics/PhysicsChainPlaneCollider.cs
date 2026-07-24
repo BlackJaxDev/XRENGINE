@@ -78,7 +78,7 @@ public class PhysicsChainPlaneCollider : PhysicsChainColliderBase, IRenderable
 
     private void OnDrawGizmosSelected()
     {
-        if (!IsActiveInHierarchy || Engine.Rendering.State.IsShadowPass)
+        if (!IsActiveInHierarchy || RuntimeEngine.Rendering.State.IsShadowPass)
             return;
 
         if (Transform is null)
@@ -88,6 +88,6 @@ public class PhysicsChainPlaneCollider : PhysicsChainColliderBase, IRenderable
 
         ColorF4 color = _bound == EBound.Outside ? ColorF4.Yellow : ColorF4.Magenta;
         Vector3 p = Transform.TransformPoint(_center);
-        Engine.Rendering.Debug.RenderLine(p, p + _plane.Normal, color);
+        RuntimeEngine.Rendering.Debug.RenderLine(p, p + _plane.Normal, color);
     }
 }

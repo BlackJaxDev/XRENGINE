@@ -1,7 +1,6 @@
 using Silk.NET.OpenXR.Extensions.HTC;
 using Silk.NET.OpenXR.Extensions.HTCX;
 using Silk.NET.OpenXR.Extensions.KHR;
-using XREngine.Rendering.Vulkan;
 using OxrExtDebugUtils = global::Silk.NET.OpenXR.Extensions.EXT.ExtDebugUtils;
 
 namespace XREngine.Rendering.API.Rendering.OpenXR;
@@ -76,8 +75,9 @@ public unsafe partial class OpenXRAPI
 
     private string[] GetVulkanGraphicsBindingExtensions()
     {
-        if (Window?.Renderer is VulkanRenderer vulkanRenderer &&
-            vulkanRenderer.UsesOpenXrVulkanEnable2Creation)
+        if (Window?.Renderer is AbstractRenderer renderer &&
+            TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding) &&
+            binding.UsesOpenXrVulkanEnable2Creation(renderer))
         {
             return [KhrVulkanEnable2.ExtensionName];
         }

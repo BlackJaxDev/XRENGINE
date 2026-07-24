@@ -1457,7 +1457,7 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
 
     private static XRTexture? TryResolveEngineSamplerPreview(string samplerName)
     {
-        XRRenderPipelineInstance? pipelineInstance = Engine.Rendering.State.CurrentRenderingPipeline;
+        XRRenderPipelineInstance? pipelineInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         if (pipelineInstance?.Pipeline is null)
             return null;
 

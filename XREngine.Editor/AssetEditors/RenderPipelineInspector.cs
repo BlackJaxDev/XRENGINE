@@ -148,7 +148,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed, 210f);
             ImGui.TableHeadersRow();
 
-            var activeInstance = Engine.Rendering.State.CurrentRenderingPipeline;
+            var activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
             for (int i = 0; i < instances.Count; i++)
             {
                 var instance = instances[i];
@@ -383,7 +383,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         float ignoreTopPercent = grading?.AutoExposureIgnoreTopPercent ?? 0.02f;
         float centerStrength = grading?.AutoExposureCenterWeightStrength ?? 1.0f;
         float centerPower = grading?.AutoExposureCenterWeightPower ?? 2.0f;
-        Vector3 luminanceWeights = grading?.AutoExposureLuminanceWeights ?? Engine.Rendering.Settings.DefaultLuminance;
+        Vector3 luminanceWeights = grading?.AutoExposureLuminanceWeights ?? RuntimeEngine.Rendering.Settings.DefaultLuminance;
 
         if (!TryGetTextureBaseDimensions(hdrTex, out int baseWidth, out int baseHeight, out int smallestAllowedMip))
         {
@@ -651,10 +651,10 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             ?? instance.RenderState.RenderingCamera
             ?? instance.LastSceneCamera
             ?? instance.LastRenderingCamera
-            ?? Engine.Rendering.State.RenderingPipelineState?.SceneCamera
-            ?? Engine.Rendering.State.CurrentRenderingPipeline?.RenderState.SceneCamera
-            ?? Engine.Rendering.State.CurrentRenderingPipeline?.RenderState.RenderingCamera
-            ?? Engine.Rendering.State.RenderingPipelineState?.WindowViewport?.ActiveCamera
+            ?? RuntimeEngine.Rendering.State.RenderingPipelineState?.SceneCamera
+            ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.SceneCamera
+            ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.RenderingCamera
+            ?? RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport?.ActiveCamera
             ?? (Engine.State.MainPlayer?.Viewport as XRViewport)?.ActiveCamera;
 
         var stage = camera?.GetPostProcessStageState<ColorGradingSettings>();
@@ -730,7 +730,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         weights = new Vector3(Sanitize(weights.X), Sanitize(weights.Y), Sanitize(weights.Z));
         float sum = weights.X + weights.Y + weights.Z;
         if (!(sum > 0.0f) || float.IsNaN(sum) || float.IsInfinity(sum))
-            weights = Engine.Rendering.Settings.DefaultLuminance;
+            weights = RuntimeEngine.Rendering.Settings.DefaultLuminance;
         else
             weights /= sum;
 

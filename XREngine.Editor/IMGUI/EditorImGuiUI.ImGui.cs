@@ -311,10 +311,10 @@ public static partial class EditorImGuiUI
             if (!Engine.IsEditor)
                 return;
 
-            if (Engine.Windows.Count <= 0)
+            if (RuntimeEngine.Windows.Count <= 0)
                 return;
 
-            var window = Engine.Windows[0];
+            var window = RuntimeEngine.Windows[0];
             if (window is null)
                 return;
 
@@ -1465,10 +1465,10 @@ public static partial class EditorImGuiUI
             if (ImGui.BeginMenu("Engine Defaults"))
             {
                 if (ImGui.MenuItem("Global Engine Defaults"))
-                    OpenSettingsInInspector(Engine.Rendering.GlobalDefaultSettings, GlobalEngineDefaultsInspectorTitle);
+                    OpenSettingsInInspector(RuntimeEngine.Rendering.GlobalDefaultSettings, GlobalEngineDefaultsInspectorTitle);
 
                 if (ImGui.MenuItem("Project Engine Defaults", null, false, Engine.CurrentProject is not null))
-                    OpenSettingsInInspector(Engine.Rendering.ProjectDefaultSettings ?? Engine.Rendering.DefaultSettings, ProjectEngineDefaultsInspectorTitle);
+                    OpenSettingsInInspector(RuntimeEngine.Rendering.ProjectDefaultSettings ?? RuntimeEngine.Rendering.DefaultSettings, ProjectEngineDefaultsInspectorTitle);
 
                 ImGui.EndMenu();
             }
@@ -2048,7 +2048,7 @@ public static partial class EditorImGuiUI
 
         private static XRWorldInstance? TryGetActiveWorldInstance()
         {
-            foreach (var window in Engine.Windows)
+            foreach (var window in RuntimeEngine.Windows)
             {
                 var instance = window?.TargetWorldInstance as XRWorldInstance;
                 if (instance is not null)
@@ -2501,7 +2501,7 @@ public static partial class EditorImGuiUI
                         asset.FilePath = buildSettingsPath;
                     else if (title == "Game Settings" && Engine.CurrentProject.GameSettingsPath is string gameSettingsPath)
                         asset.FilePath = gameSettingsPath;
-                    else if (ReferenceEquals(asset, Engine.Rendering.ProjectDefaultSettings) && Engine.CurrentProject.EngineDefaultsPath is string engineDefaultsPath)
+                    else if (ReferenceEquals(asset, RuntimeEngine.Rendering.ProjectDefaultSettings) && Engine.CurrentProject.EngineDefaultsPath is string engineDefaultsPath)
                         asset.FilePath = engineDefaultsPath;
                 }
 

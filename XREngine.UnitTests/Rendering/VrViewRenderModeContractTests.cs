@@ -822,9 +822,9 @@ public sealed class VrViewRenderModeContractTests
             ReadWorkspaceFile("XREngine.Runtime.Core/Settings/Contracts/Records/RenderFrameViewSet.cs"),
             ReadWorkspaceFile("XREngine.Runtime.Core/Settings/Contracts/RenderFrameViewBatchPlanner.cs"),
         });
-        string settings = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs");
-        string stats = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.FrameOutputs.cs");
-        string host = ReadWorkspaceFile("XRENGINE/Engine/Engine.RuntimeRenderingHostServices.cs");
+        string settings = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs");
+        string stats = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.FrameOutputs.cs");
+        string host = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
         string viewport = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/XRViewport.cs");
         string timerFrame = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeTimerFrame.cs");
         string window = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");
@@ -871,7 +871,7 @@ public sealed class VrViewRenderModeContractTests
             ReadWorkspaceFile("XREngine.Runtime.Core/Settings/VRRenderingContracts/Enums/EOpenXrEyeResolutionPreset.cs"),
             ReadWorkspaceFile("XREngine.Runtime.Core/Settings/VRRenderingContracts/VrViewRenderModeResolver.cs"),
         });
-        string openXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs");
+        string openXr = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs");
         string openXrFrameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
         string openXrResolution = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Resolution.cs");
         string openXrRuntimeState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.RuntimeStateMachine.cs");
@@ -879,9 +879,9 @@ public sealed class VrViewRenderModeContractTests
         string openXrFoveation = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Foveation.cs");
         string environment = ReadWorkspaceFile("XREngine.Data/Environment/XREngineEnvironmentVariables.cs");
         string smoke = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.SmokeDiagnostics.cs");
-        string engineVrState = ReadWorkspaceFile("XRENGINE/Engine/Engine.VRState.cs");
-        string engineStats = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.cs");
-        string rendererState = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.RendererState.cs");
+        string engineVrState = ReadWorkspaceFile("XRENGINE/Engine/EngineVrLifecycle.cs");
+        string engineStats = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.cs");
+        string rendererState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.RendererState.cs");
         string profileCapture = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfileCapture.cs");
         string schema = ReadWorkspaceFile(".vscode/schemas/unit-testing-world-settings.schema.json");
         string xrViewport = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/XRViewport.cs");
@@ -1008,13 +1008,15 @@ public sealed class VrViewRenderModeContractTests
         schema.ShouldContain("never falls back to per-eye rendering");
         schema.ShouldContain("unavailable capabilities are logged and the XR output is not rendered");
 
-        string vulkanOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string vulkanOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string vulkanOpenXrMirrorRequest = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXrEyeMirrorRenderRequest.cs");
         openXr.ShouldContain("if (!trueSinglePassStereo)");
         AssertTrueStereoPublishDoesNotFlipY(openXr, "true stereo left eye swapchain image");
         AssertTrueStereoPublishDoesNotFlipY(openXr, "true stereo right eye swapchain image");
         vulkanOpenXr.ShouldContain("TryBlitTextureArrayLayerToOpenXrSwapchainImage");
         vulkanOpenXr.ShouldContain("BaseArrayLayer = sourceLayer");
-        vulkanOpenXr.ShouldContain("RendersExternalSwapchainTarget = true");
+        vulkanOpenXrMirrorRequest.ShouldContain("bool RendersExternalSwapchainTarget = true");
         vulkanOpenXr.ShouldContain("CreateOpenXrPrewarmRenderStateTracker(request.Extent)");
         vulkanOpenXr.ShouldContain("ViewFoveationContext Foveation");
         vulkanOpenXr.ShouldContain("FoveationResourceKey: request.Foveation.BackendResourceKey");
@@ -1046,9 +1048,9 @@ public sealed class VrViewRenderModeContractTests
     [Test]
     public void VulkanSinglePassStereo_FinalShaderAndLayeredViewContractsStayWired()
     {
-        string compiler = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderCompiler.cs");
-        string imageTexture = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
-        string textureView = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureView.cs");
+        string compiler = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderCompiler.cs");
+        string imageTexture = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string textureView = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureView.cs");
 
         compiler.ShouldContain("MultiviewNumViewsLayoutDeclarationRegex");
         compiler.ShouldContain("rewrittenSource = RemoveVulkanMultiviewNumViewsLayout(rewrittenSource);");

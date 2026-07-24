@@ -22,6 +22,23 @@ namespace XREngine.Rendering;
 /// </summary>
 public interface IRuntimeRenderFrameTimingServices
 {
+    bool IsShuttingDown => false;
+    RuntimeDebugShapePopulationMode DebugShapePopulationMode => RuntimeDebugShapePopulationMode.Tasks;
+    float DebugPointSize => 0.005f;
+    float DebugLineWidth => 0.005f;
+    float DebugTextMaxLifespan => 1.0f;
+    string CollectVisibleLatePolicy => string.Empty;
+    ulong UpdateFrameId => 0UL;
+    ulong CollectFrameId => 0UL;
+    ulong SwapFrameId => 0UL;
+    ulong PresentFrameId => 0UL;
+    long RequestedCollectGeneration => 0L;
+    long CompletedCollectGeneration => 0L;
+    long PublishedCollectGeneration => 0L;
+    long ConsumedCollectGeneration => 0L;
+    long RequiredCollectGeneration => 0L;
+    float TargetRenderFrequency => 0.0f;
+
 
     /// <summary>
     /// Gets whether the current caller is executing on the host render thread.

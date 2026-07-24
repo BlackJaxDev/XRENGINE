@@ -4,46 +4,172 @@ using XREngine.Rendering.Resources;
 using XREngine.Rendering.Shadows;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
+using XREngine.Data.Core;
+using XREngine.Scene.Physics;
 
 namespace XREngine;
 
-internal static partial class RuntimeEngine
+public static partial class RuntimeEngine
 {
+    private static readonly EventList<XRWindow> ActiveWindows = [];
+    private static int _renderThreadId;
+    private static int _windowThreadId;
+
+    public enum EViewportEnumerationMode
+    {
+        ExcludeVrEyeViewports,
+        IncludeVrEyeViewports,
+    }
+
     public static float Delta => Time.Timer.Update.Delta;
     public static float SmoothedDelta => (float)RuntimeRenderingHostServices.FrameTiming.SmoothedUpdateDeltaSeconds;
     public static long ElapsedTicks => RuntimeRenderingHostServices.FrameTiming.ElapsedTicks;
     public static float ElapsedTime => RuntimeRenderingHostServices.FrameTiming.ElapsedTime;
     public static bool IsEditor => false;
-    public static bool IsRenderThread => RuntimeRenderingHostServices.FrameTiming.IsRenderThread;
+    public static bool IsRenderThread
+        => Environment.CurrentManagedThreadId == RenderThreadId;
+    public static int RenderThreadId
+        => Volatile.Read(ref _renderThreadId);
+    public static bool IsWindowThread
+        => Environment.CurrentManagedThreadId == WindowThreadId;
+    public static int WindowThreadId
+        => Volatile.Read(ref _windowThreadId);
     public static bool StartingUp => RuntimeRenderingHostServices.FrameTiming.IsStartingUp;
     public static bool IsDispatchingRenderFrame { get; set; }
     public static bool StartupPresentationEnabled { get; set; }
     public static ColorF4 StartupPresentationClearColor { get; set; } = ColorF4.Black;
 
-    public static RuntimeTime Time { get; } = new();
-    public static RuntimePlayMode PlayMode { get; } = new();
-    public static RuntimeGameSettings GameSettings { get; } = new();
-    public static RuntimeEditorPreferences EditorPreferences { get; } = new();
-    public static RuntimeEffectiveSettings EffectiveSettings { get; } = new();
+    internal static RuntimeTime Time { get; } = new();
+    internal static RuntimePlayMode PlayMode { get; } = new();
+    internal static RuntimeGameSettings GameSettings { get; } = new();
+    internal static RuntimeEditorPreferences EditorPreferences { get; } = new();
+    internal static RuntimeEffectiveSettings EffectiveSettings { get; } = new();
     public static UserSettings UserSettings { get; } = new();
-    public static RuntimeAssetFacade Assets { get; } = new();
-    public static RuntimeProfilerFacade Profiler { get; } = new();
+    internal static RuntimeAssetFacade Assets { get; } = new();
+    internal static RuntimeProfilerFacade Profiler { get; } = new();
     public static JobManager Jobs { get; } = new();
     public static RuntimeVrState VRState { get; } = new();
-    public static IEnumerable<XRWindow> Windows
-        => EnumerateActiveViewports()
-            .Select(static viewport => viewport.Window)
-            .OfType<XRWindow>()
-            .Distinct();
+    /// <summary>
+    /// Active render windows. Runtime.Rendering owns this registry; the application host owns
+    /// native creation and destruction and registers each window at the lifecycle boundary.
+    /// </summary>
+    public static IEventListReadOnly<XRWindow> Windows => ActiveWindows;
 
-    public static IEnumerable<XRViewport> EnumerateActiveViewports()
-        => RuntimeRenderingHostServices.Factories.EnumerateActiveViewports().OfType<XRViewport>();
-
-    public static IEnumerable<(XRWindow Window, XRViewport Viewport)> EnumerateActiveWindowViewports()
+    public static void RegisterWindow(XRWindow window)
     {
-        foreach (XRViewport viewport in EnumerateActiveViewports())
-            if (viewport.Window is XRWindow window)
+        ArgumentNullException.ThrowIfNull(window);
+        if (!ActiveWindows.Contains(window))
+            ActiveWindows.Add(window);
+    }
+
+    public static bool UnregisterWindow(XRWindow window)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        return ActiveWindows.Remove(window);
+    }
+
+    /// <summary>
+    /// Serializes the window's target-world hierarchy for application-owned state replication.
+    /// </summary>
+    public static string? EncodeWindowTargetWorldHierarchyJson(XRWindow window)
+        => window.EncodeTargetWorldHierarchyJson();
+
+    public static void AssignRenderThread(int threadId)
+        => Volatile.Write(ref _renderThreadId, threadId);
+
+    public static void AssignWindowThread(int threadId)
+        => Volatile.Write(ref _windowThreadId, threadId);
+
+    public static IEnumerable<XRViewport> EnumerateActiveViewports(
+        EViewportEnumerationMode mode = EViewportEnumerationMode.ExcludeVrEyeViewports)
+    {
+        foreach (XRWindow window in ActiveWindows)
+            foreach (XRViewport viewport in window.Viewports)
+                yield return viewport;
+
+        if (mode != EViewportEnumerationMode.IncludeVrEyeViewports)
+            yield break;
+
+        XRViewport? leftEye = VRState.LeftEyeViewport;
+        if (leftEye is not null && !IsViewportInAnyActiveWindow(leftEye))
+            yield return leftEye;
+
+        XRViewport? rightEye = VRState.RightEyeViewport;
+        if (rightEye is not null && !IsViewportInAnyActiveWindow(rightEye))
+            yield return rightEye;
+    }
+
+    public static IEnumerable<XRViewport> EnumerateActiveViewports(
+        XRWindow? window,
+        EViewportEnumerationMode mode = EViewportEnumerationMode.ExcludeVrEyeViewports)
+    {
+        if (window is null)
+            yield break;
+
+        foreach (XRViewport viewport in window.Viewports)
+            yield return viewport;
+
+        if (mode != EViewportEnumerationMode.IncludeVrEyeViewports)
+            yield break;
+
+        XRViewport? leftEye = VRState.LeftEyeViewport;
+        if (leftEye is not null && ReferenceEquals(leftEye.Window, window) && !window.Viewports.Contains(leftEye))
+            yield return leftEye;
+
+        XRViewport? rightEye = VRState.RightEyeViewport;
+        if (rightEye is not null && ReferenceEquals(rightEye.Window, window) && !window.Viewports.Contains(rightEye))
+            yield return rightEye;
+    }
+
+    public static IReadOnlyList<XRViewport> EnumerateActiveViewportsOnRenderThread(
+        EViewportEnumerationMode mode = EViewportEnumerationMode.ExcludeVrEyeViewports)
+    {
+        if (IsRenderThread)
+            return [.. EnumerateActiveViewports(mode)];
+
+        var completion = new TaskCompletionSource<IReadOnlyList<XRViewport>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        EnqueueRenderThreadTask(() =>
+        {
+            try
+            {
+                completion.TrySetResult([.. EnumerateActiveViewports(mode)]);
+            }
+            catch (Exception ex)
+            {
+                completion.TrySetException(ex);
+            }
+        }, "RuntimeEngine.EnumerateActiveViewportsOnRenderThread");
+
+        return completion.Task.GetAwaiter().GetResult();
+    }
+
+    public static IEnumerable<(XRWindow Window, XRViewport Viewport)> EnumerateActiveWindowViewports(
+        EViewportEnumerationMode mode = EViewportEnumerationMode.ExcludeVrEyeViewports)
+    {
+        foreach (XRWindow window in ActiveWindows)
+            foreach (XRViewport viewport in window.Viewports)
                 yield return (window, viewport);
+
+        if (mode != EViewportEnumerationMode.IncludeVrEyeViewports)
+            yield break;
+
+        XRViewport? leftEye = VRState.LeftEyeViewport;
+        if (leftEye?.Window is XRWindow leftWindow && !leftWindow.Viewports.Contains(leftEye))
+            yield return (leftWindow, leftEye);
+
+        XRViewport? rightEye = VRState.RightEyeViewport;
+        if (rightEye?.Window is XRWindow rightWindow && !rightWindow.Viewports.Contains(rightEye))
+            yield return (rightWindow, rightEye);
+    }
+
+    private static bool IsViewportInAnyActiveWindow(XRViewport viewport)
+    {
+        foreach (XRWindow window in ActiveWindows)
+            if (window.Viewports.Contains(viewport))
+                return true;
+
+        return false;
     }
 
     public static void ProcessMainThreadTasks()
@@ -138,7 +264,7 @@ internal static partial class RuntimeEngine
     public static void LogWarning(string message, EOutputVerbosity verbosity = EOutputVerbosity.Normal, ELogCategory category = ELogCategory.General)
         => Debug.Out(message);
 
-    public static RuntimeEngineState State { get; } = new();
+    internal static RuntimeEngineState State { get; } = new();
 
     public static partial class Rendering
     {
@@ -150,99 +276,150 @@ internal static partial class RuntimeEngine
         private static Stack<XRRenderPipelineInstance> PipelineStack => t_pipelineStack ??= new();
         private static Stack<XRRenderPipelineInstance?> PipelineOverrideStack => t_pipelineOverrideStack ??= new();
 
-        public static RuntimeRenderSettings Settings { get; } = new();
+        private static EngineSettings _settings = new();
+        private static EngineSettings _globalDefaultSettings = _settings;
+        private static EngineSettings? _projectDefaultSettings;
         private static RuntimeRenderingState StateData { get; } = new();
         public static RuntimeBvhStats BvhStats { get; } = new();
-        private static event Action? SettingsChangedHandlers;
-        private static event Action? AntiAliasingSettingsChangedHandlers;
+        public static event Action? SettingsChanged;
+        public static event Action<string?>? SettingChanged;
+        public static event Action? AntiAliasingSettingsChanged;
 
-        public static event Action? SettingsChanged
+        static Rendering()
+            => AttachSettings(_settings);
+
+        /// <summary>
+        /// Begins a render frame and returns its monotonically increasing identifier.
+        /// </summary>
+        public static ulong BeginRenderFrame()
         {
-            add
+            StateData.BeginRenderFrame();
+            return StateData.RenderFrameId;
+        }
+
+        /// <summary>
+        /// Records the completed render-frame duration and publishes its output snapshot.
+        /// </summary>
+        public static void CompleteRenderFrame(ulong renderFrameId, long elapsedTicks)
+        {
+            Stats.FrameOutputs.RecordWholeFrameRenderThread(renderFrameId, elapsedTicks);
+            Stats.FrameOutputs.SnapshotAndReset();
+        }
+
+        /// <summary>
+        /// Active rendering defaults. Runtime.Rendering owns this serialized asset and its
+        /// change notifications; application composition owns the resulting side effects.
+        /// </summary>
+        public static EngineSettings Settings
+        {
+            get => _settings;
+            set
             {
-                if (value is null)
+                EngineSettings next = value ?? new EngineSettings();
+                if (ReferenceEquals(_settings, next))
                     return;
 
-                SettingsChangedHandlers += value;
-                RuntimeRenderingHostServices.Settings.SubscribeRenderingSettingsChanged(value);
-            }
-            remove
-            {
-                if (value is null)
-                    return;
+                DetachSettings(_settings);
+                _settings = next;
+                AttachSettings(_settings);
 
-                SettingsChangedHandlers -= value;
-                RuntimeRenderingHostServices.Settings.UnsubscribeRenderingSettingsChanged(value);
+                if (_projectDefaultSettings is not null)
+                    _projectDefaultSettings = _settings;
+                else
+                    _globalDefaultSettings = _settings;
+
+                NotifySettingsChanged(null);
             }
         }
 
-        public static event Action? AntiAliasingSettingsChanged
+        public static EngineSettings GlobalDefaultSettings
         {
-            add
+            get => _globalDefaultSettings;
+            set
             {
-                if (value is null)
+                EngineSettings next = value ?? new EngineSettings();
+                if (ReferenceEquals(_globalDefaultSettings, next))
                     return;
 
-                AntiAliasingSettingsChangedHandlers += value;
-                RuntimeRenderingHostServices.Settings.SubscribeAntiAliasingSettingsChanged(value);
+                _globalDefaultSettings = next;
+                if (_projectDefaultSettings is null)
+                    Settings = _globalDefaultSettings;
             }
-            remove
+        }
+
+        public static EngineSettings? ProjectDefaultSettings
+        {
+            get => _projectDefaultSettings;
+            set
             {
-                if (value is null)
+                if (ReferenceEquals(_projectDefaultSettings, value))
                     return;
 
-                AntiAliasingSettingsChangedHandlers -= value;
-                RuntimeRenderingHostServices.Settings.UnsubscribeAntiAliasingSettingsChanged(value);
+                _projectDefaultSettings = value;
+                Settings = _projectDefaultSettings ?? _globalDefaultSettings;
             }
         }
 
-        internal static void RebindSettingsChangedHandlers(
-            IRuntimeRenderingHostServices previous,
-            IRuntimeRenderingHostServices current)
+        public static EngineSettings DefaultSettings
         {
-            RebindHandlers(SettingsChangedHandlers, previous.UnsubscribeRenderingSettingsChanged, current.SubscribeRenderingSettingsChanged);
-            RebindHandlers(AntiAliasingSettingsChangedHandlers, previous.UnsubscribeAntiAliasingSettingsChanged, current.SubscribeAntiAliasingSettingsChanged);
+            get => Settings;
+            set => Settings = value;
         }
 
-        private static void RebindHandlers(Action? handlers, Action<Action> unsubscribe, Action<Action> subscribe)
-        {
-            if (handlers is null)
-                return;
+        public static void NotifyAntiAliasingSettingChanged()
+            => AntiAliasingSettingsChanged?.Invoke();
 
-            foreach (Delegate handler in handlers.GetInvocationList())
+        private static void AttachSettings(EngineSettings settings)
+        {
+            settings.PropertyChanged += HandleSettingsPropertyChanged;
+            settings.PhysicsVisualizeSettings.PropertyChanged += HandlePhysicsVisualizeSettingsChanged;
+            settings.PhysicsGpuMemorySettings.PropertyChanged += HandlePhysicsGpuMemorySettingsChanged;
+        }
+
+        private static void DetachSettings(EngineSettings settings)
+        {
+            settings.PropertyChanged -= HandleSettingsPropertyChanged;
+            settings.PhysicsVisualizeSettings.PropertyChanged -= HandlePhysicsVisualizeSettingsChanged;
+            settings.PhysicsGpuMemorySettings.PropertyChanged -= HandlePhysicsGpuMemorySettingsChanged;
+        }
+
+        private static void HandleSettingsPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(EngineSettings.PhysicsVisualizeSettings))
             {
-                if (handler is not Action action)
-                    continue;
-
-                unsubscribe(action);
-                subscribe(action);
+                if (e.PreviousValue is PhysicsVisualizeSettings previous)
+                    previous.PropertyChanged -= HandlePhysicsVisualizeSettingsChanged;
+                if (e.NewValue is PhysicsVisualizeSettings current)
+                    current.PropertyChanged += HandlePhysicsVisualizeSettingsChanged;
             }
+
+            if (e.PropertyName == nameof(EngineSettings.PhysicsGpuMemorySettings))
+            {
+                if (e.PreviousValue is PhysicsGpuMemorySettings previous)
+                    previous.PropertyChanged -= HandlePhysicsGpuMemorySettingsChanged;
+                if (e.NewValue is PhysicsGpuMemorySettings current)
+                    current.PropertyChanged += HandlePhysicsGpuMemorySettingsChanged;
+            }
+
+            NotifySettingsChanged(e.PropertyName);
         }
 
-        public static string VulkanUpscaleBridgeEnvVar => XREngineEnvironmentVariables.EnableVulkanUpscaleBridge;
-        public static bool VulkanUpscaleBridgeRequested => IsEnvFlagEnabled(VulkanUpscaleBridgeEnvVar, defaultValue: true);
-        public static VulkanUpscaleBridgeCapabilitySnapshot VulkanUpscaleBridgeSnapshot { get; } = new();
+        private static void HandlePhysicsVisualizeSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            // Physics scenes subscribe directly to this asset. Do not rebuild render resources.
+        }
+
+        private static void HandlePhysicsGpuMemorySettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
+            => NotifySettingsChanged(nameof(EngineSettings.PhysicsGpuMemorySettings));
+
+        private static void NotifySettingsChanged(string? propertyName)
+        {
+            SettingChanged?.Invoke(propertyName);
+            SettingsChanged?.Invoke();
+        }
+
         public static bool VulkanUpscaleBridgeDx12InteropEnabled => false;
         public static bool VulkanUpscaleBridgeImplicitModeEnabled => false;
-
-        private static bool IsEnvFlagEnabled(string name, bool defaultValue)
-        {
-            string? raw = Environment.GetEnvironmentVariable(name);
-            if (string.IsNullOrWhiteSpace(raw))
-                return defaultValue;
-
-            raw = raw.Trim();
-
-            if (string.Equals(raw, "1", StringComparison.Ordinal))
-                return true;
-
-            if (string.Equals(raw, "0", StringComparison.Ordinal))
-                return false;
-
-            return bool.TryParse(raw, out bool enabled)
-                ? enabled
-                : defaultValue;
-        }
 
         public static class Constants
         {
@@ -277,6 +454,12 @@ internal static partial class RuntimeEngine
 
         public static RenderPipeline NewRenderPipeline(bool stereo = false)
             => new DefaultRenderPipeline(stereo);
+
+        public static VisualScene3D NewVisualScene()
+            => RuntimeRenderingHostServices.Factories.CreateVisualScene();
+
+        public static AbstractPhysicsScene NewPhysicsScene()
+            => RuntimeRenderingHostServices.Factories.CreatePhysicsScene();
 
         public static IDisposable? PushRenderingPipeline(XRRenderPipelineInstance pipeline)
         {
@@ -327,30 +510,7 @@ internal static partial class RuntimeEngine
             => Settings.ClipDepthRange == ERenderClipDepthRange.NegativeOneToOne &&
                !State.HasVulkanDepthClipControl;
 
-        public static void ReleaseVulkanUpscaleBridge()
-        {
-        }
-
-        public static void ReleaseVulkanUpscaleBridge(XRViewport viewport, string? reason = null)
-        {
-        }
-
-        public static VulkanUpscaleBridge? GetVulkanUpscaleBridge(XRViewport viewport)
-            => null;
-
-        public static string DescribeVulkanUpscaleBridgeUnavailability(XRViewport viewport, bool outputHdr)
-            => "Vulkan upscale bridge is not configured.";
-
-        public static EVulkanUpscaleBridgeQueueModel VulkanUpscaleBridgeQueueModel => EVulkanUpscaleBridgeQueueModel.Graphics;
         public static Func<XRWindow, BoundingRectangle?>? ScenePanelRenderRegionProvider { get; set; }
-
-        public static void RefreshVulkanUpscaleBridgeCapabilitySnapshot()
-        {
-        }
-
-        public static void RefreshVulkanUpscaleBridgeCapabilitySnapshot(object? renderer)
-        {
-        }
 
         public static bool IsVulkanRendererActive()
             => RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan;
@@ -380,8 +540,109 @@ internal static partial class RuntimeEngine
         {
         }
 
+        /// <summary>
+        /// Applies exact-transparency bindings without exposing the internal binding implementation.
+        /// </summary>
+        public static void ConfigureExactTransparencyMaterialProgram(
+            XRMaterialBase material,
+            XRRenderProgram program)
+            => ExactTransparencyShaderBindings.ConfigureMaterialProgram(material, program);
+
         public static bool ResolveGpuRenderDispatchPreference(bool requested)
             => VulkanFeatureProfile.ResolveGpuRenderDispatchPreference(requested);
+
+        /// <summary>
+        /// Immutable inputs for the pure mesh-submission strategy resolver.
+        /// </summary>
+        public readonly record struct MeshSubmissionStrategyResolverInputs(
+            bool RequestedGpuDispatch,
+            EMeshSubmissionStrategy? ForcedStrategy,
+            bool EnableGpuIndirectDebugLogging,
+            bool EnableGpuIndirectValidationLogging,
+            bool EnableGpuIndirectCpuFallback,
+            bool EnableZeroReadbackMaterialScatter,
+            bool EnableEditorZeroReadbackMaterialScatter,
+            bool VulkanFeatureProfileActive,
+            EVulkanGpuDrivenProfile ActiveVulkanProfile,
+            bool EnforceStrictNoFallbacks,
+            bool GpuRenderDispatchAllowed,
+            bool SupportsIndirectCountDraw,
+            EMeshShaderDialect MeshShaderDialect,
+            bool SupportsDirectMeshTaskDispatch,
+            bool SupportsIndirectCountMeshTaskDispatch,
+            bool SupportsMeshletDispatch);
+
+        /// <summary>
+        /// Resolves a mesh-submission strategy from an explicit capability snapshot.
+        /// This overload is deterministic and does not read or mutate runtime state.
+        /// </summary>
+        public static EMeshSubmissionStrategy ResolveMeshSubmissionStrategy(
+            MeshSubmissionStrategyResolverInputs inputs)
+        {
+            if (inputs.ForcedStrategy is { } forcedStrategy)
+            {
+                if (!forcedStrategy.IsAnyMeshletStrategy())
+                    return forcedStrategy;
+
+                if (inputs.SupportsMeshletDispatch)
+                {
+                    bool instrumentationAllowed =
+                        (inputs.VulkanFeatureProfileActive &&
+                         inputs.ActiveVulkanProfile == EVulkanGpuDrivenProfile.Diagnostics) ||
+                        inputs.EnableGpuIndirectDebugLogging;
+
+                    if (forcedStrategy == EMeshSubmissionStrategy.GpuMeshletInstrumented &&
+                        instrumentationAllowed)
+                    {
+                        return EMeshSubmissionStrategy.GpuMeshletInstrumented;
+                    }
+
+                    return EMeshSubmissionStrategy.GpuMeshletZeroReadback;
+                }
+
+                if (inputs.SupportsIndirectCountDraw)
+                    return EMeshSubmissionStrategy.GpuIndirectZeroReadback;
+
+                return inputs.EnforceStrictNoFallbacks
+                    ? EMeshSubmissionStrategy.CpuDirect
+                    : EMeshSubmissionStrategy.GpuIndirectInstrumented;
+            }
+
+            if (!inputs.RequestedGpuDispatch)
+                return EMeshSubmissionStrategy.CpuDirect;
+
+            if (inputs.VulkanFeatureProfileActive && !inputs.GpuRenderDispatchAllowed)
+                return EMeshSubmissionStrategy.CpuDirect;
+
+            bool diagnosticsProfile = inputs.VulkanFeatureProfileActive &&
+                inputs.ActiveVulkanProfile == EVulkanGpuDrivenProfile.Diagnostics;
+            bool shippingFastProfile = inputs.VulkanFeatureProfileActive &&
+                inputs.ActiveVulkanProfile == EVulkanGpuDrivenProfile.ShippingFast;
+            bool instrumentationRequested = diagnosticsProfile
+                || inputs.EnableGpuIndirectDebugLogging
+                || inputs.EnableGpuIndirectValidationLogging
+                || inputs.EnableGpuIndirectCpuFallback;
+            bool zeroReadbackRequested = shippingFastProfile
+                || inputs.EnableZeroReadbackMaterialScatter
+                || inputs.EnableEditorZeroReadbackMaterialScatter;
+
+            if (zeroReadbackRequested)
+            {
+                if (inputs.SupportsIndirectCountDraw)
+                    return EMeshSubmissionStrategy.GpuIndirectZeroReadback;
+
+                return inputs.EnforceStrictNoFallbacks
+                    ? EMeshSubmissionStrategy.CpuDirect
+                    : EMeshSubmissionStrategy.GpuIndirectInstrumented;
+            }
+
+            if (instrumentationRequested)
+                return EMeshSubmissionStrategy.GpuIndirectInstrumented;
+
+            return inputs.SupportsIndirectCountDraw
+                ? EMeshSubmissionStrategy.GpuIndirectInstrumented
+                : EMeshSubmissionStrategy.CpuDirect;
+        }
 
         public static EMeshSubmissionStrategy ResolveMeshSubmissionStrategy(bool? requestedGpuDispatch = null)
         {
@@ -539,1776 +800,16 @@ internal static partial class RuntimeEngine
             return "production meshlet dispatch is unavailable";
         }
 
-        internal static void RaiseSettingsChanged() => SettingsChangedHandlers?.Invoke();
-        internal static void RaiseAntiAliasingSettingsChanged() => AntiAliasingSettingsChangedHandlers?.Invoke();
+        internal static void RaiseSettingsChanged() => NotifySettingsChanged(null);
+        internal static void RaiseAntiAliasingSettingsChanged() => NotifyAntiAliasingSettingChanged();
 
-        public static class Debug
-        {
-            public static readonly Vector3 UIPositionBias = new(0.0f, 0.0f, 0.1f);
-
-            public static void RenderLine(Vector3 start, Vector3 end, ColorF4 color)
-                => RuntimeRenderingHostServices.DebugDrawing.RenderDebugLine(start, end, color);
-
-            public static void RenderSphere(Vector3 center, float radius, bool solid, ColorF4 color)
-                => RuntimeRenderingHostServices.DebugDrawing.RenderDebugSphere(center, radius, solid, color);
-
-            public static void RenderCone(Vector3 center, Vector3 up, float radius, float height, bool solid, ColorF4 color)
-                => RuntimeRenderingHostServices.DebugDrawing.RenderDebugCone(center, up, radius, height, solid, color);
-
-            public static void RenderAABB(Vector3 halfExtents, Vector3 center, bool solid, ColorF4 color)
-                => RuntimeRenderingHostServices.DebugDrawing.RenderDebugAABB(halfExtents, center, solid, color);
-
-            public static void RenderRect2D(BoundingRectangleF rectangle, bool solid, ColorF4 color)
-                => RuntimeRenderingHostServices.DebugDrawing.RenderDebugRect2D(rectangle, solid, color);
-
-            public static void RenderBox(Vector3 halfExtents, Vector3 center, Matrix4x4 transform, bool solid, ColorF4 color)
-                => RuntimeRenderingHostServices.DebugDrawing.RenderDebugBox(halfExtents, center, transform, solid, color);
-
-            public static void RenderQuad(Vector3 center, Rotator rotation, Vector2 extents, bool solid, ColorF4 color)
-                => RuntimeRenderingHostServices.DebugDrawing.RenderDebugQuad(center, rotation, extents, solid, color);
-
-            public static void RenderQuad(Vector3 center, Quaternion rotation, Vector2 extents, bool solid, ColorF4 color)
-            {
-                Rotator rotator = Rotator.FromQuaternion(rotation);
-                RuntimeRenderingHostServices.DebugDrawing.RenderDebugQuad(center, rotator, extents, solid, color);
-            }
-
-            public static void RenderQuad(Vector3 center, object rotation, Vector2 extents, bool solid, ColorF4 color)
-            {
-                if (rotation is Rotator rotator)
-                    RuntimeRenderingHostServices.DebugDrawing.RenderDebugQuad(center, rotator, extents, solid, color);
-            }
-
-            public static void RenderPoint(Vector3 position, ColorF4 color)
-                => RuntimeRenderingHostServices.DebugDrawing.RenderDebugPoint(position, color);
-
-            public static void RenderText(Vector3 position, string text, ColorF4 color)
-                => RuntimeRenderingHostServices.DebugDrawing.RenderDebugText(position, text, color);
-
-            public static void RenderShapes(bool depthTested)
-                => RuntimeRenderingHostServices.DebugDrawing.RenderDebugShapes(depthTested);
-        }
-
-        public static class Stats
-        {
-            private static long _trackedVramBytes;
-            private static bool _enableTracking = RuntimeRenderingHostServiceDefaults.EnableRenderStatisticsTracking;
-            public static bool EnableTracking
-            {
-                get => RuntimeRenderingHostServices.HasConcreteHost
-                    ? RuntimeRenderingHostServices.FrameTiming.EnableRenderStatisticsTracking
-                    : _enableTracking;
-                set => _enableTracking = value;
-            }
-            public static int DrawCalls { get; private set; }
-            public static int MultiDrawCalls { get; private set; }
-            public static int TrianglesRendered { get; private set; }
-            public static int GpuCpuFallbackEvents { get; private set; }
-            public static int GpuCpuFallbackRecoveredCommands { get; private set; }
-            public static int GpuTransparencyOpaqueOrOtherVisible { get; private set; }
-            public static int GpuTransparencyMaskedVisible { get; private set; }
-            public static int GpuTransparencyApproximateVisible { get; private set; }
-            public static int GpuTransparencyExactVisible { get; private set; }
-            public static int GpuMeshletRequestedFrames { get; private set; }
-            public static int GpuMeshletProductionFrames { get; private set; }
-            public static int GpuMeshletFallbackFrames { get; private set; }
-            public static int GpuMeshletDispatchSkipped { get; private set; }
-            public static long GpuMeshletTaskRecordsEmitted { get; private set; }
-            public static long GpuMeshletTaskRecordsFrustumCulled { get; private set; }
-            public static long GpuMeshletTaskRecordsConeCulled { get; private set; }
-            public static long GpuMeshletTaskRecordsHiZCulled { get; private set; }
-            public static long GpuMeshletExpansionOverflowCount { get; private set; }
-            public static long GpuMeshletBufferBytesResident { get; private set; }
-            public static long LastVisibleMeshletCount { get; private set; }
-            public static long LastDispatchedMeshletCount { get; private set; }
-            public static long LastTaskRecordOverflowCount { get; private set; }
-            public static TimeSpan LastDispatchTime { get; private set; }
-            public static long LastReadbackBytes { get; private set; }
-            public static int GpuMeshletCacheHits { get; private set; }
-            public static int GpuMeshletCacheMisses { get; private set; }
-            public static int GpuMeshletCacheStale { get; private set; }
-            public static long VulkanRequestedDraws { get; private set; }
-            public static long VulkanCulledDraws { get; private set; }
-            public static long VulkanEmittedIndirectDraws { get; private set; }
-            public static long VulkanConsumedDraws { get; private set; }
-            public static int VulkanQueueOwnershipTransfers { get; private set; }
-            public static int VulkanBarrierStageFlushes { get; private set; }
-            public static int VulkanDescriptorBindSkips { get; private set; }
-            public static int VulkanDescriptorFallbacksCurrentFrame { get; private set; }
-            public static int VulkanDescriptorBindingFailuresCurrentFrame { get; private set; }
-            public static int VulkanOomFallbackCount { get; private set; }
-            public static int VulkanValidationMessageCountCurrentFrame { get; private set; }
-            public static int VulkanValidationErrorCountCurrentFrame { get; private set; }
-
-            public enum EVulkanGpuDrivenStageTiming
-            {
-                Reset,
-                Cull,
-                Occlusion,
-                Indirect,
-                Draw,
-            }
-
-            public enum EVulkanAllocationTelemetryClass
-            {
-                DeviceLocal,
-                Upload,
-                Readback,
-            }
-
-            private static bool HasHostStats => RuntimeRenderingHostServices.HasConcreteHost;
-
-            public static void IncrementDrawCalls(int count = 1)
-            {
-                if (!EnableTracking || count <= 0)
-                    return;
-
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.IncrementRenderDrawCalls(count);
-                else
-                    DrawCalls += count;
-            }
-
-            public static void IncrementMultiDrawCalls(int count = 1)
-            {
-                if (!EnableTracking || count <= 0)
-                    return;
-
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.IncrementRenderMultiDrawCalls(count);
-                else
-                    MultiDrawCalls += count;
-            }
-
-            public static void AddTrianglesRendered(int count)
-            {
-                if (!EnableTracking || count <= 0)
-                    return;
-
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.AddRenderTrianglesRendered(count);
-                else
-                    TrianglesRendered += count;
-            }
-
-            public static void AddBufferAllocation(long bytes)
-            {
-                if (bytes <= 0)
-                    return;
-
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.AddRenderGpuBufferAllocation(bytes);
-                else
-                    _trackedVramBytes += bytes;
-            }
-
-            public static void RemoveBufferAllocation(long bytes)
-            {
-                if (bytes <= 0)
-                    return;
-
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RemoveRenderGpuBufferAllocation(bytes);
-                else
-                    _trackedVramBytes = Math.Max(0L, _trackedVramBytes - bytes);
-            }
-
-            public static void AddTextureAllocation(long bytes)
-            {
-                if (bytes <= 0)
-                    return;
-
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.AddRenderGpuTextureAllocation(bytes);
-                else
-                    _trackedVramBytes += bytes;
-            }
-
-            public static void RemoveTextureAllocation(long bytes)
-            {
-                if (bytes <= 0)
-                    return;
-
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RemoveRenderGpuTextureAllocation(bytes);
-                else
-                    _trackedVramBytes = Math.Max(0L, _trackedVramBytes - bytes);
-            }
-
-            public static void AddRenderBufferAllocation(long bytes)
-            {
-                if (bytes <= 0)
-                    return;
-
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.AddRenderGpuRenderBufferAllocation(bytes);
-                else
-                    _trackedVramBytes += bytes;
-            }
-
-            public static void RemoveRenderBufferAllocation(long bytes)
-            {
-                if (bytes <= 0)
-                    return;
-
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RemoveRenderGpuRenderBufferAllocation(bytes);
-                else
-                    _trackedVramBytes = Math.Max(0L, _trackedVramBytes - bytes);
-            }
-
-            public static bool CanAllocateVram(long requestedBytes, long currentAllocationBytes, out long projectedBytes, out long budgetBytes)
-            {
-                if (HasHostStats)
-                    return RuntimeRenderingHostServices.Statistics.CanAllocateRenderVram(requestedBytes, currentAllocationBytes, out projectedBytes, out budgetBytes);
-
-                budgetBytes = RuntimeRenderingHostServices.FrameTiming.TrackedVramBudgetBytes;
-                projectedBytes = Math.Max(0L, _trackedVramBytes - Math.Max(0L, currentAllocationBytes)) + Math.Max(0L, requestedBytes);
-                return projectedBytes <= budgetBytes;
-            }
-
-            public static void RecordGpuBufferMapped(int count = 1)
-            {
-                if (EnableTracking && count > 0 && HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuBufferMapped(count);
-            }
-
-            public static void RecordGpuReadbackBytes(long bytes)
-            {
-                if (EnableTracking && bytes > 0 && HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuReadbackBytes(bytes);
-            }
-
-            public static void RecordRendererStateCounter(ERendererProfilerCounter counter, long count = 1)
-            {
-                if (EnableTracking && count > 0 && HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderRendererStateCounter(counter, count);
-            }
-
-            public static void RecordMemoryBarrier(EMemoryBarrierMask mask)
-            {
-                if (EnableTracking && HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderMemoryBarrier(mask);
-            }
-
-            public static void RecordSceneAssetVisible(
-                string? sourceAssetIdentity,
-                string? cookedVariantIdentity,
-                string? meshName,
-                string? materialName,
-                int materialSlots,
-                int textureCount,
-                long triangleCount,
-                bool skinned,
-                string? representation)
-            {
-                if (EnableTracking && HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderSceneAssetVisible(
-                        sourceAssetIdentity,
-                        cookedVariantIdentity,
-                        meshName,
-                        materialName,
-                        materialSlots,
-                        textureCount,
-                        triangleCount,
-                        skinned,
-                        representation);
-            }
-
-            public static void RecordTextureUpload(long bytes, TimeSpan elapsed)
-            {
-                if (EnableTracking && HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderTextureUpload(bytes, elapsed);
-            }
-
-            public static void RecordSkinningUpload(
-                long boneMatrixBytes,
-                long blendshapeWeightBytes,
-                int skinningDispatches = 0,
-                int blendshapeDispatches = 0,
-                long coreInfluenceBytes = 0,
-                long spillHeaderBytes = 0,
-                long spillEntryBytes = 0,
-                long skinPaletteBytes = 0,
-                int skippedSkinningDispatches = 0,
-                int reusedSkinnedOutputBuffers = 0,
-                int liveSkinningShaderPermutations = 0,
-                long blendshapeActiveListUploadBytes = 0,
-                long blendshapeDeltaBytes = 0,
-                int blendshapeAuthoredShapeCount = 0,
-                int blendshapeActiveShapeCount = 0,
-                int blendshapeAffectedVertexCount = 0,
-                int skippedBlendshapeDispatches = 0,
-                int compactedActiveBlendshapeCount = 0,
-                int liveBlendshapeShaderPermutations = 0)
-            {
-                if (EnableTracking && HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderSkinningUpload(
-                        boneMatrixBytes,
-                        blendshapeWeightBytes,
-                        skinningDispatches,
-                        blendshapeDispatches,
-                        coreInfluenceBytes,
-                        spillHeaderBytes,
-                        spillEntryBytes,
-                        skinPaletteBytes,
-                        skippedSkinningDispatches,
-                        reusedSkinnedOutputBuffers,
-                        liveSkinningShaderPermutations,
-                        blendshapeActiveListUploadBytes,
-                        blendshapeDeltaBytes,
-                        blendshapeAuthoredShapeCount,
-                        blendshapeActiveShapeCount,
-                        blendshapeAffectedVertexCount,
-                        skippedBlendshapeDispatches,
-                        compactedActiveBlendshapeCount,
-                        liveBlendshapeShaderPermutations);
-            }
-
-            public static void RecordShaderVariant(bool requested = false, bool warming = false, bool linked = false, bool failed = false, bool loadedFromDiskCache = false, bool generatedThisRun = false)
-            {
-                if (EnableTracking && HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderShaderVariant(requested, warming, linked, failed, loadedFromDiskCache, generatedThisRun);
-            }
-
-            public static void RecordGpuDrivenBucketWork(int activeBuckets = 0, int emptyBucketSkips = 0, int fullBucketScans = 0, int materialScatterDispatches = 0)
-            {
-                if (EnableTracking && HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuDrivenBucketWork(activeBuckets, emptyBucketSkips, fullBucketScans, materialScatterDispatches);
-            }
-
-            public static void RecordGpuDrivenCommandCompaction(long culledCommands = 0, long delayedDrawCountValue = 0, long gpuCompactionOverflow = 0, long activeListOverflow = 0, long bucketOverflow = 0, long meshletOverflow = 0)
-            {
-                if (EnableTracking && HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuDrivenCommandCompaction(culledCommands, delayedDrawCountValue, gpuCompactionOverflow, activeListOverflow, bucketOverflow, meshletOverflow);
-            }
-
-            public static void RecordGpuDrivenStageTiming(TimeSpan indirectGeneration, TimeSpan gpuCull, TimeSpan sortCompact)
-            {
-                if (EnableTracking && HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuDrivenStageTiming(indirectGeneration, gpuCull, sortCompact);
-            }
-
-            public static void RecordGpuDrivenDelayedDiagnosticReadback(long bytes)
-            {
-                if (EnableTracking && HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuDrivenDelayedDiagnosticReadback(bytes);
-            }
-
-            public static void RecordGpuDrivenHiZMode(string? mode)
-            {
-                if (EnableTracking && HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuDrivenHiZMode(mode);
-            }
-
-            public static void RecordGpuDrivenHiZPhase(bool twoPhase, long phaseOneDraws, long phaseTwoDraws)
-            {
-                if (EnableTracking && HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuDrivenHiZPhase(twoPhase, phaseOneDraws, phaseTwoDraws);
-            }
-
-            public static void RecordVisibilityBuffer(int passDraws, long classifiedPixels, int activeMaterialTiles, int classificationOverflow, TimeSpan reconstruction, TimeSpan materialShading)
-            {
-                if (EnableTracking && HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVisibilityBuffer(passDraws, classifiedPixels, activeMaterialTiles, classificationOverflow, reconstruction, materialShading);
-            }
-
-            public static void RecordGpuCpuFallback(int events, int recoveredCommands)
-            {
-                if (!EnableTracking || events <= 0)
-                    return;
-
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuCpuFallback(events, recoveredCommands);
-                    return;
-                }
-
-                GpuCpuFallbackEvents += events;
-                if (recoveredCommands > 0)
-                    GpuCpuFallbackRecoveredCommands += recoveredCommands;
-            }
-
-            public static void RecordForbiddenGpuFallback(int events)
-            {
-                if (EnableTracking && events > 0 && HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderForbiddenGpuFallback(events);
-            }
-
-            public static void RecordShadowAtlasSolveDiagnostics(ShadowAtlasSolveDiagnostics diagnostics)
-            {
-                if (EnableTracking && HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderShadowAtlasSolveDiagnostics(diagnostics);
-            }
-
-            public static void RecordGpuTransparencyDomainCounts(int opaqueOrOther, int masked, int approximate, int exact)
-            {
-                if (!EnableTracking)
-                    return;
-
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuTransparencyDomainCounts(
-                        (uint)Math.Max(0, opaqueOrOther),
-                        (uint)Math.Max(0, masked),
-                        (uint)Math.Max(0, approximate),
-                        (uint)Math.Max(0, exact));
-                    return;
-                }
-
-                GpuTransparencyOpaqueOrOtherVisible = opaqueOrOther;
-                GpuTransparencyMaskedVisible = masked;
-                GpuTransparencyApproximateVisible = approximate;
-                GpuTransparencyExactVisible = exact;
-            }
-            public static void RecordGpuTransparencyDomainCounts(uint opaqueOrOther, uint masked, uint approximate, uint exact)
-                => RecordGpuTransparencyDomainCounts((int)opaqueOrOther, (int)masked, (int)approximate, (int)exact);
-
-            public static void RecordGpuMeshletStrategyRequested(
-                int renderPass,
-                EMeshSubmissionStrategy requestedStrategy,
-                EMeshSubmissionStrategy selectedStrategy,
-                EMeshShaderDialect dialect,
-                uint commandCount,
-                uint taskCapacity)
-            {
-                if (!EnableTracking)
-                    return;
-
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuMeshletStrategyRequested();
-                    return;
-                }
-
-                GpuMeshletRequestedFrames++;
-            }
-
-            public static void RecordGpuMeshletProductionFrame(int eventCount = 1)
-            {
-                if (!EnableTracking || eventCount <= 0)
-                    return;
-
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuMeshletProductionFrame(eventCount);
-                    return;
-                }
-
-                GpuMeshletProductionFrames += eventCount;
-            }
-
-            public static void RecordGpuMeshletFallback(int eventCount = 1)
-            {
-                if (!EnableTracking || eventCount <= 0)
-                    return;
-
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuMeshletFallback(eventCount);
-                    return;
-                }
-
-                GpuMeshletFallbackFrames += eventCount;
-            }
-
-            public static void RecordGpuMeshletDispatchSkipped(int eventCount = 1)
-            {
-                if (!EnableTracking || eventCount <= 0)
-                    return;
-
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuMeshletDispatchSkipped(eventCount);
-                    return;
-                }
-
-                GpuMeshletDispatchSkipped += eventCount;
-            }
-
-            public static void RecordGpuMeshletTaskStats(uint emitted, uint frustumCulled, uint coneCulled, uint hiZCulled)
-            {
-                if (!EnableTracking)
-                    return;
-
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuMeshletTaskStats(emitted, frustumCulled, coneCulled, hiZCulled);
-                    return;
-                }
-
-                GpuMeshletTaskRecordsEmitted += emitted;
-                GpuMeshletTaskRecordsFrustumCulled += frustumCulled;
-                GpuMeshletTaskRecordsConeCulled += coneCulled;
-                GpuMeshletTaskRecordsHiZCulled += hiZCulled;
-            }
-
-            public static void RecordGpuMeshletExpansionOverflow(uint overflowCount)
-            {
-                if (!EnableTracking || overflowCount == 0u)
-                    return;
-
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuMeshletExpansionOverflow(overflowCount);
-                    return;
-                }
-
-                GpuMeshletExpansionOverflowCount += overflowCount;
-            }
-
-            public static void RecordGpuMeshletBufferBytesResident(ulong bytes)
-            {
-                if (!EnableTracking)
-                    return;
-
-                long saturated = bytes > long.MaxValue ? long.MaxValue : (long)bytes;
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuMeshletBufferBytesResident(saturated);
-                    return;
-                }
-
-                GpuMeshletBufferBytesResident = Math.Max(GpuMeshletBufferBytesResident, saturated);
-            }
-
-            public static void RecordGpuMeshletInstrumentation(
-                uint visibleMeshletCount,
-                uint dispatchedMeshletCount,
-                uint taskRecordOverflowCount,
-                TimeSpan dispatchTime,
-                uint readbackBytes)
-            {
-                if (!EnableTracking)
-                    return;
-
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuMeshletInstrumentation(
-                        visibleMeshletCount,
-                        dispatchedMeshletCount,
-                        taskRecordOverflowCount,
-                        dispatchTime,
-                        readbackBytes);
-                    return;
-                }
-
-                LastVisibleMeshletCount = visibleMeshletCount;
-                LastDispatchedMeshletCount = dispatchedMeshletCount;
-                LastTaskRecordOverflowCount = taskRecordOverflowCount;
-                LastDispatchTime = dispatchTime;
-                LastReadbackBytes += readbackBytes;
-            }
-
-            public static void RecordGpuMeshletCacheHit(int eventCount = 1)
-            {
-                if (!EnableTracking || eventCount <= 0)
-                    return;
-
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuMeshletCacheHit(eventCount);
-                    return;
-                }
-
-                GpuMeshletCacheHits += eventCount;
-            }
-
-            public static void RecordGpuMeshletCacheMiss(int eventCount = 1)
-            {
-                if (!EnableTracking || eventCount <= 0)
-                    return;
-
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuMeshletCacheMiss(eventCount);
-                    return;
-                }
-
-                GpuMeshletCacheMisses += eventCount;
-            }
-
-            public static void RecordGpuMeshletCacheStale(int eventCount = 1)
-            {
-                if (!EnableTracking || eventCount <= 0)
-                    return;
-
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderGpuMeshletCacheStale(eventCount);
-                    return;
-                }
-
-                GpuMeshletCacheStale += eventCount;
-            }
-
-            public static void RecordOctreeCollect(int visibleRenderables, int emittedCommands)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderOctreeCollect(visibleRenderables, emittedCommands);
-            }
-
-            public static void RecordCpuSpatialTreeStats(string mode, SpatialTreeOccupancyStats occupancy, long collectTicks)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderCpuSpatialTreeStats(mode, occupancy, collectTicks);
-            }
-
-            public static void RecordRtxIoCopyIndirect(long bytes, TimeSpan elapsed)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderRtxIoCopyIndirect(bytes, elapsed);
-            }
-
-            public static void RecordRtxIoDecompression(long compressedBytes, long decompressedBytes, TimeSpan elapsed)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderRtxIoDecompression(compressedBytes, decompressedBytes, elapsed);
-            }
-
-            public static void RecordSkinnedBoundsRefreshDeferredFinished(long queueWaitTicks, long cpuJobTicks, long applyTicks, bool succeeded)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderSkinnedBoundsRefreshDeferredFinished(queueWaitTicks, cpuJobTicks, applyTicks, succeeded);
-            }
-
-            public static void RecordSkinnedBoundsRefreshDeferredScheduled()
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderSkinnedBoundsRefreshDeferredScheduled();
-            }
-
-            public static void RecordSkinnedBoundsRefreshGpuCompleted(long gpuTicks, long applyTicks)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderSkinnedBoundsRefreshGpuCompleted(gpuTicks, applyTicks);
-            }
-
-            public static void RecordVrCommandBuildTimes(TimeSpan leftBuildTime, TimeSpan rightBuildTime)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVrCommandBuildTimes(leftBuildTime, rightBuildTime);
-            }
-
-            public static void RecordVrPerViewDrawCounts(uint leftDraws, uint rightDraws)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Presentation.RecordVrPerViewDrawCounts(leftDraws, rightDraws);
-            }
-
-            public static void RecordVrPerViewVisibleCounts(uint leftVisible, uint rightVisible)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVrPerViewVisibleCounts(leftVisible, rightVisible);
-            }
-
-            public static void RecordVrRenderSubmitTime(TimeSpan elapsed)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVrRenderSubmitTime(elapsed);
-            }
-
-            public static void RecordVrXrWaitFrameBlockTime(TimeSpan elapsed)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVrXrWaitFrameBlockTime(elapsed);
-            }
-
-            public static void RecordVrXrEndFrameSubmitTime(TimeSpan elapsed, ulong renderFrameId = 0UL)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVrXrEndFrameSubmitTime(elapsed, renderFrameId);
-            }
-
-            public static void RecordVrXrPredictedToLatePoseDelta(double millimeters, double degrees)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVrXrPredictedToLatePoseDelta(millimeters, degrees);
-            }
-
-            public static void RecordVrXrPredictedDisplayLeadTime(double leadTimeMs)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVrXrPredictedDisplayLeadTime(leadTimeMs);
-            }
-
-            public static void RecordVrXrMissedDeadlineFrame()
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVrXrMissedDeadlineFrame();
-            }
-
-            public static void RecordVrXrTrackingLossFrame()
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVrXrTrackingLossFrame();
-            }
-
-            public static void RecordVrXrRelocatePredictedTime(TimeSpan elapsed)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVrXrRelocatePredictedTime(elapsed);
-            }
-
-            public static void RecordVrXrCollectFrustumExpansionDegrees(double degrees)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVrXrCollectFrustumExpansionDegrees(degrees);
-            }
-
-            public static void RecordVrXrPacingThreadIdleTime(TimeSpan elapsed)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVrXrPacingThreadIdleTime(elapsed);
-            }
-
-            public static void RecordVrXrPacingHandoffStall()
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVrXrPacingHandoffStall();
-            }
-
-            public static void RecordVulkanAdhocBarrier(int emittedCount = 0, int redundantCount = 0)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanAdhocBarrier(emittedCount, redundantCount);
-            }
-
-            public static void RecordVulkanAllocation(EVulkanAllocationTelemetryClass allocationClass, long bytes)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanAllocation((int)allocationClass, bytes);
-            }
-
-            public static void RecordVulkanBarrierPlannerPass(int imageBarrierCount = 0, int bufferBarrierCount = 0, int queueOwnershipTransfers = 0, int stageFlushes = 0)
-            {
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanBarrierPlannerPass(imageBarrierCount, bufferBarrierCount, queueOwnershipTransfers, stageFlushes);
-                    return;
-                }
-
-                VulkanQueueOwnershipTransfers += queueOwnershipTransfers;
-                VulkanBarrierStageFlushes += stageFlushes;
-            }
-
-            public static void RecordVulkanBindChurn(
-                int pipelineBinds = 0,
-                int descriptorBinds = 0,
-                int pushConstantWrites = 0,
-                int vertexBufferBinds = 0,
-                int indexBufferBinds = 0,
-                int pipelineBindSkips = 0,
-                int descriptorBindSkips = 0,
-                int vertexBufferBindSkips = 0,
-                int indexBufferBindSkips = 0)
-            {
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanBindChurn(
-                        pipelineBinds,
-                        descriptorBinds,
-                        pushConstantWrites,
-                        vertexBufferBinds,
-                        indexBufferBinds,
-                        pipelineBindSkips,
-                        descriptorBindSkips,
-                        vertexBufferBindSkips,
-                        indexBufferBindSkips);
-                    return;
-                }
-
-                VulkanDescriptorBindSkips += descriptorBindSkips;
-            }
-
-            public static void RecordVulkanDescriptorBindingFailure(
-                string? programName = null,
-                string? bindingClass = null,
-                string? bindingName = null,
-                uint set = 0,
-                uint binding = 0,
-                bool skippedDraw = false,
-                bool skippedDispatch = false,
-                string? reason = null)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanDescriptorBindingFailure(programName, bindingClass, bindingName, set, binding, skippedDraw, skippedDispatch, reason);
-                else
-                    VulkanDescriptorBindingFailuresCurrentFrame++;
-            }
-
-            public static void RecordVulkanDescriptorFallback(
-                string? programName,
-                string? bindingClass,
-                string? bindingName,
-                uint set,
-                uint binding,
-                int count = 1)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanDescriptorFallback(programName, bindingClass, bindingName, set, binding, count);
-                else
-                    VulkanDescriptorFallbacksCurrentFrame++;
-            }
-
-            public static void RecordVulkanDescriptorPoolCreate()
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanDescriptorPoolCreate();
-            }
-
-            public static void RecordVulkanDescriptorPoolDestroy()
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanDescriptorPoolDestroy();
-            }
-
-            public static void RecordVulkanDescriptorPoolReset()
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanDescriptorPoolReset();
-            }
-
-            public static void RecordVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount, int pendingRetirementCount, long oldestPendingRetirementAgeMilliseconds)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanResourceLifetimeGauges(liveResourceCount, trackedDescriptorSetCount, pendingRetirementCount, oldestPendingRetirementAgeMilliseconds);
-            }
-
-            public static void RecordVulkanMeshFrameDataGauges(int arenaChunkCount, long mappedBytes, long reservedBytes, int reservationCount, ulong generation, int recordingLeases, int cachedLeases, int submittedLeases, int activeGenerationCount, int leaseRetainedGenerationCount)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanMeshFrameDataGauges(arenaChunkCount, mappedBytes, reservedBytes, reservationCount, generation, recordingLeases, cachedLeases, submittedLeases, activeGenerationCount, leaseRetainedGenerationCount);
-            }
-
-            public static void RecordVulkanFrameWideMeshFrameDataManifestGauges(ulong generation, long publicationCount, long lateRegistrationCount, int rendererCount, int familyCount, bool isSealed)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanFrameWideMeshFrameDataManifestGauges(generation, publicationCount, lateRegistrationCount, rendererCount, familyCount, isSealed);
-            }
-
-            public static void AdjustVulkanMeshDescriptorOwnership(int allocationVariants, int pools, int allocatedSets, int reservedSets)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.AdjustRenderVulkanMeshDescriptorOwnership(allocationVariants, pools, allocatedSets, reservedSets);
-            }
-
-            public static void RecordVulkanDynamicUniformAllocation(long bytes)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanDynamicUniformAllocation(bytes);
-            }
-
-            public static void RecordVulkanDynamicUniformExhaustion()
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanDynamicUniformExhaustion();
-            }
-
-            public static void RecordVulkanRecordCommandBufferAllocation(long bytes)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanRecordCommandBufferAllocation(bytes);
-            }
-
-            public static void RecordVulkanFrameDiagnostics(
-                int droppedFrameOps,
-                int droppedDrawOps,
-                int droppedComputeOps,
-                int sceneSwapchainWriters,
-                int overlaySwapchainWriters,
-                int forcedDiagnosticSwapchainWriters,
-                int fboOnlyDrawOps,
-                int fboOnlyBlitOps,
-                bool missingSceneSwapchainWriters,
-                string? firstFailedOpType,
-                int firstFailedPassIndex,
-                int firstFailedPipelineIdentity,
-                int firstFailedViewportIdentity,
-                string? firstFailedTargetName,
-                string? firstFailedMaterialName,
-                string? firstFailedShaderName,
-                string? firstFailedMessage,
-                string? diagnosticSummary)
-            {
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanFrameDiagnostics(
-                        droppedFrameOps,
-                        droppedDrawOps,
-                        droppedComputeOps,
-                        sceneSwapchainWriters,
-                        overlaySwapchainWriters,
-                        forcedDiagnosticSwapchainWriters,
-                        fboOnlyDrawOps,
-                        fboOnlyBlitOps,
-                        missingSceneSwapchainWriters,
-                        firstFailedOpType,
-                        firstFailedPassIndex,
-                        firstFailedPipelineIdentity,
-                        firstFailedViewportIdentity,
-                        firstFailedTargetName,
-                        firstFailedMaterialName,
-                        firstFailedShaderName,
-                        firstFailedMessage,
-                        diagnosticSummary);
-                }
-            }
-
-            public static void RecordVulkanFrameGpuCommandBufferTime(TimeSpan elapsed)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanFrameGpuCommandBufferTime(elapsed);
-            }
-
-            public static void RecordVulkanFrameLifecycleTiming(
-                TimeSpan waitFence,
-                TimeSpan acquireImage,
-                TimeSpan recordCommandBuffer,
-                TimeSpan submit,
-                TimeSpan trim,
-                TimeSpan present,
-                TimeSpan total)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanFrameLifecycleTiming(waitFence, acquireImage, recordCommandBuffer, submit, trim, present, total);
-            }
-
-            public static void RecordVulkanFrameLifecycleDetailTiming(
-                TimeSpan sampleTimingQueries,
-                TimeSpan drainRetiredResources,
-                TimeSpan acquireBridgeSubmit,
-                TimeSpan waitSwapchainImage,
-                TimeSpan resetDynamicUniformRing,
-                TimeSpan snapshotImGuiOverlay,
-                TimeSpan recordSceneCommandBuffer,
-                TimeSpan recordImGuiOverlay,
-                TimeSpan recordDynamicUiTextOverlay)
-            {
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanFrameLifecycleDetailTiming(
-                        sampleTimingQueries,
-                        drainRetiredResources,
-                        acquireBridgeSubmit,
-                        waitSwapchainImage,
-                        resetDynamicUniformRing,
-                        snapshotImGuiOverlay,
-                        recordSceneCommandBuffer,
-                        recordImGuiOverlay,
-                        recordDynamicUiTextOverlay);
-                }
-            }
-
-            public static void RecordVulkanFrameOpCensus(
-                int totalCount,
-                int clearCount,
-                int meshDrawCount,
-                int indirectDrawCount,
-                int meshTaskDispatchCount,
-                int blitCount,
-                int computeCount,
-                int swapchainWriteCount,
-                int fboWriteCount,
-                int uniquePassCount,
-                int uniqueContextCount,
-                int uniqueTargetCount)
-            {
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanFrameOpCensus(
-                        totalCount,
-                        clearCount,
-                        meshDrawCount,
-                        indirectDrawCount,
-                        meshTaskDispatchCount,
-                        blitCount,
-                        computeCount,
-                        swapchainWriteCount,
-                        fboWriteCount,
-                        uniquePassCount,
-                        uniqueContextCount,
-                        uniqueTargetCount);
-                }
-            }
-
-            public static void RecordVulkanCommandBufferCacheOutcome(
-                bool reusedClean,
-                bool recorded,
-                bool forcedDirty,
-                bool frameOpSignatureDirty,
-                bool plannerDirty,
-                bool profilerDirty,
-                string? dirtyReason,
-                EVulkanCommandBufferDecisionReason detailReasons = EVulkanCommandBufferDecisionReason.None,
-                ulong structuralSignature = 0,
-                ulong descriptorGeneration = 0,
-                int swapchainSlot = -1)
-            {
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanCommandBufferCacheOutcome(
-                        reusedClean,
-                        recorded,
-                        forcedDirty,
-                        frameOpSignatureDirty,
-                        plannerDirty,
-                        profilerDirty,
-                        dirtyReason,
-                        detailReasons,
-                        structuralSignature,
-                        descriptorGeneration,
-                        swapchainSlot);
-                }
-            }
-
-            public static void RecordVulkanCpuStage(EVulkanCpuStage stage, TimeSpan elapsed, long allocatedBytes)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanCpuStage(stage, elapsed, allocatedBytes);
-            }
-
-            public static void RecordVulkanCommandBuffersDirty(string? reason)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanCommandBuffersDirty(reason);
-            }
-
-            public static void RecordVulkanExactResourceInvalidation(
-                int exactVariantsDirtied,
-                int exactCommandChainsDirtied,
-                int unrelatedVariantsPreserved,
-                int globalFallbackInvalidations)
-            {
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanExactResourceInvalidation(
-                        exactVariantsDirtied,
-                        exactCommandChainsDirtied,
-                        unrelatedVariantsPreserved,
-                        globalFallbackInvalidations);
-                }
-            }
-
-            public static void RecordVulkanTrackingBatch(
-                int dependencyBinds,
-                int uniqueDependencies,
-                int imageAccessWrites,
-                int compactImageRanges)
-            {
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanTrackingBatch(
-                        dependencyBinds,
-                        uniqueDependencies,
-                        imageAccessWrites,
-                        compactImageRanges);
-                }
-            }
-
-            public static void RecordVulkanDescriptorExpansion(int cacheHits, int cacheMisses)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanDescriptorExpansion(cacheHits, cacheMisses);
-            }
-
-            public static void RecordVulkanTrackingContention(int lifetimeLockContentions, int layoutLockContentions)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanTrackingContention(lifetimeLockContentions, layoutLockContentions);
-            }
-
-            public static void RecordVulkanCommandChainMetrics(
-                int chainsScheduled = 0,
-                int chainsRecorded = 0,
-                int chainsReused = 0,
-                int chainsFrameDataRefreshed = 0,
-                int volatileChainsRecorded = 0,
-                int primaryCommandBuffersReused = 0,
-                int primaryCommandBuffersRecorded = 0,
-                int visibilityPackets = 0,
-                int renderPackets = 0,
-                int secondaryCommandBuffers = 0,
-                TimeSpan chainWorkerRecordTime = default,
-                TimeSpan renderThreadWaitForWorkersTime = default,
-                string? firstStructuralDirtyReason = null,
-                string? firstDescriptorGenerationMismatch = null,
-                string? firstResourcePlanRevisionMismatch = null)
-            {
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanCommandChainMetrics(
-                        chainsScheduled,
-                        chainsRecorded,
-                        chainsReused,
-                        chainsFrameDataRefreshed,
-                        volatileChainsRecorded,
-                        primaryCommandBuffersReused,
-                        primaryCommandBuffersRecorded,
-                        visibilityPackets,
-                        renderPackets,
-                        secondaryCommandBuffers,
-                        chainWorkerRecordTime,
-                        renderThreadWaitForWorkersTime,
-                        firstStructuralDirtyReason,
-                        firstDescriptorGenerationMismatch,
-                        firstResourcePlanRevisionMismatch);
-                }
-            }
-
-            public static void RecordVulkanGpuDrivenStageTiming(EVulkanGpuDrivenStageTiming stage, TimeSpan elapsed)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanGpuDrivenStageTiming((int)stage, elapsed);
-            }
-
-            public static void RecordVulkanIndirectBatchMerge(int requestedBatches, int mergedBatches)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanIndirectBatchMerge(requestedBatches, mergedBatches);
-            }
-
-            public static void RecordVulkanIndirectEffectiveness(uint requestedDraws, uint culledDraws, uint emittedIndirectDraws, uint consumedDraws, uint overflowCount = 0u)
-            {
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanIndirectEffectiveness(requestedDraws, culledDraws, emittedIndirectDraws, consumedDraws, overflowCount);
-                    return;
-                }
-
-                VulkanRequestedDraws = requestedDraws;
-                VulkanCulledDraws = culledDraws;
-                VulkanEmittedIndirectDraws = emittedIndirectDraws;
-                VulkanConsumedDraws = consumedDraws;
-            }
-
-            public static void RecordVulkanIndirectRecordingMode(bool usedSecondary = false, bool usedParallel = false, int opCount = 0)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanIndirectRecordingMode(usedSecondary, usedParallel, opCount);
-            }
-
-            public static void RecordVulkanIndirectSubmission(bool usedCountPath = false, bool usedLoopFallback = false, int apiCalls = 0, uint submittedDraws = 0u)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanIndirectSubmission(usedCountPath, usedLoopFallback, apiCalls, submittedDraws);
-            }
-
-            public static void RecordVulkanOomFallback()
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanOomFallback();
-                else
-                    VulkanOomFallbackCount++;
-            }
-
-            public static void RecordVulkanPipelineCacheLookup(bool cacheHit)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanPipelineCacheLookup(cacheHit);
-            }
-
-            public static void RecordVulkanPipelineCacheMiss(string? summary)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanPipelineCacheMiss(summary);
-            }
-
-            public static void RecordVulkanPipelineTelemetry(
-                EVulkanPipelineTelemetryEvent eventKind,
-                EVulkanDriverPipelineCacheOutcome cacheOutcome = EVulkanDriverPipelineCacheOutcome.Unknown,
-                bool backgroundCompile = false,
-                double compileMilliseconds = 0.0,
-                int queueDepth = 0,
-                int queueCapacity = 0)
-            {
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanPipelineTelemetry(
-                        eventKind,
-                        cacheOutcome,
-                        backgroundCompile,
-                        compileMilliseconds,
-                        queueDepth,
-                        queueCapacity);
-                }
-            }
-
-            public static void RecordVulkanQueueOverlapWindow(int overlapCandidatePasses, int transferCost, TimeSpan frameDelta, bool promotedMode, bool demotedMode)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanQueueOverlapWindow(overlapCandidatePasses, transferCost, frameDelta, promotedMode, demotedMode);
-            }
-
-            public static void RecordVulkanQueueSubmit()
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanQueueSubmit();
-            }
-
-            public static void RecordVulkanPresentResult(int result, bool accepted)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanPresentResult(result, accepted);
-            }
-
-            public static void RecordVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanRetiredResourcePlanReplacement(imageCount, bufferCount);
-            }
-
-            public static void RecordVulkanSwapchainRetirement(
-                int queued = 0,
-                int drained = 0,
-                int pending = 0,
-                int deferred = 0)
-            {
-                if (HasHostStats)
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanSwapchainRetirement(queued, drained, pending, deferred);
-            }
-
-            public static void RecordVulkanRetiredResourceDrain(
-                int descriptorPools = 0,
-                int descriptorSets = 0,
-                int commandBuffers = 0,
-                int queryPools = 0,
-                int bufferViews = 0,
-                int pipelines = 0,
-                int framebuffers = 0,
-                int buffers = 0,
-                int bufferMemories = 0,
-                int images = 0,
-                int imageViews = 0,
-                int samplers = 0,
-                int imageMemories = 0,
-                long imageBytes = 0)
-            {
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanRetiredResourceDrain(
-                        descriptorPools,
-                        descriptorSets,
-                        commandBuffers,
-                        queryPools,
-                        bufferViews,
-                        pipelines,
-                        framebuffers,
-                        buffers,
-                        bufferMemories,
-                        images,
-                        imageViews,
-                        samplers,
-                        imageMemories,
-                        imageBytes);
-                }
-            }
-
-            public static void RecordVulkanValidationMessage(bool isError, string message)
-            {
-                if (HasHostStats)
-                {
-                    RuntimeRenderingHostServices.Statistics.RecordRenderVulkanValidationMessage(isError, message);
-                    return;
-                }
-
-                VulkanValidationMessageCountCurrentFrame++;
-                if (isError)
-                    VulkanValidationErrorCountCurrentFrame++;
-            }
-
-            public static class Frame
-            {
-                public static int DrawCalls => Stats.DrawCalls;
-                public static int MultiDrawCalls => Stats.MultiDrawCalls;
-                public static int TrianglesRendered => Stats.TrianglesRendered;
-                public static void IncrementDrawCalls(int count = 1) => Stats.IncrementDrawCalls(count);
-                public static void IncrementMultiDrawCalls(int count = 1) => Stats.IncrementMultiDrawCalls(count);
-                public static void AddTrianglesRendered(int count) => Stats.AddTrianglesRendered(count);
-            }
-
-            public static class Vram
-            {
-                public static void AddBufferAllocation(long bytes) => Stats.AddBufferAllocation(bytes);
-                public static void RemoveBufferAllocation(long bytes) => Stats.RemoveBufferAllocation(bytes);
-                public static void AddTextureAllocation(long bytes) => Stats.AddTextureAllocation(bytes);
-                public static void RemoveTextureAllocation(long bytes) => Stats.RemoveTextureAllocation(bytes);
-                public static void AddRenderBufferAllocation(long bytes) => Stats.AddRenderBufferAllocation(bytes);
-                public static void RemoveRenderBufferAllocation(long bytes) => Stats.RemoveRenderBufferAllocation(bytes);
-                public static bool CanAllocateVram(long requestedBytes, long currentAllocationBytes, out long projectedBytes, out long budgetBytes)
-                    => Stats.CanAllocateVram(requestedBytes, currentAllocationBytes, out projectedBytes, out budgetBytes);
-            }
-
-            public static class GpuReadback
-            {
-                public static void RecordGpuBufferMapped(int count = 1) => Stats.RecordGpuBufferMapped(count);
-                public static void RecordGpuReadbackBytes(long bytes) => Stats.RecordGpuReadbackBytes(bytes);
-            }
-
-            public static class GpuFallback
-            {
-                public static int GpuCpuFallbackEvents => Stats.GpuCpuFallbackEvents;
-                public static int GpuCpuFallbackRecoveredCommands => Stats.GpuCpuFallbackRecoveredCommands;
-                public static void RecordGpuCpuFallback(int events, int recoveredCommands) => Stats.RecordGpuCpuFallback(events, recoveredCommands);
-                public static void RecordForbiddenGpuFallback(int events = 1) => Stats.RecordForbiddenGpuFallback(events);
-            }
-
-            public static class GpuTransparency
-            {
-                public static int GpuTransparencyOpaqueOrOtherVisible => Stats.GpuTransparencyOpaqueOrOtherVisible;
-                public static int GpuTransparencyMaskedVisible => Stats.GpuTransparencyMaskedVisible;
-                public static int GpuTransparencyApproximateVisible => Stats.GpuTransparencyApproximateVisible;
-                public static int GpuTransparencyExactVisible => Stats.GpuTransparencyExactVisible;
-                public static void RecordGpuTransparencyDomainCounts(int opaqueOrOther, int masked, int approximate, int exact)
-                    => Stats.RecordGpuTransparencyDomainCounts(opaqueOrOther, masked, approximate, exact);
-                public static void RecordGpuTransparencyDomainCounts(uint opaqueOrOther, uint masked, uint approximate, uint exact)
-                    => Stats.RecordGpuTransparencyDomainCounts(opaqueOrOther, masked, approximate, exact);
-            }
-
-            public static class GpuMeshlets
-            {
-                public static int GpuMeshletRequestedFrames => Stats.GpuMeshletRequestedFrames;
-                public static int GpuMeshletProductionFrames => Stats.GpuMeshletProductionFrames;
-                public static int GpuMeshletFallbackFrames => Stats.GpuMeshletFallbackFrames;
-                public static int GpuMeshletDispatchSkipped => Stats.GpuMeshletDispatchSkipped;
-                public static long GpuMeshletTaskRecordsEmitted => Stats.GpuMeshletTaskRecordsEmitted;
-                public static long GpuMeshletTaskRecordsFrustumCulled => Stats.GpuMeshletTaskRecordsFrustumCulled;
-                public static long GpuMeshletTaskRecordsConeCulled => Stats.GpuMeshletTaskRecordsConeCulled;
-                public static long GpuMeshletTaskRecordsHiZCulled => Stats.GpuMeshletTaskRecordsHiZCulled;
-                public static long GpuMeshletExpansionOverflowCount => Stats.GpuMeshletExpansionOverflowCount;
-                public static long GpuMeshletBufferBytesResident => Stats.GpuMeshletBufferBytesResident;
-                public static long LastVisibleMeshletCount => Stats.LastVisibleMeshletCount;
-                public static long LastDispatchedMeshletCount => Stats.LastDispatchedMeshletCount;
-                public static long LastTaskRecordOverflowCount => Stats.LastTaskRecordOverflowCount;
-                public static TimeSpan LastDispatchTime => Stats.LastDispatchTime;
-                public static long LastReadbackBytes => Stats.LastReadbackBytes;
-                public static int GpuMeshletCacheHits => Stats.GpuMeshletCacheHits;
-                public static int GpuMeshletCacheMisses => Stats.GpuMeshletCacheMisses;
-                public static int GpuMeshletCacheStale => Stats.GpuMeshletCacheStale;
-                public static void RecordGpuMeshletStrategyRequested(
-                    int renderPass,
-                    EMeshSubmissionStrategy requestedStrategy,
-                    EMeshSubmissionStrategy selectedStrategy,
-                    EMeshShaderDialect dialect,
-                    uint commandCount,
-                    uint taskCapacity)
-                    => Stats.RecordGpuMeshletStrategyRequested(renderPass, requestedStrategy, selectedStrategy, dialect, commandCount, taskCapacity);
-                public static void RecordGpuMeshletProductionFrame(int eventCount = 1) => Stats.RecordGpuMeshletProductionFrame(eventCount);
-                public static void RecordGpuMeshletFallback(int eventCount = 1) => Stats.RecordGpuMeshletFallback(eventCount);
-                public static void RecordGpuMeshletDispatchSkipped(int eventCount = 1) => Stats.RecordGpuMeshletDispatchSkipped(eventCount);
-                public static void RecordGpuMeshletTaskStats(uint emitted, uint frustumCulled, uint coneCulled, uint hiZCulled)
-                    => Stats.RecordGpuMeshletTaskStats(emitted, frustumCulled, coneCulled, hiZCulled);
-                public static void RecordGpuMeshletExpansionOverflow(uint overflowCount) => Stats.RecordGpuMeshletExpansionOverflow(overflowCount);
-                public static void RecordGpuMeshletBufferBytesResident(ulong bytes) => Stats.RecordGpuMeshletBufferBytesResident(bytes);
-                public static void RecordGpuMeshletInstrumentation(
-                    uint visibleMeshletCount,
-                    uint dispatchedMeshletCount,
-                    uint taskRecordOverflowCount,
-                    TimeSpan dispatchTime,
-                    uint readbackBytes)
-                    => Stats.RecordGpuMeshletInstrumentation(
-                        visibleMeshletCount,
-                        dispatchedMeshletCount,
-                        taskRecordOverflowCount,
-                        dispatchTime,
-                        readbackBytes);
-                public static void RecordGpuMeshletCacheHit(int eventCount = 1) => Stats.RecordGpuMeshletCacheHit(eventCount);
-                public static void RecordGpuMeshletCacheMiss(int eventCount = 1) => Stats.RecordGpuMeshletCacheMiss(eventCount);
-                public static void RecordGpuMeshletCacheStale(int eventCount = 1) => Stats.RecordGpuMeshletCacheStale(eventCount);
-            }
-
-            public static class Octree
-            {
-                public static void RecordOctreeCollect(int visibleRenderables, int emittedCommands)
-                    => Stats.RecordOctreeCollect(visibleRenderables, emittedCommands);
-
-                public static void RecordCpuSpatialTreeStats(string mode, SpatialTreeOccupancyStats occupancy, long collectTicks)
-                    => Stats.RecordCpuSpatialTreeStats(mode, occupancy, collectTicks);
-            }
-
-            public static class RtxIo
-            {
-                public static void RecordRtxIoCopyIndirect(long bytes, TimeSpan elapsed) => Stats.RecordRtxIoCopyIndirect(bytes, elapsed);
-                public static void RecordRtxIoDecompression(long compressedBytes, long decompressedBytes, TimeSpan elapsed)
-                    => Stats.RecordRtxIoDecompression(compressedBytes, decompressedBytes, elapsed);
-            }
-
-            public static class SkinnedBounds
-            {
-                public static void RecordSkinnedBoundsRefreshDeferredFinished(long queueWaitTicks, long cpuJobTicks, long applyTicks, bool succeeded)
-                    => Stats.RecordSkinnedBoundsRefreshDeferredFinished(queueWaitTicks, cpuJobTicks, applyTicks, succeeded);
-                public static void RecordSkinnedBoundsRefreshDeferredScheduled()
-                    => Stats.RecordSkinnedBoundsRefreshDeferredScheduled();
-                public static void RecordSkinnedBoundsRefreshGpuCompleted(long gpuTicks, long applyTicks)
-                    => Stats.RecordSkinnedBoundsRefreshGpuCompleted(gpuTicks, applyTicks);
-            }
-
-            public static class Vr
-            {
-                public static void RecordVrCommandBuildTimes(TimeSpan leftBuildTime, TimeSpan rightBuildTime)
-                    => Stats.RecordVrCommandBuildTimes(leftBuildTime, rightBuildTime);
-                public static void RecordVrPerViewDrawCounts(uint leftDraws, uint rightDraws)
-                    => Stats.RecordVrPerViewDrawCounts(leftDraws, rightDraws);
-                public static void RecordVrPerViewVisibleCounts(uint leftVisible, uint rightVisible)
-                    => Stats.RecordVrPerViewVisibleCounts(leftVisible, rightVisible);
-                public static void RecordVrRenderSubmitTime(TimeSpan elapsed) => Stats.RecordVrRenderSubmitTime(elapsed);
-                public static void RecordVrXrWaitFrameBlockTime(TimeSpan elapsed) => Stats.RecordVrXrWaitFrameBlockTime(elapsed);
-                public static void RecordVrXrEndFrameSubmitTime(TimeSpan elapsed, ulong renderFrameId = 0UL)
-                    => Stats.RecordVrXrEndFrameSubmitTime(elapsed, renderFrameId);
-                public static void RecordVrXrPredictedToLatePoseDelta(double millimeters, double degrees)
-                    => Stats.RecordVrXrPredictedToLatePoseDelta(millimeters, degrees);
-                public static void RecordVrXrPredictedDisplayLeadTime(double leadTimeMs)
-                    => Stats.RecordVrXrPredictedDisplayLeadTime(leadTimeMs);
-                public static void RecordVrXrMissedDeadlineFrame() => Stats.RecordVrXrMissedDeadlineFrame();
-                public static void RecordVrXrTrackingLossFrame() => Stats.RecordVrXrTrackingLossFrame();
-                public static void RecordVrXrRelocatePredictedTime(TimeSpan elapsed) => Stats.RecordVrXrRelocatePredictedTime(elapsed);
-                public static void RecordVrXrCollectFrustumExpansionDegrees(double degrees)
-                    => Stats.RecordVrXrCollectFrustumExpansionDegrees(degrees);
-                public static void RecordVrXrPacingThreadIdleTime(TimeSpan elapsed) => Stats.RecordVrXrPacingThreadIdleTime(elapsed);
-                public static void RecordVrXrPacingHandoffStall() => Stats.RecordVrXrPacingHandoffStall();
-            }
-
-            public static class Vulkan
-            {
-                public static long VulkanRequestedDraws => Stats.VulkanRequestedDraws;
-                public static long VulkanCulledDraws => Stats.VulkanCulledDraws;
-                public static long VulkanEmittedIndirectDraws => Stats.VulkanEmittedIndirectDraws;
-                public static long VulkanConsumedDraws => Stats.VulkanConsumedDraws;
-                public static int VulkanQueueOwnershipTransfers => Stats.VulkanQueueOwnershipTransfers;
-                public static int VulkanBarrierStageFlushes => Stats.VulkanBarrierStageFlushes;
-                public static int VulkanDescriptorBindSkips => Stats.VulkanDescriptorBindSkips;
-                public static int VulkanDescriptorFallbacksCurrentFrame => Stats.VulkanDescriptorFallbacksCurrentFrame;
-                public static int VulkanDescriptorBindingFailuresCurrentFrame => Stats.VulkanDescriptorBindingFailuresCurrentFrame;
-                public static int VulkanOomFallbackCount => Stats.VulkanOomFallbackCount;
-                public static int VulkanValidationMessageCountCurrentFrame => Stats.VulkanValidationMessageCountCurrentFrame;
-                public static int VulkanValidationErrorCountCurrentFrame => Stats.VulkanValidationErrorCountCurrentFrame;
-
-                public enum EVulkanGpuDrivenStageTiming
-                {
-                    Reset,
-                    Cull,
-                    Occlusion,
-                    Indirect,
-                    Draw,
-                }
-
-                public enum EVulkanAllocationTelemetryClass
-                {
-                    DeviceLocal,
-                    Upload,
-                    Readback,
-                }
-
-                public static void RecordVulkanAdhocBarrier(int emittedCount = 0, int redundantCount = 0)
-                    => Stats.RecordVulkanAdhocBarrier(emittedCount, redundantCount);
-                public static void RecordVulkanAllocation(EVulkanAllocationTelemetryClass allocationClass, long bytes)
-                    => Stats.RecordVulkanAllocation((Stats.EVulkanAllocationTelemetryClass)allocationClass, bytes);
-                public static void RecordVulkanBarrierPlannerPass(int imageBarrierCount = 0, int bufferBarrierCount = 0, int queueOwnershipTransfers = 0, int stageFlushes = 0)
-                    => Stats.RecordVulkanBarrierPlannerPass(imageBarrierCount, bufferBarrierCount, queueOwnershipTransfers, stageFlushes);
-                public static void RecordVulkanBindChurn(
-                    int pipelineBinds = 0,
-                    int descriptorBinds = 0,
-                    int pushConstantWrites = 0,
-                    int vertexBufferBinds = 0,
-                    int indexBufferBinds = 0,
-                    int pipelineBindSkips = 0,
-                    int descriptorBindSkips = 0,
-                    int vertexBufferBindSkips = 0,
-                    int indexBufferBindSkips = 0)
-                    => Stats.RecordVulkanBindChurn(
-                        pipelineBinds,
-                        descriptorBinds,
-                        pushConstantWrites,
-                        vertexBufferBinds,
-                        indexBufferBinds,
-                        pipelineBindSkips,
-                        descriptorBindSkips,
-                        vertexBufferBindSkips,
-                        indexBufferBindSkips);
-                public static void RecordVulkanDescriptorBindingFailure(
-                    string? programName = null,
-                    string? bindingClass = null,
-                    string? bindingName = null,
-                    uint set = 0,
-                    uint binding = 0,
-                    bool skippedDraw = false,
-                    bool skippedDispatch = false,
-                    string? reason = null)
-                    => Stats.RecordVulkanDescriptorBindingFailure(programName, bindingClass, bindingName, set, binding, skippedDraw, skippedDispatch, reason);
-                public static void RecordVulkanDescriptorFallback(
-                    string? programName,
-                    string? bindingClass,
-                    string? bindingName,
-                    uint set,
-                    uint binding,
-                    int count = 1)
-                    => Stats.RecordVulkanDescriptorFallback(programName, bindingClass, bindingName, set, binding, count);
-                public static void RecordVulkanDescriptorPoolCreate() => Stats.RecordVulkanDescriptorPoolCreate();
-                public static void RecordVulkanDescriptorPoolDestroy() => Stats.RecordVulkanDescriptorPoolDestroy();
-                public static void RecordVulkanDescriptorPoolReset() => Stats.RecordVulkanDescriptorPoolReset();
-                public static void RecordVulkanResourceLifetimeGauges(int liveResourceCount, int trackedDescriptorSetCount, int pendingRetirementCount, long oldestPendingRetirementAgeMilliseconds)
-                    => Stats.RecordVulkanResourceLifetimeGauges(liveResourceCount, trackedDescriptorSetCount, pendingRetirementCount, oldestPendingRetirementAgeMilliseconds);
-                public static void RecordVulkanMeshFrameDataGauges(int arenaChunkCount, long mappedBytes, long reservedBytes, int reservationCount, ulong generation, int recordingLeases, int cachedLeases, int submittedLeases, int activeGenerationCount, int leaseRetainedGenerationCount)
-                    => Stats.RecordVulkanMeshFrameDataGauges(arenaChunkCount, mappedBytes, reservedBytes, reservationCount, generation, recordingLeases, cachedLeases, submittedLeases, activeGenerationCount, leaseRetainedGenerationCount);
-                public static void RecordVulkanFrameWideMeshFrameDataManifestGauges(ulong generation, long publicationCount, long lateRegistrationCount, int rendererCount, int familyCount, bool isSealed)
-                    => Stats.RecordVulkanFrameWideMeshFrameDataManifestGauges(generation, publicationCount, lateRegistrationCount, rendererCount, familyCount, isSealed);
-                public static void AdjustVulkanMeshDescriptorOwnership(int allocationVariants, int pools, int allocatedSets, int reservedSets)
-                    => Stats.AdjustVulkanMeshDescriptorOwnership(allocationVariants, pools, allocatedSets, reservedSets);
-                public static void RecordVulkanDynamicUniformAllocation(long bytes) => Stats.RecordVulkanDynamicUniformAllocation(bytes);
-                public static void RecordVulkanDynamicUniformExhaustion() => Stats.RecordVulkanDynamicUniformExhaustion();
-                public static void RecordVulkanRecordCommandBufferAllocation(long bytes) => Stats.RecordVulkanRecordCommandBufferAllocation(bytes);
-                public static void RecordVulkanFrameDiagnostics(
-                    int droppedFrameOps,
-                    int droppedDrawOps,
-                    int droppedComputeOps,
-                    int sceneSwapchainWriters,
-                    int overlaySwapchainWriters,
-                    int forcedDiagnosticSwapchainWriters,
-                    int fboOnlyDrawOps,
-                    int fboOnlyBlitOps,
-                    bool missingSceneSwapchainWriters,
-                    string? firstFailedOpType,
-                    int firstFailedPassIndex,
-                    int firstFailedPipelineIdentity,
-                    int firstFailedViewportIdentity,
-                    string? firstFailedTargetName,
-                    string? firstFailedMaterialName,
-                    string? firstFailedShaderName,
-                    string? firstFailedMessage,
-                    string? diagnosticSummary)
-                    => Stats.RecordVulkanFrameDiagnostics(
-                        droppedFrameOps,
-                        droppedDrawOps,
-                        droppedComputeOps,
-                        sceneSwapchainWriters,
-                        overlaySwapchainWriters,
-                        forcedDiagnosticSwapchainWriters,
-                        fboOnlyDrawOps,
-                        fboOnlyBlitOps,
-                        missingSceneSwapchainWriters,
-                        firstFailedOpType,
-                        firstFailedPassIndex,
-                        firstFailedPipelineIdentity,
-                        firstFailedViewportIdentity,
-                        firstFailedTargetName,
-                        firstFailedMaterialName,
-                        firstFailedShaderName,
-                        firstFailedMessage,
-                        diagnosticSummary);
-                public static void RecordVulkanFrameGpuCommandBufferTime(TimeSpan elapsed) => Stats.RecordVulkanFrameGpuCommandBufferTime(elapsed);
-                public static void RecordVulkanFrameLifecycleTiming(
-                    TimeSpan waitFence,
-                    TimeSpan acquireImage,
-                    TimeSpan recordCommandBuffer,
-                    TimeSpan submit,
-                    TimeSpan trim,
-                    TimeSpan present,
-                    TimeSpan total)
-                    => Stats.RecordVulkanFrameLifecycleTiming(waitFence, acquireImage, recordCommandBuffer, submit, trim, present, total);
-                public static void RecordVulkanFrameLifecycleDetailTiming(
-                    TimeSpan sampleTimingQueries,
-                    TimeSpan drainRetiredResources,
-                    TimeSpan acquireBridgeSubmit,
-                    TimeSpan waitSwapchainImage,
-                    TimeSpan resetDynamicUniformRing,
-                    TimeSpan snapshotImGuiOverlay,
-                    TimeSpan recordSceneCommandBuffer,
-                    TimeSpan recordImGuiOverlay,
-                    TimeSpan recordDynamicUiTextOverlay)
-                    => Stats.RecordVulkanFrameLifecycleDetailTiming(
-                        sampleTimingQueries,
-                        drainRetiredResources,
-                        acquireBridgeSubmit,
-                        waitSwapchainImage,
-                        resetDynamicUniformRing,
-                        snapshotImGuiOverlay,
-                        recordSceneCommandBuffer,
-                        recordImGuiOverlay,
-                        recordDynamicUiTextOverlay);
-                public static void RecordVulkanFrameOpCensus(
-                    int totalCount,
-                    int clearCount,
-                    int meshDrawCount,
-                    int indirectDrawCount,
-                    int meshTaskDispatchCount,
-                    int blitCount,
-                    int computeCount,
-                    int swapchainWriteCount,
-                    int fboWriteCount,
-                    int uniquePassCount,
-                    int uniqueContextCount,
-                    int uniqueTargetCount)
-                    => Stats.RecordVulkanFrameOpCensus(
-                        totalCount,
-                        clearCount,
-                        meshDrawCount,
-                        indirectDrawCount,
-                        meshTaskDispatchCount,
-                        blitCount,
-                        computeCount,
-                        swapchainWriteCount,
-                        fboWriteCount,
-                        uniquePassCount,
-                        uniqueContextCount,
-                        uniqueTargetCount);
-                public static void RecordVulkanCommandBufferCacheOutcome(
-                    bool reusedClean,
-                    bool recorded,
-                    bool forcedDirty,
-                    bool frameOpSignatureDirty,
-                    bool plannerDirty,
-                    bool profilerDirty,
-                    string? dirtyReason,
-                    EVulkanCommandBufferDecisionReason detailReasons = EVulkanCommandBufferDecisionReason.None,
-                    ulong structuralSignature = 0,
-                    ulong descriptorGeneration = 0,
-                    int swapchainSlot = -1)
-                    => Stats.RecordVulkanCommandBufferCacheOutcome(
-                        reusedClean,
-                        recorded,
-                        forcedDirty,
-                        frameOpSignatureDirty,
-                        plannerDirty,
-                        profilerDirty,
-                        dirtyReason,
-                        detailReasons,
-                        structuralSignature,
-                        descriptorGeneration,
-                        swapchainSlot);
-                public static void RecordVulkanCpuStage(EVulkanCpuStage stage, TimeSpan elapsed, long allocatedBytes)
-                    => Stats.RecordVulkanCpuStage(stage, elapsed, allocatedBytes);
-                public static void RecordVulkanCommandBuffersDirty(string? reason)
-                    => Stats.RecordVulkanCommandBuffersDirty(reason);
-                public static void RecordVulkanExactResourceInvalidation(
-                    int exactVariantsDirtied,
-                    int exactCommandChainsDirtied,
-                    int unrelatedVariantsPreserved,
-                    int globalFallbackInvalidations)
-                    => Stats.RecordVulkanExactResourceInvalidation(
-                        exactVariantsDirtied,
-                        exactCommandChainsDirtied,
-                        unrelatedVariantsPreserved,
-                        globalFallbackInvalidations);
-                public static void RecordVulkanTrackingBatch(
-                    int dependencyBinds,
-                    int uniqueDependencies,
-                    int imageAccessWrites,
-                    int compactImageRanges)
-                    => Stats.RecordVulkanTrackingBatch(
-                        dependencyBinds,
-                        uniqueDependencies,
-                        imageAccessWrites,
-                        compactImageRanges);
-                public static void RecordVulkanDescriptorExpansion(int cacheHits, int cacheMisses)
-                    => Stats.RecordVulkanDescriptorExpansion(cacheHits, cacheMisses);
-                public static void RecordVulkanTrackingContention(int lifetimeLockContentions, int layoutLockContentions)
-                    => Stats.RecordVulkanTrackingContention(lifetimeLockContentions, layoutLockContentions);
-                public static void RecordVulkanCommandChainMetrics(
-                    int chainsScheduled = 0,
-                    int chainsRecorded = 0,
-                    int chainsReused = 0,
-                    int chainsFrameDataRefreshed = 0,
-                    int volatileChainsRecorded = 0,
-                    int primaryCommandBuffersReused = 0,
-                    int primaryCommandBuffersRecorded = 0,
-                    int visibilityPackets = 0,
-                    int renderPackets = 0,
-                    int secondaryCommandBuffers = 0,
-                    TimeSpan chainWorkerRecordTime = default,
-                    TimeSpan renderThreadWaitForWorkersTime = default,
-                    string? firstStructuralDirtyReason = null,
-                    string? firstDescriptorGenerationMismatch = null,
-                    string? firstResourcePlanRevisionMismatch = null)
-                    => Stats.RecordVulkanCommandChainMetrics(
-                        chainsScheduled,
-                        chainsRecorded,
-                        chainsReused,
-                        chainsFrameDataRefreshed,
-                        volatileChainsRecorded,
-                        primaryCommandBuffersReused,
-                        primaryCommandBuffersRecorded,
-                        visibilityPackets,
-                        renderPackets,
-                        secondaryCommandBuffers,
-                        chainWorkerRecordTime,
-                        renderThreadWaitForWorkersTime,
-                        firstStructuralDirtyReason,
-                        firstDescriptorGenerationMismatch,
-                        firstResourcePlanRevisionMismatch);
-                public static void RecordVulkanGpuDrivenStageTiming(EVulkanGpuDrivenStageTiming stage, TimeSpan elapsed)
-                    => Stats.RecordVulkanGpuDrivenStageTiming((Stats.EVulkanGpuDrivenStageTiming)stage, elapsed);
-                public static void RecordVulkanIndirectBatchMerge(int requestedBatches, int mergedBatches)
-                    => Stats.RecordVulkanIndirectBatchMerge(requestedBatches, mergedBatches);
-                public static void RecordVulkanIndirectEffectiveness(uint requestedDraws, uint culledDraws, uint emittedIndirectDraws, uint consumedDraws, uint overflowCount = 0u)
-                    => Stats.RecordVulkanIndirectEffectiveness(requestedDraws, culledDraws, emittedIndirectDraws, consumedDraws, overflowCount);
-                public static void RecordVulkanIndirectRecordingMode(bool usedSecondary = false, bool usedParallel = false, int opCount = 0)
-                    => Stats.RecordVulkanIndirectRecordingMode(usedSecondary, usedParallel, opCount);
-                public static void RecordVulkanIndirectSubmission(bool usedCountPath = false, bool usedLoopFallback = false, int apiCalls = 0, uint submittedDraws = 0u)
-                    => Stats.RecordVulkanIndirectSubmission(usedCountPath, usedLoopFallback, apiCalls, submittedDraws);
-                public static void RecordVulkanOomFallback() => Stats.RecordVulkanOomFallback();
-                public static void RecordVulkanPipelineCacheLookup(bool cacheHit) => Stats.RecordVulkanPipelineCacheLookup(cacheHit);
-                public static void RecordVulkanPipelineCacheMiss(string? summary) => Stats.RecordVulkanPipelineCacheMiss(summary);
-                public static void RecordVulkanPipelineTelemetry(
-                    EVulkanPipelineTelemetryEvent eventKind,
-                    EVulkanDriverPipelineCacheOutcome cacheOutcome = EVulkanDriverPipelineCacheOutcome.Unknown,
-                    bool backgroundCompile = false,
-                    double compileMilliseconds = 0.0,
-                    int queueDepth = 0,
-                    int queueCapacity = 0)
-                    => Stats.RecordVulkanPipelineTelemetry(eventKind, cacheOutcome, backgroundCompile, compileMilliseconds, queueDepth, queueCapacity);
-                public static void RecordVulkanQueueOverlapWindow(int overlapCandidatePasses, int transferCost, TimeSpan frameDelta, bool promotedMode, bool demotedMode)
-                    => Stats.RecordVulkanQueueOverlapWindow(overlapCandidatePasses, transferCost, frameDelta, promotedMode, demotedMode);
-                public static void RecordVulkanQueueSubmit() => Stats.RecordVulkanQueueSubmit();
-                public static void RecordVulkanPresentResult(int result, bool accepted)
-                    => Stats.RecordVulkanPresentResult(result, accepted);
-                public static void RecordVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount)
-                    => Stats.RecordVulkanRetiredResourcePlanReplacement(imageCount, bufferCount);
-                public static void RecordVulkanSwapchainRetirement(
-                    int queued = 0,
-                    int drained = 0,
-                    int pending = 0,
-                    int deferred = 0)
-                    => Stats.RecordVulkanSwapchainRetirement(queued, drained, pending, deferred);
-                public static void RecordVulkanRetiredResourceDrain(
-                    int descriptorPools = 0,
-                    int descriptorSets = 0,
-                    int commandBuffers = 0,
-                    int queryPools = 0,
-                    int bufferViews = 0,
-                    int pipelines = 0,
-                    int framebuffers = 0,
-                    int buffers = 0,
-                    int bufferMemories = 0,
-                    int images = 0,
-                    int imageViews = 0,
-                    int samplers = 0,
-                    int imageMemories = 0,
-                    long imageBytes = 0)
-                    => Stats.RecordVulkanRetiredResourceDrain(
-                        descriptorPools,
-                        descriptorSets,
-                        commandBuffers,
-                        queryPools,
-                        bufferViews,
-                        pipelines,
-                        framebuffers,
-                        buffers,
-                        bufferMemories,
-                        images,
-                        imageViews,
-                        samplers,
-                        imageMemories,
-                        imageBytes);
-                public static void RecordVulkanValidationMessage(bool isError, string message)
-                    => Stats.RecordVulkanValidationMessage(isError, message);
-            }
-        }
 
         public static class State
         {
             public static ulong RenderFrameId => StateData.RenderFrameId;
             public static IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState => StateData.ActiveRenderCommandExecutionState;
             public static int CurrentRenderGraphPassIndex => StateData.CurrentRenderGraphPassIndex;
+            internal static XRRenderPipelineInstance? CurrentRenderGraphPassPipeline => StateData.CurrentRenderGraphPassPipeline;
             public static uint CurrentTransformId => StateData.CurrentTransformId;
             public static XRRenderPipelineInstance? CurrentRenderingPipeline => StateData.CurrentRenderingPipeline;
             public static RenderResourceRegistry? CurrentResourceRegistry => CurrentRenderingPipeline?.Resources;
@@ -2494,7 +995,7 @@ internal static partial class RuntimeEngine
         public sealed class RuntimeRenderingState
         {
             [ThreadStatic]
-            private static Stack<int>? t_renderGraphPasses;
+            private static Stack<RenderGraphPassScopeState>? t_renderGraphPasses;
             [ThreadStatic]
             private static Stack<XRCamera?>? t_cameraOverrides;
             [ThreadStatic]
@@ -2512,19 +1013,21 @@ internal static partial class RuntimeEngine
             [ThreadStatic]
             private static bool t_reverseCulling;
 
-            private static Stack<int> RenderGraphPasses => t_renderGraphPasses ??= new();
+            private static Stack<RenderGraphPassScopeState> RenderGraphPasses => t_renderGraphPasses ??= new();
             private static Stack<XRCamera?> CameraOverrides => t_cameraOverrides ??= new();
             private static Stack<uint> TransformIds => t_transformIds ??= new();
             private static Stack<int> MirrorPasses => t_mirrorPasses ??= new();
             private static Stack<MirrorPassState> MirrorPassStates => t_mirrorPassStates ??= new();
 
-            private bool _isNvidia;
-            private bool _isIntel;
-            private bool _isVulkan;
+            // Runtime.Rendering owns frame and pipeline state. The installed host
+            // exposes it to consumers, so sourcing it back from FrameTiming would
+            // re-enter the concrete host adapter and recurse.
+            private long _renderFrameId;
             private readonly record struct MirrorPassState(bool IsSceneCapturePass, bool ReverseCulling);
 
-            public ulong RenderFrameId => RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
-            public IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState => RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState;
+            public ulong RenderFrameId => unchecked((ulong)Volatile.Read(ref _renderFrameId));
+            public IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState
+                => CurrentRenderingPipeline?.RenderState;
             public XRRenderPipelineInstance? CurrentRenderingPipeline
             {
                 get
@@ -2535,9 +1038,7 @@ internal static partial class RuntimeEngine
                     if (t_pipelineStack is { Count: > 0 } pipelineStack)
                         return pipelineStack.Peek();
 
-                    return RuntimeRenderingHostServices.FrameTiming.IsRenderThread
-                        ? RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext as XRRenderPipelineInstance
-                        : null;
+                    return null;
                 }
             }
             public XRRenderPipelineInstance.RenderingState? RenderingPipelineState => CurrentRenderingPipeline?.RenderState;
@@ -2577,7 +1078,7 @@ internal static partial class RuntimeEngine
             }
             public BoundingRectangle RenderArea => RenderingPipelineState?.CurrentRenderRegion ?? BoundingRectangle.Empty;
             public float DefaultDepthClearValue => 1.0f;
-            public bool IsShadowPass => CurrentRenderingPipeline?.RenderState.ShadowPass ?? RuntimeRenderingHostServices.FrameTiming.IsShadowPass;
+            public bool IsShadowPass => CurrentRenderingPipeline?.RenderState.ShadowPass ?? false;
             public bool IsSceneCapturePass
             {
                 get => t_isSceneCapturePass;
@@ -2588,25 +1089,17 @@ internal static partial class RuntimeEngine
                 get => t_isLightProbePass;
                 set => t_isLightProbePass = value;
             }
-            public bool IsNVIDIA
-            {
-                get => RuntimeRenderingHostServices.FrameTiming.IsNvidia || _isNvidia;
-                internal set => _isNvidia = value;
-            }
-            public bool IsIntel
-            {
-                get => _isIntel;
-                internal set => _isIntel = value;
-            }
-            public bool IsVulkan
-            {
-                get => RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan || _isVulkan;
-                internal set => _isVulkan = value;
-            }
             public bool IsMirrorPass => MirrorPassIndex > 0;
             public bool IsReflectedMirrorPass => (MirrorPassIndex & 1) == 1;
             public int MirrorPassIndex => t_mirrorPasses is { Count: > 0 } stack ? stack.Peek() : 0;
-            public int CurrentRenderGraphPassIndex => t_renderGraphPasses is { Count: > 0 } stack ? stack.Peek() : int.MinValue;
+            public int CurrentRenderGraphPassIndex
+                => t_renderGraphPasses is { Count: > 0 } stack
+                    ? stack.Peek().PassIndex
+                    : int.MinValue;
+            internal XRRenderPipelineInstance? CurrentRenderGraphPassPipeline
+                => t_renderGraphPasses is { Count: > 0 } stack
+                    ? stack.Peek().OwnerPipeline
+                    : null;
             public uint CurrentTransformId => t_transformIds is { Count: > 0 } stack ? stack.Peek() : 0u;
             public bool ReverseWinding
             {
@@ -2621,13 +1114,13 @@ internal static partial class RuntimeEngine
 
             public void BeginRenderFrame()
             {
-                // RenderFrameId is now sourced from the host bridge; no-op retained for legacy callers.
+                Interlocked.Increment(ref _renderFrameId);
             }
 
             public IDisposable PushRenderGraphPassIndex(int passIndex)
             {
-                Stack<int> stack = RenderGraphPasses;
-                stack.Push(passIndex);
+                Stack<RenderGraphPassScopeState> stack = RenderGraphPasses;
+                stack.Push(new RenderGraphPassScopeState(passIndex, CurrentRenderingPipeline));
                 return new DisposableAction(() => stack.Pop());
             }
 

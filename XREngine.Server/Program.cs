@@ -42,8 +42,9 @@ namespace XREngine.Networking
 
         private static void Main(string[] args)
         {
+            RuntimeRenderingBootstrap.InstallEngineHostServices();
             // Apply engine settings
-            Engine.Rendering.Settings.OutputVerbosity = EOutputVerbosity.Verbose;
+            RuntimeEngine.Rendering.Settings.OutputVerbosity = EOutputVerbosity.Verbose;
             Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = false;
             Engine.ConfigureMemoryPolicy(EngineMemoryProfile.HeadlessServer);
 
@@ -119,7 +120,7 @@ namespace XREngine.Networking
 
         private static XRWorldInstance? ResolvePrimaryWorldInstance()
         {
-            foreach (var window in Engine.Windows)
+            foreach (var window in RuntimeEngine.Windows)
             {
                 if (window?.TargetWorldInstance is XRWorldInstance worldInstance)
                     return worldInstance;

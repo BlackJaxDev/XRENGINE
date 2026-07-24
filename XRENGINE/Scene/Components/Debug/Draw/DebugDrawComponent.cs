@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
@@ -29,7 +29,7 @@ namespace XREngine.Components
         public void Render()
         {
             using var profilerState = Engine.Profiler.Start("DebugDrawComponent.Render");
-            Engine.Rendering.Debug.RecordDebugDrawComponentCallback();
+            RuntimeEngine.Rendering.Debug.RecordDebugDrawComponentCallback();
 
             lock (_shapeSync)
             {

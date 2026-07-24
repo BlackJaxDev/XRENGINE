@@ -49,7 +49,7 @@ public sealed class VulkanCoreHardeningPhase5Tests
     public void RecordedLayouts_AreCommandBufferLocalUntilSuccessfulSubmission()
     {
         string synchronization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
         string recording = SliceBetween(
             synchronization,
             "private void RecordImageAccess(",
@@ -72,9 +72,9 @@ public sealed class VulkanCoreHardeningPhase5Tests
     public void SubmittedAndCompletedLayouts_UseResourceLifetimeCompletionWatermarks()
     {
         string synchronization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
 
         synchronization.ShouldContain("public VulkanImageAccessState Submitted");
         synchronization.ShouldContain("public VulkanImageAccessState Completed");
@@ -91,9 +91,9 @@ public sealed class VulkanCoreHardeningPhase5Tests
     public void QueueOwnershipAndSecondaryRecording_ArePartOfLayoutState()
     {
         string synchronization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
 
         synchronization.ShouldContain("uint QueueFamilyIndex");
         synchronization.ShouldContain("barrier.DstQueueFamilyIndex");
@@ -105,7 +105,7 @@ public sealed class VulkanCoreHardeningPhase5Tests
     public void DescriptorBinding_ValidatesExactViewRangeAgainstRecordedLayout()
     {
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
 
         lifetime.ShouldContain("VulkanDescriptorImageReference");
         lifetime.ShouldContain("TryGetDescriptorHeapImageViewCreateInfo(reference.View");
@@ -120,9 +120,9 @@ public sealed class VulkanCoreHardeningPhase5Tests
     public void TransferReadbackAndMipmapGeneration_RestoreSampledLayouts()
     {
         string blit = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Blit.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Blit.cs");
         string texture = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
         string mipmaps = SliceBetween(
             texture,
             "protected void GenerateMipmapsWithBlit()",

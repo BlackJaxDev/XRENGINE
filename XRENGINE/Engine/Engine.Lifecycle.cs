@@ -30,6 +30,13 @@ namespace XREngine
         /// </example>
         public static void Run(GameStartupSettings startupSettings, GameState state)
         {
+            if (!RuntimeRenderingHostServices.HasConcreteHost)
+            {
+                throw new InvalidOperationException(
+                    "No concrete rendering host is installed. Call the application composition root's " +
+                    "rendering bootstrap before Engine.Run.");
+            }
+
             if (Initialize(startupSettings, state))
             {
                 RunGameLoop();
@@ -72,12 +79,12 @@ namespace XREngine
                 ShuttingDown = false;
                 Interlocked.Exchange(ref _abandonProcessExitCleanup, 0);
                 int startupThreadId = Environment.CurrentManagedThreadId;
-                SetWindowThreadId(startupThreadId);
-                SetRenderThreadId(startupThreadId);
+                RuntimeEngine.AssignWindowThread(startupThreadId);
+                RuntimeEngine.AssignRenderThread(startupThreadId);
                 Debug.Rendering(
                     "[WindowOwnership] Startup thread owns collapsed window/render mode. WindowThreadId={0} RenderThreadId={1}.",
-                    WindowThreadId,
-                    RenderThreadId);
+                    RuntimeEngine.WindowThreadId,
+                    RuntimeEngine.RenderThreadId);
 
                 using (SuppressSettingsCascades())
                 {
@@ -98,8 +105,8 @@ namespace XREngine
                 // Creating windows first is critical—they initialize the render context and graphics API
                 CreateWindows(startupSettings.StartupWindows);
                 AfterCreateWindows?.Invoke(startupSettings, state);
-                Rendering.LogVulkanFeatureProfileFingerprint(force: true);
-                Rendering.SecondaryContext.InitializeIfSupported(Windows.FirstOrDefault());
+                EngineRenderingSettingsApplication.LogVulkanFeatureProfileFingerprint(force: true);
+                RuntimeEngine.Rendering.SecondaryContext.InitializeIfSupported(RuntimeEngine.Windows.FirstOrDefault());
                 XRWindow.AnyWindowFocusChanged += WindowFocusChanged;
 
                 // VR initialization can run asynchronously in the background
@@ -169,7 +176,7 @@ namespace XREngine
         /// </remarks>
         public static void ShutDown()
         {
-            var windows = _windows.ToArray();
+            var windows = RuntimeEngine.Windows.ToArray();
             foreach (var window in windows)
                 window.RequestClose();
         }
@@ -211,7 +218,7 @@ namespace XREngine
             ShutdownNetworking();
 
             // TODO: Implement clean shutdown where each window disposes of its own allocated assets
-            Rendering.SecondaryContext.Dispose();
+            RuntimeEngine.Rendering.SecondaryContext.Dispose();
             WindowPumpHost.Stop();
             Jobs.Shutdown(waitForWorkers: false);
             Assets.Dispose();
@@ -222,7 +229,7 @@ namespace XREngine
         /// </summary>
         /// <returns><c>true</c> if at least one window is still active.</returns>
         private static bool IsEngineStillActive()
-            => Windows.Count > 0;
+            => RuntimeEngine.Windows.Count > 0;
 
         private static void ValidateGpuRenderingStartupConfiguration()
         {

@@ -48,14 +48,14 @@ public static partial class EditorImGuiUI
         // Meshlet downgrade banner: when the user asked for a meshlet strategy that the
         // active backend can't dispatch, the resolver swaps it; surface that here so the
         // dropdown choice doesn't appear silently ignored.
-        var meshletRequested = Engine.Rendering.LastMeshletDowngradeRequested;
-        var meshletResolved = Engine.Rendering.LastMeshletDowngradeResolved;
-        var meshletReason = Engine.Rendering.LastMeshletDowngradeReason;
+        var meshletRequested = RuntimeEngine.Rendering.LastMeshletDowngradeRequested;
+        var meshletResolved = RuntimeEngine.Rendering.LastMeshletDowngradeResolved;
+        var meshletReason = RuntimeEngine.Rendering.LastMeshletDowngradeReason;
         if (meshletRequested.HasValue && meshletResolved.HasValue && meshletRequested.Value != meshletResolved.Value)
         {
             ImGui.TextColored(new Vector4(1.0f, 0.85f, 0.4f, 1.0f),
                 $"Meshlet downgrade: {meshletRequested.Value} -> {meshletResolved.Value}");
-            ImGui.TextWrapped($"  Backend={Engine.Rendering.LastResolvedRendererBackend}, dialect={Engine.Rendering.LastResolvedMeshShaderDialect}.");
+            ImGui.TextWrapped($"  Backend={RuntimeEngine.Rendering.LastResolvedRendererBackend}, dialect={RuntimeEngine.Rendering.LastResolvedMeshShaderDialect}.");
             if (!string.IsNullOrEmpty(meshletReason))
                 ImGui.TextWrapped($"  Reason: {meshletReason}");
             ImGui.TextDisabled("  Mesh shaders require Vulkan with VK_EXT_mesh_shader, or OpenGL with GL_EXT_mesh_shader (rare on current drivers).");

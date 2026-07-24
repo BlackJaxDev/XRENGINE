@@ -26,7 +26,7 @@ public sealed class AtmosphericScatteringComponentEditor : IXRComponentEditor
 
     private static void RenderEditingShell(AtmosphericScatteringComponent atmosphere)
     {
-        if (Engine.Rendering.State.IsShadowPass)
+        if (RuntimeEngine.Rendering.State.IsShadowPass)
             return;
 
         float radius = atmosphere.OuterRadius;
@@ -34,6 +34,6 @@ public sealed class AtmosphericScatteringComponentEditor : IXRComponentEditor
             return;
 
         ColorF4 color = atmosphere.HasRenderableAtmosphere ? ActiveShellColor : InactiveShellColor;
-        Engine.Rendering.Debug.RenderSphere(atmosphere.GetPlanetCenter(), radius, solid: false, color);
+        RuntimeEngine.Rendering.Debug.RenderSphere(atmosphere.GetPlanetCenter(), radius, solid: false, color);
     }
 }

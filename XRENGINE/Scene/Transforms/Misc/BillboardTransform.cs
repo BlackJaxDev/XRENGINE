@@ -295,14 +295,14 @@ namespace XREngine.Scene.Transforms
         }
 
         private void CameraParametersChanged(object? sender, IXRPropertyChangedEventArgs e)
-            => RefreshCameraDependentMatrix(false, Engine.Rendering.Settings.RecalcChildMatricesLoopType);
+            => RefreshCameraDependentMatrix(false, Engine.EffectiveSettings.RecalcChildMatricesLoopType);
 
         private void CameraMoved(TransformBase @base, Matrix4x4 worldMatrix)
         {
             if (_refreshingCameraDependentMatrix)
                 return;
 
-            RefreshCameraDependentMatrix(false, Engine.Rendering.Settings.RecalcChildMatricesLoopType);
+            RefreshCameraDependentMatrix(false, Engine.EffectiveSettings.RecalcChildMatricesLoopType);
         }
 
         public void RefreshCameraDependentMatrix(bool setRenderMatrixNow = false, ELoopType childRecalcType = ELoopType.Asynchronous)

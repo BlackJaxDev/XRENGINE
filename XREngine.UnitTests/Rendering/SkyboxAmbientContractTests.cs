@@ -32,8 +32,8 @@ public sealed class SkyboxAmbientContractTests
     [Test]
     public void DeferredPipelines_BindGlobalAmbientFromRenderingWorld()
     {
-        string pipeline1 = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
-        string pipeline2 = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs");
+        string pipeline1 = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
+        string pipeline2 = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.cs");
 
         pipeline1.ShouldContain("RenderingWorld?.GetEffectiveAmbientColor()");
         pipeline1.ShouldContain("program.Uniform(\"GlobalAmbient\", ResolveGlobalAmbient());");
@@ -44,7 +44,7 @@ public sealed class SkyboxAmbientContractTests
     [Test]
     public void DeferredPipeline2_LightCombineFbosApplyAmbientAndProbeBindings()
     {
-        string fboSource = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.FBOs.cs");
+        string fboSource = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.FBOs.cs");
 
         fboSource.ShouldContain("lightCombineMat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);");
         fboSource.ShouldContain("mat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);");
@@ -53,8 +53,8 @@ public sealed class SkyboxAmbientContractTests
     [Test]
     public void DeferredPipeline_LightCombineDrawsPushAmbientAndProbeBindings()
     {
-        string fboSource = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.FBOs.cs");
-        string commandSource = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs");
+        string fboSource = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.FBOs.cs");
+        string commandSource = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs");
 
         fboSource.ShouldContain("lightCombineMat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);");
         fboSource.ShouldContain("mat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);");

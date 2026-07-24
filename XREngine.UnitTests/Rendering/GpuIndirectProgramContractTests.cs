@@ -36,7 +36,7 @@ public sealed class GpuIndirectProgramContractTests
     [Test]
     public void OpenGlIndirectBinding_SkipsUnlinkedPrograms_And_UsePollsLinkState()
     {
-        string rendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Bootstrap/OpenGLRenderer.cs");
+        string rendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Bootstrap/OpenGLRenderer.cs");
         string programSource = ReadGlRenderProgramLinkingSources();
 
         rendererSource.ShouldContain("if (glProgram is null || glMesh is null || !glProgram.IsLinked)");
@@ -47,7 +47,7 @@ public sealed class GpuIndirectProgramContractTests
     public void LargeIndirectPrograms_RouteAwayFromDriverParallelLinks()
     {
         string programSource = ReadGlRenderProgramLinkingSources();
-        string selectorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Pipelines/OpenGLShaderLinkBackendSelector.cs");
+        string selectorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Pipelines/OpenGLShaderLinkBackendSelector.cs");
 
         programSource.ShouldContain("DriverParallelLargeSourceSharedContextThresholdBytes");
         programSource.ShouldContain("ShouldPreferSharedContextForLargeSource(inputs)");
@@ -59,7 +59,7 @@ public sealed class GpuIndirectProgramContractTests
     public void ZeroReadbackProgramWarmup_UsesCpuSafetyNetWithoutForcedOpenGlLinks()
     {
         string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
-        string gpuPassSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.Core.cs");
+        string gpuPassSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Core.cs");
         string commandSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Traditional/VPRC_RenderMeshesPassTraditional.cs");
 
         managerSource.ShouldContain("EnsureZeroReadbackMaterialSlotProgramsReady(");
@@ -160,12 +160,12 @@ public sealed class GpuIndirectProgramContractTests
     private static string ReadGlRenderProgramLinkingSources()
         => string.Join('\n', new[]
         {
-            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.LinkOrchestration.cs"),
-            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.CompileInputs.cs"),
-            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.BinaryCacheInteraction.cs"),
-            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.AsyncResults.cs"),
-            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.HazardDetection.cs"),
-            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.LinkDiagnostics.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.LinkOrchestration.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.CompileInputs.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.BinaryCacheInteraction.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.AsyncResults.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.HazardDetection.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.LinkDiagnostics.cs"),
         });
 
     private static string InvokeTryAugmentIndirectFragmentShader(string source)

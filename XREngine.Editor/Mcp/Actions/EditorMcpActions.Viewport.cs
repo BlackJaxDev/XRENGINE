@@ -128,8 +128,8 @@ namespace XREngine.Editor.Mcp
             Action? deferredHandler = null;
 
             var window = viewport.Window
-                ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
-                ?? Engine.Windows.FirstOrDefault();
+                ?? RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
+                ?? RuntimeEngine.Windows.FirstOrDefault();
             if (window is null)
                 return new McpToolResponse("No window found to capture from.", isError: true);
 
@@ -166,8 +166,8 @@ namespace XREngine.Editor.Mcp
                 if (deferredHandler is not null)
                 {
                     var window = viewport.Window
-                        ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
-                        ?? Engine.Windows.FirstOrDefault();
+                        ?? RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
+                        ?? RuntimeEngine.Windows.FirstOrDefault();
                     window?.PostRenderViewportsCallback -= deferredHandler;
                 }
 
@@ -289,8 +289,8 @@ namespace XREngine.Editor.Mcp
                 return new McpToolResponse("No viewport found.", isError: true);
 
             XRWindow? window = viewport.Window
-                ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
-                ?? Engine.Windows.FirstOrDefault();
+                ?? RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
+                ?? RuntimeEngine.Windows.FirstOrDefault();
             if (window is null)
                 return new McpToolResponse("No window found for the target viewport.", isError: true);
 
@@ -331,8 +331,8 @@ namespace XREngine.Editor.Mcp
                 return new McpToolResponse("No viewport found.", isError: true);
 
             XRWindow? window = viewport.Window
-                ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
-                ?? Engine.Windows.FirstOrDefault();
+                ?? RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
+                ?? RuntimeEngine.Windows.FirstOrDefault();
             if (window is null)
                 return new McpToolResponse("No window found for the target viewport.", isError: true);
 
@@ -397,7 +397,7 @@ namespace XREngine.Editor.Mcp
             }
 
             XRViewport resolvedViewport = viewport;
-            window = resolvedViewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(resolvedViewport));
+            window = resolvedViewport.Window ?? RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Contains(resolvedViewport));
             if (window is null)
             {
                 error = "No window found for the target viewport.";
@@ -650,7 +650,7 @@ namespace XREngine.Editor.Mcp
                 var camera = node?.GetComponent<CameraComponent>();
                 if (camera is not null)
                 {
-                    foreach (var viewport in Engine.EnumerateActiveViewports())
+                    foreach (var viewport in RuntimeEngine.EnumerateActiveViewports())
                     {
                         if (ReferenceEquals(viewport.CameraComponent, camera))
                             return viewport;
@@ -661,10 +661,10 @@ namespace XREngine.Editor.Mcp
                 }
             }
 
-            if (windowIndex < 0 || windowIndex >= Engine.Windows.Count)
-                return Engine.Windows.FirstOrDefault()?.Viewports.FirstOrDefault();
+            if (windowIndex < 0 || windowIndex >= RuntimeEngine.Windows.Count)
+                return RuntimeEngine.Windows.FirstOrDefault()?.Viewports.FirstOrDefault();
 
-            var windowTarget = Engine.Windows.ElementAt(windowIndex);
+            var windowTarget = RuntimeEngine.Windows.ElementAt(windowIndex);
             if (windowTarget.Viewports.Count == 0)
                 return null;
 

@@ -61,10 +61,10 @@ Program.Main()
 | **Initialization** | Eager (in constructor via `InitGL`) | Deferred (in `Initialize()`: instance → device → swapchain) |
 | **Frame completion** | Automatic (Silk.NET SwapBuffers) | Explicit (acquire → record → submit → present) |
 | **Command model** | Immediate-mode state machine | Command buffer recording + deferred submission |
-| **Synchronization** | Implicit (driver-managed) | Explicit (semaphores + fences, double-buffered) |
+| **Synchronization** | Implicit (driver-managed) | Binary acquire/present semaphores plus graphics timeline completion |
 | **Shader format** | GLSL (compiled by driver) | GLSL → SPIR-V (compiled at build/runtime) |
 | **Pipeline state** | Mutable global state | Immutable pipeline objects (cached to disk) |
-| **`WindowRenderCallback`** | Empty (no-op) | Full frame lifecycle (~180 lines) |
+| **`WindowRenderCallback`** | Empty (no-op) | 89-line coordinator: preflight → captured slot → acquire → prepare → record → submit → present → finalization; focused owners are mapped in `Vulkan/Frame/README.md` |
 
 ## Shared Post-Processing Defaults
 

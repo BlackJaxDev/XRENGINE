@@ -1,4 +1,3 @@
-using Silk.NET.OpenGL;
 using Silk.NET.OpenXR;
 using System;
 using System.Diagnostics;
@@ -9,7 +8,6 @@ using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Occlusion;
-using XREngine.Rendering.Vulkan;
 using Debug = XREngine.Debug;
 
 namespace XREngine.Rendering.API.Rendering.OpenXR;
@@ -107,15 +105,25 @@ public unsafe partial class OpenXRAPI
             projectionViews[i] = default;
         ResetOpenXrRvcFrameProfile();
 
-        renderCallback ??= RenderViewportsToSwapchain;
-
         bool allEyesRendered;
         bool vulkanBatchHandled;
         bool strictSinglePassStereoRequested =
             RuntimeRenderingHostServices.Presentation.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo;
         using (var batchSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.RenderFrame.TryRenderVulkanEyesBatch"))
         {
-            allEyesRendered = TryRenderVulkanEyesBatch(projectionViews, out vulkanBatchHandled);
+            if (Window?.Renderer is AbstractRenderer renderer &&
+                TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding))
+            {
+                allEyesRendered = binding.TryRenderViewsBatch(
+                    this,
+                    (nint)projectionViews,
+                    out vulkanBatchHandled);
+            }
+            else
+            {
+                allEyesRendered = false;
+                vulkanBatchHandled = false;
+            }
         }
 
         // This is the final, zero-tolerance guard. Every known strict-SPS
@@ -151,8 +159,11 @@ public unsafe partial class OpenXRAPI
             }
         }
 
-        if (_gl is not null)
-            _gl.Flush();
+        if (Window?.Renderer is AbstractRenderer activeRenderer &&
+            TryGetOrCreateGraphicsBinding(activeRenderer, out IXrGraphicsBinding? activeBinding))
+        {
+            activeBinding.Flush(this);
+        }
 
         if (!allEyesRendered)
         {
@@ -212,7 +223,7 @@ public unsafe partial class OpenXRAPI
     /// <summary>
     /// Renders a single eye (view)
     /// </summary>
-    private bool RenderEye(uint viewIndex, DelRenderToFBO renderCallback, CompositionLayerProjectionView* projectionViews)
+    private bool RenderEye(uint viewIndex, DelRenderToFBO? renderCallback, CompositionLayerProjectionView* projectionViews)
     {
         AssertOpenXrRenderThread(nameof(RenderEye));
         uint imageIndex = 0;
@@ -225,8 +236,12 @@ public unsafe partial class OpenXRAPI
         int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
         try
         {
-            if (Window?.Renderer.BackendId == RendererBackendId.Vulkan && ShouldPrewarmVulkanEyeResources(viewIndex))
-                PrewarmVulkanEyeResources(viewIndex);
+            if (Window?.Renderer is AbstractRenderer renderer &&
+                TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding) &&
+                binding.ShouldPrewarmEyeResources(this, viewIndex))
+            {
+                binding.PrewarmEyeResources(this, viewIndex);
+            }
 
             var acquireResult = CheckResult(Api.AcquireSwapchainImage(_swapchains[viewIndex], in acquireInfo, ref imageIndex), "xrAcquireSwapchainImage");
             if (acquireResult != Result.Success)
@@ -254,41 +269,9 @@ public unsafe partial class OpenXRAPI
             if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                 Debug.Out($"OpenXR[{frameNo}] Eye{viewIndex}: Wait => {waitResult}");
 
-            // Render to the acquired swapchain image.
-            GL? gl = _gl;
-            uint[]? swapchainFramebuffers = _swapchainFramebuffers[viewIndex];
-            SwapchainImageOpenGLKHR* swapchainImages = _swapchainImagesGL[viewIndex];
-            if (gl is not null && swapchainFramebuffers is not null && swapchainImages != null)
-            {
-                if (imageIndex >= swapchainFramebuffers.Length)
-                    throw new InvalidOperationException($"OpenXR acquired swapchain image index {imageIndex}, but view {viewIndex} only has {swapchainFramebuffers.Length} OpenGL framebuffers.");
-
-                _openXrCurrentSwapchainFramebuffer = swapchainFramebuffers[imageIndex];
-                try
-                {
-                    gl.BindFramebuffer(FramebufferTarget.Framebuffer, _openXrCurrentSwapchainFramebuffer);
-                    gl.Viewport(0, 0, GetOpenXrSwapchainWidth(viewIndex), GetOpenXrSwapchainHeight(viewIndex));
-
-                    // Guard against GL state leakage between eyes (scissor/read buffers/masks are commonly left in a bad state
-                    // by some passes and can make the second eye appear fully black).
-                    gl.Disable(EnableCap.ScissorTest);
-                    gl.ColorMask(true, true, true, true);
-                    gl.DepthMask(true);
-
-                    renderCallback(swapchainImages[imageIndex].Image, viewIndex);
-                }
-                finally
-                {
-                    _openXrCurrentSwapchainFramebuffer = 0;
-                    gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-                }
-            }
-            else if (Window?.Renderer.BackendId == RendererBackendId.Vulkan)
-            {
-                if (!TryRenderVulkanEye(viewIndex, imageIndex))
-                    return false;
-            }
-            else
+            if (Window?.Renderer is not AbstractRenderer activeRenderer ||
+                !TryGetOrCreateGraphicsBinding(activeRenderer, out IXrGraphicsBinding? activeBinding) ||
+                !activeBinding.TryRenderEye(this, viewIndex, imageIndex, renderCallback))
             {
                 Debug.LogWarning($"OpenXR RenderEye({viewIndex}) has no compatible graphics swapchain renderer.");
                 return false;
@@ -507,36 +490,12 @@ public unsafe partial class OpenXRAPI
     private void Window_RenderViewportsCallback()
     {
         MarkOpenXrRenderThread();
-        // Do NOT force a context switch here.
-        // If we accidentally switch into a different (non-sharing) WGL context, engine-owned textures will become
-        // invalid on this thread ("<texture> does not refer to an existing texture object"), which then cascades
-        // into incomplete FBOs and black output.
-        // The windowing layer should already have the correct render context current when invoking this callback.
-        if (_gl is not null && OpenXrDebugGl)
+        IXrGraphicsBinding? graphicsBinding = null;
+        if (Window?.Renderer is AbstractRenderer renderer &&
+            TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding))
         {
-            nint hdcCurrent = wglGetCurrentDC();
-            nint hglrcCurrent = wglGetCurrentContext();
-            int dbg = Interlocked.Increment(ref _openXrDebugFrameIndex);
-            if (dbg == 1 || (dbg % OpenXrDebugLogEveryNFrames) == 0)
-            {
-                Debug.Out(
-                    $"OpenXR render thread WGL: current(HDC=0x{(nuint)hdcCurrent:X}, HGLRC=0x{(nuint)hglrcCurrent:X}) " +
-                    $"session({_openXrSessionGlBindingTag}; HDC=0x{(nuint)_openXrSessionHdc:X}, HGLRC=0x{(nuint)_openXrSessionHglrc:X})");
-            }
-        }
-        GlStateSnapshot glSnapshot = default;
-        bool hasGlSnapshot = false;
-        if (_gl is not null)
-        {
-            try
-            {
-                glSnapshot = GlStateSnapshot.Capture(_gl);
-                hasGlSnapshot = true;
-            }
-            catch
-            {
-                // Best-effort only; fall back to sanitation on exit.
-            }
+            graphicsBinding = binding;
+            binding.CaptureRenderCallbackState(this);
         }
 
         try
@@ -616,24 +575,7 @@ public unsafe partial class OpenXRAPI
         finally
         {
             using var restoreStateSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.RenderCallback.RestoreRenderState");
-            // XRWindow renders desktop viewports immediately after this callback returns.
-            // Restore the GL state that existed before OpenXR's work to avoid contaminating
-            // the engine's normal desktop rendering. If snapshot capture failed, do best-effort sanitation.
-            if (_gl is not null && hasGlSnapshot)
-            {
-                try
-                {
-                    glSnapshot.Restore(_gl);
-                }
-                catch
-                {
-                    SanitizeGlStateForEngineRendering();
-                }
-            }
-            else
-            {
-                SanitizeGlStateForEngineRendering();
-            }
+            graphicsBinding?.RestoreRenderCallbackState(this);
         }
     }
 
@@ -662,147 +604,6 @@ public unsafe partial class OpenXRAPI
         double w = Math.Clamp(Math.Abs(delta.W), 0.0, 1.0);
         double degrees = 2.0 * Math.Acos(w) * (180.0 / Math.PI);
         return (millimeters, degrees);
-    }
-
-    private readonly struct GlStateSnapshot
-    {
-        private readonly int _readFbo;
-        private readonly int _drawFbo;
-        private readonly int _readBuffer;
-        private readonly int _currentProgram;
-        private readonly int _vertexArray;
-        private readonly int _arrayBuffer;
-        private readonly int _activeTexture;
-        private readonly bool _scissorEnabled;
-        private readonly bool _blendEnabled;
-        private readonly bool _depthTestEnabled;
-        private readonly bool _cullFaceEnabled;
-
-        private GlStateSnapshot(
-            int readFbo,
-            int drawFbo,
-            int readBuffer,
-            int currentProgram,
-            int vertexArray,
-            int arrayBuffer,
-            int activeTexture,
-            bool scissorEnabled,
-            bool blendEnabled,
-            bool depthTestEnabled,
-            bool cullFaceEnabled)
-        {
-            _readFbo = readFbo;
-            _drawFbo = drawFbo;
-            _readBuffer = readBuffer;
-            _currentProgram = currentProgram;
-            _vertexArray = vertexArray;
-            _arrayBuffer = arrayBuffer;
-            _activeTexture = activeTexture;
-            _scissorEnabled = scissorEnabled;
-            _blendEnabled = blendEnabled;
-            _depthTestEnabled = depthTestEnabled;
-            _cullFaceEnabled = cullFaceEnabled;
-        }
-
-        public static GlStateSnapshot Capture(GL gl)
-        {
-            int readFbo = gl.GetInteger(GetPName.ReadFramebufferBinding);
-            int drawFbo = gl.GetInteger(GetPName.DrawFramebufferBinding);
-            int readBuffer = gl.GetInteger(GetPName.ReadBuffer);
-
-            int currentProgram = gl.GetInteger(GetPName.CurrentProgram);
-            int vertexArray = gl.GetInteger(GetPName.VertexArrayBinding);
-            int arrayBuffer = gl.GetInteger(GetPName.ArrayBufferBinding);
-            int activeTexture = gl.GetInteger(GetPName.ActiveTexture);
-
-            bool scissorEnabled = gl.IsEnabled(EnableCap.ScissorTest);
-            bool blendEnabled = gl.IsEnabled(EnableCap.Blend);
-            bool depthTestEnabled = gl.IsEnabled(EnableCap.DepthTest);
-            bool cullFaceEnabled = gl.IsEnabled(EnableCap.CullFace);
-
-            return new GlStateSnapshot(
-                readFbo,
-                drawFbo,
-                readBuffer,
-                currentProgram,
-                vertexArray,
-                arrayBuffer,
-                activeTexture,
-                scissorEnabled,
-                blendEnabled,
-                depthTestEnabled,
-                cullFaceEnabled);
-        }
-
-        public void Restore(GL gl)
-        {
-            if (_scissorEnabled)
-                gl.Enable(EnableCap.ScissorTest);
-            else
-                gl.Disable(EnableCap.ScissorTest);
-
-            if (_blendEnabled)
-                gl.Enable(EnableCap.Blend);
-            else
-                gl.Disable(EnableCap.Blend);
-
-            if (_depthTestEnabled)
-                gl.Enable(EnableCap.DepthTest);
-            else
-                gl.Disable(EnableCap.DepthTest);
-
-            if (_cullFaceEnabled)
-                gl.Enable(EnableCap.CullFace);
-            else
-                gl.Disable(EnableCap.CullFace);
-
-            gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, (uint)_readFbo);
-            gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, (uint)_drawFbo);
-            gl.ReadBuffer((GLEnum)_readBuffer);
-
-            gl.UseProgram((uint)_currentProgram);
-            gl.BindVertexArray((uint)_vertexArray);
-            gl.BindBuffer(BufferTargetARB.ArrayBuffer, (uint)_arrayBuffer);
-            gl.ActiveTexture((TextureUnit)_activeTexture);
-        }
-    }
-
-    private void SanitizeGlStateForEngineRendering()
-    {
-        if (_gl is null)
-            return;
-
-        try
-        {
-            // Ensure we are back on the default framebuffer.
-            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-
-            // XRWindow already disables scissor via Renderer.SetCroppingEnabled(false),
-            // but do it here as well because OpenXR renders before that point.
-            _gl.Disable(EnableCap.ScissorTest);
-
-            // Avoid leaking write masks into subsequent clears/passes.
-            _gl.ColorMask(true, true, true, true);
-            _gl.DepthMask(true);
-
-            // Restore a sensible default for the default framebuffer.
-            // (Some passes set ReadBuffer=None; leaving that can break later blits/copies.)
-            _gl.ReadBuffer(GLEnum.Back);
-            _gl.DrawBuffer(GLEnum.Back);
-
-            // Restore viewport to the window framebuffer size so the next pass doesn't inherit swapchain sizing.
-            var win = Window?.Window;
-            if (win is not null)
-            {
-                var fb = win.FramebufferSize;
-                if (fb.X > 0 && fb.Y > 0)
-                    _gl.Viewport(0, 0, (uint)fb.X, (uint)fb.Y);
-            }
-        }
-        catch
-        {
-            // Best-effort only; never crash the render thread for state sanitation.
-        }
     }
 
     /// <summary>
@@ -990,7 +791,14 @@ public unsafe partial class OpenXRAPI
 
             if (useTrueSinglePassStereo)
             {
-                EnsureOpenXrStereoViewport(GetOpenXrSwapchainWidth(0), GetOpenXrSwapchainHeight(0));
+                if (Window?.Renderer is AbstractRenderer renderer &&
+                    TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding))
+                {
+                    binding.EnsureStereoViewport(
+                        this,
+                        GetOpenXrSwapchainWidth(0),
+                        GetOpenXrSwapchainHeight(0));
+                }
                 if (_openXrStereoViewport is null)
                 {
                     Debug.RenderingWarningEvery(

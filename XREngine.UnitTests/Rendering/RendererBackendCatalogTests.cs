@@ -163,6 +163,10 @@ public sealed class RendererBackendCatalogTests
 
         openGl.Factory.ShouldBeOfType<OpenGLRendererBackendFactory>();
         vulkan.Factory.ShouldBeOfType<VulkanRendererBackendFactory>();
+        openGl.Factory.GetType().Assembly.GetName().Name
+            .ShouldBe("XREngine.Runtime.Rendering.OpenGL");
+        vulkan.Factory.GetType().Assembly.GetName().Name
+            .ShouldBe("XREngine.Runtime.Rendering.Vulkan");
         openGl.Metadata.ReloadLimitations.ShouldNotBe(RendererBackendReloadLimitations.None);
         openGl.Metadata.ReloadLimitationDescription.ShouldNotBeNullOrWhiteSpace();
         catalog.Count.ShouldBe(2);

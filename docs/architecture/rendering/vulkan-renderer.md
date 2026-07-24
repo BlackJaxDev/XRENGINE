@@ -48,7 +48,7 @@ This document describes how the Vulkan renderer is initialized, how it manages t
 `VulkanRenderer` is a partial class extending `AbstractRenderer<Vk>` (where `Vk` is Silk.NET's Vulkan binding). It is split across **40+ files** organized by responsibility. Unlike the OpenGL renderer where swap is automatic, the Vulkan renderer **explicitly manages** the entire frame lifecycle: swapchain image acquisition, command buffer recording, queue submission, and presentation.
 
 ```csharp
-// XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs
+// XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs
 public unsafe partial class VulkanRenderer(XRWindow window, bool shouldLinkWindow = true)
     : AbstractRenderer<Vk>(window, shouldLinkWindow)
 ```
@@ -87,7 +87,7 @@ Project overrides live under `GameStartupSettings.Rendering.Vulkan` and
 ## Source File Inventory
 
 The Vulkan renderer lives under
-`XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/` and uses the
+`XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/` and uses the
 same responsibility-based backend taxonomy described in
 [Rendering Code Map](code-map.md). Namespaces intentionally remain
 `XREngine.Rendering.Vulkan`; folder names are for ownership and navigation.
@@ -95,8 +95,8 @@ same responsibility-based backend taxonomy described in
 | Folder | Purpose |
 | --- | --- |
 | `Bootstrap/` | Instance, surface, physical/logical device setup, extension probes, validation, OBS hook compatibility, and renderer initialization. |
-| `Frame/` | Swapchain creation/recreation, per-frame acquire/submit/present flow, synchronization objects, frame timing, and deferred resource retirement. |
-| `Commands/` | Command pools, command-buffer allocation/recording, frame-op signatures and diagnostics, blits, readbacks, indirect draw, render-state mutation, command-chain lowering, and queue-overlap policy. |
+| `Frame/` | Swapchain creation/recreation, desktop acquire/submit/present coordination, synchronization objects, frame timing, and deferred resource retirement. `Frame/README.md` records the P4.8b target phase map. |
+| `Commands/` | Command pools, command-buffer allocation/recording, renderer-facing frame-op and render-state APIs, frame-op signatures and diagnostics, blits, readbacks, indirect draw, command-chain lowering, and queue-overlap policy. |
 | `RenderGraph/` | Render-graph compilation, barrier planning, resource planning, and the renderer's resource-planner state refresh path. |
 | `Resources/` | Resource allocator, resource registration, framebuffer/image-view helpers, placeholder textures, dynamic uniform and scene database buffers, upload/staging services, and Vulkan memory allocator backends. |
 | `Descriptors/` | Descriptor pools, sets, layouts, update templates, descriptor contracts, image layout policy, immutable samplers, compute descriptors, and bindless material texture tables. |
@@ -104,7 +104,7 @@ same responsibility-based backend taxonomy described in
 | `Shaders/` | Shader artifact cache, auto-uniform rewriting, source fixups, transform-feedback translation, shaderc compilation, SPIR-V reflection, and shader tool shared types. |
 | `Features/` | Auto exposure, feature profile, meshlets, ray tracing, RTX IO memory copy/decompression, texture streaming hooks, Streamline interop, DLSS command buffers, and the OpenGL-to-Vulkan upscale bridge. |
 | `UI/` | Vulkan ImGui backend integration. |
-| `BackendObjects/` | Vulkan wrappers around engine resources: buffers, textures, framebuffers, materials, mesh renderers, render programs, shaders, queries, samplers, and shared wrapper base types. |
+| `BackendObjects/` | Vulkan wrapper creation dispatch plus wrappers around engine resources: buffers, textures, framebuffers, materials, mesh renderers, render programs, shaders, queries, samplers, and shared wrapper base types. |
 | `Types/` | Small backend value types, enums, and interop helpers such as queue-family indices, format conversions, transform-feedback metadata, and extension structs. |
 
 ---
@@ -305,13 +305,18 @@ In dynamic-rendering mode, `CreateRenderPass()` leaves the swapchain render-pass
 From `Frame/VulkanRenderer.SyncObjects.cs`:
 
 ```csharp
-Semaphore[] imageAvailableSemaphores;  // Per in-flight frame (2)
-Semaphore[] renderFinishedSemaphores;  // Per in-flight frame (2)
-Fence[]     inFlightFences;            // Per in-flight frame (2), created SIGNALED
-Fence[]     imagesInFlight;            // Per swapchain image (tracks which frame owns it)
+Semaphore[] acquireBridgeSemaphores;       // Binary acquire semaphore per desktop slot
+Semaphore[] presentBridgeSemaphores;       // Binary present semaphore per swapchain image
+Semaphore   _graphicsTimelineSemaphore;    // Monotonic graphics completion
+ulong[]     _frameSlotTimelineValues;      // Last submission owned by each desktop slot
+ulong[]     _swapchainImageTimelineValues; // Last submission using each swapchain image
 ```
 
-Fences are created in the signaled state so the first frame doesn't deadlock waiting for a "previous" frame that never existed.
+Desktop slot and swapchain-image reuse wait on the graphics timeline. Binary
+semaphores retain Vulkan acquire/present ownership, while timeline values drive
+completion, deferred-resource retirement, and OpenXR coexistence checks. A zero
+timeline value means no submitted timeline work; device-loss cleanup does not
+reinterpret zeroed arrays as completed submissions.
 
 ---
 
@@ -319,55 +324,35 @@ Fences are created in the signaled state so the first frame doesn't deadlock wai
 
 ### WindowRenderCallback() — Frame-Level Flow
 
-From `Drawing.cs`, this is the core per-frame method (~180 lines). Unlike OpenGL where this is empty, the Vulkan renderer performs all explicit GPU work here:
+`Frame/VulkanRenderer.FrameLoop.cs` is an 89-line coordinator. It captures an
+immutable frame number/desktop slot/start timestamp, publishes one coherent
+desktop activity state, carries all attempt-local state in a stack-only
+`DesktopFrameAttempt`, and delegates lifecycle responsibilities to focused
+partials documented in `Frame/README.md`.
 
 ```
 WindowRenderCallback(double delta)
 │
-├─ 1. MarkCommandBuffersDirty()
-│     Force re-record every frame (deferred ops model — frame ops are drained during recording)
-│
-├─ 2. Check surface/swapchain size mismatch
-│     Compare live framebuffer size to swapchain extent
-│     If mismatched → schedule RecreateSwapChain()
-│
-├─ 3. Handle pending swapchain recreation
-│     If _frameBufferInvalidated → RecreateSwapChain()
-│
-├─ 4. WaitForFences(inFlightFences[currentFrame])
-│     Block until the GPU finishes the previous frame in this slot
-│
-├─ 5. AcquireNextImage(imageAvailableSemaphores[currentFrame]) → imageIndex
-│     Request the next swapchain image
-│     ErrorOutOfDateKhr → RecreateSwapChain() + return
-│     SuboptimalKhr → RecreateSwapChain() + return
-│
-├─ 6. Wait on imagesInFlight[imageIndex] if another frame slot owns it
-│     Prevents two in-flight frames from using the same swapchain image
-│
-├─ 7. imagesInFlight[imageIndex] = inFlightFences[currentFrame]
-│     Mark this swapchain image as owned by the current frame slot
-│
-├─ 8. EnsureCommandBufferRecorded(imageIndex)
-│     Record all draw commands, barriers, render passes into the command buffer
-│
-├─ 9. QueueSubmit
-│     ├─ Wait: imageAvailableSemaphores[currentFrame] @ ColorAttachmentOutput stage
-│     ├─ Execute: commandBuffers[imageIndex]
-│     ├─ Signal: renderFinishedSemaphores[currentFrame]
-│     └─ Fence: inFlightFences[currentFrame]
-│
-├─ 10. StagingManager.Trim()
-│      Release idle staging buffers to prevent unbounded memory growth
-│
-├─ 11. QueuePresent
-│      ├─ Wait: renderFinishedSemaphores[currentFrame]
-│      └─ Present swapchain image to the display
-│
-├─ 12. Handle out-of-date → RecreateSwapChain()
-│
-└─ 13. currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT
+├─ TryEnterDesktopFrameAttempt
+├─ RunDesktopFramePreflight
+├─ PrepareDesktopFrameSlot
+├─ AcquireDesktopSwapchainImage
+├─ PrepareAcquiredDesktopImage
+├─ RecordDesktopFrame
+├─ SubmitDesktopFrame
+├─ PresentSubmittedDesktopFrame
+├─ catch: SettleDesktopAcquireAfterUnexpectedFailure
+└─ finally: PublishDesktopFrameTelemetry → ExitDesktopFrameAttempt
 ```
+
+Acquire, upload, image, timeline, and slot obligations are explicit typed
+states. `SuboptimalKhr` is an acquiring result and continues through settlement.
+`ErrorSurfaceLostKhr` causes visible renderer failure/restart instead of an
+unsafe swapchain-only retry. Healthy post-acquire failures use the common
+recovery policy; device loss blocks additional submit/present/recreate work.
+Submit success publishes ownership and timeline bookkeeping before fallible PCL
+markers, staging trim, or telemetry. Collect-visible release precedes the
+potentially blocking present.
 
 ### Command Buffer Recording
 
@@ -452,7 +437,10 @@ Optional multi-queue scheduling is metadata-only in this phase. The queue schedu
 
 ### Frame Operations (FrameOps)
 
-The engine's render pipeline doesn't directly record Vulkan commands. Instead, it enqueues **frame operations** (`FrameOp`) during viewport rendering. These are deferred command descriptions that the Vulkan backend consumes during command buffer recording:
+The engine's render pipeline doesn't directly record Vulkan commands. Instead,
+renderer-facing APIs in `Commands/VulkanRenderer.FrameOpApi.cs` enqueue **frame
+operations** (`FrameOp`) during viewport rendering. These are deferred command
+descriptions that the Vulkan backend consumes during command buffer recording:
 
 ```
 Viewport rendering (runs during RenderWindowViewports)
@@ -521,22 +509,15 @@ Swapchain recreation is triggered by:
 
 The recreation process:
 
-```csharp
-private void RecreateSwapChain()
-{
-    // Wait for non-zero window size (handles minimize)
-    while (framebufferSize.X == 0 || framebufferSize.Y == 0)
-    {
-        framebufferSize = Window.FramebufferSize;
-        Window.DoEvents();
-    }
-
-    DeviceWaitIdle();                  // Wait for all GPU work to finish
-    DestroyAllSwapChainObjects();      // Tear down old swapchain + dependents
-    CreateAllSwapChainObjects();       // Rebuild with new dimensions
-    imagesInFlight = new Fence[swapChainImages.Length];  // Reset fence tracking
-}
-```
+1. Preflight defers zero-size/minimized surfaces and debounces interactive
+   resize without blocking the render thread.
+2. `TryRecreateSwapchainNow` validates that recreation can proceed and
+   schedules a deferred retry when it cannot.
+3. Swapchain-dependent resources are retired with their completion markers;
+   low-level creation/destruction remains in `VulkanRenderer.Swapchain.cs`.
+4. Swapchain-image timeline ownership is resized/reset for the new image set.
+5. Surface loss does not enter this swapchain-only path; it fails visibly so
+   the platform/renderer owner can recreate the surface and logical renderer.
 
 `DestroyAllSwapChainObjects()` tears down in reverse dependency order:
 1. Debug triangle resources
@@ -554,40 +535,43 @@ private void RecreateSwapChain()
 
 ## Synchronization Model
 
-The Vulkan renderer uses a double-buffered frame model:
+The Vulkan renderer uses two desktop in-flight slots with one monotonic graphics
+timeline:
 
 ```
-                Frame Slot 0                    Frame Slot 1
-                ┌─────────────┐                 ┌─────────────┐
-                │ inFlight    │                 │ inFlight    │
-                │ Fence[0]    │                 │ Fence[1]    │
-                │             │                 │             │
-                │ imgAvail    │                 │ imgAvail    │
-                │ Sem[0]      │                 │ Sem[1]      │
-                │             │                 │             │
-                │ renderDone  │                 │ renderDone  │
-                │ Sem[0]      │                 │ Sem[1]      │
-                └─────────────┘                 └─────────────┘
+Frame slot 0: acquireBridgeSemaphores[0] → submit
+Frame slot 1: acquireBridgeSemaphores[1] → submit
+Swapchain image I: submit signals presentBridgeSemaphores[I] → present
 
-Timeline:
-  Frame 0: Wait fence[0] → Acquire → Record → Submit (signal fence[0]) → Present
-  Frame 1: Wait fence[1] → Acquire → Record → Submit (signal fence[1]) → Present
-  Frame 2: Wait fence[0] → ...  (fence[0] is now signaled from Frame 0)
+Graphics timeline:
+  submit N signals value N
+  _frameSlotTimelineValues[slot] = N
+  _swapchainImageTimelineValues[image] = N
+  slot/image reuse waits only when its non-zero value has not completed
 ```
 
 **Per-frame semaphores:**
-- `imageAvailableSemaphores[i]` — Signaled by `AcquireNextImage`, waited on by `QueueSubmit`
-- `renderFinishedSemaphores[i]` — Signaled by `QueueSubmit`, waited on by `QueuePresent`
+- `acquireBridgeSemaphores[i]` — Signaled by acquire and consumed exactly
+  once by normal or recovery submission.
+- `presentBridgeSemaphores[imageIndex]` — Signaled by submission and waited by
+  presentation without reusing a binary semaphore still associated with an
+  earlier image.
 
-**Fences:**
-- `inFlightFences[i]` — CPU-GPU sync per frame slot; CPU waits before reusing resources
-- `imagesInFlight[imageIndex]` — Tracks which frame slot currently owns each swapchain image, preventing two frame slots from recording to the same image simultaneously
+**Timeline ownership:**
+- `_frameSlotTimelineValues[i]` prevents reuse/retirement before the slot's last
+  submission completes.
+- `_swapchainImageTimelineValues[imageIndex]` prevents reuse of a swapchain
+  image still owned by an earlier submission.
+- `_graphicsTimelineSemaphore` provides the completion counter used by both
+  arrays and deferred resource retirement.
 
 ---
 
 ## Render Object Factory
 
-`CreateAPIRenderObject()` in `Drawing.cs` maps engine-generic render objects to Vulkan-specific wrappers:
+`CreateAPIRenderObject()` in
+`BackendObjects/VulkanRenderer.RenderObjectFactory.cs` maps engine-generic
+render objects to Vulkan-specific wrappers:
 
 | Generic (Engine) | Vulkan Wrapper |
 |-------------------|----------------|

@@ -34,13 +34,13 @@ namespace XREngine
             bool result;
             if (runVRInPlace)
             {
-                var window = _windows.FirstOrDefault();
+                var window = RuntimeEngine.Windows.FirstOrDefault();
 
                 // OpenXR can be initialized without OpenVR manifests.
                 // OpenVR requires both the action manifest and vrmanifest.
                 if (vrSettings.VRRuntime == EVRRuntime.OpenXR)
                 {
-                    result = VRState.InitializeOpenXR(window);
+                    result = RuntimeEngine.VRState.InitializeOpenXR(window);
                     if (!result)
                         Debug.LogWarning("Failed to initialize OpenXR (forced). VR will not be started.");
                 }
@@ -52,12 +52,12 @@ namespace XREngine
                         return false;
                     }
 
-                    result = await VRState.InitializeLocal(actionManifest, vrManifest, window ?? _windows[0]);
+                    result = await RuntimeEngine.VRState.InitializeLocal(actionManifest, vrManifest, window ?? RuntimeEngine.Windows[0]);
                 }
                 else
                 {
                     // Auto: try OpenXR first, then fall back to OpenVR if configured.
-                    result = VRState.InitializeOpenXR(window);
+                    result = RuntimeEngine.VRState.InitializeOpenXR(window);
                     if (!result)
                     {
                         if (vrManifest is null || actionManifest is null)
@@ -66,7 +66,7 @@ namespace XREngine
                             return false;
                         }
 
-                        result = await VRState.InitializeLocal(actionManifest, vrManifest, window ?? _windows[0]);
+                        result = await RuntimeEngine.VRState.InitializeLocal(actionManifest, vrManifest, window ?? RuntimeEngine.Windows[0]);
                     }
                 }
             }
@@ -85,7 +85,7 @@ namespace XREngine
                     return false;
                 }
 
-                result = await VRState.IninitializeClient(actionManifest, vrManifest);
+                result = await RuntimeEngine.VRState.IninitializeClient(actionManifest, vrManifest);
             }
 
             return result;
@@ -222,7 +222,7 @@ namespace XREngine
 
         private static XRWorldInstance? ResolvePrimaryWorldInstance()
         {
-            foreach (var window in Windows)
+            foreach (var window in RuntimeEngine.Windows)
             {
                 if (window?.TargetWorldInstance is XRWorldInstance worldInstance)
                     return worldInstance;

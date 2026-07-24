@@ -14,6 +14,7 @@ using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Shadows;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
+using XREngine.Scene.Physics;
 
 namespace XREngine.Rendering;
 
@@ -68,6 +69,18 @@ public interface IRuntimeRendererFactoryServices
     /// Creates the host's default render pipeline implementation.
     /// </summary>
     IRuntimeRenderPipelineHost? CreateDefaultRenderPipeline();
+
+    /// <summary>
+    /// Creates the host's default visual scene implementation.
+    /// </summary>
+    VisualScene3D CreateVisualScene()
+        => throw new NotSupportedException("The installed rendering host does not provide a visual-scene factory.");
+
+    /// <summary>
+    /// Creates the physics scene selected by the application composition root.
+    /// </summary>
+    AbstractPhysicsScene CreatePhysicsScene()
+        => throw new NotSupportedException("The installed rendering host does not provide a physics-scene factory.");
 
     /// <summary>
     /// Gets the renderer backend modules installed by this application's composition root.

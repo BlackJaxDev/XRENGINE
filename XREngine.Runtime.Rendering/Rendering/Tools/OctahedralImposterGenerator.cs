@@ -12,7 +12,6 @@ using XREngine.Diagnostics;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.PostProcessing;
 using XREngine.Scene;

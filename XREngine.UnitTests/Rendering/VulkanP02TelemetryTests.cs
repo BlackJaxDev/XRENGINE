@@ -12,20 +12,20 @@ public sealed class VulkanP02TelemetryTests
     public void SceneRecordingTiming_IsCapturedBeforeOverlayTimestampReuse()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recording.cs");
 
         string snapshotBlock = Slice(source,
             "Vulkan.FrameLifecycle.SnapshotImGuiOverlay",
-            "bool preserveSwapchainForImGuiOverlay");
-        snapshotBlock.ShouldContain("snapshotImGuiOverlayTime +=");
-        snapshotBlock.ShouldNotContain("recordCommandBufferTime +=");
+            "attempt.PreserveSwapchainForImGuiOverlay");
+        snapshotBlock.ShouldContain("attempt.Timing.SnapshotImGuiOverlay +=");
+        snapshotBlock.ShouldNotContain("attempt.Timing.RecordCommandBuffer +=");
 
         string sceneBlock = Slice(source,
             "Vulkan.FrameLifecycle.RecordCommandBuffer",
-            "bool scenePrimaryRecordedThisFrame");
-        sceneBlock.ShouldContain("TimeSpan sceneRecordElapsed = Stopwatch.GetElapsedTime(stageStartTimestamp);");
-        sceneBlock.ShouldContain("recordSceneCommandBufferTime += sceneRecordElapsed;");
-        sceneBlock.ShouldContain("recordCommandBufferTime += sceneRecordElapsed;");
+            "attempt.ScenePrimaryRecordedThisFrame");
+        sceneBlock.ShouldContain("TimeSpan elapsed =\n                        Stopwatch.GetElapsedTime(stageStartTimestamp);");
+        sceneBlock.ShouldContain("attempt.Timing.RecordSceneCommandBuffer += elapsed;");
+        sceneBlock.ShouldContain("attempt.Timing.RecordCommandBuffer += elapsed;");
     }
 
     [Test]
@@ -33,9 +33,9 @@ public sealed class VulkanP02TelemetryTests
     {
         string stageSource = ReadWorkspaceFile("XREngine.Data/Rendering/VulkanTelemetryEnums.cs");
         string recordingSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string statsSource = ReadWorkspaceFile(
-            "XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.Vulkan.cs");
+            "XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.cs");
         string captureSource = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfileCapture.cs");
 
         foreach (string stage in new[]
@@ -57,9 +57,9 @@ public sealed class VulkanP02TelemetryTests
     public void NormalRecordingPath_UsesNumericDecisionReasonsWithoutFormattingDiagnosticStrings()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string lowering = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
 
         source.ShouldContain("string? dirtyReason = VulkanFrameDiagnosticsTraceEnabled");
         source.ShouldContain("EVulkanCommandBufferDecisionReason.DescriptorGeneration");

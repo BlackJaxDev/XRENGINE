@@ -213,7 +213,7 @@ public sealed class GPUSoftbodyComponent : XRComponent, IRenderable, IGpuSoftbod
 
     private void RenderDebugVisualization()
     {
-        if (!IsActive || Engine.Rendering.State.IsShadowPass)
+        if (!IsActive || RuntimeEngine.Rendering.State.IsShadowPass)
             return;
 
         // Draw particles as wireframe spheres
@@ -222,9 +222,9 @@ public sealed class GPUSoftbodyComponent : XRComponent, IRenderable, IGpuSoftbod
             GPUSoftbodyParticleData p = Particles[i];
             ColorF4 color = p.InverseMass <= 0.0f ? ColorF4.Red : ColorF4.Yellow;
             if (p.Radius > 0.0f)
-                Engine.Rendering.Debug.RenderSphere(p.CurrentPosition, p.Radius, false, color);
+                RuntimeEngine.Rendering.Debug.RenderSphere(p.CurrentPosition, p.Radius, false, color);
             else
-                Engine.Rendering.Debug.RenderPoint(p.CurrentPosition, color);
+                RuntimeEngine.Rendering.Debug.RenderPoint(p.CurrentPosition, color);
         }
 
         // Draw distance constraint links as lines
@@ -235,7 +235,7 @@ public sealed class GPUSoftbodyComponent : XRComponent, IRenderable, IGpuSoftbod
                 c.ParticleB < 0 || c.ParticleB >= Particles.Count)
                 continue;
 
-            Engine.Rendering.Debug.RenderLine(
+            RuntimeEngine.Rendering.Debug.RenderLine(
                 Particles[c.ParticleA].CurrentPosition,
                 Particles[c.ParticleB].CurrentPosition,
                 ColorF4.Orange);
@@ -251,7 +251,7 @@ public sealed class GPUSoftbodyComponent : XRComponent, IRenderable, IGpuSoftbod
             Vector3 start = new(col.SegmentStartRadius.X, col.SegmentStartRadius.Y, col.SegmentStartRadius.Z);
             float radius = col.SegmentStartRadius.W;
             Vector3 end = new(col.SegmentEndFriction.X, col.SegmentEndFriction.Y, col.SegmentEndFriction.Z);
-            Engine.Rendering.Debug.RenderCapsule(start, end, radius, false, ColorF4.Cyan);
+            RuntimeEngine.Rendering.Debug.RenderCapsule(start, end, radius, false, ColorF4.Cyan);
         }
 
         for (int i = 0; i < Clusters.Count; i++)
@@ -261,10 +261,10 @@ public sealed class GPUSoftbodyComponent : XRComponent, IRenderable, IGpuSoftbod
                 continue;
 
             float axisLength = Math.Max(cluster.Radius * 0.6f, 0.05f);
-            Engine.Rendering.Debug.RenderSphere(center, Math.Max(cluster.Radius * 0.15f, 0.015f), false, ColorF4.White);
-            Engine.Rendering.Debug.RenderLine(center, center + Vector3.Transform(Vector3.UnitX * axisLength, rotation), ColorF4.Red);
-            Engine.Rendering.Debug.RenderLine(center, center + Vector3.Transform(Vector3.UnitY * axisLength, rotation), ColorF4.Green);
-            Engine.Rendering.Debug.RenderLine(center, center + Vector3.Transform(Vector3.UnitZ * axisLength, rotation), ColorF4.Blue);
+            RuntimeEngine.Rendering.Debug.RenderSphere(center, Math.Max(cluster.Radius * 0.15f, 0.015f), false, ColorF4.White);
+            RuntimeEngine.Rendering.Debug.RenderLine(center, center + Vector3.Transform(Vector3.UnitX * axisLength, rotation), ColorF4.Red);
+            RuntimeEngine.Rendering.Debug.RenderLine(center, center + Vector3.Transform(Vector3.UnitY * axisLength, rotation), ColorF4.Green);
+            RuntimeEngine.Rendering.Debug.RenderLine(center, center + Vector3.Transform(Vector3.UnitZ * axisLength, rotation), ColorF4.Blue);
         }
     }
 

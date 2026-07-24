@@ -444,11 +444,11 @@ public sealed partial class McpAssistantWindow
     /// </summary>
     private static async Task<string?> CaptureViewportScreenshotBase64Async(CancellationToken ct)
     {
-        var viewport = Engine.Windows.FirstOrDefault()?.Viewports.FirstOrDefault();
+        var viewport = RuntimeEngine.Windows.FirstOrDefault()?.Viewports.FirstOrDefault();
         if (viewport is null)
             return null;
 
-        var window = viewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
+        var window = viewport.Window ?? RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
         if (window is null)
             return null;
 
@@ -516,7 +516,7 @@ public sealed partial class McpAssistantWindow
         {
             if (deferredHandler is not null)
             {
-                var cancelWindow = viewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
+                var cancelWindow = viewport.Window ?? RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
                 cancelWindow?.RenderViewportsCallback -= deferredHandler;
             }
 
@@ -550,7 +550,7 @@ public sealed partial class McpAssistantWindow
         var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         Action? deferredHandler = null;
 
-        var window = viewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
+        var window = viewport.Window ?? RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
         if (window is null)
             throw new InvalidOperationException("No window found to capture from.");
 
@@ -616,7 +616,7 @@ public sealed partial class McpAssistantWindow
         {
             if (deferredHandler is not null)
             {
-                var cancelWindow = viewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
+                var cancelWindow = viewport.Window ?? RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
                 cancelWindow?.RenderViewportsCallback -= deferredHandler;
             }
 
@@ -637,7 +637,7 @@ public sealed partial class McpAssistantWindow
     private static int ResolveWindowIndex(XRWindow window)
     {
         int index = 0;
-        foreach (var entry in Engine.Windows)
+        foreach (var entry in RuntimeEngine.Windows)
         {
             if (ReferenceEquals(entry, window))
                 return index;
@@ -663,17 +663,17 @@ public sealed partial class McpAssistantWindow
 
         if (camera is not null)
         {
-            foreach (var activeViewport in Engine.EnumerateActiveViewports())
+            foreach (var activeViewport in RuntimeEngine.EnumerateActiveViewports())
             {
                 if (ReferenceEquals(activeViewport.CameraComponent, camera))
                     return activeViewport;
             }
         }
 
-        if (windowIndex < 0 || windowIndex >= Engine.Windows.Count)
-            return Engine.Windows.FirstOrDefault()?.Viewports.FirstOrDefault();
+        if (windowIndex < 0 || windowIndex >= RuntimeEngine.Windows.Count)
+            return RuntimeEngine.Windows.FirstOrDefault()?.Viewports.FirstOrDefault();
 
-        var window = Engine.Windows[windowIndex];
+        var window = RuntimeEngine.Windows[windowIndex];
         if (window.Viewports.Count == 0)
             return null;
 

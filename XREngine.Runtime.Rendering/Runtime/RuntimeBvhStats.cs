@@ -1,8 +1,27 @@
+using XREngine.Rendering.Compute;
+
 namespace XREngine;
 
-internal sealed class RuntimeBvhStats
+/// <summary>
+/// Thread-safe snapshot of the latest GPU BVH metrics.
+/// </summary>
+public sealed class RuntimeBvhStats
 {
-    public void Publish(object? packet)
+    private readonly object _lock = new();
+    private BvhGpuProfiler.Metrics _latest = BvhGpuProfiler.Metrics.Empty;
+
+    public BvhGpuProfiler.Metrics Latest
     {
+        get
+        {
+            lock (_lock)
+                return _latest;
+        }
+    }
+
+    internal void Publish(BvhGpuProfiler.Metrics metrics)
+    {
+        lock (_lock)
+            _latest = metrics;
     }
 }

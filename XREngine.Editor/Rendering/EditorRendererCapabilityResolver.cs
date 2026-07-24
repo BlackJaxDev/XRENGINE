@@ -16,7 +16,7 @@ internal static class EditorRendererCapabilityResolver
             return true;
         }
 
-        foreach (XRWindow window in Engine.Windows)
+        foreach (XRWindow window in RuntimeEngine.Windows)
         {
             if (window.Renderer is not TCapability candidate)
                 continue;
@@ -32,7 +32,7 @@ internal static class EditorRendererCapabilityResolver
     public static IEnumerable<TCapability> Enumerate<TCapability>()
         where TCapability : class
     {
-        foreach (XRWindow window in Engine.Windows)
+        foreach (XRWindow window in RuntimeEngine.Windows)
             if (window.Renderer is TCapability capability)
                 yield return capability;
     }
@@ -50,7 +50,7 @@ internal static class EditorRendererCapabilityResolver
             return true;
         }
 
-        foreach (XRWindow window in Engine.Windows)
+        foreach (XRWindow window in RuntimeEngine.Windows)
         {
             if (window.Renderer.BackendId != backendId
                 || window.Renderer is not TCapability candidate)

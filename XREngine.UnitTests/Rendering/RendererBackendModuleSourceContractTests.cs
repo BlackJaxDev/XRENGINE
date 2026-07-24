@@ -12,7 +12,7 @@ public sealed class RendererBackendModuleSourceContractTests
         string windowSource = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");
         string hostSource = ReadWorkspaceFile(
-            "XRENGINE/Engine/Engine.RuntimeRenderingHostServices.cs");
+            "XREngine.Runtime.Bootstrap/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
 
         windowSource.ShouldContain("RendererBackends.CreateRequired(");
         windowSource.ShouldContain("RendererBackendCapabilities.DesktopPresentation");
@@ -25,9 +25,9 @@ public sealed class RendererBackendModuleSourceContractTests
     public void StableEnginePolicy_DoesNotUseConcreteRendererTypeTests()
     {
         string renderingPolicy = ReadWorkspaceFile(
-            "XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.cs");
+            "XREngine.Runtime.Rendering/Runtime/RuntimeEngine.Rendering.SecondaryContext.cs");
         string hostServices = ReadWorkspaceFile(
-            "XRENGINE/Engine/Engine.RuntimeRenderingHostServices.cs");
+            "XREngine.Runtime.Bootstrap/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
 
         renderingPolicy.ShouldNotContain("is VulkanRenderer");
         renderingPolicy.ShouldContain("BackendId == RendererBackendId.Vulkan");
@@ -40,13 +40,14 @@ public sealed class RendererBackendModuleSourceContractTests
     public void StaticBuiltInsAndCollectibleModulesShareFactoryAndRegistrationContracts()
     {
         string builtIns = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Runtime/RendererModules/BuiltInRendererBackendModules.cs");
+            "XREngine.Runtime.Bootstrap/RenderingHost/BuiltInRendererBackendModules.cs");
         string registration = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Runtime/RendererModules/RendererBackendRegistration.cs");
 
         builtIns.ShouldNotContain("AssemblyLoadContext");
         builtIns.ShouldNotContain("GetTypes(");
-        builtIns.ShouldContain("catalog.Register(");
+        builtIns.ShouldContain("OpenGlRendererBackendModule.Register(catalog)");
+        builtIns.ShouldContain("VulkanRendererBackendModule.Register(catalog)");
         registration.ShouldContain("IRendererBackendFactory");
         registration.ShouldContain("IRendererBackendLifecycle");
     }
@@ -95,9 +96,9 @@ public sealed class RendererBackendModuleSourceContractTests
         string addressContract = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Runtime/RendererModules/ISceneDatabaseDeviceAddressBackendCapability.cs");
         string glImplementation = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Commands/OpenGLRenderer.IndirectSubmissionCapability.cs");
+            "XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Commands/OpenGLRenderer.IndirectSubmissionCapability.cs");
         string vkImplementation = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.IndirectSubmissionCapability.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.IndirectSubmissionCapability.cs");
 
         hybrid.ShouldNotContain("OpenGLRenderer");
         hybrid.ShouldNotContain("VulkanRenderer");
