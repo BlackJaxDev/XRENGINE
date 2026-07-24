@@ -93,7 +93,7 @@ public unsafe partial class OpenXRAPI
                 return vp;
         }
 
-        foreach (var player in RuntimeRenderingHostServices.Current.EnumerateLocalPlayers())
+        foreach (var player in RuntimeRenderingHostServices.Factories.EnumerateLocalPlayers())
         {
             if (TryResolveSourcePlayer(player, Window.TargetWorldInstance, out XRViewport? playerViewport, out sourceCamera, out sourceWorld))
                 return playerViewport;

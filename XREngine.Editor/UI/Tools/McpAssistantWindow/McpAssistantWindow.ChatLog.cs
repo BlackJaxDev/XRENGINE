@@ -459,32 +459,12 @@ public sealed partial class McpAssistantWindow
                 const float maxPreviewEdge = 256f;
                 nint handle = nint.Zero;
 
-                // Try to get the ImGui-compatible texture handle from the current renderer.
-                if (Engine.IsRenderThread && AbstractRenderer.Current is { } renderer)
-                {
-                    if (renderer is VulkanRenderer vkRenderer)
-                    {
-                        IntPtr textureId = EditorRenderThread.Invoke(
-                            () => vkRenderer.RegisterImGuiTexture(texture),
-                            "McpAssistantWindow.RegisterVulkanPreviewTexture",
-                            RenderThreadJobKind.TextureUpload);
-                        if (textureId != IntPtr.Zero)
-                            handle = (nint)textureId;
-                    }
-                    else if (renderer is OpenGLRenderer glRenderer)
-                    {
-                        var apiTexture = EditorRenderThread.Invoke(
-                            () => glRenderer.GenericToAPI<GLTexture2D>(texture),
-                            "McpAssistantWindow.ResolveOpenGLPreviewTexture",
-                            RenderThreadJobKind.TextureUpload);
-                        if (apiTexture is not null)
-                        {
-                            uint binding = apiTexture.BindingId;
-                            if (binding != 0)
-                                handle = (nint)binding;
-                        }
-                    }
-                }
+                if (Engine.IsRenderThread)
+                    EditorTexturePreviewService.TryGetHandle(
+                        texture,
+                        out handle,
+                        out _,
+                        out _);
 
                 if (handle != nint.Zero)
                 {

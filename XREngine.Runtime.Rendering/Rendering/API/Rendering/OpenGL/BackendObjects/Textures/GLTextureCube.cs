@@ -274,7 +274,7 @@ namespace XREngine.Rendering.Models.Materials.Textures
                 if (i < 0 || w == 0 || h == 0 || (_storageSet && (uint)i >= configuredLevels))
                 {
                     TextureRuntimeDiagnostics.LogUploadValidationFailed(
-                        RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                        RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                         GetDescribingName(),
                         null,
                         BindingId,

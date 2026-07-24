@@ -46,7 +46,6 @@ internal static class LightComponentEditorShared
     private static readonly ConditionalWeakTable<XRTexture2DArray, Dictionary<int, XRTexture2DArrayView>> Texture2DArrayPreviewViews = new();
     private static readonly ConditionalWeakTable<XRTextureCube, CubemapPreviewCache> CubemapPreviewCaches = new();
     private static readonly ConditionalWeakTable<LightComponent, ShadowResolutionEditState> ShadowResolutionEditStates = new();
-    private static readonly ConditionalWeakTable<IGLTexture, PreviewSwizzleState> TexturePreviewSwizzles = new();
 
     private static readonly (ECubemapFace Face, string Label)[] CubemapFaces =
     [
@@ -1542,128 +1541,15 @@ internal static class LightComponentEditorShared
             return false;
         }
 
-        if (TryGetVulkanRenderer() is VulkanRenderer vkRenderer)
-        {
-            IntPtr textureId = EditorRenderThread.Invoke(
-                () => vkRenderer.RegisterImGuiTexture(texture),
-                "LightComponentEditor.RegisterVulkanPreviewTexture",
-                RenderThreadJobKind.TextureUpload);
-            if (textureId == IntPtr.Zero)
-            {
-                failureReason = "Texture not uploaded to GPU.";
-                return false;
-            }
-
-            handle = (nint)textureId;
-            return true;
-        }
-
-        var renderer = TryGetOpenGLRenderer();
-        if (renderer is null)
-        {
-            failureReason = "Preview requires OpenGL or Vulkan renderer.";
-            return false;
-        }
-
-        switch (texture)
-        {
-            case XRTexture2D tex2D:
-                var glTexture2D = EditorRenderThread.Invoke(
-                    () => renderer.GenericToAPI<GLTexture2D>(tex2D),
-                    "LightComponentEditor.ResolveOpenGLPreviewTexture2D",
-                    RenderThreadJobKind.TextureUpload);
-                if (!TryGetTextureHandle(renderer, glTexture2D, out handle, out uint tex2DBinding, out failureReason))
-                    return false;
-
-                ApplySingleChannelPreviewSwizzle(renderer, tex2D.SizedInternalFormat, glTexture2D, tex2DBinding);
-                return true;
-            case XRTexture2DView tex2DView:
-                var glTexture2DView = EditorRenderThread.Invoke(
-                    () => renderer.GenericToAPI<GLTextureView>(tex2DView),
-                    "LightComponentEditor.ResolveOpenGLPreviewTexture2DView",
-                    RenderThreadJobKind.TextureUpload);
-                if (!TryGetTextureHandle(renderer, glTexture2DView, out handle, out uint tex2DViewBinding, out failureReason))
-                    return false;
-
-                ApplySingleChannelPreviewSwizzle(renderer, tex2DView.InternalFormat, glTexture2DView, tex2DViewBinding);
-                ApplyPreviewSamplingState(renderer, tex2DViewBinding);
-                return true;
-            case XRTexture2DArrayView tex2DArrayView:
-                pixelSize = new Vector2(MathF.Max(1.0f, tex2DArrayView.Width), MathF.Max(1.0f, tex2DArrayView.Height));
-                displaySize = GetPreviewSize(pixelSize);
-                var glTexture2DArrayView = EditorRenderThread.Invoke(
-                    () => renderer.GenericToAPI<GLTextureView>(tex2DArrayView),
-                    "LightComponentEditor.ResolveOpenGLPreviewTexture2DArrayView",
-                    RenderThreadJobKind.TextureUpload);
-                if (!TryGetTextureHandle(renderer, glTexture2DArrayView, out handle, out uint tex2DArrayViewBinding, out failureReason))
-                    return false;
-
-                ApplySingleChannelPreviewSwizzle(renderer, tex2DArrayView.InternalFormat, glTexture2DArrayView, tex2DArrayViewBinding);
-                ApplyPreviewSamplingState(renderer, tex2DArrayViewBinding);
-                return true;
-            case XRTextureCubeView cubeView when cubeView.View2D:
-                float extent = MathF.Max(1.0f, cubeView.ViewedTexture.Extent);
-                pixelSize = new Vector2(extent, extent);
-                displaySize = GetPreviewSize(pixelSize);
-                var glTextureView = EditorRenderThread.Invoke(
-                    () => renderer.GenericToAPI<GLTextureView>(cubeView),
-                    "LightComponentEditor.ResolveOpenGLPreviewCubeView",
-                    RenderThreadJobKind.TextureUpload);
-                if (!TryGetTextureHandle(renderer, glTextureView, out handle, out uint cubeViewBinding, out failureReason))
-                    return false;
-
-                ApplySingleChannelPreviewSwizzle(renderer, cubeView.InternalFormat, glTextureView, cubeViewBinding);
-                ApplyPreviewSamplingState(renderer, cubeViewBinding);
-                return true;
-            default:
-                failureReason = $"{texture.GetType().Name} preview not supported.";
-                return false;
-        }
-    }
-
-    private static void ApplySingleChannelPreviewSwizzle(OpenGLRenderer renderer, ESizedInternalFormat format, IGLTexture? glTexture, uint binding)
-    {
-        if (glTexture is null || !IsSingleChannelFormat(format))
-            return;
-
-        if (binding == 0 || binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || !renderer.RawGL.IsTexture(binding))
-            return;
-
-        PreviewSwizzleState state = TexturePreviewSwizzles.GetValue(glTexture, _ => new PreviewSwizzleState());
-        if (state.BindingId == binding && state.Format == format)
-            return;
-
-        var gl = renderer.RawGL;
-        int red = (int)GLEnum.Red;
-        int one = (int)GLEnum.One;
-        gl.TextureParameterI(binding, GLEnum.TextureSwizzleR, in red);
-        gl.TextureParameterI(binding, GLEnum.TextureSwizzleG, in red);
-        gl.TextureParameterI(binding, GLEnum.TextureSwizzleB, in red);
-        gl.TextureParameterI(binding, GLEnum.TextureSwizzleA, in one);
-
-        state.BindingId = binding;
-        state.Format = format;
-    }
-
-    private static void ApplyPreviewSamplingState(OpenGLRenderer renderer, uint binding)
-    {
-        if (binding == 0 || binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || !renderer.RawGL.IsTexture(binding))
-            return;
-
-        var gl = renderer.RawGL;
-        int linear = (int)GLEnum.Linear;
-        int baseLevel = 0;
-        int maxLevel = 0;
-        int clamp = (int)GLEnum.ClampToEdge;
-        int compareMode = (int)GLEnum.None;
-
-        gl.TextureParameterI(binding, GLEnum.TextureMinFilter, in linear);
-        gl.TextureParameterI(binding, GLEnum.TextureMagFilter, in linear);
-        gl.TextureParameterI(binding, GLEnum.TextureBaseLevel, in baseLevel);
-        gl.TextureParameterI(binding, GLEnum.TextureMaxLevel, in maxLevel);
-        gl.TextureParameterI(binding, GLEnum.TextureWrapS, in clamp);
-        gl.TextureParameterI(binding, GLEnum.TextureWrapT, in clamp);
-        gl.TextureParameterI(binding, GLEnum.TextureCompareMode, in compareMode);
+        var options = new RenderTexturePreviewOptions(
+            ApplySingleChannelSwizzle: true,
+            ForceBaseMipSampling: texture is XRTextureViewBase);
+        return EditorTexturePreviewService.TryGetHandle(
+            texture,
+            in options,
+            out handle,
+            out _,
+            out failureReason);
     }
 
     private static ShadowResolutionEditState GetShadowResolutionEditState(LightComponent light)
@@ -1718,86 +1604,6 @@ internal static class LightComponentEditorShared
 
         views[layerIndex] = view;
         return view;
-    }
-
-    private static bool IsSingleChannelFormat(ESizedInternalFormat format)
-        => format switch
-        {
-            ESizedInternalFormat.R8 or
-            ESizedInternalFormat.R8Snorm or
-            ESizedInternalFormat.R16 or
-            ESizedInternalFormat.R16Snorm or
-            ESizedInternalFormat.R16f or
-            ESizedInternalFormat.R32f or
-            ESizedInternalFormat.R8i or
-            ESizedInternalFormat.R8ui or
-            ESizedInternalFormat.R16i or
-            ESizedInternalFormat.R16ui or
-            ESizedInternalFormat.R32i or
-            ESizedInternalFormat.R32ui or
-            ESizedInternalFormat.DepthComponent16 or
-            ESizedInternalFormat.DepthComponent24 or
-            ESizedInternalFormat.DepthComponent32f or
-            ESizedInternalFormat.Depth24Stencil8 or
-            ESizedInternalFormat.Depth32fStencil8 => true,
-            _ => false,
-        };
-
-    private static bool TryGetTextureHandle(
-        OpenGLRenderer renderer,
-        IGLTexture? glTexture,
-        out nint handle,
-        out uint bindingId,
-        out string? failureReason)
-    {
-        handle = nint.Zero;
-        bindingId = 0u;
-        failureReason = null;
-        if (glTexture is null)
-        {
-            failureReason = "Texture not uploaded to GPU.";
-            return false;
-        }
-
-        bindingId = glTexture.BindingId;
-        if (bindingId == 0 || bindingId == OpenGLRenderer.GLObjectBase.InvalidBindingId)
-        {
-            failureReason = "Texture handle invalid.";
-            return false;
-        }
-
-        if (!renderer.RawGL.IsTexture(bindingId))
-        {
-            failureReason = "Texture object not ready.";
-            return false;
-        }
-
-        handle = (nint)bindingId;
-        return true;
-    }
-
-    private static OpenGLRenderer? TryGetOpenGLRenderer()
-    {
-        if (AbstractRenderer.Current is OpenGLRenderer current)
-            return current;
-
-        foreach (var window in Engine.Windows)
-            if (window.Renderer is OpenGLRenderer renderer)
-                return renderer;
-
-        return null;
-    }
-
-    private static VulkanRenderer? TryGetVulkanRenderer()
-    {
-        if (AbstractRenderer.Current is VulkanRenderer current)
-            return current;
-
-        foreach (var window in Engine.Windows)
-            if (window.Renderer is VulkanRenderer renderer)
-                return renderer;
-
-        return null;
     }
 
     private static Vector2 GetPreviewSize(Vector2 pixelSize)
@@ -1874,12 +1680,6 @@ internal static class LightComponentEditorShared
             _sourceWidth = unchecked((uint)Width);
             _sourceHeight = unchecked((uint)Height);
         }
-    }
-
-    private sealed class PreviewSwizzleState
-    {
-        public uint BindingId;
-        public ESizedInternalFormat Format;
     }
 
     private sealed class CubemapPreviewCache

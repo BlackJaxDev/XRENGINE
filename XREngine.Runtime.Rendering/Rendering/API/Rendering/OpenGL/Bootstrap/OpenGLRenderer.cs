@@ -29,8 +29,10 @@ using System.Diagnostics;
 
 namespace XREngine.Rendering.OpenGL;
 
-public partial class OpenGLRenderer : AbstractRenderer<GL>
+public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStreamingBackendCapability
 {
+    public override RendererBackendId BackendId => RendererBackendId.OpenGL;
+
     public GL RawGL => Api; // public accessor for underlying GL instance
     private bool _shutdownAbandonedAsyncShaderWork;
     private int _asyncShaderProgramShutdownDisposeRequested;

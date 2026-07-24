@@ -2277,94 +2277,11 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         handle = nint.Zero;
         failure = null;
 
-        if (TryGetVulkanRenderer() is VulkanRenderer vkRenderer)
-        {
-            IntPtr textureId = EditorRenderThread.Invoke(
-                () => vkRenderer.RegisterImGuiTexture(texture),
-                "CameraComponentEditor.RegisterVulkanPreviewTexture",
-                RenderThreadJobKind.TextureUpload);
-            if (textureId == IntPtr.Zero)
-            {
-                failure = "Texture has not been uploaded to the GPU yet.";
-                return false;
-            }
-
-            handle = (nint)textureId;
-            return true;
-        }
-
-        OpenGLRenderer? renderer = TryGetOpenGLRenderer();
-        if (renderer is null)
-        {
-            failure = "Preview requires the OpenGL or Vulkan renderer.";
-            return false;
-        }
-
-        IGLTexture? glTexture = texture switch
-        {
-            XRTexture2D texture2D => EditorRenderThread.Invoke(
-                () => renderer.GenericToAPI<GLTexture2D>(texture2D),
-                "CameraComponentEditor.ResolveOpenGLPreviewTexture2D",
-                RenderThreadJobKind.TextureUpload),
-            XRTexture2DArrayView textureArrayView => EditorRenderThread.Invoke(
-                () => renderer.GenericToAPI<GLTextureView>(textureArrayView),
-                "CameraComponentEditor.ResolveOpenGLPreviewTextureView",
-                RenderThreadJobKind.TextureUpload),
-            _ => null,
-        };
-
-        if (glTexture is null)
-        {
-            failure = "Preview currently supports 2D textures and array-layer views only.";
-            return false;
-        }
-
-        return TryGetGlTextureHandle(glTexture, out handle, out failure);
-    }
-
-    private static bool TryGetGlTextureHandle(IGLTexture glTexture, out nint handle, out string? failure)
-    {
-        handle = nint.Zero;
-        failure = null;
-
-        if (glTexture is null)
-        {
-            failure = "Texture has not been uploaded to the GPU yet.";
-            return false;
-        }
-
-        if (glTexture.BindingId == 0 || glTexture.BindingId == OpenGLRenderer.GLObjectBase.InvalidBindingId)
-        {
-            failure = "Texture binding identifier is invalid.";
-            return false;
-        }
-
-        handle = (nint)glTexture.BindingId;
-        return true;
-    }
-
-    private static OpenGLRenderer? TryGetOpenGLRenderer()
-    {
-        if (AbstractRenderer.Current is OpenGLRenderer current)
-            return current;
-
-        foreach (var window in Engine.Windows)
-            if (window.Renderer is OpenGLRenderer renderer)
-                return renderer;
-
-        return null;
-    }
-
-    private static VulkanRenderer? TryGetVulkanRenderer()
-    {
-        if (AbstractRenderer.Current is VulkanRenderer current)
-            return current;
-
-        foreach (var window in Engine.Windows)
-            if (window.Renderer is VulkanRenderer renderer)
-                return renderer;
-
-        return null;
+        return EditorTexturePreviewService.TryGetHandle(
+            texture,
+            out handle,
+            out _,
+            out failure);
     }
 
     private static Vector2 CalculatePreviewSize(Vector2 pixelSize)

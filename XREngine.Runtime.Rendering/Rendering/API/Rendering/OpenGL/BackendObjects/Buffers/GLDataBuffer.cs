@@ -675,6 +675,12 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
+            void IApiDataBuffer.EnsureStorageAllocatedForGpuUse()
+                => EnsureStorageAllocatedForGpuCopy();
+
+            bool IApiDataBuffer.TryGetBindingId(out uint bindingId)
+                => TryGetBindingId(out bindingId);
+
             public static GLEnum ToGLEnum(EBufferUsage usage) => usage switch
             {
                 EBufferUsage.StaticDraw => GLEnum.StaticDraw,

@@ -215,7 +215,7 @@ public partial class GLTexture2D
         // promotion preparer may allocate storage before pages are exposed.
         int storageGeneration = AdvanceStorageGeneration();
         TextureRuntimeDiagnostics.LogStorageAllocated(
-            RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+            RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
             GetDescribingName(),
             Data.FilePath,
             BindingId,

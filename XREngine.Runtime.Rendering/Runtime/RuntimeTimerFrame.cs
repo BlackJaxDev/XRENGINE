@@ -15,15 +15,15 @@ internal sealed class RuntimeTimerFrame(ERuntimeTimerFrameKind kind)
                 return scopedDeltaSeconds;
 
             return (float)(kind == ERuntimeTimerFrameKind.Update
-                ? RuntimeRenderingHostServices.Current.UpdateDeltaSeconds
-                : RuntimeRenderingHostServices.Current.RenderDeltaSeconds);
+                ? RuntimeRenderingHostServices.FrameTiming.UpdateDeltaSeconds
+                : RuntimeRenderingHostServices.FrameTiming.RenderDeltaSeconds);
         }
     }
 
     public long LastTimestampTicks
         => kind == ERuntimeTimerFrameKind.Update
-            ? RuntimeRenderingHostServices.Current.LastUpdateTimestampTicks
-            : RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+            ? RuntimeRenderingHostServices.FrameTiming.LastUpdateTimestampTicks
+            : RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
 
     internal static ScopedRenderDeltaOverride PushScopedRenderDeltaSeconds(float deltaSeconds)
         => new(deltaSeconds);

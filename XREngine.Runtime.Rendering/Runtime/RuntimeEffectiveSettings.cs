@@ -42,13 +42,13 @@ internal sealed class RuntimeEffectiveSettings
 
     public bool AllowInitialSkinnedBoundsBuildWhenNever { get; set; } = true;
     public EAntiAliasingMode AntiAliasingMode { get; set; } = EAntiAliasingMode.None;
-    public EDlssQualityMode DlssQuality => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+    public EDlssQualityMode DlssQuality => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
         ? services.DlssQuality
         : Settings.DlssQuality;
-    public float DlssCustomScale => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+    public float DlssCustomScale => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
         ? services.DlssCustomScale
         : Settings.DlssCustomScale;
-    public float DlssSharpness => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+    public float DlssSharpness => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
         ? services.DlssSharpness
         : Settings.DlssSharpness;
     public bool EnableGpuBvhTimingQueries { get; set; }
@@ -56,25 +56,25 @@ internal sealed class RuntimeEffectiveSettings
     public bool EnableGpuIndirectDebugLogging { get; set; }
     public bool EnableGpuIndirectValidationLogging { get; set; }
     public bool EnableIntelXess { get; set; }
-    public bool EnableNvidiaDlss => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+    public bool EnableNvidiaDlss => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
         ? services.EnableNvidiaDlss
         : Settings.EnableNvidiaDlss;
-    public bool EnableNvidiaDlssFrameGeneration => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+    public bool EnableNvidiaDlssFrameGeneration => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
         ? services.EnableNvidiaDlssFrameGeneration
         : Settings.EnableNvidiaDlssFrameGeneration;
-    public ENvidiaDlssFrameGenerationMode NvidiaDlssFrameGenerationMode => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+    public ENvidiaDlssFrameGenerationMode NvidiaDlssFrameGenerationMode => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
         ? services.NvidiaDlssFrameGenerationMode
         : Settings.NvidiaDlssFrameGenerationMode;
     public bool EnableVulkanBindlessMaterialTable
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostSettings(out IRuntimeRenderSettingsServices services)
             ? services.EnableVulkanBindlessMaterialTable
             : _enableVulkanBindlessMaterialTable;
         set => _enableVulkanBindlessMaterialTable = value;
     }
     public bool EnableVulkanDescriptorIndexing
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostSettings(out IRuntimeRenderSettingsServices services)
             ? services.EnableVulkanDescriptorIndexing
             : _enableVulkanDescriptorIndexing;
         set => _enableVulkanDescriptorIndexing = value;
@@ -98,7 +98,7 @@ internal sealed class RuntimeEffectiveSettings
     {
         get
         {
-            EOcclusionCullingMode resolved = TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            EOcclusionCullingMode resolved = TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
                 ? services.GpuOcclusionCullingMode
                 : _gpuOcclusionCullingMode;
             string? raw = EffectiveSettingsEnvOverrides.OcclusionCullingMode;
@@ -121,7 +121,7 @@ internal sealed class RuntimeEffectiveSettings
             if (!string.IsNullOrWhiteSpace(raw) && int.TryParse(raw, out int parsed))
                 return Math.Clamp(parsed, 1, 64);
 
-            return TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            return TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
                 ? Math.Clamp(services.CpuQueryOcclusionRetestPeriodFrames, 1, 64)
                 : _cpuQueryOcclusionRetestPeriodFrames;
         }
@@ -131,7 +131,7 @@ internal sealed class RuntimeEffectiveSettings
     private int _cpuQueryOcclusionMaxQueriesPerFrame = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionMaxQueriesPerFrame;
     public int CpuQueryOcclusionMaxQueriesPerFrame
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? Math.Clamp(services.CpuQueryOcclusionMaxQueriesPerFrame, 0, 4096)
             : _cpuQueryOcclusionMaxQueriesPerFrame;
         set => _cpuQueryOcclusionMaxQueriesPerFrame = Math.Clamp(value, 0, 4096);
@@ -140,7 +140,7 @@ internal sealed class RuntimeEffectiveSettings
     private float _cpuQueryOcclusionVisibleDemotionBudgetFraction = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionVisibleDemotionBudgetFraction;
     public float CpuQueryOcclusionVisibleDemotionBudgetFraction
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? Math.Clamp(services.CpuQueryOcclusionVisibleDemotionBudgetFraction, 0.0f, 1.0f)
             : _cpuQueryOcclusionVisibleDemotionBudgetFraction;
         set => _cpuQueryOcclusionVisibleDemotionBudgetFraction = Math.Clamp(value, 0.0f, 1.0f);
@@ -149,7 +149,7 @@ internal sealed class RuntimeEffectiveSettings
     private int _cpuQueryOcclusionRecoveryMinCadenceFrames = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionRecoveryMinCadenceFrames;
     public int CpuQueryOcclusionRecoveryMinCadenceFrames
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? Math.Clamp(services.CpuQueryOcclusionRecoveryMinCadenceFrames, 1, 64)
             : _cpuQueryOcclusionRecoveryMinCadenceFrames;
         set => _cpuQueryOcclusionRecoveryMinCadenceFrames = Math.Clamp(value, 1, 64);
@@ -158,7 +158,7 @@ internal sealed class RuntimeEffectiveSettings
     private float _cpuQueryOcclusionSmallMotionMeters = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionSmallMotionMeters;
     public float CpuQueryOcclusionSmallMotionMeters
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? ClampNonNegative(services.CpuQueryOcclusionSmallMotionMeters, 100.0f)
             : _cpuQueryOcclusionSmallMotionMeters;
         set => _cpuQueryOcclusionSmallMotionMeters = ClampNonNegative(value, 100.0f);
@@ -167,7 +167,7 @@ internal sealed class RuntimeEffectiveSettings
     private float _cpuQueryOcclusionMediumMotionMeters = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionMediumMotionMeters;
     public float CpuQueryOcclusionMediumMotionMeters
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? ClampNonNegative(services.CpuQueryOcclusionMediumMotionMeters, 100.0f)
             : _cpuQueryOcclusionMediumMotionMeters;
         set => _cpuQueryOcclusionMediumMotionMeters = ClampNonNegative(value, 100.0f);
@@ -176,7 +176,7 @@ internal sealed class RuntimeEffectiveSettings
     private float _cpuQueryOcclusionLargeMotionMeters = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionLargeMotionMeters;
     public float CpuQueryOcclusionLargeMotionMeters
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? ClampNonNegative(services.CpuQueryOcclusionLargeMotionMeters, 100.0f)
             : _cpuQueryOcclusionLargeMotionMeters;
         set => _cpuQueryOcclusionLargeMotionMeters = ClampNonNegative(value, 100.0f);
@@ -185,7 +185,7 @@ internal sealed class RuntimeEffectiveSettings
     private float _cpuQueryOcclusionCameraCutMeters = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionCameraCutMeters;
     public float CpuQueryOcclusionCameraCutMeters
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? ClampNonNegative(services.CpuQueryOcclusionCameraCutMeters, 1000.0f)
             : _cpuQueryOcclusionCameraCutMeters;
         set => _cpuQueryOcclusionCameraCutMeters = ClampNonNegative(value, 1000.0f);
@@ -194,7 +194,7 @@ internal sealed class RuntimeEffectiveSettings
     private float _cpuQueryOcclusionSmallRotationDegrees = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionSmallRotationDegrees;
     public float CpuQueryOcclusionSmallRotationDegrees
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? ClampDegrees(services.CpuQueryOcclusionSmallRotationDegrees)
             : _cpuQueryOcclusionSmallRotationDegrees;
         set => _cpuQueryOcclusionSmallRotationDegrees = ClampDegrees(value);
@@ -203,7 +203,7 @@ internal sealed class RuntimeEffectiveSettings
     private float _cpuQueryOcclusionMediumRotationDegrees = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionMediumRotationDegrees;
     public float CpuQueryOcclusionMediumRotationDegrees
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? ClampDegrees(services.CpuQueryOcclusionMediumRotationDegrees)
             : _cpuQueryOcclusionMediumRotationDegrees;
         set => _cpuQueryOcclusionMediumRotationDegrees = ClampDegrees(value);
@@ -212,7 +212,7 @@ internal sealed class RuntimeEffectiveSettings
     private float _cpuQueryOcclusionLargeRotationDegrees = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionLargeRotationDegrees;
     public float CpuQueryOcclusionLargeRotationDegrees
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? ClampDegrees(services.CpuQueryOcclusionLargeRotationDegrees)
             : _cpuQueryOcclusionLargeRotationDegrees;
         set => _cpuQueryOcclusionLargeRotationDegrees = ClampDegrees(value);
@@ -221,7 +221,7 @@ internal sealed class RuntimeEffectiveSettings
     private float _cpuQueryOcclusionCameraCutRotationDegrees = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionCameraCutRotationDegrees;
     public float CpuQueryOcclusionCameraCutRotationDegrees
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? ClampDegrees(services.CpuQueryOcclusionCameraCutRotationDegrees)
             : _cpuQueryOcclusionCameraCutRotationDegrees;
         set => _cpuQueryOcclusionCameraCutRotationDegrees = ClampDegrees(value);
@@ -230,7 +230,7 @@ internal sealed class RuntimeEffectiveSettings
     private float _cpuQueryOcclusionVrHeadMotionMeters = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionVrHeadMotionMeters;
     public float CpuQueryOcclusionVrHeadMotionMeters
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? ClampNonNegative(services.CpuQueryOcclusionVrHeadMotionMeters, 10.0f)
             : _cpuQueryOcclusionVrHeadMotionMeters;
         set => _cpuQueryOcclusionVrHeadMotionMeters = ClampNonNegative(value, 10.0f);
@@ -239,7 +239,7 @@ internal sealed class RuntimeEffectiveSettings
     private float _cpuQueryOcclusionVrHeadRotationDegrees = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionVrHeadRotationDegrees;
     public float CpuQueryOcclusionVrHeadRotationDegrees
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? ClampDegrees(services.CpuQueryOcclusionVrHeadRotationDegrees)
             : _cpuQueryOcclusionVrHeadRotationDegrees;
         set => _cpuQueryOcclusionVrHeadRotationDegrees = ClampDegrees(value);
@@ -248,7 +248,7 @@ internal sealed class RuntimeEffectiveSettings
     private ECpuQueryStereoMode _cpuQueryOcclusionStereoMode = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionStereoMode;
     public ECpuQueryStereoMode CpuQueryOcclusionStereoMode
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? services.CpuQueryOcclusionStereoMode
             : _cpuQueryOcclusionStereoMode;
         set => _cpuQueryOcclusionStereoMode = value;
@@ -257,7 +257,7 @@ internal sealed class RuntimeEffectiveSettings
     private int _cpuQueryOcclusionMaxPendingFrames = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionMaxPendingFrames;
     public int CpuQueryOcclusionMaxPendingFrames
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? Math.Clamp(services.CpuQueryOcclusionMaxPendingFrames, 1, 120)
             : _cpuQueryOcclusionMaxPendingFrames;
         set => _cpuQueryOcclusionMaxPendingFrames = Math.Clamp(value, 1, 120);
@@ -277,7 +277,7 @@ internal sealed class RuntimeEffectiveSettings
                     return false;
             }
 
-            return TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            return TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
                 ? services.EnableCpuSoftwareOcclusionCulling
                 : _enableCpuSoftwareOcclusionCulling;
         }
@@ -286,7 +286,7 @@ internal sealed class RuntimeEffectiveSettings
     private int _cpuSocBufferWidth = 256;
     public int CpuSocBufferWidth
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? Math.Clamp(services.CpuSocBufferWidth, 64, 4096)
             : _cpuSocBufferWidth;
         set => _cpuSocBufferWidth = Math.Clamp(value, 64, 4096);
@@ -294,7 +294,7 @@ internal sealed class RuntimeEffectiveSettings
     private int _cpuSocBufferHeight = 128;
     public int CpuSocBufferHeight
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? Math.Clamp(services.CpuSocBufferHeight, 32, 4096)
             : _cpuSocBufferHeight;
         set => _cpuSocBufferHeight = Math.Clamp(value, 32, 4096);
@@ -302,7 +302,7 @@ internal sealed class RuntimeEffectiveSettings
     private int _cpuSocOccluderTriangleBudget = 5000;
     public int CpuSocOccluderTriangleBudget
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? Math.Clamp(services.CpuSocOccluderTriangleBudget, 0, 1_000_000)
             : _cpuSocOccluderTriangleBudget;
         set => _cpuSocOccluderTriangleBudget = Math.Clamp(value, 0, 1_000_000);
@@ -310,7 +310,7 @@ internal sealed class RuntimeEffectiveSettings
     private int _cpuSocMaxOccluders = 64;
     public int CpuSocMaxOccluders
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? Math.Clamp(services.CpuSocMaxOccluders, 0, 4096)
             : _cpuSocMaxOccluders;
         set => _cpuSocMaxOccluders = Math.Clamp(value, 0, 4096);
@@ -318,7 +318,7 @@ internal sealed class RuntimeEffectiveSettings
     private float _cpuSocMinOccluderScreenArea = 0.005f;
     public float CpuSocMinOccluderScreenArea
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? Math.Clamp(services.CpuSocMinOccluderScreenArea, 0.0f, 1.0f)
             : _cpuSocMinOccluderScreenArea;
         set => _cpuSocMinOccluderScreenArea = Math.Clamp(value, 0.0f, 1.0f);
@@ -326,7 +326,7 @@ internal sealed class RuntimeEffectiveSettings
     private bool _cpuSocUseAvx2 = true;
     public bool CpuSocUseAvx2
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? services.CpuSocUseAvx2
             : _cpuSocUseAvx2;
         set => _cpuSocUseAvx2 = value;
@@ -334,7 +334,7 @@ internal sealed class RuntimeEffectiveSettings
     private bool _cpuSocDebugVisualization;
     public bool CpuSocDebugVisualization
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? services.CpuSocDebugVisualization
             : _cpuSocDebugVisualization;
         set => _cpuSocDebugVisualization = value;
@@ -342,7 +342,7 @@ internal sealed class RuntimeEffectiveSettings
     private bool _cpuSocDebugForceVisible;
     public bool CpuSocDebugForceVisible
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
             ? services.CpuSocDebugForceVisible
             : _cpuSocDebugForceVisible;
         set => _cpuSocDebugForceVisible = value;
@@ -386,7 +386,7 @@ internal sealed class RuntimeEffectiveSettings
                 return parsed;
             }
 
-            return TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            return TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
                 ? services.CpuSceneCullingStructure
                 : _cpuSceneCullingStructure;
         }
@@ -394,56 +394,56 @@ internal sealed class RuntimeEffectiveSettings
     }
     public bool ValidateVulkanDescriptorContracts
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostSettings(out IRuntimeRenderSettingsServices services)
             ? services.ValidateVulkanDescriptorContracts
             : _validateVulkanDescriptorContracts;
         set => _validateVulkanDescriptorContracts = value;
     }
     public EVulkanBindlessMaterialMode VulkanBindlessMaterialMode
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostSettings(out IRuntimeRenderSettingsServices services)
             ? services.VulkanBindlessMaterialMode
             : _vulkanBindlessMaterialMode;
         set => _vulkanBindlessMaterialMode = value;
     }
     public EVulkanGeometryFetchMode VulkanGeometryFetchMode
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostSettings(out IRuntimeRenderSettingsServices services)
             ? services.VulkanGeometryFetchMode
             : _vulkanGeometryFetchMode;
         set => _vulkanGeometryFetchMode = value;
     }
     public EVulkanRenderTargetMode VulkanRenderTargetMode
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostSettings(out IRuntimeRenderSettingsServices services)
             ? services.VulkanRenderTargetMode
             : _vulkanRenderTargetMode;
         set => _vulkanRenderTargetMode = value;
     }
     public EVulkanGpuDrivenProfile VulkanGpuDrivenProfile
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostSettings(out IRuntimeRenderSettingsServices services)
             ? services.VulkanGpuDrivenProfile
             : _vulkanGpuDrivenProfile;
         set => _vulkanGpuDrivenProfile = value;
     }
     public EVulkanQueueOverlapMode VulkanQueueOverlapMode
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostSettings(out IRuntimeRenderSettingsServices services)
             ? services.VulkanQueueOverlapMode
             : _vulkanQueueOverlapMode;
         set => _vulkanQueueOverlapMode = value;
     }
     public EVulkanDiagnosticPreset VulkanDiagnosticPreset
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostSettings(out IRuntimeRenderSettingsServices services)
             ? services.VulkanDiagnosticPreset
             : _vulkanDiagnosticPreset;
         set => _vulkanDiagnosticPreset = value;
     }
     public EVulkanDiagnosticFlags VulkanDiagnosticFlags
     {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+        get => TryGetHostSettings(out IRuntimeRenderSettingsServices services)
             ? services.VulkanDiagnosticFlags
             : _vulkanDiagnosticFlags;
         set => _vulkanDiagnosticFlags = value;
@@ -460,9 +460,15 @@ internal sealed class RuntimeEffectiveSettings
     private static float ClampDegrees(float value)
         => Math.Clamp(float.IsFinite(value) ? value : 0.0f, 0.0f, 180.0f);
 
-    private static bool TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+    private static bool TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
     {
-        services = RuntimeRenderingHostServices.Current;
+        services = RuntimeRenderingHostServices.FrameTiming;
+        return RuntimeRenderingHostServices.HasConcreteHost;
+    }
+
+    private static bool TryGetHostSettings(out IRuntimeRenderSettingsServices services)
+    {
+        services = RuntimeRenderingHostServices.Settings;
         return RuntimeRenderingHostServices.HasConcreteHost;
     }
 }

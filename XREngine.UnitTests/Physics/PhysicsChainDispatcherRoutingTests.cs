@@ -15,7 +15,7 @@ public sealed class PhysicsChainDispatcherRoutingTests
         componentSource.ShouldNotContain("private bool TryGetGpuParticleRenderSource");
         componentSource.ShouldNotContain("XRDataBuffer<GPUParticleData>? _particlesBuffer");
 
-        string dispatcherSource = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
+        string dispatcherSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
         dispatcherSource.ShouldContain("public bool TryGetRenderParticleBuffers(");
         dispatcherSource.ShouldContain("component.UseBatchedDispatcher ? 0 : request.RequestId");
     }

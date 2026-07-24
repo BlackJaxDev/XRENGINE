@@ -29,7 +29,7 @@ public partial class XRMesh
 
     public XRMesh(IEnumerable<Vertex> vertices, List<ushort> triangleIndices)
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope("XRMesh Triangles Constructor");
+        using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRMesh Triangles Constructor");
 
         vertices.TryGetNonEnumeratedCount(out int vertexCountHint);
         List<Vertex> triVertices = vertexCountHint > 0 ? new(vertexCountHint) : [];
@@ -68,14 +68,14 @@ public partial class XRMesh
         Vertex[] sourceVertices = [.. triVertices];
 
         PopulateVertexData(vertexActions, sourceVertices, VertexCount, dataTransform,
-            RuntimeRenderingHostServices.Current.PopulateVertexDataInParallel);
+            RuntimeRenderingHostServices.Settings.PopulateVertexDataInParallel);
 
         Vertices = sourceVertices;
     }
 
     public XRMesh(IEnumerable<object?> primitives) : this()
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope("XRMesh Constructor");
+        using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRMesh Constructor");
 
         List<Vertex> points = [];
         List<Vertex> lines = [];
@@ -180,7 +180,7 @@ public partial class XRMesh
             sourceList,
             firstAppearanceArray,
             dataTransform,
-            RuntimeRenderingHostServices.Current.PopulateVertexDataInParallel);
+            RuntimeRenderingHostServices.Settings.PopulateVertexDataInParallel);
 
         if (remapper?.ImplementationTable is null)
         {

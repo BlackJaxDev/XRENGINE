@@ -23,7 +23,6 @@ using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Core.Files;
 using XREngine.Scene;
-using XREngine.Scene.Components.UI;
 using XREngine.Scene.Transforms;
 using XREngine.Editor.AssetEditors;
 using XREngine.Editor.ComponentEditors;
@@ -285,12 +284,12 @@ public static partial class EditorImGuiUI
 
         private static bool ShouldSuppressEditorImGuiForRuntimeVrView()
         {
-            var host = RuntimeRenderingHostServices.Current;
+            IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
             return Engine.IsEditor &&
                 EditorUnitTests.Toggles.VRPawn &&
                 !EditorUnitTests.Toggles.AllowEditingInVR &&
-                host.IsInVR &&
-                host.RenderWindowsWhileInVR;
+                presentation.IsInVR &&
+                presentation.RenderWindowsWhileInVR;
         }
 
         private static bool ShouldRenderEditorImGui()

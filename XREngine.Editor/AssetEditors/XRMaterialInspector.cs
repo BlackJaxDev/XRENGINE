@@ -1529,53 +1529,11 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
             return false;
         }
 
-        if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
-        {
-            IntPtr textureId = EditorRenderThread.Invoke(
-                () => vkRenderer.RegisterImGuiTexture(texture),
-                "XRMaterialInspector.RegisterVulkanPreviewTexture",
-                RenderThreadJobKind.TextureUpload);
-            if (textureId == IntPtr.Zero)
-            {
-                failureReason = "Texture not uploaded";
-                return false;
-            }
-
-            handle = (nint)textureId;
-            return true;
-        }
-
-        if (AbstractRenderer.Current is OpenGLRenderer renderer)
-        {
-            if (texture is not XRTexture2D tex2D)
-            {
-                failureReason = $"{texture.GetType().Name} preview not supported";
-                return false;
-            }
-
-            var apiTexture = EditorRenderThread.Invoke(
-                () => renderer.GenericToAPI<GLTexture2D>(tex2D),
-                "XRMaterialInspector.ResolveOpenGLPreviewTexture",
-                RenderThreadJobKind.TextureUpload);
-            if (apiTexture is null)
-            {
-                failureReason = "Texture not uploaded";
-                return false;
-            }
-
-            uint binding = apiTexture.BindingId;
-            if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
-            {
-                failureReason = "Texture not ready";
-                return false;
-            }
-
-            handle = (nint)binding;
-            return true;
-        }
-
-        failureReason = "Preview requires OpenGL or Vulkan renderer";
-        return false;
+        return EditorTexturePreviewService.TryGetHandle(
+            texture,
+            out handle,
+            out _,
+            out failureReason);
     }
 
     private static Vector2 GetTexturePixelSize(XRTexture texture)

@@ -125,27 +125,6 @@ namespace XREngine.Rendering.Vulkan
             XRMaterial Material,
             Matrix4x4 ModelMatrix);
 
-        internal IndirectDrawStateScope PushIndirectDrawState(XRRenderProgram program, XRMaterial material, Matrix4x4 modelMatrix)
-        {
-            VulkanIndirectDrawState? previous = _pendingIndirectDrawState;
-            _pendingIndirectDrawState = new VulkanIndirectDrawState(program, material, modelMatrix);
-            return new IndirectDrawStateScope(this, previous);
-        }
-
-        /// <summary>
-        /// Restores the previously captured indirect draw state without allocating
-        /// one reference object per material bucket.
-        /// </summary>
-        internal readonly struct IndirectDrawStateScope(
-            VulkanRenderer? renderer,
-            VulkanIndirectDrawState? previous) : IDisposable
-        {
-            public void Dispose()
-            {
-                renderer?._pendingIndirectDrawState = previous;
-            }
-        }
-
         private bool TryCaptureIndirectDrawPayload(
             string contextName,
             out VkMeshRenderer meshRenderer,

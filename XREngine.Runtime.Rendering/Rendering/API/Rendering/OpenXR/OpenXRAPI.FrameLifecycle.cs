@@ -112,8 +112,8 @@ public unsafe partial class OpenXRAPI
         bool allEyesRendered;
         bool vulkanBatchHandled;
         bool strictSinglePassStereoRequested =
-            RuntimeRenderingHostServices.Current.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo;
-        using (var batchSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderFrame.TryRenderVulkanEyesBatch"))
+            RuntimeRenderingHostServices.Presentation.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo;
+        using (var batchSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.RenderFrame.TryRenderVulkanEyesBatch"))
         {
             allEyesRendered = TryRenderVulkanEyesBatch(projectionViews, out vulkanBatchHandled);
         }
@@ -135,7 +135,7 @@ public unsafe partial class OpenXRAPI
         if (!allEyesRendered && !vulkanBatchHandled && OpenXrDebugRenderRightThenLeft)
         {
             allEyesRendered = true;
-            using (var sequentialSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderFrame.RenderEyesSequential"))
+            using (var sequentialSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.RenderFrame.RenderEyesSequential"))
             {
                 for (int i = (int)_viewCount - 1; i >= 0; i--)
                     allEyesRendered &= RenderEye((uint)i, renderCallback, projectionViews);
@@ -144,7 +144,7 @@ public unsafe partial class OpenXRAPI
         else if (!allEyesRendered && !vulkanBatchHandled)
         {
             allEyesRendered = true;
-            using (var sequentialSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderFrame.RenderEyesSequential"))
+            using (var sequentialSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.RenderFrame.RenderEyesSequential"))
             {
                 for (uint i = 0; i < _viewCount; i++)
                     allEyesRendered &= RenderEye(i, renderCallback, projectionViews);
@@ -225,7 +225,7 @@ public unsafe partial class OpenXRAPI
         int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
         try
         {
-            if (Window?.Renderer is VulkanRenderer && ShouldPrewarmVulkanEyeResources(viewIndex))
+            if (Window?.Renderer.BackendId == RendererBackendId.Vulkan && ShouldPrewarmVulkanEyeResources(viewIndex))
                 PrewarmVulkanEyeResources(viewIndex);
 
             var acquireResult = CheckResult(Api.AcquireSwapchainImage(_swapchains[viewIndex], in acquireInfo, ref imageIndex), "xrAcquireSwapchainImage");
@@ -283,7 +283,7 @@ public unsafe partial class OpenXRAPI
                     gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
                 }
             }
-            else if (Window?.Renderer is VulkanRenderer)
+            else if (Window?.Renderer.BackendId == RendererBackendId.Vulkan)
             {
                 if (!TryRenderVulkanEye(viewIndex, imageIndex))
                     return false;
@@ -376,7 +376,7 @@ public unsafe partial class OpenXRAPI
         const float radiansToDegrees = 180.0f / MathF.PI;
         float horizontalFovDegrees = MathF.Abs(view.Fov.AngleRight - view.Fov.AngleLeft) * radiansToDegrees;
         float verticalFovDegrees = MathF.Abs(view.Fov.AngleUp - view.Fov.AngleDown) * radiansToDegrees;
-        IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+        IRuntimeRenderPresentationServices host = RuntimeRenderingHostServices.Presentation;
         double gpuMilliseconds = host.ResolveRvcViewGpuMilliseconds(
             checked((int)viewIndex),
             checked((int)Math.Min(_viewCount, (uint)_openXrRvcFrameViewDiagnostics.Length)));
@@ -440,13 +440,13 @@ public unsafe partial class OpenXRAPI
         }
 
         RvcFrameProfileSnapshot profile = RvcFrameProfileSnapshot.Create(
-            RuntimeRenderingHostServices.Current.CurrentRenderFrameId,
+            RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId,
             _frameState.PredictedDisplayTime,
             _openXrRvcFrameViewDiagnostics.AsSpan(0, (int)count),
             _openXrRvcFrameViewProjectionDiagnostics.AsSpan(0, (int)count),
             fallbackReason,
             diagnostic);
-        RuntimeRenderingHostServices.Current.RecordRenderRvcFrameProfile(profile);
+        RuntimeRenderingHostServices.Statistics.RecordRenderRvcFrameProfile(profile);
     }
 
     private void ValidateProjectionViewSubImage(
@@ -542,7 +542,7 @@ public unsafe partial class OpenXRAPI
         try
         {
             // Keep OpenXR event/state progression on the render thread.
-            using (var pollEventsSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderCallback.PollEvents"))
+            using (var pollEventsSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.RenderCallback.PollEvents"))
             {
                 PollEvents();
             }
@@ -554,7 +554,7 @@ public unsafe partial class OpenXRAPI
             // This updates the view poses used for projection submission and device transforms.
             if (_sessionBegun && Volatile.Read(ref _pendingXrFrame) != 0)
             {
-                using var latePoseSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderCallback.LatePose");
+                using var latePoseSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.RenderCallback.LatePose");
                 // Capture predicted pose before late update for debug comparison.
                 System.Numerics.Matrix4x4 predHead;
                 lock (_openXrPoseLock)
@@ -595,13 +595,13 @@ public unsafe partial class OpenXRAPI
 
             // Lazily start the dedicated pacing thread when the session is ready and the mode is enabled.
             // The render thread then only signals it after xrEndFrame instead of running prep inline.
-            using (var pacingStartSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderCallback.EnsurePacingThread"))
+            using (var pacingStartSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.RenderCallback.EnsurePacingThread"))
             {
                 EnsureOpenXrPacingThreadStarted();
             }
 
             // Render the frame whose visibility buffers were published by the CollectVisible thread.
-            using (var renderFrameSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderCallback.RenderFrame"))
+            using (var renderFrameSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.RenderCallback.RenderFrame"))
             {
                 RenderFrame(null);
             }
@@ -609,13 +609,13 @@ public unsafe partial class OpenXRAPI
             // Inline prep (pre-desktop-render) is the legacy InRenderCallback path.
             if (OpenXrRenderPacingHandling == OpenXrRenderPacingMode.InRenderCallback)
             {
-                using var prepSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderCallback.PrepareNextFrame");
+                using var prepSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.RenderCallback.PrepareNextFrame");
                 PrepareNextFrameForPacingOwner();
             }
         }
         finally
         {
-            using var restoreStateSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderCallback.RestoreRenderState");
+            using var restoreStateSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.RenderCallback.RestoreRenderState");
             // XRWindow renders desktop viewports immediately after this callback returns.
             // Restore the GL state that existed before OpenXR's work to avoid contaminating
             // the engine's normal desktop rendering. If snapshot capture failed, do best-effort sanitation.
@@ -646,7 +646,7 @@ public unsafe partial class OpenXRAPI
         if (OpenXrRenderPacingHandling == OpenXrRenderPacingMode.PostRenderCallback
             && OpenXrPrepareFrameAfterDesktopRender)
         {
-            using var prepSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.PostRender.PrepareNextFrame");
+            using var prepSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.PostRender.PrepareNextFrame");
             PrepareNextFrameForPacingOwner();
         }
     }
@@ -822,7 +822,7 @@ public unsafe partial class OpenXRAPI
             {
                 try
                 {
-                    using var prepSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.CollectVisible.PrepareNextFrame");
+                    using var prepSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.CollectVisible.PrepareNextFrame");
                     PrepareNextFrameForPacingOwner();
                 }
                 finally
@@ -849,7 +849,7 @@ public unsafe partial class OpenXRAPI
         try
         {
             int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
-            using (var predictedPoseSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.CollectVisible.ApplyPredictedVrRigPose"))
+            using (var predictedPoseSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.CollectVisible.ApplyPredictedVrRigPose"))
             {
                 RuntimeEngine.VRState.InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming.Predicted);
             }
@@ -980,7 +980,7 @@ public unsafe partial class OpenXRAPI
 
             // OpenXR must not share render pipeline *instances* with the desktop viewport.
             // But it still needs a matching pipeline type/config to avoid missing lighting/post steps.
-            var sourcePipeline = sourceViewport?.RenderPipeline ?? baseCamera.RenderPipeline;
+            var sourcePipeline = sourceViewport?.RenderPipeline ?? baseCamera.GetOrCreateRenderPipeline();
 
             XRViewport collectViewport = _openXrLeftViewport!;
             RenderPipeline leftEyePipeline;
@@ -1152,7 +1152,7 @@ public unsafe partial class OpenXRAPI
         // configurations. Wider view sets remain fail-visible until explicitly mapped.
         int declaredViewCount = Math.Clamp((int)_viewCount, 2, 4);
         uint requiredCoverageMask = (1u << declaredViewCount) - 1u;
-        EOcclusionViewScope scope = declaredViewCount > 2 || RuntimeRenderingHostServices.Current.EnableVrFoveatedViewSet
+        EOcclusionViewScope scope = declaredViewCount > 2 || RuntimeRenderingHostServices.Presentation.EnableVrFoveatedViewSet
             ? EOcclusionViewScope.VrFoveatedView
             : trueSinglePassStereo
                 ? EOcclusionViewScope.VrSinglePassStereo
@@ -1322,7 +1322,7 @@ public unsafe partial class OpenXRAPI
             sourceCamera.AntiAliasingModeOverride
             ?? secondaryCamera.AntiAliasingModeOverride;
         EAntiAliasingMode sourceAntiAliasingMode =
-            sourceAntiAliasingOverride ?? RuntimeRenderingHostServices.Current.DefaultAntiAliasingMode;
+            sourceAntiAliasingOverride ?? RuntimeRenderingHostServices.FrameTiming.DefaultAntiAliasingMode;
         EAntiAliasingMode antiAliasingMode = ResolveOpenXrEyeAntiAliasingMode(
             sourceAntiAliasingMode,
             viewModeResolution);

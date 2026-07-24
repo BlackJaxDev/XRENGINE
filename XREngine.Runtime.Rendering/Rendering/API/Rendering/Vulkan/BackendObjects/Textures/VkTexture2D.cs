@@ -102,7 +102,7 @@ public unsafe partial class VulkanRenderer
 
         private SparseTextureStreamingTransitionResult ApplySparseTextureStreamingTransition(SparseTextureStreamingTransitionRequest request)
         {
-            if (!RuntimeRenderingHostServices.Current.IsRenderThread)
+            if (!RuntimeRenderingHostServices.FrameTiming.IsRenderThread)
                 return SparseTextureStreamingTransitionResult.Unsupported("Vulkan sparse texture transition compatibility must run on the render thread. Use RuntimeRenderingHostServices.TryScheduleSparseTextureStreamingTransitionAsync or ImportedTextureStreamingManager.");
 
             if (Renderer.IsDeviceLost)

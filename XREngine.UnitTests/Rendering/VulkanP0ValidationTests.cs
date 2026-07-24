@@ -724,7 +724,7 @@ public sealed class VulkanP0ValidationTests
     [Test]
     public void BitmapFontAtlas_ExtractsAlphaCoverageIntoR8RedChannel()
     {
-        string fontGlyphSet = ReadWorkspaceFile("XRENGINE/Core/FontGlyphSet.cs");
+        string fontGlyphSet = ReadWorkspaceFile("XREngine.Runtime.Rendering/Resources/Fonts/FontGlyphSet.cs");
 
         fontGlyphSet.ShouldContain("Atlas = CreateBitmapAtlasTexture(outputAtlasPath);");
         fontGlyphSet.ShouldContain("private static XRTexture2D CreateBitmapAtlasTexture(string atlasPath)");
@@ -804,7 +804,7 @@ public sealed class VulkanP0ValidationTests
         textRenderable.ShouldContain("DefaultLineSpacing + outlineSpacing");
         textRenderable.ShouldContain("private float ResolveLayoutSpacingForOutputPixels(float outputSpacing)");
 
-        string fontGlyphSet = ReadWorkspaceFile("XRENGINE/Core/FontGlyphSet.cs");
+        string fontGlyphSet = ReadWorkspaceFile("XREngine.Runtime.Rendering/Resources/Fonts/FontGlyphSet.cs");
         fontGlyphSet.ShouldNotContain("LoadDefaultUIMonospaceFontBitmap");
 
         string batchedVertexShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Common/UITextBatched.vs");
@@ -1014,7 +1014,7 @@ public sealed class VulkanP0ValidationTests
     [Test]
     public void VulkanRobustnessSettings_AreExposedThroughRuntimeHostServices()
     {
-        string interfaceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderingHostServices.cs");
+        string interfaceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderSettingsServices.cs");
         string runtimeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngineFacade.cs");
         string hostSource = ReadWorkspaceFile("XRENGINE/Engine/Engine.RuntimeRenderingHostServices.cs");
         string defaultsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderingHostServiceDefaults.cs");

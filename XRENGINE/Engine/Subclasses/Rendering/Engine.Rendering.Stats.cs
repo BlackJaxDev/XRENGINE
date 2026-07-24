@@ -166,7 +166,7 @@ namespace XREngine
                     return VrViewRenderModeResolver.Resolve(
                         backend,
                         requestedMode,
-                        RuntimeRenderingHostServices.Current.EnableOpenXrVulkanParallelRendering,
+                        RuntimeRenderingHostServices.Presentation.EnableOpenXrVulkanParallelRendering,
                         trueSinglePassStereoAvailable,
                         rendersExternalSwapchainTargets: Engine.VRState.IsOpenXRActive && !trueSinglePassStereoAvailable);
                 }

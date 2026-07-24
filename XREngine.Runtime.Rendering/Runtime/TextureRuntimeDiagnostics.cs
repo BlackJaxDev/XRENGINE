@@ -45,8 +45,8 @@ internal static class TextureRuntimeDiagnostics
     [ThreadStatic]
     private static StringBuilder? t_builder;
 
-    public static bool IsEnabled => RuntimeRenderingHostServices.Current.TextureLogMode != TextureRuntimeLogMode.Disabled;
-    public static bool IsVerboseEnabled => RuntimeRenderingHostServices.Current.TextureLogMode == TextureRuntimeLogMode.Verbose;
+    public static bool IsEnabled => RuntimeRenderingHostServices.Diagnostics.TextureLogMode != TextureRuntimeLogMode.Disabled;
+    public static bool IsVerboseEnabled => RuntimeRenderingHostServices.Diagnostics.TextureLogMode == TextureRuntimeLogMode.Verbose;
 
     public static long TransitionQueuedCount => Interlocked.Read(ref s_transitionQueuedCount);
     public static long TransitionCoalescedCount => Interlocked.Read(ref s_transitionCoalescedCount);
@@ -242,9 +242,9 @@ internal static class TextureRuntimeDiagnostics
         Interlocked.Increment(ref s_transitionAppliedCount);
         RecordQueueWait(queueWaitMilliseconds);
         RecordUploadDuration(activeUploadMilliseconds > 0.0 ? activeUploadMilliseconds : lifecycleMilliseconds);
-        bool slow = queueWaitMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowQueueWaitMilliseconds
-            || activeUploadMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowUploadChunkMilliseconds
-            || lifecycleMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowTransitionMilliseconds;
+        bool slow = queueWaitMilliseconds >= RuntimeRenderingHostServices.Settings.TextureSlowQueueWaitMilliseconds
+            || activeUploadMilliseconds >= RuntimeRenderingHostServices.Settings.TextureSlowUploadChunkMilliseconds
+            || lifecycleMilliseconds >= RuntimeRenderingHostServices.Settings.TextureSlowTransitionMilliseconds;
         if (slow)
             Interlocked.Increment(ref s_slowUploadCount);
 
@@ -270,7 +270,7 @@ internal static class TextureRuntimeDiagnostics
         double totalMilliseconds,
         bool usedCookedPayload)
     {
-        bool slow = totalMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowCpuDecodeResizeMilliseconds;
+        bool slow = totalMilliseconds >= RuntimeRenderingHostServices.Settings.TextureSlowCpuDecodeResizeMilliseconds;
         if (slow)
             Interlocked.Increment(ref s_slowUploadCount);
 
@@ -480,7 +480,7 @@ internal static class TextureRuntimeDiagnostics
         string backendName)
     {
         RecordUploadDuration(executionMilliseconds);
-        bool slow = executionMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowUploadChunkMilliseconds;
+        bool slow = executionMilliseconds >= RuntimeRenderingHostServices.Settings.TextureSlowUploadChunkMilliseconds;
         if (slow)
             Interlocked.Increment(ref s_slowUploadCount);
 
@@ -517,10 +517,10 @@ internal static class TextureRuntimeDiagnostics
         double totalMilliseconds,
         double totalThresholdMilliseconds)
     {
-        bool slow = decodeMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowCpuDecodeResizeMilliseconds
-            || cloneMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowCpuDecodeResizeMilliseconds
-            || resizeMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowCpuDecodeResizeMilliseconds
-            || mipBuildMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowMipBuildMilliseconds
+        bool slow = decodeMilliseconds >= RuntimeRenderingHostServices.Settings.TextureSlowCpuDecodeResizeMilliseconds
+            || cloneMilliseconds >= RuntimeRenderingHostServices.Settings.TextureSlowCpuDecodeResizeMilliseconds
+            || resizeMilliseconds >= RuntimeRenderingHostServices.Settings.TextureSlowCpuDecodeResizeMilliseconds
+            || mipBuildMilliseconds >= RuntimeRenderingHostServices.Settings.TextureSlowMipBuildMilliseconds
             || totalMilliseconds >= totalThresholdMilliseconds;
         if (slow)
             Interlocked.Increment(ref s_slowUploadCount);
@@ -845,7 +845,7 @@ internal static class TextureRuntimeDiagnostics
 
     private static bool ShouldLog(TextureRuntimeEventImportance importance)
     {
-        TextureRuntimeLogMode mode = RuntimeRenderingHostServices.Current.TextureLogMode;
+        TextureRuntimeLogMode mode = RuntimeRenderingHostServices.Diagnostics.TextureLogMode;
         return importance switch
         {
             TextureRuntimeEventImportance.Error or TextureRuntimeEventImportance.Warning => mode != TextureRuntimeLogMode.Disabled,

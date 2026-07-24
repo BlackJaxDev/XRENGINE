@@ -33,7 +33,7 @@ public sealed class PhysicsChainGpuBoundsContractTests
     public void Dispatcher_PublishesStableBoundsSlotsDirectlyToGpuScene()
     {
         string source = ReadWorkspaceFile(
-            "XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.Bounds.cs");
+            "XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.Bounds.cs");
         string copyShader = ReadWorkspaceFile(
             "Build/CommonAssets/Shaders/Compute/PhysicsChain/PhysicsChainBoundsToScene.comp");
 

@@ -169,6 +169,73 @@ public sealed class RuntimeRenderingHostServicesTests
     }
 
     [Test]
+    [NonParallelizable]
+    public void FocusedCapabilities_ResolveInstalledCompositeWithoutAdapters()
+    {
+        TestRuntimeRenderingHostServices services = new();
+
+        using IDisposable installation = RuntimeRenderingHostServices.Install(services);
+
+        RuntimeRenderingHostServices.Settings.ShouldBeSameAs(services);
+        RuntimeRenderingHostServices.FrameTiming.ShouldBeSameAs(services);
+        RuntimeRenderingHostServices.Scheduling.ShouldBeSameAs(services);
+        RuntimeRenderingHostServices.Diagnostics.ShouldBeSameAs(services);
+        RuntimeRenderingHostServices.Statistics.ShouldBeSameAs(services);
+        RuntimeRenderingHostServices.DebugDrawing.ShouldBeSameAs(services);
+        RuntimeRenderingHostServices.Profiling.ShouldBeSameAs(services);
+        RuntimeRenderingHostServices.Assets.ShouldBeSameAs(services);
+        RuntimeRenderingHostServices.Factories.ShouldBeSameAs(services);
+        RuntimeRenderingHostServices.Presentation.ShouldBeSameAs(services);
+        RuntimeRenderingHostServices.BackendInterop.ShouldBeSameAs(services);
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void InstallationScope_RestoresPreviousHostButDoesNotReplaceNewerInstallation()
+    {
+        TestRuntimeRenderingHostServices original = new();
+        TestRuntimeRenderingHostServices scoped = new();
+        TestRuntimeRenderingHostServices replacement = new();
+        RuntimeRenderingHostServices.Current = original;
+
+        IDisposable installation = RuntimeRenderingHostServices.Install(scoped);
+        RuntimeRenderingHostServices.Current.ShouldBeSameAs(scoped);
+
+        RuntimeRenderingHostServices.Current = replacement;
+        installation.Dispose();
+
+        RuntimeRenderingHostServices.Current.ShouldBeSameAs(replacement);
+
+        using (RuntimeRenderingHostServices.Install(scoped))
+            RuntimeRenderingHostServices.Current.ShouldBeSameAs(scoped);
+
+        RuntimeRenderingHostServices.Current.ShouldBeSameAs(replacement);
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void Reset_ProvidesOptionalNoOpsAndRejectsRequiredCapabilities()
+    {
+        RuntimeRenderingHostServices.Reset();
+
+        RuntimeRenderingHostServices.Profiling.StartProfileScope("test").ShouldBeNull();
+        Should.NotThrow(() => RuntimeRenderingHostServices.Statistics.BeginRenderStatsFrame());
+        Should.NotThrow(() => RuntimeRenderingHostServices.DebugDrawing.RenderDebugShapes(depthTested: false));
+        RuntimeRenderingHostServices.Settings.ShouldNotBeNull();
+        RuntimeRenderingHostServices.FrameTiming.ShouldNotBeNull();
+
+        InvalidOperationException scheduling = Should.Throw<InvalidOperationException>(
+            () => _ = RuntimeRenderingHostServices.Scheduling);
+        scheduling.Message.ShouldContain("render-thread scheduling");
+        scheduling.Message.ShouldContain("no host is installed");
+
+        Should.Throw<InvalidOperationException>(() => _ = RuntimeRenderingHostServices.Assets);
+        Should.Throw<InvalidOperationException>(() => _ = RuntimeRenderingHostServices.Factories);
+        Should.Throw<InvalidOperationException>(() => _ = RuntimeRenderingHostServices.Presentation);
+        Should.Throw<InvalidOperationException>(() => _ = RuntimeRenderingHostServices.BackendInterop);
+    }
+
+    [Test]
     public void BlendshapePrecombineSettings_UseRuntimeRenderingHostServices()
     {
         TestRuntimeRenderingHostServices services = new()
@@ -480,10 +547,18 @@ public sealed class RuntimeRenderingHostServicesTests
         public Vector3 DefaultLuminance => Vector3.One;
         public long ElapsedTicks => 0L;
         public float ElapsedTime => 0.0f;
+        public bool IsAppThread => true;
+        public bool IsStartingUp => false;
         public double UpdateDeltaSeconds => 0.0;
+        public double SmoothedUpdateDeltaSeconds => 0.0;
         public long LastUpdateTimestampTicks => 0L;
         public double RenderDeltaSeconds => 0.0;
         public long LastRenderTimestampTicks => 0L;
+        public string DefaultFontFolder => "Fonts";
+        public string DefaultFontFileName => "Default.ttf";
+        public bool RenderMesh2DBounds => false;
+        public bool RenderUITransformCoordinate => false;
+        public ColorF4 Bounds2DColor => ColorF4.White;
         public long TrackedVramBytes => 0L;
         public long TrackedVramBudgetBytes => long.MaxValue;
         public bool EnableGpuIndirectDebugLogging => false;
@@ -636,6 +711,50 @@ public sealed class RuntimeRenderingHostServicesTests
         {
         }
 
+        public string EngineAssetsPath => string.Empty;
+        public string GameAssetsPath => string.Empty;
+        public string? GameCachePath => null;
+
+        public string ResolveEngineAssetPath(params string[] relativePathFolders)
+            => Path.Combine(relativePathFolders);
+
+        public object? GetOrCreateThirdPartyImportOptions(string sourcePath, Type assetType)
+            => null;
+
+        public TAsset? LoadAsset<TAsset>(string filePath, JobPriority priority, bool bypassJobThread)
+            where TAsset : XRAsset, new()
+            => null;
+
+        public bool TryResolveThirdPartyCachePath(
+            string filePath,
+            Type assetType,
+            string? cacheVariantKey,
+            out string cachePath)
+        {
+            cachePath = string.Empty;
+            return false;
+        }
+
+        public TAsset? LoadThirdPartyVariantWithCache<TAsset>(
+            string filePath,
+            object? importOptions,
+            string cacheVariantKey,
+            JobPriority priority,
+            bool bypassJobThread)
+            where TAsset : XRAsset, new()
+            => null;
+
+        public void EvictAsset(XRAsset asset, string resolvedPath)
+        {
+        }
+
+        public Task<TAsset> LoadEngineAssetAsync<TAsset>(
+            JobPriority priority,
+            bool bypassJobThread,
+            params string[] relativePathFolders)
+            where TAsset : XRAsset, new()
+            => Task.FromException<TAsset>(new InvalidOperationException("Asset loading is not configured for this test host."));
+
         public void RecordRenderResourceChurn(string resourceKind, string resourceName, string eventName, string? reason = null)
         {
         }
@@ -688,6 +807,30 @@ public sealed class RuntimeRenderingHostServicesTests
 
         public void UnsubscribeViewportPostCollectVisible(Action postCollectVisible)
             => ViewportPostCollectUnsubscribeCount++;
+
+        public void SubscribeUpdateFrame(Action callback)
+        {
+        }
+
+        public void UnsubscribeUpdateFrame(Action callback)
+        {
+        }
+
+        public void SubscribePostUpdateFrame(Action callback)
+        {
+        }
+
+        public void UnsubscribePostUpdateFrame(Action callback)
+        {
+        }
+
+        public void SubscribeRenderFrame(Action callback)
+        {
+        }
+
+        public void UnsubscribeRenderFrame(Action callback)
+        {
+        }
 
         public void SubscribeRenderingSettingsChanged(Action callback)
         {

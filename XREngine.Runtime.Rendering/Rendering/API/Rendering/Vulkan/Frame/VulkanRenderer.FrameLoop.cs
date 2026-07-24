@@ -284,13 +284,13 @@ namespace XREngine.Rendering.Vulkan
             long elapsedTicks)
         {
             double cpuMs = elapsedTicks <= 0L ? 0.0 : elapsedTicks * 1000.0 / Stopwatch.Frequency;
-            IRuntimeRenderingHostServices services = RuntimeRenderingHostServices.Current;
-            EVrOutputViewKind viewKind = services.IsInVR && services.VrMirrorMode != EVrMirrorMode.FullIndependentRender
+            IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
+            EVrOutputViewKind viewKind = presentation.IsInVR && presentation.VrMirrorMode != EVrMirrorMode.FullIndependentRender
                 ? EVrOutputViewKind.CyclopeanDesktop
                 : EVrOutputViewKind.DesktopEditor;
-            bool mirror = services.IsInVR &&
+            bool mirror = presentation.IsInVR &&
                 viewKind == EVrOutputViewKind.CyclopeanDesktop &&
-                services.VrMirrorMode is EVrMirrorMode.BlitSubmittedEye or EVrMirrorMode.CyclopeanReconstruct;
+                presentation.VrMirrorMode is EVrMirrorMode.BlitSubmittedEye or EVrMirrorMode.CyclopeanReconstruct;
             var pacing = FrameOutputPacingDecision.Due(viewKind, outputKind, RuntimeEngine.Rendering.State.RenderFrameId);
             var telemetry = new FrameOutputTelemetry(
                 outputKind,
@@ -304,14 +304,14 @@ namespace XREngine.Rendering.Vulkan
                 false,
                 mirror,
                 false,
-                viewKind == EVrOutputViewKind.CyclopeanDesktop && services.VrMirrorMode != EVrMirrorMode.FullIndependentRender,
+                viewKind == EVrOutputViewKind.CyclopeanDesktop && presentation.VrMirrorMode != EVrMirrorMode.FullIndependentRender,
                 commandCount,
                 0,
                 0,
                 0,
                 cpuMs,
                 0.0);
-            services.RecordRenderFrameOutput(telemetry);
+            presentation.RecordRenderFrameOutput(telemetry);
         }
 
         private void WaitCurrentFrameSlotAndDrainRetiredResources()
@@ -846,7 +846,7 @@ namespace XREngine.Rendering.Vulkan
 
                     // 1. Wait for the previous submission associated with this in-flight slot.
                     long stageStartTimestamp = Stopwatch.GetTimestamp();
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.WaitFrameSlot"))
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.FrameLifecycle.WaitFrameSlot"))
                     {
                         ulong slotWaitValue = _frameSlotTimelineValues![currentFrame];
                         if (interactiveResize && !HasTimelineValueCompleted(_graphicsTimelineSemaphore, slotWaitValue))
@@ -864,7 +864,7 @@ namespace XREngine.Rendering.Vulkan
                     // Now that the GPU has finished all work for this frame slot, destroy
                     // resources that were retired during its previous recording.
                     stageStartTimestamp = Stopwatch.GetTimestamp();
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.DrainRetiredResources"))
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.FrameLifecycle.DrainRetiredResources"))
                     {
                         DrainInvalidatedCommandBufferRecordings();
                         DrainRetiredSwapchainGenerations();
@@ -904,7 +904,7 @@ namespace XREngine.Rendering.Vulkan
                     ulong acquireTimeoutNanoseconds = interactiveResize
                         ? InteractiveResizeAcquireTimeoutNanoseconds
                         : BlockingAcquireTimeoutNanoseconds;
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.AcquireNextImage"))
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.FrameLifecycle.AcquireNextImage"))
                     {
                         if (_streamlineFrameGenerationSwapchainActive)
                         {
@@ -1040,7 +1040,7 @@ namespace XREngine.Rendering.Vulkan
                         ulong abortBridgeSignalValue = Math.Max(_graphicsTimelineValue + 1, _acquireTimelineValue + 1);
                         long abortBridgeStartTimestamp = Stopwatch.GetTimestamp();
                         Result abortBridgeResult;
-                        using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.AcquireAbortBridgeSubmit"))
+                        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.FrameLifecycle.AcquireAbortBridgeSubmit"))
                         {
                             abortBridgeResult = SubmitAcquireSemaphoreBridge(acquireSemaphore, abortBridgeSignalValue);
                         }
@@ -1298,7 +1298,7 @@ namespace XREngine.Rendering.Vulkan
                             ulong abortSignalValue = Math.Max(_graphicsTimelineValue + 1, _acquireTimelineValue + 1);
                             long abortBridgeStartTimestamp = Stopwatch.GetTimestamp();
                             Result abortBridgeResult;
-                            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.DirtyAbortPresentSubmit"))
+                            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.FrameLifecycle.DirtyAbortPresentSubmit"))
                             {
                                 abortBridgeResult = SubmitAcquireSemaphoreBridge(
                                     acquireSemaphore,
@@ -1338,7 +1338,7 @@ namespace XREngine.Rendering.Vulkan
                             if (abortCommandBuffer.Handle != 0)
                                 DeferSecondaryCommandBufferFree(imageIndex, abortCommandPool, abortCommandBuffer);
 
-                            RuntimeRenderingHostServices.Current.MarkRenderFrameReadyForCollect(XRWindow);
+                            RuntimeRenderingHostServices.Scheduling.MarkRenderFrameReadyForCollect(XRWindow);
 
                             Semaphore skippedFramePresentSemaphore = presentSemaphore;
                             uint skippedFrameImageIndex = imageIndex;
@@ -1354,7 +1354,7 @@ namespace XREngine.Rendering.Vulkan
                             };
 
                             long presentStartTimestamp = Stopwatch.GetTimestamp();
-                            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.DirtyAbortQueuePresent"))
+                            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.FrameLifecycle.DirtyAbortQueuePresent"))
                             {
                                 // A rejected frame has no current DLSS-G tags or constants. Disable
                                 // generation for this fallback present; the next successfully recorded
@@ -1464,7 +1464,7 @@ namespace XREngine.Rendering.Vulkan
                     }
 
                     stageStartTimestamp = Stopwatch.GetTimestamp();
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.WaitSwapchainImage"))
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.FrameLifecycle.WaitSwapchainImage"))
                     {
                         if (_swapchainImageTimelineValues is not null && imageIndex < _swapchainImageTimelineValues.Length)
                             WaitForTimelineValue(_graphicsTimelineSemaphore, _swapchainImageTimelineValues[imageIndex]);
@@ -1472,7 +1472,7 @@ namespace XREngine.Rendering.Vulkan
                     waitSwapchainImageTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
                     stageStartTimestamp = Stopwatch.GetTimestamp();
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.SampleTimingQueries"))
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.FrameLifecycle.SampleTimingQueries"))
                     {
                         SampleFrameTimingQueries(unchecked((int)Math.Min(imageIndex, int.MaxValue)));
                     }
@@ -1480,7 +1480,7 @@ namespace XREngine.Rendering.Vulkan
 
                     // 4. Reset per-frame dynamic uniform ring buffer for this image.
                     stageStartTimestamp = Stopwatch.GetTimestamp();
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.ResetDynamicUniformRing"))
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.FrameLifecycle.ResetDynamicUniformRing"))
                     {
                         ResetDynamicUniformRingBuffer(imageIndex);
                     }
@@ -1492,7 +1492,7 @@ namespace XREngine.Rendering.Vulkan
                     ImGuiFrameSnapshot? imguiOverlaySnapshot = null;
                     bool hasPendingImGuiOverlay = false;
                     stageStartTimestamp = Stopwatch.GetTimestamp();
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.SnapshotImGuiOverlay"))
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.FrameLifecycle.SnapshotImGuiOverlay"))
                     {
                         bool canRecordImGuiOverlay = CanRecordImGuiOverlayCommandBuffer(imageIndex);
                         if (canRecordImGuiOverlay)
@@ -1514,7 +1514,7 @@ namespace XREngine.Rendering.Vulkan
                     long sceneCommandBufferDirtyGeneration;
                     int sceneSwapchainWriteCount;
                     stageStartTimestamp = Stopwatch.GetTimestamp();
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.RecordCommandBuffer"))
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.FrameLifecycle.RecordCommandBuffer"))
                     {
                         long recordAllocationStart = GC.GetAllocatedBytesForCurrentThread();
                         string recordingDeferredReason = string.Empty;
@@ -1626,7 +1626,7 @@ namespace XREngine.Rendering.Vulkan
                     CommandBuffer dynamicUiBatchTextOverlayCommandBuffer = default;
                     bool hasDynamicUiBatchTextOverlayCommandBuffer = false;
                     stageStartTimestamp = Stopwatch.GetTimestamp();
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.RecordImGuiOverlay"))
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.FrameLifecycle.RecordImGuiOverlay"))
                     {
                         try
                         {
@@ -1691,7 +1691,7 @@ namespace XREngine.Rendering.Vulkan
                         dynamicUiBatchTextOverlayOpCount > 0)
                     {
                         stageStartTimestamp = Stopwatch.GetTimestamp();
-                        using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.RecordDynamicUiTextOverlay"))
+                        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.FrameLifecycle.RecordDynamicUiTextOverlay"))
                         {
                             try
                             {
@@ -1851,7 +1851,7 @@ namespace XREngine.Rendering.Vulkan
 
                     stageStartTimestamp = Stopwatch.GetTimestamp();
                     Result submitResult;
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.Submit"))
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.FrameLifecycle.Submit"))
                     {
                         using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.Submission);
                         MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker.RenderSubmitStart);
@@ -1927,11 +1927,11 @@ namespace XREngine.Rendering.Vulkan
 
                     // QueuePresent can block on desktop swapchain pacing. The submitted commands have
                     // consumed this frame's render buffers, so release CollectVisible before that wait.
-                    RuntimeRenderingHostServices.Current.MarkRenderFrameReadyForCollect(XRWindow);
+                    RuntimeRenderingHostServices.Scheduling.MarkRenderFrameReadyForCollect(XRWindow);
 
                     // Trim idle staging buffers so the pool does not grow unbounded.
                     stageStartTimestamp = Stopwatch.GetTimestamp();
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.TrimStaging"))
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.FrameLifecycle.TrimStaging"))
                     {
                         _stagingManager.Trim(this);
                     }
@@ -1962,7 +1962,7 @@ namespace XREngine.Rendering.Vulkan
                     };
 
                     stageStartTimestamp = Stopwatch.GetTimestamp();
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.QueuePresent"))
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.FrameLifecycle.QueuePresent"))
                     {
                         DrainStreamlineFrameGenerationDisableBeforePresent();
                         MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker.PresentStart);

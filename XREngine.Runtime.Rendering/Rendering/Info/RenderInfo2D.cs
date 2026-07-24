@@ -162,7 +162,7 @@ namespace XREngine.Rendering.Info
             if (cullingVolume is null)
                 return;
 
-            RuntimeRenderingHostServices.Current.RenderDebugRect2D(cullingVolume.Value, false, ColorF4.White);
+            RuntimeRenderingHostServices.DebugDrawing.RenderDebugRect2D(cullingVolume.Value, false, ColorF4.White);
         }
     }
 }

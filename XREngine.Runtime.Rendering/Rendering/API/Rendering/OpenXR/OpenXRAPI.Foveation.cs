@@ -11,7 +11,7 @@ public unsafe partial class OpenXRAPI
 {
     private bool TryResolveOpenXrFoveationForCurrentBackend(out VrFoveationResolution resolution)
     {
-        ERenderLibrary backend = Window?.Renderer is VulkanRenderer
+        ERenderLibrary backend = Window?.Renderer.BackendId == RendererBackendId.Vulkan
             ? ERenderLibrary.Vulkan
             : ERenderLibrary.OpenGL;
 
@@ -20,7 +20,7 @@ public unsafe partial class OpenXRAPI
 
     private bool TryResolveOpenXrFoveation(ERenderLibrary backend, out VrFoveationResolution resolution)
     {
-        IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
+        IRuntimeRenderPresentationServices hostServices = RuntimeRenderingHostServices.Presentation;
         VrFoveationBackendCapabilities capabilities = BuildOpenXrFoveationBackendCapabilities(backend);
         resolution = VrFoveationResolver.Resolve(
             backend,
@@ -68,7 +68,7 @@ public unsafe partial class OpenXRAPI
     private ViewFoveationContext CreateOpenXrEyeFoveationContext(uint viewIndex)
     {
         if (!TryResolveOpenXrFoveationForCurrentBackend(out VrFoveationResolution resolution))
-            return ViewFoveationContext.Off(RuntimeRenderingHostServices.Current.VrFoveationQualityPreset);
+            return ViewFoveationContext.Off(RuntimeRenderingHostServices.Presentation.VrFoveationQualityPreset);
 
         if (resolution.EffectiveMode == EVrFoveationMode.Off ||
             resolution.CapabilityPath == EVrFoveationCapabilityPath.None)
@@ -76,7 +76,7 @@ public unsafe partial class OpenXRAPI
             return ViewFoveationContext.Off(resolution.QualityPreset);
         }
 
-        Vector2 renderTargetCenter = RuntimeRenderingHostServices.Current.VrFoveationCenterUv;
+        Vector2 renderTargetCenter = RuntimeRenderingHostServices.Presentation.VrFoveationCenterUv;
         EVrFoveationGazeSource gazeSource = resolution.EffectiveMode switch
         {
             EVrFoveationMode.EyeTracked => EVrFoveationGazeSource.EyeTracked,

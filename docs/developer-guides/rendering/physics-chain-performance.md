@@ -161,7 +161,7 @@ A failed GPU status never indicates that a CPU fallback was used.
 ## Key Files
 
 - `XRENGINE/Scene/Components/Physics/PhysicsChainComponent.cs`
-- `XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs`
+- `XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs`
 - `XREngine.Runtime.Rendering/Objects/XRDataBuffer.cs`
 - `XREngine.UnitTests/Physics/PhysicsChainComponentTests.cs`
 - `XREngine.UnitTests/Physics/GPUPhysicsChainDispatcherTests.cs`

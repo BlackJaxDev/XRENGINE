@@ -165,100 +165,11 @@ public sealed class UIMaterialComponentEditor : IXRComponentEditor
             return false;
         }
 
-        if (TryGetVulkanRenderer() is VulkanRenderer vkRenderer)
-        {
-            IntPtr textureId = EditorRenderThread.Invoke(
-                () => vkRenderer.RegisterImGuiTexture(texture),
-                "UIMaterialComponentEditor.RegisterVulkanPreviewTexture",
-                RenderThreadJobKind.TextureUpload);
-            if (textureId == IntPtr.Zero)
-            {
-                failureReason = "Texture not uploaded to GPU.";
-                return false;
-            }
-
-            handle = (nint)textureId;
-            return true;
-        }
-
-        var renderer = TryGetOpenGLRenderer();
-        if (renderer is null)
-        {
-            failureReason = "Preview requires OpenGL or Vulkan renderer.";
-            return false;
-        }
-
-        switch (texture)
-        {
-            case XRTexture2D tex2D:
-                return TryGetTextureHandle(
-                    EditorRenderThread.Invoke(
-                        () => renderer.GenericToAPI<GLTexture2D>(tex2D),
-                        "UIMaterialComponentEditor.ResolveOpenGLPreviewTexture2D",
-                        RenderThreadJobKind.TextureUpload),
-                    out handle,
-                    out failureReason);
-            case XRTextureCubeView cubeView when cubeView.View2D:
-                float extent = MathF.Max(1.0f, cubeView.ViewedTexture.Extent);
-                pixelSize = new Vector2(extent, extent);
-                displaySize = GetPreviewSize(pixelSize);
-                return TryGetTextureHandle(
-                    EditorRenderThread.Invoke(
-                        () => renderer.GenericToAPI<GLTextureView>(cubeView),
-                        "UIMaterialComponentEditor.ResolveOpenGLPreviewCubeView",
-                        RenderThreadJobKind.TextureUpload),
-                    out handle,
-                    out failureReason);
-            default:
-                failureReason = $"{texture.GetType().Name} preview not supported.";
-                return false;
-        }
-    }
-
-    private static bool TryGetTextureHandle(IGLTexture? glTexture, out nint handle, out string? failureReason)
-    {
-        handle = nint.Zero;
-        failureReason = null;
-
-        if (glTexture is null)
-        {
-            failureReason = "Texture not uploaded to GPU.";
-            return false;
-        }
-
-        uint bindingId = glTexture.BindingId;
-        if (bindingId == 0 || bindingId == OpenGLRenderer.GLObjectBase.InvalidBindingId)
-        {
-            failureReason = "Texture handle invalid.";
-            return false;
-        }
-
-        handle = (nint)bindingId;
-        return true;
-    }
-
-    private static OpenGLRenderer? TryGetOpenGLRenderer()
-    {
-        if (AbstractRenderer.Current is OpenGLRenderer current)
-            return current;
-
-        foreach (var window in Engine.Windows)
-            if (window.Renderer is OpenGLRenderer renderer)
-                return renderer;
-
-        return null;
-    }
-
-    private static VulkanRenderer? TryGetVulkanRenderer()
-    {
-        if (AbstractRenderer.Current is VulkanRenderer current)
-            return current;
-
-        foreach (var window in Engine.Windows)
-            if (window.Renderer is VulkanRenderer renderer)
-                return renderer;
-
-        return null;
+        return EditorTexturePreviewService.TryGetHandle(
+            texture,
+            out handle,
+            out _,
+            out failureReason);
     }
 
     private static Vector2 GetPreviewSize(Vector2 pixelSize)

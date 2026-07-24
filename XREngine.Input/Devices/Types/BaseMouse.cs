@@ -1,25 +1,16 @@
-﻿using System.Numerics;
+using System.Numerics;
 
 namespace XREngine.Input.Devices
 {
     [Serializable]
     public abstract class BaseMouse(int index) : InputDevice(index)
     {
-        /// <summary>
-        /// If set, the mouse cursor will jump to the other side of the bounds.
-        /// </summary>
-        //public Rectangle? WrapBounds
-        //{
-        //    get => _cursor.WrapBounds;
-        //    set => _cursor.WrapBounds = value;
-        //}
-
         protected CursorManager _cursor = new();
         protected ScrollWheelManager _wheel = new();
 
         public abstract Vector2 CursorPosition { get; set; }
 
-        protected override int GetAxisCount() => 0; 
+        protected override int GetAxisCount() => 0;
         protected override int GetButtonCount() => 3;
         public override EInputDeviceType DeviceType => EInputDeviceType.Mouse;
 
@@ -28,6 +19,7 @@ namespace XREngine.Input.Devices
             int index = (int)button;
             return _buttonStates[index] ??= MakeMouseButtonManager(button, index);
         }
+
         public void RegisterButtonPressed(EMouseButton button, DelButtonState func, bool unregister)
         {
             if (unregister)
@@ -35,6 +27,7 @@ namespace XREngine.Input.Devices
             else
                 FindOrCacheButton(button)?.RegisterPressedState(func, false);
         }
+
         public void RegisterButtonEvent(EMouseButton button, EButtonInputType type, Action func, bool unregister)
             => RegisterButtonEvent(unregister ? _buttonStates[(int)button] : FindOrCacheButton(button), type, func, unregister);
         public void RegisterScroll(DelMouseScroll func, bool unregister)
@@ -42,10 +35,7 @@ namespace XREngine.Input.Devices
         public void RegisterMouseMove(DelCursorUpdate func, EMouseMoveType type, bool unregister)
             => _cursor.Register(func, type, unregister);
 
-        /// <summary>
-        /// Clears any buffered scroll input without dispatching it.
-        /// Call this when UI has captured input to prevent scroll accumulation.
-        /// </summary>
+        /// <summary>Clears buffered scroll input without dispatching it.</summary>
         public virtual void ClearScrollBuffer() { }
 
         public ButtonManager? LeftClick => _buttonStates[(int)EMouseButton.LeftClick];
@@ -62,11 +52,5 @@ namespace XREngine.Input.Devices
             => _wheel.Tick(delta);
         protected void TickMouseButtonState(EMouseButton button, bool isPressed, float delta)
             => _buttonStates[(int)button]?.Tick(isPressed, delta);
-    }
-    public enum EMouseButton
-    {
-        LeftClick   = 0,
-        RightClick  = 1,
-        MiddleClick = 2,
     }
 }

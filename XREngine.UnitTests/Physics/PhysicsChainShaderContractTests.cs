@@ -49,8 +49,8 @@ public sealed class PhysicsChainShaderContractTests
     public void PhysicsChainDispatchers_SetParticleAndTreeCountUniformsBeforeDispatch()
     {
         string componentSource = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent.GPU.cs");
-        string dispatcherSource = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs")
-            + ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.Kernels.cs");
+        string dispatcherSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs")
+            + ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.Kernels.cs");
 
         componentSource.ShouldNotContain(".DispatchCompute(");
         dispatcherSource.ShouldContain("program.Uniform(\"ParticleCount\", TotalParticleCount);");
@@ -135,7 +135,7 @@ public sealed class PhysicsChainShaderContractTests
     [Test]
     public void Dispatcher_PublishesUnsupportedBackendStatusBeforeReturning()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
 
         int evaluateIndex = source.IndexOf("IPhysicsChainComputeBackend? backend = ResolveComputeBackend(", StringComparison.Ordinal);
         int gateIndex = source.IndexOf("if (backend is null)", evaluateIndex, StringComparison.Ordinal);
@@ -152,8 +152,8 @@ public sealed class PhysicsChainShaderContractTests
     [Test]
     public void Dispatcher_ConfinesOpenGlOperationsToBackendAdapter()
     {
-        string dispatcher = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
-        string adapter = ReadWorkspaceFile("XRENGINE/Rendering/Compute/OpenGLPhysicsChainComputeBackend.cs");
+        string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
+        string adapter = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/OpenGLPhysicsChainComputeBackend.cs");
 
         dispatcher.ShouldNotContain("OpenGLRenderer");
         dispatcher.ShouldNotContain("RawGL");
@@ -170,7 +170,7 @@ public sealed class PhysicsChainShaderContractTests
     [Test]
     public void Dispatcher_PingPongsCurrentAndPreviousGlobalPaletteAtlases()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs").Replace("\r\n", "\n");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs").Replace("\r\n", "\n");
 
         source.ShouldContain("_gpuDrivenPreviousSkinPaletteBuffer");
         int swapIndex = source.IndexOf(
@@ -192,9 +192,9 @@ public sealed class PhysicsChainShaderContractTests
     {
         string component = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent.GPU.cs")
             .Replace("\r\n", "\n");
-        string dispatcher = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs")
+        string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs")
             .Replace("\r\n", "\n");
-        string palette = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.Palette.cs")
+        string palette = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.Palette.cs")
             .Replace("\r\n", "\n");
 
         component.ShouldNotContain("if (!state.DrivesCompleteBonePalette)\n                continue;");

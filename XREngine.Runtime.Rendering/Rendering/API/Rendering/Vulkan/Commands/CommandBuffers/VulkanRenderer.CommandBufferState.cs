@@ -79,7 +79,7 @@ namespace XREngine.Rendering.Vulkan
         private bool VulkanPrimaryCommandBufferReuseEnabled =>
             VulkanPrimaryCommandBufferReuseSafe &&
             (VulkanPrimaryCommandBufferReuseOverride ??
-             RuntimeRenderingHostServices.Current.EnableVulkanPrimaryCommandBufferReuse);
+             RuntimeRenderingHostServices.Settings.EnableVulkanPrimaryCommandBufferReuse);
         private static bool VulkanFrameDiagnosticsTraceEnabled =>
             CommandRecordingDiagnosticsEnabled ||
             XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||

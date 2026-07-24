@@ -179,7 +179,7 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
         void ReportCanceled(string phase)
         {
             TextureRuntimeDiagnostics.LogTransitionCanceled(
-                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                 target.Name,
                 source.SourcePath,
                 maxResidentDimension,
@@ -213,7 +213,7 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
                     if (TextureStreamingResidentDataReuseCache.TryGet(source, maxResidentDimension, includeMipChain, out residentData))
                     {
                         TextureRuntimeDiagnostics.LogResidentDataReused(
-                            RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                            RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                             source.SourcePath,
                             maxResidentDimension,
                             includeMipChain,
@@ -282,12 +282,12 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
                     return true;
                 }
 
-                if (RuntimeRenderingHostServices.Current.IsRenderThread && TryEnterRenderThreadScheduleBudget())
+                if (RuntimeRenderingHostServices.FrameTiming.IsRenderThread && TryEnterRenderThreadScheduleBudget())
                     ScheduleUploadOnRenderThread();
                 else
                 {
                     VulkanTextureUploadService.RecordResidentDataPackageQueued();
-                    RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(
+                    RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
                         ScheduleUploadBudgeted,
                         $"TextureStreaming.ScheduleVulkanUpload[{target.Name}]",
                         RenderThreadJobKind.TextureUpload);
@@ -312,7 +312,7 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
             yield return loadTask;
         }
 
-        return RuntimeRenderingHostServices.Current.ScheduleEnumeratorJob(
+        return RuntimeRenderingHostServices.Assets.ScheduleEnumeratorJob(
             Routine,
             priority,
             cancellationToken: CancellationToken.None);
@@ -339,13 +339,13 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
             "[Vulkan Compat] Imported texture streaming for '{0}' is using dense resident mip uploads. Preferred Vulkan path is the synchronized VulkanTextureUploadService; true Vk sparse image page binding is not implemented yet.",
             target.Name ?? target.GetDescribingName());
 
-        if (RuntimeRenderingHostServices.Current.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan)
+        if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan)
         {
             onError?.Invoke(new InvalidOperationException("Vulkan dense texture residency backend was selected while the active renderer is not Vulkan."));
             return;
         }
 
-        if ((RuntimeRenderingHostServices.Current.CurrentRenderer ?? AbstractRenderer.Current) is not VulkanRenderer renderer)
+        if ((RuntimeRenderingHostServices.FrameTiming.CurrentRenderer ?? AbstractRenderer.Current) is not VulkanRenderer renderer)
         {
             onError?.Invoke(new InvalidOperationException("Vulkan imported texture upload service could not resolve the active Vulkan renderer."));
             return;
@@ -413,7 +413,7 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
 
     private static bool TryEnterRenderThreadScheduleBudget()
     {
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+        long currentFrame = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
         long previousFrame = Interlocked.Exchange(ref s_scheduleFrameTicks, currentFrame);
         if (previousFrame != currentFrame)
             Interlocked.Exchange(ref s_scheduleCountThisFrame, 0);
@@ -434,7 +434,7 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
         if (bytes <= 0)
             return;
 
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+        long currentFrame = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
         long previousFrame = Interlocked.Exchange(ref s_uploadBytesFrameTicks, currentFrame);
         if (previousFrame != currentFrame)
             Interlocked.Exchange(ref s_uploadBytesScheduledThisFrame, 0L);
@@ -444,7 +444,7 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
 
     private static long GetUploadBytesScheduledThisFrame()
     {
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+        long currentFrame = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
         long previousFrame = Volatile.Read(ref s_uploadBytesFrameTicks);
         if (previousFrame != currentFrame)
             return 0L;

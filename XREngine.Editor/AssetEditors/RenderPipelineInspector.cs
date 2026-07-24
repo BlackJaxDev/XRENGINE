@@ -611,25 +611,6 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         previewState.HasPendingRequest = true;
         previewState.Failure = null;
 
-        if (AbstractRenderer.Current is OpenGLRenderer glRenderer)
-        {
-            if (!TryRequestOpenGlTextureMipReadback(glRenderer, texture, mipLevel, 0,
-                (success, rgbaFloats, width, height, failure) =>
-                {
-                    previewState.HasPendingRequest = false;
-                    previewState.Failure = success ? null : failure;
-                    previewState.RgbaFloats = success ? rgbaFloats : null;
-                    previewState.Width = success ? width : 0;
-                    previewState.Height = success ? height : 0;
-                }))
-            {
-                previewState.HasPendingRequest = false;
-                previewState.Failure = "Async readback request failed to start.";
-            }
-
-            return;
-        }
-
         void FallbackReadback()
         {
             string failure = string.Empty;
@@ -656,105 +637,6 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
 
         if (!Engine.InvokeOnMainThread(FallbackReadback, "RenderPipelineInspector.AutoExposureReadback", true))
             FallbackReadback();
-    }
-
-    private static unsafe bool TryRequestOpenGlTextureMipReadback(
-        OpenGLRenderer renderer,
-        XRTexture texture,
-        int mipLevel,
-        int layerIndex,
-        Action<bool, float[]?, int, int, string> callback)
-    {
-        if (!Engine.IsRenderThread)
-            return false;
-
-        if (texture is XRTexture2D tex2D && tex2D.MultiSample)
-        {
-            callback(false, null, 0, 0, "Multisample textures do not support async mip readback.");
-            return true;
-        }
-
-        if (texture is XRTexture2DArray tex2DArray && tex2DArray.MultiSample)
-        {
-            callback(false, null, 0, 0, "Multisample textures do not support async mip readback.");
-            return true;
-        }
-
-        AbstractRenderAPIObject? apiRenderObject = EditorRenderThread.Invoke(
-            () => renderer.GetOrCreateAPIRenderObject(texture),
-            "RenderPipelineInspector.ResolveOpenGLReadbackTexture",
-            RenderThreadJobKind.Readback);
-        if (apiRenderObject is not OpenGLRenderer.GLObjectBase apiObject)
-        {
-            callback(false, null, 0, 0, "Texture not uploaded.");
-            return true;
-        }
-
-        uint binding = apiObject.BindingId;
-        if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
-        {
-            callback(false, null, 0, 0, "Texture not ready.");
-            return true;
-        }
-
-        int baseWidth;
-        int baseHeight;
-        int zOffset = 0;
-        int zDepth = 1;
-        switch (texture)
-        {
-            case XRTexture2D t2d:
-                baseWidth = (int)t2d.Width;
-                baseHeight = (int)t2d.Height;
-                break;
-            case XRTexture2DArray t2da:
-                baseWidth = (int)t2da.Width;
-                baseHeight = (int)t2da.Height;
-                zOffset = Math.Clamp(layerIndex, 0, Math.Max(0, (int)t2da.Depth - 1));
-                break;
-            default:
-                callback(false, null, 0, 0, "Async preview currently supports 2D and 2D array textures only.");
-                return true;
-        }
-
-        int width = Math.Max(1, baseWidth >> Math.Max(0, mipLevel));
-        int height = Math.Max(1, baseHeight >> Math.Max(0, mipLevel));
-        uint byteSize = (uint)(width * height * 4 * sizeof(float));
-
-        var gl = renderer.RawGL;
-        uint pbo = gl.GenBuffer();
-        gl.BindBuffer(GLEnum.PixelPackBuffer, pbo);
-        gl.BufferData(GLEnum.PixelPackBuffer, byteSize, (void*)0, GLEnum.StreamRead);
-        gl.GetTextureSubImage(binding, mipLevel, 0, 0, zOffset, (uint)width, (uint)height, (uint)zDepth,
-            GLEnum.Rgba, GLEnum.Float, byteSize, (void*)0);
-        IntPtr sync = gl.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
-        gl.BindBuffer(GLEnum.PixelPackBuffer, 0);
-
-        bool FenceCheck()
-        {
-            var result = gl.ClientWaitSync(sync, 0u, 0u);
-            if (!(result == GLEnum.AlreadySignaled || result == GLEnum.ConditionSatisfied))
-                return false;
-
-            byte[] byteData = new byte[byteSize];
-            gl.BindBuffer(GLEnum.PixelPackBuffer, pbo);
-            unsafe
-            {
-                fixed (byte* ptr = byteData)
-                    gl.GetBufferSubData(GLEnum.PixelPackBuffer, IntPtr.Zero, byteSize, ptr);
-            }
-            gl.BindBuffer(GLEnum.PixelPackBuffer, 0);
-            gl.DeleteSync(sync);
-            gl.DeleteBuffer(pbo);
-
-            float[] rgbaFloats = new float[byteData.Length / sizeof(float)];
-            global::System.Buffer.BlockCopy(byteData, 0, rgbaFloats, 0, byteData.Length);
-            callback(true, rgbaFloats, width, height, string.Empty);
-            return true;
-        }
-
-        Engine.AddMainThreadCoroutine(FenceCheck);
-        return true;
     }
 
     private static bool TryGetColorGradingSettings(XRRenderPipelineInstance instance, out ColorGradingSettings? grading)
@@ -1814,60 +1696,23 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         float scale = largest > 0f ? MathF.Min(1f, maxEdge / largest) : 1f;
         displaySize = new Vector2(pixelSize.X * scale, pixelSize.Y * scale);
 
-        if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
-        {
-            IntPtr textureId = EditorRenderThread.Invoke(
-                () => vkRenderer.RegisterImGuiTexture(previewTexture),
-                "RenderPipelineInspector.RegisterVulkanPreviewTexture",
-                RenderThreadJobKind.TextureUpload);
-            if (textureId == IntPtr.Zero)
-            {
-                failure = "Texture not uploaded";
-                return false;
-            }
-
-            handle = (nint)textureId;
-            return true;
-        }
-
-        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
-        {
-            failure = "Preview requires OpenGL or Vulkan renderer";
-            return false;
-        }
-
-        previewTexture = GetIsolatedOpenGlPreviewTexture(previewTexture, mipLevel, layerIndex, channel);
-
-        var apiRenderObject = EditorRenderThread.Invoke(
-            () => renderer.GetOrCreateAPIRenderObject(previewTexture),
-            "RenderPipelineInspector.ResolveOpenGLPreviewTexture",
-            RenderThreadJobKind.TextureUpload);
-        if (apiRenderObject is not IGLTexture || apiRenderObject is not OpenGLRenderer.GLObjectBase apiObject)
-        {
-            failure = "Texture not uploaded";
-            return false;
-        }
-
-        uint binding = apiObject.BindingId;
-        if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
-        {
-            failure = "Texture not ready";
-            return false;
-        }
-
-        bool previewUsesView = previewTexture is XRTextureViewBase;
-        if (previewUsesView)
-        {
-            ApplyChannelSwizzle(renderer, binding, channel);
-            ApplyPreviewSamplingState(renderer, binding);
-        }
+        previewTexture = GetIsolatedPreviewTexture(previewTexture, mipLevel, layerIndex, channel);
+        var options = new RenderTexturePreviewOptions(
+            ToPreviewChannel(channel),
+            ForceBaseMipSampling: previewTexture is XRTextureViewBase);
         // Never modify GL state on raw (non-view) texture handles — swizzle/sampling
         // changes would leak into the live render pipeline.
-        handle = (nint)binding;
-        return true;
+        bool success = EditorTexturePreviewService.TryGetHandle(
+            previewTexture,
+            in options,
+            out handle,
+            out _,
+            out string? previewFailure);
+        failure = previewFailure ?? string.Empty;
+        return success;
     }
 
-    private static XRTexture GetIsolatedOpenGlPreviewTexture(XRTexture texture, int mipLevel, int layerIndex, TextureChannelView channel)
+    private static XRTexture GetIsolatedPreviewTexture(XRTexture texture, int mipLevel, int layerIndex, TextureChannelView channel)
     {
         switch (texture)
         {
@@ -1983,6 +1828,17 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             TextureChannelView.A => "Alpha",
             TextureChannelView.Luminance => "Luma",
             _ => "RGBA",
+        };
+
+    private static RenderTexturePreviewChannel ToPreviewChannel(TextureChannelView channel)
+        => channel switch
+        {
+            TextureChannelView.R => RenderTexturePreviewChannel.Red,
+            TextureChannelView.G => RenderTexturePreviewChannel.Green,
+            TextureChannelView.B => RenderTexturePreviewChannel.Blue,
+            TextureChannelView.A => RenderTexturePreviewChannel.Alpha,
+            TextureChannelView.Luminance => RenderTexturePreviewChannel.Luminance,
+            _ => RenderTexturePreviewChannel.Rgba,
         };
 
     private static int GetLayerCount(XRTexture texture)
@@ -2105,65 +1961,6 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
                 Shifted((uint)view.WidthHeightDepth.Y, mipLevel + (int)view.MinLevel)),
             _ => new Vector2(1f, 1f),
         };
-    }
-
-    private static void ApplyPreviewSamplingState(OpenGLRenderer renderer, uint binding)
-    {
-        // Texture views often have only 1 mip level; using a mipmap min filter makes them incomplete and they sample as black.
-        var gl = renderer.RawGL;
-
-        int linear = (int)GLEnum.Linear;
-        int baseLevel = 0;
-        int maxLevel = 0;
-        int clamp = (int)GLEnum.ClampToEdge;
-        int compareMode = (int)GLEnum.None;
-
-        gl.TextureParameterI(binding, GLEnum.TextureMinFilter, in linear);
-        gl.TextureParameterI(binding, GLEnum.TextureMagFilter, in linear);
-        gl.TextureParameterI(binding, GLEnum.TextureBaseLevel, in baseLevel);
-        gl.TextureParameterI(binding, GLEnum.TextureMaxLevel, in maxLevel);
-        gl.TextureParameterI(binding, GLEnum.TextureWrapS, in clamp);
-        gl.TextureParameterI(binding, GLEnum.TextureWrapT, in clamp);
-        gl.TextureParameterI(binding, GLEnum.TextureCompareMode, in compareMode);
-    }
-
-    private static void ApplyChannelSwizzle(OpenGLRenderer renderer, uint binding, TextureChannelView channel)
-    {
-        var gl = renderer.RawGL;
-
-        int r = (int)GLEnum.Red;
-        int g = (int)GLEnum.Green;
-        int b = (int)GLEnum.Blue;
-        int a = (int)GLEnum.Alpha;
-
-        switch (channel)
-        {
-            case TextureChannelView.R:
-                g = b = r;
-                a = (int)GLEnum.One;
-                break;
-            case TextureChannelView.G:
-                r = b = g;
-                a = (int)GLEnum.One;
-                break;
-            case TextureChannelView.B:
-                r = g = b;
-                a = (int)GLEnum.One;
-                break;
-            case TextureChannelView.A:
-                r = g = b = a;
-                a = (int)GLEnum.One;
-                break;
-            case TextureChannelView.Luminance:
-                r = g = b = (int)GLEnum.Red;
-                a = (int)GLEnum.One;
-                break;
-        }
-
-        gl.TextureParameterI(binding, GLEnum.TextureSwizzleR, in r);
-        gl.TextureParameterI(binding, GLEnum.TextureSwizzleG, in g);
-        gl.TextureParameterI(binding, GLEnum.TextureSwizzleB, in b);
-        gl.TextureParameterI(binding, GLEnum.TextureSwizzleA, in a);
     }
 
     #endregion

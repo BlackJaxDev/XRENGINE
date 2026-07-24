@@ -296,7 +296,7 @@ namespace XREngine.Rendering.Vulkan
             FrameOp[] textureUploadOps = DrainTextureUploadFrameOps();
             if (textureUploadOps.Length > 0)
             {
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordTextureUploads"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordCommandBuffer.RecordTextureUploads"))
                 {
                     if (!TryRecordTextureUploadCommandBuffer(
                             imageIndex,
@@ -378,7 +378,7 @@ namespace XREngine.Rendering.Vulkan
 
             CommandChainSchedule? commandChainSchedule = null;
             CommandChainLoweringStats commandChainStats = default;
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.CommandChainLowering"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordCommandBuffer.CommandChainLowering"))
             {
                 using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.PacketConstruction);
                 FrameOp[] scheduledDynamicUiBatchTextOps = preserveSwapchainForOverlay
@@ -448,7 +448,7 @@ namespace XREngine.Rendering.Vulkan
             CommandRecordingDependencyMismatch dependencyMismatch =
                 variant.RecordedDependencySignature.Compare(currentDependencySignature);
 
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.DirtyEvaluation"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordCommandBuffer.DirtyEvaluation"))
             {
                 if (!dirty && frameOpsRequireFreshPrimary)
                 {
@@ -605,7 +605,7 @@ namespace XREngine.Rendering.Vulkan
                     bool dynamicUiSecondaryReady = true;
                     if (!delayDynamicUiBatchTextOverlayRecording)
                     {
-                        using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordDynamicUiSecondary"))
+                        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordCommandBuffer.RecordDynamicUiSecondary"))
                         using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.SecondaryRecording))
                             dynamicUiSecondaryReady = RecordDynamicUiBatchTextSecondaryCommandBuffer(
                                 imageIndex,
@@ -752,7 +752,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (!delayDynamicUiBatchTextOverlayRecording)
                 {
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordDynamicUiSecondary"))
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordCommandBuffer.RecordDynamicUiSecondary"))
                     using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.SecondaryRecording))
                         recordedDynamicUiSecondaryReady = RecordDynamicUiBatchTextSecondaryCommandBuffer(
                             imageIndex,
@@ -765,7 +765,7 @@ namespace XREngine.Rendering.Vulkan
                     variant.DynamicUiSecondaryRecorded = false;
                 }
 
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordPrimary"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordCommandBuffer.RecordPrimary"))
                 {
                     using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.PrimaryRecording);
                     bool primaryRecorded = false;
@@ -1773,7 +1773,7 @@ namespace XREngine.Rendering.Vulkan
                 bool dynamicUiSecondaryReady = true;
                 if (!delayDynamicUiSecondaryRecording)
                 {
-                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.FastReuse.RecordDynamicUiSecondary"))
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordCommandBuffer.FastReuse.RecordDynamicUiSecondary"))
                     using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.SecondaryRecording))
                         dynamicUiSecondaryReady = RecordDynamicUiBatchTextSecondaryCommandBuffer(
                             imageIndex,
@@ -2348,7 +2348,7 @@ namespace XREngine.Rendering.Vulkan
 
             upload.MarkRecordStarted();
             TextureRuntimeDiagnostics.LogVulkanImportedTextureUploadLatency(
-                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                 request.TextureName,
                 request.SourcePath,
                 request.StreamingGeneration,
@@ -2612,7 +2612,7 @@ namespace XREngine.Rendering.Vulkan
             upload.MarkPublished();
             RetireTextureUploadStagingResources(upload);
             TextureRuntimeDiagnostics.LogVulkanImportedTextureUploadLatency(
-                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                 request.TextureName,
                 request.SourcePath,
                 request.StreamingGeneration,
@@ -2620,7 +2620,7 @@ namespace XREngine.Rendering.Vulkan
                 "uploadRecordToDescriptorPublication",
                 upload.RecordTimestamp == 0L ? 0.0 : TextureRuntimeDiagnostics.ElapsedMilliseconds(upload.RecordTimestamp));
             TextureRuntimeDiagnostics.LogVulkanImportedTextureUploadLatency(
-                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                 request.TextureName,
                 request.SourcePath,
                 request.StreamingGeneration,
@@ -3121,7 +3121,7 @@ namespace XREngine.Rendering.Vulkan
             }
             using VulkanMeshFrameDataManifestRecordingScope frameDataManifestScope = new(frameDataManifest);
 
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.ResetAndBegin"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.ResetAndBegin"))
             {
                 ReleaseDeferredSecondaryCommandBuffers(frameDataImageIndex);
                 ResetVulkanCommandBufferTracked(commandBuffer);
@@ -3169,7 +3169,7 @@ namespace XREngine.Rendering.Vulkan
             Dictionary<int, VulkanRenderGraphCompiler.SecondaryRecordingBucket>? secondaryBucketByStart = null;
             CommandChainKey[]? scheduledCommandChainKeysByOpIndex = null;
             Dictionary<CommandChainKey, CommandChain>? scheduledCommandChainCache = null;
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.SortAndSecondaryBuckets"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.SortAndSecondaryBuckets"))
             {
                 if (commandChainSchedule is null)
                 {
@@ -3234,7 +3234,7 @@ namespace XREngine.Rendering.Vulkan
             ImageLayout swapchainFinalLayout = initialSwapchainColorLayout;
 
             // Ensure swapchain resources are transitioned appropriately before any rendering.
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.FrameStartBarriers"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.FrameStartBarriers"))
             {
                 CmdBeginLabel(commandBuffer, "SwapchainBarriers");
                 if (swapchainTarget.IsValid)
@@ -3284,7 +3284,7 @@ namespace XREngine.Rendering.Vulkan
             Dictionary<int, int> swapchainWriterPassByPipeline = recordingScratch.SwapchainWriterPassByPipeline;
             Dictionary<int, int> swapchainWriterOpIndexByPipeline = recordingScratch.SwapchainWriterOpIndexByPipeline;
             Dictionary<int, string> pipelineNameByIdentity = recordingScratch.PipelineNameByIdentity;
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.ScratchAndUniformSlots"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.ScratchAndUniformSlots"))
             {
                 swapchainWritesByPipeline.Clear();
                 swapchainWriterLabelByPipeline.Clear();
@@ -3460,7 +3460,7 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.OpCensus"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.OpCensus"))
             {
                 int opScanIndex = 0;
                 foreach (var op in ops)
@@ -6439,7 +6439,7 @@ namespace XREngine.Rendering.Vulkan
             // Reset every inline query pool before the first render operation. Query-pool
             // resets are illegal inside rendering, and deferring them until QueryOp would
             // force the forward pass through a store/reload cycle for proxy queries.
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.PrepareInlineQueries"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.PrepareInlineQueries"))
             {
                 for (int prepareIndex = 0; prepareIndex < ops.Length; prepareIndex++)
                 {
@@ -6470,7 +6470,7 @@ namespace XREngine.Rendering.Vulkan
 
             try
             {
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.MainOpLoop"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.MainOpLoop"))
                 {
                 for (int opIndex = 0; opIndex < ops.Length; opIndex++)
                 {
@@ -6500,7 +6500,7 @@ namespace XREngine.Rendering.Vulkan
                         {
                             IDisposable? contextChangeProfileScope = null;
                             if (CommandRecordingDetailProfilingEnabled)
-                                contextChangeProfileScope = RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.ContextChange");
+                                contextChangeProfileScope = RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.ContextChange");
                             try
                             {
                             // When the context changes but both the active render pass and the
@@ -6657,7 +6657,7 @@ namespace XREngine.Rendering.Vulkan
                         {
                             IDisposable? passTransitionProfileScope = null;
                             if (CommandRecordingDetailProfilingEnabled)
-                                passTransitionProfileScope = RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.PassTransition");
+                                passTransitionProfileScope = RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.PassTransition");
                             try
                             {
                             // Barriers are safest outside render passes.
@@ -6697,7 +6697,7 @@ namespace XREngine.Rendering.Vulkan
 
                         IDisposable? frameOpProfileScope = null;
                         if (CommandRecordingDetailProfilingEnabled)
-                            frameOpProfileScope = RuntimeRenderingHostServices.Current.StartProfileScope(GetRecordPrimaryFrameOpProfileScopeName(op));
+                            frameOpProfileScope = RuntimeRenderingHostServices.Profiling.StartProfileScope(GetRecordPrimaryFrameOpProfileScopeName(op));
                         try
                         {
                         switch (op)
@@ -7138,7 +7138,7 @@ namespace XREngine.Rendering.Vulkan
 
                 }
 
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.FinalOverlayAndDiagnostics"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.FinalOverlayAndDiagnostics"))
                 {
                 if (passIndexLabelActive)
                 {
@@ -7376,7 +7376,7 @@ namespace XREngine.Rendering.Vulkan
                 CmdEndLabel(commandBuffer);
                 }
 
-                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.EndCommandBuffer"))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.EndCommandBuffer"))
                 {
                     Result endResult = EndCommandBufferTracked(
                         commandBuffer,

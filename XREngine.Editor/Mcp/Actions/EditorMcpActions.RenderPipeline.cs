@@ -262,20 +262,13 @@ namespace XREngine.Editor.Mcp
         public static Task<McpToolResponse> ListVulkanImageAllocationDiagnosticsAsync(
             [McpName("limit"), Description("Maximum number of largest allocations to return.")] int limit = 64)
         {
-            VulkanRenderer? renderer = AbstractRenderer.Current as VulkanRenderer;
-            if (renderer is null)
-            {
-                renderer = Engine.Windows
-                    .Select(static window => window.Renderer)
-                    .OfType<VulkanRenderer>()
-                    .FirstOrDefault();
-            }
-
-            if (renderer is null)
+            if (!EditorRendererCapabilityResolver.TryGetForBackend(
+                    RendererBackendId.Vulkan,
+                    out IRenderBackendDiagnosticsCapability diagnostics))
                 return Task.FromResult(new McpToolResponse("The active renderer is not Vulkan.", isError: true));
 
-            object diagnostics = renderer.GetLiveImageAllocationDiagnostics(limit);
-            return Task.FromResult(new McpToolResponse("Listed Vulkan image allocation diagnostics.", diagnostics));
+            object snapshot = diagnostics.GetLiveImageAllocationDiagnostics(limit);
+            return Task.FromResult(new McpToolResponse("Listed Vulkan image allocation diagnostics.", snapshot));
         }
 
         [XRMcp(Name = "get_vulkan_frame_op_trace", Permission = McpPermissionLevel.ReadOnly)]
@@ -284,20 +277,13 @@ namespace XREngine.Editor.Mcp
             [McpName("limit"), Description("Maximum entries to return.")] int limit = 128,
             [McpName("target_contains"), Description("Optional case-insensitive filter applied to target, pass, and detail text.")] string? targetContains = null)
         {
-            VulkanRenderer? renderer = AbstractRenderer.Current as VulkanRenderer;
-            if (renderer is null)
-            {
-                renderer = Engine.Windows
-                    .Select(static window => window.Renderer)
-                    .OfType<VulkanRenderer>()
-                    .FirstOrDefault();
-            }
-
-            if (renderer is null)
+            if (!EditorRendererCapabilityResolver.TryGetForBackend(
+                    RendererBackendId.Vulkan,
+                    out IRenderBackendDiagnosticsCapability diagnostics))
                 return Task.FromResult(new McpToolResponse("The active renderer is not Vulkan.", isError: true));
 
-            object diagnostics = renderer.GetLastFrameOpTraceDiagnostics(limit, targetContains);
-            return Task.FromResult(new McpToolResponse("Retrieved Vulkan frame-op trace diagnostics.", diagnostics));
+            object snapshot = diagnostics.GetLastFrameOperationTraceDiagnostics(limit, targetContains);
+            return Task.FromResult(new McpToolResponse("Retrieved Vulkan frame-op trace diagnostics.", snapshot));
         }
 
         [XRMcp(Name = "capture_render_pipeline_texture", Permission = McpPermissionLevel.ReadOnly)]
@@ -900,9 +886,7 @@ namespace XREngine.Editor.Mcp
             if (record.Instance is not XRTexture texture)
                 throw new InvalidOperationException($"Texture resource '{textureName}' has no live texture instance.");
 
-            using IDisposable? plannerScope = renderer is VulkanRenderer vulkanRenderer
-                ? vulkanRenderer.EnterPipelineResourcePlannerReadbackScope(instance, viewport)
-                : null;
+            using IDisposable? plannerScope = viewport.EnterRenderPipelineReadbackScope();
 
             return CaptureTexture(
                 renderer,
@@ -982,11 +966,11 @@ namespace XREngine.Editor.Mcp
             XRWindow window,
             bool? flipVerticallyOverride)
         {
-            RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.Current.GetWindowRenderBackend(window);
+            RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.Factories.GetWindowRenderBackend(window);
             if (backend == RuntimeGraphicsApiKind.Unknown)
-                backend = RuntimeRenderingHostServices.Current.CurrentRenderBackend;
+                backend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
 
-            ERenderClipSpaceYDirection clipY = RuntimeRenderingHostServices.Current.ClipSpaceYDirection;
+            ERenderClipSpaceYDirection clipY = RuntimeRenderingHostServices.Settings.ClipSpaceYDirection;
             ERenderClipSpaceYDirection framebufferY = backend == RuntimeGraphicsApiKind.Unknown
                 ? (renderer.ScreenshotRequiresVerticalFlip ? ERenderClipSpaceYDirection.YUp : ERenderClipSpaceYDirection.YDown)
                 : RenderClipSpacePolicy.FramebufferTextureYDirection(backend);

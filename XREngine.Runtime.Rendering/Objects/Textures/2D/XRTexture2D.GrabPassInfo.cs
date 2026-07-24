@@ -119,7 +119,7 @@ namespace XREngine.Rendering
 
             public void Grab(XRFrameBuffer? inFBO, IRuntimeViewportGrabSource? viewport)
             {
-                if (RuntimeRenderingHostServices.Current.IsShadowPass || RuntimeRenderingHostServices.Current.IsSceneCapturePass)
+                if (RuntimeRenderingHostServices.FrameTiming.IsShadowPass || RuntimeRenderingHostServices.FrameTiming.IsSceneCapturePass)
                     return;
 
                 var fbo = ResultFBO;
@@ -140,7 +140,7 @@ namespace XREngine.Rendering
                     w = inFBO.Width;
                     h = inFBO.Height;
                     Resize(w, h);
-                    RuntimeRenderingHostServices.Current.TryBlitFrameBufferToFrameBuffer(
+                    RuntimeRenderingHostServices.BackendInterop.TryBlitFrameBufferToFrameBuffer(
                         inFBO,
                         fbo,
                         readBuffer,
@@ -154,7 +154,7 @@ namespace XREngine.Rendering
                     w = (uint)viewport.Width;
                     h = (uint)viewport.Height;
                     Resize(w, h);
-                    RuntimeRenderingHostServices.Current.TryBlitViewportToFrameBuffer(
+                    RuntimeRenderingHostServices.BackendInterop.TryBlitViewportToFrameBuffer(
                         viewport,
                         fbo,
                         _readBuffer,

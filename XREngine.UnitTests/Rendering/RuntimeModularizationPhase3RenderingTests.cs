@@ -2,6 +2,8 @@ using System;
 using System.IO;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Components;
+using XREngine.Rendering.UI;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -9,12 +11,38 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class RuntimeModularizationPhase3RenderingTests
 {
     [Test]
+    public void P4_2_RuntimeUiAndInputRouting_HaveFinalAssemblyOwners()
+    {
+        typeof(UIComponent).Assembly.GetName().Name.ShouldBe("XREngine.Runtime.Rendering");
+        typeof(UICanvasComponent).Assembly.GetName().Name.ShouldBe("XREngine.Runtime.Rendering");
+        typeof(UICanvasInputComponent).Assembly.GetName().Name.ShouldBe("XREngine.Runtime.InputIntegration");
+        typeof(FlyingCameraPawnComponent).Assembly.GetName().Name.ShouldBe("XREngine.Runtime.InputIntegration");
+        typeof(UICanvasInputComponent).GetInterfaces().ShouldContain(typeof(IUICanvasInputSource));
+        Type.GetType("XREngine.Components.UICanvasComponent, XREngine").ShouldBe(typeof(UICanvasComponent));
+        Type.GetType("XREngine.Components.UICanvasInputComponent, XREngine").ShouldBe(typeof(UICanvasInputComponent));
+        Type.GetType("XREngine.Components.FlyingCameraPawnComponent, XREngine").ShouldBe(typeof(FlyingCameraPawnComponent));
+        Type.GetType("XREngine.Rendering.UI.UIComponent, XREngine").ShouldBe(typeof(UIComponent));
+
+        string root = ResolveWorkspaceRoot();
+        Directory.Exists(Path.Combine(root, "XRENGINE", "Scene", "Components", "UI")).ShouldBeFalse();
+        File.Exists(Path.Combine(root, "XRENGINE", "Scene", "Components", "Pawns", "UICanvasComponent.cs")).ShouldBeFalse();
+        File.Exists(Path.Combine(root, "XRENGINE", "Core", "FontGlyphSet.cs")).ShouldBeFalse();
+
+        string renderingProject = ReadWorkspaceFile("XREngine.Runtime.Rendering/XREngine.Runtime.Rendering.csproj");
+        renderingProject.ShouldNotContain("XREngine.Runtime.InputIntegration.csproj");
+
+        string canvasSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/UI/UICanvasComponent.cs");
+        canvasSource.ShouldContain("IUICanvasInputSource? GetInputComponent()");
+        canvasSource.ShouldNotContain("UICanvasInputComponent? GetInputComponent()");
+    }
+
+    [Test]
     public void P2a_RenderCommandOwnerDebugContext_SourceContracts_ArePresent()
     {
-        string runtimeHostSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderingHostServices.cs");
-        string collectionSource = ReadWorkspaceFile("XRENGINE/Rendering/Commands/RenderCommandCollection.cs");
-        string gpuPassSource = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPURenderPassCollection.Core.cs");
-        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/XRRenderPipelineInstance.cs");
+        string runtimeHostSource = ReadRuntimeRenderingContracts();
+        string collectionSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs");
+        string gpuPassSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Core.cs");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs");
 
         runtimeHostSource.ShouldContain("public interface IRuntimeRenderPipelineDebugContext");
         runtimeHostSource.ShouldContain("string DebugName { get; }");
@@ -35,14 +63,14 @@ public sealed class RuntimeModularizationPhase3RenderingTests
     [Test]
     public void P2a_RenderCommandGpuStateSceneContracts_SourceContracts_ArePresent()
     {
-        string runtimeHostSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderingHostServices.cs");
+        string runtimeHostSource = ReadRuntimeRenderingContracts();
         string gpuViewSetSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Commands/GPUViewSet.cs");
-        string collectionSource = ReadWorkspaceFile("XRENGINE/Rendering/Commands/RenderCommandCollection.cs");
-        string stateSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/RenderingState.cs");
-        string sceneSource = ReadWorkspaceFile("XRENGINE/Rendering/VisualScene.cs");
-        string scene3DSource = ReadWorkspaceFile("XRENGINE/Rendering/VisualScene3D.cs");
-        string gpuPassCoreSource = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPURenderPassCollection.Core.cs");
-        string gpuPassViewSource = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPURenderPassCollection.ViewSet.cs");
+        string collectionSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs");
+        string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/RenderingState.cs");
+        string sceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/VisualScene.cs");
+        string scene3DSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/VisualScene3D.cs");
+        string gpuPassCoreSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Core.cs");
+        string gpuPassViewSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.ViewSet.cs");
 
         runtimeHostSource.ShouldContain("public interface IRuntimeGpuRenderPassHost");
         runtimeHostSource.ShouldContain("public interface IRuntimeRenderCommandSceneContext");
@@ -54,10 +82,10 @@ public sealed class RuntimeModularizationPhase3RenderingTests
         gpuViewSetSource.ShouldContain("public struct GPUViewConstants");
         gpuViewSetSource.ShouldContain("public static class GPUViewSetLayout");
 
-        collectionSource.ShouldContain("IRuntimeRenderCommandExecutionState? renderState = RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState;");
+        collectionSource.ShouldContain("IRuntimeRenderCommandExecutionState? renderState = RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState;");
         collectionSource.ShouldContain("scene.RenderGpuPass(gpuPass);");
         collectionSource.ShouldContain("scene.RecordGpuVisibility(draws, instances);");
-        collectionSource.ShouldContain("private static void ConfigureGpuViewSet(GPURenderPassCollection gpuPass, IRuntimeRenderCommandExecutionState renderState, IRuntimeRenderCamera leftCamera)");
+        collectionSource.ShouldContain("private static RenderFrameViewSet ConfigureGpuViewSet(GPURenderPassCollection gpuPass, IRuntimeRenderCommandExecutionState renderState, IRuntimeRenderCamera leftCamera)");
 
         stateSource.ShouldContain("public class RenderingState : IRuntimeRenderCommandExecutionState");
         stateSource.ShouldContain("IRuntimeRenderCommandSceneContext? IRuntimeRenderCommandExecutionState.RenderingScene");
@@ -71,7 +99,7 @@ public sealed class RuntimeModularizationPhase3RenderingTests
         gpuPassCoreSource.ShouldContain("public sealed partial class GPURenderPassCollection : IRuntimeGpuRenderPassHost");
         gpuPassViewSource.ShouldContain("public void SetIndirectSourceViewId(uint viewId)");
 
-        string cameraSource = ReadWorkspaceFile("XRENGINE/Rendering/Camera/XRCamera.cs");
+        string cameraSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Camera/XRCamera.cs");
         cameraSource.ShouldContain("public class XRCamera : XRBase, IRuntimeRenderCamera");
         cameraSource.ShouldContain("public bool? StereoEyeLeft");
     }
@@ -79,8 +107,9 @@ public sealed class RuntimeModularizationPhase3RenderingTests
     [Test]
     public void RuntimeTimingFacade_SeparatesUpdateAndRenderDeltaContracts()
     {
-        string runtimeHostSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderingHostServices.cs");
-        string runtimeFacadeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngineFacade.cs");
+        string runtimeHostSource = ReadRuntimeRenderingContracts();
+        string runtimeEngineTimerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngineTimer.cs");
+        string runtimeTimerFrameSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeTimerFrame.cs");
         string engineHostSource = ReadWorkspaceFile("XRENGINE/Engine/Engine.RuntimeRenderingHostServices.cs");
         string skyboxSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Misc/SkyboxComponent.cs");
 
@@ -93,10 +122,10 @@ public sealed class RuntimeModularizationPhase3RenderingTests
         engineHostSource.ShouldContain("public long LastUpdateTimestampTicks => Engine.Time.Timer.Update.LastTimestampTicks;");
         engineHostSource.ShouldContain("public double RenderDeltaSeconds => Engine.Time.Timer.Render.Delta;");
 
-        runtimeFacadeSource.ShouldContain("public RuntimeTimerFrame Update { get; } = new(ERuntimeTimerFrameKind.Update);");
-        runtimeFacadeSource.ShouldContain("public RuntimeTimerFrame Render { get; } = new(ERuntimeTimerFrameKind.Render);");
-        runtimeFacadeSource.ShouldContain("RuntimeRenderingHostServices.Current.UpdateDeltaSeconds");
-        runtimeFacadeSource.ShouldContain("RuntimeRenderingHostServices.Current.RenderDeltaSeconds");
+        runtimeEngineTimerSource.ShouldContain("public RuntimeTimerFrame Update { get; } = new(ERuntimeTimerFrameKind.Update);");
+        runtimeEngineTimerSource.ShouldContain("public RuntimeTimerFrame Render { get; } = new(ERuntimeTimerFrameKind.Render);");
+        runtimeTimerFrameSource.ShouldContain("RuntimeRenderingHostServices.FrameTiming.UpdateDeltaSeconds");
+        runtimeTimerFrameSource.ShouldContain("RuntimeRenderingHostServices.FrameTiming.RenderDeltaSeconds");
 
         skyboxSource.ShouldContain("Engine.Time.Timer.Update.Delta");
         skyboxSource.ShouldNotContain("float dt = Math.Max(0.0f, Engine.Delta);");
@@ -105,11 +134,11 @@ public sealed class RuntimeModularizationPhase3RenderingTests
     [Test]
     public void P2a_PipelineFrameAndScreenSpaceUiContracts_SourceContracts_ArePresent()
     {
-        string runtimeHostSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderingHostServices.cs");
-        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/XRRenderPipelineInstance.cs");
-        string stateSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/RenderingState.cs");
-        string cameraSource = ReadWorkspaceFile("XRENGINE/Rendering/Camera/XRCamera.cs");
-        string uiCanvasSource = ReadWorkspaceFile("XRENGINE/Scene/Components/Pawns/UICanvasComponent.cs");
+        string runtimeHostSource = ReadRuntimeRenderingContracts();
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs");
+        string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/RenderingState.cs");
+        string cameraSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Camera/XRCamera.cs");
+        string uiCanvasSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/UI/UICanvasComponent.cs");
 
         runtimeHostSource.ShouldContain("public interface IRuntimeRenderPipelineFrameContext");
         runtimeHostSource.ShouldContain("public interface IRuntimeScreenSpaceUserInterface");
@@ -119,12 +148,12 @@ public sealed class RuntimeModularizationPhase3RenderingTests
 
         pipelineSource.ShouldContain("IRuntimeRenderCommandExecutionState IRuntimeRenderPipelineFrameContext.RenderState => RenderState;");
         pipelineSource.ShouldContain("IRuntimeScreenSpaceUserInterface? userInterface = null");
-        pipelineSource.ShouldContain("using (hostServices.PushRenderingPipeline(this))");
+        pipelineSource.ShouldContain("using (RuntimeRenderingHostServices.Diagnostics.PushRenderingPipeline(this))");
 
         stateSource.ShouldContain("public IRuntimeScreenSpaceUserInterface? ScreenSpaceUserInterface");
         stateSource.ShouldContain("ScreenSpaceUserInterface = screenSpaceUI?.IsScreenSpace == true ? screenSpaceUI : null;");
 
-        cameraSource.ShouldContain("IRuntimeRenderPipelineFrameContext? currentPipeline = RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext;");
+        cameraSource.ShouldContain("IRuntimeRenderPipelineFrameContext? currentPipeline = RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext;");
 
         uiCanvasSource.ShouldContain("IRuntimeScreenSpaceUserInterface");
         uiCanvasSource.ShouldContain("bool IRuntimeScreenSpaceUserInterface.IsScreenSpace =>");
@@ -133,14 +162,14 @@ public sealed class RuntimeModularizationPhase3RenderingTests
     [Test]
     public void P2a_RenderInfoRenderCommandCameraCallbacks_SourceContracts_ArePresent()
     {
-        string runtimeHostSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderingHostServices.cs");
-        string renderInfoSource = ReadWorkspaceFile("XRENGINE/Rendering/Info/RenderInfo.cs");
-        string renderInfo2DSource = ReadWorkspaceFile("XRENGINE/Rendering/Info/RenderInfo2D.cs");
-        string renderInfo3DSource = ReadWorkspaceFile("XRENGINE/Rendering/Info/RenderInfo3D.cs");
-        string renderCommandSource = ReadWorkspaceFile("XRENGINE/Rendering/Commands/RenderCommand.cs");
-        string renderCommand3DSource = ReadWorkspaceFile("XRENGINE/Rendering/Commands/RenderCommand3D.cs");
-        string renderCommandMesh3DSource = ReadWorkspaceFile("XRENGINE/Rendering/Commands/RenderCommandMesh3D.cs");
-        string cameraSource = ReadWorkspaceFile("XRENGINE/Rendering/Camera/XRCamera.cs");
+        string runtimeHostSource = ReadRuntimeRenderingContracts();
+        string renderInfoSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Info/RenderInfo.cs");
+        string renderInfo2DSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Info/RenderInfo2D.cs");
+        string renderInfo3DSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Info/RenderInfo3D.cs");
+        string renderCommandSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommand.cs");
+        string renderCommand3DSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommand3D.cs");
+        string renderCommandMesh3DSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandMesh3D.cs");
+        string cameraSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Camera/XRCamera.cs");
 
         runtimeHostSource.ShouldContain("bool RendersLayer(int layer);");
         runtimeHostSource.ShouldContain("float DistanceFromRenderNearPlane(Vector3 point);");
@@ -149,8 +178,8 @@ public sealed class RuntimeModularizationPhase3RenderingTests
         renderInfoSource.ShouldContain("public delegate bool DelAddRenderCommandsCallback(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera);");
         renderInfoSource.ShouldContain("public void CollectCommands(RenderCommandCollection passes, IRuntimeRenderCamera? camera)");
 
-        renderInfo2DSource.ShouldContain("public virtual bool AllowRender(BoundingRectangleF? cullingVolume, RenderCommandCollection passes, IRuntimeRenderCamera? camera)");
-        renderInfo3DSource.ShouldContain("IRuntimeRenderCamera? camera,");
+        renderInfo2DSource.ShouldContain("public virtual bool AllowRender(BoundingRectangleF? cullingVolume, RenderCommandCollection passes, IRuntimeCullingCamera? camera)");
+        renderInfo3DSource.ShouldContain("IRuntimeCullingCamera? camera,");
         renderInfo3DSource.ShouldContain("(camera is null || camera.RendersLayer(_layer))");
 
         renderCommandSource.ShouldContain("public delegate void DelPreRender(RenderCommand command, IRuntimeRenderCamera? camera);");
@@ -165,14 +194,14 @@ public sealed class RuntimeModularizationPhase3RenderingTests
     [Test]
     public void P2a_VisualSceneCullingCameraContracts_SourceContracts_ArePresent()
     {
-        string runtimeHostSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderingHostServices.cs");
-        string sceneSource = ReadWorkspaceFile("XRENGINE/Rendering/VisualScene.cs");
-        string scene2DSource = ReadWorkspaceFile("XRENGINE/Rendering/VisualScene2D.cs");
-        string scene3DSource = ReadWorkspaceFile("XRENGINE/Rendering/VisualScene3D.cs");
-        string renderInfo2DSource = ReadWorkspaceFile("XRENGINE/Rendering/Info/RenderInfo2D.cs");
-        string renderInfo3DSource = ReadWorkspaceFile("XRENGINE/Rendering/Info/RenderInfo3D.cs");
-        string cameraComponentSource = ReadWorkspaceFile("XRENGINE/Scene/Components/Camera/CameraComponent.cs");
-        string cameraSource = ReadWorkspaceFile("XRENGINE/Rendering/Camera/XRCamera.cs");
+        string runtimeHostSource = ReadRuntimeRenderingContracts();
+        string sceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/VisualScene.cs");
+        string scene2DSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/VisualScene2D.cs");
+        string scene3DSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/VisualScene3D.cs");
+        string renderInfo2DSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Info/RenderInfo2D.cs");
+        string renderInfo3DSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Info/RenderInfo3D.cs");
+        string cameraComponentSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Camera/CameraComponent.cs");
+        string cameraSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Camera/XRCamera.cs");
 
         runtimeHostSource.ShouldContain("public interface IRuntimeCullingCamera : IRuntimeRenderCamera");
         runtimeHostSource.ShouldContain("Frustum WorldFrustum();");
@@ -207,6 +236,17 @@ public sealed class RuntimeModularizationPhase3RenderingTests
         string fullPath = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(fullPath).ShouldBeTrue($"Expected workspace file to exist: {relativePath}");
         return File.ReadAllText(fullPath);
+    }
+
+    private static string ReadRuntimeRenderingContracts()
+    {
+        string root = ResolveWorkspaceRoot();
+        string interfacesRoot = Path.Combine(root, "XREngine.Runtime.Rendering", "Runtime", "Interfaces");
+        return string.Join(
+            Environment.NewLine,
+            Directory.EnumerateFiles(interfacesRoot, "*.cs", SearchOption.TopDirectoryOnly)
+                .OrderBy(static path => path, StringComparer.Ordinal)
+                .Select(File.ReadAllText));
     }
 
     private static string ResolveWorkspaceRoot()

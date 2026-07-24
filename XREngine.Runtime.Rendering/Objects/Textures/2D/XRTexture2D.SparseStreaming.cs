@@ -197,7 +197,7 @@ public partial class XRTexture2D
 
         int committedBaseMipLevel = ResolveSparseCommittedBaseMipLevel(requestedBaseMipLevel, numSparseLevels, logicalMipCount);
         int tailFirstMipLevel = Math.Min(Math.Max(0, numSparseLevels), logicalMipCount);
-        int bytesPerPixel = Math.Max(1, RuntimeRenderingHostServices.Current.GetBytesPerPixel(format));
+        int bytesPerPixel = Math.Max(1, RuntimeRenderingHostServices.BackendInterop.GetBytesPerPixel(format));
         SparseTextureStreamingPageSelection normalizedSelection = selection.Normalize();
         bool usePartialPages = normalizedSelection.IsPartial && support.IsAvailable && committedBaseMipLevel < tailFirstMipLevel;
 
@@ -242,7 +242,7 @@ public partial class XRTexture2D
             return 0L;
 
         int startMip = Math.Clamp(baseMipLevel, 0, logicalMipCount - 1);
-        int bytesPerPixel = Math.Max(1, RuntimeRenderingHostServices.Current.GetBytesPerPixel(format));
+        int bytesPerPixel = Math.Max(1, RuntimeRenderingHostServices.BackendInterop.GetBytesPerPixel(format));
         long totalBytes = 0L;
 
         for (int mipLevel = startMip; mipLevel < logicalMipCount; mipLevel++)

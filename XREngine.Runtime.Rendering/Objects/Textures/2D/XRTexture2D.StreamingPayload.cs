@@ -146,7 +146,7 @@ public partial class XRTexture2D
 
         try
         {
-            byte[] fileBytes = RuntimeRenderingHostServices.Current.ReadAllBytes(sourceFilePath);
+            byte[] fileBytes = RuntimeRenderingHostServices.Assets.ReadAllBytes(sourceFilePath);
             using MagickImage sourceImage = new(fileBytes);
             texture = CreateTextureStreamingCacheTexture(sourceFilePath, GetMipmapsFromImage(sourceImage));
             texture.FilePath = cacheFilePath;
@@ -210,7 +210,7 @@ public partial class XRTexture2D
 
         try
         {
-            RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
+            RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadTask(
                 () =>
                 {
                     AbstractRenderer? renderer = AbstractRenderer.Current;
@@ -228,7 +228,7 @@ public partial class XRTexture2D
             if (!completed.Wait(TextureStreamingGpuCacheCookTimeoutMilliseconds))
             {
                 Interlocked.Exchange(ref completionState, 1);
-                RuntimeRenderingHostServices.Current.LogWarning(
+                RuntimeRenderingHostServices.Diagnostics.LogWarning(
                     $"Timed out waiting for GPU texture streaming cache cook for '{sourceFilePath}'. Falling back to CPU mip generation.");
                 return false;
             }
@@ -247,7 +247,7 @@ public partial class XRTexture2D
         {
             if (!string.IsNullOrWhiteSpace(failure))
             {
-                RuntimeRenderingHostServices.Current.LogWarning(
+                RuntimeRenderingHostServices.Diagnostics.LogWarning(
                     $"GPU texture streaming cache cook failed for '{sourceFilePath}'. Falling back to CPU mip generation. {failure}");
             }
 
@@ -263,9 +263,9 @@ public partial class XRTexture2D
 
     private static bool CanUseGpuTextureStreamingCacheCook(XRTexture2D sourceTexture)
     {
-        if (RuntimeRenderingHostServices.Current.IsRenderThread ||
-            !RuntimeRenderingHostServices.Current.IsRendererActive ||
-            RuntimeRenderingHostServices.Current.CurrentRenderBackend != RuntimeGraphicsApiKind.OpenGL)
+        if (RuntimeRenderingHostServices.FrameTiming.IsRenderThread ||
+            !RuntimeRenderingHostServices.FrameTiming.IsRendererActive ||
+            RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend != RuntimeGraphicsApiKind.OpenGL)
         {
             return false;
         }

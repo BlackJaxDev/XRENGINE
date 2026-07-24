@@ -11,7 +11,7 @@ public sealed class DebugVisualizerSourceContractTests
     [Test]
     public void LineInstanceRewrites_ForceFreshUploadWhenCountIsUnchanged()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Scene/Physics/Physx/InstancedDebugVisualizer.cs").Replace("\r\n", "\n");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Physics/DebugVisualization/InstancedDebugVisualizer.cs").Replace("\r\n", "\n");
 
         source.ShouldContain("private void MarkLinesDirty()\n            => _lineDirtyBytes = checked(");
 
@@ -35,8 +35,8 @@ public sealed class DebugVisualizerSourceContractTests
 
         AssertContainsInOrder(
             source,
-            "if (!BuffersBound)\n                    {\n                        Renderer.MeshGenerationQueue.EnqueueGeneration(this);",
-            "return;\n                    }",
+            "if (!BuffersBound)\n                {\n                    Renderer.MeshGenerationQueue.EnqueueGeneration(this);",
+            "return true;\n                }",
             "PrepareDynamicRenderData();",
             "BindSSBOs(mat!);",
             "BindSSBOs(vtx!);");
@@ -95,12 +95,12 @@ public sealed class DebugVisualizerSourceContractTests
     [Test]
     public void ScreenSpaceUiTransformDebug_OnlyRunsInThe2DVisualScene()
     {
-        string uiTransform = ReadWorkspaceFile("XRENGINE/Scene/Components/UI/Core/Transforms/UITransform.cs").Replace("\r\n", "\n");
-        string uiBoundableTransform = ReadWorkspaceFile("XRENGINE/Scene/Components/UI/Core/Transforms/UIBoundableTransform.cs").Replace("\r\n", "\n");
+        string uiTransform = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/UI/Core/Transforms/UITransform.cs").Replace("\r\n", "\n");
+        string uiBoundableTransform = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/UI/Core/Transforms/UIBoundableTransform.cs").Replace("\r\n", "\n");
 
         uiTransform.ShouldContain("DebugRenderInfo2D.PreCollectCommandsCallback = ShouldRenderDebug2D;");
         uiTransform.ShouldContain("=> IsScreenSpaceCanvas();");
-        uiTransform.ShouldContain("=> !IsScreenSpaceCanvas() || Engine.Rendering.State.RenderingScene is VisualScene2D;");
+        uiTransform.ShouldContain("=> !IsScreenSpaceCanvas() || RuntimeEngine.Rendering.State.RenderingScene is VisualScene2D;");
 
         string uiRenderDebug = SliceMethod(uiTransform, "protected override void RenderDebug()");
         AssertContainsInOrder(

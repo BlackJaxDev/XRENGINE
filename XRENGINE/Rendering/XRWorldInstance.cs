@@ -36,7 +36,13 @@ namespace XREngine.Rendering
     /// This class handles all information pertaining to the rendering of a world.
     /// This object is assigned to a window and the window's renderer is responsible for applying the world's render data to the rendering API for that window.
     /// </summary>
-    public partial class XRWorldInstance : XRObjectBase, IRuntimeWorldContext, IRuntimePhysicsWorldContext, IRuntimeRenderInfo3DRegistrationTarget
+    public partial class XRWorldInstance
+        : XRObjectBase,
+          IRuntimeWorldContext,
+          IRuntimePhysicsWorldContext,
+          IRuntimeRenderInfo3DRegistrationTarget,
+          IRuntimeRenderWorld,
+          IRuntimeAudioListenerWorld
     {
         private const float EdgeBarycentricThreshold = 0.12f;
         private const float VertexBarycentricThreshold = 0.08f;
@@ -55,7 +61,7 @@ namespace XREngine.Rendering
         }
 
         private static bool CanUseGpuMeshBvhPicking()
-            => RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL;
+            => RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL;
 
         private static void WarnGpuMeshBvhPickUnsupportedBackend()
             => Debug.RenderingWarningEvery(
@@ -70,6 +76,17 @@ namespace XREngine.Rendering
         [RuntimeOnly]
         [YamlIgnore]
         public EventList<ListenerContext> Listeners { get; private set; } = [];
+        IEnumerable<object> IRuntimeAudioListenerWorld.AudioListeners => Listeners;
+        void IRuntimeAudioListenerWorld.AddAudioListener(object listener)
+        {
+            if (listener is ListenerContext context)
+                Listeners.Add(context);
+        }
+        void IRuntimeAudioListenerWorld.RemoveAudioListener(object listener)
+        {
+            if (listener is ListenerContext context)
+                Listeners.Remove(context);
+        }
         
         public XREventGroup<GameMode> CurrentGameModeChanged;
         public XREvent<XRWorldInstance>? PreBeginPlay;
@@ -77,27 +94,21 @@ namespace XREngine.Rendering
         public XREvent<XRWorldInstance>? PreEndPlay;
         public XREvent<XRWorldInstance>? PostEndPlay;
 
-        protected VisualScene3D _visualScene;
-        public VisualScene3D VisualScene => _visualScene;
+        private readonly RuntimeWorldRenderState _renderState;
+        private readonly RuntimeWorldLifecycle _lifecycle;
+        public VisualScene3D VisualScene => _renderState.VisualScene;
 
         void IRuntimeRenderInfo3DRegistrationTarget.AddRenderable3D(IRuntimeRenderInfo3DRegistrationItem renderable)
-        {
-            if (renderable is RenderInfo3D renderInfo)
-                VisualScene.AddRenderable(renderInfo);
-        }
+            => _renderState.AddRenderable(renderable);
 
         void IRuntimeRenderInfo3DRegistrationTarget.RemoveRenderable3D(IRuntimeRenderInfo3DRegistrationItem renderable)
-        {
-            if (renderable is RenderInfo3D renderInfo)
-                VisualScene.RemoveRenderable(renderInfo);
-        }
+            => _renderState.RemoveRenderable(renderable);
 
         protected AbstractPhysicsScene _physicsScene;
         public AbstractPhysicsScene PhysicsScene => _physicsScene;
 
-        protected RootNodeCollection _rootNodes;
-        public RootNodeCollection RootNodes => _rootNodes;
-        public Lights3DCollection Lights { get; }
+        public RootNodeCollection RootNodes => _lifecycle.RootNodes;
+        public Lights3DCollection Lights => _renderState.Lights;
 
         #region Editor-Only Hidden Scene
 
@@ -379,17 +390,9 @@ namespace XREngine.Rendering
         public XRWorldInstance() : this(Engine.Rendering.NewVisualScene(), Engine.Rendering.NewPhysicsScene()) { }
         public XRWorldInstance(VisualScene3D visualScene, AbstractPhysicsScene physicsScene)
         {
-            _visualScene = visualScene;
+            _lifecycle = new RuntimeWorldLifecycle(this, OnRootNodeDestroying);
+            _renderState = new RuntimeWorldRenderState(this, visualScene);
             _physicsScene = physicsScene;
-            _rootNodes = new RootNodeCollection(this, node => OnRootNodeDestroying(node));
-            Lights = new Lights3DCollection(this);
-
-            TickLists = [];
-            TickLists.Add(ETickGroup.Normal, []);
-            TickLists.Add(ETickGroup.Late, []);
-            TickLists.Add(ETickGroup.PrePhysics, []);
-            TickLists.Add(ETickGroup.DuringPhysics, []);
-            TickLists.Add(ETickGroup.PostPhysics, []);
         }
         public XRWorldInstance(XRWorld world) : this()
             => TargetWorld = world;
@@ -588,21 +591,23 @@ namespace XREngine.Rendering
             Paused
         }
 
-        private EPlayState _playState = EPlayState.Stopped;
         public EPlayState PlayState 
         {
-            get => _playState;
-            private set => SetField(ref _playState, value);
+            get => (EPlayState)_lifecycle.PlayState;
+            private set
+            {
+                EPlayState previous = PlayState;
+                if (previous == value || !OnPropertyChanging(nameof(PlayState), previous, value))
+                    return;
+
+                _lifecycle.PlayState = (RuntimeWorldPlayState)value;
+                OnPropertyChanged(nameof(PlayState), previous, value);
+            }
         }
 
-        public bool TransitioningPlay => 
-            PlayState == EPlayState.BeginningPlay || 
-            PlayState == EPlayState.EndingPlay;
+        public bool TransitioningPlay => _lifecycle.TransitioningPlay;
 
-        internal bool IsPlaySessionActive
-            => PlayState == EPlayState.BeginningPlay
-            || PlayState == EPlayState.Playing
-            || PlayState == EPlayState.Paused;
+        internal bool IsPlaySessionActive => _lifecycle.IsPlaySessionActive;
 
         bool IRuntimeWorldContext.IsPlaySessionActive => IsPlaySessionActive;
 
@@ -1018,14 +1023,22 @@ namespace XREngine.Rendering
             }
         }
 
-        private XRWorld? _targetWorld;
         /// <summary>
         /// The world that this instance is rendering.
         /// </summary>
         public XRWorld? TargetWorld
         {
-            get => _targetWorld;
-            set => SetField(ref _targetWorld, value);
+            get => _lifecycle.TargetWorld;
+            set
+            {
+                XRWorld? previous = TargetWorld;
+                if (ReferenceEquals(previous, value)
+                    || !OnPropertyChanging(nameof(TargetWorld), previous, value))
+                    return;
+
+                _lifecycle.TargetWorld = value;
+                OnPropertyChanged(nameof(TargetWorld), previous, value);
+            }
         }
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
@@ -1055,6 +1068,7 @@ namespace XREngine.Rendering
             switch (propName)
             {
                 case nameof(TargetWorld):
+                    _renderState.BindSettings(TargetWorld?.Settings);
                     if (TargetWorld != null)
                     {
                         foreach (var scene in TargetWorld.Scenes)
@@ -1174,11 +1188,6 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
-        /// Physics group > order (arbitrarily set by user> > list of objects to tick
-        /// </summary>
-        private readonly Dictionary<ETickGroup, SortedDictionary<int, TickList>> TickLists;
-
-        /// <summary>
         /// Registers a method to execute in a specific order every update tick.
         /// </summary>
         /// <param name="group">The first grouping of when to tick: before, after, or during the physics tick update.</param>
@@ -1190,7 +1199,7 @@ namespace XREngine.Rendering
             if (function is null)
                 return;
 
-            GetTickList(group, order)?.Add(function);
+            _lifecycle.RegisterTick(group, order, function);
         }
 
         /// <summary>
@@ -1201,23 +1210,7 @@ namespace XREngine.Rendering
             if (function is null)
                 return;
 
-            GetTickList(group, order)?.Remove(function);
-        }
-
-        private readonly Lock _listGroupLock = new();
-
-        /// <summary>
-        /// Gets a list of items to tick (in no particular order) that were registered with the following parameters.
-        /// </summary>
-        private TickList GetTickList(ETickGroup group, int order)
-        {
-            using (_listGroupLock.EnterScope())
-            {
-                SortedDictionary<int, TickList> dic = TickLists[group];
-                if (!dic.TryGetValue(order, out TickList? list))
-                    dic.Add(order, list = new TickList(Engine.Rendering.Settings.TickGroupedItemsInParallel, group, order));
-                return list;
-            }
+            _lifecycle.UnregisterTick(group, order, function);
         }
 
         /// <summary>
@@ -1231,41 +1224,7 @@ namespace XREngine.Rendering
         /// enumeration.
         /// </summary>
         public void TickGroup(ETickGroup group)
-        {
-            KeyValuePair<int, TickList>[] snapshotBuffer;
-            int snapshotCount = 0;
-
-            using (_listGroupLock.EnterScope())
-            {
-                var tickListDic = TickLists[group];
-                snapshotBuffer = ArrayPool<KeyValuePair<int, TickList>>.Shared.Rent(tickListDic.Count);
-                foreach (var kv in tickListDic)
-                    snapshotBuffer[snapshotCount++] = kv;
-            }
-
-            try
-            {
-                // Dispatch all ticks OUTSIDE the lock so callbacks can register/unregister freely.
-                for (int i = 0; i < snapshotCount; i++)
-                    snapshotBuffer[i].Value.Tick();
-
-                // Re-acquire lock only for cleanup of empty tick lists.
-                using (_listGroupLock.EnterScope())
-                {
-                    var tickListDic = TickLists[group];
-                    for (int i = 0; i < snapshotCount; i++)
-                    {
-                        var kv = snapshotBuffer[i];
-                        if (kv.Value.Count == 0)
-                            tickListDic.Remove(kv.Key);
-                    }
-                }
-            }
-            finally
-            {
-                ArrayPool<KeyValuePair<int, TickList>>.Shared.Return(snapshotBuffer, clearArray: false);
-            }
-        }
+            => _lifecycle.TickGroup(group);
 
         //private readonly object _lock = new();
 

@@ -502,7 +502,7 @@ namespace XREngine.Rendering
 
         private RenderPipeline? ResolveRenderContextPostProcessPipeline()
         {
-            IRuntimeRenderPipelineFrameContext? currentPipeline = RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext;
+            IRuntimeRenderPipelineFrameContext? currentPipeline = RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext;
             IRuntimeRenderCommandExecutionState? renderState = currentPipeline?.RenderState;
             bool isActiveRenderCamera = ReferenceEquals(renderState?.SceneCamera, this)
                 || ReferenceEquals(renderState?.RenderingCamera, this)
@@ -743,7 +743,7 @@ namespace XREngine.Rendering
             XRCameraParameters parameters = Parameters;
             uint projectionVersion = parameters.ProjectionVersion;
             bool parametersChanged = !ReferenceEquals(_cachedProjectionParameters, parameters) || _cachedProjectionVersion != projectionVersion;
-            RuntimeGraphicsApiKind projectionBackend = RuntimeRenderingHostServices.Current.CurrentRenderBackend;
+            RuntimeGraphicsApiKind projectionBackend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
             ERenderClipDepthRange clipDepthRange = RuntimeEngine.Rendering.ResolveEffectiveClipDepthRange(projectionBackend);
             bool clipPolicyChanged = _cachedProjectionBackend != projectionBackend || _cachedProjectionClipDepthRange != clipDepthRange;
             if (!_projectionMatricesDirty && !parametersChanged && !clipPolicyChanged)
@@ -1616,13 +1616,24 @@ namespace XREngine.Rendering
         /// </summary>
         public RenderPipeline RenderPipeline
         {
-            get => _renderPipeline ?? SetFieldReturn(ref _renderPipeline, CreateDefaultRenderPipeline())!;
+            // Serialization and editor inspection may traverse cameras before an
+            // application rendering host exists. Keep this getter side-effect free;
+            // render entry points use GetOrCreateRenderPipeline so required factory
+            // installation still fails fast when rendering actually starts.
+            get => _renderPipeline
+                ?? (RuntimeRenderingHostServices.HasConcreteHost
+                    ? SetFieldReturn(ref _renderPipeline, CreateDefaultRenderPipeline())!
+                    : null!);
             set => SetField(ref _renderPipeline, value);
         }
 
+        public RenderPipeline GetOrCreateRenderPipeline()
+            => _renderPipeline ?? SetFieldReturn(ref _renderPipeline, CreateDefaultRenderPipeline())!;
+
         private static RenderPipeline CreateDefaultRenderPipeline()
-            => RuntimeRenderingHostServices.Current.CreateDefaultRenderPipeline() as RenderPipeline
-                ?? throw new InvalidOperationException("RuntimeRenderingHostServices.Current did not provide a default render pipeline.");
+            => RuntimeRenderingHostServices.Factories.CreateDefaultRenderPipeline() as RenderPipeline
+                ?? throw new InvalidOperationException(
+                    "The installed renderer factory capability did not provide a default render pipeline.");
 
         /// <summary>
         /// Sets all camera-related shader uniforms for rendering.
@@ -1640,7 +1651,7 @@ namespace XREngine.Rendering
             Matrix4x4 inverseProjMtx = InverseProjectionMatrix;
             Matrix4x4 viewProjMtx = ViewProjectionMatrix;
 
-            bool stereoPass = RuntimeRenderingHostServices.Current.IsStereoPass;
+            bool stereoPass = RuntimeRenderingHostServices.FrameTiming.IsStereoPass;
             if (stereoPass)
             {
                 if (stereoLeftEye)
@@ -1682,7 +1693,7 @@ namespace XREngine.Rendering
             program.Uniform(EEngineUniform.ClipDepthRange.ToStringFast(), (int)RuntimeEngine.Rendering.EffectiveClipDepthRange);
             program.Uniform(
                 EEngineUniform.FramebufferTextureYDirection.ToStringFast(),
-                (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeRenderingHostServices.Current.CurrentRenderBackend));
+                (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend));
 
             Parameters.SetUniforms(program);
         }

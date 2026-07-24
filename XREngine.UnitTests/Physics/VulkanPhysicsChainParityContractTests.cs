@@ -9,8 +9,8 @@ public sealed class VulkanPhysicsChainParityContractTests
     [Test]
     public void Dispatcher_ResolvesOpenGlAndVulkanAdaptersThroughFactory()
     {
-        string factory = ReadWorkspaceFile("XRENGINE/Rendering/Compute/PhysicsChainComputeBackendFactory.cs");
-        string dispatcher = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
+        string factory = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/PhysicsChainComputeBackendFactory.cs");
+        string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
 
         factory.ShouldContain("OpenGLPhysicsChainComputeBackend.TryCreate");
         factory.ShouldContain("VulkanPhysicsChainComputeBackend.TryCreate");
@@ -21,7 +21,7 @@ public sealed class VulkanPhysicsChainParityContractTests
     [Test]
     public void VulkanBackend_UsesOrderedRendererOperations()
     {
-        string adapter = ReadWorkspaceFile("XRENGINE/Rendering/Compute/VulkanPhysicsChainComputeBackend.cs");
+        string adapter = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/VulkanPhysicsChainComputeBackend.cs");
         string work = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ComputeWork.cs");
         string recorder = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
@@ -40,8 +40,8 @@ public sealed class VulkanPhysicsChainParityContractTests
     [Test]
     public void VulkanBackend_UsesTransactionalGroupEnqueueAndFailsAbortedMarkers()
     {
-        string adapter = ReadWorkspaceFile("XRENGINE/Rendering/Compute/VulkanPhysicsChainComputeBackend.cs");
-        string dispatcher = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
+        string adapter = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/VulkanPhysicsChainComputeBackend.cs");
+        string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
         string recorder = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string diagnostics = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpDiagnostics.cs");
         string frameLoop = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
@@ -65,7 +65,7 @@ public sealed class VulkanPhysicsChainParityContractTests
     [Test]
     public void VulkanCapabilities_FollowOperationalRendererState()
     {
-        string adapter = ReadWorkspaceFile("XRENGINE/Rendering/Compute/VulkanPhysicsChainComputeBackend.cs");
+        string adapter = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/VulkanPhysicsChainComputeBackend.cs");
         string work = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ComputeWork.cs");
 
         adapter.ShouldContain("_renderer.SupportsOrderedComputeWork");
@@ -77,8 +77,8 @@ public sealed class VulkanPhysicsChainParityContractTests
     [Test]
     public void SelectiveReadback_ReusesPerSlotAdaptersAfterWarmup()
     {
-        string dispatcher = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
-        string resources = ReadWorkspaceFile("XRENGINE/Rendering/Compute/PhysicsChainSelectiveReadbackSlotResources.cs");
+        string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
+        string resources = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/PhysicsChainSelectiveReadbackSlotResources.cs");
 
         dispatcher.ShouldContain("resources.StagingSource");
         dispatcher.ShouldContain("resources.Fence");
@@ -105,7 +105,7 @@ public sealed class VulkanPhysicsChainParityContractTests
     public void Readback_UsesTransferToHostBarrierAndDestinationUsage()
     {
         string barrier = ReadWorkspaceFile("XREngine.Runtime.Rendering/Commands/EMemoryBarrierMask.cs");
-        string dispatcher = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
+        string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
         string buffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
 
         barrier.ShouldContain("GpuReadback");
@@ -116,9 +116,9 @@ public sealed class VulkanPhysicsChainParityContractTests
     [Test]
     public void DeferredArenaRetirement_RearmsMarkersDroppedBeforeSubmission()
     {
-        string dispatcher = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
+        string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
         string deferredResource = ReadWorkspaceFile(
-            "XRENGINE/Rendering/Compute/DeferredPhysicsChainArenaResource.cs");
+            "XREngine.Runtime.Rendering/Rendering/PhysicsCompute/DeferredPhysicsChainArenaResource.cs");
 
         deferredResource.ShouldContain("IPhysicsChainComputeBackend Backend");
         deferredResource.ShouldContain("int FailedFenceRetryCount = 0");
@@ -133,7 +133,7 @@ public sealed class VulkanPhysicsChainParityContractTests
     public void StandaloneMode_IsAnIsolatedDispatcherGroupWithoutBackendSpecificCode()
     {
         string component = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent.GPU.cs");
-        string dispatcher = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
+        string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
 
         component.ShouldContain("SubmitToBatchedDispatcher(loop, timeVar)");
         component.ShouldNotContain("OpenGLRenderer");

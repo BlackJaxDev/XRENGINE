@@ -22,6 +22,24 @@ namespace XREngine.Rendering
         bool BackendIsPersistentlyMapped => GetMappedAddress().HasValue;
         XRBufferResolvedRoute BackendResolvedRoute => XRBufferResolvedRoute.Unknown;
 
+        /// <summary>
+        /// Ensures the backend allocation needed for GPU use has been requested.
+        /// Implementations must preserve their normal render-thread scheduling rules.
+        /// </summary>
+        void EnsureStorageAllocatedForGpuUse()
+        {
+        }
+
+        /// <summary>
+        /// Tries to expose the backend binding identifier used by diagnostics.
+        /// Backends without integer binding identifiers return <see langword="false"/>.
+        /// </summary>
+        bool TryGetBindingId(out uint bindingId)
+        {
+            bindingId = 0u;
+            return false;
+        }
+
         bool TryGetGpuAddress(out ulong address, out string downgradeReason)
         {
             address = 0ul;

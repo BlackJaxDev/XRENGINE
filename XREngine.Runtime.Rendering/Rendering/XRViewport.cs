@@ -79,14 +79,14 @@ namespace XREngine.Rendering
         /// Set to false for manual control over when visibility collection occurs (e.g., for deferred rendering setups).
         /// </summary>
         private bool _automaticallyCollectVisible = true;
-        private IRuntimeRenderingHostServices? _collectVisibleSubscriptionHost;
+        private IRuntimeRenderSchedulingServices? _collectVisibleSubscriptionHost;
 
         /// <summary>
         /// When true, render command buffers are automatically double-buffered (swapped) each frame.
         /// Set to false for manual control over buffer swapping (e.g., for multi-pass rendering).
         /// </summary>
         private bool _automaticallySwapBuffers = true;
-        private IRuntimeRenderingHostServices? _swapBuffersSubscriptionHost;
+        private IRuntimeRenderSchedulingServices? _swapBuffersSubscriptionHost;
         private volatile bool _destroyed;
 
         /// <summary>
@@ -437,7 +437,7 @@ namespace XREngine.Rendering
 
         private void SynchronizeRenderPipelineFromActiveCamera()
         {
-            _renderPipeline.Pipeline = ActiveCamera?.RenderPipeline;
+            _renderPipeline.Pipeline = ActiveCamera?.GetOrCreateRenderPipeline();
 
             // When the camera's pipeline changes, push current sizing into the
             // existing runtime instance so the new command chain sees valid targets
@@ -536,7 +536,7 @@ namespace XREngine.Rendering
 
             if (changed)
             {
-                RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.Current.CurrentRenderBackend;
+                RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
                 Debug.Rendering(
                     "[CapturePolicy] VP[{0}] {1}",
                     Index,
@@ -659,8 +659,8 @@ namespace XREngine.Rendering
                 viewport.ViewportCountChanged(
                     index,
                     totalViewportCount + 1,
-                    RuntimeRenderingHostServices.Current.TwoPlayerViewportPreference,
-                    RuntimeRenderingHostServices.Current.ThreePlayerViewportPreference);
+                    RuntimeRenderingHostServices.FrameTiming.TwoPlayerViewportPreference,
+                    RuntimeRenderingHostServices.FrameTiming.ThreePlayerViewportPreference);
 
             viewport.Index = index;
             return viewport;
@@ -858,13 +858,13 @@ namespace XREngine.Rendering
                 if (_swapBuffersSubscriptionHost is not null)
                     return;
 
-                IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+                IRuntimeRenderSchedulingServices host = RuntimeRenderingHostServices.Scheduling;
                 host.SubscribeViewportSwapBuffers(SwapBuffersAutomatic);
                 _swapBuffersSubscriptionHost = host;
                 return;
             }
 
-            IRuntimeRenderingHostServices? subscribedHost = _swapBuffersSubscriptionHost;
+            IRuntimeRenderSchedulingServices? subscribedHost = _swapBuffersSubscriptionHost;
             if (subscribedHost is null)
                 return;
 
@@ -879,13 +879,13 @@ namespace XREngine.Rendering
                 if (_collectVisibleSubscriptionHost is not null)
                     return;
 
-                IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+                IRuntimeRenderSchedulingServices host = RuntimeRenderingHostServices.Scheduling;
                 host.SubscribeViewportCollectVisible(CollectVisibleAutomatic);
                 _collectVisibleSubscriptionHost = host;
                 return;
             }
 
-            IRuntimeRenderingHostServices? subscribedHost = _collectVisibleSubscriptionHost;
+            IRuntimeRenderSchedulingServices? subscribedHost = _collectVisibleSubscriptionHost;
             if (subscribedHost is null)
                 return;
 
@@ -899,8 +899,8 @@ namespace XREngine.Rendering
 
         private bool ShouldSuspendPipelineWork(string operation)
         {
-            IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
-            if (!hostServices.IsPlayModeTransitioning)
+            IRuntimeRenderFrameTimingServices frameTiming = RuntimeRenderingHostServices.FrameTiming;
+            if (!frameTiming.IsPlayModeTransitioning)
                 return false;
 
             Debug.RenderingEvery(
@@ -909,7 +909,7 @@ namespace XREngine.Rendering
                 "[RenderDiag] {0} skipped during play-mode transition. VP[{1}] State={2} World={3} CameraComponent={4}",
                 operation,
                 Index,
-                hostServices.PlayModeStateName,
+                frameTiming.PlayModeStateName,
                 World?.TargetWorldName ?? "<null>",
                 CameraComponent?.Name ?? "<null>");
 
@@ -942,7 +942,7 @@ namespace XREngine.Rendering
             if (_destroyed)
                 return;
 
-            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.CollectVisible");
+            using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRViewport.CollectVisible");
 
             if (ShouldSuspendPipelineWork(nameof(CollectVisible)))
                 return;
@@ -1009,7 +1009,7 @@ namespace XREngine.Rendering
             if (AssociatedPlayer is not null && world is not null)
                 world.Lights.UpdateCameraLightIntersections(camera);
 
-            RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
+            RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
                 new FrameOutputWorkTelemetry(VisibilityBuilds: 1));
             var commandCollection = renderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
             int beforeUpdatingCount = 0;
@@ -1101,7 +1101,7 @@ namespace XREngine.Rendering
         /// </summary>
         private void CollectVisible_ScreenSpaceUI()
         {
-            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.CollectVisible_ScreenSpaceUI");
+            using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRViewport.CollectVisible_ScreenSpaceUI");
 
             if (!AllowUIRender)
             {
@@ -1210,7 +1210,7 @@ namespace XREngine.Rendering
             if (_destroyed)
                 return;
 
-            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope($"XRViewport.SwapBuffers[{Index}]");
+            using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope($"XRViewport.SwapBuffers[{Index}]");
 
             if (ShouldSuspendPipelineWork(nameof(SwapBuffers)))
                 return;
@@ -1226,7 +1226,7 @@ namespace XREngine.Rendering
                 AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>");
 */
             var commandCollection = renderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.SwapBuffers.MeshCommands"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("XRViewport.SwapBuffers.MeshCommands"))
             {
                 commandCollection.SwapBuffers();
             }
@@ -1235,7 +1235,7 @@ namespace XREngine.Rendering
 
             if (allowScreenSpaceUISwap)
             {
-                using var uiSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.SwapBuffers.ScreenSpaceUI");
+                using var uiSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRViewport.SwapBuffers.ScreenSpaceUI");
                 SwapBuffers_ScreenSpaceUI();
             }
         }
@@ -1284,7 +1284,7 @@ namespace XREngine.Rendering
             if (!AllowUIRender)
                 return;
 
-            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.SwapBuffers_ScreenSpaceUI");
+            using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRViewport.SwapBuffers_ScreenSpaceUI");
 
             var ui = ResolveScreenSpaceUICanvas();
             if (ui is null)
@@ -1342,7 +1342,7 @@ namespace XREngine.Rendering
                 return;
             }
 
-            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.SwapBuffersAutomatic");
+            using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRViewport.SwapBuffersAutomatic");
             long started = System.Diagnostics.Stopwatch.GetTimestamp();
             SwapBuffers();
             _renderingFrameOutputPacing = pacing;
@@ -1389,7 +1389,7 @@ namespace XREngine.Rendering
             if (_destroyed)
                 return;
 
-            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.Render");
+            using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRViewport.Render");
 
             if (ShouldSuspendPipelineWork(nameof(Render)))
                 return;
@@ -1467,7 +1467,7 @@ namespace XREngine.Rendering
                     CameraComponent?.Camera.RenderPipeline is null);
             }
 
-            if (RuntimeRenderingHostServices.Current.IsViewportCurrentlyRendering(this))
+            if (RuntimeRenderingHostServices.BackendInterop.IsViewportCurrentlyRendering(this))
             {
                 Debug.RenderingWarning("Render recursion: Viewport is already currently rendering.");
                 return;
@@ -1541,7 +1541,7 @@ namespace XREngine.Rendering
         /// </summary>
         public void RenderScreenSpaceUIOnly(XRFrameBuffer? targetFbo = null)
         {
-            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.RenderScreenSpaceUIOnly");
+            using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRViewport.RenderScreenSpaceUIOnly");
 
             if (ShouldSuspendPipelineWork(nameof(RenderScreenSpaceUIOnly)))
                 return;
@@ -1572,7 +1572,7 @@ namespace XREngine.Rendering
             IRuntimeRenderWorld? worldOverride = null,
             FrameOutputPacingDecision? frameOutputPacing = null)
         {
-            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.RenderStereo");
+            using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRViewport.RenderStereo");
 
             if (ShouldSuspendPipelineWork(nameof(RenderStereo)))
                 return;
@@ -1584,16 +1584,16 @@ namespace XREngine.Rendering
                 return;
             }
 
-            if (RuntimeRenderingHostServices.Current.IsViewportCurrentlyRendering(this))
+            if (RuntimeRenderingHostServices.BackendInterop.IsViewportCurrentlyRendering(this))
             {
                 Debug.RenderingWarning("Render recursion: Viewport is already currently rendering.");
                 return;
             }
 
-            IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
+            IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
             FrameOutputPacingDecision pacing = frameOutputPacing ?? FrameOutputPacingDecision.Due(
                 EVrOutputViewKind.LeftEye,
-                hostServices.IsOpenXRActive
+                presentation.IsOpenXRActive
                     ? EFrameOutputKind.OpenXREyeSubmit
                     : EFrameOutputKind.OpenVRSubmit,
                 State.RenderFrameId);
@@ -1632,11 +1632,11 @@ namespace XREngine.Rendering
             EFrameOutputKind outputKind = ResolveFrameOutputKind(fallbackOutputKind);
             bool xrCritical = viewKind is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye ||
                 outputKind is EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit;
-            IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
-            FrameOutputPacingDecision pacing = hostServices.EvaluateFrameOutputPacing(
+            IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
+            FrameOutputPacingDecision pacing = presentation.EvaluateFrameOutputPacing(
                 viewKind, outputKind, xrCritical);
             RenderOutputRequest request = BuildFrameOutputRequest(pacing);
-            hostServices.PlanRenderOutput(request, pacing.IsDue);
+            presentation.PlanRenderOutput(request, pacing.IsDue);
             return pacing with { Request = request };
         }
 
@@ -1679,10 +1679,10 @@ namespace XREngine.Rendering
             if (camera?.StereoEyeLeft == false)
                 return EVrOutputViewKind.RightEye;
 
-            if (!RuntimeRenderingHostServices.Current.IsInVR)
+            if (!RuntimeRenderingHostServices.Presentation.IsInVR)
                 return EVrOutputViewKind.DesktopEditor;
 
-            return RuntimeRenderingHostServices.Current.VrMirrorMode == EVrMirrorMode.FullIndependentRender
+            return RuntimeRenderingHostServices.Presentation.VrMirrorMode == EVrMirrorMode.FullIndependentRender
                 ? EVrOutputViewKind.DesktopEditor
                 : EVrOutputViewKind.CyclopeanDesktop;
         }
@@ -1692,13 +1692,13 @@ namespace XREngine.Rendering
             EVrOutputViewKind viewKind = ResolveOutputViewKind();
             if (viewKind is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye)
             {
-                return RuntimeRenderingHostServices.Current.IsOpenXRActive
+                return RuntimeRenderingHostServices.Presentation.IsOpenXRActive
                     ? EFrameOutputKind.OpenXREyeSubmit
                     : EFrameOutputKind.OpenVRSubmit;
             }
 
-            if (RuntimeRenderingHostServices.Current.IsInVR &&
-                RuntimeRenderingHostServices.Current.VrMirrorMode is EVrMirrorMode.BlitSubmittedEye or EVrMirrorMode.CyclopeanReconstruct)
+            if (RuntimeRenderingHostServices.Presentation.IsInVR &&
+                RuntimeRenderingHostServices.Presentation.VrMirrorMode is EVrMirrorMode.BlitSubmittedEye or EVrMirrorMode.CyclopeanReconstruct)
             {
                 return EFrameOutputKind.DesktopMirror;
             }
@@ -1714,7 +1714,7 @@ namespace XREngine.Rendering
 
         private void AccumulateSkippedSceneRenderDelta()
         {
-            double deltaSeconds = RuntimeRenderingHostServices.Current.RenderDeltaSeconds;
+            double deltaSeconds = RuntimeRenderingHostServices.FrameTiming.RenderDeltaSeconds;
             if (!double.IsFinite(deltaSeconds) || deltaSeconds <= 0.0)
                 return;
 
@@ -1725,7 +1725,7 @@ namespace XREngine.Rendering
 
         private RuntimeTimerFrame.ScopedRenderDeltaOverride PushSceneRenderDeltaScope(bool consumeSkippedDelta)
         {
-            double deltaSeconds = RuntimeRenderingHostServices.Current.RenderDeltaSeconds;
+            double deltaSeconds = RuntimeRenderingHostServices.FrameTiming.RenderDeltaSeconds;
             if (!double.IsFinite(deltaSeconds) || deltaSeconds < 0.0)
                 deltaSeconds = 0.0;
 
@@ -1759,22 +1759,23 @@ namespace XREngine.Rendering
                 : elapsedTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
             EFrameOutputKind outputKind = pacing.OutputKind;
             EVrOutputViewKind viewKind = pacing.ViewKind;
-            IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
+            IRuntimeRenderFrameTimingServices frameTiming = RuntimeRenderingHostServices.FrameTiming;
+            IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
             if (phase == EFrameOutputPhase.Render &&
                 gpuMs <= 0.0 &&
-                hostServices.GpuRenderPipelineTimingsReady &&
-                hostServices.GpuRenderPipelineFrameMs > 0.0)
+                frameTiming.GpuRenderPipelineTimingsReady &&
+                frameTiming.GpuRenderPipelineFrameMs > 0.0)
             {
-                gpuMs = hostServices.GpuRenderPipelineFrameMs;
+                gpuMs = frameTiming.GpuRenderPipelineFrameMs;
             }
 
-            EVrMirrorMode mirrorMode = hostServices.VrMirrorMode;
+            EVrMirrorMode mirrorMode = presentation.VrMirrorMode;
             bool desktopFacing = viewKind is EVrOutputViewKind.DesktopEditor or EVrOutputViewKind.CyclopeanDesktop;
             bool mirror = outputKind == EFrameOutputKind.DesktopMirror ||
                 (desktopFacing && (mirrorMode is EVrMirrorMode.BlitSubmittedEye or EVrMirrorMode.CyclopeanReconstruct));
             bool separateSceneRender =
                 sceneRendered &&
-                hostServices.IsInVR &&
+                presentation.IsInVR &&
                 viewKind == EVrOutputViewKind.DesktopEditor &&
                 mirrorMode == EVrMirrorMode.FullIndependentRender;
             bool sharedVisibility =
@@ -1811,8 +1812,8 @@ namespace XREngine.Rendering
                 // tearing resources down. The assigned instance is the only meaningful source
                 // for this frame and is safe to query without mutating pipeline ownership.
                 CommandGeneration: _renderPipeline.AssignedPipeline?.CommandGeneration ?? 0UL,
-                AntiAliasingMode: (_renderPipeline.EffectiveAntiAliasingModeThisFrame ?? hostServices.DefaultAntiAliasingMode).ToString());
-            hostServices.RecordRenderFrameOutput(telemetry);
+                AntiAliasingMode: (_renderPipeline.EffectiveAntiAliasingModeThisFrame ?? frameTiming.DefaultAntiAliasingMode).ToString());
+            presentation.RecordRenderFrameOutput(telemetry);
         }
 
         private static ulong MixFrameOutputIdentity(ulong contractIdentity, ulong instanceIdentity)
@@ -1853,8 +1854,8 @@ namespace XREngine.Rendering
         private bool ResolveUiThroughPipeline(out IRuntimeScreenSpaceUserInterface? screenSpaceUI)
         {
             bool forceUiThroughPipeline =
-                RuntimeRenderingHostServices.Current.GetWindowRenderBackend(Window) == RuntimeGraphicsApiKind.Vulkan ||
-                RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan;
+                RuntimeRenderingHostServices.Factories.GetWindowRenderBackend(Window) == RuntimeGraphicsApiKind.Vulkan ||
+                RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan;
             bool wantThroughPipeline = forceUiThroughPipeline || true;
 
             if (!wantThroughPipeline)
@@ -2353,9 +2354,14 @@ namespace XREngine.Rendering
         /// Enters any renderer-specific readback state needed to resolve this viewport's live render-pipeline resources.
         /// </summary>
         public IDisposable? EnterRenderPipelineReadbackScope()
-            => AbstractRenderer.Current is VulkanRenderer vulkan
-                ? vulkan.EnterPipelineResourcePlannerReadbackScope(RenderPipelineInstance, this)
-                : null;
+        {
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            return renderer is not null &&
+                ((IRuntimeRendererHost)renderer).TryGetBackendCapability<IRenderPipelineReadbackBackendCapability>(out var capability) &&
+                capability is not null
+                    ? capability.EnterPipelineResourcePlannerReadbackScope(RenderPipelineInstance, this)
+                    : null;
+        }
 
         /// <summary>
         /// Asynchronously reads the depth buffer value at the specified viewport position.
@@ -2468,7 +2474,7 @@ namespace XREngine.Rendering
 
             if (testScenePhysics)
             {
-                RuntimeRenderingHostServices.Current.PickViewportPhysicsAsync(
+                RuntimeRenderingHostServices.Factories.PickViewportPhysicsAsync(
                     this,
                     CameraComponent,
                     normalizedViewportPosition,

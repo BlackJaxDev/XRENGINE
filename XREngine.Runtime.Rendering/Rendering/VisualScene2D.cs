@@ -53,7 +53,7 @@ namespace XREngine.Scene
 
         private static void RenderSpatialTreeNode((QuadtreeNodeBase node, bool intersects) data)
         {
-            var host = RuntimeRenderingHostServices.Current;
+            IRuntimeRenderDebugDrawingServices host = RuntimeRenderingHostServices.DebugDrawing;
             var color = data.intersects
                 ? host.QuadtreeIntersectedBoundsColor
                 : host.QuadtreeContainedBoundsColor;

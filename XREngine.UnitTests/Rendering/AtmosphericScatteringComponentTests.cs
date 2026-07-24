@@ -5,6 +5,7 @@ using XREngine.Components.Scene.Environment;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Scene;
+using XREngine.Scene.Physics.Jitter2;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.UnitTests.Rendering;
@@ -12,13 +13,22 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class AtmosphericScatteringComponentTests
 {
+    private IRuntimeShaderServices? _previousShaderServices;
+
     [SetUp]
     public void SetUp()
-        => AtmosphericScatteringComponent.Registry.ClearForTests();
+    {
+        _previousShaderServices = RuntimeShaderServices.Current;
+        RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
+        AtmosphericScatteringComponent.Registry.ClearForTests();
+    }
 
     [TearDown]
     public void TearDown()
-        => AtmosphericScatteringComponent.Registry.ClearForTests();
+    {
+        AtmosphericScatteringComponent.Registry.ClearForTests();
+        RuntimeShaderServices.Current = _previousShaderServices;
+    }
 
     [Test]
     public void AuthoringProperties_ClampToValidAtmosphereRanges()
@@ -52,7 +62,7 @@ public sealed class AtmosphericScatteringComponentTests
     [Test]
     public void Registry_DoesNotSelectDisabledComponent()
     {
-        RuntimeRenderWorldInstance world = CreateWorldWithAtmospheres(out AtmosphericScatteringComponent atmosphere);
+        XRWorldInstance world = CreateWorldWithAtmospheres(out AtmosphericScatteringComponent atmosphere);
 
         atmosphere.Enabled = false;
 
@@ -65,7 +75,7 @@ public sealed class AtmosphericScatteringComponentTests
     [Test]
     public void Registry_DoesNotSelectInactiveRegisteredComponent()
     {
-        RuntimeRenderWorldInstance world = new();
+        XRWorldInstance world = CreateWorld();
         var node = new SceneNode("InactiveAtmosphere");
         AtmosphericScatteringComponent atmosphere = node.AddComponent<AtmosphericScatteringComponent>()!;
 
@@ -80,7 +90,7 @@ public sealed class AtmosphericScatteringComponentTests
     [Test]
     public void Registry_HigherPriorityWinsWhenCameraIsInsideBothAtmospheres()
     {
-        RuntimeRenderWorldInstance world = CreateWorldWithAtmospheres(
+        XRWorldInstance world = CreateWorldWithAtmospheres(
             out AtmosphericScatteringComponent lowerPriority,
             out AtmosphericScatteringComponent higherPriority);
 
@@ -96,7 +106,7 @@ public sealed class AtmosphericScatteringComponentTests
     [Test]
     public void Registry_CameraInsideAtmosphereWinsOverOutsideHigherPriorityCandidate()
     {
-        RuntimeRenderWorldInstance world = CreateWorldWithAtmospheres(
+        XRWorldInstance world = CreateWorldWithAtmospheres(
             out AtmosphericScatteringComponent insideCandidate,
             out AtmosphericScatteringComponent outsideCandidate,
             secondTranslation: new Vector3(100.0f, 0.0f, 0.0f));
@@ -113,7 +123,7 @@ public sealed class AtmosphericScatteringComponentTests
     [Test]
     public void Registry_CopyActiveClampsDestinationSizeAndPreservesSortOrder()
     {
-        RuntimeRenderWorldInstance world = new();
+        XRWorldInstance world = CreateWorld();
         SceneNode root = new("Root");
 
         for (int i = 0; i < 6; i++)
@@ -134,21 +144,21 @@ public sealed class AtmosphericScatteringComponentTests
         active[3]!.Priority.ShouldBe(2);
     }
 
-    private static RuntimeRenderWorldInstance CreateWorldWithAtmospheres(out AtmosphericScatteringComponent atmosphere)
+    private static XRWorldInstance CreateWorldWithAtmospheres(out AtmosphericScatteringComponent atmosphere)
     {
-        RuntimeRenderWorldInstance world = new();
+        XRWorldInstance world = CreateWorld();
         SceneNode root = new("Root");
         atmosphere = AddAtmosphere(root, "Atmosphere");
         Activate(world, root);
         return world;
     }
 
-    private static RuntimeRenderWorldInstance CreateWorldWithAtmospheres(
+    private static XRWorldInstance CreateWorldWithAtmospheres(
         out AtmosphericScatteringComponent first,
         out AtmosphericScatteringComponent second,
         Vector3 secondTranslation = default)
     {
-        RuntimeRenderWorldInstance world = new();
+        XRWorldInstance world = CreateWorld();
         SceneNode root = new("Root");
         first = AddAtmosphere(root, "AtmosphereA");
         second = AddAtmosphere(root, "AtmosphereB", secondTranslation);
@@ -175,7 +185,10 @@ public sealed class AtmosphericScatteringComponentTests
         return atmosphere;
     }
 
-    private static void Activate(RuntimeRenderWorldInstance world, SceneNode root)
+    private static XRWorldInstance CreateWorld()
+        => new(new VisualScene3D(), new JitterScene());
+
+    private static void Activate(XRWorldInstance world, SceneNode root)
     {
         root.Transform.RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: true, ELoopType.Sequential)
             .GetAwaiter()

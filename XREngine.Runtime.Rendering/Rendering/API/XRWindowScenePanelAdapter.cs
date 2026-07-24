@@ -29,7 +29,7 @@ namespace XREngine.Rendering
         public XRFrameBuffer? FrameBuffer => _scenePanelFBO;
 
         public bool IsActiveForWindow(XRWindow window)
-            => RuntimeRenderingHostServices.Current.IsWindowScenePanelPresentationEnabled &&
+            => RuntimeRenderingHostServices.Presentation.IsWindowScenePanelPresentationEnabled &&
                !window.IsDisposed;
 
         public void InvalidateResources()
@@ -79,7 +79,7 @@ namespace XREngine.Rendering
 
         public bool TryRenderScenePanelMode(XRWindow window)
         {
-            BoundingRectangle? region = RuntimeRenderingHostServices.Current.GetScenePanelRenderRegion(window);
+            BoundingRectangle? region = RuntimeRenderingHostServices.Factories.GetScenePanelRenderRegion(window);
             if (!region.HasValue ||
                 region.Value.Width < MinScenePanelRenderExtent ||
                 region.Value.Height < MinScenePanelRenderExtent)
@@ -101,7 +101,7 @@ namespace XREngine.Rendering
             int desiredWidth = region.Value.Width;
             int desiredHeight = region.Value.Height;
 
-            int debounceMs = RuntimeRenderingHostServices.Current.ScenePanelResizeDebounceMs;
+            int debounceMs = RuntimeRenderingHostServices.Presentation.ScenePanelResizeDebounceMs;
             if (debounceMs < 0)
                 debounceMs = 0;
 

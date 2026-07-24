@@ -202,7 +202,7 @@ public unsafe partial class OpenXRAPI
         }
 
         if (!_smokeFoveationResolution.IsSupported &&
-            RuntimeRenderingHostServices.Current.VrFoveationRequireRequested &&
+            RuntimeRenderingHostServices.Presentation.VrFoveationRequireRequested &&
             !string.IsNullOrWhiteSpace(_smokeFoveationResolution.Diagnostic))
         {
             AddFailureIfMissing(

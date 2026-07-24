@@ -190,7 +190,7 @@ public unsafe partial class OpenXRAPI
 
     private bool ShouldRequestOpenXrQuadViews()
     {
-        IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+        IRuntimeRenderPresentationServices host = RuntimeRenderingHostServices.Presentation;
         return host.RvcQuadViewEnabled ||
             (host.RvcPipelineMode != ERvcPipelineMode.Off && host.RvcQuadViewEnabled);
     }

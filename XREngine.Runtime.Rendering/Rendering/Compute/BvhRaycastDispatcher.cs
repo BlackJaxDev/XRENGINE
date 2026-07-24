@@ -1,4 +1,3 @@
-using Silk.NET.OpenGL;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -9,7 +8,6 @@ using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Rendering.Compute;
 
@@ -87,7 +85,8 @@ public sealed class BvhRaycastDispatcher : IDisposable
         if (renderer is null)
             return;
 
-        if (renderer is not OpenGLRenderer glRenderer)
+        if (!((IRuntimeRendererHost)renderer).TryGetBackendCapability<IGpuFenceBackendCapability>(out var fenceCapability) ||
+            fenceCapability is null)
         {
             WarnUnsupportedBackend();
             Reset("renderer backend does not support GPU BVH raycast fences/readback");
@@ -98,7 +97,7 @@ public sealed class BvhRaycastDispatcher : IDisposable
 
         while (budget-- > 0 && _pendingRequests.TryDequeue(out var request))
         {
-            if (!DependenciesReady(request, glRenderer))
+            if (!DependenciesReady(request, fenceCapability))
             {
                 _pendingRequests.Enqueue(request);
                 continue;
@@ -117,7 +116,7 @@ public sealed class BvhRaycastDispatcher : IDisposable
                 continue;
             }
 
-            Dispatch(request, glRenderer, program);
+            Dispatch(request, fenceCapability, program);
         }
     }
 
@@ -130,8 +129,11 @@ public sealed class BvhRaycastDispatcher : IDisposable
         if (!_enabled)
             return;
 
-        var glRenderer = AbstractRenderer.Current as OpenGLRenderer;
-        if (glRenderer is null && _inFlight.Count > 0)
+        IRuntimeRendererHost? renderer = AbstractRenderer.Current;
+        IGpuFenceBackendCapability? fenceCapability = null;
+        if (renderer is not null)
+            renderer.TryGetBackendCapability(out fenceCapability);
+        if (fenceCapability is null && _inFlight.Count > 0)
         {
             WarnUnsupportedBackend();
             Reset("renderer backend changed while GPU BVH raycasts were in flight");
@@ -141,7 +143,7 @@ public sealed class BvhRaycastDispatcher : IDisposable
         for (int i = _inFlight.Count - 1; i >= 0; --i)
         {
             var entry = _inFlight[i];
-            if (!IsFenceComplete(entry.Fence, glRenderer))
+            if (!IsFenceComplete(entry.Fence, fenceCapability))
                 continue;
 
             var raw = ReadResultBytes(entry.Request, entry.ExpectedBytes);
@@ -157,8 +159,7 @@ public sealed class BvhRaycastDispatcher : IDisposable
             if (entry.Request.Completed != null)
                 _completedCallbacks.Enqueue(() => entry.Request.Completed!(result));
 
-            if (glRenderer is not null && entry.Fence != IntPtr.Zero)
-                glRenderer.RawGL.DeleteSync(entry.Fence);
+            fenceCapability?.DeleteFence(entry.Fence);
 
             _inFlight.RemoveAt(i);
         }
@@ -203,12 +204,11 @@ public sealed class BvhRaycastDispatcher : IDisposable
 
     public void Reset(string? reason = null)
     {
-        var glRenderer = AbstractRenderer.Current as OpenGLRenderer;
+        IRuntimeRendererHost? renderer = AbstractRenderer.Current;
+        IGpuFenceBackendCapability? fenceCapability = null;
+        renderer?.TryGetBackendCapability(out fenceCapability);
         foreach (var entry in _inFlight)
-        {
-            if (glRenderer is not null && entry.Fence != IntPtr.Zero)
-                glRenderer.RawGL.DeleteSync(entry.Fence);
-        }
+            fenceCapability?.DeleteFence(entry.Fence);
 
         // Only treat this as a meaningful clear (and warn) when there was actually
         // outstanding work. On unsupported backends (e.g. Vulkan) Reset is invoked
@@ -230,12 +230,9 @@ public sealed class BvhRaycastDispatcher : IDisposable
             Debug.MeshesWarning($"[BvhRaycastDispatcher] Cleared GPU BVH raycasts ({reason}).");
     }
 
-    private static bool DependenciesReady(BvhRaycastRequest request, OpenGLRenderer? glRenderer)
+    private static bool DependenciesReady(BvhRaycastRequest request, IGpuFenceBackendCapability fenceCapability)
     {
         if (request.CpuDependency is not null && !request.CpuDependency())
-            return false;
-
-        if (glRenderer is null)
             return false;
 
         if (request.DependencyFences is null)
@@ -246,19 +243,15 @@ public sealed class BvhRaycastDispatcher : IDisposable
             if (fence == IntPtr.Zero)
                 continue;
 
-            var status = glRenderer.RawGL.ClientWaitSync(fence, 0u, 0u);
-            if (status != GLEnum.AlreadySignaled && status != GLEnum.ConditionSatisfied)
+            if (!fenceCapability.IsFenceComplete(fence))
                 return false;
         }
 
         return true;
     }
 
-    private void Dispatch(BvhRaycastRequest request, OpenGLRenderer? glRenderer, XRRenderProgram program)
+    private void Dispatch(BvhRaycastRequest request, IGpuFenceBackendCapability fenceCapability, XRRenderProgram program)
     {
-        if (glRenderer is null)
-            return;
-
         if (request.HitBuffer is null || request.RayBuffer is null || request.NodeBuffer is null || request.TriangleBuffer is null)
             return;
 
@@ -287,7 +280,7 @@ public sealed class BvhRaycastDispatcher : IDisposable
         using (BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Raycast, request.RayCount))
             program.DispatchCompute(groupsX, 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 
-        IntPtr fence = glRenderer.RawGL.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
+        IntPtr fence = fenceCapability.CreateCompletionFence();
 
         uint stride = request.HitStrideBytes ?? (uint)Unsafe.SizeOf<GpuRaycastHit>();
         ulong requestedBytes = request.BytesToRead ?? ((ulong)stride * request.RayCount);
@@ -344,17 +337,8 @@ public sealed class BvhRaycastDispatcher : IDisposable
         };
     }
 
-    private static bool IsFenceComplete(IntPtr fence, OpenGLRenderer? glRenderer)
-    {
-        if (glRenderer is null)
-            return false;
-
-        if (fence == IntPtr.Zero)
-            return true;
-
-        var status = glRenderer.RawGL.ClientWaitSync(fence, 0u, 0u);
-        return status == GLEnum.AlreadySignaled || status == GLEnum.ConditionSatisfied;
-    }
+    private static bool IsFenceComplete(IntPtr fence, IGpuFenceBackendCapability? fenceCapability)
+        => fenceCapability?.IsFenceComplete(fence) == true;
 
     private static void EnsureReadbackMapping(XRDataBuffer buffer)
     {
@@ -390,8 +374,9 @@ public sealed class BvhRaycastDispatcher : IDisposable
     }
 
     private static bool IsBackendSupported()
-        => RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL &&
-           AbstractRenderer.Current is OpenGLRenderer;
+        => RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL &&
+           AbstractRenderer.Current is IRuntimeRendererHost renderer &&
+           renderer.TryGetBackendCapability<IGpuFenceBackendCapability>(out _);
 
     private static void WarnUnsupportedBackend()
         => Debug.RenderingWarningEvery(

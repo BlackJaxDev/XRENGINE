@@ -173,57 +173,27 @@ public static partial class EditorImGuiUI
         var texture = GetIcon(iconName);
         if (texture is null) return false;
 
-        if (AbstractRenderer.Current is OpenGLRenderer glRenderer)
+        bool uploadNow = false;
+        lock (_iconCacheLock)
         {
-            var apiTexture = EditorRenderThread.Invoke(
-                () => glRenderer.GenericToAPI<GLTexture2D>(texture),
-                "EditorIcons.ResolveOpenGLIconTexture",
-                RenderThreadJobKind.TextureUpload);
-            if (apiTexture is null)
-                return false;
-
-            bool uploadNow = false;
-            lock (_iconCacheLock)
+            if (!_uploadedOpenGLIconCache.Contains(cacheKey))
             {
-                if (!_uploadedOpenGLIconCache.Contains(cacheKey))
-                {
-                    if (_toolbarIconGpuUploadsThisFrame >= ToolbarIconGpuUploadsPerFrame)
-                        return false;
+                if (_toolbarIconGpuUploadsThisFrame >= ToolbarIconGpuUploadsPerFrame)
+                    return false;
 
-                    _toolbarIconGpuUploadsThisFrame++;
-                    uploadNow = true;
-                }
+                _toolbarIconGpuUploadsThisFrame++;
+                _uploadedOpenGLIconCache.Add(cacheKey);
+                uploadNow = true;
             }
-
-            if (uploadNow)
-            {
-                apiTexture.Generate();
-                apiTexture.PushData();
-                lock (_iconCacheLock)
-                    _uploadedOpenGLIconCache.Add(cacheKey);
-            }
-
-            if (!apiTexture.TryGetBindingId(out uint bindingId) || bindingId == OpenGLRenderer.GLObjectBase.InvalidBindingId)
-                return false;
-
-            handle = (nint)bindingId;
-            return true;
         }
 
-        if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
-        {
-            IntPtr textureId = EditorRenderThread.Invoke(
-                () => vkRenderer.RegisterImGuiTexture(texture),
-                "EditorIcons.RegisterVulkanIconTexture",
-                RenderThreadJobKind.TextureUpload);
-            if (textureId == IntPtr.Zero)
-                return false;
-
-            handle = (nint)textureId;
-            return true;
-        }
-
-        return false;
+        var options = new RenderTexturePreviewOptions(UploadIfNeeded: uploadNow);
+        return EditorTexturePreviewService.TryGetHandle(
+            texture,
+            in options,
+            out handle,
+            out _,
+            out _);
     }
 
     private static string BuildIconCacheKey(string iconName, int size)

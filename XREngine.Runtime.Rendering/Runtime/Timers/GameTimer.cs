@@ -1,4 +1,4 @@
-﻿using XREngine.Components;
+using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 
@@ -165,7 +165,7 @@ namespace XREngine.Timers
 
         private void TickMulti()
         {
-            var delta = TimeSpan.FromSeconds(RuntimeRenderingHostServices.Current.RenderDeltaSeconds);
+            var delta = TimeSpan.FromSeconds(RuntimeRenderingHostServices.FrameTiming.RenderDeltaSeconds);
             _totalElapsedTime += delta;
             _elapsedSinceLastFire += delta;
 
@@ -183,7 +183,7 @@ namespace XREngine.Timers
 
         private void TickSingle()
         {
-            var delta = TimeSpan.FromSeconds(RuntimeRenderingHostServices.Current.RenderDeltaSeconds);
+            var delta = TimeSpan.FromSeconds(RuntimeRenderingHostServices.FrameTiming.RenderDeltaSeconds);
             _totalElapsedTime += delta;
             _elapsedSinceLastFire += delta;
 

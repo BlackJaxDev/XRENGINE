@@ -930,7 +930,7 @@ public sealed class VrViewRenderModeContractTests
         openXrResolution.ShouldContain("QueueOpenXrEyeResolutionSessionRecreate");
         openXrResolution.ShouldContain("RecreateOpenXrSessionResourcesForEyeResolution");
         openXrResolution.ShouldContain("TearDownSessionResourcesWithCurrentContext(destroyInstance: true)");
-        openXrResolution.ShouldContain("RuntimeRenderingHostServices.Current.TryEnsureOpenXrRuntimeService(serviceReason)");
+        openXrResolution.ShouldContain("RuntimeRenderingHostServices.Presentation.TryEnsureOpenXrRuntimeService(serviceReason)");
         openXrResolution.ShouldContain("SetRuntimeState(OpenXrRuntimeState.DesktopOnly)");
         openXrRuntimeState.ShouldContain("GetGraphicsDeviceFailureProbeDelay");
         openXrState.ShouldContain("_appliedOpenXrEyeResolutionPreset");

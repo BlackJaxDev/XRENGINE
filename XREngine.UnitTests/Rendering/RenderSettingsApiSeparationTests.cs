@@ -175,7 +175,7 @@ public sealed class RenderSettingsApiSeparationTests
         string effective = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Engine.EffectiveSettings.cs");
         string windows = ReadWorkspaceFile("XRENGINE/Engine/Engine.Windows.cs");
         string mode = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanRenderTargetMode.cs");
-        string runtimeServices = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderingHostServices.cs");
+        string runtimeServices = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderSettingsServices.cs");
 
         effective.ShouldContain("public static ERenderLibrary PreferredRenderBackend");
         effective.ShouldContain("public static RenderBackendFallbackPolicy RenderBackendFallbackPolicy");

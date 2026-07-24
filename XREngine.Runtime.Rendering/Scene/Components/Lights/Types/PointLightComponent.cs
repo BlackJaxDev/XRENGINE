@@ -630,7 +630,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private bool ShouldPrepareAtlasGroupedFaceCollection()
         {
-            if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+            if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
             {
                 // Share the directional-cascade safety gate: grouped atlas rendering
                 // depends on indexed viewport/scissor state and shader viewport/layer

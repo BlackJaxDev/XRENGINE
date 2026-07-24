@@ -389,7 +389,7 @@ public class SteamAudioProbeComponent : XRComponent
         if (World is null)
             return null;
 
-        foreach (var listener in (World as IRuntimeAudioListenerWorld)?.Listeners ?? [])
+        foreach (ListenerContext listener in ((World as IRuntimeAudioListenerWorld)?.AudioListeners ?? []).OfType<ListenerContext>())
         {
             if (listener.EffectsProcessor is SteamAudioProcessor processor)
                 return processor;

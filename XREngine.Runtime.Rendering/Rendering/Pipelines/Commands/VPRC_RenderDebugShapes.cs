@@ -72,11 +72,11 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         private static bool Is3DSpatialTreePreviewEnabled(XRRenderPipelineInstance instance)
-            => RuntimeRenderingHostServices.Current.Preview3DWorldOctree
+            => RuntimeRenderingHostServices.DebugDrawing.Preview3DWorldOctree
             || ResolveWorld(instance)?.PreviewOctrees == true;
 
         private static bool Is2DSpatialTreePreviewEnabled(XRRenderPipelineInstance instance)
-            => RuntimeRenderingHostServices.Current.Preview2DWorldQuadtree
+            => RuntimeRenderingHostServices.DebugDrawing.Preview2DWorldQuadtree
             || ResolveWorld(instance)?.PreviewQuadtrees == true;
 
         private static IRuntimeRenderWorld? ResolveWorld(XRRenderPipelineInstance instance)

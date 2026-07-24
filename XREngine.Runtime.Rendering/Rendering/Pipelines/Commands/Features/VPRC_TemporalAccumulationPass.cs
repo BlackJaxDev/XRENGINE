@@ -672,7 +672,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
         bool openXrVulkanRuntimeSelected =
             RuntimeEngine.Rendering.State.IsVulkan &&
-            (RuntimeRenderingHostServices.Current.IsOpenXrRuntimeRequested ||
+            (RuntimeRenderingHostServices.Presentation.IsOpenXrRuntimeRequested ||
              RuntimeEngine.GameSettings?.VRRuntime == EVRRuntime.OpenXR ||
              RuntimeEngine.VRState.OpenXRApi is not null ||
              RuntimeEngine.VRState.IsOpenXRActive);
@@ -711,7 +711,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         VrViewRenderModeResolution resolution = VrViewRenderModeResolver.Resolve(
             backend,
             RuntimeEngine.Rendering.Settings.VrViewRenderMode,
-            RuntimeRenderingHostServices.Current.EnableOpenXrVulkanParallelRendering,
+            RuntimeRenderingHostServices.Presentation.EnableOpenXrVulkanParallelRendering,
             trueSinglePassStereoAvailable,
             externalSwapchainTarget);
 
@@ -1074,7 +1074,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
     private static bool IsRenderingExternalSwapchainTarget()
     {
-        AbstractRenderer? renderer = RuntimeRenderingHostServices.Current.CurrentRenderer as AbstractRenderer
+        AbstractRenderer? renderer = RuntimeRenderingHostServices.FrameTiming.CurrentRenderer as AbstractRenderer
             ?? AbstractRenderer.Current;
         return renderer?.IsRenderingExternalSwapchainTarget == true;
     }

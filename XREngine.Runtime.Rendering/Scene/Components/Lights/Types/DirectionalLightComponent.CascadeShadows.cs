@@ -363,7 +363,7 @@ namespace XREngine.Components.Lights
         {
             if (_effectiveCascadeShadowBackend == DirectionalCascadeShadowBackend.AtlasPage &&
                 _effectiveCascadeShadowRenderMode == EDirectionalCascadeShadowRenderMode.Sequential &&
-                RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+                RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
             {
                 return "SequentialVulkanCascadeAtlas";
             }
@@ -496,7 +496,7 @@ namespace XREngine.Components.Lights
                 : state.ShadowMapTexture;
 
         private bool ShouldUseVulkanAtlasCascadeTargets(int cascadeCount)
-            => RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan &&
+            => RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan &&
                CanUseDirectionalCascadeShadowAtlasForCurrentBackend(cascadeCount);
 
         private static bool CanRenderDirectionalCascadesForCurrentBackend()
@@ -3550,7 +3550,7 @@ namespace XREngine.Components.Lights
             if (!UsesDirectionalShadowAtlasForCurrentEncoding)
                 return false;
 
-            if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+            if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
             {
                 // Keep the known Monado OpenXR Vulkan path protected, but let
                 // SteamVR and ordinary Vulkan sessions exercise the atlas toggle.
@@ -3628,7 +3628,7 @@ namespace XREngine.Components.Lights
 
         private bool SupportsDirectionalCascadeAtlasGroupedRendering(int cascadeCount)
         {
-            if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+            if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
             {
                 // The grouped atlas path hang was observed with the Monado OpenXR
                 // Vulkan runtime. SteamVR and ordinary Vulkan sessions should use

@@ -316,9 +316,12 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     private PhysicsChainBenchmarkSettleSnapshot CaptureBenchmarkSettleSnapshot()
     {
         GPUPhysicsChainBandwidthSnapshot bandwidth = GPUPhysicsChainDispatcher.GetBandwidthPressureSnapshot();
-        int pendingUploads = AbstractRenderer.Current is OpenGLRenderer glRenderer
-            ? glRenderer.MeshGenerationQueue.PendingCount
-            : 0;
+        int pendingUploads =
+            EditorRendererCapabilityResolver.TryGetForBackend(
+                RendererBackendId.OpenGL,
+                out IRendererStartupWarmupBackendCapability warmup)
+                ? warmup.PendingStartupWorkCount
+                : 0;
         int rendererCount = Engine.Rendering.Stats.SceneAssets.VisibleRendererCount;
 
         // There is not yet a backend-neutral pipeline compilation queue. GPU
@@ -401,8 +404,10 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         // The spawn produced many new meshes that queue for GPU upload. Boost the
         // per-frame mesh generation budget so the backlog drains in seconds rather
         // than minutes. The budget auto-restores when the queue empties.
-        if (AbstractRenderer.Current is OpenGLRenderer glRenderer)
-            glRenderer.MeshGenerationQueue.BoostBudgetUntilDrained(100.0);
+        if (EditorRendererCapabilityResolver.TryGetForBackend(
+                RendererBackendId.OpenGL,
+                out IRendererStartupWarmupBackendCapability warmup))
+            warmup.BoostMeshGenerationBudgetUntilDrained(100.0);
     }
 
     private void StopBenchmark(bool destroyInstances, bool updateStatus, bool cancelled)

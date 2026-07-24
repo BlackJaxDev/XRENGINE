@@ -7,8 +7,8 @@ namespace XREngine.Rendering.VideoStreaming;
 /// Uploads decoded video frames to a Vulkan texture via staging buffers.
 /// <para>
 /// Each frame:
-///   1. Obtain the <see cref="VulkanRenderer.VkTexture2D"/> wrapper for the target texture.
-///   2. Delegate to <see cref="VulkanRenderer.VkTexture2D.UploadVideoFrameData"/> which:
+///   1. Resolve the backend texture handle for the target texture.
+///   2. Delegate the upload to that handle, which:
 ///      - Allocates a host-visible staging buffer and memcpy's the pixel data.
 ///      - Transitions the image to TransferDstOptimal.
 ///      - Issues vkCmdCopyBufferToImage from the staging buffer to mip 0.

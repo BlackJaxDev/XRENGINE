@@ -17,7 +17,7 @@ public partial class XRMesh
         Dictionary<string, List<SceneNode>> nodeCache,
         Matrix4x4 dataTransform) : this()
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope("Assimp XRMesh Constructor");
+        using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope("Assimp XRMesh Constructor");
 
         ArgumentNullException.ThrowIfNull(mesh);
         ArgumentNullException.ThrowIfNull(assimp);
@@ -84,7 +84,7 @@ public partial class XRMesh
             sourceList,
             count,
             Matrix4x4.Identity,
-            RuntimeRenderingHostServices.Current.PopulateVertexDataInParallel);
+            RuntimeRenderingHostServices.Settings.PopulateVertexDataInParallel);
 
         PopulateAssimpBlendshapeData(mesh, sourceList);
 
@@ -117,7 +117,7 @@ public partial class XRMesh
         Matrix4x4 dataTransform)
     {
         int faceCount = mesh.FaceCount;
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope($"PopulateVerticesAssimpParallelPrecomputed with {faceCount} faces");
+        using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope($"PopulateVerticesAssimpParallelPrecomputed with {faceCount} faces");
 
         int maxColorCount = 0;
         int maxTexCoordCount = 0;

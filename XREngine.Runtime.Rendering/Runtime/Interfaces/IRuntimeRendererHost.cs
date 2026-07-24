@@ -8,6 +8,21 @@ namespace XREngine.Rendering;
 public interface IRuntimeRendererHost
 {
     /// <summary>
+    /// Stable backend identity that does not expose a concrete renderer type.
+    /// </summary>
+    RendererBackendId BackendId => default;
+
+    /// <summary>
+    /// Resolves an optional backend capability without a concrete renderer cast in stable layers.
+    /// </summary>
+    bool TryGetBackendCapability<TCapability>(out TCapability? capability)
+        where TCapability : class
+    {
+        capability = this as TCapability;
+        return capability is not null;
+    }
+
+    /// <summary>
     /// True after the backend detected a terminal graphics-device loss.
     /// </summary>
     bool IsDeviceLost { get; }

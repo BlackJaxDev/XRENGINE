@@ -164,7 +164,7 @@ internal static class RenderWorkBudgetCoordinator
 
     private static void EnsureFrame()
     {
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+        long currentFrame = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
         long previousFrame = Volatile.Read(ref s_frameId);
         if (previousFrame == currentFrame)
             return;
@@ -190,7 +190,7 @@ internal static class RenderWorkBudgetCoordinator
 
     private static double GetEffectiveTextureUploadBudgetMilliseconds()
     {
-        double configuredBudget = RuntimeRenderingHostServices.Current.TextureUploadFrameBudgetMilliseconds;
+        double configuredBudget = RuntimeRenderingHostServices.Settings.TextureUploadFrameBudgetMilliseconds;
         if (configuredBudget <= 0.0 || !IsStartupBoostActive())
             return configuredBudget;
 

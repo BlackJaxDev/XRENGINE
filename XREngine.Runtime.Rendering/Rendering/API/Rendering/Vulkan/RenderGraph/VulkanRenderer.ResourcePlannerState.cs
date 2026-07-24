@@ -1209,7 +1209,7 @@ public unsafe partial class VulkanRenderer
 
         if (prunedCount > 0)
         {
-            RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
+            RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
                 new FrameOutputWorkTelemetry(
                     PlannerPrunes: prunedCount,
                     PlannerEvictionDeferrals: retirementDeferralCount));
@@ -2839,7 +2839,7 @@ public unsafe partial class VulkanRenderer
         ActiveResourceAllocationSignature = allocationPlan.Signature;
         ActiveResourcePlannerSignatureBreakdown = signatureBreakdown;
         ActiveResourcePlannerRevision++;
-        RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
+        RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
             new FrameOutputWorkTelemetry(
                 PhysicalPlanGenerations: 1,
                 PhysicalPlanAliasReuses: reusedImageGroups?.Count ?? 0,
@@ -2849,7 +2849,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private void RecordPhysicalPlanCacheTelemetry(bool hit, ulong renderGraphPlanGeneration)
-        => RuntimeRenderingHostServices.Current.RecordRenderFrameOutputWork(
+        => RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
             new FrameOutputWorkTelemetry(
                 PhysicalPlanCacheHits: hit ? 1 : 0,
                 PhysicalPlanCacheMisses: hit ? 0 : 1,
@@ -3010,7 +3010,7 @@ public unsafe partial class VulkanRenderer
 
     private static TimeSpan ResolveResourceAllocationFailureRetryDelay()
     {
-        IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+        IRuntimeRenderPresentationServices host = RuntimeRenderingHostServices.Presentation;
         return host.IsOpenXRActive || host.IsInVR
             ? OpenXrResourceAllocationFailureRetryDelay
             : ResourceAllocationFailureRetryDelay;
@@ -3392,7 +3392,7 @@ public unsafe partial class VulkanRenderer
     private bool ShouldSkipAutoExposureHistoryPreserve()
         => IsDeviceLost ||
            ActiveResourcePlannerRevision == 0 ||
-           RuntimeRenderingHostServices.Current.IsInVR;
+           RuntimeRenderingHostServices.Presentation.IsInVR;
 
     private static bool IsUsableAutoExposureHistoryGroup(VulkanPhysicalImageGroup? group)
         => group is not null &&

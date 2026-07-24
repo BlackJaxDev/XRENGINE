@@ -36,7 +36,7 @@ public static class RenderFrameViewSetCapture
         builder.Add(CaptureView(camera, EVrOutputViewKind.LeftEye, 0u, width, height, LeftEyeHistoryKey));
         builder.Add(CaptureView(rightCamera, EVrOutputViewKind.RightEye, 1u, width, height, RightEyeHistoryKey));
         return builder.Build(
-            RuntimeRenderingHostServices.Current.VrViewRenderMode,
+            RuntimeRenderingHostServices.Presentation.VrViewRenderMode,
             EVrVisibilityPolicy.SharedFrameViewSet,
             1,
             "Stereo frame views");

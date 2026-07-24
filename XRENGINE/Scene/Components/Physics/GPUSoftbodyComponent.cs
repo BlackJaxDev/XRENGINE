@@ -14,7 +14,7 @@ namespace XREngine.Components;
 /// Phase 1 softbody owner component. It stores the simulation proxy, collider bindings, and render-binding metadata,
 /// submits batched GPU data each frame, and triggers the centralized softbody dispatcher from a pre-render hook.
 /// </summary>
-public sealed class GPUSoftbodyComponent : XRComponent, IRenderable
+public sealed class GPUSoftbodyComponent : XRComponent, IRenderable, IGpuSoftbodyComputeSource
 {
     private readonly RenderInfo3D _dispatchRenderInfo;
     private readonly RenderCommandMethod3D _dispatchRenderCommand;

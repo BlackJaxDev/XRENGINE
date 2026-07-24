@@ -12,8 +12,13 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer(XRWindow window, bool shouldLinkWindow = true) : AbstractRenderer<Vk>(window, shouldLinkWindow)
+    public unsafe partial class VulkanRenderer(XRWindow window, bool shouldLinkWindow = true) :
+        AbstractRenderer<Vk>(window, shouldLinkWindow),
+        ISparseTextureStreamingBackendCapability,
+        IStreamlinePresentationBackendCapability
     {
+        public override RendererBackendId BackendId => RendererBackendId.Vulkan;
+
         protected override Vk GetAPI()
             => Vk.GetApi();
 
@@ -484,8 +489,8 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
-            if (!host.IsOpenXRActive && !host.IsInVR)
+            IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
+            if (!presentation.IsOpenXRActive && !presentation.IsInVR)
                 return false;
 
             Api.GetImageMemoryRequirements(device, image, out MemoryRequirements requirements);
@@ -525,8 +530,8 @@ namespace XREngine.Rendering.Vulkan
         {
             reason = string.Empty;
 
-            IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
-            if (!host.IsOpenXRActive && !host.IsInVR)
+            IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
+            if (!presentation.IsOpenXRActive && !presentation.IsInVR)
                 return false;
 
             if (!TryGetOpenXrVulkanImageAllocationPressureSnapshot(
@@ -576,9 +581,9 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
-            trackedVramBytes = Math.Max(0L, host.TrackedVramBytes);
-            trackedVramDeferLimitBytes = ResolveOpenXrVulkanImageAllocationTrackedVramLimit(host.TrackedVramBudgetBytes);
+            IRuntimeRenderFrameTimingServices frameTiming = RuntimeRenderingHostServices.FrameTiming;
+            trackedVramBytes = Math.Max(0L, frameTiming.TrackedVramBytes);
+            trackedVramDeferLimitBytes = ResolveOpenXrVulkanImageAllocationTrackedVramLimit(frameTiming.TrackedVramBudgetBytes);
             if (TryGetVulkanAllocatorBudgetSnapshot(
                     OpenXrVulkanImageAllocationPressurePreflightRatio,
                     OpenXrVulkanImageAllocationPressureReserveBytes,

@@ -747,20 +747,20 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             return;
         foreach (var wrapper in buffer.APIWrappers)
         {
-            if (wrapper is OpenGLRenderer.GLDataBuffer gl && !gl.IsReadyForRendering)
-                gl.EnsureStorageAllocatedForGpuCopy();
-            else if (wrapper is VulkanRenderer.VkDataBuffer vk)
-                vk.EnsureStorageAllocatedForGpuUse();
+            if (wrapper is IApiDataBuffer apiBuffer && !apiBuffer.BackendIsReadyForGpuUse)
+                apiBuffer.EnsureStorageAllocatedForGpuUse();
         }
     }
 
     private static void ClearOpenGlComputeBindings()
     {
-        if (AbstractRenderer.Current is not OpenGLRenderer glRenderer)
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null ||
+            !((IRuntimeRendererHost)renderer).TryGetBackendCapability<IComputeBindingCleanupBackendCapability>(out var capability) ||
+            capability is null)
             return;
 
-        for (uint binding = 0u; binding <= SkinningPrepassBindings.Max; binding++)
-            glRenderer.RawGL.BindBufferBase(GLEnum.ShaderStorageBuffer, binding, 0);
+        capability.ClearStorageBufferBindings(SkinningPrepassBindings.Max);
     }
 
     private EmptyStorageBuffers GetEmptyStorageBuffers()

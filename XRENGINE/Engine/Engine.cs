@@ -9,6 +9,7 @@ using XREngine.Data.Trees;
 using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Rendering.VideoStreaming;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using static XREngine.Rendering.XRWorldInstance;
 
@@ -268,6 +269,8 @@ namespace XREngine
             RuntimePawnHostServices.Current = new EngineRuntimePawnHostServices();
             GameModeCompositionBootstrap.RegisterBuiltInGameModes();
             RuntimeThreadServices.Current = new EngineRuntimeThreadServices();
+            RuntimeModelImportServices.Current = new EngineRuntimeModelImportServices();
+            RuntimeSceneImportServices.Current = new UnityEditorImportBridge();
 
             RuntimeAnimationHostServices.Current = new EngineRuntimeAnimationHostServices();
             RuntimePhysicsServices.Current = new EngineRuntimePhysicsServices();

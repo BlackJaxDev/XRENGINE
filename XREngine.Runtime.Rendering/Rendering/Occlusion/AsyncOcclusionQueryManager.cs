@@ -78,16 +78,13 @@ public sealed class AsyncOcclusionQueryManager
             return ERenderQueryReadStatus.InvalidState;
 
         OcclusionQueryResult result = default;
-        ERenderQueryReadStatus status = AbstractRenderer.Current switch
-        {
-            OpenGLRenderer gl => gl.GenericToAPI<GLRenderQuery>(query) is { } glQuery
-                ? glQuery.TryGetAnySamplesPassed(out result, expectedTicket)
-                : ERenderQueryReadStatus.InvalidState,
-            VulkanRenderer vk => vk.GenericToAPI<VulkanRenderer.VkRenderQuery>(query) is { } vkQuery
-                ? vkQuery.TryGetAnySamplesPassed(out result, expectedTicket)
-                : ERenderQueryReadStatus.InvalidState,
-            _ => ERenderQueryReadStatus.Unsupported,
-        };
+        IRuntimeRendererHost? renderer = AbstractRenderer.Current;
+        ERenderQueryReadStatus status =
+            renderer is not null &&
+            renderer.TryGetBackendCapability<IOcclusionQueryBackendCapability>(out var capability) &&
+            capability is not null
+                ? capability.TryGetAnySamplesPassed(query, out result, expectedTicket)
+                : ERenderQueryReadStatus.Unsupported;
 
         if (status == ERenderQueryReadStatus.Ready)
             anySamplesPassed = result.AnySamplesPassed;
@@ -100,12 +97,13 @@ public sealed class AsyncOcclusionQueryManager
         if (query is null)
             return false;
 
-        ticket = AbstractRenderer.Current switch
+        IRuntimeRendererHost? renderer = AbstractRenderer.Current;
+        if (renderer is not null &&
+            renderer.TryGetBackendCapability<IOcclusionQueryBackendCapability>(out var capability) &&
+            capability is not null)
         {
-            OpenGLRenderer gl => gl.GenericToAPI<GLRenderQuery>(query)?.Ticket ?? default,
-            VulkanRenderer vk => vk.GenericToAPI<VulkanRenderer.VkRenderQuery>(query)?.Ticket ?? default,
-            _ => default,
-        };
+            ticket = capability.GetTicket(query);
+        }
         return ticket.IsValid;
     }
 

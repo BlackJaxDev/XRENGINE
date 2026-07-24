@@ -11,6 +11,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Occlusion;
@@ -75,7 +76,7 @@ namespace XREngine
                         _globalDefaultSettings = _settings;
 
                     ApplyEngineSettingChange(null);
-                    global::XREngine.Rendering.OpenGL.OpenGLRenderer.HandleShaderPipelineModeChanged(_settings.AllowShaderPipelines);
+                    NotifyShaderPipelineModeChanged(_settings.AllowShaderPipelines);
                     global::XREngine.Rendering.XRMaterial.DisposeShaderPipelineProgramsWhenDisabled();
                     SettingsChanged?.Invoke();
                 }
@@ -153,11 +154,20 @@ namespace XREngine
                     XREngine.Debug.Rendering($"[RenderSettings] AllowSkinning changed to {_settings.AllowSkinning}; ShaderConfigVersion={_settings.ShaderConfigVersion}");
                 if (e.PropertyName == nameof(EngineSettings.AllowShaderPipelines))
                 {
-                    global::XREngine.Rendering.OpenGL.OpenGLRenderer.HandleShaderPipelineModeChanged(_settings.AllowShaderPipelines);
+                    NotifyShaderPipelineModeChanged(_settings.AllowShaderPipelines);
                     global::XREngine.Rendering.XRMaterial.DisposeShaderPipelineProgramsWhenDisabled();
                     XREngine.Debug.Rendering($"[RenderSettings] AllowShaderPipelines changed to {_settings.AllowShaderPipelines}; ShaderConfigVersion={_settings.ShaderConfigVersion}");
                 }
                 SettingsChanged?.Invoke();
+            }
+
+            private static void NotifyShaderPipelineModeChanged(bool allowShaderPipelines)
+            {
+                if (AbstractRenderer.Current is not IRuntimeRendererHost renderer ||
+                    !renderer.TryGetBackendCapability<IShaderPipelineModeBackendCapability>(out var capability))
+                    return;
+
+                capability?.HandleShaderPipelineModeChanged(allowShaderPipelines);
             }
 
             private static void HandlePhysicsVisualizeSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)

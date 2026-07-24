@@ -86,7 +86,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void OnAsyncIndexBufferReady(XRDataBuffer xrBuffer, IndexSize elementSize)
             {
-                RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
+                RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadTask(
                     RefreshIndexBuffersFromCache,
                     "GLMeshRenderer.RefreshIndexBuffersFromCache",
                     RenderThreadJobKind.MeshUpload);

@@ -228,7 +228,7 @@ public partial class DefaultRenderPipeline
             ?? instance.LastSceneCamera?.AntiAliasingModeOverride
             ?? instance.LastRenderingCamera?.AntiAliasingModeOverride
             ?? viewport?.ActiveCamera?.AntiAliasingModeOverride
-            ?? RuntimeRenderingHostServices.Current.DefaultAntiAliasingMode;
+            ?? RuntimeRenderingHostServices.FrameTiming.DefaultAntiAliasingMode;
 
     private static void DeclareImportedResources(RenderPipelineResourceLayoutBuilder builder)
     {
@@ -2017,7 +2017,7 @@ public partial class DefaultRenderPipeline
 
     private static bool TryResolveCurrentResourceBuildKey(out ResourceGenerationKey key)
     {
-        XRRenderPipelineInstance? pipeline = RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext as XRRenderPipelineInstance
+        XRRenderPipelineInstance? pipeline = RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext as XRRenderPipelineInstance
             ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
 
         if (pipeline?.CurrentResourceBuildContext is XRRenderPipelineInstance.ResourceBuildContext context)

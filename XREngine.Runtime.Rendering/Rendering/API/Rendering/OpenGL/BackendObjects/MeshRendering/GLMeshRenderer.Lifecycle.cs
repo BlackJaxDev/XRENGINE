@@ -169,7 +169,7 @@ namespace XREngine.Rendering.OpenGL
 
                 if (System.Threading.Interlocked.Exchange(ref _bufferCollectionRefreshQueued, 1) == 0)
                 {
-                    RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
+                    RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadTask(
                         RefreshCollectedBuffersFromCollections,
                         "GLMeshRenderer.BuffersChanged",
                         RenderThreadJobKind.MeshUpload);

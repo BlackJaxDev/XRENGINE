@@ -1207,7 +1207,7 @@ namespace XREngine.Components.Scene.Mesh
                 return;
             }
 
-            long frameTicks = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+            long frameTicks = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
             if (frameTicks != 0L && frameTicks == _lastSkyTwinkleFrameTicks)
                 return;
 
@@ -1262,7 +1262,7 @@ namespace XREngine.Components.Scene.Mesh
 
         private void FadeSkyTwinkle(float targetTwinkle)
         {
-            float dt = Math.Clamp((float)RuntimeRenderingHostServices.Current.RenderDeltaSeconds, 1.0f / 240.0f, 1.0f / 20.0f);
+            float dt = Math.Clamp((float)RuntimeRenderingHostServices.FrameTiming.RenderDeltaSeconds, 1.0f / 240.0f, 1.0f / 20.0f);
             float response = targetTwinkle > _skyCameraTwinkle
                 ? 1.0f - MathF.Exp(-dt * 18.0f)
                 : 1.0f - MathF.Exp(-dt * 6.0f);

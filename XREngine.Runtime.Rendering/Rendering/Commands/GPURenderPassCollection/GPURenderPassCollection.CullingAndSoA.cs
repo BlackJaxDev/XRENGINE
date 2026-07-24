@@ -949,14 +949,15 @@ namespace XREngine.Rendering.Commands
             if (camera?.StereoEyeLeft.HasValue != true)
                 return false;
 
-            IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
-            IRuntimeRenderCommandExecutionState? renderState = host.ActiveRenderCommandExecutionState;
+            IRuntimeRenderFrameTimingServices frameTiming = RuntimeRenderingHostServices.FrameTiming;
+            IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
+            IRuntimeRenderCommandExecutionState? renderState = frameTiming.ActiveRenderCommandExecutionState;
             if (renderState?.StereoPass == true || RuntimeEngine.Rendering.State.IsStereoPass)
                 return false;
 
             bool externalOpenXr =
                 renderState?.WindowViewport is XRViewport { RendersToExternalSwapchainTarget: true } &&
-                host.IsOpenXrRuntimeRequested;
+                presentation.IsOpenXrRuntimeRequested;
             return externalOpenXr && RetainExternalOpenXrSharedVisibilityException();
         }
 
@@ -997,7 +998,7 @@ namespace XREngine.Rendering.Commands
             if (!scene.UseGpuBvh)
                 return false;
 
-            GpuBvhCullingBackend backend = AbstractRenderer.Current is VulkanRenderer
+            GpuBvhCullingBackend backend = AbstractRenderer.Current?.BackendId == RendererBackendId.Vulkan
                 ? GpuBvhCullingBackend.Vulkan
                 : GpuBvhCullingBackend.OpenGl;
             GpuBvhSelectorBucket bucket = GpuBvhSelectorBucket.From(

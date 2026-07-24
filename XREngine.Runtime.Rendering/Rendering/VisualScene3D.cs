@@ -83,7 +83,7 @@ namespace XREngine.Scene
 
         private static void RenderSpatialTreeNode((OctreeNodeBase node, bool intersects) data)
         {
-            var host = RuntimeRenderingHostServices.Current;
+            IRuntimeRenderDebugDrawingServices host = RuntimeRenderingHostServices.DebugDrawing;
             var color = data.intersects
                 ? host.OctreeIntersectedBoundsColor
                 : host.OctreeContainedBoundsColor;
@@ -266,13 +266,13 @@ namespace XREngine.Scene
             base.GlobalPreRender();
             BvhRaycasts.ProcessDispatches();
             
-            RuntimeRenderingHostServices.Current.ProcessGpuPhysicsChainDispatches();
+            RuntimeRenderingHostServices.DebugDrawing.ProcessGpuPhysicsChainDispatches();
         }
 
         public override void GlobalPostRender()
         {
             base.GlobalPostRender();
-            RuntimeRenderingHostServices.Current.ProcessGpuPhysicsChainCompletions();
+            RuntimeRenderingHostServices.DebugDrawing.ProcessGpuPhysicsChainCompletions();
             BvhRaycasts.ProcessCompletions();
         }
 

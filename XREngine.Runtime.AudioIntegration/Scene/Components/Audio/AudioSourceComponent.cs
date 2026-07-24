@@ -41,6 +41,40 @@ namespace XREngine.Components
         [YamlIgnore]
         public ConcurrentDictionary<ListenerContext, AudioSource> ActiveListeners { get; set; } = [];
 
+        public int ActiveListenerCount => ActiveListeners.Count;
+
+        public IAudioPlaybackSource? PrimaryPlaybackSource
+        {
+            get
+            {
+                foreach (AudioSource source in ActiveListeners.Values)
+                    return source;
+                return null;
+            }
+        }
+
+        public bool AnySourcePlaying
+        {
+            get
+            {
+                foreach (AudioSource source in ActiveListeners.Values)
+                    if (source.IsPlaying)
+                        return true;
+                return false;
+            }
+        }
+
+        public int MinimumPlayableBufferCount
+        {
+            get
+            {
+                int minimum = int.MaxValue;
+                foreach (AudioSource source in ActiveListeners.Values)
+                    minimum = Math.Min(minimum, Math.Max(0, source.BuffersQueued - source.BuffersProcessed));
+                return minimum == int.MaxValue ? 0 : minimum;
+            }
+        }
+
         /// <summary>
         /// The rolloff factor of the source.
         /// Rolloff factor is the rate at which the source's volume decreases as it moves further from the listener.
@@ -415,6 +449,48 @@ namespace XREngine.Components
             }
         }
 
+        public bool RewindStoppedEmptySources()
+        {
+            bool rewound = false;
+            foreach (AudioSource source in ActiveListeners.Values)
+            {
+                if (source.IsPlaying || source.BuffersQueued != 0)
+                    continue;
+                source.Rewind();
+                rewound = true;
+            }
+            return rewound;
+        }
+
+        public bool PlayStoppedSources()
+        {
+            bool started = false;
+            foreach (AudioSource source in ActiveListeners.Values)
+            {
+                if (source.IsPlaying)
+                    continue;
+                source.Play();
+                started = true;
+            }
+            return started;
+        }
+
+        public void StopAndRewindAllSources()
+        {
+            foreach (AudioSource source in ActiveListeners.Values)
+            {
+                source.Stop();
+                source.UnqueueConsumedBuffers();
+                source.Rewind();
+            }
+        }
+
+        public void SetAutoPlayOnQueue(bool enabled)
+        {
+            foreach (AudioSource source in ActiveListeners.Values)
+                source.AutoPlayOnQueue = enabled;
+        }
+
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
@@ -730,7 +806,7 @@ namespace XREngine.Components
                 _lastExistenceCheckTime = DateTime.Now;
                 //There will usually only be one listener, but we support multiple for future-proofing
                 //Check if listener is within range, add and remove sources as needed
-                foreach (var listener in (World as IRuntimeAudioListenerWorld)?.Listeners ?? [])
+                foreach (ListenerContext listener in ((World as IRuntimeAudioListenerWorld)?.AudioListeners ?? []).OfType<ListenerContext>())
                 {
                     if (RelativeToListener)
                         AddSourceToListener(listener);

@@ -29,7 +29,7 @@ public sealed class PhysicsChainSelectiveReadbackDispatcherTests
     [Test]
     public void Dispatcher_SubmitsExactMappedStagingCopiesAfterProducerBarriers()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
         int producerBarrier = source.IndexOf("TryCompletePass(backend, BonePaletteCompletionPass)", StringComparison.Ordinal);
         int selectiveQueue = source.IndexOf("QueueSelectiveReadbacks(backend, _dispatchGroup);", producerBarrier, StringComparison.Ordinal);
 
@@ -47,7 +47,7 @@ public sealed class PhysicsChainSelectiveReadbackDispatcherTests
     [Test]
     public void StrictZeroReadback_DoesNotMapOrReadActiveCountsAndSelectiveMappingIsRequestDriven()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
         string selectiveMethod = SliceMethod(source, "private void SubmitSelectiveReadbackPlan(", "private bool TryFindRequest(");
         string activeMethod = SliceMethod(source, "private bool DispatchActiveWorkGeneration(", "private bool DispatchMainPhysics(");
 
@@ -62,7 +62,7 @@ public sealed class PhysicsChainSelectiveReadbackDispatcherTests
     [Test]
     public void Epochs_AreBumpedAtBackendArenaAndStableSliceBoundaries()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
 
         source.ShouldContain("BumpEpoch(ref _readbackBackendGeneration);");
         source.ShouldContain("BumpEpoch(ref _readbackArenaGeneration);");

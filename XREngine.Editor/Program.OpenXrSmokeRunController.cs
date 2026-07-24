@@ -194,7 +194,10 @@ internal partial class Program
             Engine.Rendering.Settings.TsrRenderScale = (float)_tsrResolutionScaleRequested;
             bool injectDesktopRejection = ReadBooleanEnvironmentVariable(
                 XREngineEnvironmentVariables.VulkanPhase524bInjectDesktopRejection);
-            VulkanRenderer.ResetPhase524bDesktopRejectionEvidence(injectDesktopRejection);
+            if (EditorRendererCapabilityResolver.TryGetRegistered(
+                    RendererBackendId.Vulkan,
+                    out IOpenXrSmokeDiagnosticsBackendCapability smokeDiagnostics))
+                smokeDiagnostics.ResetDesktopRejectionEvidence(injectDesktopRejection);
 
             Engine.Time.Timer.UpdateFrame += Update;
             _installed = true;
@@ -633,9 +636,13 @@ internal partial class Program
 
                 _validationLayersObserved |= validationLayersEnabled;
                 _synchronizationValidationObserved |= synchronizationValidationEnabled;
-                _vulkanRenderTargetModeEffective = AbstractRenderer.Current is VulkanRenderer vulkanRenderer
-                    ? vulkanRenderer.EffectiveRenderTargetMode.ToString()
-                    : Engine.EffectiveSettings.VulkanRenderTargetMode.ToString();
+                _vulkanRenderTargetModeEffective =
+                    EditorRendererCapabilityResolver.TryGetForBackend(
+                        RendererBackendId.Vulkan,
+                        out IRenderBackendDiagnosticsCapability diagnostics)
+                    && diagnostics.EffectiveRenderTargetMode is { } effectiveMode
+                        ? effectiveMode
+                        : Engine.EffectiveSettings.VulkanRenderTargetMode.ToString();
                 _vulkanDiagnosticPresetEffective = Engine.EffectiveSettings.VulkanDiagnosticPreset.ToString();
                 _occlusionCullingModeEffective = Engine.EffectiveSettings.GpuOcclusionCullingMode.ToString();
                 _mirrorModeEffective = outputManifest.MirrorMode.ToString();
@@ -1359,7 +1366,10 @@ internal partial class Program
             summary.TsrResolutionScaleRequested = _tsrResolutionScaleRequested;
             summary.TsrResolutionScaleEffective = _subscribedApi?.SmokeEffectiveTsrRenderScale
                 ?? Engine.Rendering.Settings.TsrRenderScale;
-            summary.DesktopRejectionEvidence = VulkanRenderer.CapturePhase524bDesktopRejectionEvidence();
+            if (EditorRendererCapabilityResolver.TryGetRegistered(
+                    RendererBackendId.Vulkan,
+                    out IOpenXrSmokeDiagnosticsBackendCapability smokeDiagnostics))
+                summary.DesktopRejectionEvidence = smokeDiagnostics.CaptureDesktopRejectionEvidence();
             summary.OcclusionCullingModeRequested =
                 Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OcclusionCullingMode) ?? string.Empty;
             summary.OcclusionCullingModeEffective = _occlusionCullingModeEffective;

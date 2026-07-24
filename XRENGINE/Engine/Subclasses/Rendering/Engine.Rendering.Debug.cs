@@ -10,7 +10,7 @@ using XREngine.Data.Transforms.Rotations;
 using XREngine.Rendering;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Debugging;
-using XREngine.Rendering.Physics.Physx;
+using XREngine.Rendering.Physics.DebugVisualization;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 using Triangle = XREngine.Data.Geometry.Triangle;

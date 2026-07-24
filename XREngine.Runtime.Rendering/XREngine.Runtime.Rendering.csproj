@@ -10,6 +10,9 @@
     <VmaBridgeNativeDll>$(MSBuildProjectDirectory)\runtimes\win-x64\native\VulkanMemoryAllocatorBridge.Native.dll</VmaBridgeNativeDll>
     <VmaBridgeBuildStateFile>$(BaseIntermediateOutputPath)vma-active-native-configuration.txt</VmaBridgeBuildStateFile>
     <VmaBridgeBuildStampFile>$(BaseIntermediateOutputPath)vma-native-build.stamp</VmaBridgeBuildStampFile>
+    <RiveSharpManagedDll>$(MSBuildProjectDirectory)\..\Build\Submodules\rive-sharp\RiveSharp\bin\$(Configuration)\netstandard2.0\RiveSharp.dll</RiveSharpManagedDll>
+    <DefineConstants Condition="Exists('$(RiveSharpManagedDll)')">$(DefineConstants);XRENGINE_HAS_RIVESHARP</DefineConstants>
+    <Freetype64Source Condition="'$(Freetype64Source)' == ''">$(NuGetPackageRoot)sharpfont.dependencies\2.6.0\bin\msvc12\x64\freetype6.dll</Freetype64Source>
   </PropertyGroup>
 
   <ItemGroup>
@@ -45,7 +48,6 @@
 
   <ItemGroup>
     <PackageReference Include="BitsKit" Version="1.2.0" />
-    <PackageReference Include="AssimpNetter" Version="6.0.2.1" />
     <PackageReference Include="DotnetNoise" Version="1.0.0" />
     <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1" />
     <PackageReference Include="GraphQL" Version="8.8.3" />
@@ -127,16 +129,14 @@
     <Reference Include="OpenVR.NET">
       <HintPath>..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll</HintPath>
     </Reference>
+    <Reference Include="RiveSharp" Condition="Exists('$(RiveSharpManagedDll)')">
+      <HintPath>$(RiveSharpManagedDll)</HintPath>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\XREngine.Animation\XREngine.Animation.csproj" />
-    <ProjectReference Include="..\XREngine.Audio\XREngine.Audio.csproj" />
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
-    <ProjectReference Include="..\XREngine.Fbx\XREngine.Fbx.csproj" />
-    <ProjectReference Include="..\XREngine.Input\XREngine.Input.csproj" />
-    <ProjectReference Include="..\XREngine.Modeling\XREngine.Modeling.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
   </ItemGroup>
 
@@ -150,6 +150,26 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <TargetPath>VulkanMemoryAllocatorBridge.Native.pdb</TargetPath>
     </None>
+    <None Include="$(RiveSharpManagedDll)" Pack="true" PackagePath="lib\$(TargetFramework)\" Visible="false" Condition="Exists('$(RiveSharpManagedDll)')" />
+    <None Update="runtimes\win-x64\native\rive.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <None Include="..\Build\Dependencies\FFmpeg\HlsReference\win-x64\*.dll" Condition="Exists('..\Build\Dependencies\FFmpeg\HlsReference\win-x64')">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <None Include="..\docs\licenses\nuget\FFmpeg.AutoGen-7.1.1-LGPL-3.0.txt" Condition="Exists('..\docs\licenses\nuget\FFmpeg.AutoGen-7.1.1-LGPL-3.0.txt')">
+      <Link>licenses\FFmpeg.AutoGen-LGPL-3.0.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <Content Include="$(Freetype64Source)" Condition="Exists('$(Freetype64Source)')">
+      <Link>freetype6.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 
   <Target Name="PrepareVulkanMemoryAllocatorBridgeBuildState"
@@ -200,6 +220,29 @@
           BeforeTargets="PrepareForBuild"
           Condition="'$(XREngineUseExistingNativeBridges)' == 'true' and !Exists('$(VmaBridgeNativeDll)')">
     <Error Text="Isolated editor builds reuse the repository-managed VulkanMemoryAllocatorBridge native binary, but $(VmaBridgeNativeDll) is missing. Build the native bridge once before starting an isolated editor session." />
+  </Target>
+
+  <Target Name="ForceFreetype64" AfterTargets="Build" Condition="Exists('$(Freetype64Source)')">
+    <Copy SourceFiles="$(Freetype64Source)" DestinationFiles="$(OutDir)freetype6.dll" SkipUnchangedFiles="false" />
+  </Target>
+
+  <Target Name="ForceFreetype64Publish" AfterTargets="Publish" Condition="Exists('$(Freetype64Source)') and '$(PublishDir)' != ''">
+    <Copy SourceFiles="$(Freetype64Source)" DestinationFiles="$(PublishDir)freetype6.dll" SkipUnchangedFiles="false" />
+  </Target>
+
+  <Target Name="EnsureHlsReferenceFfmpeg" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT'">
+    <PropertyGroup>
+      <HlsReferenceFfmpegDir>$(MSBuildProjectDirectory)\..\Build\Dependencies\FFmpeg\HlsReference\win-x64</HlsReferenceFfmpegDir>
+      <FfmpegSeedDir>$(MSBuildProjectDirectory)\..\Build\Dependencies\FFmpeg\Seed\win-x64</FfmpegSeedDir>
+    </PropertyGroup>
+
+    <ItemGroup Condition="Exists('$(FfmpegSeedDir)') and !Exists('$(HlsReferenceFfmpegDir)\avformat-62.dll') and !Exists('$(HlsReferenceFfmpegDir)\avformat-61.dll')">
+      <FfmpegSeedDll Include="$(FfmpegSeedDir)\*.dll" />
+    </ItemGroup>
+
+    <MakeDir Directories="$(HlsReferenceFfmpegDir)" Condition="'@(FfmpegSeedDll)' != ''" />
+    <Copy SourceFiles="@(FfmpegSeedDll)" DestinationFolder="$(HlsReferenceFfmpegDir)" SkipUnchangedFiles="true" Condition="'@(FfmpegSeedDll)' != ''" />
+    <Message Text="Seeded HLS FFmpeg runtime from Build/Dependencies FFmpeg seed into $(HlsReferenceFfmpegDir)." Importance="High" Condition="'@(FfmpegSeedDll)' != ''" />
   </Target>
 
 </Project>

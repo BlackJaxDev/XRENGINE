@@ -1507,7 +1507,7 @@ public partial class DefaultRenderPipeline2
     }
 
     private static bool ShouldUseDirectVulkanFinalPresent()
-        => AbstractRenderer.Current is XREngine.Rendering.Vulkan.VulkanRenderer && !RuntimeEnableVendorUpscale;
+        => AbstractRenderer.Current?.BackendId == RendererBackendId.Vulkan && !RuntimeEnableVendorUpscale;
 
     private static bool ShouldUseDirectFinalPresent()
         => IsRenderingExternalSwapchainTarget() || ShouldUseDirectVulkanFinalPresent();

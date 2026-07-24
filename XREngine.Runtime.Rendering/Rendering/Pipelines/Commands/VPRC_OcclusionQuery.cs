@@ -140,20 +140,15 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private bool TryExecuteQueryBody(XRRenderQuery query)
         {
-            if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+            if (AbstractRenderer.Current is not IRuntimeRendererHost renderer ||
+                !renderer.TryGetBackendCapability<IOcclusionQueryBackendCapability>(out var capability) ||
+                capability is null)
             {
                 _lastResultAvailable = false;
                 return false;
             }
 
-            GLRenderQuery? glQuery = renderer.GenericToAPI<GLRenderQuery>(query);
-            if (glQuery is null)
-            {
-                _lastResultAvailable = false;
-                return false;
-            }
-
-            if (glQuery.BeginQuery() != ERenderQueryReadStatus.Ready)
+            if (!capability.BeginOcclusionQuery(query))
                 return false;
             try
             {
@@ -161,7 +156,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
             finally
             {
-                glQuery.EndQuery();
+                capability.EndOcclusionQuery(query);
             }
 
             return true;
@@ -172,14 +167,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             anySamplesPassed = true;
 
             _ = wait; // Query resolution is deliberately nonblocking on render paths.
-            if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+            if (AbstractRenderer.Current is not IRuntimeRendererHost renderer ||
+                !renderer.TryGetBackendCapability<IOcclusionQueryBackendCapability>(out var capability) ||
+                capability is null)
                 return false;
 
-            GLRenderQuery? glQuery = renderer.GenericToAPI<GLRenderQuery>(query);
-            if (glQuery is null)
-                return false;
-
-            ERenderQueryReadStatus status = glQuery.TryGetAnySamplesPassed(out OcclusionQueryResult result);
+            ERenderQueryReadStatus status = capability.TryGetAnySamplesPassed(query, out OcclusionQueryResult result);
             if (status != ERenderQueryReadStatus.Ready)
                 return false;
 
