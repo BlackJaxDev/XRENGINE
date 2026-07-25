@@ -883,30 +883,16 @@ namespace XREngine.Scene
                     {
                         // Log once per distinct reason — useful when the light casts shadows
                         // but neither representation has been populated yet.
-                        string reason = firstDirLight.ShadowMap is null ? "ShadowMap=null,CascadeTex=null" :
-                                        firstDirLight.ShadowMap.Material is null ? "ShadowMap.Material=null,CascadeTex=null" :
-                                        $"Textures.Count={firstDirLight.ShadowMap.Material.Textures.Count},CascadeTex=null";
-                        reason += $",UseRasterCascadeReceiver={firstDirLight.UsesCascadeRasterDepthReceiver}" +
-                                  $",CascadeColor={firstDirLight.HasCascadeColorTextureForSource(DirectionalLightComponent.GetCascadeSourceForCamera(directionalShadowCamera))}" +
-                                  $",CascadeRaster={firstDirLight.HasCascadeRasterDepthTextureForSource(DirectionalLightComponent.GetCascadeSourceForCamera(directionalShadowCamera))}" +
-                                  $",CascadeReceiver={firstCascadeReceiverTexture is not null}" +
-                                  $",ActiveCascades={firstActiveCascadeCount}" +
-                                  $",Atlas={firstDirLight.UsesDirectionalShadowAtlasForCurrentEncoding}";
-                        if (reason != _lastForwardShadowNoTexReason)
-                        {
-                            _lastForwardShadowNoTexReason = reason;
-                            Debug.Lighting($"[ForwardShadow] No shadow tex: {reason}");
-                        }
+                        LogForwardShadowNoTextureReason(
+                            firstDirLight,
+                            directionalShadowCamera,
+                            firstCascadeReceiverTexture,
+                            firstActiveCascadeCount);
                     }
                 }
                 else
                 {
-                    string reason = "CastsShadows=false";
-                    if (reason != _lastForwardShadowNoTexReason)
-                    {
-                        _lastForwardShadowNoTexReason = reason;
-                        Debug.Lighting($"[ForwardShadow] No shadow tex: {reason}");
-                    }
+                    LogForwardShadowsDisabledReason();
                 }
             }
             // ShadowMapEnabled is a "shader may sample a directional shadow" flag.
@@ -1314,6 +1300,73 @@ namespace XREngine.Scene
             program.Sampler("u_EnvironmentMap", envCubemap, envMapUnit);
             program.Uniform("u_EnvironmentMapMipLevels", envMipLevels);
             program.Sampler("_PBRReflCube", envCubemap, reflCubeUnit);
+        }
+
+        private static void LogForwardShadowNoTextureReason(
+            DirectionalLightComponent light,
+            XRCamera? directionalShadowCamera,
+            XRTexture2DArray? cascadeReceiverTexture,
+            int activeCascadeCount)
+        {
+            int textureCountState = light.ShadowMap is null
+                ? -2
+                : light.ShadowMap.Material is null
+                    ? -1
+                    : light.ShadowMap.Material.Textures.Count;
+            ShadowRequestSource cascadeSource =
+                DirectionalLightComponent.GetCascadeSourceForCamera(directionalShadowCamera);
+            bool hasCascadeColor = light.HasCascadeColorTextureForSource(cascadeSource);
+            bool hasCascadeRaster = light.HasCascadeRasterDepthTextureForSource(cascadeSource);
+
+            ulong reasonKey = unchecked((uint)textureCountState);
+            reasonKey |= ((ulong)(uint)activeCascadeCount & 0x00FF_FFFFUL) << 32;
+            if (light.UsesCascadeRasterDepthReceiver)
+                reasonKey |= 1UL << 56;
+            if (hasCascadeColor)
+                reasonKey |= 1UL << 57;
+            if (hasCascadeRaster)
+                reasonKey |= 1UL << 58;
+            if (cascadeReceiverTexture is not null)
+                reasonKey |= 1UL << 59;
+            if (light.UsesDirectionalShadowAtlasForCurrentEncoding)
+                reasonKey |= 1UL << 60;
+
+            if (_hasLastForwardShadowNoTextureReasonKey &&
+                reasonKey == _lastForwardShadowNoTextureReasonKey)
+            {
+                return;
+            }
+
+            _hasLastForwardShadowNoTextureReasonKey = true;
+            _lastForwardShadowNoTextureReasonKey = reasonKey;
+
+            string reason = textureCountState switch
+            {
+                -2 => "ShadowMap=null,CascadeTex=null",
+                -1 => "ShadowMap.Material=null,CascadeTex=null",
+                _ => $"Textures.Count={textureCountState},CascadeTex=null",
+            };
+            reason += $",UseRasterCascadeReceiver={light.UsesCascadeRasterDepthReceiver}" +
+                      $",CascadeColor={hasCascadeColor}" +
+                      $",CascadeRaster={hasCascadeRaster}" +
+                      $",CascadeReceiver={cascadeReceiverTexture is not null}" +
+                      $",ActiveCascades={activeCascadeCount}" +
+                      $",Atlas={light.UsesDirectionalShadowAtlasForCurrentEncoding}";
+            Debug.Lighting($"[ForwardShadow] No shadow tex: {reason}");
+        }
+
+        private static void LogForwardShadowsDisabledReason()
+        {
+            const ulong reasonKey = 1UL << 63;
+            if (_hasLastForwardShadowNoTextureReasonKey &&
+                reasonKey == _lastForwardShadowNoTextureReasonKey)
+            {
+                return;
+            }
+
+            _hasLastForwardShadowNoTextureReasonKey = true;
+            _lastForwardShadowNoTextureReasonKey = reasonKey;
+            Debug.Lighting("[ForwardShadow] No shadow tex: CastsShadows=false");
         }
 
         /// <summary>

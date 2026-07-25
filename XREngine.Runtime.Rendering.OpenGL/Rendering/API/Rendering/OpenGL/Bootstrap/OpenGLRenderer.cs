@@ -175,6 +175,7 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
     public override void CleanUp()
     {
         bool orphanGLHandles = ShouldOrphanGLHandlesForShutdown;
+        TearDownDebugOutput();
 
         if (!orphanGLHandles)
             _imguiMultiViewportController?.Dispose();
@@ -226,6 +227,7 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
         _luminanceComputeProgram?.Destroy();
         _luminanceComputeProgram = null;
         _luminanceComputeInitialized = false;
+        DisposeNativeApi();
     }
 
     /// <summary>

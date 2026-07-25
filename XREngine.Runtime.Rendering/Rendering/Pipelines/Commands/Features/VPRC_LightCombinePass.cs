@@ -1315,22 +1315,17 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private int ResolvePassIndex(string passName, out bool hasRenderGraphMetadata)
         {
-            var metadata = ParentPipeline?.PassMetadata;
-            if (metadata is not { Count: > 0 } renderPasses)
+            RenderPipeline? pipeline = ParentPipeline;
+            if (pipeline?.PassMetadata is not { Count: > 0 })
             {
                 hasRenderGraphMetadata = false;
                 return int.MinValue;
             }
 
             hasRenderGraphMetadata = true;
-
-            foreach (RenderPassMetadata pass in renderPasses)
-            {
-                if (string.Equals(pass.Name, passName, StringComparison.OrdinalIgnoreCase))
-                    return pass.PassIndex;
-            }
-
-            return int.MinValue;
+            return pipeline.TryGetRenderPassIndex(passName, out int passIndex)
+                ? passIndex
+                : int.MinValue;
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

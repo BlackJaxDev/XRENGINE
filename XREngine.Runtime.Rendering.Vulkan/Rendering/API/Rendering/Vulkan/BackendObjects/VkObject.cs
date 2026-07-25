@@ -73,6 +73,7 @@ public unsafe partial class VulkanRenderer
         protected override GenericRenderObject Data_Internal => Data;
 
         private T _data;
+        private bool _dataLinked;
         public virtual T Data
         {
             get => _data;
@@ -83,8 +84,10 @@ public unsafe partial class VulkanRenderer
 
                 if (_data is not null)
                 {
-                    UnlinkData();
+                    if (_dataLinked)
+                        UnlinkData();
                     _data.RemoveWrapper(this);
+                    _dataLinked = false;
                 }
 
                 _data = value;
@@ -93,12 +96,25 @@ public unsafe partial class VulkanRenderer
                 {
                     _data.AddWrapper(this);
                     LinkData();
+                    _dataLinked = true;
                 }
             }
         }
 
         protected abstract void UnlinkData();
         protected abstract void LinkData();
+
+        protected internal override void Retire()
+        {
+            if (_dataLinked)
+            {
+                UnlinkData();
+                _dataLinked = false;
+            }
+
+            _data.RemoveWrapper(this);
+            Destroy();
+        }
 
         protected internal override void PostGenerated()
         {

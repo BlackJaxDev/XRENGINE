@@ -261,13 +261,13 @@ public unsafe partial class VulkanRenderer
 				program.GetActiveEngineUniformRequirements();
 
 			bool lightingUniformsBound = false;
-			if (reqs.HasFlag(EUniformRequirements.Lights))
+			if ((reqs & EUniformRequirements.Lights) != 0)
 			{
 				RuntimeEngine.Rendering.State.RenderingWorld?.Lights?.SetForwardLightingUniforms(program);
 				lightingUniformsBound = RuntimeEngine.Rendering.State.RenderingWorld?.Lights is not null;
 			}
 
-			if (reqs.HasFlag(EUniformRequirements.AmbientOcclusion) && !lightingUniformsBound)
+			if ((reqs & EUniformRequirements.AmbientOcclusion) != 0 && !lightingUniformsBound)
 				Lights3DCollection.SetForwardAmbientOcclusionUniforms(program);
 
 			if (!RuntimeEngine.Rendering.State.IsShadowPass)

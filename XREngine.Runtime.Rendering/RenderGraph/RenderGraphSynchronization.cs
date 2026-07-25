@@ -76,11 +76,13 @@ public sealed record RenderGraphSynchronizationEdge(
 public sealed class RenderGraphSynchronizationInfo
 {
     private readonly List<RenderGraphSynchronizationEdge> _edges;
+    private readonly ReadOnlyCollection<RenderGraphSynchronizationEdge> _edgesView;
     private readonly Dictionary<int, List<RenderGraphSynchronizationEdge>> _edgesByConsumer;
 
     internal RenderGraphSynchronizationInfo(IEnumerable<RenderGraphSynchronizationEdge> edges)
     {
         _edges = [.. edges];
+        _edgesView = _edges.AsReadOnly();
         _edgesByConsumer = new Dictionary<int, List<RenderGraphSynchronizationEdge>>();
         foreach (RenderGraphSynchronizationEdge edge in _edges)
         {
@@ -97,7 +99,7 @@ public sealed class RenderGraphSynchronizationInfo
     public static RenderGraphSynchronizationInfo Empty { get; } = new([]);
 
     public ReadOnlyCollection<RenderGraphSynchronizationEdge> Edges
-        => _edges.AsReadOnly();
+        => _edgesView;
 
     public IReadOnlyList<RenderGraphSynchronizationEdge> GetEdgesForConsumer(int passIndex)
         => _edgesByConsumer.TryGetValue(passIndex, out List<RenderGraphSynchronizationEdge>? list)

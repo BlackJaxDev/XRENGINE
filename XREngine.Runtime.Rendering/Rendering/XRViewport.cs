@@ -164,6 +164,9 @@ namespace XREngine.Rendering
         /// Used for layered viewport rendering where later viewports render on top of earlier ones.
         /// </summary>
         private int _index = 0;
+        private string? _swapBuffersProfileName;
+        private string? _renderProfileName;
+        private string? _renderToFboProfileName;
 
         /// <summary>
         /// The left edge of the viewport as a percentage (0.0-1.0) of the parent window's width.
@@ -329,8 +332,22 @@ namespace XREngine.Rendering
         public int Index
         {
             get => _index;
-            set => SetField(ref _index, value);
+            set
+            {
+                if (!SetField(ref _index, value))
+                    return;
+
+                _swapBuffersProfileName = null;
+                _renderProfileName = null;
+                _renderToFboProfileName = null;
+            }
         }
+
+        internal string RenderProfileName
+            => _renderProfileName ??= $"XRViewport.Render[{Index}]";
+
+        internal string RenderToFboProfileName
+            => _renderToFboProfileName ??= $"XRViewport.RenderToFBO[{Index}]";
 
         /// <summary>
         /// The local player controller associated with this viewport.
@@ -1210,7 +1227,8 @@ namespace XREngine.Rendering
             if (_destroyed)
                 return;
 
-            using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope($"XRViewport.SwapBuffers[{Index}]");
+            using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                _swapBuffersProfileName ??= $"XRViewport.SwapBuffers[{Index}]");
 
             if (ShouldSuspendPipelineWork(nameof(SwapBuffers)))
                 return;
@@ -1812,7 +1830,8 @@ namespace XREngine.Rendering
                 // tearing resources down. The assigned instance is the only meaningful source
                 // for this frame and is safe to query without mutating pipeline ownership.
                 CommandGeneration: _renderPipeline.AssignedPipeline?.CommandGeneration ?? 0UL,
-                AntiAliasingMode: (_renderPipeline.EffectiveAntiAliasingModeThisFrame ?? frameTiming.DefaultAntiAliasingMode).ToString());
+                AntiAliasingMode: GetAntiAliasingModeName(
+                    _renderPipeline.EffectiveAntiAliasingModeThisFrame ?? frameTiming.DefaultAntiAliasingMode));
             presentation.RecordRenderFrameOutput(telemetry);
         }
 
@@ -1829,7 +1848,36 @@ namespace XREngine.Rendering
                 EFrameOutputKind.DesktopMirror => "VR desktop mirror",
                 EFrameOutputKind.OpenXREyeSubmit => viewKind == EVrOutputViewKind.LeftEye ? "OpenXR left eye" : "OpenXR right eye",
                 EFrameOutputKind.OpenVRSubmit => viewKind == EVrOutputViewKind.LeftEye ? "OpenVR left eye" : "OpenVR right eye",
-                _ => viewKind.ToString(),
+                _ => GetOutputViewKindName(viewKind),
+            };
+
+        private static string GetOutputViewKindName(EVrOutputViewKind viewKind)
+            => viewKind switch
+            {
+                EVrOutputViewKind.LeftEye => nameof(EVrOutputViewKind.LeftEye),
+                EVrOutputViewKind.RightEye => nameof(EVrOutputViewKind.RightEye),
+                EVrOutputViewKind.DesktopEditor => nameof(EVrOutputViewKind.DesktopEditor),
+                EVrOutputViewKind.CyclopeanDesktop => nameof(EVrOutputViewKind.CyclopeanDesktop),
+                EVrOutputViewKind.LeftWide => nameof(EVrOutputViewKind.LeftWide),
+                EVrOutputViewKind.RightWide => nameof(EVrOutputViewKind.RightWide),
+                EVrOutputViewKind.LeftInset => nameof(EVrOutputViewKind.LeftInset),
+                EVrOutputViewKind.RightInset => nameof(EVrOutputViewKind.RightInset),
+                EVrOutputViewKind.Secondary => nameof(EVrOutputViewKind.Secondary),
+                EVrOutputViewKind.Debug => nameof(EVrOutputViewKind.Debug),
+                _ => "Unknown",
+            };
+
+        private static string GetAntiAliasingModeName(EAntiAliasingMode mode)
+            => mode switch
+            {
+                EAntiAliasingMode.None => nameof(EAntiAliasingMode.None),
+                EAntiAliasingMode.Msaa => nameof(EAntiAliasingMode.Msaa),
+                EAntiAliasingMode.Fxaa => nameof(EAntiAliasingMode.Fxaa),
+                EAntiAliasingMode.Smaa => nameof(EAntiAliasingMode.Smaa),
+                EAntiAliasingMode.Taa => nameof(EAntiAliasingMode.Taa),
+                EAntiAliasingMode.Tsr => nameof(EAntiAliasingMode.Tsr),
+                EAntiAliasingMode.Dlaa => nameof(EAntiAliasingMode.Dlaa),
+                _ => "Unknown",
             };
 
         private int GetUpdatingCommandCountForTelemetry()
@@ -1870,7 +1918,7 @@ namespace XREngine.Rendering
             // fall back to overlay rendering so the UI is never silently lost.
             if (screenSpaceUI is not null
                 && _renderPipeline.Pipeline?.CommandChain is not null
-                && !XRRenderPipelineInstance.ContainsScreenSpaceUiRenderCommand(_renderPipeline.Pipeline.CommandChain))
+                && !_renderPipeline.ContainsScreenSpaceUiRenderCommand())
             {
                 if (s_pipelineUiFallbackLogCount < 5)
                 {

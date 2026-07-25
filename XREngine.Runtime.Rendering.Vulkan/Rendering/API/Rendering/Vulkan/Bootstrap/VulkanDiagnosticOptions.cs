@@ -14,23 +14,26 @@ internal readonly record struct VulkanDiagnosticOptions
     public int DeviceFaultVendorBinaryByteCap { get; init; }
 
     public bool EnableValidationLayers =>
-        Flags.HasFlag(EVulkanDiagnosticFlags.StandardValidation) ||
-        Flags.HasFlag(EVulkanDiagnosticFlags.SynchronizationValidation) ||
-        Flags.HasFlag(EVulkanDiagnosticFlags.GpuAssistedValidation) ||
-        Flags.HasFlag(EVulkanDiagnosticFlags.BestPractices);
+        HasFlag(EVulkanDiagnosticFlags.StandardValidation) ||
+        HasFlag(EVulkanDiagnosticFlags.SynchronizationValidation) ||
+        HasFlag(EVulkanDiagnosticFlags.GpuAssistedValidation) ||
+        HasFlag(EVulkanDiagnosticFlags.BestPractices);
 
-    public bool EnableSynchronizationValidation => Flags.HasFlag(EVulkanDiagnosticFlags.SynchronizationValidation);
-    public bool EnableGpuAssistedValidation => Flags.HasFlag(EVulkanDiagnosticFlags.GpuAssistedValidation);
-    public bool EnableBestPractices => Flags.HasFlag(EVulkanDiagnosticFlags.BestPractices);
-    public bool EnableDebugUtils => EnableValidationLayers || Flags.HasFlag(EVulkanDiagnosticFlags.DebugUtils);
-    public bool EnableCommandBufferLabels => Flags.HasFlag(EVulkanDiagnosticFlags.CommandBufferLabels);
-    public bool EnableCrashBreadcrumbs => Flags.HasFlag(EVulkanDiagnosticFlags.CrashBreadcrumbs);
-    public bool RequestDeviceFault => Flags.HasFlag(EVulkanDiagnosticFlags.DeviceFault);
-    public bool RequestDeviceFaultDeviceLostOnMasked => Flags.HasFlag(EVulkanDiagnosticFlags.DeviceFaultDeviceLostOnMasked);
-    public bool RequestDeviceAddressBindingReport => Flags.HasFlag(EVulkanDiagnosticFlags.DeviceAddressBindingReport);
-    public bool RequestNvDiagnosticCheckpoints => Flags.HasFlag(EVulkanDiagnosticFlags.NvDiagnosticCheckpoints);
-    public bool RequestNvDiagnosticsConfig => Flags.HasFlag(EVulkanDiagnosticFlags.NvDiagnosticsConfig);
-    public bool RenderDocFriendly => Flags.HasFlag(EVulkanDiagnosticFlags.RenderDocFriendly);
+    public bool EnableSynchronizationValidation => HasFlag(EVulkanDiagnosticFlags.SynchronizationValidation);
+    public bool EnableGpuAssistedValidation => HasFlag(EVulkanDiagnosticFlags.GpuAssistedValidation);
+    public bool EnableBestPractices => HasFlag(EVulkanDiagnosticFlags.BestPractices);
+    public bool EnableDebugUtils => EnableValidationLayers || HasFlag(EVulkanDiagnosticFlags.DebugUtils);
+    public bool EnableCommandBufferLabels => HasFlag(EVulkanDiagnosticFlags.CommandBufferLabels);
+    public bool EnableCrashBreadcrumbs => HasFlag(EVulkanDiagnosticFlags.CrashBreadcrumbs);
+    public bool RequestDeviceFault => HasFlag(EVulkanDiagnosticFlags.DeviceFault);
+    public bool RequestDeviceFaultDeviceLostOnMasked => HasFlag(EVulkanDiagnosticFlags.DeviceFaultDeviceLostOnMasked);
+    public bool RequestDeviceAddressBindingReport => HasFlag(EVulkanDiagnosticFlags.DeviceAddressBindingReport);
+    public bool RequestNvDiagnosticCheckpoints => HasFlag(EVulkanDiagnosticFlags.NvDiagnosticCheckpoints);
+    public bool RequestNvDiagnosticsConfig => HasFlag(EVulkanDiagnosticFlags.NvDiagnosticsConfig);
+    public bool RenderDocFriendly => HasFlag(EVulkanDiagnosticFlags.RenderDocFriendly);
+
+    private bool HasFlag(EVulkanDiagnosticFlags flag)
+        => (Flags & flag) != 0;
     public bool HasValidationFeatures =>
         EnableSynchronizationValidation ||
         EnableGpuAssistedValidation ||

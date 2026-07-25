@@ -424,6 +424,24 @@ public sealed class WindowResizeControllerTests
     }
 
     [Test]
+    public void WindowInputSnapshotAccumulator_ExposesCurrentKeyStateBeforeSnapshotConsumption()
+    {
+        WindowInputSnapshotAccumulator accumulator = new();
+
+        accumulator.RecordKeyDown(EKey.ShiftLeft).ShouldBeTrue();
+        accumulator.RecordKeyDown(EKey.ShiftLeft).ShouldBeFalse();
+        accumulator.IsKeyPressed(EKey.ShiftLeft).ShouldBeTrue();
+
+        accumulator.RecordKeyDown(EKey.F5).ShouldBeTrue();
+        accumulator.IsKeyPressed(EKey.F5).ShouldBeTrue();
+
+        accumulator.RecordKeyUp(EKey.ShiftLeft);
+        accumulator.IsKeyPressed(EKey.ShiftLeft).ShouldBeFalse();
+        accumulator.RecordKeyDown(EKey.ShiftLeft).ShouldBeTrue();
+        accumulator.IsKeyPressed(EKey.F5).ShouldBeTrue();
+    }
+
+    [Test]
     public void WindowInputSnapshotAccumulator_FirstPointerMovePrimesPositionWithoutDelta()
     {
         WindowInputSnapshotAccumulator accumulator = new();

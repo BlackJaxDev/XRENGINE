@@ -1001,37 +1001,37 @@ namespace XREngine.Rendering.UI
             if (font is null || font.Atlas is not { } atlas)
                 return false; // Font not loaded yet — fall back to individual rendering
 
-            (Vector4 transform, Vector4 uvs)[] glyphsCopy;
             using (_glyphLock.EnterScope())
             {
                 if (_glyphs.Count == 0)
                     return false; // No glyphs — fall back to individual rendering
-                glyphsCopy = [.. _glyphs];
+
+                var tfm = BoundableTransform;
+                var worldMatrix = GetRenderWorldMatrix(tfm);
+                var textColor = new Vector4(Color.R, Color.G, Color.B, Color.A);
+                var outlineColor = new Vector4(OutlineColor.R, OutlineColor.G, OutlineColor.B, OutlineColor.A);
+                var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
+                var bounds = new Vector4(bottomLeft.X, bottomLeft.Y, tfm.ActualWidth, tfm.ActualHeight);
+
+                // The collector immediately copies into its collect/render double buffer,
+                // so no per-frame glyph snapshot array is required here.
+                collector.AddTextQuad(
+                    RenderPass,
+                    RenderCommand2D.ZIndex,
+                    passes,
+                    atlas,
+                    in worldMatrix,
+                    in textColor,
+                    in outlineColor,
+                    OutlineThickness,
+                    in bounds,
+                    (int)font.AtlasType,
+                    font.DistanceRange,
+                    font.DistanceRangeMiddle,
+                    MsdfFillBias,
+                    (int)BatchedDebugMode,
+                    _glyphs);
             }
-
-            var tfm = BoundableTransform;
-            var worldMatrix = GetRenderWorldMatrix(tfm);
-            var textColor = new Vector4(Color.R, Color.G, Color.B, Color.A);
-            var outlineColor = new Vector4(OutlineColor.R, OutlineColor.G, OutlineColor.B, OutlineColor.A);
-            var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
-            var bounds = new Vector4(bottomLeft.X, bottomLeft.Y, tfm.ActualWidth, tfm.ActualHeight);
-
-            collector.AddTextQuad(
-                RenderPass,
-                RenderCommand2D.ZIndex,
-                passes,
-                atlas,
-                in worldMatrix,
-                in textColor,
-                in outlineColor,
-                OutlineThickness,
-                in bounds,
-                (int)font.AtlasType,
-                font.DistanceRange,
-                font.DistanceRangeMiddle,
-                MsdfFillBias,
-                (int)BatchedDebugMode,
-                glyphsCopy);
             return true;
         }
 

@@ -186,6 +186,14 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     [Browsable(false)]
     [YamlIgnore]
     public IReadOnlyCollection<RenderPassMetadata> PassMetadata { get; private set; } = Array.Empty<RenderPassMetadata>();
+    private readonly Dictionary<string, int> _renderPassIndicesByName = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Resolves stable render-graph metadata without repeatedly scanning the pass
+    /// collection from every command during frame execution.
+    /// </summary>
+    public bool TryGetRenderPassIndex(string passName, out int passIndex)
+        => _renderPassIndicesByName.TryGetValue(passName, out passIndex);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="RenderPipeline"/> class.
@@ -422,6 +430,9 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     {
         CommandGeneration++;
         PassMetadata = GeneratePassMetadata();
+        _renderPassIndicesByName.Clear();
+        foreach (RenderPassMetadata pass in PassMetadata)
+            _renderPassIndicesByName.TryAdd(pass.Name, pass.PassIndex);
         RefreshPostProcessSchema();
     }
 

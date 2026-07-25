@@ -21,31 +21,6 @@ namespace XREngine.Rendering.OpenGL
             private delegate void RenderImDrawDataDelegate(ImGuiController controller, ImDrawDataPtr drawData);
             private delegate ImGuiKey TranslateInputKeyDelegate(Key key);
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate void ViewportCallback(ImGuiViewport* viewport);
-
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate void ViewportSetVec2Callback(ImGuiViewport* viewport, Vector2 value);
-
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate void ViewportGetVec2Callback(ImGuiViewport* viewport, Vector2* value);
-
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate byte ViewportGetBoolCallback(ImGuiViewport* viewport);
-
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate void ViewportSetTitleCallback(ImGuiViewport* viewport, byte* title);
-
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate void ViewportSetFloatCallback(ImGuiViewport* viewport, float value);
-
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate float ViewportGetFloatCallback(ImGuiViewport* viewport);
-
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate void ViewportRenderCallback(ImGuiViewport* viewport, void* renderArg);
-
-
             private static readonly RenderImDrawDataDelegate? RenderImDrawData = CreateRenderImDrawDataDelegate();
             private static readonly TranslateInputKeyDelegate? TranslateInputKey = CreateTranslateInputKeyDelegate();
             private static readonly List<IWindow> AbandonedShutdownWindows = [];
@@ -63,29 +38,6 @@ namespace XREngine.Rendering.OpenGL
             private readonly List<PendingPlatformWindowDisposal> _pendingPlatformWindowDisposals = [];
             private readonly List<ImGuiPlatformMonitor> _monitorScratch = [];
 
-            private readonly ViewportCallback _platformCreateWindow;
-            private readonly ViewportCallback _platformDestroyWindow;
-            private readonly ViewportCallback _platformShowWindow;
-            private readonly ViewportSetVec2Callback _platformSetWindowPos;
-            private readonly ViewportGetVec2Callback _platformGetWindowPos;
-            private readonly ViewportSetVec2Callback _platformSetWindowSize;
-            private readonly ViewportGetVec2Callback _platformGetWindowSize;
-            private readonly ViewportCallback _platformSetWindowFocus;
-            private readonly ViewportGetBoolCallback _platformGetWindowFocus;
-            private readonly ViewportGetBoolCallback _platformGetWindowMinimized;
-            private readonly ViewportSetTitleCallback _platformSetWindowTitle;
-            private readonly ViewportSetFloatCallback _platformSetWindowAlpha;
-            private readonly ViewportCallback _platformUpdateWindow;
-            private readonly ViewportRenderCallback _platformRenderWindow;
-            private readonly ViewportRenderCallback _platformSwapBuffers;
-            private readonly ViewportGetFloatCallback _platformGetWindowDpiScale;
-            private readonly ViewportCallback _platformOnChangedViewport;
-            private readonly ViewportCallback _rendererCreateWindow;
-            private readonly ViewportCallback _rendererDestroyWindow;
-            private readonly ViewportSetVec2Callback _rendererSetWindowSize;
-            private readonly ViewportRenderCallback _rendererRenderWindow;
-            private readonly ViewportRenderCallback _rendererSwapBuffers;
-            private readonly MonitorEnumProc _monitorEnumProc;
 
             private readonly nint _platformCreateWindowPtr;
             private readonly nint _platformDestroyWindowPtr;
@@ -122,6 +74,7 @@ namespace XREngine.Rendering.OpenGL
             private readonly object _mainMouseWheelLock = new();
             private nint _monitorData;
             private int _monitorCapacity;
+            private IDisposable? _callbackRegistration;
 
 
             private OpenGLImGuiMultiViewportController(OpenGLRenderer renderer, ImGuiController controller)
@@ -130,52 +83,28 @@ namespace XREngine.Rendering.OpenGL
                 _controller = controller;
                 _mainWindow = renderer.XRWindow.Window;
 
-                _platformCreateWindow = PlatformCreateWindow;
-                _platformDestroyWindow = PlatformDestroyWindow;
-                _platformShowWindow = PlatformShowWindow;
-                _platformSetWindowPos = PlatformSetWindowPos;
-                _platformGetWindowPos = PlatformGetWindowPos;
-                _platformSetWindowSize = PlatformSetWindowSize;
-                _platformGetWindowSize = PlatformGetWindowSize;
-                _platformSetWindowFocus = PlatformSetWindowFocus;
-                _platformGetWindowFocus = PlatformGetWindowFocus;
-                _platformGetWindowMinimized = PlatformGetWindowMinimized;
-                _platformSetWindowTitle = PlatformSetWindowTitle;
-                _platformSetWindowAlpha = PlatformSetWindowAlpha;
-                _platformUpdateWindow = PlatformUpdateWindow;
-                _platformRenderWindow = PlatformRenderWindow;
-                _platformSwapBuffers = PlatformSwapBuffers;
-                _platformGetWindowDpiScale = PlatformGetWindowDpiScale;
-                _platformOnChangedViewport = PlatformOnChangedViewport;
-                _rendererCreateWindow = RendererCreateWindow;
-                _rendererDestroyWindow = RendererDestroyWindow;
-                _rendererSetWindowSize = RendererSetWindowSize;
-                _rendererRenderWindow = RendererRenderWindow;
-                _rendererSwapBuffers = RendererSwapBuffers;
-                _monitorEnumProc = EnumMonitor;
-
-                _platformCreateWindowPtr = Marshal.GetFunctionPointerForDelegate(_platformCreateWindow);
-                _platformDestroyWindowPtr = Marshal.GetFunctionPointerForDelegate(_platformDestroyWindow);
-                _platformShowWindowPtr = Marshal.GetFunctionPointerForDelegate(_platformShowWindow);
-                _platformSetWindowPosPtr = Marshal.GetFunctionPointerForDelegate(_platformSetWindowPos);
-                _platformGetWindowPosPtr = Marshal.GetFunctionPointerForDelegate(_platformGetWindowPos);
-                _platformSetWindowSizePtr = Marshal.GetFunctionPointerForDelegate(_platformSetWindowSize);
-                _platformGetWindowSizePtr = Marshal.GetFunctionPointerForDelegate(_platformGetWindowSize);
-                _platformSetWindowFocusPtr = Marshal.GetFunctionPointerForDelegate(_platformSetWindowFocus);
-                _platformGetWindowFocusPtr = Marshal.GetFunctionPointerForDelegate(_platformGetWindowFocus);
-                _platformGetWindowMinimizedPtr = Marshal.GetFunctionPointerForDelegate(_platformGetWindowMinimized);
-                _platformSetWindowTitlePtr = Marshal.GetFunctionPointerForDelegate(_platformSetWindowTitle);
-                _platformSetWindowAlphaPtr = Marshal.GetFunctionPointerForDelegate(_platformSetWindowAlpha);
-                _platformUpdateWindowPtr = Marshal.GetFunctionPointerForDelegate(_platformUpdateWindow);
-                _platformRenderWindowPtr = Marshal.GetFunctionPointerForDelegate(_platformRenderWindow);
-                _platformSwapBuffersPtr = Marshal.GetFunctionPointerForDelegate(_platformSwapBuffers);
-                _platformGetWindowDpiScalePtr = Marshal.GetFunctionPointerForDelegate(_platformGetWindowDpiScale);
-                _platformOnChangedViewportPtr = Marshal.GetFunctionPointerForDelegate(_platformOnChangedViewport);
-                _rendererCreateWindowPtr = Marshal.GetFunctionPointerForDelegate(_rendererCreateWindow);
-                _rendererDestroyWindowPtr = Marshal.GetFunctionPointerForDelegate(_rendererDestroyWindow);
-                _rendererSetWindowSizePtr = Marshal.GetFunctionPointerForDelegate(_rendererSetWindowSize);
-                _rendererRenderWindowPtr = Marshal.GetFunctionPointerForDelegate(_rendererRenderWindow);
-                _rendererSwapBuffersPtr = Marshal.GetFunctionPointerForDelegate(_rendererSwapBuffers);
+                _platformCreateWindowPtr = RendererImGuiViewportCallbackBridge.PlatformCreateWindow;
+                _platformDestroyWindowPtr = RendererImGuiViewportCallbackBridge.PlatformDestroyWindow;
+                _platformShowWindowPtr = RendererImGuiViewportCallbackBridge.PlatformShowWindow;
+                _platformSetWindowPosPtr = RendererImGuiViewportCallbackBridge.PlatformSetWindowPosition;
+                _platformGetWindowPosPtr = RendererImGuiViewportCallbackBridge.PlatformGetWindowPosition;
+                _platformSetWindowSizePtr = RendererImGuiViewportCallbackBridge.PlatformSetWindowSize;
+                _platformGetWindowSizePtr = RendererImGuiViewportCallbackBridge.PlatformGetWindowSize;
+                _platformSetWindowFocusPtr = RendererImGuiViewportCallbackBridge.PlatformSetWindowFocus;
+                _platformGetWindowFocusPtr = RendererImGuiViewportCallbackBridge.PlatformGetWindowFocus;
+                _platformGetWindowMinimizedPtr = RendererImGuiViewportCallbackBridge.PlatformGetWindowMinimized;
+                _platformSetWindowTitlePtr = RendererImGuiViewportCallbackBridge.PlatformSetWindowTitle;
+                _platformSetWindowAlphaPtr = RendererImGuiViewportCallbackBridge.PlatformSetWindowAlpha;
+                _platformUpdateWindowPtr = RendererImGuiViewportCallbackBridge.PlatformUpdateWindow;
+                _platformRenderWindowPtr = RendererImGuiViewportCallbackBridge.PlatformRenderWindow;
+                _platformSwapBuffersPtr = RendererImGuiViewportCallbackBridge.PlatformSwapBuffers;
+                _platformGetWindowDpiScalePtr = RendererImGuiViewportCallbackBridge.PlatformGetWindowDpiScale;
+                _platformOnChangedViewportPtr = RendererImGuiViewportCallbackBridge.PlatformOnChangedViewport;
+                _rendererCreateWindowPtr = RendererImGuiViewportCallbackBridge.RendererCreateWindow;
+                _rendererDestroyWindowPtr = RendererImGuiViewportCallbackBridge.RendererDestroyWindow;
+                _rendererSetWindowSizePtr = RendererImGuiViewportCallbackBridge.RendererSetWindowSize;
+                _rendererRenderWindowPtr = RendererImGuiViewportCallbackBridge.RendererRenderWindow;
+                _rendererSwapBuffersPtr = RendererImGuiViewportCallbackBridge.RendererSwapBuffers;
             }
 
             /// <summary>
@@ -207,6 +136,9 @@ namespace XREngine.Rendering.OpenGL
                     return;
 
                 _controller.MakeCurrent();
+                _callbackRegistration = RendererImGuiViewportCallbackBridge.Register(
+                    _controller.Context,
+                    this);
                 var io = ImGui.GetIO();
                 var platformIO = ImGui.GetPlatformIO();
 
@@ -345,6 +277,7 @@ namespace XREngine.Rendering.OpenGL
                     window.AbandonNativeWindowForShutdown();
                 _platformWindows.Clear();
                 AbandonPendingPlatformWindowsForShutdown();
+                Interlocked.Exchange(ref _callbackRegistration, null)?.Dispose();
             }
 
 
@@ -621,7 +554,11 @@ namespace XREngine.Rendering.OpenGL
                 {
                     try
                     {
-                        EnumDisplayMonitors(nint.Zero, nint.Zero, _monitorEnumProc, nint.Zero);
+                        EnumDisplayMonitors(
+                            nint.Zero,
+                            nint.Zero,
+                            RendererImGuiViewportCallbackBridge.MonitorEnumeration,
+                            nint.Zero);
                     }
                     catch (Exception ex)
                     {

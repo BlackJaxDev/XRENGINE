@@ -624,6 +624,18 @@ namespace XREngine.Rendering
             PlayState = EPlayState.Playing;
         }
 
+        /// <summary>
+        /// Restarts the world's runtime lifecycle for editor operation after a play-mode teardown.
+        /// Edit mode still requires world update, render-collection, and component lifecycle
+        /// callbacks, but it must not retain a gameplay mode or simulate physics.
+        /// </summary>
+        public Task BeginEditMode()
+        {
+            PhysicsEnabled = false;
+            GameMode = null;
+            return BeginPlay();
+        }
+
         public async Task BeginPlay()
         {
             using var profilerScope = Engine.Profiler.Start("WorldInstance.BeginPlay");
@@ -943,6 +955,16 @@ namespace XREngine.Rendering
         /// </summary>
         private static void RecalcTransformDepth(ConcurrentHashSet<TransformBase> bag, ELoopType loopType)
         {
+            // Camera movement commonly dirties exactly one transform. Scheduling a task list and
+            // WhenAll array for that case costs more than the recalculation itself.
+            if (bag.Count <= 1)
+            {
+                foreach (TransformBase transform in bag)
+                    transform.RecalculateMatrixHierarchy(true, false, ELoopType.Sequential)
+                        .GetAwaiter().GetResult();
+                return;
+            }
+
             switch (loopType)
             {
                 case ELoopType.Asynchronous:

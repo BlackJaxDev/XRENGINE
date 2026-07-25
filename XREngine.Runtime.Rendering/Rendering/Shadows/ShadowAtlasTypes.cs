@@ -130,15 +130,15 @@ public readonly record struct ShadowRequestKey(
 {
     public int CompareTo(ShadowRequestKey other)
     {
-        int result = Domain.CompareTo(other.Domain);
+        int result = ((int)Domain).CompareTo((int)other.Domain);
         if (result != 0)
             return result;
 
-        result = ProjectionType.CompareTo(other.ProjectionType);
+        result = ((int)ProjectionType).CompareTo((int)other.ProjectionType);
         if (result != 0)
             return result;
 
-        result = Source.CompareTo(other.Source);
+        result = ((int)Source).CompareTo((int)other.Source);
         if (result != 0)
             return result;
 
@@ -147,7 +147,7 @@ public readonly record struct ShadowRequestKey(
             return result;
 
         result = FaceOrCascadeIndex.CompareTo(other.FaceOrCascadeIndex);
-        return result != 0 ? result : Encoding.CompareTo(other.Encoding);
+        return result != 0 ? result : ((int)Encoding).CompareTo((int)other.Encoding);
     }
 }
 

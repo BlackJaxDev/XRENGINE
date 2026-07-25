@@ -199,7 +199,45 @@ namespace XREngine
         /// <summary>
         /// Provides a profiler hook for external systems.
         /// </summary>
-        private static IDisposable ExternalProfilingHook(string sampleName) => Profiler.Start(sampleName);
+        private static IDisposable ExternalProfilingHook(string sampleName)
+            => StartPooledProfilerScope(sampleName);
+
+        /// <summary>
+        /// Bridges the value-type code-profiler scope through interfaces that expose
+        /// <see cref="IDisposable"/> without boxing a new scope on every hot-path call.
+        /// </summary>
+        internal static IDisposable StartPooledProfilerScope(string sampleName)
+            => PooledExternalProfilerScope.Rent(Profiler.Start(sampleName));
+
+        private sealed class PooledExternalProfilerScope : IDisposable
+        {
+            [ThreadStatic]
+            private static Stack<PooledExternalProfilerScope>? t_available;
+
+            private CodeProfiler.ProfilerScope _scope;
+            private bool _active;
+
+            public static PooledExternalProfilerScope Rent(CodeProfiler.ProfilerScope scope)
+            {
+                Stack<PooledExternalProfilerScope> available = t_available ??= new();
+                PooledExternalProfilerScope wrapper =
+                    available.Count != 0 ? available.Pop() : new PooledExternalProfilerScope();
+                wrapper._scope = scope;
+                wrapper._active = true;
+                return wrapper;
+            }
+
+            public void Dispose()
+            {
+                if (!_active)
+                    return;
+
+                _active = false;
+                _scope.Dispose();
+                _scope = default;
+                (t_available ??= new()).Push(this);
+            }
+        }
 
         private static readonly RuntimeRenderThreadHost s_renderThreadHost = new(
             () => WindowPumpHost.IsRunning,
@@ -221,9 +259,12 @@ namespace XREngine
             => Profiler.CaptureLinkedChildContext();
 
         private static IDisposable ExternalLinkedProfilingHook(object? context, string sampleName)
-            => context is CodeProfiler.LinkedScopeContext linkedContext
+        {
+            CodeProfiler.ProfilerScope scope = context is CodeProfiler.LinkedScopeContext linkedContext
                 ? Profiler.StartLinkedChild(linkedContext, sampleName, ProfilerScopeKind.OneOffInvoke)
                 : Profiler.Start(sampleName, ProfilerScopeKind.OneOffInvoke);
+            return PooledExternalProfilerScope.Rent(scope);
+        }
 
         /// <summary>
         /// Static constructor that initializes default settings and wires up internal event handlers.

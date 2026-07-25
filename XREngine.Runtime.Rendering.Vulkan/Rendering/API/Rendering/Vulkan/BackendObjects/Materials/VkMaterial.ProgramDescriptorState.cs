@@ -17,7 +17,7 @@ namespace XREngine.Rendering.Vulkan
                 public required VkRenderProgram Program { get; init; }
 
                 /// <summary>Snapshot of the program's descriptor binding metadata at creation time.</summary>
-                public required IReadOnlyList<DescriptorBindingInfo> Bindings { get; init; }
+                public required DescriptorBindingInfo[] Bindings { get; init; }
 
                 /// <summary>
                 /// Per-frame descriptor sets. Indexed as <c>[frameIndex][setIndex]</c>.

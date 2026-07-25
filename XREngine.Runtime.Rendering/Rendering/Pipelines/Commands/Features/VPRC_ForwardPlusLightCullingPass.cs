@@ -46,6 +46,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRDataBuffer? _localLightsBuffer;
         private XRDataBuffer? _visibleIndicesBuffer;
         private XRDataBuffer? _tileLightCountsBuffer;
+        private readonly List<ForwardPlusLocalLight> _localLightsScratch = [];
 
         private struct ForwardPlusLocalLight
         {
@@ -80,30 +81,31 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (RuntimeEngine.Rendering.State.IsShadowPass ||
                 DefaultRenderPipeline.UseOpenXrVulkanDesktopStartupSafePath)
             {
-                RuntimeEngine.Rendering.State.ForwardPlusLocalLightCount = 0;
-                RuntimeEngine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
-                RuntimeEngine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
-                RuntimeEngine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
+                ResetPublishedForwardPlusState();
                 return;
             }
 
             var world = ActivePipelineInstance.RenderState.WindowViewport?.World;
             if (world?.Lights is null)
             {
-                RuntimeEngine.Rendering.State.ForwardPlusLocalLightCount = 0;
-                RuntimeEngine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
-                RuntimeEngine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
-                RuntimeEngine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
+                ResetPublishedForwardPlusState();
+                return;
+            }
+
+            // Build first so worlds containing only directional lights avoid resolving depth,
+            // allocating compute state, refreshing SSBOs, and dispatching an empty full-screen grid.
+            BuildLocalLights(world.Lights);
+            int lightCount = Math.Min(_localLightsScratch.Count, checked((int)MaxLocalLights));
+            if (lightCount == 0)
+            {
+                ResetPublishedForwardPlusState();
                 return;
             }
 
             var depthTex = ActivePipelineInstance.GetTexture<XRTexture>(DepthViewTexture);
             if (depthTex is null)
             {
-                RuntimeEngine.Rendering.State.ForwardPlusLocalLightCount = 0;
-                RuntimeEngine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
-                RuntimeEngine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
-                RuntimeEngine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
+                ResetPublishedForwardPlusState();
                 return;
             }
 
@@ -113,16 +115,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             else
                 EnsureComputeProgram();
 
-            // Build local light list (point + spot).
-            List<ForwardPlusLocalLight> lights = BuildLocalLights(world.Lights);
-            int lightCount = Math.Min(lights.Count, checked((int)MaxLocalLights));
-            if (lights.Count > lightCount)
+            if (_localLightsScratch.Count > lightCount)
             {
                 Debug.RenderingEvery(
                     "ForwardPlus.LocalLightOverflow",
                     TimeSpan.FromSeconds(1),
                     "Forward+ local light count {0} exceeds declared capacity {1}; deterministically truncating the uploaded point/spot list.",
-                    lights.Count,
+                    _localLightsScratch.Count,
                     MaxLocalLights);
             }
 
@@ -143,15 +142,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             int viewCount = stereo ? 2 : 1;
             if (!RefreshDeclaredBuffers(tileCountX, tileCountY, viewCount))
             {
-                RuntimeEngine.Rendering.State.ForwardPlusLocalLightCount = 0;
-                RuntimeEngine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
-                RuntimeEngine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
-                RuntimeEngine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
+                ResetPublishedForwardPlusState();
                 return;
             }
 
             // Upload local lights (CPU->GPU). Visible-indices buffer is written by compute.
-            UploadLocalLights(lights, lightCount);
+            UploadLocalLights(_localLightsScratch, lightCount);
 
             // Bind SSBOs + uniforms and dispatch.
             var cam = RuntimeEngine.Rendering.State.RenderingCamera;
@@ -163,10 +159,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 if (depthTex is not XRTexture2DArray depthArray)
                 {
-                    RuntimeEngine.Rendering.State.ForwardPlusLocalLightCount = 0;
-                    RuntimeEngine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
-                    RuntimeEngine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
-                    RuntimeEngine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
+                    ResetPublishedForwardPlusState();
                     return;
                 }
 
@@ -225,9 +218,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         }
 
-        private static List<ForwardPlusLocalLight> BuildLocalLights(Lights3DCollection lights)
+        private void BuildLocalLights(Lights3DCollection lights)
         {
-            List<ForwardPlusLocalLight> result = new(lights.DynamicPointLights.Count + lights.DynamicSpotLights.Count);
+            List<ForwardPlusLocalLight> result = _localLightsScratch;
+            result.Clear();
+            result.EnsureCapacity(lights.DynamicPointLights.Count + lights.DynamicSpotLights.Count);
 
             for (int pointIndex = 0; pointIndex < lights.DynamicPointLights.Count; ++pointIndex)
             {
@@ -270,8 +265,17 @@ namespace XREngine.Rendering.Pipelines.Commands
                     Indices = new IVector4(spotIndex, shadowRecordIndex, s.CastsShadows ? 1 : 0, 0),
                 });
             }
+        }
 
-            return result;
+        private static void ResetPublishedForwardPlusState()
+        {
+            RuntimeEngine.Rendering.State.ForwardPlusLocalLightCount = 0;
+            RuntimeEngine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
+            RuntimeEngine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
+            RuntimeEngine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
+            RuntimeEngine.Rendering.State.ForwardPlusScreenSize = Vector2.Zero;
+            RuntimeEngine.Rendering.State.ForwardPlusTileCountX = 0;
+            RuntimeEngine.Rendering.State.ForwardPlusTileCountY = 0;
         }
 
         private bool RefreshDeclaredBuffers(int tileCountX, int tileCountY, int viewCount)
@@ -367,18 +371,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         private int ResolvePassIndex(string passName)
-        {
-            var metadata = ParentPipeline?.PassMetadata;
-            if (metadata is null)
-                return int.MinValue;
-
-            foreach (RenderPassMetadata pass in metadata)
-            {
-                if (string.Equals(pass.Name, passName, StringComparison.OrdinalIgnoreCase))
-                    return pass.PassIndex;
-            }
-
-            return int.MinValue;
-        }
+            => ParentPipeline?.TryGetRenderPassIndex(passName, out int passIndex) == true
+                ? passIndex
+                : int.MinValue;
     }
 }

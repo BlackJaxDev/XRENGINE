@@ -94,6 +94,22 @@ namespace XREngine.Rendering.Pipelines.Commands
             "Bloom Upsample mip3->2 shader=BloomUpsample.fs",
             "Bloom Upsample mip4->3 shader=BloomUpsample.fs",
         ];
+        private static readonly string[] BloomDownsamplePassNames =
+        [
+            string.Empty,
+            "Bloom_Downsample_Mip0_to_1",
+            "Bloom_Downsample_Mip1_to_2",
+            "Bloom_Downsample_Mip2_to_3",
+            "Bloom_Downsample_Mip3_to_4",
+        ];
+        private static readonly string[] BloomUpsamplePassNames =
+        [
+            string.Empty,
+            string.Empty,
+            "Bloom_Upsample_Mip2_to_1",
+            "Bloom_Upsample_Mip3_to_2",
+            "Bloom_Upsample_Mip4_to_3",
+        ];
 
         private static readonly string[] BloomUpsampleStereoScopeNames =
         [
@@ -252,10 +268,14 @@ namespace XREngine.Rendering.Pipelines.Commands
             };
 
         private static string GetDownsamplePassName(int targetMipLevel)
-            => $"Bloom_Downsample_Mip{targetMipLevel - 1}_to_{targetMipLevel}";
+            => (uint)targetMipLevel < (uint)BloomDownsamplePassNames.Length
+                ? BloomDownsamplePassNames[targetMipLevel]
+                : $"Bloom_Downsample_Mip{targetMipLevel - 1}_to_{targetMipLevel}";
 
         private static string GetUpsamplePassName(int sourceMipLevel)
-            => $"Bloom_Upsample_Mip{sourceMipLevel}_to_{sourceMipLevel - 1}";
+            => (uint)sourceMipLevel < (uint)BloomUpsamplePassNames.Length
+                ? BloomUpsamplePassNames[sourceMipLevel]
+                : $"Bloom_Upsample_Mip{sourceMipLevel}_to_{sourceMipLevel - 1}";
 
         private BoundingRectangle GetBloomRect(int mipLevel)
             => mipLevel switch
@@ -601,19 +621,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         private int ResolvePassIndex(string passName)
-        {
-            var metadata = ParentPipeline?.PassMetadata;
-            if (metadata is null)
-                return int.MinValue;
-
-            foreach (RenderPassMetadata pass in metadata)
-            {
-                if (string.Equals(pass.Name, passName, StringComparison.OrdinalIgnoreCase))
-                    return pass.PassIndex;
-            }
-
-            return int.MinValue;
-        }
+            => ParentPipeline?.TryGetRenderPassIndex(passName, out int passIndex) == true
+                ? passIndex
+                : int.MinValue;
 
         private XRTexture GetOrCreateBloomSourceMipView(XRTexture bloomTexture, int sourceMip)
         {

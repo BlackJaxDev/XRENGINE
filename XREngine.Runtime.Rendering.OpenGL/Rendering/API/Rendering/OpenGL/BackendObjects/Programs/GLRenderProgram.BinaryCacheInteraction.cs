@@ -337,6 +337,7 @@ namespace XREngine.Rendering.OpenGL
                     return;
 
                 _replacementProgramPending = true;
+                _replacementSourceRevisionKey = CalculateSourceRevisionKey();
                 _hashComputed = false;
                 InvalidatePreparedLinkData();
                 PublishBackendStatus(
@@ -347,10 +348,22 @@ namespace XREngine.Rendering.OpenGL
                 RegisterPendingAsyncProgram();
             }
 
-            private void AdoptLinkedBuildProgram(uint linkedProgramId)
+            private bool AdoptLinkedBuildProgram(uint linkedProgramId)
             {
-                if (!_replacementProgramPending || linkedProgramId == 0 || linkedProgramId != _replacementProgramId)
-                    return;
+                if (!_replacementProgramPending)
+                    return true;
+
+                if (linkedProgramId == 0 || linkedProgramId != _replacementProgramId)
+                    return false;
+
+                if (_replacementSourceRevisionKey != CalculateSourceRevisionKey())
+                {
+                    AbandonReplacementProgram();
+                    _hashComputed = false;
+                    InvalidatePreparedLinkData();
+                    BeginReplacementProgramBuild();
+                    return false;
+                }
 
                 uint previousProgramId = 0;
                 SharedLinkedProgram? previousSharedProgram = _sharedLinkedProgram;
@@ -365,6 +378,7 @@ namespace XREngine.Rendering.OpenGL
                 Cache[linkedProgramId] = this;
                 _replacementProgramId = 0;
                 _replacementProgramPending = false;
+                _replacementSourceRevisionKey = 0;
 
                 ResetProgramInterfaceCaches();
 
@@ -372,6 +386,8 @@ namespace XREngine.Rendering.OpenGL
                     ReleaseSharedLinkedProgram(previousSharedProgram);
                 else if (previousProgramId != 0)
                     EnqueueDeferredProgramHandleDelete(Renderer, previousProgramId);
+
+                return true;
             }
 
             private void AbandonReplacementProgram()
@@ -382,8 +398,21 @@ namespace XREngine.Rendering.OpenGL
                 uint replacementId = _replacementProgramId;
                 _replacementProgramId = 0;
                 _replacementProgramPending = false;
+                _replacementSourceRevisionKey = 0;
                 if (replacementId != 0)
                     EnqueueDeferredProgramHandleDelete(Renderer, replacementId);
+            }
+
+            private long CalculateSourceRevisionKey()
+            {
+                HashCode hash = new();
+                foreach (XRShader shader in Data.Shaders)
+                {
+                    hash.Add(shader.SourceRevision);
+                    hash.Add(shader.Type);
+                }
+
+                return hash.ToHashCode();
             }
 
             private SharedLinkedProgramKey BuildSharedLinkedProgramKey(string cacheKey)

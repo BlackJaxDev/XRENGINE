@@ -31,6 +31,8 @@ namespace XREngine.Rendering
     [XRTypeRedirect("XREngine.Rendering.FontGlyphSet")]
     public partial class FontGlyphSet : XRAsset
     {
+        private static readonly string[] AsciiGlyphKeys = CreateAsciiGlyphKeys();
+
         static partial void StaticConstructor()
             => EnsureNativeFreetypeAvailable();
 
@@ -889,7 +891,9 @@ namespace XREngine.Rendering
                 if (!TryReadNextRune(text, ref charIndex, out Rune rune, out bool last))
                     break;
 
-                string character = rune.ToString();
+                string character = (uint)rune.Value < (uint)AsciiGlyphKeys.Length
+                    ? AsciiGlyphKeys[rune.Value]
+                    : rune.ToString();
                 if (!glyphs.TryGetValue(character, out Glyph? glyph) || glyph is null)
                 {
                     // Handle missing glyphs (e.g., skip or substitute)
@@ -1206,6 +1210,14 @@ namespace XREngine.Rendering
                     quads[i] = (transform, quads[i].uvs);
                 }
             }
+        }
+
+        private static string[] CreateAsciiGlyphKeys()
+        {
+            string[] keys = new string[128];
+            for (int i = 0; i < keys.Length; i++)
+                keys[i] = ((char)i).ToString();
+            return keys;
         }
 
         public float CalculateFontSize(

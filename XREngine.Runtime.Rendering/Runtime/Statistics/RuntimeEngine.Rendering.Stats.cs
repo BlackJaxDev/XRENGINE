@@ -57,10 +57,10 @@ namespace XREngine
                         activeStrategy,
                         CaptureActiveTextureBindingRung(),
                         CaptureActiveStereoMode(),
-                        activeVrViewMode.RequestedMode.ToString(),
-                        activeVrViewMode.EffectiveMode.ToString(),
-                        activeVrViewMode.EffectiveImplementationPath.ToString(),
-                        activeVrViewMode.TemporalHistoryPolicy.ToString(),
+                        GetVrViewRenderModeName(activeVrViewMode.RequestedMode),
+                        GetVrViewRenderModeName(activeVrViewMode.EffectiveMode),
+                        GetVrViewRenderImplementationPathName(activeVrViewMode.EffectiveImplementationPath),
+                        GetVrTemporalHistoryPolicyName(activeVrViewMode.TemporalHistoryPolicy),
                         CaptureActiveRenderBackend(),
                         RuntimeEngine.Rendering.State.IsVulkan && RuntimeEngine.Rendering.State.VulkanValidationLayersEnabled,
                         IsDebugOutputEnabled(),
@@ -99,7 +99,7 @@ namespace XREngine
                 {
                     try
                     {
-                        return RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().ToString();
+                        return GetMeshSubmissionStrategyName(RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
                     }
                     catch
                     {
@@ -111,7 +111,7 @@ namespace XREngine
                 {
                     try
                     {
-                        return RuntimeEngine.EffectiveSettings.ZeroReadbackMaterialDrawPath.ToString();
+                        return GetZeroReadbackMaterialDrawPathName(RuntimeEngine.EffectiveSettings.ZeroReadbackMaterialDrawPath);
                     }
                     catch
                     {
@@ -198,6 +198,58 @@ namespace XREngine
                            value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
                            value.Equals("on", StringComparison.OrdinalIgnoreCase);
                 }
+
+                private static string GetMeshSubmissionStrategyName(EMeshSubmissionStrategy strategy)
+                    => strategy switch
+                    {
+                        EMeshSubmissionStrategy.CpuDirect => nameof(EMeshSubmissionStrategy.CpuDirect),
+                        EMeshSubmissionStrategy.GpuIndirectInstrumented => nameof(EMeshSubmissionStrategy.GpuIndirectInstrumented),
+                        EMeshSubmissionStrategy.GpuIndirectZeroReadback => nameof(EMeshSubmissionStrategy.GpuIndirectZeroReadback),
+                        EMeshSubmissionStrategy.GpuMeshletZeroReadback => nameof(EMeshSubmissionStrategy.GpuMeshletZeroReadback),
+                        EMeshSubmissionStrategy.GpuMeshletInstrumented => nameof(EMeshSubmissionStrategy.GpuMeshletInstrumented),
+                        _ => "unknown",
+                    };
+
+                private static string GetZeroReadbackMaterialDrawPathName(EZeroReadbackMaterialDrawPath path)
+                    => path switch
+                    {
+                        EZeroReadbackMaterialDrawPath.FullBucketScan => nameof(EZeroReadbackMaterialDrawPath.FullBucketScan),
+                        EZeroReadbackMaterialDrawPath.ActiveBucketList => nameof(EZeroReadbackMaterialDrawPath.ActiveBucketList),
+                        EZeroReadbackMaterialDrawPath.MaterialTable => nameof(EZeroReadbackMaterialDrawPath.MaterialTable),
+                        EZeroReadbackMaterialDrawPath.BindlessMaterialTable => nameof(EZeroReadbackMaterialDrawPath.BindlessMaterialTable),
+                        _ => "unknown",
+                    };
+
+                private static string GetVrViewRenderModeName(EVrViewRenderMode mode)
+                    => mode switch
+                    {
+                        EVrViewRenderMode.SequentialViews => nameof(EVrViewRenderMode.SequentialViews),
+                        EVrViewRenderMode.SinglePassStereo => nameof(EVrViewRenderMode.SinglePassStereo),
+                        EVrViewRenderMode.ParallelCommandBufferRecording => nameof(EVrViewRenderMode.ParallelCommandBufferRecording),
+                        _ => "unknown",
+                    };
+
+                private static string GetVrViewRenderImplementationPathName(EVrViewRenderImplementationPath path)
+                    => path switch
+                    {
+                        EVrViewRenderImplementationPath.Unsupported => nameof(EVrViewRenderImplementationPath.Unsupported),
+                        EVrViewRenderImplementationPath.SequentialViews => nameof(EVrViewRenderImplementationPath.SequentialViews),
+                        EVrViewRenderImplementationPath.ParallelCommandBufferRecording => nameof(EVrViewRenderImplementationPath.ParallelCommandBufferRecording),
+                        EVrViewRenderImplementationPath.TrueSinglePassStereo => nameof(EVrViewRenderImplementationPath.TrueSinglePassStereo),
+                        _ => "unknown",
+                    };
+
+                private static string GetVrTemporalHistoryPolicyName(EVrTemporalHistoryPolicy policy)
+                    => policy switch
+                    {
+                        EVrTemporalHistoryPolicy.Disabled => nameof(EVrTemporalHistoryPolicy.Disabled),
+                        EVrTemporalHistoryPolicy.DisabledPerEyeSwapchain => nameof(EVrTemporalHistoryPolicy.DisabledPerEyeSwapchain),
+                        EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain => nameof(EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain),
+                        EVrTemporalHistoryPolicy.PerEye => nameof(EVrTemporalHistoryPolicy.PerEye),
+                        EVrTemporalHistoryPolicy.StereoArrayLayer => nameof(EVrTemporalHistoryPolicy.StereoArrayLayer),
+                        EVrTemporalHistoryPolicy.HeadsetShared => nameof(EVrTemporalHistoryPolicy.HeadsetShared),
+                        _ => "unknown",
+                    };
 
                 public static class Frame
                 {

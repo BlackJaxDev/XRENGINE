@@ -9,12 +9,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            ActivePipelineInstance.RenderState.PushTextureBinding(new XRRenderPipelineInstance.RenderingState.ScopedTextureBinding
-            {
-                TextureName = TextureName,
-                SamplerName = string.IsNullOrWhiteSpace(SamplerName) ? TextureName : SamplerName,
-                TextureUnit = TextureUnit
-            });
+            ActivePipelineInstance.RenderState.PushTextureBindingState(
+                new XRRenderPipelineInstance.RenderingState.ScopedTextureBinding(
+                    TextureName,
+                    string.IsNullOrWhiteSpace(SamplerName) ? TextureName : SamplerName,
+                    TextureUnit));
         }
     }
 }

@@ -1441,6 +1441,18 @@ public static partial class RuntimeEngine
                 }
 
                 /// <summary>
+                /// Selects inline or hybrid Vulkan command recording.
+                /// Auto enables the validated desktop hybrid path.
+                /// </summary>
+                [Category("Vulkan")]
+                [Description("Selects inline or hybrid Vulkan command recording. Auto enables the validated desktop hybrid path. XRE_VULKAN_COMMAND_CHAINS=0/1 overrides this setting for diagnostics.")]
+                public EVulkanCommandRecordingMode VulkanCommandRecordingMode
+                {
+                    get => Vulkan.CommandRecording.Mode;
+                    set => Vulkan.CommandRecording.Mode = value;
+                }
+
+                /// <summary>
                 /// Enables correctness-validated Vulkan primary and stable secondary command-buffer reuse.
                 /// </summary>
                 [Category("Vulkan")]

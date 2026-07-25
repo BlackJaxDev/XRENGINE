@@ -29,6 +29,7 @@ public unsafe partial class VulkanRenderer
         private BoundingRectangle[]? _indexedScissorRegions;
         private Viewport[]? _indexedViewportCache;
         private Rect2D[]? _indexedScissorCache;
+        private int _indexedViewportScissorCount;
         private Extent2D _indexedCacheExtent;
 
         public VulkanStateTracker()
@@ -195,8 +196,7 @@ public unsafe partial class VulkanRenderer
             bool unchanged =
                 currentViewports is not null &&
                 currentScissors is not null &&
-                currentViewports.Length == count &&
-                currentScissors.Length == count;
+                _indexedViewportScissorCount == count;
 
             for (int i = 0; i < count; i++)
             {
@@ -215,8 +215,14 @@ public unsafe partial class VulkanRenderer
             if (unchanged)
                 return false;
 
-            BoundingRectangle[] viewportRegions = new BoundingRectangle[count];
-            BoundingRectangle[] scissorRegions = new BoundingRectangle[count];
+            BoundingRectangle[] viewportRegions =
+                currentViewports is not null && currentViewports.Length >= count
+                    ? currentViewports
+                    : new BoundingRectangle[count];
+            BoundingRectangle[] scissorRegions =
+                currentScissors is not null && currentScissors.Length >= count
+                    ? currentScissors
+                    : new BoundingRectangle[count];
             for (int i = 0; i < count; i++)
             {
                 viewportRegions[i] = viewports[i];
@@ -225,28 +231,19 @@ public unsafe partial class VulkanRenderer
 
             _indexedViewportRegions = viewportRegions;
             _indexedScissorRegions = scissorRegions;
-            _indexedViewportCache = null;
-            _indexedScissorCache = null;
+            _indexedViewportScissorCount = count;
             _indexedCacheExtent = default;
             return true;
         }
 
         public bool ClearIndexedViewportScissors()
         {
-            if (_indexedViewportRegions is null &&
-                _indexedScissorRegions is null &&
-                _indexedViewportCache is null &&
-                _indexedScissorCache is null &&
-                _indexedCacheExtent.Width == 0 &&
-                _indexedCacheExtent.Height == 0)
-            {
+            if (_indexedViewportScissorCount == 0)
                 return false;
-            }
 
-            _indexedViewportRegions = null;
-            _indexedScissorRegions = null;
-            _indexedViewportCache = null;
-            _indexedScissorCache = null;
+            // Retain growth-only storage. Shadow passes clear and restore indexed
+            // viewport state repeatedly while a command chain is rebuilt.
+            _indexedViewportScissorCount = 0;
             _indexedCacheExtent = default;
             return true;
         }
@@ -255,8 +252,7 @@ public unsafe partial class VulkanRenderer
         {
             if (_indexedViewportRegions is null ||
                 _indexedScissorRegions is null ||
-                _indexedViewportRegions.Length == 0 ||
-                _indexedViewportRegions.Length != _indexedScissorRegions.Length)
+                _indexedViewportScissorCount == 0)
             {
                 return default;
             }
@@ -269,12 +265,18 @@ public unsafe partial class VulkanRenderer
                 return new IndexedViewportScissorSnapshot(
                     _indexedViewportCache,
                     _indexedScissorCache,
-                    (uint)_indexedViewportCache.Length);
+                    (uint)_indexedViewportScissorCount);
             }
 
-            int count = _indexedViewportRegions.Length;
-            Viewport[] viewports = new Viewport[count];
-            Rect2D[] scissors = new Rect2D[count];
+            int count = _indexedViewportScissorCount;
+            Viewport[] viewports =
+                _indexedViewportCache is not null && _indexedViewportCache.Length >= count
+                    ? _indexedViewportCache
+                    : new Viewport[count];
+            Rect2D[] scissors =
+                _indexedScissorCache is not null && _indexedScissorCache.Length >= count
+                    ? _indexedScissorCache
+                    : new Rect2D[count];
             for (int i = 0; i < count; i++)
             {
                 viewports[i] = CreateVulkanViewport(_indexedViewportRegions[i], targetExtent);

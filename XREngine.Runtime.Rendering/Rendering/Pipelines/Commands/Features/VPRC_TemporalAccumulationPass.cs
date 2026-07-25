@@ -615,19 +615,9 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     }
 
     private int ResolvePassIndex(string passName)
-    {
-        var metadata = ParentPipeline?.PassMetadata;
-        if (metadata is null)
-            return int.MinValue;
-
-        foreach (RenderPassMetadata pass in metadata)
-        {
-            if (string.Equals(pass.Name, passName, StringComparison.OrdinalIgnoreCase))
-                return pass.PassIndex;
-        }
-
-        return int.MinValue;
-    }
+        => ParentPipeline?.TryGetRenderPassIndex(passName, out int passIndex) == true
+            ? passIndex
+            : int.MinValue;
 
     private static bool ShouldUseTemporalJitter()
         => ShouldUseTemporalJitter(ResolveAntiAliasingMode());

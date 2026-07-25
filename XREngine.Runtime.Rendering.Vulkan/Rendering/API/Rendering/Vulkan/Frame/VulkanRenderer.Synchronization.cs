@@ -21,6 +21,14 @@ public unsafe partial class VulkanRenderer
     [ThreadStatic]
     private static CommandBufferSubmitInfo[]? t_submitCommandBufferInfoScratch;
 
+    private static void ReleaseCurrentThreadSynchronizationScratch()
+    {
+        t_submitWaitInfoScratch = null;
+        t_submitSignalInfoScratch = null;
+        t_submitCommandBufferInfoScratch = null;
+        t_excludeDesktopSwapchainBarriers = false;
+    }
+
     private readonly ref struct DesktopSwapchainBarrierExclusionScope
     {
         private readonly bool _previous;
@@ -143,10 +151,10 @@ public unsafe partial class VulkanRenderer
             (dstStage & PipelineStageFlags.AllCommandsBit) != 0)
         {
             string site = string.IsNullOrEmpty(caller) ? "<unknown>" : caller;
-            // Throttle per originating call site: a single over-broad barrier site
-            // would otherwise emit hundreds of identical lines per second.
+            // One shared throttle key avoids formatting a per-site key on this
+            // command-recording path. The emitted message still identifies the site.
             Debug.VulkanWarningEvery(
-                $"Vulkan.BarrierAudit.{site}",
+                "Vulkan.BarrierAudit",
                 TimeSpan.FromSeconds(10),
                 "[Vulkan][BarrierAudit] Broad AllCommandsBit barrier originating from {0}. Consider narrowing src/dst stages for performance.",
                 site);

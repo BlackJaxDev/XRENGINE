@@ -229,15 +229,15 @@ namespace XREngine.Rendering.Vulkan
         {
             info = default;
 
-            ImageLayout layout = aspectMask.HasFlag(ImageAspectFlags.ColorBit)
+            ImageLayout layout = (aspectMask & ImageAspectFlags.ColorBit) != 0
                 ? ImageLayout.ColorAttachmentOptimal
                 : ImageLayout.DepthStencilAttachmentOptimal;
 
-            PipelineStageFlags stage = aspectMask.HasFlag(ImageAspectFlags.ColorBit)
+            PipelineStageFlags stage = (aspectMask & ImageAspectFlags.ColorBit) != 0
                 ? PipelineStageFlags.ColorAttachmentOutputBit
                 : PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit;
 
-            AccessFlags access = aspectMask.HasFlag(ImageAspectFlags.ColorBit)
+            AccessFlags access = (aspectMask & ImageAspectFlags.ColorBit) != 0
                 ? AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit
                 : AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit;
 
@@ -315,7 +315,7 @@ namespace XREngine.Rendering.Vulkan
                 if (!IsDepthOrStencilFormat(format))
                     return false;
             }
-            else if (!aspectMask.HasFlag(ImageAspectFlags.ColorBit))
+            else if ((aspectMask & ImageAspectFlags.ColorBit) == 0)
             {
                 return false;
             }
@@ -403,7 +403,7 @@ namespace XREngine.Rendering.Vulkan
                 if (!IsDepthOrStencilFormat(group.Format))
                     return false;
             }
-            else if (!aspectMask.HasFlag(ImageAspectFlags.ColorBit))
+            else if ((aspectMask & ImageAspectFlags.ColorBit) == 0)
             {
                 return false;
             }
@@ -605,7 +605,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         (true, true) => recordingTarget.DepthAspect,
                         (true, false) => ImageAspectFlags.DepthBit,
-                        (false, true) => recordingTarget.DepthAspect.HasFlag(ImageAspectFlags.StencilBit)
+                        (false, true) => (recordingTarget.DepthAspect & ImageAspectFlags.StencilBit) != 0
                             ? ImageAspectFlags.StencilBit
                             : ImageAspectFlags.None,
                         _ => ImageAspectFlags.None
@@ -650,7 +650,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     (true, true) => depth.Aspect,
                     (true, false) => ImageAspectFlags.DepthBit,
-                    (false, true) => depth.Aspect.HasFlag(ImageAspectFlags.StencilBit) ? ImageAspectFlags.StencilBit : ImageAspectFlags.None,
+                    (false, true) => (depth.Aspect & ImageAspectFlags.StencilBit) != 0 ? ImageAspectFlags.StencilBit : ImageAspectFlags.None,
                     _ => ImageAspectFlags.None
                 };
 
@@ -1155,7 +1155,7 @@ namespace XREngine.Rendering.Vulkan
         {
             rgbaPixels = [];
 
-            if (!source.IsValid || !source.AspectMask.HasFlag(ImageAspectFlags.ColorBit))
+            if (!source.IsValid || (source.AspectMask & ImageAspectFlags.ColorBit) == 0)
                 return false;
             if (!TryResolveLiveBlitImage(source, out BlitImageInfo liveSource))
                 return false;
@@ -1250,7 +1250,7 @@ namespace XREngine.Rendering.Vulkan
         {
             rgbaFloats = [];
 
-            if (!source.IsValid || !source.AspectMask.HasFlag(ImageAspectFlags.ColorBit))
+            if (!source.IsValid || (source.AspectMask & ImageAspectFlags.ColorBit) == 0)
                 return false;
             if (!TryResolveLiveBlitImage(source, out BlitImageInfo liveSource))
                 return false;
@@ -1348,7 +1348,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (width <= 0 || height <= 0)
                 return false;
-            if (!source.IsValid || !source.AspectMask.HasFlag(ImageAspectFlags.DepthBit))
+            if (!source.IsValid || (source.AspectMask & ImageAspectFlags.DepthBit) == 0)
                 return false;
             if (!TryResolveLiveBlitImage(source, out BlitImageInfo liveSource))
                 return false;
@@ -1847,7 +1847,7 @@ namespace XREngine.Rendering.Vulkan
                     BufferImageHeight = 0,
                     ImageSubresource = new ImageSubresourceLayers
                     {
-                        AspectMask = liveSource.AspectMask.HasFlag(ImageAspectFlags.DepthBit)
+                        AspectMask = (liveSource.AspectMask & ImageAspectFlags.DepthBit) != 0
                             ? ImageAspectFlags.DepthBit
                             : liveSource.AspectMask,
                         MipLevel = liveSource.MipLevel,
@@ -2020,7 +2020,7 @@ namespace XREngine.Rendering.Vulkan
         {
             stencil = 0;
 
-            if (!source.IsValid || !source.AspectMask.HasFlag(ImageAspectFlags.StencilBit))
+            if (!source.IsValid || (source.AspectMask & ImageAspectFlags.StencilBit) == 0)
                 return false;
             if (!TryResolveLiveBlitImage(source, out BlitImageInfo liveSource))
                 return false;

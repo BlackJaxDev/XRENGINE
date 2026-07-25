@@ -3,7 +3,6 @@ using Silk.NET.OpenGL;
 using Silk.NET.OpenGL.Extensions.ARB;
 using System;
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 
 namespace XREngine.Rendering.OpenGL;
 
@@ -15,9 +14,7 @@ public partial class OpenGLRenderer
     private const int GL_MAX_SHADER_COMPILER_THREADS = 0x91B0;
     private const int GL_COMPLETION_STATUS = 0x91B1;
 
-    private delegate void GlMaxShaderCompilerThreadsDelegate(uint count);
-
-    private GlMaxShaderCompilerThreadsDelegate? _glMaxShaderCompilerThreadsKhr;
+    private nint _glMaxShaderCompilerThreadsKhr;
     private ArbParallelShaderCompile? _arbParallelShaderCompile;
     private uint _configuredParallelShaderCompilerThreadCount;
     private bool _parallelShaderCompileSupported;
@@ -194,14 +191,14 @@ public partial class OpenGLRenderer
 
     private void LoadKhrParallelShaderCompileDelegate()
     {
-        if (_glMaxShaderCompilerThreadsKhr is not null)
+        if (_glMaxShaderCompilerThreadsKhr != 0)
             return;
 
         if (Window.GLContext is not INativeContext nativeContext)
             return;
 
         if (nativeContext.TryGetProcAddress("glMaxShaderCompilerThreadsKHR", out IntPtr proc) && proc != IntPtr.Zero)
-            _glMaxShaderCompilerThreadsKhr = Marshal.GetDelegateForFunctionPointer<GlMaxShaderCompilerThreadsDelegate>(proc);
+            _glMaxShaderCompilerThreadsKhr = proc;
     }
 
     private static uint ResolveParallelShaderCompilerThreadCount()
@@ -228,11 +225,11 @@ public partial class OpenGLRenderer
             }
 
             if (_parallelShaderCompileExtensionName == KhrParallelShaderCompileExtensionName &&
-                _glMaxShaderCompilerThreadsKhr is not null)
+                _glMaxShaderCompilerThreadsKhr != 0)
             {
                 MeasureRenderingParallelShaderCompileGlCall(
                     "glMaxShaderCompilerThreadsKHR",
-                    () => _glMaxShaderCompilerThreadsKhr(count),
+                    () => InvokeGlMaxShaderCompilerThreads(_glMaxShaderCompilerThreadsKhr, count),
                     $"threads={FormatThreadCount(count)}");
                 return true;
             }
@@ -304,7 +301,7 @@ public partial class OpenGLRenderer
 
         uint requested = ResolveParallelShaderCompilerThreadCount();
         string extensionName = _parallelShaderCompileExtensionName;
-        GlMaxShaderCompilerThreadsDelegate? khrDelegate = _glMaxShaderCompilerThreadsKhr;
+        nint khrEntryPoint = _glMaxShaderCompilerThreadsKhr;
 
         worker.Enqueue(gl =>
         {
@@ -321,9 +318,9 @@ public partial class OpenGLRenderer
                         arb.MaxShaderCompilerThreads(requested);
                         set = true;
                     }
-                    else if (extensionName == KhrParallelShaderCompileExtensionName && khrDelegate is not null)
+                    else if (extensionName == KhrParallelShaderCompileExtensionName && khrEntryPoint != 0)
                     {
-                        khrDelegate(requested);
+                        InvokeGlMaxShaderCompilerThreads(khrEntryPoint, requested);
                         set = true;
                     }
 
@@ -341,6 +338,9 @@ public partial class OpenGLRenderer
             });
         }, "InitParallelShaderCompile");
     }
+
+    private static unsafe void InvokeGlMaxShaderCompilerThreads(nint entryPoint, uint count)
+        => ((delegate* unmanaged[Stdcall]<uint, void>)entryPoint)(count);
 
     /// <summary>
     /// Temporarily disables driver parallel shader compilation by setting

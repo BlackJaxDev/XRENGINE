@@ -1,7 +1,6 @@
 using XREngine.Extensions;
 using System.Collections;
 using System.ComponentModel;
-using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Core.Attributes;
@@ -359,7 +358,11 @@ namespace XREngine.Components
         private void CollectVisible()
         {
             var tree = GetCameraCanvas()?.VisualScene2D?.RenderTree;
-            tree?.FindAllIntersectingSorted(CursorPositionWorld2D, UIElementIntersections, UIElementPredicate);
+            tree?.FindAllIntersectingSorted(
+                CursorPositionWorld2D,
+                UIElementIntersections,
+                _intersectionCollectionScratch,
+                UIElementPredicate);
         }
 
         private void SwapBuffers()
@@ -515,7 +518,8 @@ namespace XREngine.Components
                 return;
 
             // Remove items whose transform is not the blocker and not a descendant of the blocker
-            var toRemove = new List<RenderInfo2D>();
+            List<RenderInfo2D> toRemove = _blockedInputRemovalScratch;
+            toRemove.Clear();
             foreach (var item in UIElementIntersections)
                 if (item.Owner is UIComponent ui && !IsDescendantOfOrSelf(ui.Transform, blockerTransform))
                     toRemove.Add(item);
@@ -543,7 +547,12 @@ namespace XREngine.Components
         /// </summary>
         private void ValidateAndSwapIntersections()
         {
-            LastUIElementIntersections.Union(UIElementIntersections).ForEach(ValidateIntersection);
+            foreach (RenderInfo2D item in LastUIElementIntersections)
+                ValidateIntersection(item);
+            foreach (RenderInfo2D item in UIElementIntersections)
+                if (!ContainsReference(LastUIElementIntersections, item))
+                    ValidateIntersection(item);
+
             (LastUIElementIntersections, UIElementIntersections) = (UIElementIntersections, LastUIElementIntersections);
             UIElementIntersections.Clear();
         }
@@ -678,6 +687,8 @@ namespace XREngine.Components
 
         private SortedSet<RenderInfo2D> LastUIElementIntersections = new(new Comparer());
         private SortedSet<RenderInfo2D> UIElementIntersections = new(new Comparer());
+        private readonly List<RenderInfo2D> _intersectionCollectionScratch = [];
+        private readonly List<RenderInfo2D> _blockedInputRemovalScratch = [];
 
         protected static bool UIElementPredicate(RenderInfo2D item)
             => item.Owner is UIComponent ui && ui.UITransform.IsVisibleInHierarchy;
@@ -686,14 +697,15 @@ namespace XREngine.Components
             if (item.Owner is not UIInteractableComponent inter)
                 return;
 
-            //Quick fix: sortedset uses a comparer to sort, but the comparer doesn't check for equality, resulting in invalid contains checks.
-            var last = LastUIElementIntersections.ToArray();
-            var curr = UIElementIntersections.ToArray();
+            // Render-order fields are mutable, so a SortedSet lookup can follow the wrong branch
+            // after an item has moved. Reference scans preserve identity without snapshot arrays.
+            bool wasIntersecting = ContainsReference(LastUIElementIntersections, item);
+            bool isIntersecting = ContainsReference(UIElementIntersections, item);
 
-            if (last.Contains(item))
+            if (wasIntersecting)
             {
                 //Mouse was over this renderable last update
-                if (!curr.Contains(item))
+                if (!isIntersecting)
                 {
                     //Lost mouse over
                     inter.IsMouseOver = false;
@@ -713,7 +725,7 @@ namespace XREngine.Components
                             uiTransform.CanvasToLocal(CursorPositionWorld2D));
                 }
             }
-            else if (curr.Contains(item)) //Mouse was not over this renderable last update
+            else if (isIntersecting) //Mouse was not over this renderable last update
             {
                 //Got mouse over
                 inter.IsMouseOver = true;
@@ -725,6 +737,15 @@ namespace XREngine.Components
                 inter.IsMouseOver = false;
                 inter.IsMouseDirectlyOver = false;
             }
+        }
+
+        private static bool ContainsReference(SortedSet<RenderInfo2D> items, RenderInfo2D candidate)
+        {
+            foreach (RenderInfo2D item in items)
+                if (ReferenceEquals(item, candidate))
+                    return true;
+
+            return false;
         }
         private class Comparer : IComparer<RenderInfo2D>, IComparer
         {

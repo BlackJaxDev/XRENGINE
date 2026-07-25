@@ -69,29 +69,35 @@ public static class OpenXrGraphicsBindingRegistry
         return false;
     }
 
-    private sealed class RegistrationLease(
-        RendererBackendId backendId,
-        Func<IXrGraphicsBinding> factory) : IDisposable
+    private sealed class RegistrationLease : IDisposable
     {
-        private bool _disposed;
+        private readonly RendererBackendId _backendId;
+        private Func<IXrGraphicsBinding>? _factory;
+
+        public RegistrationLease(
+            RendererBackendId backendId,
+            Func<IXrGraphicsBinding> factory)
+        {
+            _backendId = backendId;
+            _factory = factory;
+        }
 
         public void Dispose()
         {
-            if (_disposed)
+            Func<IXrGraphicsBinding>? factory = Interlocked.Exchange(ref _factory, null);
+            if (factory is null)
                 return;
 
             lock (Sync)
             {
-                if (Registrations.TryGetValue(backendId, out RegistrationEntry? current) &&
+                if (Registrations.TryGetValue(_backendId, out RegistrationEntry? current) &&
                     current.Factory.Equals(factory))
                 {
                     current.LeaseCount--;
                     if (current.LeaseCount == 0)
-                        Registrations.Remove(backendId);
+                        Registrations.Remove(_backendId);
                 }
             }
-
-            _disposed = true;
         }
     }
 

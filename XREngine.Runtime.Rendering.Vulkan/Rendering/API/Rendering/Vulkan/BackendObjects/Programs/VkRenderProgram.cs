@@ -5,6 +5,7 @@ using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Silk.NET.Vulkan;
 using XREngine;
 using XREngine.Data.Colors;
@@ -33,24 +34,23 @@ public unsafe partial class VulkanRenderer
         if (!IsLogicalDeviceReady)
             return;
 
-        VkRenderProgram[] pendingPrograms;
+        int deferredCount;
         lock (_pendingDeviceReadyProgramLinksLock)
         {
             if (_pendingDeviceReadyProgramLinks.Count == 0)
                 return;
 
-            pendingPrograms = [.. _pendingDeviceReadyProgramLinks];
+            deferredCount = _pendingDeviceReadyProgramLinks.Count;
             _pendingDeviceReadyProgramLinks.Clear();
         }
 
-        foreach (VkRenderProgram program in pendingPrograms)
-        {
-            if (program.IsLinked || !program.Data.LinkReady)
-                continue;
-
-            if (!program.Link())
-                Debug.VulkanWarning($"Failed to link Vulkan program '{program.Data.Name ?? "UnnamedProgram"}' after logical device creation.");
-        }
+        // Do not eagerly relink every logical program while the replacement renderer is
+        // initializing. A source reload can make dozens of programs pending, and compiling
+        // all of them here blocks the render thread inside the Vulkan driver for minutes.
+        // Programs link on first use, so first-frame acceptance warms only the resources
+        // actually required by the active view while the rest remain lazy.
+        Debug.Vulkan(
+            $"Deferred {deferredCount} Vulkan program link(s) until first use after logical device creation.");
     }
 
     private void ClearPendingDeviceReadyProgramLinks()
@@ -85,6 +85,9 @@ public unsafe partial class VulkanRenderer
         private readonly Dictionary<string, XRTexture> _samplersByName = new(StringComparer.Ordinal);
         private readonly Dictionary<uint, ProgramImageBinding> _imagesByUnit = new();
         private readonly Dictionary<uint, XRDataBuffer> _buffersByBinding = new();
+        private readonly List<ComputeDispatchSnapshot> _frameBindingSnapshotPool = [];
+        private ulong _frameBindingSnapshotPoolFrame;
+        private int _frameBindingSnapshotPoolCursor;
         private readonly ConcurrentDictionary<string, byte> _computeWarnings = new(StringComparer.Ordinal);
         private readonly Dictionary<ComputeUniformBufferKey, ComputeUniformBuffer> _computeUniformBuffers = new();
         private readonly HashSet<(uint ImageIndex, ulong BindingKey)> _reusableComputeDescriptorRefreshKeys = [];
@@ -93,6 +96,7 @@ public unsafe partial class VulkanRenderer
         private bool[] _descriptorSetUsesUpdateAfterBind = Array.Empty<bool>();
         private bool _descriptorSetsRequireUpdateAfterBind;
         private bool _descriptorSetsRequireVariableDescriptorCount;
+        private long _linkGeneration;
         private int _linkedShaderConfigVersion = -1;
         private bool _linkedUsesVulkanClipDepthRemap;
         private EShaderType? _linkedVulkanClipDepthRemapStage;
@@ -113,6 +117,7 @@ public unsafe partial class VulkanRenderer
             }
         }
         public PipelineLayout PipelineLayout => _pipelineLayout;
+        internal ulong LinkGeneration => unchecked((ulong)Volatile.Read(ref _linkGeneration));
         internal DescriptorHeapProgramLayout? DescriptorHeapLayout => _descriptorHeapLayout;
         public IReadOnlyList<DescriptorSetLayout> DescriptorSetLayouts => _descriptorSetLayouts;
         public IReadOnlyList<DescriptorBindingInfo> DescriptorBindings => _programDescriptorBindings;
@@ -469,8 +474,15 @@ public unsafe partial class VulkanRenderer
         {
             lock (_bindingLock)
             {
-                Dictionary<uint, VulkanComputeBufferBinding> buffers = new(_buffersByBinding.Count);
-                Dictionary<string, VulkanComputeBufferBinding> buffersByName = new(StringComparer.Ordinal);
+                ComputeDispatchSnapshot snapshot = RentFrameBindingSnapshot()
+                    ?? new ComputeDispatchSnapshot();
+                snapshot.Reset(
+                    _uniformValues,
+                    _samplersByUnit,
+                    _samplerNamesByUnit,
+                    _samplersByName,
+                    _imagesByUnit);
+                snapshot.Buffers.EnsureCapacity(_buffersByBinding.Count);
                 bool allowSynchronousUpload = Renderer.AllowSynchronousResourceUploads;
                 foreach (KeyValuePair<uint, XRDataBuffer> pair in _buffersByBinding)
                 {
@@ -481,20 +493,43 @@ public unsafe partial class VulkanRenderer
                         bufferBinding = new VulkanComputeBufferBinding(buffer, default, 0UL, 0);
                     }
 
-                    buffers[pair.Key] = bufferBinding;
+                    snapshot.Buffers[pair.Key] = bufferBinding;
                     if (!string.IsNullOrWhiteSpace(buffer.AttributeName))
-                        buffersByName.TryAdd(buffer.AttributeName, bufferBinding);
+                        snapshot.BuffersByName.TryAdd(buffer.AttributeName, bufferBinding);
                 }
 
-                return new ComputeDispatchSnapshot(
-                    new Dictionary<string, ProgramUniformValue>(_uniformValues, StringComparer.Ordinal),
-                    new Dictionary<uint, XRTexture>(_samplersByUnit),
-                    new Dictionary<uint, string>(_samplerNamesByUnit),
-                    new Dictionary<string, XRTexture>(_samplersByName, StringComparer.Ordinal),
-                    new Dictionary<uint, ProgramImageBinding>(_imagesByUnit),
-                    buffers,
-                    buffersByName);
+                return snapshot;
             }
+        }
+
+        /// <summary>
+        /// Rents binding storage only while a render-pipeline frame context is active.
+        /// The global render-frame ID covers desktop and OpenXR outputs, while captures
+        /// made during initialization keep owning snapshots because their lifetime is
+        /// not bounded by a published frame context.
+        /// </summary>
+        private ComputeDispatchSnapshot? RentFrameBindingSnapshot()
+        {
+            if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext is null)
+                return null;
+
+            ulong frameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
+            if (frameId == 0)
+                return null;
+
+            if (_frameBindingSnapshotPoolFrame != frameId)
+            {
+                _frameBindingSnapshotPoolFrame = frameId;
+                _frameBindingSnapshotPoolCursor = 0;
+            }
+
+            int index = _frameBindingSnapshotPoolCursor++;
+            if (index < _frameBindingSnapshotPool.Count)
+                return _frameBindingSnapshotPool[index];
+
+            ComputeDispatchSnapshot snapshot = new();
+            _frameBindingSnapshotPool.Add(snapshot);
+            return snapshot;
         }
 
         /// <summary>
@@ -545,58 +580,55 @@ public unsafe partial class VulkanRenderer
 
         private void Uniform(string name, Matrix4x4 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._mat4, value));
         private void Uniform(string name, Quaternion value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._vec4, new Vector4(value.X, value.Y, value.Z, value.W)));
-        private void Uniform(string name, Matrix4x4[] value) => SetUniformValue(name, EShaderVarType._mat4, value.ToArray(), true);
+        private void Uniform(string name, Matrix4x4[] value) => SetUniformValue(name, EShaderVarType._mat4, CaptureUniformArray(value), true);
         private void Uniform(string name, Quaternion[] value)
-        {
-            Vector4[] converted = value.Select(q => new Vector4(q.X, q.Y, q.Z, q.W)).ToArray();
-            SetUniformValue(name, EShaderVarType._vec4, converted, true);
-        }
+            => SetUniformValue(name, EShaderVarType._vec4, CaptureQuaternionUniformArray(value), true);
 
         private void Uniform(string name, bool value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._bool, value));
         private void Uniform(string name, BoolVector2 value) => SetUniformValue(name, EShaderVarType._bvec2, value);
         private void Uniform(string name, BoolVector3 value) => SetUniformValue(name, EShaderVarType._bvec3, value);
         private void Uniform(string name, BoolVector4 value) => SetUniformValue(name, EShaderVarType._bvec4, value);
-        private void Uniform(string name, bool[] value) => SetUniformValue(name, EShaderVarType._bool, value.ToArray(), true);
-        private void Uniform(string name, BoolVector2[] value) => SetUniformValue(name, EShaderVarType._bvec2, value.ToArray(), true);
-        private void Uniform(string name, BoolVector3[] value) => SetUniformValue(name, EShaderVarType._bvec3, value.ToArray(), true);
-        private void Uniform(string name, BoolVector4[] value) => SetUniformValue(name, EShaderVarType._bvec4, value.ToArray(), true);
+        private void Uniform(string name, bool[] value) => SetUniformValue(name, EShaderVarType._bool, CaptureUniformArray(value), true);
+        private void Uniform(string name, BoolVector2[] value) => SetUniformValue(name, EShaderVarType._bvec2, CaptureUniformArray(value), true);
+        private void Uniform(string name, BoolVector3[] value) => SetUniformValue(name, EShaderVarType._bvec3, CaptureUniformArray(value), true);
+        private void Uniform(string name, BoolVector4[] value) => SetUniformValue(name, EShaderVarType._bvec4, CaptureUniformArray(value), true);
 
         private void Uniform(string name, float value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._float, value));
         private void Uniform(string name, Vector2 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._vec2, value));
         private void Uniform(string name, Vector3 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._vec3, value));
         private void Uniform(string name, Vector4 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._vec4, value));
-        private void Uniform(string name, float[] value) => SetUniformValue(name, EShaderVarType._float, value.ToArray(), true);
-        private void Uniform(string name, Span<float> value) => SetUniformValue(name, EShaderVarType._float, value.ToArray(), true);
-        private void Uniform(string name, Vector2[] value) => SetUniformValue(name, EShaderVarType._vec2, value.ToArray(), true);
-        private void Uniform(string name, Vector3[] value) => SetUniformValue(name, EShaderVarType._vec3, value.ToArray(), true);
-        private void Uniform(string name, Vector4[] value) => SetUniformValue(name, EShaderVarType._vec4, value.ToArray(), true);
+        private void Uniform(string name, float[] value) => SetUniformValue(name, EShaderVarType._float, CaptureUniformArray(value), true);
+        private void Uniform(string name, Span<float> value) => SetUniformValue(name, EShaderVarType._float, CaptureUniformArray((ReadOnlySpan<float>)value), true);
+        private void Uniform(string name, Vector2[] value) => SetUniformValue(name, EShaderVarType._vec2, CaptureUniformArray(value), true);
+        private void Uniform(string name, Vector3[] value) => SetUniformValue(name, EShaderVarType._vec3, CaptureUniformArray(value), true);
+        private void Uniform(string name, Vector4[] value) => SetUniformValue(name, EShaderVarType._vec4, CaptureUniformArray(value), true);
 
         private void Uniform(string name, double value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._double, value));
         private void Uniform(string name, DVector2 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._dvec2, value));
         private void Uniform(string name, DVector3 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._dvec3, value));
         private void Uniform(string name, DVector4 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._dvec4, value));
-        private void Uniform(string name, double[] value) => SetUniformValue(name, EShaderVarType._double, value.ToArray(), true);
-        private void Uniform(string name, DVector2[] value) => SetUniformValue(name, EShaderVarType._dvec2, value.ToArray(), true);
-        private void Uniform(string name, DVector3[] value) => SetUniformValue(name, EShaderVarType._dvec3, value.ToArray(), true);
-        private void Uniform(string name, DVector4[] value) => SetUniformValue(name, EShaderVarType._dvec4, value.ToArray(), true);
+        private void Uniform(string name, double[] value) => SetUniformValue(name, EShaderVarType._double, CaptureUniformArray(value), true);
+        private void Uniform(string name, DVector2[] value) => SetUniformValue(name, EShaderVarType._dvec2, CaptureUniformArray(value), true);
+        private void Uniform(string name, DVector3[] value) => SetUniformValue(name, EShaderVarType._dvec3, CaptureUniformArray(value), true);
+        private void Uniform(string name, DVector4[] value) => SetUniformValue(name, EShaderVarType._dvec4, CaptureUniformArray(value), true);
 
         private void Uniform(string name, int value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._int, value));
         private void Uniform(string name, IVector2 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._ivec2, value));
         private void Uniform(string name, IVector3 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._ivec3, value));
         private void Uniform(string name, IVector4 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._ivec4, value));
-        private void Uniform(string name, int[] value) => SetUniformValue(name, EShaderVarType._int, value.ToArray(), true);
-        private void Uniform(string name, IVector2[] value) => SetUniformValue(name, EShaderVarType._ivec2, value.ToArray(), true);
-        private void Uniform(string name, IVector3[] value) => SetUniformValue(name, EShaderVarType._ivec3, value.ToArray(), true);
-        private void Uniform(string name, IVector4[] value) => SetUniformValue(name, EShaderVarType._ivec4, value.ToArray(), true);
+        private void Uniform(string name, int[] value) => SetUniformValue(name, EShaderVarType._int, CaptureUniformArray(value), true);
+        private void Uniform(string name, IVector2[] value) => SetUniformValue(name, EShaderVarType._ivec2, CaptureUniformArray(value), true);
+        private void Uniform(string name, IVector3[] value) => SetUniformValue(name, EShaderVarType._ivec3, CaptureUniformArray(value), true);
+        private void Uniform(string name, IVector4[] value) => SetUniformValue(name, EShaderVarType._ivec4, CaptureUniformArray(value), true);
 
         private void Uniform(string name, uint value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._uint, value));
         private void Uniform(string name, UVector2 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._uvec2, value));
         private void Uniform(string name, UVector3 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._uvec3, value));
         private void Uniform(string name, UVector4 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._uvec4, value));
-        private void Uniform(string name, uint[] value) => SetUniformValue(name, EShaderVarType._uint, value.ToArray(), true);
-        private void Uniform(string name, UVector2[] value) => SetUniformValue(name, EShaderVarType._uvec2, value.ToArray(), true);
-        private void Uniform(string name, UVector3[] value) => SetUniformValue(name, EShaderVarType._uvec3, value.ToArray(), true);
-        private void Uniform(string name, UVector4[] value) => SetUniformValue(name, EShaderVarType._uvec4, value.ToArray(), true);
+        private void Uniform(string name, uint[] value) => SetUniformValue(name, EShaderVarType._uint, CaptureUniformArray(value), true);
+        private void Uniform(string name, UVector2[] value) => SetUniformValue(name, EShaderVarType._uvec2, CaptureUniformArray(value), true);
+        private void Uniform(string name, UVector3[] value) => SetUniformValue(name, EShaderVarType._uvec3, CaptureUniformArray(value), true);
+        private void Uniform(string name, UVector4[] value) => SetUniformValue(name, EShaderVarType._uvec4, CaptureUniformArray(value), true);
 
         private void Sampler(string name, IRenderTextureResource texture, int textureUnit)
         {
@@ -669,8 +701,6 @@ public unsafe partial class VulkanRenderer
             if (Renderer.IsDeviceLost)
                 return false;
 
-            global::System.Diagnostics.Stopwatch buildWatch = global::System.Diagnostics.Stopwatch.StartNew();
-            double compileMilliseconds = 0.0;
             int shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
             bool usesVulkanClipDepthRemap = RuntimeEngine.Rendering.ShouldUseVulkanShaderClipDepthRemap;
             EShaderType? vulkanClipDepthRemapStage = ResolveVulkanClipDepthRemapStage();
@@ -681,6 +711,8 @@ public unsafe partial class VulkanRenderer
                 _linkedTransformFeedbackLayoutVersion == Data.TransformFeedbackLayoutVersion)
                 return true;
 
+            global::System.Diagnostics.Stopwatch buildWatch = global::System.Diagnostics.Stopwatch.StartNew();
+            double compileMilliseconds = 0.0;
             if (IsLinked)
                 DestroyLayouts();
 
@@ -829,6 +861,7 @@ public unsafe partial class VulkanRenderer
             }
 
             IsLinked = true;
+            Interlocked.Increment(ref _linkGeneration);
             _linkedShaderConfigVersion = shaderConfigVersion;
             _linkedUsesVulkanClipDepthRemap = usesVulkanClipDepthRemap;
             _linkedVulkanClipDepthRemapStage = vulkanClipDepthRemapStage;

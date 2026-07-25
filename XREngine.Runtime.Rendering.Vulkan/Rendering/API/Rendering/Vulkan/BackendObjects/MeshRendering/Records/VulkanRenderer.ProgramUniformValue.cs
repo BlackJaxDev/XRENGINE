@@ -162,6 +162,12 @@ public unsafe partial class VulkanRenderer
         public IVector4 IVector4 { get; }
         public UVector4 UVector4 { get; }
 
+        public bool TryGetVector4(out Vector4 value)
+        {
+            value = Vector4;
+            return HasInlineValue && Type == EShaderVarType._vec4;
+        }
+
         public object Value
             => _referenceValue ?? Type switch
             {

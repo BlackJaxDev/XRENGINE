@@ -72,6 +72,13 @@ namespace XREngine.Rendering
         #region Events
 
         public static event Action<XRWindow, bool>? AnyWindowFocusChanged;
+        public static event Action<XRWindow, long>? AnyRendererFrameCompleted;
+        /// <summary>
+        /// Fired for every native-window key-down transition before pawn input consumes the
+        /// corresponding snapshot. Handlers must remain lightweight and marshal state changes
+        /// to their owning thread.
+        /// </summary>
+        public static event Action<XRWindow, EKey>? AnyWindowKeyDown;
         public event Action<XRWindow, bool>? FocusChanged;
         public event Action<XRWindow, string[]>? FileDropped;
         public event Action<XRWindow>? ClosingRequested;
@@ -232,6 +239,13 @@ namespace XREngine.Rendering
         internal WindowInputSnapshot ConsumeLatestWindowInputSnapshot()
             => _inputSnapshotAccumulator.ConsumeLatest();
 
+        /// <summary>
+        /// Returns the current native-window state for an engine keyboard key.
+        /// Unlike pawn input, this state remains available when no gameplay pawn is possessed.
+        /// </summary>
+        public bool IsKeyPressed(EKey key)
+            => _inputSnapshotAccumulator.IsKeyPressed(key);
+
         public WindowResizeExtents ResizeExtents => _resizeController.Extents;
 
         public bool IsNativeEventPumpExternallyOwned
@@ -343,6 +357,9 @@ namespace XREngine.Rendering
         private void DisableRenderingPermanently(string reason, Exception? exception = null)
         {
             if (_renderPermanentlyDisabled)
+                return;
+
+            if (_rendererRecreationInProgress)
                 return;
 
             _renderPermanentlyDisabled = true;
@@ -1520,7 +1537,7 @@ namespace XREngine.Rendering
             return renderer;
         }
 
-        private void DestroyRenderer(AbstractRenderer renderer, string reason, bool waitForGpu)
+        private bool DestroyRenderer(AbstractRenderer renderer, string reason, bool waitForGpu)
         {
             Debug.Rendering(
                 "[XRWindow] Destroying renderer for hash={0}. RendererType={1} WaitForGpu={2} Reason={3}",
@@ -1536,7 +1553,7 @@ namespace XREngine.Rendering
                     GetHashCode(),
                     renderer.GetType().Name,
                     reason);
-                return;
+                return false;
             }
 
             TryPrepareOpenXrForRendererTeardown(renderer, reason);
@@ -1559,22 +1576,113 @@ namespace XREngine.Rendering
                         GetHashCode(),
                         renderer.GetType().Name,
                         reason);
-                    return;
+                    return false;
                 }
             }
 
-            TryRendererCleanupStep(renderer, reason, "DestroyCachedAPIRenderObjects", renderer.DestroyCachedAPIRenderObjects);
-            TryRendererCleanupStep(
+            bool wrappersDestroyed = TryRendererCleanupStep(
+                renderer,
+                reason,
+                "DestroyCachedAPIRenderObjects",
+                renderer.DestroyCachedAPIRenderObjects);
+            bool stableObjectsDestroyed = TryRendererCleanupStep(
                 renderer,
                 reason,
                 "DestroyObjectsForRenderer",
                 () => RuntimeRenderingHostServices.BackendInterop.DestroyObjectsForRenderer(renderer));
-            TryRendererCleanupStep(
+            bool cleanupCompleted = TryRendererCleanupStep(
                 renderer,
                 reason,
                 "CleanUp",
                 waitForGpu ? renderer.CleanUpAfterGpuIdle : renderer.CleanUp);
+            return wrappersDestroyed && stableObjectsDestroyed && cleanupCompleted;
         }
+
+        internal bool TryDetachRendererForReplacement(string reason, out string? failureReason)
+        {
+            failureReason = null;
+            if (_isDisposed || _isDisposing)
+            {
+                failureReason = "The window is disposing.";
+                return false;
+            }
+
+            if (_rendererRecreationInProgress)
+            {
+                failureReason = "Another renderer replacement is already in progress.";
+                return false;
+            }
+
+            if (RuntimeEngine.VRState.IsInVR)
+            {
+                failureReason =
+                    "An XR session is active. Stop OpenXR/OpenVR presentation before reloading the renderer backend.";
+                return false;
+            }
+
+            _rendererRecreationInProgress = true;
+            AbstractRenderer retiring = _renderer;
+            retiring.BeginBackendRetirement();
+            if (ReferenceEquals(AbstractRenderer.Current, retiring))
+                AbstractRenderer.Current = null;
+
+            bool destroyed = DestroyRenderer(retiring, reason, waitForGpu: true);
+            if (!destroyed)
+            {
+                _rendererRecreationInProgress = false;
+                failureReason = "Renderer cleanup or GPU drain did not complete safely.";
+                return false;
+            }
+
+            // Keep the retired instance assigned as an inert placeholder until the
+            // replacement is ready. Collapsed render-loop dispatch uses the window's
+            // initialized state and renderer presence to decide whether to keep servicing
+            // render-thread jobs; clearing either here can strand the queued candidate-
+            // initialization job. RenderFrame skips this interval explicitly.
+            return true;
+        }
+
+        internal bool TryAttachReplacementRenderer(string reason, out string? failureReason)
+        {
+            failureReason = null;
+            bool attached = false;
+            try
+            {
+                AbstractRenderer replacement = CreateRendererForCurrentWindow(reason);
+                try
+                {
+                    replacement.Initialize();
+                }
+                catch
+                {
+                    DestroyRenderer(replacement, $"failed initialization: {reason}", waitForGpu: false);
+                    throw;
+                }
+
+                _renderer = replacement;
+                _rendererInitialized = true;
+                _renderPermanentlyDisabled = false;
+                _renderPermanentlyDisabledReason = null;
+                ResetRenderCircuitBreaker();
+                InvalidateRendererDependentResourcesAfterRecovery();
+                attached = true;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _lastRenderException = ex;
+                failureReason = ex.ToString();
+                return false;
+            }
+            finally
+            {
+                if (attached)
+                    _rendererRecreationInProgress = false;
+            }
+        }
+
+        internal void CompleteFailedRendererReplacement()
+            => _rendererRecreationInProgress = false;
 
         private void TryPrepareOpenXrForRendererTeardown(AbstractRenderer renderer, string reason)
         {
@@ -1927,9 +2035,11 @@ namespace XREngine.Rendering
         public void RenderViewports()
         {
             using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.RenderViewports");
-            foreach (var viewport in Viewports)
+            EventList<XRViewport> viewports = Viewports;
+            for (int i = 0; i < viewports.Count; i++)
             {
-                using var viewportSample = RuntimeRenderingHostServices.Profiling.StartProfileScope($"XRViewport.Render[{viewport.Index}]");
+                XRViewport viewport = viewports[i];
+                using var viewportSample = RuntimeRenderingHostServices.Profiling.StartProfileScope(viewport.RenderProfileName);
                 viewport.Render();
             }
         }
@@ -1946,9 +2056,11 @@ namespace XREngine.Rendering
             }
 
             using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.RenderViewportsToFBO");
-            foreach (var viewport in Viewports)
+            EventList<XRViewport> viewports = Viewports;
+            for (int i = 0; i < viewports.Count; i++)
             {
-                using var viewportSample = RuntimeRenderingHostServices.Profiling.StartProfileScope($"XRViewport.RenderToFBO[{viewport.Index}]");
+                XRViewport viewport = viewports[i];
+                using var viewportSample = RuntimeRenderingHostServices.Profiling.StartProfileScope(viewport.RenderToFboProfileName);
                 viewport.Render(targetFBO);
             }
         }
@@ -2400,7 +2512,12 @@ namespace XREngine.Rendering
         }
 
         private void InputSnapshot_KeyDown(IKeyboard keyboard, Key key, int scanCode)
-            => _inputSnapshotAccumulator.RecordKeyDown(WindowInputKeyMap.ToEngineKey(key));
+        {
+            EKey engineKey = WindowInputKeyMap.ToEngineKey(key);
+            bool isNewPress = _inputSnapshotAccumulator.RecordKeyDown(engineKey);
+            if (isNewPress)
+                AnyWindowKeyDown?.Invoke(this, engineKey);
+        }
 
         private void InputSnapshot_KeyUp(IKeyboard keyboard, Key key, int scanCode)
             => _inputSnapshotAccumulator.RecordKeyUp(WindowInputKeyMap.ToEngineKey(key));
@@ -2601,6 +2718,12 @@ namespace XREngine.Rendering
         {
             // Guard against rendering after window is disposed or GL context is invalid
             if (ShouldStopRenderingForClose())
+                return;
+
+            // The retiring renderer has completed GPU teardown and must never receive
+            // another frame. Keeping it assigned during the transaction lets the host
+            // continue servicing render-thread jobs without touching destroyed GPU state.
+            if (_rendererRecreationInProgress)
                 return;
 
             using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.Timer.RenderFrame");
@@ -3068,6 +3191,8 @@ namespace XREngine.Rendering
                 }
 
                 RuntimeRenderingHostServices.Scheduling.MarkRenderFrameReadyForCollect(this);
+                if (!viewportRenderFailed)
+                    AnyRendererFrameCompleted?.Invoke(this, frameRenderer.BackendGeneration);
             }
             catch (Exception ex)
             {

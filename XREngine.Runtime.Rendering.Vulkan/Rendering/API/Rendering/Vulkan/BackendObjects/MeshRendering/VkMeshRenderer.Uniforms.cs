@@ -1866,7 +1866,9 @@ public unsafe partial class VulkanRenderer
 				case nameof(EEngineUniform.UIHeight):
 					if (_program is not null && _program.TryGetUniformValue(normalized, out ProgramUniformValue uiScalar))
 						return UploadProgramUniform(buffer, uiScalar);
-					if (_program is not null && _program.TryGetUniformValue(nameof(EEngineUniform.UIXYWH), out ProgramUniformValue packedBounds) && packedBounds.Value is Vector4 b)
+					if (_program is not null &&
+						_program.TryGetUniformValue(nameof(EEngineUniform.UIXYWH), out ProgramUniformValue packedBounds) &&
+						packedBounds.TryGetVector4(out Vector4 b))
 					{
 						float scalar = normalized switch
 						{
@@ -1948,28 +1950,54 @@ public unsafe partial class VulkanRenderer
 			return true;
 		}
 
-		/// <summary>Uploads a boxed program uniform value to a host-visible UBO, dispatching by type.</summary>
+		/// <summary>Uploads an inline program uniform value to a host-visible UBO without boxing.</summary>
 		private bool UploadProgramUniform(EngineUniformBuffer buffer, ProgramUniformValue value)
 		{
+			if (!value.HasInlineValue)
+				return value.ReferenceValue is { } reference &&
+					UploadReferencedProgramUniform(buffer, reference, value.Type);
+
 			return value.Type switch
 			{
-				EShaderVarType._float => UploadUniform(buffer, Convert.ToSingle(value.Value)),
-				EShaderVarType._int => UploadUniform(buffer, Convert.ToInt32(value.Value)),
-				EShaderVarType._uint => UploadUniform(buffer, Convert.ToUInt32(value.Value)),
-				EShaderVarType._bool => UploadUniform(buffer, Convert.ToBoolean(value.Value) ? 1 : 0),
-				EShaderVarType._vec2 when value.Value is Vector2 v2 => UploadUniform(buffer, v2),
-				EShaderVarType._vec3 when TryConvertVector3(value.Value, out Vector3 v3) => UploadUniform(buffer, new Vector4(v3, 0f)),
-				EShaderVarType._vec4 when TryConvertVector4(value.Value, out Vector4 v4) => UploadUniform(buffer, v4),
-				EShaderVarType._ivec2 when value.Value is IVector2 iv2 => UploadUniform(buffer, iv2),
-				EShaderVarType._ivec3 when value.Value is IVector3 iv3 => UploadUniform(buffer, new IVector4(iv3.X, iv3.Y, iv3.Z, 0)),
-				EShaderVarType._ivec4 when value.Value is IVector4 iv4 => UploadUniform(buffer, iv4),
-				EShaderVarType._uvec2 when value.Value is UVector2 uv2 => UploadUniform(buffer, uv2),
-				EShaderVarType._uvec3 when value.Value is UVector3 uv3 => UploadUniform(buffer, new UVector4(uv3.X, uv3.Y, uv3.Z, 0)),
-				EShaderVarType._uvec4 when value.Value is UVector4 uv4 => UploadUniform(buffer, uv4),
-				EShaderVarType._mat4 when value.Value is Matrix4x4 mat => UploadUniform(buffer, mat),
+				EShaderVarType._float => UploadUniform(buffer, value.Float),
+				EShaderVarType._int or EShaderVarType._bool => UploadUniform(buffer, value.Int),
+				EShaderVarType._uint => UploadUniform(buffer, value.UInt),
+				EShaderVarType._vec2 => UploadUniform(buffer, value.Vector2),
+				EShaderVarType._vec3 => UploadUniform(buffer, new Vector4(value.Vector3, 0f)),
+				EShaderVarType._vec4 => UploadUniform(buffer, value.Vector4),
+				EShaderVarType._ivec2 => UploadUniform(buffer, new IVector2(value.IVector4.X, value.IVector4.Y)),
+				EShaderVarType._ivec3 => UploadUniform(buffer, value.IVector4),
+				EShaderVarType._ivec4 => UploadUniform(buffer, value.IVector4),
+				EShaderVarType._uvec2 => UploadUniform(buffer, new UVector2(value.UVector4.X, value.UVector4.Y)),
+				EShaderVarType._uvec3 => UploadUniform(buffer, value.UVector4),
+				EShaderVarType._uvec4 => UploadUniform(buffer, value.UVector4),
+				EShaderVarType._mat4 => UploadUniform(buffer, value.Matrix4x4),
 				_ => false
 			};
 		}
+
+		private bool UploadReferencedProgramUniform(
+			EngineUniformBuffer buffer,
+			object value,
+			EShaderVarType type)
+			=> type switch
+			{
+				EShaderVarType._float => UploadUniform(buffer, Convert.ToSingle(value)),
+				EShaderVarType._int => UploadUniform(buffer, Convert.ToInt32(value)),
+				EShaderVarType._uint => UploadUniform(buffer, Convert.ToUInt32(value)),
+				EShaderVarType._bool => UploadUniform(buffer, Convert.ToBoolean(value) ? 1 : 0),
+				EShaderVarType._vec2 when value is Vector2 v2 => UploadUniform(buffer, v2),
+				EShaderVarType._vec3 when TryConvertVector3(value, out Vector3 v3) => UploadUniform(buffer, new Vector4(v3, 0f)),
+				EShaderVarType._vec4 when TryConvertVector4(value, out Vector4 v4) => UploadUniform(buffer, v4),
+				EShaderVarType._ivec2 when value is IVector2 iv2 => UploadUniform(buffer, iv2),
+				EShaderVarType._ivec3 when value is IVector3 iv3 => UploadUniform(buffer, new IVector4(iv3.X, iv3.Y, iv3.Z, 0)),
+				EShaderVarType._ivec4 when value is IVector4 iv4 => UploadUniform(buffer, iv4),
+				EShaderVarType._uvec2 when value is UVector2 uv2 => UploadUniform(buffer, uv2),
+				EShaderVarType._uvec3 when value is UVector3 uv3 => UploadUniform(buffer, new UVector4(uv3.X, uv3.Y, uv3.Z, 0)),
+				EShaderVarType._uvec4 when value is UVector4 uv4 => UploadUniform(buffer, uv4),
+				EShaderVarType._mat4 when value is Matrix4x4 mat => UploadUniform(buffer, mat),
+				_ => false
+			};
 
 		#endregion // Engine Uniform Upload
 	}

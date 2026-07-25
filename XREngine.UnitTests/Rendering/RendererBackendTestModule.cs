@@ -17,4 +17,8 @@ internal sealed class RendererBackendTestModule(RendererBackendRegistration regi
 
     public void OnUnregistered()
         => UnregisteredCount++;
+
+    public void Dispose()
+    {
+    }
 }

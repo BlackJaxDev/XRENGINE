@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading;
 
 namespace XREngine.Data.Core
@@ -55,9 +56,33 @@ namespace XREngine.Data.Core
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool AreSameReference<T>(T field, T value)
-            => typeof(T).IsValueType
-                ? field is null && value is null
-                : ReferenceEquals(field, value);
+        {
+            if (!typeof(T).IsValueType)
+                return ReferenceEquals(field, value);
+
+            // ValueType.Equals reflects over fields and boxes nested structs when T
+            // does not implement IEquatable<T> (notably Nullable<AABB> in culling).
+            // Bitwise comparison is allocation-free for blittable/value-only state.
+            if (!RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+            {
+                ReadOnlySpan<byte> left = MemoryMarshal.CreateReadOnlySpan(
+                    ref Unsafe.As<T, byte>(ref field),
+                    Unsafe.SizeOf<T>());
+                ReadOnlySpan<byte> right = MemoryMarshal.CreateReadOnlySpan(
+                    ref Unsafe.As<T, byte>(ref value),
+                    Unsafe.SizeOf<T>());
+                return left.SequenceEqual(right);
+            }
+
+            return ValueEqualityStrategy<T>.SupportsEquatable &&
+                   EqualityComparer<T>.Default.Equals(field, value);
+        }
+
+        private static class ValueEqualityStrategy<T>
+        {
+            public static readonly bool SupportsEquatable =
+                typeof(IEquatable<T>).IsAssignableFrom(typeof(T));
+        }
         /// <summary>
         /// Helper method to set a field.
         /// Verifies if the value is changing and calls PropertyChanging, which checks if PropertyChanged should be called.
@@ -84,6 +109,26 @@ namespace XREngine.Data.Core
             T prev = field;
             field = value;
             OnPropertyChanged(propertyName, prev, field);
+            return true;
+        }
+
+        /// <summary>
+        /// Sets a field while allowing high-frequency telemetry properties to opt out
+        /// of change-event publication. Mutation still flows through the standard
+        /// equality and field-assignment path.
+        /// </summary>
+        protected bool SetField<T>(
+            ref T field,
+            T value,
+            bool publishNotifications,
+            [CallerMemberName] string? propertyName = null)
+        {
+            if (publishNotifications)
+                return SetField(ref field, value, propertyName);
+            if (AreSameReference(field, value))
+                return false;
+
+            field = value;
             return true;
         }
 

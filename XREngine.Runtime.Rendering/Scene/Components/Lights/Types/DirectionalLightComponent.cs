@@ -300,14 +300,12 @@ namespace XREngine.Components.Lights
             bool enableCascadesForBackend = EnableCascadedShadows && CanRenderDirectionalCascadesForCurrentBackend();
             program.Uniform(RuntimeEngine.Rendering.Constants.EnableCascadedShadows, enableCascadesForBackend);
 
-            string prefix = targetStructName ?? RuntimeEngine.Rendering.Constants.LightsStructName;
-            string flatPrefix = $"{prefix}.";
-            string basePrefix = $"{prefix}.Base.";
+            DirectionalLightUniformNames names = ResolveUniformNames(targetStructName);
 
             // Populate both legacy flat uniforms and structured Base.* uniforms expected by the ForwardLighting snippet.
-            program.Uniform($"{flatPrefix}Direction", Transform.WorldForward);
-            program.Uniform($"{flatPrefix}Color", _color);
-            program.Uniform($"{flatPrefix}DiffuseIntensity", _diffuseIntensity);
+            program.Uniform(names.Direction, Transform.WorldForward);
+            program.Uniform(names.Color, _color);
+            program.Uniform(names.DiffuseIntensity, _diffuseIntensity);
             Matrix4x4 lightView = ShadowCamera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
             Matrix4x4 lightProj = ShadowCamera?.ProjectionMatrix ?? Matrix4x4.Identity;
             // C# Matrix4x4 is row-major but OpenGL expects column-major.
@@ -317,9 +315,9 @@ namespace XREngine.Components.Lights
             // GLSL then computes: ((Proj * View)^T) * v = v^T * (Proj * View) = same result
             Matrix4x4 lightViewProj = lightView * lightProj;
 
-            program.Uniform($"{flatPrefix}WorldToLightProjMatrix", lightProj);
-            program.Uniform($"{flatPrefix}WorldToLightInvViewMatrix", ShadowCamera?.Transform.WorldMatrix ?? Matrix4x4.Identity);
-            program.Uniform($"{flatPrefix}WorldToLightSpaceMatrix", lightViewProj);  // Pre-computed for deferred shadow mapping
+            program.Uniform(names.WorldToLightProjMatrix, lightProj);
+            program.Uniform(names.WorldToLightInvViewMatrix, ShadowCamera?.Transform.WorldMatrix ?? Matrix4x4.Identity);
+            program.Uniform(names.WorldToLightSpaceMatrix, lightViewProj);  // Pre-computed for deferred shadow mapping
 
             float[] cascadeSplits = _uniformCascadeSplits;
             float[] cascadeBlendWidths = _uniformCascadeBlendWidths;
@@ -355,49 +353,55 @@ namespace XREngine.Components.Lights
                 out _);
 
             // Set the cascade count uniform before setting individual cascade uniforms.
-            program.Uniform($"{flatPrefix}CascadeCount", cascadeCount);
-            if (IsVulkanDirectionalShadowBackend())
+            program.Uniform(names.CascadeCount, cascadeCount);
+            bool useVulkanBulkArrays = IsVulkanDirectionalShadowBackend();
+            if (useVulkanBulkArrays)
             {
-                program.Uniform($"{flatPrefix}CascadeSplits", cascadeSplits);
-                program.Uniform($"{flatPrefix}CascadeBlendWidths", cascadeBlendWidths);
-                program.Uniform($"{flatPrefix}CascadeBiasMin", cascadeBiasMins);
-                program.Uniform($"{flatPrefix}CascadeBiasMax", cascadeBiasMaxes);
-                program.Uniform($"{flatPrefix}CascadeReceiverOffsets", cascadeReceiverOffsets);
-                program.Uniform($"{flatPrefix}CascadeMatrices", cascadeMatrices);
-                program.Uniform($"{flatPrefix}RenderedCascadeSplits", renderedCascadeSplits);
-                program.Uniform($"{flatPrefix}RenderedCascadeBlendWidths", renderedCascadeBlendWidths);
-                program.Uniform($"{flatPrefix}RenderedCascadeBiasMin", renderedCascadeBiasMins);
-                program.Uniform($"{flatPrefix}RenderedCascadeBiasMax", renderedCascadeBiasMaxes);
-                program.Uniform($"{flatPrefix}RenderedCascadeReceiverOffsets", renderedCascadeReceiverOffsets);
-                program.Uniform($"{flatPrefix}RenderedCascadeMatrices", renderedCascadeMatrices);
-                program.Uniform($"{flatPrefix}RenderedCascadeStaleAge", renderedCascadeStaleAges);
+                program.Uniform(names.CascadeSplits, cascadeSplits);
+                program.Uniform(names.CascadeBlendWidths, cascadeBlendWidths);
+                program.Uniform(names.CascadeBiasMin, cascadeBiasMins);
+                program.Uniform(names.CascadeBiasMax, cascadeBiasMaxes);
+                program.Uniform(names.CascadeReceiverOffsets, cascadeReceiverOffsets);
+                program.Uniform(names.CascadeMatrices, cascadeMatrices);
+                program.Uniform(names.RenderedCascadeSplits, renderedCascadeSplits);
+                program.Uniform(names.RenderedCascadeBlendWidths, renderedCascadeBlendWidths);
+                program.Uniform(names.RenderedCascadeBiasMin, renderedCascadeBiasMins);
+                program.Uniform(names.RenderedCascadeBiasMax, renderedCascadeBiasMaxes);
+                program.Uniform(names.RenderedCascadeReceiverOffsets, renderedCascadeReceiverOffsets);
+                program.Uniform(names.RenderedCascadeMatrices, renderedCascadeMatrices);
+                program.Uniform(names.RenderedCascadeStaleAge, renderedCascadeStaleAges);
             }
 
-            // Set individual cascade uniforms for the maximum number of cascades.
-            for (int i = 0; i < MaxCascadeRenderCount; i++)
+            // OpenGL retains indexed uploads for drivers that do not expose the
+            // reflected array as one writable uniform. Vulkan writes each reflected
+            // array directly and does not need the duplicate indexed dictionary entries.
+            if (!useVulkanBulkArrays)
             {
-                program.Uniform($"{flatPrefix}CascadeSplits[{i}]", cascadeSplits[i]);
-                program.Uniform($"{flatPrefix}CascadeBlendWidths[{i}]", cascadeBlendWidths[i]);
-                program.Uniform($"{flatPrefix}CascadeBiasMin[{i}]", cascadeBiasMins[i]);
-                program.Uniform($"{flatPrefix}CascadeBiasMax[{i}]", cascadeBiasMaxes[i]);
-                program.Uniform($"{flatPrefix}CascadeReceiverOffsets[{i}]", cascadeReceiverOffsets[i]);
-                program.Uniform($"{flatPrefix}CascadeMatrices[{i}]", cascadeMatrices[i]);
-                program.Uniform($"{flatPrefix}RenderedCascadeSplits[{i}]", renderedCascadeSplits[i]);
-                program.Uniform($"{flatPrefix}RenderedCascadeBlendWidths[{i}]", renderedCascadeBlendWidths[i]);
-                program.Uniform($"{flatPrefix}RenderedCascadeBiasMin[{i}]", renderedCascadeBiasMins[i]);
-                program.Uniform($"{flatPrefix}RenderedCascadeBiasMax[{i}]", renderedCascadeBiasMaxes[i]);
-                program.Uniform($"{flatPrefix}RenderedCascadeReceiverOffsets[{i}]", renderedCascadeReceiverOffsets[i]);
-                program.Uniform($"{flatPrefix}RenderedCascadeMatrices[{i}]", renderedCascadeMatrices[i]);
-                program.Uniform($"{flatPrefix}RenderedCascadeStaleAge[{i}]", renderedCascadeStaleAges[i]);
+                for (int i = 0; i < MaxCascadeRenderCount; i++)
+                {
+                    program.Uniform(names.IndexedCascadeSplits[i], cascadeSplits[i]);
+                    program.Uniform(names.IndexedCascadeBlendWidths[i], cascadeBlendWidths[i]);
+                    program.Uniform(names.IndexedCascadeBiasMin[i], cascadeBiasMins[i]);
+                    program.Uniform(names.IndexedCascadeBiasMax[i], cascadeBiasMaxes[i]);
+                    program.Uniform(names.IndexedCascadeReceiverOffsets[i], cascadeReceiverOffsets[i]);
+                    program.Uniform(names.IndexedCascadeMatrices[i], cascadeMatrices[i]);
+                    program.Uniform(names.IndexedRenderedCascadeSplits[i], renderedCascadeSplits[i]);
+                    program.Uniform(names.IndexedRenderedCascadeBlendWidths[i], renderedCascadeBlendWidths[i]);
+                    program.Uniform(names.IndexedRenderedCascadeBiasMin[i], renderedCascadeBiasMins[i]);
+                    program.Uniform(names.IndexedRenderedCascadeBiasMax[i], renderedCascadeBiasMaxes[i]);
+                    program.Uniform(names.IndexedRenderedCascadeReceiverOffsets[i], renderedCascadeReceiverOffsets[i]);
+                    program.Uniform(names.IndexedRenderedCascadeMatrices[i], renderedCascadeMatrices[i]);
+                    program.Uniform(names.IndexedRenderedCascadeStaleAge[i], renderedCascadeStaleAges[i]);
+                }
             }
 
             program.Uniform("DebugCascadeColors", _debugCascadeColors);
             program.Uniform("DirectionalShadowAtlasMaxStaleFrames", (float)RuntimeEngine.Rendering.Settings.MaxDirectionalCascadeAtlasStaleFrames);
 
-            program.Uniform($"{basePrefix}Color", _color);
-            program.Uniform($"{basePrefix}DiffuseIntensity", _diffuseIntensity);
-            program.Uniform($"{basePrefix}AmbientIntensity", 0.05f);
-            program.Uniform($"{basePrefix}WorldToLightSpaceProjMatrix", lightViewProj);
+            program.Uniform(names.BaseColor, _color);
+            program.Uniform(names.BaseDiffuseIntensity, _diffuseIntensity);
+            program.Uniform(names.BaseAmbientIntensity, 0.05f);
+            program.Uniform(names.BaseWorldToLightSpaceProjMatrix, lightViewProj);
 
             // Note: Shadow map sampler is bound by the caller (deferred pass or forward lighting collection)
             // to avoid overwriting material texture units.

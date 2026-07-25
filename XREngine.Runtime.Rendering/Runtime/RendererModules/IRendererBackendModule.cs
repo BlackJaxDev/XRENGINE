@@ -5,9 +5,18 @@ namespace XREngine.Rendering;
 /// Static applications may construct the equivalent <see cref="RendererBackendRegistration"/>
 /// directly without dynamic loading.
 /// </summary>
-public interface IRendererBackendModule : IRendererBackendLifecycle
+public interface IRendererBackendModule : IRendererBackendLifecycle, IDisposable
 {
     RendererBackendMetadata Metadata { get; }
 
     IRendererBackendFactory Factory { get; }
+
+    /// <summary>
+    /// Cooperatively stops module-owned workers and callbacks after all renderer instances
+    /// have been quiesced and destroyed.
+    /// </summary>
+    ValueTask PrepareForUnloadAsync(
+        RendererModuleUnloadContext context,
+        CancellationToken cancellationToken)
+        => ValueTask.CompletedTask;
 }

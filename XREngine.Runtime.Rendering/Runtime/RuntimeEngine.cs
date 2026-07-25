@@ -80,46 +80,14 @@ public static partial class RuntimeEngine
     public static void AssignWindowThread(int threadId)
         => Volatile.Write(ref _windowThreadId, threadId);
 
-    public static IEnumerable<XRViewport> EnumerateActiveViewports(
+    public static ActiveViewportEnumerable EnumerateActiveViewports(
         EViewportEnumerationMode mode = EViewportEnumerationMode.ExcludeVrEyeViewports)
-    {
-        foreach (XRWindow window in ActiveWindows)
-            foreach (XRViewport viewport in window.Viewports)
-                yield return viewport;
+        => new(ActiveWindows, mode);
 
-        if (mode != EViewportEnumerationMode.IncludeVrEyeViewports)
-            yield break;
-
-        XRViewport? leftEye = VRState.LeftEyeViewport;
-        if (leftEye is not null && !IsViewportInAnyActiveWindow(leftEye))
-            yield return leftEye;
-
-        XRViewport? rightEye = VRState.RightEyeViewport;
-        if (rightEye is not null && !IsViewportInAnyActiveWindow(rightEye))
-            yield return rightEye;
-    }
-
-    public static IEnumerable<XRViewport> EnumerateActiveViewports(
+    public static ActiveViewportEnumerable EnumerateActiveViewports(
         XRWindow? window,
         EViewportEnumerationMode mode = EViewportEnumerationMode.ExcludeVrEyeViewports)
-    {
-        if (window is null)
-            yield break;
-
-        foreach (XRViewport viewport in window.Viewports)
-            yield return viewport;
-
-        if (mode != EViewportEnumerationMode.IncludeVrEyeViewports)
-            yield break;
-
-        XRViewport? leftEye = VRState.LeftEyeViewport;
-        if (leftEye is not null && ReferenceEquals(leftEye.Window, window) && !window.Viewports.Contains(leftEye))
-            yield return leftEye;
-
-        XRViewport? rightEye = VRState.RightEyeViewport;
-        if (rightEye is not null && ReferenceEquals(rightEye.Window, window) && !window.Viewports.Contains(rightEye))
-            yield return rightEye;
-    }
+        => new(window, mode);
 
     public static IReadOnlyList<XRViewport> EnumerateActiveViewportsOnRenderThread(
         EViewportEnumerationMode mode = EViewportEnumerationMode.ExcludeVrEyeViewports)
@@ -144,33 +112,9 @@ public static partial class RuntimeEngine
         return completion.Task.GetAwaiter().GetResult();
     }
 
-    public static IEnumerable<(XRWindow Window, XRViewport Viewport)> EnumerateActiveWindowViewports(
+    public static ActiveWindowViewportEnumerable EnumerateActiveWindowViewports(
         EViewportEnumerationMode mode = EViewportEnumerationMode.ExcludeVrEyeViewports)
-    {
-        foreach (XRWindow window in ActiveWindows)
-            foreach (XRViewport viewport in window.Viewports)
-                yield return (window, viewport);
-
-        if (mode != EViewportEnumerationMode.IncludeVrEyeViewports)
-            yield break;
-
-        XRViewport? leftEye = VRState.LeftEyeViewport;
-        if (leftEye?.Window is XRWindow leftWindow && !leftWindow.Viewports.Contains(leftEye))
-            yield return (leftWindow, leftEye);
-
-        XRViewport? rightEye = VRState.RightEyeViewport;
-        if (rightEye?.Window is XRWindow rightWindow && !rightWindow.Viewports.Contains(rightEye))
-            yield return (rightWindow, rightEye);
-    }
-
-    private static bool IsViewportInAnyActiveWindow(XRViewport viewport)
-    {
-        foreach (XRWindow window in ActiveWindows)
-            if (window.Viewports.Contains(viewport))
-                return true;
-
-        return false;
-    }
+        => new(ActiveWindows, mode);
 
     public static void ProcessMainThreadTasks()
         => RuntimeRenderingHostServices.Scheduling.ProcessRenderThreadTasks();
@@ -275,6 +219,11 @@ public static partial class RuntimeEngine
 
         private static Stack<XRRenderPipelineInstance> PipelineStack => t_pipelineStack ??= new();
         private static Stack<XRRenderPipelineInstance?> PipelineOverrideStack => t_pipelineOverrideStack ??= new();
+        private static readonly Action<object?> PopRenderingPipelineAction = static _ =>
+        {
+            if (PipelineStack.Count != 0)
+                PipelineStack.Pop();
+        };
 
         private static EngineSettings _settings = new();
         private static EngineSettings _globalDefaultSettings = _settings;
@@ -464,11 +413,7 @@ public static partial class RuntimeEngine
         public static IDisposable? PushRenderingPipeline(XRRenderPipelineInstance pipeline)
         {
             PipelineStack.Push(pipeline);
-            return new DisposableAction(() =>
-            {
-                if (PipelineStack.Count != 0)
-                    PipelineStack.Pop();
-            });
+            return StateObject.New(PopRenderingPipelineAction, null);
         }
 
         public readonly struct RenderingPipelineOverrideScope : IDisposable
@@ -932,9 +877,9 @@ public static partial class RuntimeEngine
 
                 var textureTypes = boundFBO.TextureTypes;
                 Clear(
-                    textureTypes.HasFlag(EFrameBufferTextureTypeFlags.Color) && color,
-                    textureTypes.HasFlag(EFrameBufferTextureTypeFlags.Depth) && depth,
-                    textureTypes.HasFlag(EFrameBufferTextureTypeFlags.Stencil) && stencil);
+                    (textureTypes & EFrameBufferTextureTypeFlags.Color) != 0 && color,
+                    (textureTypes & EFrameBufferTextureTypeFlags.Depth) != 0 && depth,
+                    (textureTypes & EFrameBufferTextureTypeFlags.Stencil) != 0 && stencil);
             }
             public static void UnbindFrameBuffers(EFramebufferTarget target) => AbstractRenderer.Current?.BindFrameBuffer(target, null);
             public static void SetReadBuffer(EReadBufferMode mode) => AbstractRenderer.Current?.SetReadBuffer(mode);
@@ -994,6 +939,21 @@ public static partial class RuntimeEngine
 
         public sealed class RuntimeRenderingState
         {
+            private static readonly Action<object?> PopRenderGraphPassAction = static state =>
+            {
+                Stack<RenderGraphPassScopeState> stack = (Stack<RenderGraphPassScopeState>)state!;
+                if (stack.Count != 0)
+                    stack.Pop();
+            };
+            private static readonly Action<object?> PopTransformIdAction = static state =>
+            {
+                Stack<uint> stack = (Stack<uint>)state!;
+                if (stack.Count != 0)
+                    stack.Pop();
+            };
+            private static readonly Action<object?> PopMirrorPassAction =
+                static state => ((RuntimeRenderingState)state!).PopMirrorPassScope();
+
             [ThreadStatic]
             private static Stack<RenderGraphPassScopeState>? t_renderGraphPasses;
             [ThreadStatic]
@@ -1121,14 +1081,14 @@ public static partial class RuntimeEngine
             {
                 Stack<RenderGraphPassScopeState> stack = RenderGraphPasses;
                 stack.Push(new RenderGraphPassScopeState(passIndex, CurrentRenderingPipeline));
-                return new DisposableAction(() => stack.Pop());
+                return StateObject.New(PopRenderGraphPassAction, stack);
             }
 
             public IDisposable PushTransformId(uint transformId)
             {
                 Stack<uint> stack = TransformIds;
                 stack.Push(transformId);
-                return new DisposableAction(() => stack.Pop());
+                return StateObject.New(PopTransformIdAction, stack);
             }
 
             public IDisposable PushMirrorPass(int mirrorPassIndex)
@@ -1137,12 +1097,14 @@ public static partial class RuntimeEngine
                 PushMirrorPassState();
                 stack.Push(mirrorPassIndex);
                 ApplyActiveMirrorPassState();
-                return new DisposableAction(() =>
-                {
-                    if (stack.Count != 0)
-                        stack.Pop();
-                    RestoreMirrorPassState();
-                });
+                return StateObject.New(PopMirrorPassAction, this);
+            }
+
+            private void PopMirrorPassScope()
+            {
+                if (t_mirrorPasses is { Count: > 0 } stack)
+                    stack.Pop();
+                RestoreMirrorPassState();
             }
 
             public void PushMirrorPass()

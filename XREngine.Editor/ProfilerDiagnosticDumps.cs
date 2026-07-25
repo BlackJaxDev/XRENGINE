@@ -14,24 +14,33 @@ internal static class ProfilerDiagnosticDumps
 
     public static DumpResult DumpCpuFrameTimingHistory()
     {
-        bool enabledByDump = EnsureCpuFrameSnapshotAvailable(
-            out Engine.CodeProfiler.ProfilerFrameSnapshot? snapshot,
-            out Dictionary<int, float[]> history);
-        if (snapshot is null)
+        bool enabledByDump = false;
+        try
         {
-            const string error = "No CPU profiler frame snapshot has been captured yet.";
-            return new DumpResult(false, error, [], error);
+            enabledByDump = EnsureCpuFrameSnapshotAvailable(
+                out Engine.CodeProfiler.ProfilerFrameSnapshot? snapshot,
+                out Dictionary<int, float[]> history);
+            if (snapshot is null)
+            {
+                const string error = "No CPU profiler frame snapshot has been captured yet.";
+                return new DumpResult(false, error, [], error);
+            }
+
+            DateTimeOffset timestamp = DateTimeOffset.Now;
+            string fileName = BuildCpuFrameDumpFileName(timestamp);
+            string content = BuildCpuFrameDumpContent(snapshot, history, timestamp, fileName);
+
+            Debug.WriteAuxiliaryLog(fileName, content);
+            string message = enabledByDump
+                ? $"CPU frame logging was temporarily enabled and frame dump written: {fileName}"
+                : $"CPU frame dump written: {fileName}";
+            return new DumpResult(true, message, [fileName]);
         }
-
-        DateTimeOffset timestamp = DateTimeOffset.Now;
-        string fileName = BuildCpuFrameDumpFileName(timestamp);
-        string content = BuildCpuFrameDumpContent(snapshot, history, timestamp, fileName);
-
-        Debug.WriteAuxiliaryLog(fileName, content);
-        string message = enabledByDump
-            ? $"CPU frame logging was enabled and frame dump written: {fileName}"
-            : $"CPU frame dump written: {fileName}";
-        return new DumpResult(true, message, [fileName]);
+        finally
+        {
+            if (enabledByDump)
+                Engine.Profiler.EnableFrameLogging = false;
+        }
     }
 
     public static DumpResult DumpGpuRenderPipelineTimingHistory(string? pipelineName)

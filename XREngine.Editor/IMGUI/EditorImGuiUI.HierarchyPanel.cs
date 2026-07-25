@@ -200,7 +200,9 @@ public static partial class EditorImGuiUI
             ImGui.SetTooltip("Show the hidden editor scene hierarchy (editor-only gizmos/tools/UI).");
         ImGui.Separator();
 
-        ImGui.Text($"GameMode: {world.GameMode?.GetType().Name ?? "<none>"}");
+        ImGui.TextUnformatted("GameMode:");
+        ImGui.SameLine();
+        ImGui.TextUnformatted(world.GameMode?.GetType().Name ?? "<none>");
         ImGui.Separator();
 
         var targetWorld = world.TargetWorld;
@@ -408,7 +410,7 @@ public static partial class EditorImGuiUI
                 && !ReferenceEquals(droppedNode, node)
                 && !IsHierarchyDescendantOf(node, droppedNode))
             {
-                EnqueueSceneEdit(() => ReparentHierarchyNode(droppedNode, node.Transform, world, owningScene));
+                QueueHierarchyReparent(droppedNode, node, world, owningScene);
             }
             ImGui.EndDragDropTarget();
         }
@@ -454,15 +456,7 @@ public static partial class EditorImGuiUI
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(canToggleActiveSelf ? "Toggle node active state" : "This editor node must stay active.");
         if (checkboxToggled)
-        {
-            bool capturedActiveSelf = activeSelf;
-            EnqueueSceneEdit(() =>
-            {
-                using var _ = Undo.TrackChange("Toggle Node Active", node);
-                node.IsActiveSelf = capturedActiveSelf;
-                MarkSceneHierarchyDirty(node, owningScene, world);
-            });
-        }
+            QueueHierarchyActiveStateChange(node, activeSelf, owningScene, world);
         ImGui.OpenPopupOnItemClick("Context", ImGuiPopupFlags.MouseButtonRight);
 
         ImGui.SetNextWindowViewport(ImGui.GetWindowViewport().ID);
@@ -474,23 +468,23 @@ public static partial class EditorImGuiUI
             if (ImGui.MenuItem("Duplicate"))
             {
                 var targets = GetHierarchyDuplicateTargets(node);
-                EnqueueSceneEdit(() => DuplicateHierarchyNodes(targets, world, preserveAssetReferences: true));
+                QueueHierarchyDuplicate(targets, world);
             }
 
             if (ImGui.MenuItem("Deep Duplicate..."))
             {
                 var targets = GetHierarchyDuplicateTargets(node);
-                EnqueueSceneEdit(() => RequestHierarchyDeepDuplicate(targets));
+                QueueHierarchyDeepDuplicate(targets);
             }
 
             if (ImGui.MenuItem("Delete"))
-                EnqueueSceneEdit(() => DeleteHierarchyNode(node, world, owningScene));
+                QueueHierarchyDelete(node, world, owningScene);
 
             if (ImGui.MenuItem("Add Child Scene Node"))
-                EnqueueSceneEdit(() => CreateChildSceneNode(node, owningScene, world));
+                QueueHierarchyCreateChild(node, owningScene, world);
 
             if (ImGui.MenuItem("Focus Camera"))
-                EnqueueSceneEdit(() => FocusCameraOnHierarchyNode(node));
+                QueueHierarchyFocus(node);
 
             ImGui.EndPopup();
         }
@@ -500,6 +494,50 @@ public static partial class EditorImGuiUI
 
         return nodeOpen;
     }
+
+    private static void QueueHierarchyReparent(
+        SceneNode droppedNode,
+        SceneNode targetNode,
+        XRWorldInstance world,
+        XRScene? owningScene)
+        => EnqueueSceneEdit(
+            () => ReparentHierarchyNode(droppedNode, targetNode.Transform, world, owningScene));
+
+    private static void QueueHierarchyActiveStateChange(
+        SceneNode node,
+        bool activeSelf,
+        XRScene? owningScene,
+        XRWorldInstance world)
+        => EnqueueSceneEdit(() =>
+        {
+            using var _ = Undo.TrackChange("Toggle Node Active", node);
+            node.IsActiveSelf = activeSelf;
+            MarkSceneHierarchyDirty(node, owningScene, world);
+        });
+
+    private static void QueueHierarchyDuplicate(
+        IReadOnlyList<SceneNode> targets,
+        XRWorldInstance world)
+        => EnqueueSceneEdit(
+            () => DuplicateHierarchyNodes(targets, world, preserveAssetReferences: true));
+
+    private static void QueueHierarchyDeepDuplicate(IReadOnlyList<SceneNode> targets)
+        => EnqueueSceneEdit(() => RequestHierarchyDeepDuplicate(targets));
+
+    private static void QueueHierarchyDelete(
+        SceneNode node,
+        XRWorldInstance world,
+        XRScene? owningScene)
+        => EnqueueSceneEdit(() => DeleteHierarchyNode(node, world, owningScene));
+
+    private static void QueueHierarchyCreateChild(
+        SceneNode node,
+        XRScene? owningScene,
+        XRWorldInstance world)
+        => EnqueueSceneEdit(() => CreateChildSceneNode(node, owningScene, world));
+
+    private static void QueueHierarchyFocus(SceneNode node)
+        => EnqueueSceneEdit(() => FocusCameraOnHierarchyNode(node));
 
     private static void HandleHierarchyKeyboardNavigation(XRWorldInstance world)
     {
@@ -1606,9 +1644,8 @@ public static partial class EditorImGuiUI
         if (scene is null)
             return;
 
-        ImGui.PushID(scene.ID.ToString());
+        ImGui.PushID(scene.ID.GetHashCode());
         string sceneName = string.IsNullOrWhiteSpace(scene.Name) ? "Untitled Scene" : scene.Name!;
-        string headerLabel = $"{sceneName}{(scene.IsDirty ? " *" : string.Empty)}##SceneHeader";
         bool open;
         // Use a two-column layout so the collapsing header can't steal clicks
         // from the controls rendered to its right.
@@ -1619,11 +1656,17 @@ public static partial class EditorImGuiUI
             ImGui.TableNextRow();
 
             ImGui.TableSetColumnIndex(0);
-            open = ImGui.CollapsingHeader(headerLabel, ImGuiTreeNodeFlags.DefaultOpen);
+            open = ImGui.CollapsingHeader(sceneName, ImGuiTreeNodeFlags.DefaultOpen);
             if (ImGui.IsItemHovered() && !string.IsNullOrWhiteSpace(scene.FilePath))
                 ImGui.SetTooltip(scene.FilePath);
 
             ImGui.TableSetColumnIndex(1);
+            if (scene.IsDirty)
+            {
+                ImGui.TextColored(new Vector4(0.95f, 0.7f, 0.2f, 1.0f), "*");
+                ImGui.SameLine();
+            }
+
             bool visible = scene.IsVisible;
             if (ImGui.Checkbox("Visible##SceneVisible", ref visible))
                 ToggleSceneVisibility(scene, world, visible);
@@ -1638,7 +1681,7 @@ public static partial class EditorImGuiUI
         }
         else
         {
-            open = ImGui.CollapsingHeader(headerLabel, ImGuiTreeNodeFlags.DefaultOpen);
+            open = ImGui.CollapsingHeader(sceneName, ImGuiTreeNodeFlags.DefaultOpen);
         }
 
         if (open)

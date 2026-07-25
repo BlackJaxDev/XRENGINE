@@ -21,11 +21,15 @@ namespace XREngine
 
                     private static readonly object Sync = new();
                     private static readonly Dictionary<OutputKey, OutputAccumulator> CurrentOutputs = [];
+                    private static readonly Stack<OutputAccumulator> OutputAccumulatorPool = [];
                     private static readonly Dictionary<OutputKey, PacingAccumulator> Pacing = [];
                     private static readonly Dictionary<OutputKey, CompletionAccumulator> CompletionPacing = [];
                     private static readonly double[] WholeFrameHistory = new double[FrameHistoryCapacity];
+                    private static readonly double[] PercentileScratch = new double[FrameHistoryCapacity];
 
                     private static FrameOutputEntrySnapshot[] _lastOutputs = [];
+                    private static FrameOutputEntrySnapshot[]? _lastOutputsSnapshot;
+                    private static int _lastOutputCount;
                     private static FrameOutputManifestSnapshot _lastManifest = FrameOutputManifestSnapshot.Empty;
                     private static ulong _wholeFrameId;
                     private static long _wholeFrameTicks;
@@ -61,7 +65,7 @@ namespace XREngine
                         get
                         {
                             lock (Sync)
-                                return _lastManifest;
+                                return _lastManifest with { Outputs = GetOrCreateLastOutputsSnapshotNoLock() };
                         }
                     }
 
@@ -71,8 +75,8 @@ namespace XREngine
                         {
                             lock (Sync)
                             {
-                                FrameOutputEntrySnapshot[] copy = new FrameOutputEntrySnapshot[_lastOutputs.Length];
-                                Array.Copy(_lastOutputs, copy, copy.Length);
+                                FrameOutputEntrySnapshot[] copy = new FrameOutputEntrySnapshot[_lastOutputCount];
+                                Array.Copy(_lastOutputs, copy, _lastOutputCount);
                                 return copy;
                             }
                         }
@@ -120,11 +124,12 @@ namespace XREngine
                             long completionTimestamp = Stopwatch.GetTimestamp();
                             double wholeFrameMs = StopwatchTicksToMilliseconds(Volatile.Read(ref _wholeFrameTicks));
                             FrameBudgetSnapshot budget = ResolveCurrentBudget();
-                            FrameOutputEntrySnapshot[] outputs = new FrameOutputEntrySnapshot[CurrentOutputs.Count];
+                            int previousOutputCount = _lastOutputCount;
+                            EnsureLastOutputCapacity(CurrentOutputs.Count);
                             int index = 0;
                             foreach ((OutputKey key, OutputAccumulator output) in CurrentOutputs)
                             {
-                                outputs[index++] = CreateObservedCompletionSnapshot(
+                                _lastOutputs[index++] = CreateObservedCompletionSnapshot(
                                     key,
                                     output,
                                     completionTimestamp,
@@ -132,12 +137,18 @@ namespace XREngine
                                     budget);
                             }
 
-                            Array.Sort(outputs, static (left, right) =>
+                            if (index < previousOutputCount)
+                                Array.Clear(_lastOutputs, index, previousOutputCount - index);
+                            _lastOutputCount = index;
+                            _lastOutputsSnapshot = null;
+
+                            Span<FrameOutputEntrySnapshot> outputs = _lastOutputs.AsSpan(0, index);
+                            outputs.Sort(static (left, right) =>
                             {
-                                int kind = left.OutputKind.CompareTo(right.OutputKind);
+                                int kind = ((int)left.OutputKind).CompareTo((int)right.OutputKind);
                                 if (kind != 0)
                                     return kind;
-                                int view = left.ViewKind.CompareTo(right.ViewKind);
+                                int view = ((int)left.ViewKind).CompareTo((int)right.ViewKind);
                                 if (view != 0)
                                     return view;
                                 int name = string.CompareOrdinal(left.Name, right.Name);
@@ -148,7 +159,6 @@ namespace XREngine
                             FrameOutputWorkSnapshot work = CaptureWorkSnapshot(outputs);
                             ulong workloadIdentityHash = ComputeWorkloadIdentityHash(outputs);
 
-                            _lastOutputs = outputs;
                             _lastManifest = new FrameOutputManifestSnapshot(
                                 _wholeFrameId,
                                 RuntimeEngine.VRState.IsInVR,
@@ -164,12 +174,37 @@ namespace XREngine
                                 percentiles.Worst,
                                 workloadIdentityHash,
                                 work,
-                                outputs);
+                                []);
 
+                            foreach (OutputAccumulator output in CurrentOutputs.Values)
+                                OutputAccumulatorPool.Push(output);
                             CurrentOutputs.Clear();
                             _wholeFrameId = 0UL;
                             _wholeFrameTicks = 0L;
                         }
+                    }
+
+                    private static void EnsureLastOutputCapacity(int required)
+                    {
+                        if (_lastOutputs.Length >= required)
+                            return;
+
+                        int capacity = Math.Max(8, _lastOutputs.Length);
+                        while (capacity < required)
+                            capacity *= 2;
+                        Array.Resize(ref _lastOutputs, capacity);
+                    }
+
+                    private static FrameOutputEntrySnapshot[] GetOrCreateLastOutputsSnapshotNoLock()
+                    {
+                        if (_lastOutputsSnapshot is not null)
+                            return _lastOutputsSnapshot;
+                        if (_lastOutputCount == 0)
+                            return _lastOutputsSnapshot = [];
+
+                        FrameOutputEntrySnapshot[] snapshot = new FrameOutputEntrySnapshot[_lastOutputCount];
+                        Array.Copy(_lastOutputs, snapshot, _lastOutputCount);
+                        return _lastOutputsSnapshot = snapshot;
                     }
 
                     private static FrameOutputEntrySnapshot CreateObservedCompletionSnapshot(
@@ -372,7 +407,10 @@ namespace XREngine
                         {
                             if (!CurrentOutputs.TryGetValue(key, out OutputAccumulator? output))
                             {
-                                output = new OutputAccumulator(
+                                output = OutputAccumulatorPool.Count > 0
+                                    ? OutputAccumulatorPool.Pop()
+                                    : new OutputAccumulator();
+                                output.Reset(
                                     telemetry.OutputKind,
                                     telemetry.ViewKind,
                                     telemetry.Name ?? string.Empty);
@@ -491,11 +529,11 @@ namespace XREngine
                         if (_wholeFrameHistoryCount == 0)
                             return default;
 
-                        double[] values = new double[_wholeFrameHistoryCount];
+                        Span<double> values = PercentileScratch.AsSpan(0, _wholeFrameHistoryCount);
                         for (int i = 0; i < _wholeFrameHistoryCount; i++)
                             values[i] = WholeFrameHistory[i];
 
-                        Array.Sort(values);
+                        values.Sort();
                         return new(
                             Percentile(values, 0.50),
                             Percentile(values, 0.90),
@@ -504,7 +542,7 @@ namespace XREngine
                             values[^1]);
                     }
 
-                    private static double Percentile(double[] sortedValues, double percentile)
+                    private static double Percentile(ReadOnlySpan<double> sortedValues, double percentile)
                     {
                         if (sortedValues.Length == 0)
                             return 0.0;
@@ -606,7 +644,7 @@ namespace XREngine
                             Interlocked.Add(ref field, value);
                     }
 
-                    private static FrameOutputWorkSnapshot CaptureWorkSnapshot(FrameOutputEntrySnapshot[] outputs)
+                    private static FrameOutputWorkSnapshot CaptureWorkSnapshot(ReadOnlySpan<FrameOutputEntrySnapshot> outputs)
                     {
                         int logicalOutputRequests = 0;
                         int uniqueViewFamilies = 0;
@@ -691,7 +729,7 @@ namespace XREngine
                             ForceFlushCount: Interlocked.Exchange(ref _forceFlushes, 0));
                     }
 
-                    private static bool IsLogicalRenderRequest(FrameOutputEntrySnapshot[] outputs, int index)
+                    private static bool IsLogicalRenderRequest(ReadOnlySpan<FrameOutputEntrySnapshot> outputs, int index)
                     {
                         FrameOutputEntrySnapshot candidate = outputs[index];
                         if (!candidate.RenderPhaseSceneRendered && !candidate.SceneRendered && !candidate.Skipped)
@@ -744,7 +782,7 @@ namespace XREngine
                         }
                     }
 
-                    private static bool IsFirstViewFamily(FrameOutputEntrySnapshot[] outputs, int index)
+                    private static bool IsFirstViewFamily(ReadOnlySpan<FrameOutputEntrySnapshot> outputs, int index)
                     {
                         ulong familyId = outputs[index].Request.ViewFamilyId;
                         for (int i = 0; i < index; i++)
@@ -755,7 +793,7 @@ namespace XREngine
                         return true;
                     }
 
-                    private static bool IsFirstTargetVariant(FrameOutputEntrySnapshot[] outputs, int index)
+                    private static bool IsFirstTargetVariant(ReadOnlySpan<FrameOutputEntrySnapshot> outputs, int index)
                     {
                         ulong compatibilityKey = outputs[index].Request.Target.CompatibilityKey;
                         int externalSlot = outputs[index].Request.Target.ExternalImageSlot;
@@ -772,7 +810,7 @@ namespace XREngine
                         return true;
                     }
 
-                    private static ulong ComputeWorkloadIdentityHash(FrameOutputEntrySnapshot[] outputs)
+                    private static ulong ComputeWorkloadIdentityHash(ReadOnlySpan<FrameOutputEntrySnapshot> outputs)
                     {
                         ulong hash = 1469598103934665603UL;
                         AddHash(ref hash, (ulong)outputs.Length);
@@ -850,12 +888,12 @@ namespace XREngine
                         }
                     }
 
-                    private sealed class OutputAccumulator(EFrameOutputKind outputKind, EVrOutputViewKind viewKind, string name)
+                    private sealed class OutputAccumulator
                     {
                         public ulong FrameId;
-                        public EFrameOutputKind OutputKind { get; } = outputKind;
-                        public EVrOutputViewKind ViewKind { get; } = viewKind;
-                        public string Name { get; } = name;
+                        public EFrameOutputKind OutputKind { get; private set; }
+                        public EVrOutputViewKind ViewKind { get; private set; }
+                        public string Name { get; private set; } = string.Empty;
                         public string PipelineName = string.Empty;
                         public int PipelineInstanceId;
                         public int ResourcePlanGeneration;
@@ -904,6 +942,65 @@ namespace XREngine
                         public int SubmitEventCount;
                         public int OverlayEventCount;
                         public int PresentEventCount;
+
+                        public void Reset(
+                            EFrameOutputKind outputKind,
+                            EVrOutputViewKind viewKind,
+                            string name)
+                        {
+                            FrameId = 0UL;
+                            OutputKind = outputKind;
+                            ViewKind = viewKind;
+                            Name = name;
+                            PipelineName = string.Empty;
+                            PipelineInstanceId = 0;
+                            ResourcePlanGeneration = 0;
+                            CommandGeneration = 0UL;
+                            AntiAliasingMode = string.Empty;
+                            Active = false;
+                            Rendered = false;
+                            SceneRendered = false;
+                            RenderPhaseSceneRendered = false;
+                            Mirror = false;
+                            SeparateSceneRender = false;
+                            SharedVisibility = false;
+                            Due = true;
+                            Skipped = false;
+                            CadenceSkipped = false;
+                            AutoSkipped = false;
+                            SkipReason = EFrameOutputSkipReason.None;
+                            ConfiguredTargetRateHz = 0.0f;
+                            SourceRateHz = 0.0f;
+                            AchievedRateHz = 0.0;
+                            TotalRenderCount = 0;
+                            TotalSkipCount = 0;
+                            CommandCount = 0;
+                            DrawCalls = 0;
+                            MultiDrawCalls = 0;
+                            Triangles = 0;
+                            CollectCpuMs = 0.0;
+                            SwapCpuMs = 0.0;
+                            RenderCpuMs = 0.0;
+                            SubmitCpuMs = 0.0;
+                            OverlayCpuMs = 0.0;
+                            PresentCpuMs = 0.0;
+                            GpuMs = 0.0;
+                            Request = default;
+                            WorkDisposition = default;
+                            ContentAgeFrames = 0u;
+                            DeadlineMissed = false;
+                            PolicyAuthorized = true;
+                            PolicyReason = ERenderOutputPolicyReason.None;
+                            SubmitObserved = false;
+                            PresentObserved = false;
+                            OutputEventCount = 0;
+                            CollectEventCount = 0;
+                            SwapEventCount = 0;
+                            RenderEventCount = 0;
+                            SubmitEventCount = 0;
+                            OverlayEventCount = 0;
+                            PresentEventCount = 0;
+                        }
 
                         public bool CompletedThisFrame
                             => !Skipped && Rendered && OutputKind switch

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -19,6 +20,7 @@ public unsafe partial class VulkanRenderer
     {
         private const string ScreenSpaceUiPassName = "VPRC_RenderScreenSpaceUI";
         private const string RenderUiBatchedPassNamePrefix = "RenderUIBatched_";
+        private const int MaxMetadataCacheEntries = 64;
         [ThreadStatic]
         private static FrameOpSortKey[]? _threadFrameOpSortKeyScratch;
         private readonly List<SecondaryRecordingBucket> _secondaryRecordingBucketScratch = new(32);
@@ -115,6 +117,8 @@ public unsafe partial class VulkanRenderer
                 return ((int)x.Draw.BillboardMode).CompareTo((int)y.Draw.BillboardMode);
             }
         }
+        private static readonly Comparison<FrameOpSortKey> FrameOpSortComparison =
+            FrameOpSortKeyComparer.Instance.Compare;
 
         private sealed class PassOrderCacheEntry
         {
@@ -136,8 +140,24 @@ public unsafe partial class VulkanRenderer
             public VulkanCompiledRenderGraph Graph { get; } = BuildCompiledGraph(metadata);
         }
 
-        private static readonly ConditionalWeakTable<IReadOnlyCollection<RenderPassMetadata>, PassOrderCacheEntry> PassOrderCache = new();
-        private static readonly ConditionalWeakTable<IReadOnlyCollection<RenderPassMetadata>, CompiledGraphCacheEntry> CompiledGraphCache = new();
+        // Do not use ConditionalWeakTable here. Its runtime dependent handles let stable
+        // render-graph metadata keys retain collectible-generation cache values after the
+        // owning compiler becomes unreachable. A bounded, generation-owned dictionary is
+        // released atomically with the renderer and therefore unloads without ephemerons.
+        private readonly ConcurrentDictionary<IReadOnlyCollection<RenderPassMetadata>, PassOrderCacheEntry>
+            _passOrderCache = new(ReferenceEqualityComparer.Instance);
+        private readonly ConcurrentDictionary<IReadOnlyCollection<RenderPassMetadata>, CompiledGraphCacheEntry>
+            _compiledGraphCache = new(ReferenceEqualityComparer.Instance);
+
+        internal static void ReleaseCurrentThreadScratch()
+            => _threadFrameOpSortKeyScratch = null;
+
+        internal void ReleaseCaches()
+        {
+            _passOrderCache.Clear();
+            _compiledGraphCache.Clear();
+            _secondaryRecordingBucketScratch.Clear();
+        }
 
         /// <summary>
         /// Compiles the high-level pass metadata into:
@@ -153,7 +173,22 @@ public unsafe partial class VulkanRenderer
             if (passMetadata is null || passMetadata.Count == 0)
                 return VulkanCompiledRenderGraph.Empty;
 
-            return CompiledGraphCache.GetValue(passMetadata, static metadata => new CompiledGraphCacheEntry(metadata)).Graph;
+            TrimMetadataCachesIfRequired();
+            return _compiledGraphCache.GetOrAdd(
+                passMetadata,
+                static metadata => new CompiledGraphCacheEntry(metadata)).Graph;
+        }
+
+        private void TrimMetadataCachesIfRequired()
+        {
+            if (_compiledGraphCache.Count < MaxMetadataCacheEntries &&
+                _passOrderCache.Count < MaxMetadataCacheEntries)
+            {
+                return;
+            }
+
+            _compiledGraphCache.Clear();
+            _passOrderCache.Clear();
         }
 
         private static VulkanCompiledRenderGraph BuildCompiledGraph(IReadOnlyCollection<RenderPassMetadata> passMetadata)
@@ -226,6 +261,12 @@ public unsafe partial class VulkanRenderer
         /// <param name="graph">Compiled pass-order metadata.</param>
         /// <returns>The input array, sorted in place (or unchanged for length 0/1).</returns>
         public static FrameOp[] SortFrameOps(FrameOp[] ops, VulkanCompiledRenderGraph graph)
+            => new VulkanRenderGraphCompiler().SortFrameOpsCore(ops, graph);
+
+        /// <summary>
+        /// Sorts frame operations using caches owned by the active renderer generation.
+        /// </summary>
+        public FrameOp[] SortFrameOpsCore(FrameOp[] ops, VulkanCompiledRenderGraph graph)
         {
             // Fast path: trivial arrays are already sorted and preserving reference identity helps tests.
             if (ops.Length <= 1)
@@ -289,12 +330,14 @@ public unsafe partial class VulkanRenderer
         }
 
         /// <summary>
-        /// Sorts the warmed frame-op scratch with the allocation-free span introsort.
+        /// Sorts the warmed frame-op scratch with the span introsort.
         /// Camera motion can interleave hundreds of cascade and scene operations, so an
         /// insertion sort here becomes quadratic precisely when frame time matters most.
+        /// The comparison delegate is cached because adapting an <see cref="IComparer{T}"/>
+        /// inside the generic sort helper allocates once per non-trivial command re-record.
         /// </summary>
         private static void SortFrameOpKeysInPlace(FrameOpSortKey[] sortKeys, int opCount)
-            => sortKeys.AsSpan(0, opCount).Sort(FrameOpSortKeyComparer.Instance);
+            => sortKeys.AsSpan(0, opCount).Sort(FrameOpSortComparison);
 
         private static bool HasSubmissionOrderBlock(FrameOp[] ops)
         {
@@ -359,7 +402,7 @@ public unsafe partial class VulkanRenderer
         private static bool IsTargetUseThatClearMustPrecede(FrameOp op)
             => op is MeshDrawOp or QueryOp or BlitOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp or TransformFeedbackOp;
 
-        private static int ResolvePassOrder(FrameOp op, VulkanCompiledRenderGraph graph)
+        private int ResolvePassOrder(FrameOp op, VulkanCompiledRenderGraph graph)
         {
             if (op is TextureUploadFrameOp)
                 return int.MinValue;
@@ -372,7 +415,8 @@ public unsafe partial class VulkanRenderer
 
             if (op.Context.PassMetadata is { Count: > 0 } metadata)
             {
-                IReadOnlyDictionary<int, int> contextPassOrder = PassOrderCache.GetValue(
+                TrimMetadataCachesIfRequired();
+                IReadOnlyDictionary<int, int> contextPassOrder = _passOrderCache.GetOrAdd(
                     metadata,
                     static key => new PassOrderCacheEntry(key)).PassOrder;
 
@@ -465,7 +509,7 @@ public unsafe partial class VulkanRenderer
                     else if (!Equals(ops[i].Context, firstSwapchainContext.Value))
                     {
                         // Rewrite only swapchain ops; non-swapchain ops retain original contexts.
-                        ops[i] = ops[i] with { Context = firstSwapchainContext.Value };
+                        ops[i].Context = firstSwapchainContext.Value;
                     }
                 }
             }

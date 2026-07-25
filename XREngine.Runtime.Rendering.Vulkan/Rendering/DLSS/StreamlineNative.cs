@@ -10,7 +10,7 @@ namespace XREngine.Rendering.DLSS
 {
     public static partial class NvidiaDlssManager
     {
-        internal static class Native
+        internal static unsafe class Native
         {
             private const string StreamlineLibrary = "sl.interposer.dll";
             private const ulong StreamlineSdkVersion = 0x0002000C0000FEDC;
@@ -28,8 +28,7 @@ namespace XREngine.Rendering.DLSS
             private const uint BufferTypeUiColorAndAlpha = 23;
 
             private static readonly object Sync = new();
-            private static readonly SlLogMessageCallbackDelegate LogMessageCallbackDelegate = OnStreamlineLogMessage;
-            private static readonly IntPtr LogMessageCallbackPtr = Marshal.GetFunctionPointerForDelegate(LogMessageCallbackDelegate);
+            private static IDisposable? _streamlineLogRegistration;
 
             private static bool _initialized;
             private static bool _runtimeInitialized;
@@ -68,31 +67,31 @@ namespace XREngine.Rendering.DLSS
             private static ulong _frameGenerationFramesActuallyPresentedTotal;
             private static uint _frameGenerationStateViewportId;
 
-            private static SlInitDelegate? _init;
-            private static SlShutdownDelegate? _shutdown;
-            private static SlIsFeatureSupportedDelegate? _isFeatureSupported;
-            private static SlGetFeatureRequirementsDelegate? _getFeatureRequirements;
-            private static SlSetVulkanInfoDelegate? _setVulkanInfo;
-            private static SlEvaluateFeatureDelegate? _evaluateFeature;
-            private static SlAllocateResourcesDelegate? _allocateResources;
-            private static SlFreeResourcesDelegate? _freeResources;
-            private static SlSetTagForFrameDelegate? _setTagForFrame;
-            private static SlSetConstantsDelegate? _setConstants;
-            private static SlGetFeatureFunctionDelegate? _getFeatureFunction;
-            private static SlGetNewFrameTokenDelegate? _getNewFrameToken;
-            private static SlDlssSetOptionsDelegate? _setOptions;
-            private static SlDlssGetOptimalSettingsDelegate? _getOptimalSettings;
-            private static SlDlssGSetOptionsDelegate? _setFrameGenerationOptions;
-            private static SlDlssGGetStateDelegate? _getFrameGenerationState;
-            private static SlReflexSetOptionsDelegate? _setReflexOptions;
-            private static SlPclSetMarkerDelegate? _setPclMarker;
-            private static VkGetDeviceProcAddrProxyDelegate? _vkGetDeviceProcAddrProxy;
-            private static VkCreateSwapchainKhrProxyDelegate? _vkCreateSwapchainProxy;
-            private static VkDestroySwapchainKhrProxyDelegate? _vkDestroySwapchainProxy;
-            private static VkGetSwapchainImagesKhrProxyDelegate? _vkGetSwapchainImagesProxy;
-            private static VkAcquireNextImageKhrProxyDelegate? _vkAcquireNextImageProxy;
-            private static VkQueuePresentKhrProxyDelegate? _vkQueuePresentProxy;
-            private static VkDeviceWaitIdleProxyDelegate? _vkDeviceWaitIdleProxy;
+            private static nint _init;
+            private static nint _shutdown;
+            private static nint _isFeatureSupported;
+            private static nint _getFeatureRequirements;
+            private static nint _setVulkanInfo;
+            private static nint _evaluateFeature;
+            private static nint _allocateResources;
+            private static nint _freeResources;
+            private static nint _setTagForFrame;
+            private static nint _setConstants;
+            private static nint _getFeatureFunction;
+            private static nint _getNewFrameToken;
+            private static nint _setOptions;
+            private static nint _getOptimalSettings;
+            private static nint _setFrameGenerationOptions;
+            private static nint _getFrameGenerationState;
+            private static nint _setReflexOptions;
+            private static nint _setPclMarker;
+            private static nint _vkGetDeviceProcAddrProxy;
+            private static nint _vkCreateSwapchainProxy;
+            private static nint _vkDestroySwapchainProxy;
+            private static nint _vkGetSwapchainImagesProxy;
+            private static nint _vkAcquireNextImageProxy;
+            private static nint _vkQueuePresentProxy;
+            private static nint _vkDeviceWaitIdleProxy;
 
             internal static bool IsAvailable
             {
@@ -217,7 +216,7 @@ namespace XREngine.Rendering.DLSS
                             Base = CreateBase(FeatureRequirementsStructType, 2),
                         };
 
-                        StreamlineResult requirementsResult = _getFeatureRequirements!(feature, ref requirements);
+                        StreamlineResult requirementsResult = CallGetFeatureRequirements(feature, ref requirements);
                         if (requirementsResult != StreamlineResult.Ok)
                         {
                             failureReason = $"slGetFeatureRequirements({DescribeFeature(feature)}) failed with {requirementsResult}.";
@@ -460,7 +459,7 @@ namespace XREngine.Rendering.DLSS
                         Base = CreateBase(AdapterInfoStructType, 1),
                         VkPhysicalDevice = (IntPtr)vulkanPhysicalDevice,
                     };
-                    StreamlineResult supportResult = _isFeatureSupported!(FeatureDlssG, ref adapterInfo);
+                    StreamlineResult supportResult = CallIsFeatureSupported(FeatureDlssG, ref adapterInfo);
                     if (supportResult == StreamlineResult.Ok)
                         return true;
 
@@ -635,7 +634,7 @@ namespace XREngine.Rendering.DLSS
                     uint requestedFramesToGenerate = options.NumFramesToGenerate;
                     options.NumFramesToGenerate = ResolveSupportedFramesToGenerate(requestedFramesToGenerate);
 
-                    StreamlineResult setOptionsResult = _setFrameGenerationOptions!(ref viewport, ref options);
+                    StreamlineResult setOptionsResult = CallSetFrameGenerationOptions(ref viewport, ref options);
                     if (setOptionsResult != StreamlineResult.Ok)
                     {
                         failureReason = DescribeFrameGenerationFailure(
@@ -653,7 +652,7 @@ namespace XREngine.Rendering.DLSS
                         Base = CreateBase(DlssGStateStructType, 4),
                     };
 
-                    StreamlineResult getStateResult = _getFrameGenerationState!(ref viewport, ref state, IntPtr.Zero);
+                    StreamlineResult getStateResult = CallGetFrameGenerationState(ref viewport, ref state, IntPtr.Zero);
                     if (getStateResult != StreamlineResult.Ok)
                     {
                         failureReason = DescribeFrameGenerationFailure(
@@ -753,7 +752,7 @@ namespace XREngine.Rendering.DLSS
                         NumFramesToGenerate = 1,
                     };
 
-                    StreamlineResult result = _setFrameGenerationOptions!(ref streamlineViewport, ref options);
+                    StreamlineResult result = CallSetFrameGenerationOptions(ref streamlineViewport, ref options);
                     if (result == StreamlineResult.Ok)
                     {
                         _frameGenerationOptionsCacheValid = false;
@@ -816,7 +815,7 @@ namespace XREngine.Rendering.DLSS
                         NumFramesToGenerate = 1,
                     };
 
-                    StreamlineResult result = _setFrameGenerationOptions!(ref streamlineViewport, ref options);
+                    StreamlineResult result = CallSetFrameGenerationOptions(ref streamlineViewport, ref options);
                     if (result != StreamlineResult.Ok)
                     {
                         failureReason = $"slDLSSGSetOptions(Off drain) failed with {result}.";
@@ -855,7 +854,7 @@ namespace XREngine.Rendering.DLSS
                 {
                     fixed (SwapchainKHR* swapchainPtr = &swapchain)
                     {
-                        result = _vkCreateSwapchainProxy!(renderer.Device, createInfoPtr, null, swapchainPtr);
+                        result = CallVkCreateSwapchainProxy(renderer.Device, createInfoPtr, null, swapchainPtr);
                     }
                 }
 
@@ -875,7 +874,7 @@ namespace XREngine.Rendering.DLSS
                     if (!EnsureFrameGenerationVulkanProxyReady(renderer, renderer.StreamlineFrameGenerationSwapchainIncludesDlss, out failureReason))
                         return false;
 
-                    _vkDestroySwapchainProxy!(renderer.Device, swapchain, null);
+                    CallVkDestroySwapchainProxy(renderer.Device, swapchain, null);
                     return true;
                 }
                 finally
@@ -898,7 +897,7 @@ namespace XREngine.Rendering.DLSS
                     return false;
 
                 fixed (uint* imageCountPtr = &imageCount)
-                    result = _vkGetSwapchainImagesProxy!(renderer.Device, swapchain, imageCountPtr, images);
+                    result = CallVkGetSwapchainImagesProxy(renderer.Device, swapchain, imageCountPtr, images);
 
                 return true;
             }
@@ -919,7 +918,7 @@ namespace XREngine.Rendering.DLSS
                     return false;
 
                 fixed (uint* imageIndexPtr = &imageIndex)
-                    result = _vkAcquireNextImageProxy!(renderer.Device, swapchain, timeout, semaphore, fence, imageIndexPtr);
+                    result = CallVkAcquireNextImageProxy(renderer.Device, swapchain, timeout, semaphore, fence, imageIndexPtr);
 
                 return true;
             }
@@ -937,7 +936,7 @@ namespace XREngine.Rendering.DLSS
                     return false;
 
                 fixed (PresentInfoKHR* presentInfoPtr = &presentInfo)
-                    result = _vkQueuePresentProxy!(queue, presentInfoPtr);
+                    result = CallVkQueuePresentProxy(queue, presentInfoPtr);
 
                 return true;
             }
@@ -956,7 +955,7 @@ namespace XREngine.Rendering.DLSS
                         return false;
                     }
 
-                    StreamlineResult frameTokenResult = _getNewFrameToken!(out IntPtr frameToken, ref frameIndex);
+                    StreamlineResult frameTokenResult = CallGetNewFrameToken(out IntPtr frameToken, ref frameIndex);
                     if (frameTokenResult != StreamlineResult.Ok || frameToken == IntPtr.Zero)
                     {
                         failureReason = $"slGetNewFrameToken failed for DLSS-G PCL marker {marker} with {frameTokenResult}.";
@@ -964,7 +963,7 @@ namespace XREngine.Rendering.DLSS
                         return false;
                     }
 
-                    StreamlineResult markerResult = _setPclMarker!(marker, frameToken);
+                    StreamlineResult markerResult = CallSetPclMarker(marker, frameToken);
                     if (markerResult != StreamlineResult.Ok)
                     {
                         failureReason = $"slPCLSetMarker({marker}) failed with {markerResult}.";
@@ -1054,7 +1053,7 @@ namespace XREngine.Rendering.DLSS
                 if (!_vulkanInfoInitialized)
                 {
                     StreamlineVulkanInfo info = CreateVulkanInfo(renderer);
-                    StreamlineResult setInfoResult = _setVulkanInfo!(ref info);
+                    StreamlineResult setInfoResult = CallSetVulkanInfo(ref info);
                     if (setInfoResult != StreamlineResult.Ok)
                     {
                         failureReason = $"slSetVulkanInfo failed with {setInfoResult}.";
@@ -1107,7 +1106,7 @@ namespace XREngine.Rendering.DLSS
                 if (!_vulkanInfoInitialized)
                 {
                     StreamlineVulkanInfo info = CreateVulkanInfo(sidecar);
-                    StreamlineResult setInfoResult = _setVulkanInfo!(ref info);
+                    StreamlineResult setInfoResult = CallSetVulkanInfo(ref info);
                     if (setInfoResult != StreamlineResult.Ok)
                     {
                         failureReason = $"slSetVulkanInfo failed with {setInfoResult}.";
@@ -1171,6 +1170,9 @@ namespace XREngine.Rendering.DLSS
                 if (_runtimeInitialized)
                     return true;
 
+                _streamlineLogRegistration ??= RendererNativeCallbackBridge.RegisterStreamlineLogHandler(
+                    static (type, message) => OnStreamlineLogMessage((StreamlineLogType)type, message));
+
                 uint* features = stackalloc uint[4];
                 uint featureCount = 0;
                 if (includeDlss)
@@ -1185,9 +1187,10 @@ namespace XREngine.Rendering.DLSS
                 StreamlinePreferences preferences = CreatePreferences(features, featureCount);
                 try
                 {
-                    StreamlineResult initResult = _init!(ref preferences, StreamlineSdkVersion);
+                    StreamlineResult initResult = CallInit(ref preferences, StreamlineSdkVersion);
                     if (initResult != StreamlineResult.Ok)
                     {
+                        Interlocked.Exchange(ref _streamlineLogRegistration, null)?.Dispose();
                         failureReason = $"slInit failed with {initResult}.";
                         MarkTerminalBridgeFailure(failureReason);
                         return false;
@@ -1319,7 +1322,7 @@ namespace XREngine.Rendering.DLSS
                 _frameGenerationRequirementsFailure = null;
                 failureReason = string.Empty;
 
-                if (_getFeatureRequirements is null)
+                if (_getFeatureRequirements == 0)
                 {
                     failureReason = "Streamline feature-requirements export was not resolved.";
                     _frameGenerationRequirementsFailure = failureReason;
@@ -1332,7 +1335,7 @@ namespace XREngine.Rendering.DLSS
                     Base = CreateBase(FeatureRequirementsStructType, 2),
                 };
 
-                StreamlineResult result = _getFeatureRequirements(FeatureDlssG, ref requirements);
+                StreamlineResult result = CallGetFeatureRequirements(FeatureDlssG, ref requirements);
                 if (result != StreamlineResult.Ok)
                 {
                     failureReason = $"slGetFeatureRequirements(DLSS-G) failed with {result}.";
@@ -1367,9 +1370,13 @@ namespace XREngine.Rendering.DLSS
                     message += $" Last Streamline message: {streamlineMessage}.";
             }
 
-            private static bool TryResolveFeatureFunction<T>(uint feature, string name, out T? del, bool required = true) where T : Delegate
+            private static bool TryResolveFeatureFunction(
+                uint feature,
+                string name,
+                out nint function,
+                bool required = true)
             {
-                del = null;
+                function = 0;
 
                 if (_libraryHandle == IntPtr.Zero)
                 {
@@ -1379,17 +1386,17 @@ namespace XREngine.Rendering.DLSS
 
                 if (NativeLibrary.TryGetExport(_libraryHandle, name, out IntPtr directExport) && directExport != IntPtr.Zero)
                 {
-                    del = Marshal.GetDelegateForFunctionPointer<T>(directExport);
+                    function = directExport;
                     return true;
                 }
 
                 StreamlineResult featureResult = StreamlineResult.ErrorFeatureMissing;
-                if (_getFeatureFunction is not null)
+                if (_getFeatureFunction != 0)
                 {
-                    featureResult = _getFeatureFunction(feature, name, out IntPtr functionPtr);
+                    featureResult = CallGetFeatureFunction(feature, name, out IntPtr functionPtr);
                     if (featureResult == StreamlineResult.Ok && functionPtr != IntPtr.Zero)
                     {
-                        del = Marshal.GetDelegateForFunctionPointer<T>(functionPtr);
+                        function = functionPtr;
                         return true;
                     }
                 }
@@ -1441,7 +1448,7 @@ namespace XREngine.Rendering.DLSS
                     return false;
                 }
 
-                _vkGetDeviceProcAddrProxy = Marshal.GetDelegateForFunctionPointer<VkGetDeviceProcAddrProxyDelegate>(getDeviceProcAddrPtr);
+                _vkGetDeviceProcAddrProxy = getDeviceProcAddrPtr;
 
                 if (!TryResolveVulkanDeviceProxyFunction("vkCreateSwapchainKHR", out _vkCreateSwapchainProxy)
                     || !TryResolveVulkanDeviceProxyFunction("vkDestroySwapchainKHR", out _vkDestroySwapchainProxy)
@@ -1458,11 +1465,11 @@ namespace XREngine.Rendering.DLSS
                 return true;
             }
 
-            private static unsafe bool TryResolveVulkanDeviceProxyFunction<T>(string name, out T? del) where T : Delegate
+            private static bool TryResolveVulkanDeviceProxyFunction(string name, out nint function)
             {
-                del = null;
+                function = 0;
 
-                if (_vkGetDeviceProcAddrProxy is null || _boundDeviceHandle == 0)
+                if (_vkGetDeviceProcAddrProxy == 0 || _boundDeviceHandle == 0)
                 {
                     _lastError = $"Cannot resolve Vulkan proxy function '{name}' before Streamline Vulkan info is bound.";
                     return false;
@@ -1471,14 +1478,16 @@ namespace XREngine.Rendering.DLSS
                 IntPtr namePtr = Marshal.StringToHGlobalAnsi(name);
                 try
                 {
-                    IntPtr functionPtr = _vkGetDeviceProcAddrProxy(new Device(_boundDeviceHandle), (byte*)namePtr);
+                    IntPtr functionPtr = CallVkGetDeviceProcAddrProxy(
+                        new Device(_boundDeviceHandle),
+                        (byte*)namePtr);
                     if (functionPtr == IntPtr.Zero)
                     {
                         _lastError = $"Streamline vkGetDeviceProcAddr returned null for '{name}'.";
                         return false;
                     }
 
-                    del = Marshal.GetDelegateForFunctionPointer<T>(functionPtr);
+                    function = functionPtr;
                     return true;
                 }
                 finally
@@ -1494,7 +1503,7 @@ namespace XREngine.Rendering.DLSS
                 if (_reflexEnabled)
                     return true;
 
-                if (_setReflexOptions is null)
+                if (_setReflexOptions == 0)
                 {
                     failureReason = "Streamline Reflex options export was not resolved.";
                     _lastError = failureReason;
@@ -1511,7 +1520,7 @@ namespace XREngine.Rendering.DLSS
                     IdThread = 0,
                 };
 
-                StreamlineResult result = _setReflexOptions(ref options);
+                StreamlineResult result = CallSetReflexOptions(ref options);
                 if (result != StreamlineResult.Ok)
                 {
                     failureReason = $"slReflexSetOptions failed with {result}; DLSS frame generation requires Reflex to be active.";
@@ -1639,7 +1648,7 @@ namespace XREngine.Rendering.DLSS
                     PathToLogsAndData = runtimeDirectoryPtr,
                     AllocateCallback = IntPtr.Zero,
                     ReleaseCallback = IntPtr.Zero,
-                    LogMessageCallback = LogMessageCallbackPtr,
+                    LogMessageCallback = RendererNativeCallbackBridge.StreamlineLogCallbackPointer,
                     Flags = StreamlinePreferenceFlags.DisableCommandListStateTracking
                         | StreamlinePreferenceFlags.DisableDebugText
                         | StreamlinePreferenceFlags.UseManualHooking
@@ -1749,9 +1758,9 @@ namespace XREngine.Rendering.DLSS
                 }
             }
 
-            private static bool TryLoadExport<T>(string exportName, out T? del) where T : Delegate
+            private static bool TryLoadExport(string exportName, out nint function)
             {
-                del = null;
+                function = 0;
 
                 if (_libraryHandle == IntPtr.Zero || !NativeLibrary.TryGetExport(_libraryHandle, exportName, out IntPtr exportPtr) || exportPtr == IntPtr.Zero)
                 {
@@ -1759,7 +1768,7 @@ namespace XREngine.Rendering.DLSS
                     return false;
                 }
 
-                del = Marshal.GetDelegateForFunctionPointer<T>(exportPtr);
+                function = exportPtr;
                 return true;
             }
 
@@ -1771,31 +1780,31 @@ namespace XREngine.Rendering.DLSS
                     _libraryHandle = IntPtr.Zero;
                 }
 
-                _init = null;
-                _shutdown = null;
-                _isFeatureSupported = null;
-                _setVulkanInfo = null;
-                _evaluateFeature = null;
-                _allocateResources = null;
-                _freeResources = null;
-                _setTagForFrame = null;
-                _setConstants = null;
-                _getFeatureFunction = null;
-                _getNewFrameToken = null;
-                _getFeatureRequirements = null;
-                _setOptions = null;
-                _getOptimalSettings = null;
-                _setFrameGenerationOptions = null;
-                _getFrameGenerationState = null;
-                _setReflexOptions = null;
-                _setPclMarker = null;
-                _vkGetDeviceProcAddrProxy = null;
-                _vkCreateSwapchainProxy = null;
-                _vkDestroySwapchainProxy = null;
-                _vkGetSwapchainImagesProxy = null;
-                _vkAcquireNextImageProxy = null;
-                _vkQueuePresentProxy = null;
-                _vkDeviceWaitIdleProxy = null;
+                _init = 0;
+                _shutdown = 0;
+                _isFeatureSupported = 0;
+                _setVulkanInfo = 0;
+                _evaluateFeature = 0;
+                _allocateResources = 0;
+                _freeResources = 0;
+                _setTagForFrame = 0;
+                _setConstants = 0;
+                _getFeatureFunction = 0;
+                _getNewFrameToken = 0;
+                _getFeatureRequirements = 0;
+                _setOptions = 0;
+                _getOptimalSettings = 0;
+                _setFrameGenerationOptions = 0;
+                _getFrameGenerationState = 0;
+                _setReflexOptions = 0;
+                _setPclMarker = 0;
+                _vkGetDeviceProcAddrProxy = 0;
+                _vkCreateSwapchainProxy = 0;
+                _vkDestroySwapchainProxy = 0;
+                _vkGetSwapchainImagesProxy = 0;
+                _vkAcquireNextImageProxy = 0;
+                _vkQueuePresentProxy = 0;
+                _vkDeviceWaitIdleProxy = 0;
             }
 
             private static bool MatchesBoundDevice(VulkanUpscaleBridgeSidecar sidecar)
@@ -1829,8 +1838,8 @@ namespace XREngine.Rendering.DLSS
 
             private static void ShutdownRuntimeUnsafe()
             {
-                if (_runtimeInitialized && _shutdown is not null)
-                    _shutdown();
+                if (_runtimeInitialized && _shutdown != 0)
+                    CallShutdown();
 
                 _runtimeInitialized = false;
                 _runtimeIncludesDlss = false;
@@ -1855,6 +1864,22 @@ namespace XREngine.Rendering.DLSS
                 _frameGenerationFramesActuallyPresented = 0;
                 _frameGenerationFramesActuallyPresentedTotal = 0;
                 _frameGenerationStateViewportId = 0;
+                Interlocked.Exchange(ref _streamlineLogRegistration, null)?.Dispose();
+            }
+
+            internal static void PrepareForModuleUnload()
+            {
+                lock (Sync)
+                {
+                    if (HasActiveRuntimeOwnersUnsafe)
+                    {
+                        throw new InvalidOperationException(
+                            "Streamline still has active Vulkan sessions at the renderer module unload boundary.");
+                    }
+
+                    ShutdownRuntimeUnsafe();
+                    UnloadLibrary();
+                }
             }
 
             private static string[] MarshalStringArray(IntPtr names, uint count)
@@ -1983,12 +2008,12 @@ namespace XREngine.Rendering.DLSS
                         return false;
                     }
 
-                    if (_freeResources is null
-                        || _setTagForFrame is null
-                        || _setConstants is null
-                        || _evaluateFeature is null
-                        || _getNewFrameToken is null
-                        || _setOptions is null)
+                    if (_freeResources == 0
+                        || _setTagForFrame == 0
+                        || _setConstants == 0
+                        || _evaluateFeature == 0
+                        || _getNewFrameToken == 0
+                        || _setOptions == 0)
                     {
                         failureReason = "Streamline core exports are not fully initialized.";
                         MarkTerminalBridgeFailure(failureReason);
@@ -1999,7 +2024,7 @@ namespace XREngine.Rendering.DLSS
                     StreamlineViewportHandle viewport = _viewport;
 
                     StreamlineDlssOptions options = CreateDlssOptions(parameters);
-                    StreamlineResult setOptionsResult = _setOptions(ref viewport, ref options);
+                    StreamlineResult setOptionsResult = CallSetOptions(ref viewport, ref options);
                     if (setOptionsResult != StreamlineResult.Ok)
                     {
                         failureReason = $"slDLSSSetOptions failed with {setOptionsResult}.";
@@ -2009,7 +2034,7 @@ namespace XREngine.Rendering.DLSS
 
                     StreamlineConstants constants = CreateConstants(parameters, _firstDispatch);
                     uint frameIndex = parameters.FrameIndex;
-                    StreamlineResult frameTokenResult = _getNewFrameToken(out IntPtr frameToken, ref frameIndex);
+                    StreamlineResult frameTokenResult = CallGetNewFrameToken(out IntPtr frameToken, ref frameIndex);
                     if (frameTokenResult != StreamlineResult.Ok || frameToken == IntPtr.Zero)
                     {
                         failureReason = $"slGetNewFrameToken failed with {frameTokenResult}.";
@@ -2063,7 +2088,7 @@ namespace XREngine.Rendering.DLSS
                     if (frameGenerationRequested)
                         tags[tagCount++] = CreateResourceTag(&colorOutput, BufferTypeHudLessColor, StreamlineResourceLifecycle.ValidUntilPresent, outputExtent);
 
-                    StreamlineResult tagResult = _setTagForFrame(frameToken, ref viewport, (IntPtr)tags, tagCount, commandBufferPtr);
+                    StreamlineResult tagResult = CallSetTagForFrame(frameToken, ref viewport, (IntPtr)tags, tagCount, commandBufferPtr);
                     if (tagResult != StreamlineResult.Ok)
                     {
                         failureReason = DescribeStreamlineFailure(
@@ -2076,7 +2101,7 @@ namespace XREngine.Rendering.DLSS
                         return false;
                     }
 
-                    StreamlineResult constantsResult = _setConstants(ref constants, frameToken, ref viewport);
+                    StreamlineResult constantsResult = CallSetConstants(ref constants, frameToken, ref viewport);
                     if (constantsResult != StreamlineResult.Ok)
                     {
                         failureReason = DescribeStreamlineFailure(
@@ -2093,7 +2118,7 @@ namespace XREngine.Rendering.DLSS
                     IntPtr* inputs = stackalloc IntPtr[1];
                     inputs[0] = (IntPtr)(&viewportInput);
 
-                    StreamlineResult evaluateResult = _evaluateFeature(FeatureDlss, frameToken, (IntPtr)inputs, 1, commandBufferPtr);
+                    StreamlineResult evaluateResult = CallEvaluateFeature(FeatureDlss, frameToken, (IntPtr)inputs, 1, commandBufferPtr);
                     if (evaluateResult != StreamlineResult.Ok)
                     {
                         failureReason = DescribeStreamlineFailure(
@@ -2133,10 +2158,10 @@ namespace XREngine.Rendering.DLSS
 
                 private void FreeAllocatedResources()
                 {
-                    if (_resourcesAllocated && _freeResources is not null)
+                    if (_resourcesAllocated && _freeResources != 0)
                     {
                         StreamlineViewportHandle viewport = _viewport;
-                        _freeResources(FeatureDlss, ref viewport);
+                        CallFreeResources(FeatureDlss, ref viewport);
                         _resourcesAllocated = false;
                     }
                 }
@@ -2227,7 +2252,7 @@ namespace XREngine.Rendering.DLSS
 
                 private static string DescribeOptimalSettings(ref StreamlineDlssOptions options)
                 {
-                    if (_getOptimalSettings is null)
+                    if (_getOptimalSettings == 0)
                         return string.Empty;
 
                     StreamlineDlssOptimalSettings settings = new()
@@ -2235,7 +2260,7 @@ namespace XREngine.Rendering.DLSS
                         Base = CreateBase(DlssOptimalSettingsStructType, 1),
                     };
 
-                    StreamlineResult result = _getOptimalSettings(ref options, ref settings);
+                    StreamlineResult result = CallGetOptimalSettings(ref options, ref settings);
                     if (result != StreamlineResult.Ok)
                         return $"slDLSSGetOptimalSettings failed with {result}";
 
@@ -2360,7 +2385,7 @@ namespace XREngine.Rendering.DLSS
                         return false;
                     }
 
-                    if (_setTagForFrame is null || _setConstants is null || _getNewFrameToken is null)
+                    if (_setTagForFrame == 0 || _setConstants == 0 || _getNewFrameToken == 0)
                     {
                         failureReason = "Streamline core exports are not fully initialized for DLSS-G resource tagging.";
                         _lastError = failureReason;
@@ -2397,7 +2422,7 @@ namespace XREngine.Rendering.DLSS
 
                     StreamlineViewportHandle viewport = _viewport;
                     uint frameIndex = parameters.FrameIndex;
-                    StreamlineResult frameTokenResult = _getNewFrameToken(out IntPtr frameToken, ref frameIndex);
+                    StreamlineResult frameTokenResult = CallGetNewFrameToken(out IntPtr frameToken, ref frameIndex);
                     if (frameTokenResult != StreamlineResult.Ok || frameToken == IntPtr.Zero)
                     {
                         failureReason = $"slGetNewFrameToken failed for DLSS-G with {frameTokenResult}.";
@@ -2432,7 +2457,7 @@ namespace XREngine.Rendering.DLSS
                     tags[3] = CreateResourceTag(&uiColorAndAlpha, BufferTypeUiColorAndAlpha, StreamlineResourceLifecycle.ValidUntilPresent, outputExtent);
 
                     IntPtr commandBufferPtr = ToIntPtr(commandBuffer.Handle);
-                    StreamlineResult tagResult = _setTagForFrame(frameToken, ref viewport, (IntPtr)tags, 4, commandBufferPtr);
+                    StreamlineResult tagResult = CallSetTagForFrame(frameToken, ref viewport, (IntPtr)tags, 4, commandBufferPtr);
                     if (tagResult != StreamlineResult.Ok)
                     {
                         failureReason = DescribeFailure("slSetTagForFrame", tagResult, in parameters);
@@ -2441,7 +2466,7 @@ namespace XREngine.Rendering.DLSS
                     }
 
                     StreamlineConstants constants = CreateConstants(parameters, _firstDispatch);
-                    StreamlineResult constantsResult = _setConstants(ref constants, frameToken, ref viewport);
+                    StreamlineResult constantsResult = CallSetConstants(ref constants, frameToken, ref viewport);
                     if (constantsResult != StreamlineResult.Ok)
                     {
                         failureReason = DescribeFailure("slSetConstants", constantsResult, in parameters);
@@ -2617,12 +2642,12 @@ namespace XREngine.Rendering.DLSS
                         return false;
                     }
 
-                    if (_freeResources is null
-                        || _setTagForFrame is null
-                        || _setConstants is null
-                        || _evaluateFeature is null
-                        || _getNewFrameToken is null
-                        || _setOptions is null)
+                    if (_freeResources == 0
+                        || _setTagForFrame == 0
+                        || _setConstants == 0
+                        || _evaluateFeature == 0
+                        || _getNewFrameToken == 0
+                        || _setOptions == 0)
                     {
                         failureReason = "Streamline core exports are not fully initialized.";
                         MarkTerminalBridgeFailure(failureReason);
@@ -2633,7 +2658,7 @@ namespace XREngine.Rendering.DLSS
                     StreamlineViewportHandle viewport = _viewport;
 
                     StreamlineDlssOptions options = CreateDlssOptions(parameters);
-                    StreamlineResult setOptionsResult = _setOptions(ref viewport, ref options);
+                    StreamlineResult setOptionsResult = CallSetOptions(ref viewport, ref options);
                     if (setOptionsResult != StreamlineResult.Ok)
                     {
                         failureReason = $"slDLSSSetOptions failed with {setOptionsResult}.";
@@ -2643,7 +2668,7 @@ namespace XREngine.Rendering.DLSS
 
                     StreamlineConstants constants = CreateConstants(parameters, _firstDispatch);
                     uint frameIndex = parameters.FrameIndex;
-                    StreamlineResult frameTokenResult = _getNewFrameToken(out IntPtr frameToken, ref frameIndex);
+                    StreamlineResult frameTokenResult = CallGetNewFrameToken(out IntPtr frameToken, ref frameIndex);
                     if (frameTokenResult != StreamlineResult.Ok || frameToken == IntPtr.Zero)
                     {
                         failureReason = $"slGetNewFrameToken failed with {frameTokenResult}.";
@@ -2690,7 +2715,7 @@ namespace XREngine.Rendering.DLSS
                     if (parameters.HasExposureTexture)
                         tags[tagCount++] = CreateResourceTag(&exposure, BufferTypeExposure, StreamlineResourceLifecycle.ValidUntilEvaluate, exposureExtent);
 
-                    StreamlineResult tagResult = _setTagForFrame(frameToken, ref viewport, (IntPtr)tags, tagCount, commandBuffer);
+                    StreamlineResult tagResult = CallSetTagForFrame(frameToken, ref viewport, (IntPtr)tags, tagCount, commandBuffer);
                     if (tagResult != StreamlineResult.Ok)
                     {
                         failureReason = DescribeStreamlineFailure(
@@ -2703,7 +2728,7 @@ namespace XREngine.Rendering.DLSS
                         return false;
                     }
 
-                    StreamlineResult constantsResult = _setConstants(ref constants, frameToken, ref viewport);
+                    StreamlineResult constantsResult = CallSetConstants(ref constants, frameToken, ref viewport);
                     if (constantsResult != StreamlineResult.Ok)
                     {
                         failureReason = DescribeStreamlineFailure(
@@ -2720,7 +2745,7 @@ namespace XREngine.Rendering.DLSS
                     IntPtr* inputs = stackalloc IntPtr[1];
                     inputs[0] = (IntPtr)(&viewportInput);
 
-                    StreamlineResult evaluateResult = _evaluateFeature(FeatureDlss, frameToken, (IntPtr)inputs, 1, commandBuffer);
+                    StreamlineResult evaluateResult = CallEvaluateFeature(FeatureDlss, frameToken, (IntPtr)inputs, 1, commandBuffer);
                     if (evaluateResult != StreamlineResult.Ok)
                     {
                         failureReason = DescribeStreamlineFailure(
@@ -2768,10 +2793,10 @@ namespace XREngine.Rendering.DLSS
 
                 private void FreeAllocatedResources()
                 {
-                    if (_resourcesAllocated && _freeResources is not null)
+                    if (_resourcesAllocated && _freeResources != 0)
                     {
                         StreamlineViewportHandle viewport = _viewport;
-                        _freeResources(FeatureDlss, ref viewport);
+                        CallFreeResources(FeatureDlss, ref viewport);
                         _resourcesAllocated = false;
                     }
                 }
@@ -2862,7 +2887,7 @@ namespace XREngine.Rendering.DLSS
 
                 private static string DescribeOptimalSettings(ref StreamlineDlssOptions options)
                 {
-                    if (_getOptimalSettings is null)
+                    if (_getOptimalSettings == 0)
                         return string.Empty;
 
                     StreamlineDlssOptimalSettings settings = new()
@@ -2870,7 +2895,7 @@ namespace XREngine.Rendering.DLSS
                         Base = CreateBase(DlssOptimalSettingsStructType, 1),
                     };
 
-                    StreamlineResult result = _getOptimalSettings(ref options, ref settings);
+                    StreamlineResult result = CallGetOptimalSettings(ref options, ref settings);
                     if (result != StreamlineResult.Ok)
                         return $"slDLSSGetOptimalSettings failed with {result}";
 
@@ -2965,83 +2990,244 @@ namespace XREngine.Rendering.DLSS
             private static IntPtr ToIntPtr(nint handle)
                 => (IntPtr)handle;
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlInitDelegate(ref StreamlinePreferences preferences, ulong sdkVersion);
+            private static StreamlineResult CallInit(
+                ref StreamlinePreferences preferences,
+                ulong sdkVersion)
+            {
+                fixed (StreamlinePreferences* preferencesPtr = &preferences)
+                    return ((delegate* unmanaged[Cdecl]<StreamlinePreferences*, ulong, StreamlineResult>)_init)(
+                        preferencesPtr,
+                        sdkVersion);
+            }
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlShutdownDelegate();
+            private static StreamlineResult CallShutdown()
+                => ((delegate* unmanaged[Cdecl]<StreamlineResult>)_shutdown)();
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlIsFeatureSupportedDelegate(uint feature, ref StreamlineAdapterInfo adapterInfo);
+            private static StreamlineResult CallIsFeatureSupported(
+                uint feature,
+                ref StreamlineAdapterInfo adapterInfo)
+            {
+                fixed (StreamlineAdapterInfo* adapterInfoPtr = &adapterInfo)
+                    return ((delegate* unmanaged[Cdecl]<uint, StreamlineAdapterInfo*, StreamlineResult>)_isFeatureSupported)(
+                        feature,
+                        adapterInfoPtr);
+            }
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlGetFeatureRequirementsDelegate(uint feature, ref StreamlineFeatureRequirements requirements);
+            private static StreamlineResult CallGetFeatureRequirements(
+                uint feature,
+                ref StreamlineFeatureRequirements requirements)
+            {
+                fixed (StreamlineFeatureRequirements* requirementsPtr = &requirements)
+                    return ((delegate* unmanaged[Cdecl]<uint, StreamlineFeatureRequirements*, StreamlineResult>)_getFeatureRequirements)(
+                        feature,
+                        requirementsPtr);
+            }
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlSetVulkanInfoDelegate(ref StreamlineVulkanInfo info);
+            private static StreamlineResult CallSetVulkanInfo(ref StreamlineVulkanInfo info)
+            {
+                fixed (StreamlineVulkanInfo* infoPtr = &info)
+                    return ((delegate* unmanaged[Cdecl]<StreamlineVulkanInfo*, StreamlineResult>)_setVulkanInfo)(infoPtr);
+            }
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlEvaluateFeatureDelegate(uint feature, IntPtr frameToken, IntPtr inputs, uint numInputs, IntPtr commandBuffer);
+            private static StreamlineResult CallEvaluateFeature(
+                uint feature,
+                IntPtr frameToken,
+                IntPtr inputs,
+                uint inputCount,
+                IntPtr commandBuffer)
+                => ((delegate* unmanaged[Cdecl]<uint, IntPtr, IntPtr, uint, IntPtr, StreamlineResult>)_evaluateFeature)(
+                    feature,
+                    frameToken,
+                    inputs,
+                    inputCount,
+                    commandBuffer);
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlAllocateResourcesDelegate(IntPtr commandBuffer, uint feature, ref StreamlineViewportHandle viewport);
+            private static StreamlineResult CallFreeResources(
+                uint feature,
+                ref StreamlineViewportHandle viewport)
+            {
+                fixed (StreamlineViewportHandle* viewportPtr = &viewport)
+                    return ((delegate* unmanaged[Cdecl]<uint, StreamlineViewportHandle*, StreamlineResult>)_freeResources)(
+                        feature,
+                        viewportPtr);
+            }
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlFreeResourcesDelegate(uint feature, ref StreamlineViewportHandle viewport);
+            private static StreamlineResult CallSetTagForFrame(
+                IntPtr frameToken,
+                ref StreamlineViewportHandle viewport,
+                IntPtr resourceTags,
+                uint resourceTagCount,
+                IntPtr commandBuffer)
+            {
+                fixed (StreamlineViewportHandle* viewportPtr = &viewport)
+                    return ((delegate* unmanaged[Cdecl]<IntPtr, StreamlineViewportHandle*, IntPtr, uint, IntPtr, StreamlineResult>)_setTagForFrame)(
+                        frameToken,
+                        viewportPtr,
+                        resourceTags,
+                        resourceTagCount,
+                        commandBuffer);
+            }
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlSetTagForFrameDelegate(IntPtr frameToken, ref StreamlineViewportHandle viewport, IntPtr resourceTags, uint resourceTagCount, IntPtr commandBuffer);
+            private static StreamlineResult CallSetConstants(
+                ref StreamlineConstants values,
+                IntPtr frameToken,
+                ref StreamlineViewportHandle viewport)
+            {
+                fixed (StreamlineConstants* valuesPtr = &values)
+                fixed (StreamlineViewportHandle* viewportPtr = &viewport)
+                    return ((delegate* unmanaged[Cdecl]<StreamlineConstants*, IntPtr, StreamlineViewportHandle*, StreamlineResult>)_setConstants)(
+                        valuesPtr,
+                        frameToken,
+                        viewportPtr);
+            }
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlSetConstantsDelegate(ref StreamlineConstants values, IntPtr frameToken, ref StreamlineViewportHandle viewport);
+            private static StreamlineResult CallGetFeatureFunction(
+                uint feature,
+                string functionName,
+                out IntPtr function)
+            {
+                function = IntPtr.Zero;
+                IntPtr name = Marshal.StringToHGlobalAnsi(functionName);
+                try
+                {
+                    fixed (IntPtr* functionPtr = &function)
+                        return ((delegate* unmanaged[Cdecl]<uint, byte*, IntPtr*, StreamlineResult>)_getFeatureFunction)(
+                            feature,
+                            (byte*)name,
+                            functionPtr);
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(name);
+                }
+            }
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlGetFeatureFunctionDelegate(uint feature, [MarshalAs(UnmanagedType.LPStr)] string functionName, out IntPtr function);
+            private static StreamlineResult CallGetNewFrameToken(
+                out IntPtr token,
+                ref uint frameIndex)
+            {
+                token = IntPtr.Zero;
+                fixed (IntPtr* tokenPtr = &token)
+                fixed (uint* frameIndexPtr = &frameIndex)
+                    return ((delegate* unmanaged[Cdecl]<IntPtr*, uint*, StreamlineResult>)_getNewFrameToken)(
+                        tokenPtr,
+                        frameIndexPtr);
+            }
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlGetNewFrameTokenDelegate(out IntPtr token, ref uint frameIndex);
+            private static StreamlineResult CallSetOptions(
+                ref StreamlineViewportHandle viewport,
+                ref StreamlineDlssOptions options)
+            {
+                fixed (StreamlineViewportHandle* viewportPtr = &viewport)
+                fixed (StreamlineDlssOptions* optionsPtr = &options)
+                    return ((delegate* unmanaged[Cdecl]<StreamlineViewportHandle*, StreamlineDlssOptions*, StreamlineResult>)_setOptions)(
+                        viewportPtr,
+                        optionsPtr);
+            }
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlDlssSetOptionsDelegate(ref StreamlineViewportHandle viewport, ref StreamlineDlssOptions options);
+            private static StreamlineResult CallGetOptimalSettings(
+                ref StreamlineDlssOptions options,
+                ref StreamlineDlssOptimalSettings settings)
+            {
+                fixed (StreamlineDlssOptions* optionsPtr = &options)
+                fixed (StreamlineDlssOptimalSettings* settingsPtr = &settings)
+                    return ((delegate* unmanaged[Cdecl]<StreamlineDlssOptions*, StreamlineDlssOptimalSettings*, StreamlineResult>)_getOptimalSettings)(
+                        optionsPtr,
+                        settingsPtr);
+            }
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlDlssGetOptimalSettingsDelegate(ref StreamlineDlssOptions options, ref StreamlineDlssOptimalSettings settings);
+            private static StreamlineResult CallSetFrameGenerationOptions(
+                ref StreamlineViewportHandle viewport,
+                ref StreamlineDlssGOptions options)
+            {
+                fixed (StreamlineViewportHandle* viewportPtr = &viewport)
+                fixed (StreamlineDlssGOptions* optionsPtr = &options)
+                    return ((delegate* unmanaged[Cdecl]<StreamlineViewportHandle*, StreamlineDlssGOptions*, StreamlineResult>)_setFrameGenerationOptions)(
+                        viewportPtr,
+                        optionsPtr);
+            }
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlDlssGSetOptionsDelegate(ref StreamlineViewportHandle viewport, ref StreamlineDlssGOptions options);
+            private static StreamlineResult CallGetFrameGenerationState(
+                ref StreamlineViewportHandle viewport,
+                ref StreamlineDlssGState state,
+                IntPtr options)
+            {
+                fixed (StreamlineViewportHandle* viewportPtr = &viewport)
+                fixed (StreamlineDlssGState* statePtr = &state)
+                    return ((delegate* unmanaged[Cdecl]<StreamlineViewportHandle*, StreamlineDlssGState*, IntPtr, StreamlineResult>)_getFrameGenerationState)(
+                        viewportPtr,
+                        statePtr,
+                        options);
+            }
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlDlssGGetStateDelegate(ref StreamlineViewportHandle viewport, ref StreamlineDlssGState state, IntPtr options);
+            private static StreamlineResult CallSetReflexOptions(ref StreamlineReflexOptions options)
+            {
+                fixed (StreamlineReflexOptions* optionsPtr = &options)
+                    return ((delegate* unmanaged[Cdecl]<StreamlineReflexOptions*, StreamlineResult>)_setReflexOptions)(optionsPtr);
+            }
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlReflexSetOptionsDelegate(ref StreamlineReflexOptions options);
+            private static StreamlineResult CallSetPclMarker(
+                StreamlinePclMarker marker,
+                IntPtr frame)
+                => ((delegate* unmanaged[Cdecl]<StreamlinePclMarker, IntPtr, StreamlineResult>)_setPclMarker)(
+                    marker,
+                    frame);
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate StreamlineResult SlPclSetMarkerDelegate(StreamlinePclMarker marker, IntPtr frame);
+            private static IntPtr CallVkGetDeviceProcAddrProxy(Device device, byte* name)
+                => ((delegate* unmanaged[Cdecl]<Device, byte*, IntPtr>)_vkGetDeviceProcAddrProxy)(
+                    device,
+                    name);
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate void SlLogMessageCallbackDelegate(StreamlineLogType type, IntPtr message);
+            private static Result CallVkCreateSwapchainProxy(
+                Device device,
+                SwapchainCreateInfoKHR* createInfo,
+                AllocationCallbacks* allocator,
+                SwapchainKHR* swapchain)
+                => ((delegate* unmanaged[Cdecl]<Device, SwapchainCreateInfoKHR*, AllocationCallbacks*, SwapchainKHR*, Result>)_vkCreateSwapchainProxy)(
+                    device,
+                    createInfo,
+                    allocator,
+                    swapchain);
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private unsafe delegate IntPtr VkGetDeviceProcAddrProxyDelegate(Device device, byte* name);
+            private static void CallVkDestroySwapchainProxy(
+                Device device,
+                SwapchainKHR swapchain,
+                AllocationCallbacks* allocator)
+                => ((delegate* unmanaged[Cdecl]<Device, SwapchainKHR, AllocationCallbacks*, void>)_vkDestroySwapchainProxy)(
+                    device,
+                    swapchain,
+                    allocator);
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private unsafe delegate Result VkCreateSwapchainKhrProxyDelegate(Device device, SwapchainCreateInfoKHR* createInfo, AllocationCallbacks* allocator, SwapchainKHR* swapchain);
+            private static Result CallVkGetSwapchainImagesProxy(
+                Device device,
+                SwapchainKHR swapchain,
+                uint* imageCount,
+                Image* images)
+                => ((delegate* unmanaged[Cdecl]<Device, SwapchainKHR, uint*, Image*, Result>)_vkGetSwapchainImagesProxy)(
+                    device,
+                    swapchain,
+                    imageCount,
+                    images);
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private unsafe delegate void VkDestroySwapchainKhrProxyDelegate(Device device, SwapchainKHR swapchain, AllocationCallbacks* allocator);
+            private static Result CallVkAcquireNextImageProxy(
+                Device device,
+                SwapchainKHR swapchain,
+                ulong timeout,
+                Silk.NET.Vulkan.Semaphore semaphore,
+                Fence fence,
+                uint* imageIndex)
+                => ((delegate* unmanaged[Cdecl]<Device, SwapchainKHR, ulong, Silk.NET.Vulkan.Semaphore, Fence, uint*, Result>)_vkAcquireNextImageProxy)(
+                    device,
+                    swapchain,
+                    timeout,
+                    semaphore,
+                    fence,
+                    imageIndex);
 
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private unsafe delegate Result VkGetSwapchainImagesKhrProxyDelegate(Device device, SwapchainKHR swapchain, uint* imageCount, Image* images);
-
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private unsafe delegate Result VkAcquireNextImageKhrProxyDelegate(Device device, SwapchainKHR swapchain, ulong timeout, Silk.NET.Vulkan.Semaphore semaphore, Fence fence, uint* imageIndex);
-
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private unsafe delegate Result VkQueuePresentKhrProxyDelegate(Queue queue, PresentInfoKHR* presentInfo);
-
-            [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-            private delegate Result VkDeviceWaitIdleProxyDelegate(Device device);
+            private static Result CallVkQueuePresentProxy(Queue queue, PresentInfoKHR* presentInfo)
+                => ((delegate* unmanaged[Cdecl]<Queue, PresentInfoKHR*, Result>)_vkQueuePresentProxy)(
+                    queue,
+                    presentInfo);
 
             private enum StreamlineResult
             {

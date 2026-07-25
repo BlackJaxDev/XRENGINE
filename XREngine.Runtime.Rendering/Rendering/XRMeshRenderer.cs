@@ -129,22 +129,24 @@ namespace XREngine.Rendering
             /// Surfaced by the shader-program-links panel so each program tells the engineer what pass
             /// and stereo strategy it is for.
             /// </summary>
+            private string? _versionKindLabel;
             public virtual string VersionKindLabel
+                => _versionKindLabel ??= ResolveVersionKindLabel();
+
+            private string ResolveVersionKindLabel()
             {
-                get
+                Type type = GetType();
+                if (type.IsGenericType)
                 {
-                    Type t = GetType();
-                    if (t.IsGenericType)
-                    {
-                        Type genericArg = t.GetGenericArguments()[0];
-                        string raw = genericArg.Name;
-                        const string suffix = "VertexShaderGenerator";
-                        return raw.EndsWith(suffix, StringComparison.Ordinal)
-                            ? raw[..^suffix.Length]
-                            : raw;
-                    }
-                    return t.Name;
+                    Type genericArg = type.GetGenericArguments()[0];
+                    string raw = genericArg.Name;
+                    const string suffix = "VertexShaderGenerator";
+                    return raw.EndsWith(suffix, StringComparison.Ordinal)
+                        ? raw[..^suffix.Length]
+                        : raw;
                 }
+
+                return type.Name;
             }
 
             public void ResetVertexShaderSource()

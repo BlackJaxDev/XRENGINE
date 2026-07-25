@@ -14,5 +14,81 @@ public unsafe partial class VulkanRenderer
         float Depth,
         uint Stencil,
         Rect2D Rect,
-        FrameOpContext Context) : FrameOp(PassIndex, Target, Context);
+        FrameOpContext Context) : FrameOp(PassIndex, Target, Context)
+    {
+        public bool ClearColor { get; private set; } = ClearColor;
+        public bool ClearDepth { get; private set; } = ClearDepth;
+        public bool ClearStencil { get; private set; } = ClearStencil;
+        public ColorF4 Color { get; private set; } = Color;
+        public float Depth { get; private set; } = Depth;
+        public uint Stencil { get; private set; } = Stencil;
+        public Rect2D Rect { get; private set; } = Rect;
+
+        internal static ClearOp Rent(
+            int passIndex,
+            XRFrameBuffer? target,
+            bool clearColor,
+            bool clearDepth,
+            bool clearStencil,
+            ColorF4 color,
+            float depth,
+            uint stencil,
+            Rect2D rect,
+            in FrameOpContext context)
+        {
+            bool frameOwned = TryRentForCurrentFrame(out ClearOp? reusable);
+            if (reusable is null)
+            {
+                ClearOp created = new(
+                    passIndex,
+                    target,
+                    clearColor,
+                    clearDepth,
+                    clearStencil,
+                    color,
+                    depth,
+                    stencil,
+                    rect,
+                    context);
+                return frameOwned ? RetainForCurrentFrame(created) : created;
+            }
+
+            reusable.Reset(
+                passIndex,
+                target,
+                clearColor,
+                clearDepth,
+                clearStencil,
+                color,
+                depth,
+                stencil,
+                rect,
+                context);
+            return reusable;
+        }
+
+        private void Reset(
+            int passIndex,
+            XRFrameBuffer? target,
+            bool clearColor,
+            bool clearDepth,
+            bool clearStencil,
+            ColorF4 color,
+            float depth,
+            uint stencil,
+            Rect2D rect,
+            in FrameOpContext context)
+        {
+            PassIndex = passIndex;
+            Target = target;
+            ClearColor = clearColor;
+            ClearDepth = clearDepth;
+            ClearStencil = clearStencil;
+            Color = color;
+            Depth = depth;
+            Stencil = stencil;
+            Rect = rect;
+            Context = context;
+        }
+    }
 }

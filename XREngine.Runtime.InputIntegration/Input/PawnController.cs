@@ -65,21 +65,21 @@ namespace XREngine.Runtime.InputIntegration
             set => SetField(ref _controlledPawn, value is null && _pawnPossessionQueue.Count > 0 ? _pawnPossessionQueue.Dequeue() : value);
         }
 
-        //protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
-        //{
-        //    bool change = base.OnPropertyChanging(propName, field, @new);
-        //    if (change)
-        //    {
-        //        switch (propName)
-        //        {
-        //            case nameof(ControlledPawn):
-        //                //if (ControlledPawn?.Controller == this)
-        //                //    ControlledPawn.Controller = null;
-        //                break;
-        //        }
-        //    }
-        //    return change;
-        //}
+        protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
+        {
+            bool change = base.OnPropertyChanging(propName, field, @new);
+            if (!change || propName != nameof(ControlledPawn))
+                return change;
+
+            if (field is IRuntimeInputControllablePawn currentPawn &&
+                ReferenceEquals(currentPawn.Controller, this))
+            {
+                currentPawn.Controller = null;
+            }
+
+            return true;
+        }
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);

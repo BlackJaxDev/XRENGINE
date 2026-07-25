@@ -359,7 +359,8 @@ namespace XREngine.Rendering.OpenGL
                             : StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - _uberLinkStartTimestamp);
                         if (linked)
                         {
-                            AdoptLinkedBuildProgram(linkedProgramId);
+                            if (!AdoptLinkedBuildProgram(linkedProgramId))
+                                return IsLinked;
                             IsLinked = true;
                             long reflectionStart = Stopwatch.GetTimestamp();
                             CacheActiveUniforms();
@@ -495,6 +496,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     _replacementProgramId = 0;
                     _replacementProgramPending = false;
+                    _replacementSourceRevisionKey = 0;
                     PublishBackendStatus(
                         EShaderProgramBackendStage.Abandoned,
                         _activeBuildBackend ?? "DriverParallelSource",
@@ -506,6 +508,7 @@ namespace XREngine.Rendering.OpenGL
                     {
                         _replacementProgramId = retryReplacementProgramId;
                         _replacementProgramPending = true;
+                        _replacementSourceRevisionKey = CalculateSourceRevisionKey();
                         PublishBackendStatus(
                             EShaderProgramBackendStage.SynchronousFallback,
                             "SynchronousSource",
@@ -620,6 +623,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     _replacementProgramId = 0;
                     _replacementProgramPending = false;
+                    _replacementSourceRevisionKey = 0;
                 }
                 else
                 {
@@ -680,6 +684,7 @@ namespace XREngine.Rendering.OpenGL
 
                 _replacementProgramId = 0;
                 _replacementProgramPending = false;
+                _replacementSourceRevisionKey = 0;
                 _asyncAttachedShaderIds = null;
                 _asyncLinkedProgramId = 0;
                 _asyncLinkPhase = EAsyncLinkPhase.Idle;

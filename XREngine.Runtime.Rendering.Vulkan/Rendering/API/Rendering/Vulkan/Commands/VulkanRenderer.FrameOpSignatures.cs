@@ -596,7 +596,7 @@ namespace XREngine.Rendering.Vulkan
                 item.Add(pair.Key, StringComparer.Ordinal);
                 item.Add((int)pair.Value.Type);
                 item.Add(pair.Value.IsArray);
-                HashUniformValue(ref item, pair.Value.Value);
+                HashUniformValue(ref item, pair.Value);
                 hash.Add(item.ToHashCode());
             }
 

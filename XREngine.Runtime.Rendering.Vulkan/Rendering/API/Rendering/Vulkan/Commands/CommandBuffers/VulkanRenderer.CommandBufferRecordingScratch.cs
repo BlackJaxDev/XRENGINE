@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Text;
 using Silk.NET.Vulkan;
 
@@ -52,7 +51,8 @@ namespace XREngine.Rendering.Vulkan
                 new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
             public VulkanMeshFrameDataReservationManifest MeshFrameDataManifest { get; } = new();
             public Dictionary<XRFrameBuffer, ImageLayout[]> FboLayoutTracking { get; } = new(ReferenceEqualityComparer.Instance);
-            public ConditionalWeakTable<XRFrameBuffer, FboAttachmentLayoutScratch> FboAttachmentLayouts { get; } = new();
+            public Dictionary<XRFrameBuffer, FboAttachmentLayoutScratch> FboAttachmentLayouts { get; } =
+                new(ReferenceEqualityComparer.Instance);
             public CommandChainKey[] ScheduledCommandChainKeysByOpIndex { get; set; } = [];
             public List<KeyValuePair<int, int>> SwapchainWriterCountSort { get; } = new();
             public StringBuilder SwapchainWriterSummaryBuilder { get; } = new(256);

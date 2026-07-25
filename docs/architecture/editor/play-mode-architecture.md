@@ -11,17 +11,19 @@ The editor/play mode system provides:
 4. **Physics simulation control** that only runs during play mode
 5. **GameMode lifecycle management** with proper begin/end play hooks
 6. **Startup world configuration** for determining what loads when play begins
-7. **Optional user confirmation prompts** for editor-triggered enter/exit requests before the transition starts
+7. **Optional user confirmation prompts** for editor UI enter/exit requests before the transition starts
 8. **Mode-owned UI presentation** so the editor shell and runtime game UI do not leak into one another
 
 ## Editor Confirmation Prompts
 
-User-triggered play mode requests from the ImGui editor, including `F5`, `Shift+F5`, the toolbar buttons, and the State panel, can be gated by confirmation prompts.
+User-triggered play mode requests from the ImGui toolbar, State panel, and `F5` enter-play shortcut can be gated by confirmation prompts.
 
 - `Confirm Before Entering Play Mode` controls whether editor-triggered enter-play requests open a confirmation dialog.
-- `Confirm Before Exiting Play Mode` controls whether editor-triggered exit-play requests open a confirmation dialog.
+- `Confirm Before Exiting Play Mode` controls whether editor UI exit-play requests open a confirmation dialog.
 
 These settings live on the top-level editor preferences asset and can also be overridden through editor preference overrides. Programmatic transitions that call `EditorState.EnterPlayMode()` or `EditorState.ExitPlayMode()` directly, including MCP workflow actions, bypass the UI prompt so automation is not blocked by modal dialogs.
+
+`Shift+F5` is the global force-stop shortcut. It is registered against native window input rather than a pawn, so it remains available for every `GameMode` and when no gameplay pawn is possessed. It calls the direct exit transition and intentionally bypasses `Confirm Before Exiting Play Mode`; this guarantees that play mode can be stopped while the editor ImGui shell is hidden.
 
 ## Editor And Runtime UI Ownership
 

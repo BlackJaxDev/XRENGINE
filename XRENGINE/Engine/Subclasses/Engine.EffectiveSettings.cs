@@ -99,7 +99,7 @@ namespace XREngine
             /// Resolved from: Project Override > Engine Default.
             /// </summary>
             public static EVulkanGpuDrivenProfile VulkanGpuDrivenProfile
-                => OverrideableSettingExtensions.ResolveCascade(
+                => OverrideableSettingExtensions.ResolveValueCascade(
                     RuntimeEngine.Rendering.Settings.VulkanGpuDrivenProfile,
                     GameSettings?.VulkanGpuDrivenProfileOverride,
                     null);
@@ -139,6 +139,12 @@ namespace XREngine
             /// </summary>
             public static EVulkanQueueOverlapMode VulkanQueueOverlapMode
                 => RuntimeEngine.Rendering.Settings.VulkanQueueOverlapMode;
+
+            /// <summary>
+            /// Gets the active Vulkan command-recording policy.
+            /// </summary>
+            public static EVulkanCommandRecordingMode VulkanCommandRecordingMode
+                => RuntimeEngine.Rendering.Settings.VulkanCommandRecordingMode;
 
             /// <summary>
             /// Gets the effective Vulkan diagnostics preset.

@@ -6,6 +6,6 @@ namespace XREngine.Rendering.Pipelines.Commands
         public required XRMaterial Material { get; set; }
 
         protected override void Execute()
-            => ActivePipelineInstance.RenderState.PushOverrideMaterial(Material);
+            => ActivePipelineInstance.RenderState.PushOverrideMaterialState(Material);
     }
 }

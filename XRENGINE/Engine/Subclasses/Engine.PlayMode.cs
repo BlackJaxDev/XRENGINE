@@ -402,6 +402,17 @@ namespace XREngine
                         PostSnapshotRestore?.Invoke(restoredTarget);
                     }
 
+                    // Edit mode is not a stopped world. The editor camera, native UI animations,
+                    // transform propagation, and visible collection all use XRWorldInstance's
+                    // timer callbacks. EndPlay unlinks those callbacks, so explicitly restart
+                    // every current world after restoration while keeping gameplay and physics off.
+                    foreach (var worldInstance in XRWorldInstance.WorldInstances.Values.ToArray())
+                    {
+                        LogWorldInstanceState("ExitPlay", "BeforeBeginEditMode", worldInstance);
+                        worldInstance.BeginEditMode().GetAwaiter().GetResult();
+                        LogWorldInstanceState("ExitPlay", "AfterBeginEditMode", worldInstance);
+                    }
+
                     State = EPlayModeState.Edit;
                     PostExitPlay?.Invoke();
 

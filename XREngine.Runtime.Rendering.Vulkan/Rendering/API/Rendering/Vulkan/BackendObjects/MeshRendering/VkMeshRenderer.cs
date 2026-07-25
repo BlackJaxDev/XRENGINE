@@ -8,6 +8,7 @@ using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Textures;
@@ -363,6 +364,17 @@ public unsafe partial class VulkanRenderer
         return buffer;
     }
 
+    private static void ReleaseCurrentThreadFrameOpCaptureCaches()
+    {
+        t_frameOpCapture = null;
+        t_frameOpCaptureScratch = null;
+        t_orderedComputeBatchCapture = null;
+        t_orderedComputeBatchCaptureScratch = null;
+        t_frameOpCaptureBuffersByCount?.Clear();
+        t_frameOpCaptureBuffersByCount = null;
+        t_renderQueryBracketDepth = 0;
+    }
+
     private static void PublishFrameOpDrawStats(FrameOp op)
     {
         if (op.PassIndex == int.MinValue)
@@ -413,25 +425,11 @@ public unsafe partial class VulkanRenderer
         if (validatedPassIndex == op.PassIndex)
             return op;
 
-        return op switch
-        {
-            ClearOp clear => clear with { PassIndex = validatedPassIndex },
-            MeshDrawOp meshDraw => meshDraw with { PassIndex = validatedPassIndex },
-            QueryOp query => query with { PassIndex = validatedPassIndex },
-            BlitOp blit => blit with { PassIndex = validatedPassIndex },
-            IndirectDrawOp indirectDraw => indirectDraw with { PassIndex = validatedPassIndex },
-            MeshTaskDispatchIndirectCountOp meshTaskDispatch => meshTaskDispatch with { PassIndex = validatedPassIndex },
-            MemoryBarrierOp memoryBarrier => memoryBarrier with { PassIndex = validatedPassIndex },
-            PublishFramebufferForSamplingOp publish => publish with { PassIndex = validatedPassIndex },
-            DlssUpscaleOp dlssUpscale => dlssUpscale with { PassIndex = validatedPassIndex },
-            DlssFrameGenerationOp dlssFrameGeneration => dlssFrameGeneration with { PassIndex = validatedPassIndex },
-            TransformFeedbackOp transformFeedback => transformFeedback with { PassIndex = validatedPassIndex },
-            ComputeDispatchOp computeDispatch => computeDispatch with { PassIndex = validatedPassIndex },
-            ComputeDispatchIndirectOp computeDispatchIndirect => computeDispatchIndirect with { PassIndex = validatedPassIndex },
-            BufferCopyOp bufferCopy => bufferCopy with { PassIndex = validatedPassIndex },
-            SubmissionMarkerOp submissionMarker => submissionMarker with { PassIndex = validatedPassIndex },
-            _ => op
-        };
+        // Frame operations are owned by the current frame and intentionally mutable.
+        // Cloning a MeshDrawOp copies its large captured draw payload and made a
+        // command-buffer refresh allocate once per visible draw.
+        op.PassIndex = validatedPassIndex;
+        return op;
     }
 
     internal FrameOp[] DrainFrameOps() 
@@ -966,7 +964,7 @@ public unsafe partial class VulkanRenderer
             item.Add(pair.Key, StringComparer.Ordinal);
             item.Add((int)pair.Value.Type);
             item.Add(pair.Value.IsArray);
-            HashUniformValue(ref item, pair.Value.Value);
+            HashUniformValue(ref item, pair.Value);
             AddUnorderedItemHash(ref xor, ref sum, unchecked((ulong)item.ToHashCode()));
         }
 
@@ -1135,6 +1133,80 @@ public unsafe partial class VulkanRenderer
         hash.Add(value);
     }
 
+    private static void HashUniformValue(ref HashCode hash, ProgramUniformValue value)
+    {
+        if (value.ReferenceValue is { } referenceValue)
+        {
+            HashUniformValue(ref hash, referenceValue);
+            return;
+        }
+
+        if (!value.HasInlineValue)
+        {
+            hash.Add(0);
+            return;
+        }
+
+        switch (value.Type)
+        {
+            case EShaderVarType._float:
+                hash.Add(value.Float);
+                break;
+            case EShaderVarType._int:
+            case EShaderVarType._bool:
+                hash.Add(value.Int);
+                break;
+            case EShaderVarType._uint:
+                hash.Add(value.UInt);
+                break;
+            case EShaderVarType._double:
+                hash.Add(value.Double);
+                break;
+            case EShaderVarType._vec2:
+                hash.Add(value.Vector2);
+                break;
+            case EShaderVarType._vec3:
+                hash.Add(value.Vector3);
+                break;
+            case EShaderVarType._vec4:
+                hash.Add(value.Vector4);
+                break;
+            case EShaderVarType._mat4:
+                hash.Add(value.Matrix4x4);
+                break;
+            case EShaderVarType._dvec2:
+                hash.Add(new DVector2(value.DVector4.X, value.DVector4.Y));
+                break;
+            case EShaderVarType._dvec3:
+                hash.Add(new DVector3(value.DVector4.X, value.DVector4.Y, value.DVector4.Z));
+                break;
+            case EShaderVarType._dvec4:
+                hash.Add(value.DVector4);
+                break;
+            case EShaderVarType._ivec2:
+                hash.Add(new IVector2(value.IVector4.X, value.IVector4.Y));
+                break;
+            case EShaderVarType._ivec3:
+                hash.Add(new IVector3(value.IVector4.X, value.IVector4.Y, value.IVector4.Z));
+                break;
+            case EShaderVarType._ivec4:
+                hash.Add(value.IVector4);
+                break;
+            case EShaderVarType._uvec2:
+                hash.Add(new UVector2(value.UVector4.X, value.UVector4.Y));
+                break;
+            case EShaderVarType._uvec3:
+                hash.Add(new UVector3(value.UVector4.X, value.UVector4.Y, value.UVector4.Z));
+                break;
+            case EShaderVarType._uvec4:
+                hash.Add(value.UVector4);
+                break;
+            default:
+                hash.Add(0);
+                break;
+        }
+    }
+
     private static void HashUniformArray(ref HashCode hash, Array array)
     {
         switch (array)
@@ -1278,7 +1350,8 @@ public unsafe partial class VulkanRenderer
         private VkRenderProgram? _program;
         private XRRenderProgram? _generatedProgram;
         private string? _activeProgramIdentity;
-        private readonly Dictionary<string, GeneratedProgramCacheEntry> _programCache = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, GeneratedProgramCacheEntry> _programCache = new(4, StringComparer.Ordinal);
+        private readonly Dictionary<GeneratedProgramState, GeneratedProgramCacheEntry> _programStateCache = new(4);
         private VertexInputBindingDescription[] _vertexBindings = [];
         private VertexInputAttributeDescription[] _vertexAttributes = [];
         private bool _vertexInputStateDirty = true;
@@ -1841,14 +1914,12 @@ public unsafe partial class VulkanRenderer
             }
 
             FrameOpContext context = Renderer.CaptureFrameOpContext();
-            Renderer.EnqueueFrameOp(new MeshDrawOp(
+            Renderer.EnqueueFrameOp(MeshDrawOp.Rent(
                 Renderer.EnsureValidPassIndex(passIndex, "MeshDraw", context.PassMetadata),
                 target,
                 draw,
-                context)
-            {
-                PreserveSubmissionOrder = VulkanRenderer.IsInOcclusionQueryBracket,
-            });
+                context,
+                VulkanRenderer.IsInOcclusionQueryBracket));
         }
 
         private static Vector4 ProjectUiDiagCorner(float x, float y, in Matrix4x4 worldViewProjection)

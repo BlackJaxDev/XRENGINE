@@ -12,6 +12,7 @@ public unsafe partial class VulkanRenderer
 
     private ExtDebugUtils? debugUtils;
     private DebugUtilsMessengerEXT debugMessenger;
+    private RendererNativeCallbackBridge.VulkanDebugRegistration? _vulkanDebugRegistration;
 
     private readonly VulkanDiagnosticOptions _diagnosticOptions = VulkanDiagnosticOptions.Resolve();
     private bool? _validationLayersEnabledOverride;
@@ -116,6 +117,10 @@ public unsafe partial class VulkanRenderer
     {
         if (EnableValidationLayers && debugUtils is not null)
             debugUtils!.DestroyDebugUtilsMessenger(instance, debugMessenger, null);
+
+        debugMessenger = default;
+        debugUtils = null;
+        Interlocked.Exchange(ref _vulkanDebugRegistration, null)?.Dispose();
     }
 
     private void PopulateDebugMessengerCreateInfo(ref DebugUtilsMessengerCreateInfoEXT createInfo)
@@ -127,7 +132,11 @@ public unsafe partial class VulkanRenderer
         createInfo.MessageType = DebugUtilsMessageTypeFlagsEXT.GeneralBitExt |
                                  DebugUtilsMessageTypeFlagsEXT.PerformanceBitExt |
                                  DebugUtilsMessageTypeFlagsEXT.ValidationBitExt;
-        createInfo.PfnUserCallback = (DebugUtilsMessengerCallbackFunctionEXT)DebugCallback;
+        _vulkanDebugRegistration ??= RendererNativeCallbackBridge.RegisterVulkanDebugHandler(
+            HandleVulkanDebugMessage);
+        createInfo.PUserData = (void*)_vulkanDebugRegistration.UserData;
+        createInfo.PfnUserCallback = Marshal.GetDelegateForFunctionPointer<DebugUtilsMessengerCallbackFunctionEXT>(
+            RendererNativeCallbackBridge.VulkanDebugCallbackPointer);
     }
     private void SetupDebugMessenger()
     {
@@ -226,8 +235,16 @@ public unsafe partial class VulkanRenderer
 
         return validationLayers.All(availableLayerNames.Contains);
     }
-    private uint DebugCallback(DebugUtilsMessageSeverityFlagsEXT messageSeverity, DebugUtilsMessageTypeFlagsEXT messageTypes, DebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
+    private uint HandleVulkanDebugMessage(
+        uint rawMessageSeverity,
+        uint rawMessageTypes,
+        nint rawCallbackData,
+        nint userData)
     {
+        DebugUtilsMessageSeverityFlagsEXT messageSeverity = (DebugUtilsMessageSeverityFlagsEXT)rawMessageSeverity;
+        DebugUtilsMessageTypeFlagsEXT messageTypes = (DebugUtilsMessageTypeFlagsEXT)rawMessageTypes;
+        DebugUtilsMessengerCallbackDataEXT* pCallbackData =
+            (DebugUtilsMessengerCallbackDataEXT*)rawCallbackData;
         string msg = Marshal.PtrToStringAnsi((nint)pCallbackData->PMessage) ?? "<null>";
 
         // Silently suppress harmless fragment-output-unused warnings that

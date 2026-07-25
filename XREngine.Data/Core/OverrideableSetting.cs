@@ -205,6 +205,25 @@ namespace XREngine.Data.Core
         }
 
         /// <summary>
+        /// Resolves a cascading chain for a non-nullable value type without the
+        /// pattern-matching box required by the unconstrained overload.
+        /// </summary>
+        public static T ResolveValueCascade<T>(
+            T engineDefault,
+            OverrideableSetting<T>? projectOverride,
+            OverrideableSetting<T>? userOverride)
+            where T : struct
+        {
+            if (userOverride is not null && userOverride.HasOverride)
+                return userOverride.Value;
+
+            if (projectOverride is not null && projectOverride.HasOverride)
+                return projectOverride.Value;
+
+            return engineDefault;
+        }
+
+        /// <summary>
         /// Resolves a cascading chain for nullable value types.
         /// </summary>
         public static T? ResolveCascadeNullable<T>(

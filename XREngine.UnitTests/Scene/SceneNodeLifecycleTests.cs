@@ -10,6 +10,7 @@ using XREngine.Data.Core;
 using XREngine.Editor;
 using XREngine.Rendering;
 using XREngine.Runtime.Bootstrap;
+using XREngine.Runtime.InputIntegration;
 using XREngine.Scene.Physics.Jitter2;
 using XREngine.Scene.Physics.Physx;
 using XREngine.Scene;
@@ -738,6 +739,75 @@ public class SceneNodeLifecycleTests
     }
 
     [Test]
+    public async Task BeginEditMode_RestartsStoppedWorldWithoutGameplayPhysics()
+    {
+        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        SceneNode root = new("EditRoot");
+        LifecycleTrackingComponent component = root.AddComponent<LifecycleTrackingComponent>()!;
+        world.RootNodes.Add(root);
+
+        try
+        {
+            await world.BeginPlay();
+            world.EndPlay();
+            world.PhysicsEnabled = true;
+
+            await world.BeginEditMode();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(world.PlayState, Is.EqualTo(XRWorldInstance.EPlayState.Playing));
+                Assert.That(world.PhysicsEnabled, Is.False);
+                Assert.That(root.HasBegunPlay, Is.True);
+                Assert.That(component.BeginPlayCount, Is.EqualTo(2));
+                Assert.That(component.EndPlayCount, Is.EqualTo(1));
+            });
+        }
+        finally
+        {
+            if (world.PlayState != XRWorldInstance.EPlayState.Stopped)
+                world.EndPlay();
+        }
+    }
+
+    [Test]
+    public void ReactivatingPossessedPawn_ReregistersItsLocalInputTick()
+    {
+        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        SceneNode root = new("PawnRoot");
+        PawnComponent pawn = root.AddComponent<PawnComponent>()!;
+        TrackingLocalPawnController controller = new();
+        world.RootNodes.Add(root);
+        controller.ControlledPawn = pawn;
+
+        world.TickGroup(ETickGroup.Normal);
+        root.IsActiveSelf = false;
+        world.TickGroup(ETickGroup.Normal);
+        root.IsActiveSelf = true;
+        world.TickGroup(ETickGroup.Normal);
+
+        Assert.That(controller.InputTickCount, Is.EqualTo(2));
+    }
+
+    [Test]
+    public void UnlinkControlledPawn_ClearsThePawnControllerReference()
+    {
+        PawnComponent pawn = new();
+        TrackingLocalPawnController controller = new()
+        {
+            ControlledPawn = pawn,
+        };
+
+        controller.UnlinkControlledPawn();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(controller.ControlledPawn, Is.Null);
+            Assert.That(pawn.Controller, Is.Null);
+        });
+    }
+
+    [Test]
     public void DestroyingLoadedSceneRoot_RemovesItFromSceneAndRuntimeRootCollections()
     {
         SceneNode root = new("SceneRoot");
@@ -863,6 +933,16 @@ public class SceneNodeLifecycleTests
     {
         protected override System.Numerics.Matrix4x4 CreateLocalMatrix()
             => System.Numerics.Matrix4x4.Identity;
+    }
+
+    private sealed class TrackingLocalPawnController : PawnController
+    {
+        public override bool IsLocal => true;
+
+        public int InputTickCount { get; private set; }
+
+        public override void TickPawnInput(float delta, bool isUIInputCaptured)
+            => InputTickCount++;
     }
 
     private sealed class DestroyUndoAssetReferenceComponent : XRComponent

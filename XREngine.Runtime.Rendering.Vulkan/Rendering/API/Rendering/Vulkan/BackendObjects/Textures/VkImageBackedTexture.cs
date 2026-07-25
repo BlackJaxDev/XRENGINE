@@ -3474,35 +3474,36 @@ public unsafe partial class VulkanRenderer
                 return;
 
             int cacheIndex = FindPhysicalImageViewCacheIndex(_physicalGroup, _image.Handle);
-            Dictionary<AttachmentViewKey, PhysicalImageViewCacheValue> attachmentViews =
-                new(_attachmentViews.Count);
-            foreach (KeyValuePair<AttachmentViewKey, ImageView> pair in _attachmentViews)
+            PhysicalImageViewCacheEntry entry;
+            if (cacheIndex >= 0)
             {
-                attachmentViews[pair.Key] = new PhysicalImageViewCacheValue(
-                    pair.Value,
+                entry = _physicalImageViewCache[cacheIndex];
+                entry.PrimaryView = CreatePhysicalImageViewCacheValue(_view);
+                entry.AttachmentViews.Clear();
+            }
+            else
+            {
+                entry = new PhysicalImageViewCacheEntry(
+                    _physicalGroup,
+                    _image.Handle,
                     Renderer.GetCurrentVulkanResourceGeneration(
-                        ObjectType.ImageView,
-                        pair.Value.Handle));
+                        ObjectType.Image,
+                        _image.Handle),
+                    CreatePhysicalImageViewCacheValue(_view),
+                    new Dictionary<AttachmentViewKey, PhysicalImageViewCacheValue>(_attachmentViews.Count));
+                _physicalImageViewCache.Add(entry);
             }
 
-            PhysicalImageViewCacheEntry entry = new(
-                _physicalGroup,
-                _image.Handle,
-                Renderer.GetCurrentVulkanResourceGeneration(
-                    ObjectType.Image,
-                    _image.Handle),
-                new PhysicalImageViewCacheValue(
-                    _view,
-                    Renderer.GetCurrentVulkanResourceGeneration(
-                        ObjectType.ImageView,
-                        _view.Handle)),
-                attachmentViews);
-
-            if (cacheIndex >= 0)
-                _physicalImageViewCache[cacheIndex] = entry;
-            else
-                _physicalImageViewCache.Add(entry);
+            foreach (KeyValuePair<AttachmentViewKey, ImageView> pair in _attachmentViews)
+                entry.AttachmentViews[pair.Key] = CreatePhysicalImageViewCacheValue(pair.Value);
         }
+
+        private PhysicalImageViewCacheValue CreatePhysicalImageViewCacheValue(ImageView view)
+            => new(
+                view,
+                Renderer.GetCurrentVulkanResourceGeneration(
+                    ObjectType.ImageView,
+                    view.Handle));
 
         private bool TryRestorePhysicalImageViewCache(VulkanPhysicalImageGroup group, Image image)
         {
@@ -3616,12 +3617,19 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        private sealed record class PhysicalImageViewCacheEntry(
-            VulkanPhysicalImageGroup Group,
-            ulong ImageHandle,
-            ulong ImageGeneration,
-            PhysicalImageViewCacheValue PrimaryView,
-            Dictionary<AttachmentViewKey, PhysicalImageViewCacheValue> AttachmentViews);
+        private sealed class PhysicalImageViewCacheEntry(
+            VulkanPhysicalImageGroup group,
+            ulong imageHandle,
+            ulong imageGeneration,
+            PhysicalImageViewCacheValue primaryView,
+            Dictionary<AttachmentViewKey, PhysicalImageViewCacheValue> attachmentViews)
+        {
+            public VulkanPhysicalImageGroup Group { get; } = group;
+            public ulong ImageHandle { get; } = imageHandle;
+            public ulong ImageGeneration { get; } = imageGeneration;
+            public PhysicalImageViewCacheValue PrimaryView { get; set; } = primaryView;
+            public Dictionary<AttachmentViewKey, PhysicalImageViewCacheValue> AttachmentViews { get; } = attachmentViews;
+        }
 
         private readonly record struct PhysicalImageViewCacheValue(
             ImageView View,

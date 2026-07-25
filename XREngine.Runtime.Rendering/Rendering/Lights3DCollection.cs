@@ -79,9 +79,11 @@ namespace XREngine.Scene
         private static bool _loggedForwardLightingOnce = false;
         private static bool _loggedShadowMapEnabledOnce = false;
 
-        // Last reason logged by the "No shadow tex" diagnostic in SetForwardLightingUniforms.
-        // Logged exactly once per distinct reason so we don't spam the log every frame.
-        private static string? _lastForwardShadowNoTexReason = null;
+        // Last state logged by the "No shadow tex" diagnostic in SetForwardLightingUniforms.
+        // Keep the comparison numeric so the steady-state render path does not construct a
+        // diagnostic string every frame merely to discover that nothing changed.
+        private static bool _hasLastForwardShadowNoTextureReasonKey;
+        private static ulong _lastForwardShadowNoTextureReasonKey;
 
         #endregion
 

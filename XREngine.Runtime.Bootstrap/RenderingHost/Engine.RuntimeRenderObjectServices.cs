@@ -41,6 +41,7 @@ internal sealed class EngineRuntimeRenderObjectServices : IRuntimeRenderObjectSe
         if (owner is not AbstractRenderer renderer)
             return;
 
+        List<Exception>? failures = null;
         lock (GenericRenderObject.RenderObjectCache)
         {
             foreach (var pair in GenericRenderObject.RenderObjectCache)
@@ -59,14 +60,22 @@ internal sealed class EngineRuntimeRenderObjectServices : IRuntimeRenderObjectSe
                         {
                             wrapper.Destroy();
                         }
-                        catch
+                        catch (Exception ex)
                         {
+                            (failures ??= []).Add(ex);
                         }
 
                         renderObject.RemoveWrapper(wrapper);
                     }
                 }
             }
+        }
+
+        if (failures is not null)
+        {
+            throw new AggregateException(
+                $"Failed to destroy {failures.Count} renderer API wrapper(s) for '{owner.RenderApiWrapperOwnerName}'.",
+                failures);
         }
     }
 

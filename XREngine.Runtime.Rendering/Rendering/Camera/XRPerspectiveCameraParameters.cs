@@ -91,14 +91,23 @@ namespace XREngine.Rendering
             return Matrix4x4.CreatePerspectiveOffCenter(xMin, xMax, yMin, yMax, nearZ, farZ);
         }
 
-        protected override Frustum CalculateUntransformedFrustum(Matrix4x4 inverseProjectionMatrix)
+        protected override void UpdateUntransformedFrustum(
+            ref Frustum frustum,
+            Matrix4x4 inverseProjectionMatrix)
         {
             float nearZ = MathF.Max(0.001f, NearZ);
             float farZ = FarZ;
             if (farZ <= nearZ)
                 farZ = nearZ + 0.001f;
 
-            return new Frustum(VerticalFieldOfView, AspectRatio, nearZ, farZ, Globals.Forward, Globals.Up, Vector3.Zero);
+            frustum.Update(
+                VerticalFieldOfView,
+                AspectRatio,
+                nearZ,
+                farZ,
+                Globals.Forward,
+                Globals.Up,
+                Vector3.Zero);
         }
 
         public override void SetUniforms(XRRenderProgram program)

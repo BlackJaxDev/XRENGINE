@@ -25,8 +25,8 @@ internal readonly record struct VulkanMemoryAllocation(
     public bool IsNativeBacked => NativeAllocation != 0;
 
     /// <summary>Whether this allocation is host-visible and can be mapped.</summary>
-    public bool IsHostVisible => Properties.HasFlag(MemoryPropertyFlags.HostVisibleBit);
+    public bool IsHostVisible => (Properties & MemoryPropertyFlags.HostVisibleBit) != 0;
 
     /// <summary>Whether this allocation uses coherent memory that doesn't need flush/invalidate.</summary>
-    public bool IsCoherent => Properties.HasFlag(MemoryPropertyFlags.HostCoherentBit);
+    public bool IsCoherent => (Properties & MemoryPropertyFlags.HostCoherentBit) != 0;
 }

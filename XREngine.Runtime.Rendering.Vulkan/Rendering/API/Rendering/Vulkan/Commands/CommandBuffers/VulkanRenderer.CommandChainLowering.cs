@@ -67,7 +67,8 @@ public unsafe partial class VulkanRenderer
     // introduce a CPU readback; only the command buffer that owns the draw changes.
     internal const bool IndirectCommandChainSecondaryRecordingSafe = false;
 
-    private static readonly bool CommandChainsEnabled = IsCommandChainFlagEnabled(CommandChainsEnvVar);
+    private static readonly bool? CommandChainsEnvironmentOverride =
+        ReadOptionalBooleanEnvironmentOverride(CommandChainsEnvVar);
     private static readonly bool CommandChainsSingleThread = IsCommandChainFlagEnabled(CommandChainsSingleThreadEnvVar);
     private static readonly bool CommandChainValidationEnabled = IsCommandChainFlagEnabled(CommandChainValidateEnvVar);
     private static readonly bool CommandChainTraceEnabled = IsCommandChainFlagEnabled(CommandChainTraceEnvVar);
@@ -80,9 +81,15 @@ public unsafe partial class VulkanRenderer
         !IsCommandChainFlagDisabled(CommandChainStabilityGuardEnvVar);
     private static readonly bool AllowIndependentDesktopCommandChains =
         IsCommandChainFlagEnabled("XRE_VULKAN_COMMAND_CHAINS_ALLOW_INDEPENDENT_DESKTOP");
+    private bool CommandChainsRequested =>
+        ResolveCommandChainsRequested(
+            RuntimeRenderingHostServices.Settings.VulkanCommandRecordingMode,
+            CommandChainsEnvironmentOverride);
+    private static bool CommandChainsExplicitlyRequested =>
+        CommandChainsEnvironmentOverride == true;
     private bool CommandChainsEnabledForCurrentRecording =>
         !IsRenderingExternalSwapchainTarget &&
-        ((CommandChainsEnabled && !ShouldBypassCommandChainsForOpenXrIndependentDesktop) ||
+        ((CommandChainsRequested && !ShouldBypassCommandChainsForOpenXrIndependentDesktop) ||
          ShouldUseCommandChainsForOpenXrIndependentDesktop);
 
     private static bool ShouldBypassCommandChainsForOpenXrIndependentDesktop =>
@@ -131,7 +138,6 @@ public unsafe partial class VulkanRenderer
     private enum CommandChainStabilityBypassReason
     {
         None,
-        ResourcePlanRevisionChanged,
         RecentZeroReuse,
     }
 
@@ -150,6 +156,16 @@ public unsafe partial class VulkanRenderer
         return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool ResolveCommandChainsRequested(
+        EVulkanCommandRecordingMode mode,
+        bool? environmentOverride)
+    {
+        if (environmentOverride.HasValue)
+            return environmentOverride.Value;
+
+        return mode is EVulkanCommandRecordingMode.Auto or EVulkanCommandRecordingMode.Hybrid;
     }
 
     private static bool IsCommandChainFlagDisabled(string name)
@@ -251,7 +267,7 @@ public unsafe partial class VulkanRenderer
         // was designed to consume and CpuQueryAsync must re-record the complete eye
         // command buffer every frame.
         bool commandChainsEnabledForTarget = allowExternalSwapchainTarget
-            ? CommandChainsEnabled
+            ? CommandChainsExplicitlyRequested
             : CommandChainsEnabledForCurrentRecording;
         if (!commandChainsEnabledForTarget)
             return null;
@@ -670,14 +686,17 @@ public unsafe partial class VulkanRenderer
                  resourcePlanRevision != 0 &&
                  state.ResourcePlanRevision != resourcePlanRevision)
         {
+            // A new resource plan invalidates the old stability history, but it does
+            // not make the new schedule unstable. Build the replacement command-chain
+            // schedule immediately. The old one-frame bypass recorded a complete
+            // inline primary; camera motion then made that primary stale before its
+            // next use and produced a recurring full-frame re-record spike.
             state.ResourcePlanRevision = resourcePlanRevision;
             state.StableObservations = 1;
             state.ScheduledAttemptsForRevision = 0;
             state.ConsecutiveRecordedWithoutReuse = 0;
-            state.ConsecutiveBypasses++;
+            state.ConsecutiveBypasses = 0;
             _commandChainStabilityGuardStates[imageIndex] = state;
-            reason = CommandChainStabilityBypassReason.ResourcePlanRevisionChanged;
-            return true;
         }
 
         state.StableObservations++;
@@ -990,6 +1009,7 @@ public unsafe partial class VulkanRenderer
         FrameOpSignatureHasher frameDataHash = new();
         FrameOpSignatureHasher descriptorGenerationHash = new();
         FrameOpSignatureHasher descriptorSetHash = new();
+        FrameOpSignatureHasher pipelineGenerationHash = new();
         int descriptorSetCount = 0;
         bool hasDescriptorBindings = false;
         for (int i = 0; i < runCount; i++)
@@ -999,6 +1019,7 @@ public unsafe partial class VulkanRenderer
             draws[i] = draw;
             structuralHash.Add(draw.StructuralSignature);
             frameDataHash.Add(draw.FrameDataSignature);
+            pipelineGenerationHash.Add(ResolvePipelineGeneration(drawOp));
 
             // A secondary command buffer may bind a different material descriptor
             // set and graphics program for every draw. Track the complete ordered
@@ -1027,7 +1048,7 @@ public unsafe partial class VulkanRenderer
             resourcePlanRevision,
             unchecked((ulong)targetIdentity),
             unchecked((ulong)targetName.GetHashCode(StringComparison.Ordinal)),
-            ResolvePipelineGeneration(first));
+            pipelineGenerationHash.ToHash());
         RenderPacket packet = RentRenderPacket();
         packet.Reset(
             viewKey,
@@ -2396,7 +2417,40 @@ public unsafe partial class VulkanRenderer
         };
 
     private static ulong ResolvePipelineGeneration(FrameOp op)
-        => unchecked((ulong)op.Context.PipelineIdentity);
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add(op.Context.PipelineIdentity);
+
+        switch (op)
+        {
+            case MeshDrawOp draw:
+                AddProgramGeneration(ref hash, draw.Draw.PreparedProgram);
+                break;
+            case IndirectDrawOp indirect:
+                AddProgramGeneration(ref hash, indirect.Draw.PreparedProgram);
+                AddProgramGeneration(ref hash, indirect.BindlessMaterialTextures?.Program);
+                break;
+            case MeshTaskDispatchIndirectCountOp meshTask:
+                AddProgramGeneration(ref hash, meshTask.BindlessMaterialTextures?.Program);
+                break;
+            case ComputeDispatchOp compute:
+                AddProgramGeneration(ref hash, compute.Program);
+                break;
+            case ComputeDispatchIndirectOp computeIndirect:
+                AddProgramGeneration(ref hash, computeIndirect.Program);
+                break;
+        }
+
+        return hash.ToHash();
+    }
+
+    private static void AddProgramGeneration(
+        ref FrameOpSignatureHasher hash,
+        VkRenderProgram? program)
+    {
+        hash.Add(program?.BindingId ?? 0u);
+        hash.Add(program?.LinkGeneration ?? 0UL);
+    }
 
     private static DescriptorBindingSnapshot CreateDescriptorSnapshot(FrameOp op)
     {

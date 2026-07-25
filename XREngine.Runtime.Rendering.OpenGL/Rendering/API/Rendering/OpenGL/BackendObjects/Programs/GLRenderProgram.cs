@@ -24,6 +24,7 @@ namespace XREngine.Rendering.OpenGL
             private bool _isLinked = false;
             private uint _replacementProgramId;
             private bool _replacementProgramPending;
+            private long _replacementSourceRevisionKey;
             private string? _computeDispatchNotLinkedLogKey;
             private static readonly System.TimeSpan ComputeDispatchNotLinkedLogInterval = System.TimeSpan.FromSeconds(5.0);
             public bool IsLinked
@@ -254,6 +255,7 @@ namespace XREngine.Rendering.OpenGL
                 _lastMaterialUniformSourceLayoutVersion = 0;
                 _replacementProgramId = 0;
                 _replacementProgramPending = false;
+                _replacementSourceRevisionKey = 0;
                 _asyncLinkPhase = EAsyncLinkPhase.Idle;
                 _asyncAttachedShaderIds = null;
                 _asyncLinkedProgramId = 0;

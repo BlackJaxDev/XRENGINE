@@ -88,7 +88,7 @@ public sealed class VkDataBufferParityContractTests
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
 
-        source.ShouldContain("private static MemoryPropertyFlags ResolveMemoryProperties(XRDataBuffer data)");
+        source.ShouldContain("private static MemoryPropertyFlags ResolveMemoryProperties(XRDataBuffer data, ulong byteCount)");
         source.ShouldContain("MemoryPropertyFlags.HostCachedBit");
         source.ShouldContain("EBufferMapRangeFlags.FlushExplicit");
         source.ShouldContain("EBufferMapRangeFlags.InvalidateRange");
@@ -97,7 +97,7 @@ public sealed class VkDataBufferParityContractTests
         source.ShouldContain("_lastUploadRoute = \"SkippedVramBudget\"");
         source.ShouldContain("TracePushSubData(offset, clampedLength, \"immutable-no-dynstore-full-upload\")");
         source.ShouldContain("NormalizeMappedRange(offset, length, out ulong memoryOffset, out ulong mappedLength)");
-        source.ShouldContain("Renderer.FlushBuffer(_vkMemory, memoryOffset, mappedLength)");
+        source.ShouldContain("Renderer.FlushBuffer(_vkBuffer, _vkMemory, memoryOffset, mappedLength)");
         source.ShouldContain("Renderer.InvalidateBuffer(_vkMemory, GetMappedMemoryOffset(0), _bufferSize)");
         source.ShouldContain("_lastUploadRoute = \"DeviceLocalGpuDecompression\"");
         source.ShouldContain("_lastUploadRoute = \"DeviceLocalCompressedFallbackMissingCpuData\"");

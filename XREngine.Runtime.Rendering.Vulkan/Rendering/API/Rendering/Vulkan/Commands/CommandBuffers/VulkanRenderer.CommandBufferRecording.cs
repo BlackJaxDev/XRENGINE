@@ -128,7 +128,7 @@ namespace XREngine.Rendering.Vulkan
                     // EVulkanCpuStage.FrameOpPreparation already measures this hot section.
                     // Interface-returned profiler scopes box their value-type implementation,
                     // so a second profiler scope here would manufacture managed allocations every frame.
-                    ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+                    ops = _renderGraphCompiler.SortFrameOpsCore(ops, CompiledRenderGraph);
                     SplitDynamicUiBatchTextFrameOps(ops, out FrameOp[] staticOps, out dynamicUiBatchTextOps);
                     ops = staticOps;
                     frameOpsSignature = ComputeFrameOpsSignature(ops);
@@ -179,79 +179,98 @@ namespace XREngine.Rendering.Vulkan
                 !hasStaticFrameOps &&
                 HasLastWindowPresentSourceForSwapchainRefresh();
 
+            ulong plannerFrameOpsSignature = hasStaticFrameOps
+                ? frameOpsSignature
+                : dynamicUiBatchTextSignature;
             ulong plannerRevision;
             using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.ResourcePlanning))
             {
-                if (hasStaticFrameOps)
+                bool hasPlannerFrameOps = plannerPreparationOps.Length > 0;
+                if (hasPlannerFrameOps &&
+                    TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                 {
-                    if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
-                    {
-                        recordingDeferredReason = prePlanFailureReason;
-                        FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
-                        return default;
-                    }
+                    recordingDeferredReason = prePlanFailureReason;
+                    FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
+                    return default;
+                }
 
-                    FrameOpContext plannerContext = PrepareResourcePlannerForFrameOps(ops, frameOpsSignature);
-                    if (TryDescribeRecentResourceAllocationFailure(out string postPlanFailureReason))
+                if (hasPlannerFrameOps &&
+                    TryReusePreparedFrameOpResourcePlannerStates(
+                        plannerFrameOpsSignature,
+                        out plannerRevision))
+                {
+                    // Exact clean-frame plan hit. Per-frame buffers are refreshed
+                    // below; the immutable planner, wrapper, and keyed-state work
+                    // remains valid for this frame-op signature.
+                }
+                else
+                {
+                    if (hasStaticFrameOps)
                     {
-                        recordingDeferredReason = postPlanFailureReason;
-                        FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
-                        return default;
-                    }
+                        FrameOpContext plannerContext = PrepareResourcePlannerForFrameOps(ops, frameOpsSignature);
+                        if (TryDescribeRecentResourceAllocationFailure(out string postPlanFailureReason))
+                        {
+                            recordingDeferredReason = postPlanFailureReason;
+                            FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
+                            return default;
+                        }
 
-                    if (!TryRefreshFrameOpResourceWrappers(
+                        if (!TryRefreshFrameOpResourceWrappers(
                             ops,
                             plannerContext,
                             "Vulkan command-chain resource planner refresh",
                             AllowSynchronousResourceUploads,
                             out string refreshFailureReason))
-                    {
-                        recordingDeferredReason = refreshFailureReason;
-                        FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
-                        return default;
+                        {
+                            recordingDeferredReason = refreshFailureReason;
+                            FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
+                            return default;
+                        }
                     }
-                }
-                else if (dynamicUiBatchTextOps.Length > 0)
-                {
-                    if (TryDescribeRecentResourceAllocationFailure(out string preDynamicPlanFailureReason))
+                    else if (dynamicUiBatchTextOps.Length > 0)
                     {
-                        recordingDeferredReason = preDynamicPlanFailureReason;
+                        FrameOpContext plannerContext = PrepareResourcePlannerForFrameOps(
+                            dynamicUiBatchTextOps,
+                            dynamicUiBatchTextSignature);
+                        if (TryDescribeRecentResourceAllocationFailure(out string postDynamicPlanFailureReason))
+                        {
+                            recordingDeferredReason = postDynamicPlanFailureReason;
+                            FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
+                            return default;
+                        }
+
+                        if (!TryRefreshFrameOpResourceWrappers(
+                            dynamicUiBatchTextOps,
+                            plannerContext,
+                            "Vulkan command-chain dynamic UI resource planner refresh",
+                            AllowSynchronousResourceUploads,
+                            out string refreshFailureReason))
+                        {
+                            recordingDeferredReason = refreshFailureReason;
+                            FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
+                            return default;
+                        }
+                    }
+
+                    frameOpResourcePlannerPreparationScope.PublishCurrentState();
+                    plannerRevision = hasStaticFrameOps
+                        ? PrepareFrameOpResourcePlannerStatesForFrameOps(ops, frameOpsSignature)
+                        : dynamicUiBatchTextOps.Length > 0
+                            ? PrepareFrameOpResourcePlannerStatesForFrameOps(dynamicUiBatchTextOps, dynamicUiBatchTextSignature)
+                            : ResourcePlannerRevision;
+                    if (TryDescribeRecentResourceAllocationFailure(out string frameOpPlannerFailureReason))
+                    {
+                        recordingDeferredReason = frameOpPlannerFailureReason;
                         FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
                         return default;
                     }
 
-                    FrameOpContext plannerContext = PrepareResourcePlannerForFrameOps(dynamicUiBatchTextOps, dynamicUiBatchTextSignature);
-                    if (TryDescribeRecentResourceAllocationFailure(out string postDynamicPlanFailureReason))
+                    if (hasPlannerFrameOps)
                     {
-                        recordingDeferredReason = postDynamicPlanFailureReason;
-                        FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
-                        return default;
+                        RememberPreparedFrameOpResourcePlannerStates(
+                            plannerFrameOpsSignature,
+                            plannerRevision);
                     }
-
-                    if (!TryRefreshFrameOpResourceWrappers(
-                        dynamicUiBatchTextOps,
-                        plannerContext,
-                        "Vulkan command-chain dynamic UI resource planner refresh",
-                        AllowSynchronousResourceUploads,
-                        out string refreshFailureReason))
-                    {
-                        recordingDeferredReason = refreshFailureReason;
-                        FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
-                        return default;
-                    }
-                }
-
-                frameOpResourcePlannerPreparationScope.PublishCurrentState();
-                plannerRevision = hasStaticFrameOps
-                    ? PrepareFrameOpResourcePlannerStatesForFrameOps(ops, frameOpsSignature)
-                    : dynamicUiBatchTextOps.Length > 0
-                        ? PrepareFrameOpResourcePlannerStatesForFrameOps(dynamicUiBatchTextOps, dynamicUiBatchTextSignature)
-                        : ResourcePlannerRevision;
-                if (TryDescribeRecentResourceAllocationFailure(out string frameOpPlannerFailureReason))
-                {
-                    recordingDeferredReason = frameOpPlannerFailureReason;
-                    FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
-                    return default;
                 }
             }
 
@@ -1693,10 +1712,13 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
+            FrameOp[] scheduledDynamicUiBatchTextOps = preserveSwapchainForOverlay
+                ? Array.Empty<FrameOp>()
+                : dynamicUiBatchTextOps;
             ulong fastScheduleSignature = ComputeCommandChainFastScheduleSignature(
                 imageIndex,
                 ops,
-                dynamicUiBatchTextOps,
+                scheduledDynamicUiBatchTextOps,
                 plannerRevision);
             if (!TryGetCachedCommandChainSchedule(
                     imageIndex,
@@ -3178,7 +3200,7 @@ namespace XREngine.Rendering.Vulkan
                     // Render graph pass order preserves cross-pass dependencies, while same-pass
                     // compute/barrier/indirect operations stay in enqueue order so GPU-produced
                     // counters are written before the draw commands that consume them.
-                    ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+                    ops = _renderGraphCompiler.SortFrameOpsCore(ops, CompiledRenderGraph);
                 }
 
                 secondaryBuckets = _renderGraphCompiler.BuildSecondaryRecordingBuckets(ops);
@@ -6765,7 +6787,15 @@ namespace XREngine.Rendering.Vulkan
                             if (clear.ClearDepth || clear.ClearStencil)
                             {
                                 // Emit depth/stencil clear only â€” strip the color clear.
-                                RecordClearOp(commandBuffer, imageIndex, clear with { ClearColor = false }, activeRenderArea, in swapchainTarget, clearRenderLayerCount, clearRenderViewMask);
+                                RecordClearOp(
+                                    commandBuffer,
+                                    imageIndex,
+                                    clear,
+                                    activeRenderArea,
+                                    in swapchainTarget,
+                                    clearRenderLayerCount,
+                                    clearRenderViewMask,
+                                    suppressColorClear: true);
                                 clearRecorded = true;
                             }
                             // else: pure color clear on swapchain after first pass â†’ skip entirely
@@ -7416,9 +7446,11 @@ namespace XREngine.Rendering.Vulkan
             Rect2D activeRenderArea,
             in SwapchainRecordingTarget swapchainTarget,
             uint activeRenderLayerCount = 0u,
-            uint activeRenderViewMask = 0u)
+            uint activeRenderViewMask = 0u,
+            bool suppressColorClear = false)
         {
             _ = imageIndex;
+            bool clearColor = op.ClearColor && !suppressColorClear;
 
             Extent2D targetExtent = op.Target is null
                 ? (swapchainTarget.IsValid ? swapchainTarget.Extent : swapChainExtent)
@@ -7472,7 +7504,7 @@ namespace XREngine.Rendering.Vulkan
                 ClearAttachment* attachments = stackalloc ClearAttachment[2];
                 uint count = 0;
 
-                if (op.ClearColor)
+                if (clearColor)
                 {
                     attachments[count++] = new ClearAttachment
                     {
@@ -7535,7 +7567,7 @@ namespace XREngine.Rendering.Vulkan
 
             uint maxAttachments = Math.Max(vkFrameBuffer.AttachmentCount + 1u, 2u);
             ClearAttachment* fboAttachments = stackalloc ClearAttachment[(int)maxAttachments];
-            uint fboCount = vkFrameBuffer.WriteClearAttachments(fboAttachments, op.ClearColor, op.ClearDepth, op.ClearStencil);
+            uint fboCount = vkFrameBuffer.WriteClearAttachments(fboAttachments, clearColor, op.ClearDepth, op.ClearStencil);
             string targetName = op.Target.Name ?? "<unnamed>";
             if (DeferredLightingDiagnostics.Enabled && DeferredLightingDiagnostics.IsWatchedFrameBufferName(targetName))
             {
@@ -7545,7 +7577,7 @@ namespace XREngine.Rendering.Vulkan
                     "[DeferredLightingDiag][CmdClearAttachments] target='{0}' count={1} color={2} depth={3} stencil={4} rect=({5},{6},{7},{8})",
                     targetName,
                     fboCount,
-                    op.ClearColor,
+                    clearColor,
                     op.ClearDepth,
                     op.ClearStencil,
                     clearArea.Offset.X,
@@ -8704,70 +8736,91 @@ namespace XREngine.Rendering.Vulkan
             AccessFlags srcAccessLocal = 0;
             AccessFlags dstAccessLocal = 0;
 
-            void Merge(bool condition, PipelineStageFlags srcStage, PipelineStageFlags dstStage, AccessFlags srcAcc, AccessFlags dstAcc)
-            {
-                if (!condition)
-                    return;
-
-                srcStagesLocal |= srcStage;
-                dstStagesLocal |= dstStage;
-                srcAccessLocal |= srcAcc;
-                dstAccessLocal |= dstAcc;
-            }
-
-            Merge(mask.HasFlag(EMemoryBarrierMask.VertexAttribArray),
+            MergeBarrierScope((mask & EMemoryBarrierMask.VertexAttribArray) != 0,
                 PipelineStageFlags.TransferBit | PipelineStageFlags.VertexInputBit,
                 PipelineStageFlags.VertexInputBit,
                 AccessFlags.TransferWriteBit | AccessFlags.VertexAttributeReadBit,
-                AccessFlags.VertexAttributeReadBit);
+                AccessFlags.VertexAttributeReadBit,
+                ref srcStagesLocal,
+                ref dstStagesLocal,
+                ref srcAccessLocal,
+                ref dstAccessLocal);
 
-            Merge(mask.HasFlag(EMemoryBarrierMask.ElementArray),
+            MergeBarrierScope((mask & EMemoryBarrierMask.ElementArray) != 0,
                 PipelineStageFlags.TransferBit | PipelineStageFlags.VertexInputBit,
                 PipelineStageFlags.VertexInputBit,
                 AccessFlags.TransferWriteBit | AccessFlags.IndexReadBit,
-                AccessFlags.IndexReadBit);
+                AccessFlags.IndexReadBit,
+                ref srcStagesLocal,
+                ref dstStagesLocal,
+                ref srcAccessLocal,
+                ref dstAccessLocal);
 
-            Merge(mask.HasFlag(EMemoryBarrierMask.Uniform),
+            MergeBarrierScope((mask & EMemoryBarrierMask.Uniform) != 0,
                 PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
                 PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
                 AccessFlags.ShaderReadBit,
-                AccessFlags.UniformReadBit);
+                AccessFlags.UniformReadBit,
+                ref srcStagesLocal,
+                ref dstStagesLocal,
+                ref srcAccessLocal,
+                ref dstAccessLocal);
 
-            Merge(mask.HasFlag(EMemoryBarrierMask.TextureFetch) || mask.HasFlag(EMemoryBarrierMask.TextureUpdate),
+            MergeBarrierScope((mask & (EMemoryBarrierMask.TextureFetch | EMemoryBarrierMask.TextureUpdate)) != 0,
                 PipelineStageFlags.TransferBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
                 PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
                 AccessFlags.TransferWriteBit | AccessFlags.ShaderReadBit,
-                AccessFlags.ShaderReadBit);
+                AccessFlags.ShaderReadBit,
+                ref srcStagesLocal,
+                ref dstStagesLocal,
+                ref srcAccessLocal,
+                ref dstAccessLocal);
 
-            Merge(mask.HasFlag(EMemoryBarrierMask.ShaderGlobalAccess) || mask.HasFlag(EMemoryBarrierMask.ShaderImageAccess) || mask.HasFlag(EMemoryBarrierMask.ShaderStorage),
+            MergeBarrierScope((mask & (EMemoryBarrierMask.ShaderGlobalAccess | EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.ShaderStorage)) != 0,
                 PipelineStageFlags.AllGraphicsBit | PipelineStageFlags.ComputeShaderBit,
                 PipelineStageFlags.AllGraphicsBit | PipelineStageFlags.ComputeShaderBit,
                 AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
-                AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit);
+                AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
+                ref srcStagesLocal,
+                ref dstStagesLocal,
+                ref srcAccessLocal,
+                ref dstAccessLocal);
 
-            Merge(mask.HasFlag(EMemoryBarrierMask.Command),
+            MergeBarrierScope((mask & EMemoryBarrierMask.Command) != 0,
                 PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.TransferBit,
                 PipelineStageFlags.DrawIndirectBit,
                 AccessFlags.TransferWriteBit | AccessFlags.ShaderWriteBit,
-                AccessFlags.IndirectCommandReadBit);
+                AccessFlags.IndirectCommandReadBit,
+                ref srcStagesLocal,
+                ref dstStagesLocal,
+                ref srcAccessLocal,
+                ref dstAccessLocal);
 
-            Merge(mask.HasFlag(EMemoryBarrierMask.PixelBuffer) || mask.HasFlag(EMemoryBarrierMask.BufferUpdate),
+            MergeBarrierScope((mask & (EMemoryBarrierMask.PixelBuffer | EMemoryBarrierMask.BufferUpdate)) != 0,
                 PipelineStageFlags.TransferBit,
                 PipelineStageFlags.TransferBit | PipelineStageFlags.VertexInputBit,
                 AccessFlags.TransferReadBit | AccessFlags.TransferWriteBit,
-                AccessFlags.TransferReadBit | AccessFlags.TransferWriteBit | AccessFlags.VertexAttributeReadBit);
+                AccessFlags.TransferReadBit | AccessFlags.TransferWriteBit | AccessFlags.VertexAttributeReadBit,
+                ref srcStagesLocal,
+                ref dstStagesLocal,
+                ref srcAccessLocal,
+                ref dstAccessLocal);
 
-            Merge(mask.HasFlag(EMemoryBarrierMask.Framebuffer),
+            MergeBarrierScope((mask & EMemoryBarrierMask.Framebuffer) != 0,
                 PipelineStageFlags.ColorAttachmentOutputBit | PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
                 PipelineStageFlags.ColorAttachmentOutputBit | PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
                 AccessFlags.ColorAttachmentWriteBit | AccessFlags.DepthStencilAttachmentWriteBit,
-                AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit | AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit);
+                AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit | AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit,
+                ref srcStagesLocal,
+                ref dstStagesLocal,
+                ref srcAccessLocal,
+                ref dstAccessLocal);
 
-            if (mask.HasFlag(EMemoryBarrierMask.TransformFeedback))
+            if ((mask & EMemoryBarrierMask.TransformFeedback) != 0)
             {
                 if (SupportsTransformFeedback)
                 {
-                    Merge(
+                    MergeBarrierScope(
                         true,
                         PipelineStageFlags.TransformFeedbackBitExt,
                         PipelineStageFlags.TransformFeedbackBitExt |
@@ -8780,48 +8833,72 @@ namespace XREngine.Rendering.Vulkan
                         AccessFlags.TransformFeedbackWriteBitExt |
                             AccessFlags.TransformFeedbackCounterWriteBitExt,
                         AccessFlags.TransformFeedbackWriteBitExt |
-                            AccessFlags.TransformFeedbackCounterReadBitExt |
+                        AccessFlags.TransformFeedbackCounterReadBitExt |
                             AccessFlags.VertexAttributeReadBit |
                             AccessFlags.ShaderReadBit |
                             AccessFlags.TransferReadBit |
-                            AccessFlags.IndirectCommandReadBit);
+                            AccessFlags.IndirectCommandReadBit,
+                        ref srcStagesLocal,
+                        ref dstStagesLocal,
+                        ref srcAccessLocal,
+                        ref dstAccessLocal);
                 }
                 else
                 {
-                    Merge(
+                    MergeBarrierScope(
                         true,
                         PipelineStageFlags.AllCommandsBit,
                         PipelineStageFlags.AllCommandsBit,
                         AccessFlags.MemoryWriteBit,
-                        AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
+                        AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+                        ref srcStagesLocal,
+                        ref dstStagesLocal,
+                        ref srcAccessLocal,
+                        ref dstAccessLocal);
                 }
             }
 
-            Merge(mask.HasFlag(EMemoryBarrierMask.AtomicCounter),
+            MergeBarrierScope((mask & EMemoryBarrierMask.AtomicCounter) != 0,
                 PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
                 PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
                 AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
-                AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit);
+                AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
+                ref srcStagesLocal,
+                ref dstStagesLocal,
+                ref srcAccessLocal,
+                ref dstAccessLocal);
 
-            Merge(mask.HasFlag(EMemoryBarrierMask.ClientMappedBuffer),
+            MergeBarrierScope((mask & EMemoryBarrierMask.ClientMappedBuffer) != 0,
                 PipelineStageFlags.HostBit,
                 PipelineStageFlags.TransferBit | PipelineStageFlags.VertexInputBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
                 AccessFlags.HostWriteBit,
-                AccessFlags.TransferReadBit | AccessFlags.VertexAttributeReadBit | AccessFlags.UniformReadBit | AccessFlags.ShaderReadBit);
+                AccessFlags.TransferReadBit | AccessFlags.VertexAttributeReadBit | AccessFlags.UniformReadBit | AccessFlags.ShaderReadBit,
+                ref srcStagesLocal,
+                ref dstStagesLocal,
+                ref srcAccessLocal,
+                ref dstAccessLocal);
 
-            Merge(mask.HasFlag(EMemoryBarrierMask.GpuReadback),
+            MergeBarrierScope((mask & EMemoryBarrierMask.GpuReadback) != 0,
                 PipelineStageFlags.TransferBit,
                 PipelineStageFlags.HostBit,
                 AccessFlags.TransferWriteBit,
-                AccessFlags.HostReadBit);
+                AccessFlags.HostReadBit,
+                ref srcStagesLocal,
+                ref dstStagesLocal,
+                ref srcAccessLocal,
+                ref dstAccessLocal);
 
             // Query buffers: AllCommandsBit is justified per Vulkan spec because
             // queries can be written by any pipeline stage.
-            Merge(mask.HasFlag(EMemoryBarrierMask.QueryBuffer),
+            MergeBarrierScope((mask & EMemoryBarrierMask.QueryBuffer) != 0,
                 PipelineStageFlags.AllCommandsBit,
                 PipelineStageFlags.AllCommandsBit,
                 AccessFlags.MemoryWriteBit,
-                AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
+                AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+                ref srcStagesLocal,
+                ref dstStagesLocal,
+                ref srcAccessLocal,
+                ref dstAccessLocal);
 
             if (srcStagesLocal == 0)
                 srcStagesLocal = PipelineStageFlags.AllCommandsBit;
@@ -8836,6 +8913,26 @@ namespace XREngine.Rendering.Vulkan
             dstStages = dstStagesLocal;
             srcAccess = srcAccessLocal;
             dstAccess = dstAccessLocal;
+        }
+
+        private static void MergeBarrierScope(
+            bool condition,
+            PipelineStageFlags srcStage,
+            PipelineStageFlags dstStage,
+            AccessFlags srcAccess,
+            AccessFlags dstAccess,
+            ref PipelineStageFlags mergedSrcStages,
+            ref PipelineStageFlags mergedDstStages,
+            ref AccessFlags mergedSrcAccess,
+            ref AccessFlags mergedDstAccess)
+        {
+            if (!condition)
+                return;
+
+            mergedSrcStages |= srcStage;
+            mergedDstStages |= dstStage;
+            mergedSrcAccess |= srcAccess;
+            mergedDstAccess |= dstAccess;
         }
 
         /// <summary>
@@ -9565,8 +9662,9 @@ namespace XREngine.Rendering.Vulkan
             if (plannedBarriers is null || plannedBarriers.Count == 0)
                 return;
 
-            foreach (var planned in plannedBarriers)
+            for (int plannedIndex = 0; plannedIndex < plannedBarriers.Count; plannedIndex++)
             {
+                VulkanBarrierPlanner.PlannedImageBarrier planned = plannedBarriers[plannedIndex];
                 planned.Group.EnsureAllocated(this);
                 if (skipDesktopSwapchainImages && IsDesktopSwapchainImage(planned.Group.Image))
                     continue;
@@ -9677,8 +9775,9 @@ namespace XREngine.Rendering.Vulkan
             if (plannedBarriers is null || plannedBarriers.Count == 0)
                 return;
 
-            foreach (VulkanBarrierPlanner.PlannedBufferBarrier planned in plannedBarriers)
+            for (int plannedIndex = 0; plannedIndex < plannedBarriers.Count; plannedIndex++)
             {
+                VulkanBarrierPlanner.PlannedBufferBarrier planned = plannedBarriers[plannedIndex];
                 if (!TryResolveTrackedBuffer(planned.ResourceName, out Silk.NET.Vulkan.Buffer buffer, out ulong size) || buffer.Handle == 0)
                     continue;
 

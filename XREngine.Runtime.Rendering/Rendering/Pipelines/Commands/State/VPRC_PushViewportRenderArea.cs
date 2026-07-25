@@ -58,8 +58,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 res = renderer.MapWindowPresentationRegionToBackbuffer(res);
             }
 
-            ActivePipelineInstance.RenderState.PushRenderArea(res);
-            ActivePipelineInstance.RenderState.PushCropArea(res);
+            ActivePipelineInstance.RenderState.PushRenderAreaState(res);
+            ActivePipelineInstance.RenderState.PushCropAreaState(res);
         }
 
         internal static BoundingRectangle ResolveRenderArea(

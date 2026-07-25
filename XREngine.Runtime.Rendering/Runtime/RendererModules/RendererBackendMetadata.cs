@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace XREngine.Rendering;
 
 /// <summary>
@@ -12,7 +14,13 @@ public sealed record RendererBackendMetadata
         Version version,
         RendererBackendCapabilities capabilities,
         RendererBackendReloadLimitations reloadLimitations,
-        string? reloadLimitationDescription = null)
+        string? reloadLimitationDescription = null,
+        int abiVersion = RendererBackendAbi.CurrentVersion,
+        long generation = 0,
+        string? buildHash = null,
+        string? targetFramework = null,
+        Architecture? processArchitecture = null,
+        string? entryPointTypeName = null)
     {
         if (id.Value.Length == 0)
             throw new ArgumentException("A renderer backend module must have a non-empty stable identifier.", nameof(id));
@@ -21,6 +29,10 @@ public sealed record RendererBackendMetadata
 
         ArgumentException.ThrowIfNullOrWhiteSpace(displayName);
         ArgumentNullException.ThrowIfNull(version);
+        if (abiVersion <= 0)
+            throw new ArgumentOutOfRangeException(nameof(abiVersion));
+        if (generation < 0)
+            throw new ArgumentOutOfRangeException(nameof(generation));
 
         if (reloadLimitations != RendererBackendReloadLimitations.None &&
             string.IsNullOrWhiteSpace(reloadLimitationDescription))
@@ -37,6 +49,12 @@ public sealed record RendererBackendMetadata
         Capabilities = capabilities;
         ReloadLimitations = reloadLimitations;
         ReloadLimitationDescription = reloadLimitationDescription;
+        AbiVersion = abiVersion;
+        Generation = generation;
+        BuildHash = buildHash ?? string.Empty;
+        TargetFramework = targetFramework ?? string.Empty;
+        ProcessArchitecture = processArchitecture ?? RendererBackendModuleIdentity.ProcessArchitecture;
+        EntryPointTypeName = entryPointTypeName ?? string.Empty;
     }
 
     public RendererBackendId Id { get; }
@@ -53,9 +71,37 @@ public sealed record RendererBackendMetadata
 
     public string? ReloadLimitationDescription { get; }
 
+    public int AbiVersion { get; }
+
+    public long Generation { get; }
+
+    public string BuildHash { get; }
+
+    public string TargetFramework { get; }
+
+    public Architecture ProcessArchitecture { get; }
+
+    public string EntryPointTypeName { get; }
+
     /// <summary>
     /// Returns whether every requested capability is declared by this module.
     /// </summary>
     public bool Supports(RendererBackendCapabilities requiredCapabilities)
         => (Capabilities & requiredCapabilities) == requiredCapabilities;
+
+    public RendererBackendMetadata WithGeneration(long generation)
+        => new(
+            Id,
+            GraphicsApi,
+            DisplayName,
+            Version,
+            Capabilities,
+            ReloadLimitations,
+            ReloadLimitationDescription,
+            AbiVersion,
+            generation,
+            BuildHash,
+            TargetFramework,
+            ProcessArchitecture,
+            EntryPointTypeName);
 }

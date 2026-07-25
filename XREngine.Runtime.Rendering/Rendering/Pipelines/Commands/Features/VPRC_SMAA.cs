@@ -455,21 +455,15 @@ void main()
 
     private bool TryResolvePassIndex(string passName, out int passIndex)
     {
-        var metadata = ParentPipeline?.PassMetadata;
-        if (metadata is not { Count: > 0 } renderPasses)
+        RenderPipeline? pipeline = ParentPipeline;
+        if (pipeline?.PassMetadata is not { Count: > 0 })
         {
             passIndex = int.MinValue;
             return true;
         }
 
-        foreach (var match in renderPasses)
-        {
-            if (string.Equals(match.Name, passName, StringComparison.OrdinalIgnoreCase))
-            {
-                passIndex = match.PassIndex;
-                return true;
-            }
-        }
+        if (pipeline.TryGetRenderPassIndex(passName, out passIndex))
+            return true;
 
         passIndex = int.MinValue;
         Debug.RenderingWarningEvery(
@@ -709,13 +703,17 @@ void main()
             return frameBuffer is not null;
         }
 
-        foreach (XRFrameBuffer candidate in instance.Resources.EnumerateFrameBufferInstances())
+        XRFrameBuffer[] frameBuffers = instance.Resources.GetFrameBufferInstanceSnapshot();
+        for (int frameBufferIndex = 0; frameBufferIndex < frameBuffers.Length; ++frameBufferIndex)
         {
+            XRFrameBuffer candidate = frameBuffers[frameBufferIndex];
             if (candidate.Targets is null)
                 continue;
 
-            foreach (var (target, attachment, _, _) in candidate.Targets)
+            var targets = candidate.Targets;
+            for (int targetIndex = 0; targetIndex < targets.Length; ++targetIndex)
             {
+                var (target, attachment, _, _) = targets[targetIndex];
                 if (attachment is < EFrameBufferAttachment.ColorAttachment0 or > EFrameBufferAttachment.ColorAttachment7)
                     continue;
 

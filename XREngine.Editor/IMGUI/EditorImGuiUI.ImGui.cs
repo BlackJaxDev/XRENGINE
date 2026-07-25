@@ -64,6 +64,7 @@ public static partial class EditorImGuiUI
         private static bool _showStatePanel;
         private static bool _showPlayerCameras;
         private static bool _showRenderPipelineGraph;
+        private static bool _showRendererDevelopment;
         private static bool _showShaderGraphPanel;
         private static int _probePreviewLayer;
         private static bool _showHierarchy;
@@ -726,6 +727,13 @@ public static partial class EditorImGuiUI
                 using (Engine.Profiler.Start("UI.DrawRenderPipelineGraphPanel"))
                     DrawRenderPipelineGraphPanel();
             }
+            if (_showRendererDevelopment)
+            {
+                using (Engine.Profiler.Start("UI.DrawRendererDevelopmentPanel"))
+                    DrawRendererDevelopmentPanel();
+            }
+
+            DrawRendererReloadOverlay();
             if (_showShaderGraphPanel)
             {
                 using (Engine.Profiler.Start("UI.DrawShaderGraphPanel"))
@@ -1141,9 +1149,8 @@ public static partial class EditorImGuiUI
         private static void SuppressUnexpectedImGuiDebugWindows()
         {
             // Some ImGui backends/sample layers can create an always-on "Debug" window.
-            // We don't want that in the editor UI.
-            //
-            // We use reflection so this remains tolerant of ImGui.NET version differences.
+            // Use the pinned ImGui.NET API directly. Reflecting over every ImGui method
+            // for both names on every frame dominated editor UI allocation and CPU time.
             TryHideImGuiWindowByName("Debug");
             TryHideImGuiWindowByName("Debug##Default");
         }
@@ -1152,55 +1159,8 @@ public static partial class EditorImGuiUI
         {
             try
             {
-                var imguiType = typeof(ImGui);
-
-                // Prefer collapsing; if the window is undocked this effectively removes it.
-                var setCollapsed = imguiType.GetMethods(BindingFlags.Public | BindingFlags.Static)
-                    .FirstOrDefault(m =>
-                    {
-                        if (!string.Equals(m.Name, "SetWindowCollapsed", StringComparison.Ordinal))
-                            return false;
-                        var p = m.GetParameters();
-                        return p.Length >= 2 && p[0].ParameterType == typeof(string) && p[1].ParameterType == typeof(bool);
-                    });
-
-                if (setCollapsed is not null)
-                {
-                    var parameters = setCollapsed.GetParameters();
-                    object?[]? args = parameters.Length switch
-                    {
-                        2 => [windowName, true],
-                        3 => [windowName, true, ImGuiCond.Always],
-                        _ => null
-                    };
-
-                    if (args is not null)
-                        setCollapsed.Invoke(null, args);
-                }
-
-                // Fallback: move it far off-screen (helps if collapsing isn't supported).
-                var setPos = imguiType.GetMethods(BindingFlags.Public | BindingFlags.Static)
-                    .FirstOrDefault(m =>
-                    {
-                        if (!string.Equals(m.Name, "SetWindowPos", StringComparison.Ordinal))
-                            return false;
-                        var p = m.GetParameters();
-                        return p.Length >= 2 && p[0].ParameterType == typeof(string) && p[1].ParameterType == typeof(Vector2);
-                    });
-
-                if (setPos is not null)
-                {
-                    var parameters = setPos.GetParameters();
-                    object?[]? args = parameters.Length switch
-                    {
-                        2 => [windowName, new Vector2(-100000f, -100000f)],
-                        3 => [windowName, new Vector2(-100000f, -100000f), ImGuiCond.Always],
-                        _ => null
-                    };
-
-                    if (args is not null)
-                        setPos.Invoke(null, args);
-                }
+                ImGui.SetWindowCollapsed(windowName, true, ImGuiCond.Always);
+                ImGui.SetWindowPos(windowName, new Vector2(-100000f, -100000f), ImGuiCond.Always);
             }
             catch
             {
@@ -1398,6 +1358,7 @@ public static partial class EditorImGuiUI
                 ImGui.Separator();
                 ImGui.MenuItem("Console", null, ref _showConsole);
                 ImGui.MenuItem("Render Pipeline Graph", null, ref _showRenderPipelineGraph);
+                ImGui.MenuItem("Renderer Development", null, ref _showRendererDevelopment);
                 ImGui.MenuItem("Engine State", null, ref _showStatePanel);
                 ImGui.MenuItem("Player Cameras", null, ref _showPlayerCameras);
                 DrawProfilerMenuItems();
@@ -1443,6 +1404,9 @@ public static partial class EditorImGuiUI
 
                 if (ImGui.MenuItem("Shader Graph Builder"))
                     _showShaderGraphPanel = true;
+
+                if (ImGui.MenuItem("Renderer Development"))
+                    _showRendererDevelopment = true;
 
                 ImGui.EndMenu();
             }

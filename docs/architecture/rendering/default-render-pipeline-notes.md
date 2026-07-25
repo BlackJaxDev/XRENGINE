@@ -677,3 +677,38 @@ Light-probe cubemap faces use `RenderCapturePolicy.LightProbe`. Cubemap mip
 generation and cubemap-to-octahedral, irradiance, and prefilter work happen only
 after face capture through explicit `XRQuadFrameBuffer` fullscreen passes; they
 are not part of the scene-capture command chain.
+
+---
+
+## 31. Steady-State Performance Contract
+
+**Rule:** Performance acceptance for the production renderer must use
+`DefaultRenderPipeline`. `DebugOpaque` is a diagnostic isolation path, not a
+performance fallback or shipping configuration.
+
+The default pipeline's clean-frame path follows these invariants:
+
+- Stable framebuffer, buffer, pass-name, and output-manifest snapshots retain
+  their backing storage and change revision only when their contents change.
+- Vulkan resource planning and command-chain lowering reuse exact installed
+  plans. A real resource revision installs its replacement schedule immediately
+  instead of injecting a one-frame inline-primary fallback.
+- Frame operations, mesh draw captures, binding snapshots, uniform arrays, and
+  descriptor-update scratch storage are frame-bounded pools or retained
+  growth-only containers. Per-frame heap allocation in collection, submission,
+  recording, and present paths is a bug.
+- The Forward+ local-light culling pass exits before resolving textures,
+  buffers, or dispatch state when the scene has no point or spot lights.
+- Generated Vulkan mesh-program identity is rebuilt only when material,
+  shader, vertex-layout, renderer-version, or feature-axis state changes.
+  Camera motion alone must hit the generated-program state cache.
+- CPU component timing remains disabled by default. A one-shot CPU profiler
+  dump may enable capture temporarily, but must restore the previous disabled
+  state so the diagnostic does not become the workload being measured.
+
+Normal camera motion may refresh camera/model uniform data and re-record an
+affected secondary when visibility genuinely changes. It must not rebuild the
+entire resource plan, regenerate shader-program identities, or re-record the
+desktop primary. Deliberately discontinuous camera jumps can still cause
+bounded structural work when they expose a substantially different visible or
+shadow set.
