@@ -11,6 +11,45 @@ public sealed partial class XRRenderPipelineInstance
 {
     public class RenderingState : IRuntimeRenderCommandExecutionState
     {
+        private static readonly Action<object?> PopMainAttributesAction =
+            static state => ((RenderingState)state!).PopMainAttributes();
+        private static readonly Action<object?> PopDirectionalCascadeLayeredShadowPassAction =
+            static state => ((RenderingState)state!).PopDirectionalCascadeLayeredShadowPass();
+        private static readonly Action<object?> PopPointLightLayeredShadowPassAction =
+            static state => ((RenderingState)state!).PopPointLightLayeredShadowPass();
+        private static readonly Action<object?> PopRenderingCameraAction =
+            static state => ((RenderingState)state!).PopRenderingCamera();
+        private static readonly Action<object?> PopRenderAreaAction =
+            static state => ((RenderingState)state!).PopRenderArea();
+        private static readonly Action<object?> PopCropAreaAction =
+            static state => ((RenderingState)state!).PopCropArea();
+        private static readonly Action<object?> PopIndexedViewportScissorsAction =
+            static state => ((RenderingState)state!).PopIndexedViewportScissors();
+        private static readonly Action<object?> PopRenderTargetBindingAction =
+            static state => ((RenderingState)state!).PopRenderTargetBinding();
+        private static readonly Action<object?> PopOverrideMaterialAction =
+            static state => ((RenderingState)state!).PopOverrideMaterial();
+        private static readonly Action<object?> PopTextureBindingAction =
+            static state => ((RenderingState)state!).PopTextureBinding();
+        private static readonly Action<object?> PopBufferBindingAction =
+            static state => ((RenderingState)state!).PopBufferBinding();
+        private static readonly Action<object?> PopShaderGlobalsAction =
+            static state => ((RenderingState)state!).PopShaderGlobals();
+        private static readonly Action<object?> PopProgramBindingsAction =
+            static state => ((RenderingState)state!).PopProgramBindings();
+        private static readonly Action<object?> PopUseDepthNormalMaterialVariantsAction =
+            static state => ((RenderingState)state!).PopUseDepthNormalMaterialVariants();
+        private static readonly Action<object?> PopUnjitteredProjectionAction =
+            static state => ((RenderingState)state!).PopUnjitteredProjection();
+        private static readonly Action<object?> PopForceShaderPipelinesAction =
+            static state => ((RenderingState)state!).PopForceShaderPipelines();
+        private static readonly Action<object?> PopForceGeneratedVertexProgramAction =
+            static state => ((RenderingState)state!).PopForceGeneratedVertexProgram();
+        private static readonly Action<object?> PopViewportAction =
+            static state => ((RenderingState)state!).PopViewport();
+        private static readonly Action<object?> PopRenderingSceneAction =
+            static state => ((RenderingState)state!).PopRenderingScene();
+
         /// <summary>
         /// The viewport being rendered to.
         /// May be null if rendering directly to a framebuffer.
@@ -201,7 +240,7 @@ public sealed partial class XRRenderPipelineInstance
             // here would let a collection viewport leak into an unrelated mesh draw.
             _mainAttributeRenderAreaPushed.Push(applyRenderArea && PushInitialMainRenderArea(viewport, target));
 
-            return StateObject.New(PopMainAttributes);
+            return StateObject.New(PopMainAttributesAction, this);
         }
 
         public void PopMainAttributes()
@@ -336,7 +375,7 @@ public sealed partial class XRRenderPipelineInstance
             DirectionalCascadeShadowLayerCount = Math.Clamp(cascadeMatrices.Length, 0, _directionalCascadeShadowMatrices.Length);
             for (int i = 0; i < DirectionalCascadeShadowLayerCount; i++)
                 _directionalCascadeShadowMatrices[i] = cascadeMatrices[i];
-            return StateObject.New(PopDirectionalCascadeLayeredShadowPass);
+            return StateObject.New(PopDirectionalCascadeLayeredShadowPassAction, this);
         }
 
         public bool TryGetDirectionalCascadeShadowMatrix(int index, out Matrix4x4 matrix)
@@ -382,7 +421,7 @@ public sealed partial class XRRenderPipelineInstance
                 _pointLightShadowFaceMatrices[i] = faceMatrices[i];
                 _pointLightShadowFaceIndices[i] = i < faceIndices.Length ? faceIndices[i] : i;
             }
-            return StateObject.New(PopPointLightLayeredShadowPass);
+            return StateObject.New(PopPointLightLayeredShadowPassAction, this);
         }
 
         public bool TryGetPointLightShadowFaceMatrix(int index, out Matrix4x4 matrix)
@@ -430,9 +469,11 @@ public sealed partial class XRRenderPipelineInstance
         private readonly Stack<XRCamera?> _renderingCameras = new();
         public StateObject PushRenderingCamera(XRCamera? camera)
         {
-            _renderingCameras.Push(camera);
-            return StateObject.New(PopRenderingCamera);
+            PushRenderingCameraState(camera);
+            return StateObject.New(PopRenderingCameraAction, this);
         }
+        internal void PushRenderingCameraState(XRCamera? camera)
+            => _renderingCameras.Push(camera);
         public void PopRenderingCamera()
             => _renderingCameras.Pop();
 
@@ -445,9 +486,13 @@ public sealed partial class XRRenderPipelineInstance
             => PushRenderArea(new BoundingRectangle(x, y, width, height));
         public StateObject PushRenderArea(BoundingRectangle region)
         {
+            PushRenderAreaState(region);
+            return StateObject.New(PopRenderAreaAction, this);
+        }
+        internal void PushRenderAreaState(BoundingRectangle region)
+        {
             _renderRegionStack.Push(region);
             AbstractRenderer.Current?.SetRenderArea(region);
-            return StateObject.New(PopRenderArea);
         }
         public void PopRenderArea()
         {
@@ -470,10 +515,14 @@ public sealed partial class XRRenderPipelineInstance
             => PushCropArea(new BoundingRectangle(x, y, width, height));
         public StateObject PushCropArea(BoundingRectangle region)
         {
+            PushCropAreaState(region);
+            return StateObject.New(PopCropAreaAction, this);
+        }
+        internal void PushCropAreaState(BoundingRectangle region)
+        {
             _cropRegionStack.Push(region);
             AbstractRenderer.Current?.SetCroppingEnabled(true);
             AbstractRenderer.Current?.CropRenderArea(region);
-            return StateObject.New(PopCropArea);
         }
         public void PopCropArea()
         {
@@ -494,11 +543,11 @@ public sealed partial class XRRenderPipelineInstance
             if (count <= 0 || AbstractRenderer.Current?.SetIndexedViewportScissors(viewports[..count], scissors[..count]) != true)
             {
                 _indexedViewportScissorCounts.Push(0);
-                return StateObject.New(PopIndexedViewportScissors);
+                return StateObject.New(PopIndexedViewportScissorsAction, this);
             }
 
             _indexedViewportScissorCounts.Push(count);
-            return StateObject.New(PopIndexedViewportScissors);
+            return StateObject.New(PopIndexedViewportScissorsAction, this);
         }
 
         private void PopIndexedViewportScissors()
@@ -536,7 +585,7 @@ public sealed partial class XRRenderPipelineInstance
         public StateObject PushRenderTargetBinding(string name, XRFrameBuffer? frameBuffer, bool write)
         {
             _renderTargetBindings.Push(new ScopedRenderTargetBinding(name, frameBuffer, write));
-            return StateObject.New(PopRenderTargetBinding);
+            return StateObject.New(PopRenderTargetBindingAction, this);
         }
 
         public void PopRenderTargetBinding()
@@ -553,21 +602,22 @@ public sealed partial class XRRenderPipelineInstance
         private readonly Stack<XRMaterial> _overrideMaterials = new();
         public StateObject PushOverrideMaterial(XRMaterial material)
         {
-            _overrideMaterials.Push(material);
-            return StateObject.New(PopOverrideMaterial);
+            PushOverrideMaterialState(material);
+            return StateObject.New(PopOverrideMaterialAction, this);
         }
+        internal void PushOverrideMaterialState(XRMaterial material)
+            => _overrideMaterials.Push(material);
         public void PopOverrideMaterial()
         {
             if (_overrideMaterials.Count > 0)
                 _overrideMaterials.Pop();
         }
 
-        public sealed class ScopedTextureBinding
+        public readonly record struct ScopedTextureBinding(
+            string TextureName,
+            string SamplerName,
+            int TextureUnit)
         {
-            public required string TextureName { get; init; }
-            public required string SamplerName { get; init; }
-            public required int TextureUnit { get; init; }
-
             public void Apply(XRRenderPipelineInstance pipeline, XRRenderProgram program)
             {
                 if (string.IsNullOrWhiteSpace(TextureName) || string.IsNullOrWhiteSpace(SamplerName))
@@ -578,11 +628,10 @@ public sealed partial class XRRenderPipelineInstance
             }
         }
 
-        public sealed class ScopedBufferBinding
+        public readonly record struct ScopedBufferBinding(
+            string BufferName,
+            uint BindingLocation)
         {
-            public required string BufferName { get; init; }
-            public required uint BindingLocation { get; init; }
-
             public void Apply(XRRenderPipelineInstance pipeline, XRRenderProgram program)
             {
                 if (string.IsNullOrWhiteSpace(BufferName))
@@ -625,10 +674,8 @@ public sealed partial class XRRenderPipelineInstance
             }
         }
 
-        public sealed class ScopedProgramBindings
+        public readonly record struct ScopedProgramBindings(Action<XRRenderProgram>? ApplyUniforms)
         {
-            public Action<XRRenderProgram>? ApplyUniforms { get; init; }
-
             public void Apply(XRRenderProgram program)
                 => ApplyUniforms?.Invoke(program);
         }
@@ -644,9 +691,11 @@ public sealed partial class XRRenderPipelineInstance
 
         public StateObject PushTextureBinding(ScopedTextureBinding binding)
         {
-            _textureBindings.Push(binding);
-            return StateObject.New(PopTextureBinding);
+            PushTextureBindingState(binding);
+            return StateObject.New(PopTextureBindingAction, this);
         }
+        internal void PushTextureBindingState(ScopedTextureBinding binding)
+            => _textureBindings.Push(binding);
 
         public void PopTextureBinding()
         {
@@ -656,9 +705,11 @@ public sealed partial class XRRenderPipelineInstance
 
         public StateObject PushBufferBinding(ScopedBufferBinding binding)
         {
-            _bufferBindings.Push(binding);
-            return StateObject.New(PopBufferBinding);
+            PushBufferBindingState(binding);
+            return StateObject.New(PopBufferBindingAction, this);
         }
+        internal void PushBufferBindingState(ScopedBufferBinding binding)
+            => _bufferBindings.Push(binding);
 
         public void PopBufferBinding()
         {
@@ -668,9 +719,11 @@ public sealed partial class XRRenderPipelineInstance
 
         public StateObject PushShaderGlobals(ScopedShaderGlobals globals)
         {
-            _shaderGlobals.Push(globals);
-            return StateObject.New(PopShaderGlobals);
+            PushShaderGlobalsState(globals);
+            return StateObject.New(PopShaderGlobalsAction, this);
         }
+        internal void PushShaderGlobalsState(ScopedShaderGlobals globals)
+            => _shaderGlobals.Push(globals);
 
         public void PopShaderGlobals()
         {
@@ -680,9 +733,11 @@ public sealed partial class XRRenderPipelineInstance
 
         public StateObject PushProgramBindings(ScopedProgramBindings bindings)
         {
-            _programBindings.Push(bindings);
-            return StateObject.New(PopProgramBindings);
+            PushProgramBindingsState(bindings);
+            return StateObject.New(PopProgramBindingsAction, this);
         }
+        internal void PushProgramBindingsState(ScopedProgramBindings bindings)
+            => _programBindings.Push(bindings);
 
         public void PopProgramBindings()
         {
@@ -739,7 +794,7 @@ public sealed partial class XRRenderPipelineInstance
         {
             _useDepthNormalMaterialVariantsDepth++;
             UseDepthNormalMaterialVariants = true;
-            return StateObject.New(PopUseDepthNormalMaterialVariants);
+            return StateObject.New(PopUseDepthNormalMaterialVariantsAction, this);
         }
         private void PopUseDepthNormalMaterialVariants()
         {
@@ -761,7 +816,7 @@ public sealed partial class XRRenderPipelineInstance
         {
             _unjitteredProjectionDepth++;
             UseUnjitteredProjection = true;
-            return StateObject.New(PopUnjitteredProjection);
+            return StateObject.New(PopUnjitteredProjectionAction, this);
         }
         private void PopUnjitteredProjection()
         {
@@ -784,7 +839,7 @@ public sealed partial class XRRenderPipelineInstance
         {
             _forceShaderPipelinesDepth++;
             ForceShaderPipelines = true;
-            return StateObject.New(PopForceShaderPipelines);
+            return StateObject.New(PopForceShaderPipelinesAction, this);
         }
         private void PopForceShaderPipelines()
         {
@@ -806,7 +861,7 @@ public sealed partial class XRRenderPipelineInstance
         {
             _forceGeneratedVertexProgramDepth++;
             ForceGeneratedVertexProgram = true;
-            return StateObject.New(PopForceGeneratedVertexProgram);
+            return StateObject.New(PopForceGeneratedVertexProgramAction, this);
         }
         private void PopForceGeneratedVertexProgram()
         {
@@ -827,7 +882,7 @@ public sealed partial class XRRenderPipelineInstance
         {
             _renderingViewports.Push(viewport);
             PushRenderArea(viewport.Region);
-            return StateObject.New(PopViewport);
+            return StateObject.New(PopViewportAction, this);
         }
         public void PopViewport()
         {
@@ -842,7 +897,7 @@ public sealed partial class XRRenderPipelineInstance
         public StateObject PushRenderingScene(VisualScene scene)
         {
             _renderingScenes.Push(scene);
-            return StateObject.New(PopRenderingScene);
+            return StateObject.New(PopRenderingSceneAction, this);
         }
         public void PopRenderingScene()
             => _renderingScenes.Pop();

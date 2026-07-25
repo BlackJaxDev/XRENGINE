@@ -24,7 +24,7 @@ namespace XREngine.Scene
             if (camera is null)
                 return;
 
-            PreparedFrustum preparedCamera = camera.WorldFrustum().Prepare();
+            PreparedFrustum preparedCamera = camera.PreparedWorldFrustum();
 
             UpdateDirectionalCameraLightIntersections(DynamicDirectionalLights, camera, preparedCamera, new ColorF4(0.2f, 0.8f, 1.0f, 1.0f));
             UpdateCameraLightIntersections(DynamicSpotLights, preparedCamera, new ColorF4(1.0f, 0.85f, 0.2f, 1.0f));

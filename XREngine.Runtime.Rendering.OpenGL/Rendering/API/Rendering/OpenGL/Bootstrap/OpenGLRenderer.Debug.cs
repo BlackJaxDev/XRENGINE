@@ -30,6 +30,26 @@ namespace XREngine.Rendering.OpenGL;
 
 public partial class OpenGLRenderer
 {
+    private unsafe void TearDownDebugOutput()
+    {
+        try
+        {
+            // The native driver and Silk's delegate marshal cache both retain the callback
+            // until it is explicitly replaced. Leaving it installed roots the collectible
+            // backend load context even after every renderer object has been destroyed.
+            Api.DebugMessageCallback(null, null);
+            Api.Disable(EnableCap.DebugOutputSynchronous);
+            Api.Disable(EnableCap.DebugOutput);
+        }
+        catch (Exception ex)
+        {
+            Debug.OpenGLWarning(
+                $"Failed to unregister the OpenGL debug callback during renderer teardown: {ex.Message}");
+        }
+
+        _debugDedupCache.Clear();
+    }
+
     private unsafe static void SetupDebug(GL api)
     {
         // Be defensive here: some drivers (or non-debug contexts) can report GL_INVALID_OPERATION

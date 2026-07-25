@@ -19,5 +19,9 @@ public unsafe partial class VulkanRenderer
         bool DepthBit,
         bool StencilBit,
         bool LinearFilter,
-        FrameOpContext Context) : FrameOp(PassIndex, OutFbo, Context);
+        FrameOpContext Context) : FrameOp(PassIndex, OutFbo, Context)
+    {
+        public XRFrameBuffer? InFbo { get; internal set; } = InFbo;
+        public XRFrameBuffer? OutFbo { get; internal set; } = OutFbo;
+    }
 }

@@ -44,6 +44,9 @@ public unsafe partial class VulkanRenderer
 		[ThreadStatic]
 		private static DescriptorWriteScratch? s_descriptorWriteScratch;
 
+		internal static void ReleaseCurrentThreadDescriptorScratch()
+			=> s_descriptorWriteScratch = null;
+
 		/// <summary>
 		/// Ensures the descriptor sets for one frame/draw slot are allocated and current.
 		/// Pool identity is structural while local output/pass sets are immutable resource

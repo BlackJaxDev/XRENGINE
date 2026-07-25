@@ -18,11 +18,13 @@ public class DearImGuiComponent : UIComponent, IRenderable
 {
     private readonly RenderInfo2D _renderInfo;
     private readonly RenderCommandMethod2D _renderCommand;
+    private readonly Action _drawCallback;
 
     private bool _showDemoWindow = false;
 
     public DearImGuiComponent()
     {
+        _drawCallback = OnDraw;
         RenderedObjects =
         [
             _renderInfo = RenderInfo2D.New(
@@ -55,7 +57,12 @@ public class DearImGuiComponent : UIComponent, IRenderable
             return;
 
         var viewport = RuntimeEngine.Rendering.State.RenderingViewport;
-        renderer.TryRenderImGui(viewport, UserInterfaceCanvas, RuntimeEngine.Rendering.State.RenderingCamera, OnDraw, allowMultipleInFrame: true);
+        renderer.TryRenderImGui(
+            viewport,
+            UserInterfaceCanvas,
+            RuntimeEngine.Rendering.State.RenderingCamera,
+            _drawCallback,
+            allowMultipleInFrame: true);
     }
 
     protected virtual void OnDraw()

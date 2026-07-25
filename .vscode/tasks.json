@@ -18,6 +18,44 @@
 			"problemMatcher": "$msCompile"
 		},
 		{
+			"label": "Watch-Editor-RendererDevelopment",
+			"command": "dotnet",
+			"type": "shell",
+			"args": [
+				"watch",
+				"run",
+				"--project",
+				"${workspaceFolder}/XREngine.Editor/XREngine.Editor.csproj",
+				"--",
+				"--renderer-development"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"detail": "Applies supported method-body edits with .NET Hot Reload. Choose Never if dotnet watch offers to restart for a rude edit, then use Build and Reload Renderer for structural backend edits.",
+			"isBackground": true,
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated"
+			},
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "Start-Editor-RendererDevelopment-NoDebug",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1 && set XRE_WINDOW_TITLE=XRE Editor (Renderer Development) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\" --renderer-development"
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "Build-Editor-Fast",
 			"command": "dotnet",
 			"type": "shell",

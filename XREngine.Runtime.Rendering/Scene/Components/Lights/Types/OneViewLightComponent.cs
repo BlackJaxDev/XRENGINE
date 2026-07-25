@@ -229,7 +229,7 @@ namespace XREngine.Components.Capture.Lights.Types
             if (ShadowCamera is null)
                 return;
 
-            output.Add(ShadowCamera.WorldFrustum().Prepare());
+            output.Add(ShadowCamera.PreparedWorldFrustum());
         }
     }
 }

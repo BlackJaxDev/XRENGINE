@@ -36,10 +36,17 @@ internal sealed class VulkanResourceAllocator
     public IReadOnlyDictionary<string, VulkanBufferAllocation> LogicalBufferAllocations => _logicalBufferAllocations;
     public IReadOnlyDictionary<VulkanAliasGroupKey, VulkanImageAliasGroup> AliasGroups => _aliasGroups;
     public IReadOnlyDictionary<VulkanBufferAliasGroupKey, VulkanBufferAliasGroup> BufferAliasGroups => _bufferAliasGroups;
-    public IEnumerable<VulkanImageAliasGroup> EnumerateAliasGroups() => _aliasGroups.Values;
-    public IEnumerable<VulkanPhysicalImageGroup> EnumeratePhysicalGroups() => _physicalGroups.Values;
-    public IEnumerable<VulkanBufferAliasGroup> EnumerateBufferAliasGroups() => _bufferAliasGroups.Values;
-    public IEnumerable<VulkanPhysicalBufferGroup> EnumeratePhysicalBufferGroups() => _physicalBufferGroups.Values;
+    public Dictionary<VulkanAliasGroupKey, VulkanImageAliasGroup>.ValueCollection EnumerateAliasGroups()
+        => _aliasGroups.Values;
+
+    public Dictionary<VulkanAliasGroupKey, VulkanPhysicalImageGroup>.ValueCollection EnumeratePhysicalGroups()
+        => _physicalGroups.Values;
+
+    public Dictionary<VulkanBufferAliasGroupKey, VulkanBufferAliasGroup>.ValueCollection EnumerateBufferAliasGroups()
+        => _bufferAliasGroups.Values;
+
+    public Dictionary<VulkanBufferAliasGroupKey, VulkanPhysicalBufferGroup>.ValueCollection EnumeratePhysicalBufferGroups()
+        => _physicalBufferGroups.Values;
     public long OwnershipId { get; } = Interlocked.Increment(ref _nextOwnershipId);
     public bool IsRetired => Volatile.Read(ref _retired) != 0;
 

@@ -57,7 +57,8 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         // that caller's method name arrives here. If it did not (e.g. explicit null), fall
         // back to a generic placeholder rather than letting CodeProfiler.Start()'s own
         // [CallerMemberName] resolve to our wrapper name ("StartProfileScope").
-        return Engine.Profiler.Start(string.IsNullOrWhiteSpace(scopeName) ? "<unnamed>" : scopeName);
+        return Engine.StartPooledProfilerScope(
+            string.IsNullOrWhiteSpace(scopeName) ? "<unnamed>" : scopeName);
     }
 
     public bool AllowShaderPipelines => RuntimeEngine.Rendering.Settings.AllowShaderPipelines;
@@ -106,6 +107,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public EVulkanRenderTargetMode VulkanRenderTargetMode => Engine.EffectiveSettings.VulkanRenderTargetMode;
     public EVulkanGpuDrivenProfile VulkanGpuDrivenProfile => Engine.EffectiveSettings.VulkanGpuDrivenProfile;
     public EVulkanQueueOverlapMode VulkanQueueOverlapMode => Engine.EffectiveSettings.VulkanQueueOverlapMode;
+    public EVulkanCommandRecordingMode VulkanCommandRecordingMode => Engine.EffectiveSettings.VulkanCommandRecordingMode;
     public bool EnableVulkanPrimaryCommandBufferReuse => RuntimeEngine.Rendering.Settings.EnableVulkanPrimaryCommandBufferReuse;
     public EVulkanDiagnosticPreset VulkanDiagnosticPreset => Engine.EffectiveSettings.VulkanDiagnosticPreset;
     public EVulkanDiagnosticFlags VulkanDiagnosticFlags => Engine.EffectiveSettings.VulkanDiagnosticFlags;

@@ -43,6 +43,35 @@ public unsafe partial class VulkanRenderer
     private static XRFrameBuffer? _threadBoundReadFrameBuffer;
     [ThreadStatic]
     private static EReadBufferMode _threadReadBufferMode;
+
+    private void ReleaseCurrentThreadStateTrackingCaches()
+    {
+        if (ReferenceEquals(_threadRenderStateOwner, this))
+        {
+            _threadRenderStateOwner = null;
+            _threadRenderState = null;
+        }
+
+        if (ReferenceEquals(_threadResourcePlannerRuntimeStateOwner, this))
+        {
+            _threadResourcePlannerRuntimeStateOwner = null;
+            _threadResourcePlannerRuntimeState = null;
+        }
+
+        if (ReferenceEquals(_threadFrameOpResourcePlannerSwitchingStateOwner, this))
+        {
+            _threadFrameOpResourcePlannerSwitchingStateOwner = null;
+            _threadFrameOpResourcePlannerSwitchingState = null;
+        }
+
+        if (!ReferenceEquals(_threadFramebufferBindingOwner, this))
+            return;
+
+        _threadFramebufferBindingOwner = null;
+        _threadBoundDrawFrameBuffer = null;
+        _threadBoundReadFrameBuffer = null;
+        _threadReadBufferMode = default;
+    }
     private VulkanResourcePlanner _resourcePlanner = new();
     private VulkanResourceAllocator _resourceAllocator = new();
     private VulkanBarrierPlanner _barrierPlanner = new();
@@ -432,8 +461,11 @@ public unsafe partial class VulkanRenderer
     private int _queueOverlapFramesInMode;
     private long _lastQueueOverlapSampleTimestamp;
     private ulong _lastQueueOverlapSampleFrameId = ulong.MaxValue;
+    private ulong _lastQueueOverlapPolicyFrameId = ulong.MaxValue;
     private double _queueOverlapFrameDeltaEmaMs = -1.0;
     private double _queueOverlapModeStartFrameDeltaMs = -1.0;
+    private ulong _queueOwnershipConfigCacheFrameId = ulong.MaxValue;
+    private readonly List<QueueOwnershipConfigCacheEntry> _queueOwnershipConfigCache = [];
     private readonly List<MergedFrameOpRegistryCacheEntry> _mergedFrameOpRegistryCache = new(MaxMergedFrameOpRegistryCacheEntries);
     private readonly List<FrameOpPlannerStateKey> _frameOpPlannerStateKeyScratch = [];
     private readonly List<FrameOpPlannerStateKey> _frameOpPlannerStateEvictionScratch = [];
@@ -538,6 +570,9 @@ public unsafe partial class VulkanRenderer
         public FrameOpContext ActiveContext;
         public ResourcePlannerRuntimeState PreparationState;
         public bool HasPreparationState;
+        public ulong PreparedFrameOpsSignature;
+        public ulong PreparedPlanRevision;
+        public bool HasPreparedPlan;
     }
 
     private struct ResourcePlannerRuntimeState

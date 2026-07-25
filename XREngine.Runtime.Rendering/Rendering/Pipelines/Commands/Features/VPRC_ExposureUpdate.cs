@@ -213,36 +213,13 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private int ResolvePassIndex(string passName)
         {
-            if (TryResolvePassIndex(ParentPipeline?.PassMetadata, passName, out int passIndex))
+            if (ParentPipeline?.TryGetRenderPassIndex(passName, out int passIndex) == true)
                 return passIndex;
 
-            return TryResolvePassIndex(
-                RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.PassMetadata,
-                passName,
-                out passIndex)
+            return RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline
+                ?.TryGetRenderPassIndex(passName, out passIndex) == true
                 ? passIndex
                 : int.MinValue;
-        }
-
-        private static bool TryResolvePassIndex(
-            IReadOnlyCollection<RenderPassMetadata>? metadata,
-            string passName,
-            out int passIndex)
-        {
-            passIndex = int.MinValue;
-            if (metadata is null)
-                return false;
-
-            foreach (var pass in metadata)
-            {
-                if (string.Equals(pass.Name, passName, StringComparison.OrdinalIgnoreCase))
-                {
-                    passIndex = pass.PassIndex;
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

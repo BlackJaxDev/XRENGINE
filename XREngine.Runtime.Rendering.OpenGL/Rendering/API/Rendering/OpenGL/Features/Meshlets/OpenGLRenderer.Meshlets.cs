@@ -1,16 +1,12 @@
 using Silk.NET.Core.Contexts;
 using System;
-using System.Runtime.InteropServices;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.OpenGL;
 
 public unsafe partial class OpenGLRenderer
 {
-    private GlMultiDrawMeshTasksIndirectCountExtDelegate? _glMultiDrawMeshTasksIndirectCountExt;
-
-    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
-    private delegate void GlMultiDrawMeshTasksIndirectCountExtDelegate(void* indirect, nint drawCountOffset, int maxDrawCount, int stride);
+    private nint _glMultiDrawMeshTasksIndirectCountExt;
 
     public override EMeshShaderDialect MeshShaderDialect
         => Api.IsExtensionPresent("GL_EXT_mesh_shader")
@@ -25,7 +21,7 @@ public unsafe partial class OpenGLRenderer
     public override bool SupportsIndirectCountMeshTaskDispatch()
         => MeshShaderDialect == EMeshShaderDialect.OpenGLEXT &&
            SupportsIndirectCountDraw() &&
-           _glMultiDrawMeshTasksIndirectCountExt is not null;
+           _glMultiDrawMeshTasksIndirectCountExt != 0;
 
     public override bool SupportsProductionMeshletShaders()
         => MeshShaderDialect == EMeshShaderDialect.OpenGLEXT;
@@ -51,7 +47,7 @@ public unsafe partial class OpenGLRenderer
             return false;
         }
 
-        if (!SupportsIndirectCountMeshTaskDispatch() || _glMultiDrawMeshTasksIndirectCountExt is null)
+        if (!SupportsIndirectCountMeshTaskDispatch() || _glMultiDrawMeshTasksIndirectCountExt == 0)
         {
             failureReason = MeshletDispatchUnsupportedReason;
             Debug.Out(failureReason);
@@ -67,7 +63,11 @@ public unsafe partial class OpenGLRenderer
 
         BindDrawIndirectBuffer(indirectBuffer);
         BindParameterBuffer(countBuffer);
-        _glMultiDrawMeshTasksIndirectCountExt((void*)byteOffset, (nint)countByteOffset, (int)maxDrawCount, (int)stride);
+        ((delegate* unmanaged[Stdcall]<void*, nint, int, int, void>)_glMultiDrawMeshTasksIndirectCountExt)(
+            (void*)byteOffset,
+            (nint)countByteOffset,
+            (int)maxDrawCount,
+            (int)stride);
 
         RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls();
         failureReason = string.Empty;
@@ -77,7 +77,7 @@ public unsafe partial class OpenGLRenderer
     public override string MeshletDispatchUnsupportedReason
         => MeshShaderDialect switch
         {
-            EMeshShaderDialect.OpenGLEXT when _glMultiDrawMeshTasksIndirectCountExt is null =>
+            EMeshShaderDialect.OpenGLEXT when _glMultiDrawMeshTasksIndirectCountExt == 0 =>
                 "GL_EXT_mesh_shader is visible, but glMultiDrawMeshTasksIndirectCountEXT is unavailable on the active OpenGL context.",
             EMeshShaderDialect.OpenGLEXT when !SupportsIndirectCountDraw() =>
                 "GL_EXT_mesh_shader is visible, but GL 4.6/GL_ARB_indirect_parameters count buffers are unavailable.",
@@ -94,12 +94,11 @@ public unsafe partial class OpenGLRenderer
         if (Window.GLContext is not INativeContext nativeContext)
             return;
 
-        if (_glMultiDrawMeshTasksIndirectCountExt is null &&
+        if (_glMultiDrawMeshTasksIndirectCountExt == 0 &&
             nativeContext.TryGetProcAddress("glMultiDrawMeshTasksIndirectCountEXT", out IntPtr indirectCountProc) &&
             indirectCountProc != IntPtr.Zero)
         {
-            _glMultiDrawMeshTasksIndirectCountExt =
-                Marshal.GetDelegateForFunctionPointer<GlMultiDrawMeshTasksIndirectCountExtDelegate>(indirectCountProc);
+            _glMultiDrawMeshTasksIndirectCountExt = indirectCountProc;
         }
     }
 }

@@ -569,7 +569,7 @@ namespace XREngine.Rendering.Vulkan
             MarkStreamlineUiImageInitialized(imageIndex);
         }
 
-        private static ulong ComputeCommandChainUniformSlotSignature(
+        internal static ulong ComputeCommandChainUniformSlotSignature(
             int[] uniformSlots,
             int startIndex,
             int count)

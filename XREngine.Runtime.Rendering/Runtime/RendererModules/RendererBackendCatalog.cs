@@ -118,7 +118,13 @@ public sealed class RendererBackendCatalog : IRendererBackendCatalog, IDisposabl
     {
         RendererBackendId id = RendererBackendId.FromGraphicsApi(graphicsApi);
         RendererBackendRegistration registration = GetRequired(id, requiredCapabilities);
-        IRuntimeRendererHost renderer = registration.Factory.Create(context);
+        RendererBackendCreateContext generationContext = context with
+        {
+            ModuleGeneration = registration.Metadata.Generation,
+        };
+        IRuntimeRendererHost renderer = registration.Factory.Create(generationContext);
+        if (renderer is AbstractRenderer abstractRenderer)
+            abstractRenderer.BackendGeneration = registration.Metadata.Generation;
         return renderer ?? throw new InvalidOperationException(
             $"Renderer backend factory '{registration.Metadata.DisplayName}' returned null for backend '{id}'.");
     }

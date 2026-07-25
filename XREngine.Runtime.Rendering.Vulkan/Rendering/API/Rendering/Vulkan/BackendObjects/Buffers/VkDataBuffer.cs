@@ -502,7 +502,7 @@ namespace XREngine.Rendering.Vulkan
                     return XRBufferResolvedRoute.StagingUpload;
                 if (_persistentMappedPtr != null)
                     return XRBufferResolvedRoute.PersistentMappedRing;
-                if (_lastMemProps.HasFlag(MemoryPropertyFlags.HostVisibleBit))
+                if ((_lastMemProps & MemoryPropertyFlags.HostVisibleBit) != 0)
                     return XRBufferResolvedRoute.HostVisible;
 
                 return XRBufferPolicyResolver.ResolveVulkan(
@@ -588,7 +588,8 @@ namespace XREngine.Rendering.Vulkan
                     _lastUsageFlags != usage ||
                     _lastMemProps != memProps ||
                     _lastDeviceAddressEnabled != enableDeviceAddress ||
-                    (_immutableStorageSet && !Data.StorageFlags.HasFlag(EBufferMapStorageFlags.DynamicStorage));
+                    (_immutableStorageSet &&
+                     (Data.StorageFlags & EBufferMapStorageFlags.DynamicStorage) == 0);
 
                 if (needsRecreate)
                 {
@@ -877,7 +878,8 @@ namespace XREngine.Rendering.Vulkan
                 if (clampedLength == 0)
                     return;
 
-                if (_immutableStorageSet && !Data.StorageFlags.HasFlag(EBufferMapStorageFlags.DynamicStorage))
+                if (_immutableStorageSet &&
+                    (Data.StorageFlags & EBufferMapStorageFlags.DynamicStorage) == 0)
                 {
                     TracePushSubData(offset, clampedLength, "immutable-no-dynstore-full-upload");
                     PushData();
@@ -930,7 +932,7 @@ namespace XREngine.Rendering.Vulkan
                         return;
 
                     // Host-visible: map, copy, unmap
-                    _lastUploadRoute = ResolveHostVisibleUploadRoute(_lastMemProps) + "SubData";
+                    _lastUploadRoute = ResolveHostVisibleSubDataUploadRoute(_lastMemProps);
                     Renderer.UpdateBuffer(_vkBuffer, _vkMemory, (ulong)offset, (ulong)clampedLength, sourceSlice.Pointer);
                 }
 
@@ -1106,7 +1108,7 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 // Only needed for non-coherent memory
                 if ((_lastMemProps & MemoryPropertyFlags.HostCoherentBit) == 0)
-                    Renderer.FlushBuffer(_vkMemory, GetMappedMemoryOffset(0), length);
+                    Renderer.FlushBuffer(_vkBuffer, _vkMemory, GetMappedMemoryOffset(0), length);
             }
             public void FlushRange(int offset, uint length)
             {
@@ -1115,7 +1117,7 @@ namespace XREngine.Rendering.Vulkan
                 if (!NormalizeMappedRange(offset, length, out ulong memoryOffset, out ulong mappedLength))
                     return;
                 if ((_lastMemProps & MemoryPropertyFlags.HostCoherentBit) == 0)
-                    Renderer.FlushBuffer(_vkMemory, memoryOffset, mappedLength);
+                    Renderer.FlushBuffer(_vkBuffer, _vkMemory, memoryOffset, mappedLength);
             }
 
             // --- Persistent mapping for dynamic buffers ---
@@ -1241,9 +1243,10 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 if (_persistentMappedPtr != null)
                 {
-                    if (Data.RangeFlags.HasFlag(EBufferMapRangeFlags.Read) ||
-                        Data.RangeFlags.HasFlag(EBufferMapRangeFlags.InvalidateRange) ||
-                        Data.RangeFlags.HasFlag(EBufferMapRangeFlags.InvalidateBuffer))
+                    if ((Data.RangeFlags &
+                         (EBufferMapRangeFlags.Read |
+                          EBufferMapRangeFlags.InvalidateRange |
+                          EBufferMapRangeFlags.InvalidateBuffer)) != 0)
                     {
                         Renderer.InvalidateBuffer(_vkMemory, GetMappedMemoryOffset(0), _bufferSize);
                     }
@@ -1262,9 +1265,10 @@ namespace XREngine.Rendering.Vulkan
                 {
                     if (_vkBuffer.HasValue && _vkMemory.HasValue)
                     {
-                        if (Data.RangeFlags.HasFlag(EBufferMapRangeFlags.Read) ||
-                            Data.RangeFlags.HasFlag(EBufferMapRangeFlags.InvalidateRange) ||
-                            Data.RangeFlags.HasFlag(EBufferMapRangeFlags.InvalidateBuffer))
+                        if ((Data.RangeFlags &
+                             (EBufferMapRangeFlags.Read |
+                              EBufferMapRangeFlags.InvalidateRange |
+                              EBufferMapRangeFlags.InvalidateBuffer)) != 0)
                         {
                             Renderer.InvalidateBuffer(_vkMemory, GetMappedMemoryOffset(0), _bufferSize);
                         }
@@ -1354,13 +1358,13 @@ namespace XREngine.Rendering.Vulkan
                 => descriptorType switch
                 {
                     DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic
-                        => usageFlags.HasFlag(BufferUsageFlags.StorageBufferBit),
+                        => (usageFlags & BufferUsageFlags.StorageBufferBit) != 0,
                     DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic
-                        => usageFlags.HasFlag(BufferUsageFlags.UniformBufferBit),
+                        => (usageFlags & BufferUsageFlags.UniformBufferBit) != 0,
                     DescriptorType.UniformTexelBuffer
-                        => usageFlags.HasFlag(BufferUsageFlags.UniformTexelBufferBit),
+                        => (usageFlags & BufferUsageFlags.UniformTexelBufferBit) != 0,
                     DescriptorType.StorageTexelBuffer
-                        => usageFlags.HasFlag(BufferUsageFlags.StorageTexelBufferBit),
+                        => (usageFlags & BufferUsageFlags.StorageTexelBufferBit) != 0,
                     _ => true,
                 };
 
@@ -1389,8 +1393,8 @@ namespace XREngine.Rendering.Vulkan
 
             // --- Helper: Should use device-local + staging for static/immutable buffers ---
             private bool AllowsUpdatesWhileMapped()
-                => Data.StorageFlags.HasFlag(EBufferMapStorageFlags.Persistent) ||
-                   Data.RangeFlags.HasFlag(EBufferMapRangeFlags.Persistent);
+                => (Data.StorageFlags & EBufferMapStorageFlags.Persistent) != 0 ||
+                   (Data.RangeFlags & EBufferMapRangeFlags.Persistent) != 0;
 
             private bool HasBlockingActiveMapping()
                 => Data.ActivelyMapping.Count > 0 && !AllowsUpdatesWhileMapped();
@@ -1437,7 +1441,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             private bool IsUsingDeviceLocalBacking()
-                => _lastMemProps.HasFlag(MemoryPropertyFlags.DeviceLocalBit);
+                => (_lastMemProps & MemoryPropertyFlags.DeviceLocalBit) != 0;
 
             private static bool ShouldUseDeviceLocal(XRDataBuffer data, ulong byteCount)
                 => !data.ShouldMap &&
@@ -1447,16 +1451,18 @@ namespace XREngine.Rendering.Vulkan
 
             private static bool HasHostVisibleIntent(XRDataBuffer data)
                 => data.ShouldMap ||
-                   data.StorageFlags.HasFlag(EBufferMapStorageFlags.Read) ||
-                   data.StorageFlags.HasFlag(EBufferMapStorageFlags.Write) ||
-                   data.StorageFlags.HasFlag(EBufferMapStorageFlags.Persistent) ||
-                   data.StorageFlags.HasFlag(EBufferMapStorageFlags.Coherent) ||
-                   data.StorageFlags.HasFlag(EBufferMapStorageFlags.ClientStorage) ||
-                   data.RangeFlags.HasFlag(EBufferMapRangeFlags.Read) ||
-                   data.RangeFlags.HasFlag(EBufferMapRangeFlags.Write) ||
-                   data.RangeFlags.HasFlag(EBufferMapRangeFlags.Persistent) ||
-                   data.RangeFlags.HasFlag(EBufferMapRangeFlags.Coherent) ||
-                   data.RangeFlags.HasFlag(EBufferMapRangeFlags.FlushExplicit);
+                   (data.StorageFlags &
+                    (EBufferMapStorageFlags.Read |
+                     EBufferMapStorageFlags.Write |
+                     EBufferMapStorageFlags.Persistent |
+                     EBufferMapStorageFlags.Coherent |
+                     EBufferMapStorageFlags.ClientStorage)) != 0 ||
+                   (data.RangeFlags &
+                    (EBufferMapRangeFlags.Read |
+                     EBufferMapRangeFlags.Write |
+                     EBufferMapRangeFlags.Persistent |
+                     EBufferMapRangeFlags.Coherent |
+                     EBufferMapRangeFlags.FlushExplicit)) != 0;
 
             private static MemoryPropertyFlags ResolveMemoryProperties(XRDataBuffer data, ulong byteCount)
             {
@@ -1466,16 +1472,16 @@ namespace XREngine.Rendering.Vulkan
                 MemoryPropertyFlags flags = MemoryPropertyFlags.HostVisibleBit;
 
                 bool wantsRead =
-                    data.StorageFlags.HasFlag(EBufferMapStorageFlags.Read) ||
-                    data.RangeFlags.HasFlag(EBufferMapRangeFlags.Read) ||
+                    (data.StorageFlags & EBufferMapStorageFlags.Read) != 0 ||
+                    (data.RangeFlags & EBufferMapRangeFlags.Read) != 0 ||
                     data.Usage is EBufferUsage.StaticRead or EBufferUsage.StreamRead or EBufferUsage.DynamicRead;
                 if (wantsRead)
                     flags |= MemoryPropertyFlags.HostCachedBit;
 
                 bool wantsCoherent =
-                    data.StorageFlags.HasFlag(EBufferMapStorageFlags.Coherent) ||
-                    data.RangeFlags.HasFlag(EBufferMapRangeFlags.Coherent) ||
-                    !data.RangeFlags.HasFlag(EBufferMapRangeFlags.FlushExplicit);
+                    (data.StorageFlags & EBufferMapStorageFlags.Coherent) != 0 ||
+                    (data.RangeFlags & EBufferMapRangeFlags.Coherent) != 0 ||
+                    (data.RangeFlags & EBufferMapRangeFlags.FlushExplicit) == 0;
                 if (wantsCoherent)
                     flags |= MemoryPropertyFlags.HostCoherentBit;
 
@@ -1484,12 +1490,22 @@ namespace XREngine.Rendering.Vulkan
 
             private static string ResolveHostVisibleUploadRoute(MemoryPropertyFlags properties)
             {
-                if (properties.HasFlag(MemoryPropertyFlags.HostCachedBit))
+                if ((properties & MemoryPropertyFlags.HostCachedBit) != 0)
                     return "HostVisibleCached";
 
-                return properties.HasFlag(MemoryPropertyFlags.HostCoherentBit)
+                return (properties & MemoryPropertyFlags.HostCoherentBit) != 0
                     ? "HostVisibleCoherent"
                     : "HostVisibleExplicitFlush";
+            }
+
+            private static string ResolveHostVisibleSubDataUploadRoute(MemoryPropertyFlags properties)
+            {
+                if ((properties & MemoryPropertyFlags.HostCachedBit) != 0)
+                    return "HostVisibleCachedSubData";
+
+                return (properties & MemoryPropertyFlags.HostCoherentBit) != 0
+                    ? "HostVisibleCoherentSubData"
+                    : "HostVisibleExplicitFlushSubData";
             }
 
             internal void EnsureStorageAllocatedForGpuUse()
@@ -1501,7 +1517,7 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 }
 
-                bool hasStorageUsage = _lastUsageFlags.HasFlag(BufferUsageFlags.StorageBufferBit);
+                bool hasStorageUsage = (_lastUsageFlags & BufferUsageFlags.StorageBufferBit) != 0;
                 if (_vkBuffer is null || _vkMemory is null || _bufferSize < (ulong)Data.Length || !hasStorageUsage)
                     PushData();
             }
@@ -1538,7 +1554,7 @@ namespace XREngine.Rendering.Vulkan
 
             private void WarnUnsupportedMappingFlags()
             {
-                if (Data.StorageFlags.HasFlag(EBufferMapStorageFlags.ClientStorage))
+                if ((Data.StorageFlags & EBufferMapStorageFlags.ClientStorage) != 0)
                 {
                     Debug.VulkanWarningEvery(
                         $"VkDataBuffer.ClientStorage.Noop.{GetDescribingName()}",
@@ -1547,7 +1563,7 @@ namespace XREngine.Rendering.Vulkan
                         GetDescribingName());
                 }
 
-                if (Data.RangeFlags.HasFlag(EBufferMapRangeFlags.Unsynchronized))
+                if ((Data.RangeFlags & EBufferMapRangeFlags.Unsynchronized) != 0)
                 {
                     Debug.VulkanWarningEvery(
                         $"VkDataBuffer.Unsynchronized.Diagnostic.{GetDescribingName()}",
@@ -1559,8 +1575,8 @@ namespace XREngine.Rendering.Vulkan
 
             private void RecordMappedReadbackBytes(ulong bytes)
             {
-                bool readIntent = Data.StorageFlags.HasFlag(EBufferMapStorageFlags.Read) ||
-                                  Data.RangeFlags.HasFlag(EBufferMapRangeFlags.Read);
+                bool readIntent = (Data.StorageFlags & EBufferMapStorageFlags.Read) != 0 ||
+                                  (Data.RangeFlags & EBufferMapRangeFlags.Read) != 0;
                 if (!readIntent || bytes == 0)
                     return;
 
@@ -1823,7 +1839,7 @@ namespace XREngine.Rendering.Vulkan
                 throw new Exception("Failed to map Vulkan buffer memory.");
 
             Unsafe.CopyBlock(mappedPtr, addr, (uint)length);
-            FlushBuffer(vkMemory.Value, GetBufferAllocationOffset(vkBuffer.Value) + offset, length);
+            FlushBuffer(vkBuffer, vkMemory.Value, GetBufferAllocationOffset(vkBuffer.Value) + offset, length);
             UnmapBufferMemory(vkBuffer.Value, vkMemory.Value); // Unmap after copying
         }
 
@@ -1949,7 +1965,7 @@ namespace XREngine.Rendering.Vulkan
                 if (!TryMapBufferMemory(stagingBuffer, stagingMemory, 0, requestedSize, out mappedPtr))
                     throw new Exception("Failed to map Vulkan memory.");
                 Unsafe.CopyBlock(mappedPtr, dataPtr.Pointer, (uint)requestedSize);
-                FlushBuffer(stagingMemory, GetBufferAllocationOffset(stagingBuffer), requestedSize);
+                FlushBuffer(stagingBuffer, stagingMemory, GetBufferAllocationOffset(stagingBuffer), requestedSize);
                 UnmapBufferMemory(stagingBuffer, stagingMemory);
             }
 
@@ -2142,7 +2158,7 @@ namespace XREngine.Rendering.Vulkan
             try
             {
                 Unsafe.CopyBlock(mappedPtr, source, (uint)size);
-                FlushBuffer(memory, GetBufferAllocationOffset(buffer), size);
+                FlushBuffer(buffer, memory, GetBufferAllocationOffset(buffer), size);
             }
             finally
             {
@@ -2367,6 +2383,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         public void FlushBuffer(
+            Buffer? vkBuffer,
             DeviceMemory? vkMemory,
             ulong offset,
             ulong length)
@@ -2377,13 +2394,26 @@ namespace XREngine.Rendering.Vulkan
             if (length == 0)
                 return;
 
-            if (TryGetTrackedMemoryAllocation(vkMemory.Value, offset, out VulkanMemoryAllocation allocation) &&
-                allocation.IsCoherent)
+            VulkanMemoryAllocation allocation = default;
+            bool hasTrackedAllocation =
+                vkBuffer is { } buffer &&
+                TryGetBufferMemoryAllocation(buffer, out allocation);
+            if (!hasTrackedAllocation)
+                hasTrackedAllocation = TryGetTrackedMemoryAllocation(vkMemory.Value, offset, out allocation);
+
+            if (hasTrackedAllocation && allocation.IsCoherent)
             {
                 return;
             }
 
-            NormalizeMappedMemoryRange(vkMemory.Value, offset, length, out ulong flushOffset, out ulong flushSize);
+            NormalizeMappedMemoryRange(
+                vkMemory.Value,
+                offset,
+                length,
+                in allocation,
+                hasTrackedAllocation,
+                out ulong flushOffset,
+                out ulong flushSize);
 
             var v = new MappedMemoryRange
             {
@@ -2404,8 +2434,9 @@ namespace XREngine.Rendering.Vulkan
 
         private bool TryGetTrackedMemoryAllocation(DeviceMemory memory, ulong offset, out VulkanMemoryAllocation allocation)
         {
-            foreach (VulkanMemoryAllocation candidate in _bufferAllocations.Values)
+            foreach (KeyValuePair<ulong, VulkanMemoryAllocation> pair in _bufferAllocations)
             {
+                VulkanMemoryAllocation candidate = pair.Value;
                 if (candidate.Memory.Handle != memory.Handle)
                     continue;
 
@@ -2417,8 +2448,9 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            foreach (VulkanMemoryAllocation candidate in _imageAllocations.Values)
+            foreach (KeyValuePair<ulong, VulkanMemoryAllocation> pair in _imageAllocations)
             {
+                VulkanMemoryAllocation candidate = pair.Value;
                 if (candidate.Memory.Handle != memory.Handle)
                     continue;
 
@@ -2430,8 +2462,9 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            foreach (VulkanMemoryAllocation candidate in _legacyBufferAllocations.Values)
+            foreach (KeyValuePair<ulong, VulkanMemoryAllocation> pair in _legacyBufferAllocations)
             {
+                VulkanMemoryAllocation candidate = pair.Value;
                 if (candidate.Memory.Handle != memory.Handle)
                     continue;
 
@@ -2449,11 +2482,34 @@ namespace XREngine.Rendering.Vulkan
 
         private void NormalizeMappedMemoryRange(DeviceMemory memory, ulong offset, ulong length, out ulong flushOffset, out ulong flushSize)
         {
+            bool hasTrackedAllocation = TryGetTrackedMemoryAllocation(
+                memory,
+                offset,
+                out VulkanMemoryAllocation allocation);
+            NormalizeMappedMemoryRange(
+                memory,
+                offset,
+                length,
+                in allocation,
+                hasTrackedAllocation,
+                out flushOffset,
+                out flushSize);
+        }
+
+        private void NormalizeMappedMemoryRange(
+            DeviceMemory memory,
+            ulong offset,
+            ulong length,
+            in VulkanMemoryAllocation allocation,
+            bool hasTrackedAllocation,
+            out ulong flushOffset,
+            out ulong flushSize)
+        {
             ulong atomSize = _nonCoherentAtomSize == 0 ? 1UL : _nonCoherentAtomSize;
             flushOffset = (offset / atomSize) * atomSize;
             ulong flushEnd = AlignUp(offset + length, atomSize);
 
-            if (TryGetTrackedMemoryAllocation(memory, offset, out VulkanMemoryAllocation allocation))
+            if (hasTrackedAllocation)
             {
                 ulong allocationStart = allocation.BlockId == -1 ? 0UL : allocation.Offset;
                 ulong allocationEnd = allocationStart + allocation.Size;

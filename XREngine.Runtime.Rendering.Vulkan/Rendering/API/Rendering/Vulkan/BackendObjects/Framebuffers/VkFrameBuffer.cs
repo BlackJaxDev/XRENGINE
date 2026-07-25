@@ -104,15 +104,7 @@ public unsafe partial class VulkanRenderer
                 return ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!, preserveTrackedClearLoads);
             }
 
-            RenderPassMetadata? pass = null;
-            foreach (RenderPassMetadata metadata in passMetadata)
-            {
-                if (metadata.PassIndex == passIndex)
-                {
-                    pass = metadata;
-                    break;
-                }
-            }
+            RenderPassMetadata? pass = FindPassMetadata(passMetadata, passIndex);
 
             if (pass is null)
             {
@@ -122,13 +114,13 @@ public unsafe partial class VulkanRenderer
             }
 
             bool referencesFrameBuffer = false;
-            string prefix = $"fbo::{frameBufferName}::";
-            foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
+            for (int usageIndex = 0; usageIndex < pass.ResourceUsages.Count; usageIndex++)
             {
+                RenderPassResourceUsage usage = pass.ResourceUsages[usageIndex];
                 if (!usage.IsAttachment)
                     continue;
 
-                if (usage.ResourceName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                if (TryGetFrameBufferSlot(usage.ResourceName, frameBufferName, out _))
                 {
                     referencesFrameBuffer = true;
                     break;
@@ -194,27 +186,19 @@ public unsafe partial class VulkanRenderer
             if (string.IsNullOrWhiteSpace(frameBufferName))
                 return UsesReadOnlyDepthStencil(BaseSignature());
 
-            RenderPassMetadata? pass = null;
-            foreach (RenderPassMetadata metadata in passMetadata)
-            {
-                if (metadata.PassIndex == passIndex)
-                {
-                    pass = metadata;
-                    break;
-                }
-            }
+            RenderPassMetadata? pass = FindPassMetadata(passMetadata, passIndex);
 
             if (pass is null)
                 return UsesReadOnlyDepthStencil(BaseSignature());
 
             bool referencesFrameBuffer = false;
-            string prefix = $"fbo::{frameBufferName}::";
-            foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
+            for (int usageIndex = 0; usageIndex < pass.ResourceUsages.Count; usageIndex++)
             {
+                RenderPassResourceUsage usage = pass.ResourceUsages[usageIndex];
                 if (!usage.IsAttachment)
                     continue;
 
-                if (usage.ResourceName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                if (TryGetFrameBufferSlot(usage.ResourceName, frameBufferName, out _))
                 {
                     referencesFrameBuffer = true;
                     break;
@@ -879,8 +863,9 @@ public unsafe partial class VulkanRenderer
                 frameBufferName,
                 writeCapableDepthStencilAttachments);
 
-            foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
+            for (int usageIndex = 0; usageIndex < pass.ResourceUsages.Count; usageIndex++)
             {
+                RenderPassResourceUsage usage = pass.ResourceUsages[usageIndex];
                 if (!usage.IsAttachment ||
                     !TryGetFrameBufferSlot(usage.ResourceName, frameBufferName, out ReadOnlySpan<char> slot))
                 {
@@ -978,8 +963,9 @@ public unsafe partial class VulkanRenderer
             Span<bool> result)
         {
             Span<int> matchingIndices = stackalloc int[signatures.Length];
-            foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
+            for (int usageIndex = 0; usageIndex < pass.ResourceUsages.Count; usageIndex++)
             {
+                RenderPassResourceUsage usage = pass.ResourceUsages[usageIndex];
                 if (!usage.IsAttachment ||
                     usage.ResourceType is not (ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.StencilAttachment) ||
                     usage.Access == ERenderGraphAccess.Read ||
@@ -992,6 +978,29 @@ public unsafe partial class VulkanRenderer
                 for (int matchIndex = 0; matchIndex < matchingCount; matchIndex++)
                     result[matchingIndices[matchIndex]] = true;
             }
+        }
+
+        private static RenderPassMetadata? FindPassMetadata(
+            IReadOnlyCollection<RenderPassMetadata> metadata,
+            int passIndex)
+        {
+            if (metadata is IReadOnlyList<RenderPassMetadata> list)
+            {
+                for (int i = 0; i < list.Count; i++)
+                {
+                    RenderPassMetadata pass = list[i];
+                    if (pass.PassIndex == passIndex)
+                        return pass;
+                }
+
+                return null;
+            }
+
+            foreach (RenderPassMetadata pass in metadata)
+                if (pass.PassIndex == passIndex)
+                    return pass;
+
+            return null;
         }
 
         private static bool TryGetFrameBufferSlot(
@@ -1386,8 +1395,10 @@ public unsafe partial class VulkanRenderer
             if (synchronization is null)
                 return ImageLayout.Undefined;
 
-            foreach (RenderGraphSynchronizationEdge edge in synchronization.Edges)
+            IReadOnlyList<RenderGraphSynchronizationEdge> edges = synchronization.Edges;
+            for (int edgeIndex = 0; edgeIndex < edges.Count; edgeIndex++)
             {
+                RenderGraphSynchronizationEdge edge = edges[edgeIndex];
                 if (edge.DependencyOnly ||
                     edge.ProducerPassIndex != pass.PassIndex ||
                     string.IsNullOrEmpty(edge.ResourceName) ||

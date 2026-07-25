@@ -85,13 +85,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         private int ResolveRenderGraphPassIndex()
         {
             if (!string.IsNullOrWhiteSpace(RenderGraphPassName) &&
-                ParentPipeline?.PassMetadata is { } metadata)
+                ParentPipeline?.TryGetRenderPassIndex(RenderGraphPassName, out int passIndex) == true)
             {
-                foreach (RenderPassMetadata pass in metadata)
-                {
-                    if (string.Equals(pass.Name, RenderGraphPassName, StringComparison.OrdinalIgnoreCase))
-                        return pass.PassIndex;
-                }
+                return passIndex;
             }
 
             return DepthTested

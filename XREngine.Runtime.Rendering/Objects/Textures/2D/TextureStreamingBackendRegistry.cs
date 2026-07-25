@@ -5,24 +5,24 @@ namespace XREngine.Rendering;
 /// </summary>
 internal static class TextureStreamingBackendRegistry
 {
+    private static readonly object Sync = new();
     private static ITextureStreamingBackendProvider? s_openGl;
     private static ITextureStreamingBackendProvider? s_vulkan;
 
-    public static void Register(RuntimeGraphicsApiKind api, ITextureStreamingBackendProvider provider)
+    public static IDisposable Register(RuntimeGraphicsApiKind api, ITextureStreamingBackendProvider provider)
     {
         ArgumentNullException.ThrowIfNull(provider);
 
-        switch (api)
+        lock (Sync)
         {
-            case RuntimeGraphicsApiKind.OpenGL:
-                Volatile.Write(ref s_openGl, provider);
-                break;
-            case RuntimeGraphicsApiKind.Vulkan:
-                Volatile.Write(ref s_vulkan, provider);
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(nameof(api), api, "Texture streaming is only provided by renderer leaf assemblies.");
+            ref ITextureStreamingBackendProvider? slot = ref GetSlot(api);
+            if (slot is not null && !ReferenceEquals(slot, provider))
+                throw new InvalidOperationException($"A texture-streaming provider is already registered for {api}.");
+
+            slot = provider;
         }
+
+        return new Registration(api, provider);
     }
 
     public static bool TryGet(RuntimeGraphicsApiKind api, out ITextureStreamingBackendProvider? provider)
@@ -41,4 +41,39 @@ internal static class TextureStreamingBackendRegistry
             ? provider
             : throw new InvalidOperationException(
                 $"The {api} texture-streaming provider has not been registered. Register the renderer leaf module at the composition root.");
+
+    private static ref ITextureStreamingBackendProvider? GetSlot(RuntimeGraphicsApiKind api)
+    {
+        if (api == RuntimeGraphicsApiKind.OpenGL)
+            return ref s_openGl;
+        if (api == RuntimeGraphicsApiKind.Vulkan)
+            return ref s_vulkan;
+
+        throw new ArgumentOutOfRangeException(
+            nameof(api),
+            api,
+            "Texture streaming is only provided by renderer leaf assemblies.");
+    }
+
+    private sealed class Registration(
+        RuntimeGraphicsApiKind api,
+        ITextureStreamingBackendProvider provider) : IDisposable
+    {
+        private ITextureStreamingBackendProvider? _provider = provider;
+
+        public void Dispose()
+        {
+            ITextureStreamingBackendProvider? currentProvider =
+                Interlocked.Exchange(ref _provider, null);
+            if (currentProvider is null)
+                return;
+
+            lock (Sync)
+            {
+                ref ITextureStreamingBackendProvider? slot = ref GetSlot(api);
+                if (ReferenceEquals(slot, currentProvider))
+                    slot = null;
+            }
+        }
+    }
 }

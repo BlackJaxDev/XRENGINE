@@ -5,4 +5,5 @@ namespace XREngine.Rendering;
 /// </summary>
 public readonly record struct RendererBackendCreateContext(
     IRuntimeRenderWindowHost Window,
-    bool LinkRendererToWindow = true);
+    bool LinkRendererToWindow = true,
+    long ModuleGeneration = 0);

@@ -363,8 +363,6 @@ namespace XREngine.Rendering.OpenGL
                 public nint Data;
             }
 
-            private delegate bool MonitorEnumProc(nint monitor, nint hdc, ref NativeRect rect, nint data);
-
             [DllImport("user32.dll", SetLastError = true)]
             private static extern bool ClientToScreen(nint hWnd, ref NativePoint point);
 
@@ -378,7 +376,7 @@ namespace XREngine.Rendering.OpenGL
             private static extern short GetAsyncKeyState(int virtualKey);
 
             [DllImport("user32.dll", SetLastError = true)]
-            private static extern bool EnumDisplayMonitors(nint hdc, nint clipRect, MonitorEnumProc callback, nint data);
+            private static extern bool EnumDisplayMonitors(nint hdc, nint clipRect, nint callback, nint data);
 
             [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
             private static extern bool GetMonitorInfo(nint monitor, ref NativeMonitorInfo monitorInfo);

@@ -36,11 +36,16 @@ public unsafe partial class VulkanRenderer
 		/// </summary>
 		private bool EnsureProgram(XRMaterial material)
 		{
-			var sourceShaders = new List<XRShader>();
+			GeneratedProgramState programState = CaptureGeneratedProgramState(material);
+			if (_programStateCache.TryGetValue(programState, out GeneratedProgramCacheEntry? cachedEntry))
+				return ActivateGeneratedProgram(cachedEntry);
+
+			var sourceShaders = new List<XRShader>(material.Shaders.Count);
 			string? generatedVertexIdentity = null;
 
-			foreach (var shader in material.Shaders)
+			for (int i = 0; i < material.Shaders.Count; i++)
 			{
+				XRShader? shader = material.Shaders[i];
 				if (shader is null)
 					continue;
 				sourceShaders.Add(shader);
@@ -58,7 +63,7 @@ public unsafe partial class VulkanRenderer
 			}
 			else
 			{
-				string? vsSource = Data.VertexShaderSource;
+				string? vsSource = programState.GeneratedVertexSource;
 				if (string.IsNullOrWhiteSpace(vsSource))
 				{
 					Debug.RenderingWarningEvery(
@@ -77,35 +82,35 @@ public unsafe partial class VulkanRenderer
 			}
 
 			List<XRShader> shaders = BuildCombinedShaderList(sourceShaders, vertexShader);
-			string generatedProgramName = BuildGeneratedProgramName(material, shaders);
-			string generatedProgramAxes = BuildGeneratedProgramAxes(material);
+			string generatedProgramAxes = BuildGeneratedProgramAxes(programState);
 			string shaderStageList = BuildShaderStageList(shaders);
-			string programIdentity = BuildGeneratedProgramIdentity(material, generatedProgramAxes, shaderStageList, generatedVertexIdentity);
+			string generatedProgramName = BuildGeneratedProgramName(programState, generatedProgramAxes, shaderStageList);
+			string programIdentity = BuildGeneratedProgramIdentity(programState, generatedProgramAxes, shaderStageList, generatedVertexIdentity);
 			if (!_programCache.TryGetValue(programIdentity, out GeneratedProgramCacheEntry? entry))
 			{
 				XRRenderProgramDescriptor descriptor = XRRenderProgramDescriptor.FromShaders(
 					shaders,
 					separable: false,
-					renderSettingsVersion: RuntimeEngine.Rendering.Settings.ShaderConfigVersion,
+					renderSettingsVersion: programState.ShaderConfigVersion,
 					generatedVertexIdentity: generatedVertexIdentity,
-					materialVariantKind: material.ActiveUberVariant.IsEmpty ? null : "MaterialVariant",
-					materialVariantHash: material.ActiveUberVariant.VariantHash,
+					materialVariantKind: programState.MaterialVariantIsEmpty ? null : "MaterialVariant",
+					materialVariantHash: programState.MaterialVariantHash,
 					vertexLayoutIdentity: BuildCombinedProgramVertexLayoutIdentity(generatedVertexIdentity),
 					topologyKind: "VulkanCombinedMesh");
 
 				XRRenderProgram generatedProgram = new(linkNow: false, separable: false, shaders)
 				{
 					Name = generatedProgramName,
-					UsageTag = $"VulkanCombinedMeshProgram | variant={Data.VersionKindLabel} | material={material.Name ?? "<unnamed>"} | mesh={Mesh?.Name ?? "<unnamed>"} | renderer={MeshRenderer?.Name ?? "<unnamed>"} | axes={generatedProgramAxes}",
-					Priority = Data.ProgramPriority,
+					UsageTag = $"VulkanCombinedMeshProgram | variant={programState.VersionKindLabel} | material={programState.MaterialName ?? "<unnamed>"} | mesh={programState.MeshName ?? "<unnamed>"} | renderer={programState.RendererName ?? "<unnamed>"} | axes={generatedProgramAxes}",
+					Priority = programState.ProgramPriority,
 					ProgramDescriptor = descriptor,
 				};
 				generatedProgram.SetShaderProgramDiagnosticMetadata(new XRRenderProgram.ShaderProgramDiagnosticMetadata(
-					material.Name,
-					MeshRenderer?.Name,
-					Data.VersionKindLabel,
+					programState.MaterialName,
+					programState.RendererName,
+					programState.VersionKindLabel,
 					"VulkanCombinedMesh",
-					Mesh?.Name,
+					programState.MeshName,
 					shaderStageList));
 				generatedProgram.AllowLink();
 
@@ -123,15 +128,22 @@ public unsafe partial class VulkanRenderer
 
 				entry = new GeneratedProgramCacheEntry
 				{
+					Identity = programIdentity,
 					Data = generatedProgram,
 					Program = vkProgram,
 				};
 				_programCache[programIdentity] = entry;
 			}
 
-			if (!string.Equals(_activeProgramIdentity, programIdentity, StringComparison.Ordinal))
+			_programStateCache[programState] = entry;
+			return ActivateGeneratedProgram(entry);
+		}
+
+		private bool ActivateGeneratedProgram(GeneratedProgramCacheEntry entry)
+		{
+			if (!string.Equals(_activeProgramIdentity, entry.Identity, StringComparison.Ordinal))
 			{
-				_activeProgramIdentity = programIdentity;
+				_activeProgramIdentity = entry.Identity;
 				_pipelineDirty = true;
 				_descriptorDirty = true;
 				_vertexInputStateDirty = true;
@@ -160,12 +172,89 @@ public unsafe partial class VulkanRenderer
 			return linked;
 		}
 
+		private GeneratedProgramState CaptureGeneratedProgramState(XRMaterial material)
+		{
+			XRMesh? mesh = Mesh;
+			bool hasSkinning = mesh?.HasSkinning == true;
+			bool hasBlendshapes = mesh?.BlendshapeCount > 0;
+			bool isVulkan = RuntimeEngine.Rendering.State.IsVulkan;
+			bool useComputeSkinning =
+				hasSkinning &&
+				RuntimeEngine.Rendering.Settings.AllowSkinning &&
+				RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
+				!isVulkan;
+			bool useComputeBlendshapes =
+				hasBlendshapes &&
+				RuntimeEngine.Rendering.Settings.AllowBlendshapes &&
+				!isVulkan &&
+				(RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
+
+			return new GeneratedProgramState(
+				material,
+				material.ShaderStateRevision,
+				ComputeMaterialShaderStateSignature(material),
+				material.ActiveUberVariant.VariantHash,
+				material.ActiveUberVariant.IsEmpty,
+				Data.VertexShaderSource,
+				material.Name,
+				mesh?.Name,
+				MeshRenderer.Name,
+				Data.VersionKindLabel,
+				Data.ProgramPriority,
+				RuntimeEngine.Rendering.Settings.ShaderConfigVersion,
+				hasSkinning,
+				useComputeSkinning,
+				hasBlendshapes,
+				useComputeBlendshapes,
+				RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass && !isVulkan,
+				MeshRenderer.MeshDeformEnabled,
+				material.DirectionalCascadeShadowMaterialKind,
+				material.PointShadowMaterialKind,
+				RuntimeEngine.Rendering.State.RenderingPipelineState?.UseDepthNormalMaterialVariants ?? false,
+				RuntimeEngine.Rendering.EffectiveClipDepthRange,
+				RuntimeEngine.Rendering.Settings.ClipSpaceYDirection);
+		}
+
+		private static ulong ComputeMaterialShaderStateSignature(XRMaterial material)
+		{
+			const ulong offset = 1469598103934665603UL;
+			const ulong prime = 1099511628211UL;
+			ulong hash = offset;
+			hash = (hash ^ unchecked((ulong)material.Shaders.Count)) * prime;
+			for (int i = 0; i < material.Shaders.Count; i++)
+			{
+				XRShader? shader = material.Shaders[i];
+				if (shader is null)
+				{
+					hash = (hash ^ ulong.MaxValue) * prime;
+					continue;
+				}
+
+				hash = (hash ^ unchecked((uint)RuntimeHelpers.GetHashCode(shader))) * prime;
+				hash = (hash ^ unchecked((ulong)shader.SourceRevision)) * prime;
+				hash = (hash ^ unchecked((uint)shader.Type)) * prime;
+				hash = (hash ^ shader.GeneratedUberVariantHash) * prime;
+				hash = (hash ^ ReferenceIdentity(shader.Source)) * prime;
+				hash = (hash ^ ReferenceIdentity(shader.Source?.Text)) * prime;
+				hash = (hash ^ ReferenceIdentity(shader.Source?.FilePath)) * prime;
+				hash = (hash ^ ReferenceIdentity(shader.FilePath)) * prime;
+			}
+
+			return hash;
+		}
+
+		private static ulong ReferenceIdentity(object? value)
+			=> value is null ? 0UL : unchecked((uint)RuntimeHelpers.GetHashCode(value));
+
 		private static List<XRShader> BuildCombinedShaderList(IReadOnlyList<XRShader> sourceShaders, XRShader vertexShader)
 		{
 			List<XRShader> shaders = new(sourceShaders.Count + 1);
-			foreach (XRShader shader in sourceShaders)
+			for (int i = 0; i < sourceShaders.Count; i++)
+			{
+				XRShader shader = sourceShaders[i];
 				if (shader.Type != EShaderType.Vertex)
 					shaders.Add(shader);
+			}
 
 			shaders.Add(vertexShader);
 			return shaders;
@@ -193,100 +282,40 @@ public unsafe partial class VulkanRenderer
 		private static XRShader GenerateVertexShader(string source)
 			=> _generatedVertexShaderCache.GetOrAdd(source ?? string.Empty, static src => new XRShader(EShaderType.Vertex, src));
 
-		private string BuildGeneratedProgramIdentity(
-			XRMaterial material,
+		private static string BuildGeneratedProgramIdentity(
+			GeneratedProgramState state,
 			string generatedProgramAxes,
 			string shaderStageList,
 			string? generatedVertexIdentity)
-			=> string.Concat(
-				"material=",
-				RuntimeHelpers.GetHashCode(material).ToString("X8"),
-				";shaderIdentity=",
-				BuildShaderIdentityList(material, generatedVertexIdentity),
-				";uberVariant=",
-				material.ActiveUberVariant.VariantHash.ToString("X16"),
-				";axes=",
-				generatedProgramAxes,
-				";stages=",
-				shaderStageList,
-				";generatedVertex=",
-				generatedVertexIdentity ?? string.Empty);
+			=> $"material={RuntimeHelpers.GetHashCode(state.Material):X8};shaderRevision={state.ShaderStateRevision};shaderSignature={state.ShaderSourceSignature:X16};uberVariant={state.MaterialVariantHash:X16};axes={generatedProgramAxes};stages={shaderStageList};generatedVertex={generatedVertexIdentity ?? string.Empty}";
 
-		private static string BuildShaderIdentityList(XRMaterial material, string? generatedVertexIdentity)
-		{
-			if (material.Shaders.Count == 0)
-				return generatedVertexIdentity ?? "no-shaders";
+		private static string BuildGeneratedProgramName(
+			GeneratedProgramState state,
+			string generatedProgramAxes,
+			string shaderStageList)
+			=> $"VkCombined:{SanitizeProgramName(state.MaterialName, "material")}:{SanitizeProgramName(state.MeshName, "mesh")}:{generatedProgramAxes}:{shaderStageList}";
 
-			string identity = string.Join(",", material.Shaders
-				.Where(static shader => shader is not null)
-				.Select(static shader => BuildShaderIdentity(shader)));
-
-			return identity.Length == 0
-				? generatedVertexIdentity ?? "no-shaders"
-				: identity;
-		}
-
-		private static string BuildShaderIdentity(XRShader shader)
-		{
-			string sourcePath = shader.Source?.FilePath ?? shader.FilePath ?? string.Empty;
-			string sourceText = shader.Source?.Text ?? string.Empty;
-			int sourceTextHash = StringComparer.Ordinal.GetHashCode(sourceText);
-			string variantHash = shader.GeneratedUberVariantHash != 0
-				? shader.GeneratedUberVariantHash.ToString("X16")
-				: string.Empty;
-
-			return string.Concat(
-				shader.Type,
-				":",
-				RuntimeHelpers.GetHashCode(shader).ToString("X8"),
-				":",
-				sourcePath,
-				":len=",
-				sourceText.Length.ToString(System.Globalization.CultureInfo.InvariantCulture),
-				":src=",
-				sourceTextHash.ToString("X8"),
-				":var=",
-				variantHash);
-		}
-
-		private string BuildGeneratedProgramName(XRMaterial material, IReadOnlyList<XRShader> shaders)
-			=> $"VkCombined:{SanitizeProgramName(material.Name, "material")}:{SanitizeProgramName(Mesh?.Name, "mesh")}:{BuildGeneratedProgramAxes(material)}:{BuildShaderStageList(shaders)}";
-
-		private string BuildGeneratedProgramAxes(XRMaterial material)
-		{
-			XRMesh? mesh = Mesh;
-			bool useComputeSkinning = mesh?.HasSkinning == true &&
-				RuntimeEngine.Rendering.Settings.AllowSkinning &&
-				RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
-				!RuntimeEngine.Rendering.State.IsVulkan;
-			bool useComputeBlendshapes = mesh?.BlendshapeCount > 0 &&
-				RuntimeEngine.Rendering.Settings.AllowBlendshapes &&
-				!RuntimeEngine.Rendering.State.IsVulkan &&
-				(RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
-			bool usePrecombinedBlendshapes = RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass &&
-				!RuntimeEngine.Rendering.State.IsVulkan;
-
-			return string.Join(";",
-				$"shaderConfig={RuntimeEngine.Rendering.Settings.ShaderConfigVersion}",
-				$"skinning={mesh?.HasSkinning == true}",
-				$"computeSkinning={useComputeSkinning}",
-				$"blendshapes={mesh?.BlendshapeCount > 0}",
-				$"computeBlendshapes={useComputeBlendshapes}",
-				$"precombineBlendshapes={usePrecombinedBlendshapes}",
-				$"meshDeform={MeshRenderer.MeshDeformEnabled}",
-				$"directionalShadow={material.DirectionalCascadeShadowMaterialKind}",
-				$"pointShadow={material.PointShadowMaterialKind}",
-				$"depthNormal={RuntimeEngine.Rendering.State.RenderingPipelineState?.UseDepthNormalMaterialVariants ?? false}",
-				$"clipDepth={RuntimeEngine.Rendering.EffectiveClipDepthRange}",
-				$"clipY={RuntimeEngine.Rendering.Settings.ClipSpaceYDirection}");
-		}
+		private static string BuildGeneratedProgramAxes(GeneratedProgramState state)
+			=> $"shaderConfig={state.ShaderConfigVersion};skinning={state.HasSkinning};computeSkinning={state.UseComputeSkinning};blendshapes={state.HasBlendshapes};computeBlendshapes={state.UseComputeBlendshapes};precombineBlendshapes={state.UsePrecombinedBlendshapes};meshDeform={state.MeshDeformEnabled};directionalShadow={state.DirectionalShadowKind};pointShadow={state.PointShadowKind};depthNormal={state.UseDepthNormalVariants};clipDepth={state.ClipDepthRange};clipY={state.ClipYDirection}";
 
 		private static string BuildShaderStageList(IReadOnlyList<XRShader> shaders)
 		{
 			if (shaders.Count == 0)
 				return "no-shaders";
 
-			return string.Join(", ", shaders.Select(static shader => $"{shader.Type}:{ResolveShaderLabel(shader)}"));
+			var builder = new System.Text.StringBuilder(shaders.Count * 24);
+			for (int i = 0; i < shaders.Count; i++)
+			{
+				if (i != 0)
+					builder.Append(", ");
+
+				XRShader shader = shaders[i];
+				builder.Append(ResolveShaderTypeName(shader.Type))
+					.Append(':')
+					.Append(ResolveShaderLabel(shader));
+			}
+
+			return builder.ToString();
 		}
 
 		private static string ResolveShaderLabel(XRShader shader)
@@ -298,8 +327,22 @@ public unsafe partial class VulkanRenderer
 			if (!string.IsNullOrWhiteSpace(shader.Name))
 				return shader.Name!;
 
-			return shader.Type.ToString();
+			return ResolveShaderTypeName(shader.Type);
 		}
+
+		private static string ResolveShaderTypeName(EShaderType type)
+			=> type switch
+			{
+				EShaderType.Fragment => nameof(EShaderType.Fragment),
+				EShaderType.Vertex => nameof(EShaderType.Vertex),
+				EShaderType.Geometry => nameof(EShaderType.Geometry),
+				EShaderType.TessEvaluation => nameof(EShaderType.TessEvaluation),
+				EShaderType.TessControl => nameof(EShaderType.TessControl),
+				EShaderType.Compute => nameof(EShaderType.Compute),
+				EShaderType.Task => nameof(EShaderType.Task),
+				EShaderType.Mesh => nameof(EShaderType.Mesh),
+				_ => "Unknown",
+			};
 
 		private static string SanitizeProgramName(string? value, string fallback)
 			=> string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
@@ -1692,27 +1735,41 @@ public unsafe partial class VulkanRenderer
 			if (passMetadata is null || passIndex < 0)
 				return false;
 
-			foreach (RenderPassMetadata pass in passMetadata)
+			if (passMetadata is IReadOnlyList<RenderPassMetadata> indexedPasses)
 			{
-				if (pass.PassIndex != passIndex)
-					continue;
-
-				bool hasDepthStencilUsage = false;
-				bool hasDepthStencilWriteUsage = false;
-				foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
+				for (int index = 0; index < indexedPasses.Count; index++)
 				{
-					if (usage.ResourceType is ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.StencilAttachment)
-					{
-						hasDepthStencilUsage = true;
-						if (usage.Access is ERenderGraphAccess.Write or ERenderGraphAccess.ReadWrite)
-							hasDepthStencilWriteUsage = true;
-					}
+					RenderPassMetadata pass = indexedPasses[index];
+					if (pass.PassIndex == passIndex)
+						return PassHasReadOnlyDepthStencilUsage(pass);
 				}
 
-				return hasDepthStencilUsage && !hasDepthStencilWriteUsage;
+				return false;
 			}
 
+			foreach (RenderPassMetadata pass in passMetadata)
+				if (pass.PassIndex == passIndex)
+					return PassHasReadOnlyDepthStencilUsage(pass);
+
 			return false;
+		}
+
+		private static bool PassHasReadOnlyDepthStencilUsage(RenderPassMetadata pass)
+		{
+			bool hasDepthStencilUsage = false;
+			bool hasDepthStencilWriteUsage = false;
+			for (int index = 0; index < pass.ResourceUsages.Count; index++)
+			{
+				RenderPassResourceUsage usage = pass.ResourceUsages[index];
+				if (usage.ResourceType is not (ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.StencilAttachment))
+					continue;
+
+				hasDepthStencilUsage = true;
+				if (usage.Access is ERenderGraphAccess.Write or ERenderGraphAccess.ReadWrite)
+					hasDepthStencilWriteUsage = true;
+			}
+
+			return hasDepthStencilUsage && !hasDepthStencilWriteUsage;
 		}
 
 		private static bool StencilStateWrites(StencilOpState state)
@@ -1751,6 +1808,7 @@ public unsafe partial class VulkanRenderer
 				entry.Data.Destroy();
 
 			_programCache.Clear();
+			_programStateCache.Clear();
 			_program = null;
 			_generatedProgram = null;
 			_activeProgramIdentity = null;

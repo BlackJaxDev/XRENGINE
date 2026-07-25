@@ -193,6 +193,16 @@ public sealed class WindowInputSnapshotAccumulator
     }
 
     /// <summary>
+    /// Returns the current native-window state for an engine keyboard key.
+    /// This is intended for host-level shortcuts that must not depend on pawn input dispatch.
+    /// </summary>
+    public bool IsKeyPressed(EKey key)
+    {
+        lock (_sync)
+            return _pressedKeys.Contains(key);
+    }
+
+    /// <summary>
     /// Atomically returns and acknowledges all transient input published since the previous
     /// consumption. Events recorded concurrently but not yet published remain pending.
     /// </summary>
@@ -231,17 +241,17 @@ public sealed class WindowInputSnapshotAccumulator
     }
 
     public void RecordKeyDown()
-        => RecordKeyDown(EKey.Unknown);
+        => _ = RecordKeyDown(EKey.Unknown);
 
-    public void RecordKeyDown(EKey key)
+    public bool RecordKeyDown(EKey key)
     {
         Interlocked.Increment(ref _keyDownTransitionCount);
         lock (_sync)
         {
-            if (key != EKey.Unknown)
-                _pressedKeys.Add(key);
+            bool isNewPress = key != EKey.Unknown && _pressedKeys.Add(key);
 
             _keyTransitions.Add(new WindowKeyTransition(key, true));
+            return isNewPress;
         }
     }
 

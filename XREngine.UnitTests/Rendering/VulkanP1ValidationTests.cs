@@ -565,6 +565,102 @@ public sealed class VulkanP1ValidationTests
     }
 
     [Test]
+    public void ResourcePlanner_ReusesExactCleanFramePlanWithoutSkippingMutableSafetyChecks()
+    {
+        string trackingSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs");
+        string plannerSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+        string commandBufferSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+
+        trackingSource.ShouldContain("PreparedFrameOpsSignature");
+        trackingSource.ShouldContain("PreparedPlanRevision");
+        trackingSource.ShouldContain("HasPreparedPlan");
+
+        plannerSource.ShouldContain("TryReusePreparedFrameOpResourcePlannerStates");
+        plannerSource.ShouldContain("switchingState.PreparedFrameOpsSignature != frameOpsSignature");
+        plannerSource.ShouldContain("currentRegistryRevision != fastPathKey.RegistryDescriptorRevision");
+        plannerSource.ShouldContain("currentPassMetadataRevision != fastPathKey.ActivePassMetadataRevision");
+        plannerSource.ShouldContain("BuildQueueOwnershipConfig(fastPathKey.ActivePassMetadata)");
+        plannerSource.ShouldContain("!state.ResourceAllocator.IsRetired");
+        plannerSource.ShouldContain("RememberPreparedFrameOpResourcePlannerStates");
+        plannerSource.ShouldContain("InvalidatePreparedFrameOpResourcePlan");
+
+        int cleanFrameReuse = commandBufferSource.IndexOf(
+            "TryReusePreparedFrameOpResourcePlannerStates(",
+            StringComparison.Ordinal);
+        int fullPreparation = commandBufferSource.IndexOf(
+            "PrepareResourcePlannerForFrameOps(ops, frameOpsSignature)",
+            StringComparison.Ordinal);
+        int rememberPreparedPlan = commandBufferSource.IndexOf(
+            "RememberPreparedFrameOpResourcePlannerStates(",
+            StringComparison.Ordinal);
+
+        cleanFrameReuse.ShouldBeGreaterThanOrEqualTo(0);
+        fullPreparation.ShouldBeGreaterThan(cleanFrameReuse);
+        rememberPreparedPlan.ShouldBeGreaterThan(fullPreparation);
+    }
+
+    [Test]
+    public void DefaultPipeline_CleanFrameSettingsAndProbeScansAvoidEnumeratorAllocations()
+    {
+        string postProcessState = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/PostProcessing/CameraPostProcessStateCollection.cs");
+        string defaultPipeline = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
+        string planner = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+        string dataBuffer = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
+
+        postProcessState.ShouldNotContain("_stages.Values.FirstOrDefault");
+        postProcessState.ShouldContain("foreach (PostProcessStageState stage in _stages.Values)");
+        defaultPipeline.ShouldContain("for (int i = 0; i < probes.Count; i++)");
+        defaultPipeline.ShouldContain("UnitTestEnvironmentRequestsOpenXr");
+        planner.ShouldContain("Enum.IsDefined<EDefaultRenderPass>");
+        planner.ShouldContain("PassMetadataContainsPassIndex(passMetadata!, passIndex)");
+        planner.ShouldNotContain("passMetadata!.Any(m => m.PassIndex");
+        dataBuffer.ShouldNotContain("foreach (VulkanMemoryAllocation candidate in _bufferAllocations.Values)");
+    }
+
+    [Test]
+    public void DefaultPipeline_DirectionalLightUsesCachedNamesAndOneVulkanArrayUploadPath()
+    {
+        string directionalLight = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Scene/Components/Lights/Types/DirectionalLightComponent.cs");
+        string uniformNames = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Scene/Components/Lights/Types/DirectionalLightComponent.UniformNames.cs");
+
+        directionalLight.ShouldContain("DirectionalLightUniformNames names = ResolveUniformNames(targetStructName);");
+        directionalLight.ShouldContain("bool useVulkanBulkArrays = IsVulkanDirectionalShadowBackend();");
+        directionalLight.ShouldContain("if (!useVulkanBulkArrays)");
+        directionalLight.ShouldNotContain("program.Uniform($\"{flatPrefix}");
+        uniformNames.ShouldContain("private static readonly DirectionalLightUniformNames DefaultUniformNames");
+        uniformNames.ShouldContain("UniformNamesByPrefix.GetOrAdd");
+        uniformNames.ShouldContain("IndexedRenderedCascadeStaleAge = CreateIndexedNames(RenderedCascadeStaleAge);");
+    }
+
+    [Test]
+    public void ImGuiOverlaySnapshots_ReuseGrowthOnlyStorageAndRecycleAfterRecording()
+    {
+        string imgui = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs");
+        string frameRecording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recording.cs");
+
+        imgui.ShouldContain("private ImGuiFrameSnapshot? _recycledSnapshot;");
+        imgui.ShouldContain("snapshot.Capture(drawData);");
+        imgui.ShouldContain("EnsureCapacity(ref _vertices, VertexCount);");
+        imgui.ShouldContain("for (int listIndex = 0; listIndex < drawData.CommandListCount; listIndex++)");
+        imgui.ShouldContain("for (int cmdIndex = 0; cmdIndex < cmdList.CommandCount; cmdIndex++)");
+        imgui.ShouldNotContain("new ImDrawVert[cmdList.VtxBuffer.Size]");
+        imgui.ShouldNotContain("new ushort[cmdList.IdxBuffer.Size]");
+        imgui.ShouldNotContain("new ImGuiCommandSnapshot[cmdList.CmdBuffer.Size]");
+        frameRecording.ShouldContain("_imguiDrawData.Recycle(imguiOverlaySnapshot);");
+    }
+
+    [Test]
     public void ResourcePlanner_SwitchesPerFrameOpContextDuringPrimaryRecording()
     {
         string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs").Replace("\r\n", "\n");

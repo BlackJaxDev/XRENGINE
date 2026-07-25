@@ -372,7 +372,14 @@ namespace XREngine.Components.Capture.Lights.Types
         /// </summary>
         /// <param name="diagnostic">The diagnostic information to set for the shadow atlas allocation.</param>
         internal void SetShadowAtlasDiagnostic(ShadowRequestDiagnostic diagnostic)
-            => SetField(ref _shadowAtlasDiagnostic, diagnostic, nameof(ShadowAtlasDiagnostic));
+            // This is frame telemetry polled by the editor, not user-authored component
+            // state. Publishing multiple property events per light per frame boxed both
+            // diagnostic values and dominated collect-visible allocation.
+            => SetField(
+                ref _shadowAtlasDiagnostic,
+                diagnostic,
+                publishNotifications: false,
+                nameof(ShadowAtlasDiagnostic));
 
         /// <summary>
         /// Creates a key for requesting a shadow map for this light with the specified parameters.

@@ -1284,7 +1284,7 @@ namespace XREngine.Components.Capture.Lights.Types
             for (int i = 0; i < _shadowCameras.Length; i++)
             {
                 XRCamera cam = _shadowCameras[i];
-                output.Add(cam.WorldFrustum().Prepare());
+                output.Add(cam.PreparedWorldFrustum());
             }
         }
     }

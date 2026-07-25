@@ -4,7 +4,9 @@ Created: 2026-07-21
 
 Owner: Rendering / Editor / Runtime modularization
 
-Status: Proposed
+Status: Complete
+
+Completed: 2026-07-25
 
 Related design, execution, and architecture documents:
 
@@ -17,6 +19,8 @@ Related design, execution, and architecture documents:
 - [Dedicated Render Thread And Window Ownership Plan](../../design/rendering/dedicated-render-thread-window-ownership-plan.md)
 - [Vulkan Shader Object Pipeline Replacement](../../design/rendering/vulkan-shader-object-pipeline-replacement-design.md)
 - [OpenXR Runtime Code Organization TODO](vr/openxr-runtime-code-organization-todo.md)
+- [Renderer Backend Hot Reload Architecture](../../../architecture/rendering/renderer-backend-hot-reload.md)
+- [Implementation Closeout](../../progress/rendering/rendering-backend-hot-reload-closeout-2026-07-25.md)
 
 ## Goal
 
@@ -398,440 +402,440 @@ explicitly reset, or declare backend reload unsupported while they are active.
 
 ### HR0 - Baseline, inventory, and branch contract
 
-- [ ] Reconcile this work with the active Runtime Modularization Phase 4 branch
+- [x] Reconcile this work with the active Runtime Modularization Phase 4 branch
   and do not independently move the same source in competing branches.
-- [ ] Inventory every OpenGL/Vulkan source file, package, native library,
+- [x] Inventory every OpenGL/Vulkan source file, package, native library,
   generated binding, embedded resource, content-copy rule, AOT registration,
   reflection lookup, serializer type identity, and test that must move with each
   backend.
-- [ ] Inventory every stable-layer reference to `OpenGLRenderer`,
+- [x] Inventory every stable-layer reference to `OpenGLRenderer`,
   `VulkanRenderer`, nested backend wrapper types, Silk OpenGL/Vulkan types,
   backend enums, and backend-specific exception/diagnostic types.
-- [ ] Inventory all static fields, event subscriptions, callbacks, delegates,
+- [x] Inventory all static fields, event subscriptions, callbacks, delegates,
   GC handles, thread-static state, worker threads, tasks, timers, and native
   registrations owned by either backend.
-- [ ] Inventory multi-window, detached ImGui viewport, shared GL context,
+- [x] Inventory multi-window, detached ImGui viewport, shared GL context,
   OpenXR/OpenVR, DLSS/Streamline/XeSS, video streaming, texture upload, profiler,
   RenderDoc/debug-marker, and device-loss integration points.
-- [ ] Record current renderer creation/destruction and device-loss recovery call
+- [x] Record current renderer creation/destruction and device-loss recovery call
   graphs, including thread affinity and exact cleanup order.
-- [ ] Capture baseline shader reload and full renderer recreation timings for
+- [x] Capture baseline shader reload and full renderer recreation timings for
   representative OpenGL and Vulkan Unit Testing World scenes.
-- [ ] Record managed memory, GPU resource counts, native handle counts, worker
+- [x] Record managed memory, GPU resource counts, native handle counts, worker
   counts, and pipeline/program cache size before and after repeated manual
   renderer recreation.
-- [ ] Define initial performance budgets only after the baseline is captured.
+- [x] Define initial performance budgets only after the baseline is captured.
 
 Acceptance criteria:
 
-- [ ] Every concrete backend dependency has a target owner or an explicitly
+- [x] Every concrete backend dependency has a target owner or an explicitly
   documented blocker.
-- [ ] The inventory distinguishes stable contract state from disposable backend
+- [x] The inventory distinguishes stable contract state from disposable backend
   state.
-- [ ] Existing unrelated build, validation, and runtime failures are recorded
+- [x] Existing unrelated build, validation, and runtime failures are recorded
   separately from hot-reload work.
 
 ### HR1 - Complete shader dependency hot reload
 
-- [ ] Add an authoritative loaded-shader dependency index from normalized source
+- [x] Add an authoritative loaded-shader dependency index from normalized source
   paths to every top-level shader and generated variant that consumes them.
-- [ ] Update the index whenever source resolution, includes, snippets, source
+- [x] Update the index whenever source resolution, includes, snippets, source
   paths, or generated variant composition changes.
-- [ ] Connect game/engine file changes, rename, create, and delete events to the
+- [x] Connect game/engine file changes, rename, create, and delete events to the
   dependency index.
-- [ ] Debounce duplicate/partial file-system events and wait for a readable,
+- [x] Debounce duplicate/partial file-system events and wait for a readable,
   stable file before compiling; never block the watcher callback on compilation.
-- [ ] Make `GLShader` observe in-place `XRShader.SourceChanged`/`TextChanged`
+- [x] Make `GLShader` observe in-place `XRShader.SourceChanged`/`TextChanged`
   behavior symmetrically with Vulkan.
-- [ ] Give shader-source and program-build requests monotonic revisions and
+- [x] Give shader-source and program-build requests monotonic revisions and
   reject stale asynchronous results.
-- [ ] Compile/link candidates without destroying the active last-good shader,
+- [x] Compile/link candidates without destroying the active last-good shader,
   program, pipeline, or descriptor state.
-- [ ] Publish successful candidates only at a legal frame boundary.
-- [ ] Keep the last-good candidate active after compile/link/reflection failure
+- [x] Publish successful candidates only at a legal frame boundary.
+- [x] Keep the last-good candidate active after compile/link/reflection failure
   and surface file, include stack, stage, backend, variant, and complete compiler
   diagnostics in the editor.
-- [ ] Rebuild uniform/material metadata, descriptor state, push-constant ranges,
+- [x] Rebuild uniform/material metadata, descriptor state, push-constant ranges,
   transform-feedback state, vertex input, affected pipelines, and cached command
   buffers when the shader interface changes.
-- [ ] Invalidate only affected Vulkan pipeline/command variants where dependency
+- [x] Invalidate only affected Vulkan pipeline/command variants where dependency
   tracking is complete; use a visible broader invalidation when it is not.
-- [ ] Retire replaced GL/Vulkan objects only after in-flight use ends.
-- [ ] Bound stale shader/program/pipeline/generated-variant cache generations.
-- [ ] Cover all supported shader stages and compute-only programs.
+- [x] Retire replaced GL/Vulkan objects only after in-flight use ends.
+- [x] Bound stale shader/program/pipeline/generated-variant cache generations.
+- [x] Cover all supported shader stages and compute-only programs.
 
 Acceptance criteria:
 
-- [ ] Editing a top-level shader or any transitive include updates OpenGL and
+- [x] Editing a top-level shader or any transitive include updates OpenGL and
   Vulkan without restarting or recreating the renderer.
-- [ ] A deliberately broken edit leaves the previous image rendering and shows
+- [x] A deliberately broken edit leaves the previous image rendering and shows
   an actionable error.
-- [ ] Saving edits rapidly cannot publish an older result after a newer result.
-- [ ] Repeated successful and failed reloads do not leak programs, pipelines,
+- [x] Saving edits rapidly cannot publish an older result after a newer result.
+- [x] Repeated successful and failed reloads do not leak programs, pipelines,
   layouts, descriptors, command buffers, managed subscriptions, or cache entries.
 
 ### HR2 - Define and enforce the stable backend-module boundary
 
-- [ ] Add the backend-module metadata, factory, lifecycle, capability, creation,
+- [x] Add the backend-module metadata, factory, lifecycle, capability, creation,
   reload-limitation, and diagnostic contracts to `Runtime.Rendering`.
-- [ ] Replace direct concrete construction in rendering-host services with an
+- [x] Replace direct concrete construction in rendering-host services with an
   installed module catalog/factory.
-- [ ] Replace stable-layer `is OpenGLRenderer`/`is VulkanRenderer` checks and
+- [x] Replace stable-layer `is OpenGLRenderer`/`is VulkanRenderer` checks and
   concrete casts with capabilities or backend-neutral interfaces.
-- [ ] Ensure `XRWindow` and the generalized renderer replacement coordinator do
+- [x] Ensure `XRWindow` and the generalized renderer replacement coordinator do
   not reference concrete backend types.
-- [ ] Ensure editor UI, profiler, MCP, tests, and application composition do not
+- [x] Ensure editor UI, profiler, MCP, tests, and application composition do not
   retain concrete backend objects across reload.
-- [ ] Make `GenericRenderObject` wrapper cleanup complete, deterministic, and
+- [x] Make `GenericRenderObject` wrapper cleanup complete, deterministic, and
   verifiable before module unload.
-- [ ] Define ABI compatibility/versioning and fail visibly on mismatches.
-- [ ] Define static factory registration for production/AOT and collectible
+- [x] Define ABI compatibility/versioning and fail visibly on mismatches.
+- [x] Define static factory registration for production/AOT and collectible
   registration for the editor without duplicating behavior.
-- [ ] Add project/source-contract tests that prevent `Runtime.Rendering` from
+- [x] Add project/source-contract tests that prevent `Runtime.Rendering` from
   referencing the concrete backend projects or their API packages.
-- [ ] Add project/source-contract tests that prevent either backend from
+- [x] Add project/source-contract tests that prevent either backend from
   referencing the other, Editor, Server, VRClient, or executable policy.
 
 Acceptance criteria:
 
-- [ ] A test backend module can be loaded, create a renderer, tear down, unload,
+- [x] A test backend module can be loaded, create a renderer, tear down, unload,
   and be collected without OpenGL/Vulkan code present.
-- [ ] The stable rendering kernel compiles without concrete renderer type names.
-- [ ] Required factory failures are actionable; no renderer is silently chosen.
+- [x] The stable rendering kernel compiles without concrete renderer type names.
+- [x] Required factory failures are actionable; no renderer is silently chosen.
 
 ### HR3 - Extract `XREngine.Runtime.Rendering.OpenGL.dll`
 
-- [ ] Create `XREngine.Runtime.Rendering.OpenGL` as a leaf backend project.
-- [ ] Move `OpenGLRenderer`, every GL API wrapper, GL-specific values, shader and
+- [x] Create `XREngine.Runtime.Rendering.OpenGL` as a leaf backend project.
+- [x] Move `OpenGLRenderer`, every GL API wrapper, GL-specific values, shader and
   program linking, program pipelines, resource upload, readback, query, mesh,
   material, framebuffer, ImGui, and diagnostics implementation into it.
-- [ ] Move OpenGL-specific OpenXR, Ultralight/UI driver, video upload, platform
+- [x] Move OpenGL-specific OpenXR, Ultralight/UI driver, video upload, platform
   window, and native callback behavior with the backend.
-- [ ] Move Silk.NET.OpenGL/WGL and other OpenGL-only package/native/content
+- [x] Move Silk.NET.OpenGL/WGL and other OpenGL-only package/native/content
   ownership out of the stable rendering project wherever no stable consumer
   remains.
-- [ ] Make backend wrapper types namespace-level/internal where practical; do
+- [x] Make backend wrapper types namespace-level/internal where practical; do
   not expand the current partial/nested-type coupling during the move.
-- [ ] Define ownership of the primary window context versus module-owned shared
+- [x] Define ownership of the primary window context versus module-owned shared
   contexts. The first implementation may retain the primary window/context in
   the stable window host, but every backend-created shared context and worker
   must stop and release before unload.
-- [ ] Unregister GL debug callbacks and ensure callback delegates are no longer
+- [x] Unregister GL debug callbacks and ensure callback delegates are no longer
   native-reachable before unload.
-- [ ] Stop/join GL compile, binary upload, mesh generation, texture upload,
+- [x] Stop/join GL compile, binary upload, mesh generation, texture upload,
   readback, and detached ImGui viewport work.
-- [ ] Preserve context-creation settings that require window recreation as an
+- [x] Preserve context-creation settings that require window recreation as an
   explicit reload limitation rather than pretending they were applied.
-- [ ] Move backend tests and replace source-text tests that assume old paths.
-- [ ] Update AOT factory generation and static production registration.
-- [ ] Update application output/package rules so the backend and its private
+- [x] Move backend tests and replace source-text tests that assume old paths.
+- [x] Update AOT factory generation and static production registration.
+- [x] Update application output/package rules so the backend and its private
   dependencies are copied without a compile-time concrete-type dependency.
 
 Acceptance criteria:
 
-- [ ] `Runtime.Rendering` builds with no OpenGL implementation source and no
+- [x] `Runtime.Rendering` builds with no OpenGL implementation source and no
   accidental OpenGL-only dependency.
-- [ ] The editor can statically load and render through the extracted backend
+- [x] The editor can statically load and render through the extracted backend
   before collectible reload is enabled.
-- [ ] OpenGL cleanup leaves no live shared context, worker, callback, wrapper, or
+- [x] OpenGL cleanup leaves no live shared context, worker, callback, wrapper, or
   GL object owned by the retiring module.
-- [ ] Detached ImGui platform windows either survive and rebind or are recreated
+- [x] Detached ImGui platform windows either survive and rebind or are recreated
   with documented editor-state preservation.
 
 ### HR4 - Extract `XREngine.Runtime.Rendering.Vulkan.dll`
 
-- [ ] Create `XREngine.Runtime.Rendering.Vulkan` as a leaf backend project.
-- [ ] Move `VulkanRenderer`, every Vulkan API wrapper, device/swapchain/frame
+- [x] Create `XREngine.Runtime.Rendering.Vulkan` as a leaf backend project.
+- [x] Move `VulkanRenderer`, every Vulkan API wrapper, device/swapchain/frame
   loop, command recording, resource lifetime, descriptors, pipelines, render
   graph, ImGui, diagnostics, and feature implementation into it.
-- [ ] Move Vulkan-specific OpenXR, DLSS/Streamline, video upload, VMA bridge,
+- [x] Move Vulkan-specific OpenXR, DLSS/Streamline, video upload, VMA bridge,
   debug callbacks, generated bindings, native binaries, and content ownership
   with the backend or behind an explicitly lower optional integration contract.
-- [ ] Move Silk.NET.Vulkan and Vulkan-only extension/package ownership out of the
+- [x] Move Silk.NET.Vulkan and Vulkan-only extension/package ownership out of the
   stable rendering project wherever no stable consumer remains.
-- [ ] Coordinate with the Vulkan Runtime Code Organization TODO so source moves
+- [x] Coordinate with the Vulkan Runtime Code Organization TODO so source moves
   do not freeze the partial-class monolith as the permanent module design.
-- [ ] Make async shader/pipeline compilation, command-chain workers, secondary
+- [x] Make async shader/pipeline compilation, command-chain workers, secondary
   recorders, uploads, readbacks, and presentation tasks generation-aware and
   joinable.
-- [ ] Generalize device-loss teardown/recreation primitives for the normal
+- [x] Generalize device-loss teardown/recreation primitives for the normal
   reload transaction without weakening device-loss diagnostics.
-- [ ] For the first Level 3 implementation, recreate the Vulkan instance/device,
+- [x] For the first Level 3 implementation, recreate the Vulkan instance/device,
   queues, allocator, swapchain, caches, and resources rather than trying to
   transfer live handles across assembly generations.
-- [ ] Persist only disk pipeline/prewarm caches whose device/build/feature
+- [x] Persist only disk pipeline/prewarm caches whose device/build/feature
   fingerprints remain compatible.
-- [ ] Unregister Vulkan debug and external SDK callbacks before unload.
-- [ ] Ensure deferred retirement and tracked lifetime registries are empty or
+- [x] Unregister Vulkan debug and external SDK callbacks before unload.
+- [x] Ensure deferred retirement and tracked lifetime registries are empty or
   safely completed before the module becomes collectible.
-- [ ] Move backend tests and replace path-sensitive source-text tests.
-- [ ] Update AOT factory generation and static production registration.
-- [ ] Update application output/package rules for the backend and private native
+- [x] Move backend tests and replace path-sensitive source-text tests.
+- [x] Update AOT factory generation and static production registration.
+- [x] Update application output/package rules for the backend and private native
   dependencies.
 
 Acceptance criteria:
 
-- [ ] `Runtime.Rendering` builds with no Vulkan implementation source and no
+- [x] `Runtime.Rendering` builds with no Vulkan implementation source and no
   accidental Vulkan-only dependency.
-- [ ] The editor can statically load and render through the extracted backend
+- [x] The editor can statically load and render through the extracted backend
   before collectible reload is enabled.
-- [ ] Vulkan cleanup leaves no live backend worker, callback, wrapper, tracked
+- [x] Vulkan cleanup leaves no live backend worker, callback, wrapper, tracked
   resource, pending retirement, or module-owned native handle.
-- [ ] Validation remains clean through one explicit teardown/recreation cycle.
+- [x] Validation remains clean through one explicit teardown/recreation cycle.
 
 ### HR5 - Implement the collectible module catalog and loader
 
-- [ ] Add installed/static and editor-collectible module catalog modes behind
+- [x] Add installed/static and editor-collectible module catalog modes behind
   the same stable factory contract.
-- [ ] Implement versioned shadow-copy staging and `AssemblyDependencyResolver`.
-- [ ] Enforce shared assembly unification and reject duplicate stable contracts.
-- [ ] Implement managed and native dependency resolution with bounded search
+- [x] Implement versioned shadow-copy staging and `AssemblyDependencyResolver`.
+- [x] Enforce shared assembly unification and reject duplicate stable contracts.
+- [x] Implement managed and native dependency resolution with bounded search
   roots and actionable failure diagnostics.
-- [ ] Validate module metadata, architecture, target framework, ABI, entry point,
+- [x] Validate module metadata, architecture, target framework, ABI, entry point,
   backend ID, and hashes before activation.
-- [ ] Track the active, candidate, and last-good generations explicitly.
-- [ ] Retain weak references to unloaded contexts for diagnostics without keeping
+- [x] Track the active, candidate, and last-good generations explicitly.
+- [x] Retain weak references to unloaded contexts for diagnostics without keeping
   their assemblies or types alive.
-- [ ] Add an unload verification command/test that reports known roots when an
+- [x] Add an unload verification command/test that reports known roots when an
   ALC remains alive after cooperative unload and diagnostic GC cycles.
-- [ ] Bound generation retention and safely clean old shadow directories.
-- [ ] Ensure loader/build/cache directory changes cannot trigger recursive asset
+- [x] Bound generation retention and safely clean old shadow directories.
+- [x] Ensure loader/build/cache directory changes cannot trigger recursive asset
   or module rebuild watchers.
-- [ ] Reject activation when any required native binary is already loaded from
+- [x] Reject activation when any required native binary is already loaded from
   an incompatible generation and cannot be safely reused/unloaded.
 
 Acceptance criteria:
 
-- [ ] A minimal backend generation can be loaded/unloaded repeatedly and its ALC
+- [x] A minimal backend generation can be loaded/unloaded repeatedly and its ALC
   becomes unreachable.
-- [ ] A module with a duplicate contract DLL, bad ABI, wrong architecture, or
+- [x] A module with a duplicate contract DLL, bad ABI, wrong architecture, or
   missing native dependency is rejected without affecting the active renderer.
-- [ ] Last-good module files remain available until candidate acceptance.
+- [x] Last-good module files remain available until candidate acceptance.
 
 ### HR6 - Implement editor build and reload orchestration
 
-- [ ] Add a build service that targets only the selected backend project and
+- [x] Add a build service that targets only the selected backend project and
   captures structured MSBuild/Roslyn diagnostics.
-- [ ] Support explicit "Build and Reload Renderer" first; add opt-in automatic
+- [x] Support explicit "Build and Reload Renderer" first; add opt-in automatic
   reload after manual behavior is reliable.
-- [ ] Debounce saves, cancel superseded builds, and never load incomplete output.
-- [ ] Publish a generation manifest only after a successful build and complete
+- [x] Debounce saves, cancel superseded builds, and never load incomplete output.
+- [x] Publish a generation manifest only after a successful build and complete
   shadow copy.
-- [ ] Keep build work off render/application hot paths.
-- [ ] Distinguish compile failure, staging failure, module validation failure,
+- [x] Keep build work off render/application hot paths.
+- [x] Distinguish compile failure, staging failure, module validation failure,
   teardown failure, unload leak, candidate initialization failure, first-frame
   failure, and rollback failure.
-- [ ] Add cancellation rules: cancellation is safe before quiescing; after
+- [x] Add cancellation rules: cancellation is safe before quiescing; after
   teardown begins the transaction must finish candidate activation or rollback.
-- [ ] Add a CLI/VS Code task for starting the editor in renderer-development mode.
-- [ ] Do not set `.NET watch` to restart the whole process automatically on rude
+- [x] Add a CLI/VS Code task for starting the editor in renderer-development mode.
+- [x] Do not set `.NET watch` to restart the whole process automatically on rude
   edits in this workflow.
 
 Acceptance criteria:
 
-- [ ] A backend compile error leaves the current renderer untouched.
-- [ ] A successful backend build produces exactly one candidate reload request.
-- [ ] Rapid saves/builds cannot activate a stale module generation.
+- [x] A backend compile error leaves the current renderer untouched.
+- [x] A successful backend build produces exactly one candidate reload request.
+- [x] Rapid saves/builds cannot activate a stale module generation.
 
 ### HR7 - Generalize and harden renderer replacement
 
-- [ ] Extract the existing `XRWindow` device-loss recreation sequence into the
+- [x] Extract the existing `XRWindow` device-loss recreation sequence into the
   shared replacement coordinator.
-- [ ] Preserve device-loss retry/circuit-breaker behavior while allowing a
+- [x] Preserve device-loss retry/circuit-breaker behavior while allowing a
   user/code-reload reason with its own policy and diagnostics.
-- [ ] Coordinate every window using the retiring backend; never mix backend
+- [x] Coordinate every window using the retiring backend; never mix backend
   module generations in shared static/native state.
-- [ ] Define legal frame-abandonment, present, and swapchain ownership behavior
+- [x] Define legal frame-abandonment, present, and swapchain ownership behavior
   for reload requested during acquire, recording, submission, or present.
-- [ ] Define render/application/window-owner thread handoffs and assert them.
-- [ ] Block new wrapper creation and backend work publication after quiescing.
-- [ ] Add timeouts and diagnostics for workers, GPU drain, native callbacks,
+- [x] Define render/application/window-owner thread handoffs and assert them.
+- [x] Block new wrapper creation and backend work publication after quiescing.
+- [x] Add timeouts and diagnostics for workers, GPU drain, native callbacks,
   resource cleanup, ALC unload, candidate initialization, and first valid frame.
-- [ ] Never forcibly unload an assembly while module code or callbacks can still
+- [x] Never forcibly unload an assembly while module code or callbacks can still
   execute.
-- [ ] Invalidate render-pipeline physical generations and imported targets after
+- [x] Invalidate render-pipeline physical generations and imported targets after
   replacement while preserving logical layouts and profiles.
-- [ ] Reset temporal histories and backend telemetry explicitly.
-- [ ] Warm essential editor/UI/present resources before resuming; schedule
+- [x] Reset temporal histories and backend telemetry explicitly.
+- [x] Warm essential editor/UI/present resources before resuming; schedule
   optional resource rehydration within existing work budgets.
-- [ ] Accept the candidate only after a valid render and present/capture result.
-- [ ] Implement candidate cleanup and last-good rollback through the same
+- [x] Accept the candidate only after a valid render and present/capture result.
+- [x] Implement candidate cleanup and last-good rollback through the same
   transaction primitives.
 
 Acceptance criteria:
 
-- [ ] OpenGL and Vulkan each complete a manual same-generation renderer restart
+- [x] OpenGL and Vulkan each complete a manual same-generation renderer restart
   without restarting the editor or losing logical editor/scene state.
-- [ ] Extracted backend generations can then be replaced by a newly loaded DLL.
-- [ ] A failed candidate returns to the last-good generation or leaves rendering
+- [x] Extracted backend generations can then be replaced by a newly loaded DLL.
+- [x] A failed candidate returns to the last-good generation or leaves rendering
   safely stopped with a visible error.
-- [ ] No frame uses objects from two backend generations.
+- [x] No frame uses objects from two backend generations.
 
 ### HR8 - Preserve editor, viewport, ImGui, and logical render state
 
-- [ ] Audit every editor/rendering state owner and move session-critical logical
+- [x] Audit every editor/rendering state owner and move session-critical logical
   state out of collectible modules.
-- [ ] Preserve editor selection, inspectors, undo/redo, unsaved assets, cameras,
+- [x] Preserve editor selection, inspectors, undo/redo, unsaved assets, cameras,
   viewport layout, render-pipeline selection, and debug settings.
-- [ ] Preserve the ImGui context/docking configuration where backend ownership
+- [x] Preserve the ImGui context/docking configuration where backend ownership
   permits it; recreate renderer/platform resources explicitly.
-- [ ] Preserve logical render resources and rebuild API wrappers from asset/CPU/
+- [x] Preserve logical render resources and rebuild API wrappers from asset/CPU/
   cooked sources.
-- [ ] Classify GPU-only simulation, temporal, query, and capture resources and
+- [x] Classify GPU-only simulation, temporal, query, and capture resources and
   define reset or unsupported behavior.
-- [ ] Rebind scene panels, viewport pipeline instances, external textures,
+- [x] Rebind scene panels, viewport pipeline instances, external textures,
   editor thumbnails, gizmos, debug rendering, and profiler feeds.
-- [ ] Make stale backend objects fail generation validation instead of invoking a
+- [x] Make stale backend objects fail generation validation instead of invoking a
   disposed module.
-- [ ] Add a visible one-frame/reload placeholder rather than presenting stale or
+- [x] Add a visible one-frame/reload placeholder rather than presenting stale or
   uninitialized data when rehydration is incomplete.
 
 Acceptance criteria:
 
-- [ ] A representative edited scene remains open, selected, and unsaved across
+- [x] A representative edited scene remains open, selected, and unsaved across
   backend reload.
-- [ ] Camera and viewport state are unchanged apart from intentional temporal
+- [x] Camera and viewport state are unchanged apart from intentional temporal
   history reset.
-- [ ] No inspector, thumbnail, profiler, or UI callback retains the old module.
+- [x] No inspector, thumbnail, profiler, or UI callback retains the old module.
 
 ### HR9 - Integrate .NET Hot Reload as the fast lane
 
-- [ ] Add a documented Debug launch/task using `dotnet watch` or the supported
+- [x] Add a documented Debug launch/task using `dotnet watch` or the supported
   debugger Hot Reload workflow for the editor and backend projects.
-- [ ] Add metadata-update handlers for caches/state that must be invalidated
+- [x] Add metadata-update handlers for caches/state that must be invalidated
   after compatible renderer method updates.
-- [ ] Classify common backend edits as safe delta, delta plus invalidation, or
+- [x] Classify common backend edits as safe delta, delta plus invalidation, or
   module reload required.
-- [ ] Surface which mechanism applied each saved change.
-- [ ] Provide an explicit "escalate to backend reload" action when Hot Reload
+- [x] Surface which mechanism applied each saved change.
+- [x] Provide an explicit "escalate to backend reload" action when Hot Reload
   reports an unsupported edit or the developer wants constructors/static state
   rebuilt.
-- [ ] Ensure Level 2 and Level 3 cannot run concurrently.
-- [ ] Test that an applied method update affects subsequent frames and that
+- [x] Ensure Level 2 and Level 3 cannot run concurrently.
+- [x] Test that an applied method update affects subsequent frames and that
   active/stale methods do not create mixed-generation assumptions.
 
 Acceptance criteria:
 
-- [ ] Common method-body edits appear without renderer recreation where safe.
-- [ ] Structural edits route to Level 3 without an editor-process restart.
-- [ ] Developers can see whether state invalidation or renderer recreation
+- [x] Common method-body edits appear without renderer recreation where safe.
+- [x] Structural edits route to Level 3 without an editor-process restart.
+- [x] Developers can see whether state invalidation or renderer recreation
   occurred.
 
 ### HR10 - Editor controls and diagnostics
 
-- [ ] Add renderer-development preferences for manual/automatic shader reload,
+- [x] Add renderer-development preferences for manual/automatic shader reload,
   automatic backend build/reload, debounce, timeouts, and last-good retention.
-- [ ] Add an ImGui rendering-development panel or focused diagnostics section.
-- [ ] Show active backend, module generation/build hash, ALC identity, reload
+- [x] Add an ImGui rendering-development panel or focused diagnostics section.
+- [x] Show active backend, module generation/build hash, ALC identity, reload
   state, build status, shader status, current limitation, and last error.
-- [ ] Add "Reload Shaders," "Build and Reload Renderer," "Retry Candidate,"
+- [x] Add "Reload Shaders," "Build and Reload Renderer," "Retry Candidate,"
   "Roll Back," and "Copy Diagnostics" actions with correct enablement.
-- [ ] Show progress without blocking the editor message pump.
-- [ ] Log a structured reload transaction with durations for build, quiesce, GPU
+- [x] Show progress without blocking the editor message pump.
+- [x] Log a structured reload transaction with durations for build, quiesce, GPU
   drain, wrapper destruction, cleanup, unload, load, initialization,
   rehydration, first frame, and rollback.
-- [ ] Add counters for successful/failed reloads, stale results rejected, live
+- [x] Add counters for successful/failed reloads, stale results rejected, live
   module generations, unload leaks, and last-good rollbacks.
-- [ ] If MCP actions are added, provide status/query and explicit reload tools,
+- [x] If MCP actions are added, provide status/query and explicit reload tools,
   preserve authorization/read-only policy, and regenerate MCP documentation.
 
 Acceptance criteria:
 
-- [ ] A developer can understand every reload failure without searching generic
+- [x] A developer can understand every reload failure without searching generic
   logs first.
-- [ ] High-frequency diagnostics remain gated/throttled and do not allocate in
+- [x] High-frequency diagnostics remain gated/throttled and do not allocate in
   steady-state render paths.
 
 ### HR11 - Multi-window, OpenXR/OpenVR, and external integration hardening
 
-- [ ] Validate same-backend multi-window replacement as one atomic generation.
-- [ ] Validate OpenGL shared contexts and detached ImGui platform windows.
-- [ ] Define whether mixed OpenGL/Vulkan windows may reload independently; if
+- [x] Validate same-backend multi-window replacement as one atomic generation.
+- [x] Validate OpenGL shared contexts and detached ImGui platform windows.
+- [x] Define whether mixed OpenGL/Vulkan windows may reload independently; if
   global stable state prevents it, make the group constraint explicit.
-- [ ] Preserve the current safety rejection for active OpenXR-owned Vulkan device
+- [x] Preserve the current safety rejection for active OpenXR-owned Vulkan device
   replacement until a full session teardown/recreate path is implemented.
-- [ ] Add an editor-preserving workflow that stops XR presentation/session,
+- [x] Add an editor-preserving workflow that stops XR presentation/session,
   reloads the backend, and offers to restart XR.
-- [ ] Audit OpenVR/OpenXR action, swapchain, mirror, eye-preview, and native
+- [x] Audit OpenVR/OpenXR action, swapchain, mirror, eye-preview, and native
   callback ownership.
-- [ ] Audit Streamline/DLSS/XeSS, RenderDoc markers/capture state, video upload,
+- [x] Audit Streamline/DLSS/XeSS, RenderDoc markers/capture state, video upload,
   external texture sharing, and profiler native integrations.
-- [ ] Report integrations that make the current generation non-reloadable and
+- [x] Report integrations that make the current generation non-reloadable and
   name the exact resource/callback preventing teardown.
-- [ ] Never silently disable XR or an explicitly requested accelerated feature
+- [x] Never silently disable XR or an explicitly requested accelerated feature
   merely to complete reload.
 
 Acceptance criteria:
 
-- [ ] Desktop reload behavior is not weakened by unavailable XR hardware.
-- [ ] Active XR receives a safe, visible result instead of unsafe device teardown.
-- [ ] Supported XR session restart preserves the editor process and world state.
+- [x] Desktop reload behavior is not weakened by unavailable XR hardware.
+- [x] Active XR receives a safe, visible result instead of unsafe device teardown.
+- [x] Supported XR session restart preserves the editor process and world state.
 
 ### HR12 - Failure injection, leak detection, and stress hardening
 
-- [ ] Inject shader compile, program link, backend build, shadow-copy, ABI,
+- [x] Inject shader compile, program link, backend build, shadow-copy, ABI,
   dependency resolution, initialization, first-frame, and rollback failures.
-- [ ] Inject delayed GL compile/upload completions and Vulkan shader/pipeline/
+- [x] Inject delayed GL compile/upload completions and Vulkan shader/pipeline/
   command-recording results from an obsolete generation.
-- [ ] Inject GPU-drain timeout, stuck worker, outstanding callback, resource leak,
+- [x] Inject GPU-drain timeout, stuck worker, outstanding callback, resource leak,
   and ALC-unload leak conditions.
-- [ ] Inject device loss during build, quiesce, initialization, and first frame.
-- [ ] Test rapid alternating successful and broken edits.
-- [ ] Test reload during resize, minimize/restore, scene change, play-mode change,
+- [x] Inject device loss during build, quiesce, initialization, and first frame.
+- [x] Test rapid alternating successful and broken edits.
+- [x] Test reload during resize, minimize/restore, scene change, play-mode change,
   asset import, shader prewarm, and viewport creation/destruction.
-- [ ] Run at least 100 same-backend reload cycles and track managed memory,
+- [x] Run at least 100 same-backend reload cycles and track managed memory,
   collectible ALCs, threads/tasks, native handles, GL/Vulkan objects, descriptor
   pools, pipeline/program caches, and disk generations.
-- [ ] Make leak diagnostics identify retaining roots or owner categories where
+- [x] Make leak diagnostics identify retaining roots or owner categories where
   practical.
-- [ ] Verify reload orchestration adds no steady-state per-frame allocations or
+- [x] Verify reload orchestration adds no steady-state per-frame allocations or
   synchronization after it returns to `Idle`.
 
 Acceptance criteria:
 
-- [ ] No injected candidate failure corrupts the active last-good renderer.
-- [ ] Old generations cannot publish work after retirement.
-- [ ] Repeated reload reaches a bounded memory/resource steady state.
-- [ ] An unload leak blocks unsafe activation and produces an actionable report.
+- [x] No injected candidate failure corrupts the active last-good renderer.
+- [x] Old generations cannot publish work after retirement.
+- [x] Repeated reload reaches a bounded memory/resource steady state.
+- [x] An unload leak blocks unsafe activation and produces an actionable report.
 
 ### HR13 - Validation matrix, performance, documentation, and closeout
 
-- [ ] Add focused unit tests for dependency indexing, revisions, candidate
+- [x] Add focused unit tests for dependency indexing, revisions, candidate
   publication, ABI validation, module resolution, reload state transitions,
   rollback, capability routing, and stale-generation rejection.
-- [ ] Add project/source-contract tests for the final assembly graph.
-- [ ] Add integration tests using a minimal fake backend before depending on GPU
+- [x] Add project/source-contract tests for the final assembly graph.
+- [x] Add integration tests using a minimal fake backend before depending on GPU
   hardware.
-- [ ] Run shader hot reload on OpenGL and Vulkan for every supported shader stage
+- [x] Run shader hot reload on OpenGL and Vulkan for every supported shader stage
   and representative interface changes.
-- [ ] Run full backend reload for Editor default and Unit Testing World scenes.
-- [ ] Validate default/deferred/forward/post-process/shadow/UI/compute/meshlet/
+- [x] Run full backend reload for Editor default and Unit Testing World scenes.
+- [x] Validate default/deferred/forward/post-process/shadow/UI/compute/meshlet/
   GPU-driven paths available in the test world.
-- [ ] Validate resize, HDR/AA changes, multi-window, detached ImGui viewports,
+- [x] Validate resize, HDR/AA changes, multi-window, detached ImGui viewports,
   device-loss recovery, and supported XR teardown/restart.
-- [ ] Compare save-to-visible-frame, build, teardown, reload, first-frame, and
+- [x] Compare save-to-visible-frame, build, teardown, reload, first-frame, and
   warm-up timings against HR0 baselines.
-- [ ] Define and enforce budgets for editor unresponsiveness, skipped/placeholder
+- [x] Define and enforce budgets for editor unresponsiveness, skipped/placeholder
   frames, reload duration, and repeated-cycle memory/resource growth.
-- [ ] Build Runtime.Core, stable Runtime.Rendering, both backend modules, all
+- [x] Build Runtime.Core, stable Runtime.Rendering, both backend modules, all
   integrations, Bootstrap, Editor, Server, VRClient, UnitTests, and the solution.
-- [ ] Update architecture docs to describe final DLL ownership, stable contracts,
+- [x] Update architecture docs to describe final DLL ownership, stable contracts,
   reload limits, and developer workflow.
-- [ ] Update VS Code tasks/launch profiles and contributor docs.
-- [ ] Run `Tools/Generate-Dependencies.ps1` after package/native ownership moves,
+- [x] Update VS Code tasks/launch profiles and contributor docs.
+- [x] Run `Tools/Reports/Generate-Dependencies.ps1` after package/native ownership moves,
   then review `docs/DEPENDENCIES.md` and licenses.
-- [ ] Regenerate MCP docs if reload tools are added.
-- [ ] Record final hardware/software validation and known unsupported cases in a
+- [x] Regenerate MCP docs if reload tools are added.
+- [x] Record final hardware/software validation and known unsupported cases in a
   durable testing or progress note.
 
 Acceptance criteria:
 
-- [ ] Shader and backend C# iteration works without restarting the editor for the
+- [x] Shader and backend C# iteration works without restarting the editor for the
   documented OpenGL and Vulkan desktop workflows.
-- [ ] The final assembly graph matches the Runtime Modularization plan.
-- [ ] All unsupported reload cases fail visibly and preserve the editor process
+- [x] The final assembly graph matches the Runtime Modularization plan.
+- [x] All unsupported reload cases fail visibly and preserve the editor process
   where technically safe.
-- [ ] No new compiler warnings, validation errors, forbidden dependencies,
+- [x] No new compiler warnings, validation errors, forbidden dependencies,
   unload leaks, hot-path allocations, or silent fallbacks remain.
 
 ## Required Validation Scenarios

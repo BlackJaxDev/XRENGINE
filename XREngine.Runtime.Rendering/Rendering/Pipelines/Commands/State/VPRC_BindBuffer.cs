@@ -8,11 +8,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            ActivePipelineInstance.RenderState.PushBufferBinding(new XRRenderPipelineInstance.RenderingState.ScopedBufferBinding
-            {
-                BufferName = BufferName,
-                BindingLocation = BindingLocation
-            });
+            ActivePipelineInstance.RenderState.PushBufferBindingState(
+                new XRRenderPipelineInstance.RenderingState.ScopedBufferBinding(
+                    BufferName,
+                    BindingLocation));
         }
     }
 }

@@ -228,8 +228,8 @@ public unsafe partial class VulkanRenderer
             if (!OperatingSystem.IsWindows())
                 return;
 
-            io.GetClipboardTextFn = (IntPtr)(delegate* unmanaged[Cdecl]<void*, byte*>)&GetClipboardTextCallback;
-            io.SetClipboardTextFn = (IntPtr)(delegate* unmanaged[Cdecl]<void*, byte*, void>)&SetClipboardTextCallback;
+            io.GetClipboardTextFn = RendererNativeCallbackBridge.GetClipboardTextCallbackPointer;
+            io.SetClipboardTextFn = RendererNativeCallbackBridge.SetClipboardTextCallbackPointer;
         }
 
         // ── End clipboard ────────────────────────────────────────────────
@@ -356,10 +356,11 @@ public unsafe partial class VulkanRenderer
                 }
             }
 
-            if (input.Keyboards is { Count: > 0 })
+            if (input.Keyboards is { Count: > 0 } keyboards)
             {
-                foreach (IKeyboard keyboard in input.Keyboards)
+                for (int keyboardIndex = 0; keyboardIndex < keyboards.Count; keyboardIndex++)
                 {
+                    IKeyboard keyboard = keyboards[keyboardIndex];
                     if (!_keyboards.Add(keyboard))
                         continue;
 
@@ -1454,12 +1455,12 @@ public unsafe partial class VulkanRenderer
         byte* vertexWritePtr = (byte*)vertexDst;
         byte* indexWritePtr = (byte*)indexDst;
 
-        for (int listIndex = 0; listIndex < snapshot.CommandLists.Count; listIndex++)
+        for (int listIndex = 0; listIndex < snapshot.CommandListCount; listIndex++)
         {
             ImGuiCommandListSnapshot cmdList = snapshot.CommandLists[listIndex];
 
-            nuint vertexBytes = (nuint)(cmdList.Vertices.Length * sizeof(ImDrawVert));
-            nuint indexBytes = (nuint)(cmdList.Indices.Length * sizeof(ushort));
+            nuint vertexBytes = (nuint)(cmdList.VertexCount * sizeof(ImDrawVert));
+            nuint indexBytes = (nuint)(cmdList.IndexCount * sizeof(ushort));
 
             fixed (ImDrawVert* verticesPtr = cmdList.Vertices)
                 System.Buffer.MemoryCopy(verticesPtr, vertexWritePtr, (long)vertexBytes, (long)vertexBytes);
@@ -1524,6 +1525,7 @@ public unsafe partial class VulkanRenderer
 
         if (!HasRenderableImGuiSnapshot(drawData))
         {
+            _imguiDrawData.Recycle(drawData);
             drawData = null;
             return false;
         }
@@ -1546,6 +1548,7 @@ public unsafe partial class VulkanRenderer
                 drawData.FramebufferHeight,
                 swapChainExtent.Width,
                 swapChainExtent.Height);
+            _imguiDrawData.Recycle(drawData);
             drawData = null;
             return false;
         }
@@ -1756,7 +1759,7 @@ public unsafe partial class VulkanRenderer
     private static bool HasRenderableImGuiSnapshot(ImGuiFrameSnapshot drawData)
         => drawData.TotalVertexCount > 0 &&
            drawData.TotalIndexCount > 0 &&
-           drawData.CommandLists.Count > 0 &&
+           drawData.CommandListCount > 0 &&
            drawData.DisplaySize.X > 0f &&
            drawData.DisplaySize.Y > 0f &&
            drawData.FramebufferWidth > 0 &&
@@ -1766,10 +1769,10 @@ public unsafe partial class VulkanRenderer
         CommandBuffer commandBuffer,
         ImGuiFrameSnapshot drawData)
     {
-        for (int listIndex = 0; listIndex < drawData.CommandLists.Count; listIndex++)
+        for (int listIndex = 0; listIndex < drawData.CommandListCount; listIndex++)
         {
             ImGuiCommandListSnapshot commandList = drawData.CommandLists[listIndex];
-            for (int commandIndex = 0; commandIndex < commandList.Commands.Length; commandIndex++)
+            for (int commandIndex = 0; commandIndex < commandList.CommandCount; commandIndex++)
             {
                 ImGuiCommandSnapshot drawCommand = commandList.Commands[commandIndex];
                 if (drawCommand.HasUserCallback || drawCommand.TextureId <= 1 ||
@@ -1952,11 +1955,11 @@ public unsafe partial class VulkanRenderer
         uint globalVtxOffset = 0;
         uint globalIdxOffset = 0;
 
-        for (int listIndex = 0; listIndex < drawData.CommandLists.Count; listIndex++)
+        for (int listIndex = 0; listIndex < drawData.CommandListCount; listIndex++)
         {
             ImGuiCommandListSnapshot cmdList = drawData.CommandLists[listIndex];
 
-            for (int cmdIndex = 0; cmdIndex < cmdList.Commands.Length; cmdIndex++)
+            for (int cmdIndex = 0; cmdIndex < cmdList.CommandCount; cmdIndex++)
             {
                 ImGuiCommandSnapshot drawCmd = cmdList.Commands[cmdIndex];
                 if (drawCmd.HasUserCallback)
@@ -2032,8 +2035,8 @@ public unsafe partial class VulkanRenderer
                     0);
             }
 
-            globalIdxOffset += (uint)cmdList.Indices.Length;
-            globalVtxOffset += (uint)cmdList.Vertices.Length;
+            globalIdxOffset += (uint)cmdList.IndexCount;
+            globalVtxOffset += (uint)cmdList.VertexCount;
         }
     }
 
@@ -2397,103 +2400,104 @@ public unsafe partial class VulkanRenderer
 
     private sealed class ImGuiDrawDataCache
     {
+        private readonly object _gate = new();
         private ImGuiFrameSnapshot? _snapshot;
+        private ImGuiFrameSnapshot? _recycledSnapshot;
 
         public void Store(ImDrawDataPtr drawData)
-            => _snapshot = ImGuiFrameSnapshot.Create(drawData);
+        {
+            lock (_gate)
+            {
+                ImGuiFrameSnapshot snapshot =
+                    _snapshot ??
+                    _recycledSnapshot ??
+                    new ImGuiFrameSnapshot();
+                if (ReferenceEquals(snapshot, _recycledSnapshot))
+                    _recycledSnapshot = null;
+
+                snapshot.Capture(drawData);
+                _snapshot = snapshot;
+            }
+        }
 
         public bool TryConsume(out ImGuiFrameSnapshot? snapshot)
         {
-            snapshot = _snapshot;
-            _snapshot = null;
-            return snapshot is not null;
+            lock (_gate)
+            {
+                snapshot = _snapshot;
+                _snapshot = null;
+                return snapshot is not null;
+            }
+        }
+
+        public void Recycle(ImGuiFrameSnapshot? snapshot)
+        {
+            if (snapshot is null)
+                return;
+
+            lock (_gate)
+            {
+                if (ReferenceEquals(snapshot, _snapshot) ||
+                    ReferenceEquals(snapshot, _recycledSnapshot))
+                {
+                    return;
+                }
+
+                _recycledSnapshot = snapshot;
+            }
         }
 
         public void Clear()
-            => _snapshot = null;
+        {
+            lock (_gate)
+            {
+                _snapshot = null;
+                _recycledSnapshot = null;
+            }
+        }
     }
 
     private sealed class ImGuiFrameSnapshot
     {
-        public required Vector2 DisplayPos { get; init; }
-        public required Vector2 DisplaySize { get; init; }
-        public required Vector2 FramebufferScale { get; init; }
-        public required uint FramebufferWidth { get; init; }
-        public required uint FramebufferHeight { get; init; }
-        public required int TotalVertexCount { get; init; }
-        public required int TotalIndexCount { get; init; }
-        public required List<ImGuiCommandListSnapshot> CommandLists { get; init; }
+        public Vector2 DisplayPos { get; private set; }
+        public Vector2 DisplaySize { get; private set; }
+        public Vector2 FramebufferScale { get; private set; }
+        public uint FramebufferWidth { get; private set; }
+        public uint FramebufferHeight { get; private set; }
+        public int TotalVertexCount { get; private set; }
+        public int TotalIndexCount { get; private set; }
+        public int CommandListCount { get; private set; }
+        public List<ImGuiCommandListSnapshot> CommandLists { get; } = [];
 
-        public static ImGuiFrameSnapshot Create(ImDrawDataPtr drawData)
+        public void Capture(ImDrawDataPtr drawData)
         {
             ImDrawData* native = drawData.NativePtr;
             ImDrawList** lists = (ImDrawList**)native->CmdLists.Data;
 
-            List<ImGuiCommandListSnapshot> commandLists = new(drawData.CmdListsCount);
+            CommandLists.EnsureCapacity(drawData.CmdListsCount);
             int totalVertices = 0;
             int totalIndices = 0;
 
             for (int listIndex = 0; listIndex < drawData.CmdListsCount; listIndex++)
             {
                 ImDrawListPtr cmdList = new(lists[listIndex]);
-                ImDrawVert[] vertices = new ImDrawVert[cmdList.VtxBuffer.Size];
-                ushort[] indices = new ushort[cmdList.IdxBuffer.Size];
+                if (listIndex == CommandLists.Count)
+                    CommandLists.Add(new ImGuiCommandListSnapshot());
 
-                if (vertices.Length > 0)
-                {
-                    fixed (ImDrawVert* vertexDst = vertices)
-                    {
-                        nuint bytes = (nuint)(vertices.Length * sizeof(ImDrawVert));
-                        System.Buffer.MemoryCopy(cmdList.VtxBuffer.Data.ToPointer(), vertexDst, (long)bytes, (long)bytes);
-                    }
-                }
-
-                if (indices.Length > 0)
-                {
-                    fixed (ushort* indexDst = indices)
-                    {
-                        nuint bytes = (nuint)(indices.Length * sizeof(ushort));
-                        System.Buffer.MemoryCopy(cmdList.IdxBuffer.Data.ToPointer(), indexDst, (long)bytes, (long)bytes);
-                    }
-                }
-
-                ImGuiCommandSnapshot[] commands = new ImGuiCommandSnapshot[cmdList.CmdBuffer.Size];
-                for (int cmdIndex = 0; cmdIndex < commands.Length; cmdIndex++)
-                {
-                    ImDrawCmdPtr drawCmd = cmdList.CmdBuffer[cmdIndex];
-                    commands[cmdIndex] = new ImGuiCommandSnapshot
-                    {
-                        ClipRect = drawCmd.ClipRect,
-                        TextureId = drawCmd.TextureId,
-                        ElemCount = drawCmd.ElemCount,
-                        IdxOffset = drawCmd.IdxOffset,
-                        VtxOffset = drawCmd.VtxOffset,
-                        HasUserCallback = drawCmd.UserCallback != IntPtr.Zero
-                    };
-                }
-
-                commandLists.Add(new ImGuiCommandListSnapshot
-                {
-                    Vertices = vertices,
-                    Indices = indices,
-                    Commands = commands
-                });
-
-                totalVertices += vertices.Length;
-                totalIndices += indices.Length;
+                ImGuiCommandListSnapshot snapshot = CommandLists[listIndex];
+                snapshot.Capture(cmdList);
+                totalVertices += snapshot.VertexCount;
+                totalIndices += snapshot.IndexCount;
             }
 
-            return new ImGuiFrameSnapshot
-            {
-                DisplayPos = drawData.DisplayPos,
-                DisplaySize = drawData.DisplaySize,
-                FramebufferScale = drawData.FramebufferScale,
-                FramebufferWidth = ComputeFramebufferExtent(drawData.DisplaySize.X, drawData.FramebufferScale.X),
-                FramebufferHeight = ComputeFramebufferExtent(drawData.DisplaySize.Y, drawData.FramebufferScale.Y),
-                TotalVertexCount = totalVertices,
-                TotalIndexCount = totalIndices,
-                CommandLists = commandLists
-            };
+            DisplayPos = drawData.DisplayPos;
+            DisplaySize = drawData.DisplaySize;
+            FramebufferScale = drawData.FramebufferScale;
+            FramebufferWidth = ComputeFramebufferExtent(drawData.DisplaySize.X, drawData.FramebufferScale.X);
+            FramebufferHeight = ComputeFramebufferExtent(drawData.DisplaySize.Y, drawData.FramebufferScale.Y);
+            TotalVertexCount = totalVertices;
+            TotalIndexCount = totalIndices;
+            CommandListCount = drawData.CmdListsCount;
         }
 
         private static uint ComputeFramebufferExtent(float displaySize, float framebufferScale)
@@ -2511,9 +2515,79 @@ public unsafe partial class VulkanRenderer
 
     private sealed class ImGuiCommandListSnapshot
     {
-        public required ImDrawVert[] Vertices { get; init; }
-        public required ushort[] Indices { get; init; }
-        public required ImGuiCommandSnapshot[] Commands { get; init; }
+        private ImDrawVert[] _vertices = [];
+        private ushort[] _indices = [];
+        private ImGuiCommandSnapshot[] _commands = [];
+
+        public ImDrawVert[] Vertices => _vertices;
+        public ushort[] Indices => _indices;
+        public ImGuiCommandSnapshot[] Commands => _commands;
+        public int VertexCount { get; private set; }
+        public int IndexCount { get; private set; }
+        public int CommandCount { get; private set; }
+
+        public void Capture(ImDrawListPtr cmdList)
+        {
+            VertexCount = cmdList.VtxBuffer.Size;
+            IndexCount = cmdList.IdxBuffer.Size;
+            CommandCount = cmdList.CmdBuffer.Size;
+
+            EnsureCapacity(ref _vertices, VertexCount);
+            EnsureCapacity(ref _indices, IndexCount);
+            EnsureCapacity(ref _commands, CommandCount);
+
+            if (VertexCount > 0)
+            {
+                fixed (ImDrawVert* vertexDst = _vertices)
+                {
+                    nuint bytes = (nuint)(VertexCount * sizeof(ImDrawVert));
+                    System.Buffer.MemoryCopy(
+                        cmdList.VtxBuffer.Data.ToPointer(),
+                        vertexDst,
+                        (long)bytes,
+                        (long)bytes);
+                }
+            }
+
+            if (IndexCount > 0)
+            {
+                fixed (ushort* indexDst = _indices)
+                {
+                    nuint bytes = (nuint)(IndexCount * sizeof(ushort));
+                    System.Buffer.MemoryCopy(
+                        cmdList.IdxBuffer.Data.ToPointer(),
+                        indexDst,
+                        (long)bytes,
+                        (long)bytes);
+                }
+            }
+
+            for (int cmdIndex = 0; cmdIndex < CommandCount; cmdIndex++)
+            {
+                ImDrawCmdPtr drawCmd = cmdList.CmdBuffer[cmdIndex];
+                _commands[cmdIndex] = new ImGuiCommandSnapshot
+                {
+                    ClipRect = drawCmd.ClipRect,
+                    TextureId = drawCmd.TextureId,
+                    ElemCount = drawCmd.ElemCount,
+                    IdxOffset = drawCmd.IdxOffset,
+                    VtxOffset = drawCmd.VtxOffset,
+                    HasUserCallback = drawCmd.UserCallback != IntPtr.Zero
+                };
+            }
+        }
+
+        private static void EnsureCapacity<T>(ref T[] buffer, int requiredCount)
+        {
+            if (buffer.Length >= requiredCount)
+                return;
+
+            int doubledCapacity = buffer.Length <= Array.MaxLength / 2
+                ? buffer.Length * 2
+                : Array.MaxLength;
+            int newCapacity = Math.Max(requiredCount, Math.Max(4, doubledCapacity));
+            buffer = new T[newCapacity];
+        }
     }
 
     private struct ImGuiCommandSnapshot

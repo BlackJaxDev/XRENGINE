@@ -94,8 +94,92 @@ public sealed class VulkanCommandRecordingDependencyTests
         string source = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
         source.ShouldContain("VulkanPrimaryCommandBufferReuseOverride ??");
-        source.ShouldContain("RuntimeRenderingHostServices.Current.EnableVulkanPrimaryCommandBufferReuse");
+        source.ShouldContain("RuntimeRenderingHostServices.Settings.EnableVulkanPrimaryCommandBufferReuse");
         source.ShouldNotContain("VulkanPrimaryCommandBufferReuseSafe = false");
+    }
+
+    [Test]
+    public void HybridCommandRecording_DefaultsToAutoAndEnvironmentOverrideWins()
+    {
+        RuntimeRenderingHostServiceDefaults.VulkanCommandRecordingMode
+            .ShouldBe(EVulkanCommandRecordingMode.Auto);
+        new XREngine.VulkanCommandRecordingSettings().Mode
+            .ShouldBe(EVulkanCommandRecordingMode.Auto);
+
+        VulkanRenderer.ResolveCommandChainsRequested(EVulkanCommandRecordingMode.Auto, null)
+            .ShouldBeTrue();
+        VulkanRenderer.ResolveCommandChainsRequested(EVulkanCommandRecordingMode.Hybrid, null)
+            .ShouldBeTrue();
+        VulkanRenderer.ResolveCommandChainsRequested(EVulkanCommandRecordingMode.Inline, null)
+            .ShouldBeFalse();
+        VulkanRenderer.ResolveCommandChainsRequested((EVulkanCommandRecordingMode)int.MaxValue, null)
+            .ShouldBeFalse();
+        VulkanRenderer.ResolveCommandChainsRequested(EVulkanCommandRecordingMode.Auto, false)
+            .ShouldBeFalse();
+        VulkanRenderer.ResolveCommandChainsRequested(EVulkanCommandRecordingMode.Inline, true)
+            .ShouldBeTrue();
+    }
+
+    [Test]
+    public void HybridCommandRecording_AutoDoesNotPromoteExternalSwapchainTargets()
+    {
+        string lowering = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string targetPolicy = Slice(
+            lowering,
+            "bool commandChainsEnabledForTarget = allowExternalSwapchainTarget",
+            "if (!commandChainsEnabledForTarget)");
+
+        targetPolicy.ShouldContain("? CommandChainsExplicitlyRequested");
+        targetPolicy.ShouldContain(": CommandChainsEnabledForCurrentRecording");
+    }
+
+    [Test]
+    public void CommandChainPipelineGeneration_TracksSuccessfulProgramRelinks()
+    {
+        string program = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+        string lowering = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+
+        program.ShouldContain("internal ulong LinkGeneration");
+        program.ShouldContain("Interlocked.Increment(ref _linkGeneration)");
+        lowering.ShouldContain("pipelineGenerationHash.Add(ResolvePipelineGeneration(drawOp))");
+        lowering.ShouldContain("hash.Add(program?.LinkGeneration ?? 0UL)");
+    }
+
+    [Test]
+    public void CleanPrimaryReuse_UsesTheSameDeferredOverlayScheduleKeyAsLowering()
+    {
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs")
+            .Replace("\r\n", "\n");
+        string fastReuse = Slice(
+            recording,
+            "private bool TryReuseCleanCommandChainPrimaryVariant(",
+            "private bool TryRefreshReusableCommandBufferFrameData(");
+
+        fastReuse.ShouldContain(
+            "FrameOp[] scheduledDynamicUiBatchTextOps = preserveSwapchainForOverlay\n" +
+            "                ? Array.Empty<FrameOp>()\n" +
+            "                : dynamicUiBatchTextOps;");
+        fastReuse.ShouldContain(
+            "ops,\n" +
+            "                scheduledDynamicUiBatchTextOps,\n" +
+            "                plannerRevision);");
+    }
+
+    [Test]
+    public void CommandChainUniformSlotSignature_TracksOrderedBakedOffsets()
+    {
+        int[] baseline = [4, 8, 12, 16];
+        int[] same = [4, 8, 12, 16];
+        int[] reordered = [8, 4, 12, 16];
+
+        VulkanRenderer.ComputeCommandChainUniformSlotSignature(baseline, 0, baseline.Length)
+            .ShouldBe(VulkanRenderer.ComputeCommandChainUniformSlotSignature(same, 0, same.Length));
+        VulkanRenderer.ComputeCommandChainUniformSlotSignature(baseline, 0, baseline.Length)
+            .ShouldNotBe(VulkanRenderer.ComputeCommandChainUniformSlotSignature(reordered, 0, reordered.Length));
     }
 
     [Test]

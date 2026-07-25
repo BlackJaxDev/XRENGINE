@@ -20,8 +20,10 @@ public static partial class EditorImGuiUI
     private const int ToolbarIconCpuRasterizationsPerFrame = 1;
     private const int ToolbarIconGpuUploadsPerFrame = 1;
 
-    private static readonly Dictionary<string, XRTexture2D> _iconCache = new();
-    private static readonly HashSet<string> _uploadedOpenGLIconCache = [];
+    private readonly record struct IconCacheKey(string Name, int Size);
+
+    private static readonly Dictionary<IconCacheKey, XRTexture2D> _iconCache = new();
+    private static readonly HashSet<IconCacheKey> _uploadedOpenGLIconCache = [];
     private static readonly object _iconCacheLock = new();
 
     private static int _toolbarIconFrameIndex;
@@ -41,7 +43,7 @@ public static partial class EditorImGuiUI
     /// </summary>
     private static XRTexture2D? GetIcon(string iconName, int size = DefaultIconSize)
     {
-        string cacheKey = BuildIconCacheKey(iconName, size);
+        IconCacheKey cacheKey = new(iconName, size);
         
         lock (_iconCacheLock)
         {
@@ -169,7 +171,7 @@ public static partial class EditorImGuiUI
         if (_toolbarIconFrameIndex < ToolbarIconWarmupFrames)
             return false;
 
-        string cacheKey = BuildIconCacheKey(iconName, DefaultIconSize);
+        IconCacheKey cacheKey = new(iconName, DefaultIconSize);
         var texture = GetIcon(iconName);
         if (texture is null) return false;
 
@@ -196,6 +198,4 @@ public static partial class EditorImGuiUI
             out _);
     }
 
-    private static string BuildIconCacheKey(string iconName, int size)
-        => $"{iconName}_{size}";
 }

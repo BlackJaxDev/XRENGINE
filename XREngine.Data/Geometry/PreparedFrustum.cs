@@ -14,20 +14,25 @@ namespace XREngine.Data.Geometry
     /// </summary>
     public sealed class PreparedFrustum
     {
-        public readonly Plane[] Planes;   // 6 planes
-        public readonly Vector3[] Corners; // 8 corners
+        public Plane[] Planes { get; }   // 6 planes
+        public Vector3[] Corners { get; } // 8 corners
 
-        public readonly int PlaneCount;
+        public int PlaneCount { get; }
 
         // Structure of arrays layout for intrinsics
-        public readonly float[] Nx;
-        public readonly float[] Ny;
-        public readonly float[] Nz;
-        public readonly float[] D;
+        public float[] Nx { get; }
+        public float[] Ny { get; }
+        public float[] Nz { get; }
+        public float[] D { get; }
 
         // Bounding sphere from corners
-        public readonly Vector3 SphereCenter;
-        public readonly float SphereRadius;
+        public Vector3 SphereCenter { get; private set; }
+        public float SphereRadius { get; private set; }
+
+        public PreparedFrustum()
+            : this(new Plane[6], new Vector3[8])
+        {
+        }
 
         public PreparedFrustum(Plane[] planes, Vector3[] corners)
         {
@@ -44,24 +49,56 @@ namespace XREngine.Data.Geometry
             Ny = new float[PlaneCount];
             Nz = new float[PlaneCount];
             D = new float[PlaneCount];
+            RefreshDerivedData();
+        }
 
+        /// <summary>
+        /// Refreshes this prepared representation without replacing its backing arrays.
+        /// </summary>
+        public void UpdateFromFrustum(in Frustum frustum)
+        {
+            for (int i = 0; i < PlaneCount; i++)
+                Planes[i] = frustum.Planes[i];
+            for (int i = 0; i < Corners.Length; i++)
+                Corners[i] = frustum.Corners[i];
+
+            RefreshDerivedData();
+        }
+
+        /// <summary>
+        /// Refreshes this prepared representation directly from a transformed frustum,
+        /// avoiding the temporary <see cref="Frustum"/> and its plane/corner arrays.
+        /// </summary>
+        public void UpdateTransformed(in Frustum frustum, in Matrix4x4 worldMatrix)
+        {
+            for (int i = 0; i < PlaneCount; i++)
+                Planes[i] = Plane.Transform(frustum.Planes[i], worldMatrix);
+            for (int i = 0; i < Corners.Length; i++)
+                Corners[i] = Vector3.Transform(frustum.Corners[i], worldMatrix);
+
+            RefreshDerivedData();
+        }
+
+        private void RefreshDerivedData()
+        {
             for (int i = 0; i < PlaneCount; i++)
             {
-                Nx[i] = planes[i].Normal.X;
-                Ny[i] = planes[i].Normal.Y;
-                Nz[i] = planes[i].Normal.Z;
-                D[i] = planes[i].D;
+                Plane plane = Planes[i];
+                Nx[i] = plane.Normal.X;
+                Ny[i] = plane.Normal.Y;
+                Nz[i] = plane.Normal.Z;
+                D[i] = plane.D;
             }
 
             Vector3 center = Vector3.Zero;
-            for (int i = 0; i < corners.Length; i++)
-                center += corners[i];
-            center /= corners.Length;
+            for (int i = 0; i < Corners.Length; i++)
+                center += Corners[i];
+            center /= Corners.Length;
 
             float maxR2 = 0.0f;
-            for (int i = 0; i < corners.Length; i++)
+            for (int i = 0; i < Corners.Length; i++)
             {
-                float d2 = Vector3.DistanceSquared(center, corners[i]);
+                float d2 = Vector3.DistanceSquared(center, Corners[i]);
                 if (d2 > maxR2)
                     maxR2 = d2;
             }
@@ -72,16 +109,9 @@ namespace XREngine.Data.Geometry
 
         public static PreparedFrustum FromFrustum(Frustum frustum)
         {
-            Plane[] planes = new Plane[6];
-            Vector3[] corners = new Vector3[8];
-
-            for (int i = 0; i < planes.Length; i++)
-                planes[i] = frustum.Planes[i];
-
-            for (int i = 0; i < corners.Length; i++)
-                corners[i] = frustum.Corners[i];
-
-            return new PreparedFrustum(planes, corners);
+            PreparedFrustum prepared = new();
+            prepared.UpdateFromFrustum(frustum);
+            return prepared;
         }
 
         public ReadOnlySpan<float> NxSpan
@@ -110,6 +140,9 @@ namespace XREngine.Data.Geometry
 
     public static class FrustumIntersection
     {
+        [ThreadStatic]
+        private static List<Vector3>? _aabbCandidateScratch;
+
         public static bool TryIntersectFrustaPoints(
             PreparedFrustum a,
             PreparedFrustum b,
@@ -168,7 +201,10 @@ namespace XREngine.Data.Geometry
         {
             aabbMin = default;
             aabbMax = default;
-            List<Vector3> candidates = new(64);
+            // Camera/light intersection runs on the visibility thread every frame.
+            // Keep one grow-only candidate buffer per thread instead of allocating a
+            // fresh list for every light.
+            List<Vector3> candidates = _aabbCandidateScratch ??= new List<Vector3>(64);
             if (!TryIntersectFrustaPoints(a, b, candidates))
                 return false;
 

@@ -13,6 +13,11 @@ public interface IRuntimeRendererHost
     RendererBackendId BackendId => default;
 
     /// <summary>
+    /// Backend module generation that created this renderer.
+    /// </summary>
+    long BackendGeneration => 0;
+
+    /// <summary>
     /// Resolves an optional backend capability without a concrete renderer cast in stable layers.
     /// </summary>
     bool TryGetBackendCapability<TCapability>(out TCapability? capability)

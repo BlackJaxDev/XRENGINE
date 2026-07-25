@@ -34,6 +34,46 @@ namespace XREngine.Rendering.Vulkan
             /// <summary>Synchronizes access to <see cref="_programStates"/> and related mutable state.</summary>
             private readonly object _stateSync = new();
 
+            private readonly System.Collections.Concurrent.ConcurrentBag<DescriptorUpdateScratch>
+                _descriptorUpdateScratchPool = [];
+            private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> MaterialDescriptorReadinessReasons =
+                new(StringComparer.Ordinal);
+
+            private sealed class DescriptorUpdateScratch
+            {
+                public readonly List<WriteDescriptorSet> Writes = [];
+                public readonly List<DescriptorBufferInfo> BufferInfos = [];
+                public readonly List<DescriptorImageInfo> ImageInfos = [];
+                public readonly List<BufferView> TexelBufferViews = [];
+                public readonly List<(int WriteIndex, int BufferIndex, DescriptorBindingInfo Binding, uint DescriptorCount)> BufferMap = [];
+                public readonly List<(int WriteIndex, int ImageIndex, DescriptorBindingInfo Binding, uint DescriptorCount)> ImageMap = [];
+                public readonly List<(int WriteIndex, int TexelIndex, DescriptorBindingInfo Binding, uint DescriptorCount)> TexelMap = [];
+                public readonly List<WriteDescriptorSet> TemplateWrites = [];
+
+                public void Reset()
+                {
+                    Writes.Clear();
+                    BufferInfos.Clear();
+                    ImageInfos.Clear();
+                    TexelBufferViews.Clear();
+                    BufferMap.Clear();
+                    ImageMap.Clear();
+                    TexelMap.Clear();
+                    TemplateWrites.Clear();
+                }
+            }
+
+            private DescriptorUpdateScratch RentDescriptorUpdateScratch()
+            {
+                if (!_descriptorUpdateScratchPool.TryTake(out DescriptorUpdateScratch? scratch))
+                    scratch = new DescriptorUpdateScratch();
+                scratch.Reset();
+                return scratch;
+            }
+
+            private void ReturnDescriptorUpdateScratch(DescriptorUpdateScratch scratch)
+                => _descriptorUpdateScratchPool.Add(scratch);
+
             /// <summary>
             /// Cached descriptor state per render program, keyed by <see cref="VkObject.BindingId"/>.
             /// Each entry owns a descriptor pool, descriptor sets, and uniform buffer resources.
@@ -745,8 +785,9 @@ namespace XREngine.Rendering.Vulkan
 
             /// <summary>
             /// Builds and submits <c>vkUpdateDescriptorSets</c> writes for a single frame.
-            /// Collects buffer, image, and texel-buffer descriptor infos into contiguous arrays,
-            /// then pins them so that the write structs can reference stable pointers.
+            /// Collects buffer, image, and texel-buffer descriptor infos into reusable
+            /// contiguous list storage, then pins its spans so write structs can reference
+            /// stable pointers.
             /// </summary>
             /// <param name="state">The program descriptor state containing the sets to update.</param>
             /// <param name="frameIndex">The frame-in-flight index to update.</param>
@@ -759,187 +800,200 @@ namespace XREngine.Rendering.Vulkan
                 int frameIndex,
                 bool allowRetirementRetry)
             {
-                // Accumulate write operations and their associated descriptor infos.
-                // Index maps record which write corresponds to which info entry so that
-                // pointers can be patched after pinning the arrays.
-                List<WriteDescriptorSet> writes = new();
-                List<DescriptorBufferInfo> bufferInfos = new();
-                List<DescriptorImageInfo> imageInfos = new();
-                List<BufferView> texelBufferViews = new();
-                List<(int writeIndex, int bufferIndex, DescriptorBindingInfo binding, uint descriptorCount)> bufferMap = new();
-                List<(int writeIndex, int imageIndex, DescriptorBindingInfo binding, uint descriptorCount)> imageMap = new();
-                List<(int writeIndex, int texelIndex, DescriptorBindingInfo binding, uint descriptorCount)> texelMap = new();
-
-                foreach (DescriptorBindingInfo binding in state.Bindings)
+                DescriptorUpdateScratch scratch = RentDescriptorUpdateScratch();
+                try
                 {
-                    if (binding.Set >= state.DescriptorSets[frameIndex].Length)
-                        return false;
+                    // Accumulate writes and descriptor infos in thread-local growth-only
+                    // lists. Their spans can be pinned directly for vkUpdateDescriptorSets.
+                    List<WriteDescriptorSet> writes = scratch.Writes;
+                    List<DescriptorBufferInfo> bufferInfos = scratch.BufferInfos;
+                    List<DescriptorImageInfo> imageInfos = scratch.ImageInfos;
+                    List<BufferView> texelBufferViews = scratch.TexelBufferViews;
+                    List<(int WriteIndex, int BufferIndex, DescriptorBindingInfo Binding, uint DescriptorCount)> bufferMap = scratch.BufferMap;
+                    List<(int WriteIndex, int ImageIndex, DescriptorBindingInfo Binding, uint DescriptorCount)> imageMap = scratch.ImageMap;
+                    List<(int WriteIndex, int TexelIndex, DescriptorBindingInfo Binding, uint DescriptorCount)> texelMap = scratch.TexelMap;
 
-                    uint descriptorCount = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding);
-
-                    switch (binding.DescriptorType)
+                    DescriptorBindingInfo[] stateBindings = state.Bindings;
+                    for (int bindingIndex = 0; bindingIndex < stateBindings.Length; bindingIndex++)
                     {
-                        case DescriptorType.UniformBuffer:
-                        {
-                            if (!state.UniformBindings.TryGetValue((binding.Set, binding.Binding), out UniformBindingResource? resource))
-                                return false;
-
-                            bufferMap.Add((writes.Count, bufferInfos.Count, binding, 1u));
-                            bufferInfos.Add(new DescriptorBufferInfo
-                            {
-                                Buffer = resource.Buffers[frameIndex],
-                                Offset = 0,
-                                Range = resource.Size,
-                            });
-
-                            writes.Add(new WriteDescriptorSet
-                            {
-                                SType = StructureType.WriteDescriptorSet,
-                                DstSet = state.DescriptorSets[frameIndex][binding.Set],
-                                DstBinding = binding.Binding,
-                                DescriptorCount = 1,
-                                DescriptorType = DescriptorType.UniformBuffer,
-                            });
-                            break;
-                        }
-
-                        case DescriptorType.CombinedImageSampler:
-                        case DescriptorType.SampledImage:
-                        case DescriptorType.StorageImage:
-                        case DescriptorType.InputAttachment:
-                        {
-                            int imageStart = imageInfos.Count;
-                            for (int i = 0; i < descriptorCount; i++)
-                            {
-                                if (!TryResolveTextureInfo(state.Program, binding, binding.DescriptorType, i, out DescriptorImageInfo info))
-                                    return false;
-                                imageInfos.Add(info);
-                            }
-
-                            imageMap.Add((writes.Count, imageStart, binding, descriptorCount));
-                            writes.Add(new WriteDescriptorSet
-                            {
-                                SType = StructureType.WriteDescriptorSet,
-                                DstSet = state.DescriptorSets[frameIndex][binding.Set],
-                                DstBinding = binding.Binding,
-                                DescriptorCount = descriptorCount,
-                                DescriptorType = binding.DescriptorType,
-                            });
-                            break;
-                        }
-
-                        case DescriptorType.UniformTexelBuffer:
-                        case DescriptorType.StorageTexelBuffer:
-                        {
-                            int texelStart = texelBufferViews.Count;
-                            for (int i = 0; i < descriptorCount; i++)
-                            {
-                                if (!TryResolveTexelBufferInfo(state.Program, binding, i, out BufferView texelView))
-                                    return false;
-                                texelBufferViews.Add(texelView);
-                            }
-
-                            texelMap.Add((writes.Count, texelStart, binding, descriptorCount));
-                            writes.Add(new WriteDescriptorSet
-                            {
-                                SType = StructureType.WriteDescriptorSet,
-                                DstSet = state.DescriptorSets[frameIndex][binding.Set],
-                                DstBinding = binding.Binding,
-                                DescriptorCount = descriptorCount,
-                                DescriptorType = binding.DescriptorType,
-                            });
-                            break;
-                        }
-                    }
-                }
-
-                // Materialize lists into arrays so they can be pinned for the Vulkan call.
-                WriteDescriptorSet[] writeArray = writes.Count == 0 ? Array.Empty<WriteDescriptorSet>() : [.. writes];
-                DescriptorBufferInfo[] bufferArray = bufferInfos.Count == 0 ? Array.Empty<DescriptorBufferInfo>() : [.. bufferInfos];
-                DescriptorImageInfo[] imageArray = imageInfos.Count == 0 ? Array.Empty<DescriptorImageInfo>() : [.. imageInfos];
-                BufferView[] texelArray = texelBufferViews.Count == 0 ? Array.Empty<BufferView>() : [.. texelBufferViews];
-
-                // Pin all arrays simultaneously and patch the native pointers into the write structs.
-                fixed (WriteDescriptorSet* writePtr = writeArray)
-                fixed (DescriptorBufferInfo* bufferPtr = bufferArray)
-                fixed (DescriptorImageInfo* imagePtr = imageArray)
-                fixed (BufferView* texelPtr = texelArray)
-                {
-                    foreach ((int writeIndex, int bufferIndex, _, _) in bufferMap)
-                        writePtr[writeIndex].PBufferInfo = bufferPtr + bufferIndex;
-
-                    foreach ((int writeIndex, int imageIndex, _, _) in imageMap)
-                        writePtr[writeIndex].PImageInfo = imagePtr + imageIndex;
-
-                    foreach ((int writeIndex, int texelIndex, _, _) in texelMap)
-                        writePtr[writeIndex].PTexelBufferView = texelPtr + texelIndex;
-
-                    if (writeArray.Length > 0)
-                    {
-                        if (Renderer.IsDescriptorHeapDrawBindingActive)
-                        {
-                            DescriptorHeapPushDataPayload payload = state.DescriptorHeapPushData[frameIndex];
-                            foreach ((_, int bufferIndex, DescriptorBindingInfo binding, uint descriptorCount) in bufferMap)
-                            {
-                                if (!Renderer.TryWriteDescriptorHeapBinding(state.Program, binding, payload, bufferPtr + bufferIndex, null, null, descriptorCount, out string heapReason))
-                                {
-                                    RecordDescriptorFailure(binding, $"descriptor heap buffer write failed: {heapReason}");
-                                    return false;
-                                }
-                            }
-
-                            foreach ((_, int imageIndex, DescriptorBindingInfo binding, uint descriptorCount) in imageMap)
-                            {
-                                if (!Renderer.TryWriteDescriptorHeapBinding(state.Program, binding, payload, null, imagePtr + imageIndex, null, descriptorCount, out string heapReason))
-                                {
-                                    RecordDescriptorFailure(binding, $"descriptor heap image write failed: {heapReason}");
-                                    return false;
-                                }
-                            }
-
-                            foreach ((_, int texelIndex, DescriptorBindingInfo binding, uint descriptorCount) in texelMap)
-                            {
-                                if (!Renderer.TryWriteDescriptorHeapBinding(state.Program, binding, payload, null, null, texelPtr + texelIndex, descriptorCount, out string heapReason))
-                                {
-                                    RecordDescriptorFailure(binding, $"descriptor heap texel write failed: {heapReason}");
-                                    return false;
-                                }
-                            }
-                        }
-
-                        if (!TryUpdateDescriptorSetsWithTemplates(state, frameIndex, writeArray) &&
-                            !Renderer.TryUpdateDescriptorSetsTracked(
-                                (uint)writeArray.Length,
-                                writePtr,
-                                out string descriptorUpdateFailure))
-                        {
-                            if (allowRetirementRetry &&
-                                descriptorUpdateFailure.Contains("retired Vulkan resource", StringComparison.Ordinal))
-                            {
-                                // Re-resolve every image snapshot immediately. The failed preflight did not
-                                // publish native descriptors, and the texture path will replace views that the
-                                // just-committed generation marked for retirement.
-                                return UpdateFrameDescriptorSetCore(
-                                    state,
-                                    frameIndex,
-                                    allowRetirementRetry: false);
-                            }
-
-                            Debug.VulkanWarningEvery(
-                                $"Vulkan.MaterialDescriptorUpdate.RetiredResource.{Data.GetHashCode()}",
-                                TimeSpan.FromSeconds(1),
-                                "[Vulkan] Deferred material descriptor update because a render-resource generation retired concurrently: {0}",
-                                descriptorUpdateFailure);
+                        DescriptorBindingInfo binding = stateBindings[bindingIndex];
+                        if (binding.Set >= state.DescriptorSets[frameIndex].Length)
                             return false;
-                        }
-                        Renderer.RecordVulkanDescriptorTableGeneration("MaterialDescriptorSets.Update");
-                    }
-                }
 
-                return true;
+                        uint descriptorCount = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding);
+
+                        switch (binding.DescriptorType)
+                        {
+                            case DescriptorType.UniformBuffer:
+                            {
+                                if (!state.UniformBindings.TryGetValue((binding.Set, binding.Binding), out UniformBindingResource? resource))
+                                    return false;
+
+                                bufferMap.Add((writes.Count, bufferInfos.Count, binding, 1u));
+                                bufferInfos.Add(new DescriptorBufferInfo
+                                {
+                                    Buffer = resource.Buffers[frameIndex],
+                                    Offset = 0,
+                                    Range = resource.Size,
+                                });
+
+                                writes.Add(new WriteDescriptorSet
+                                {
+                                    SType = StructureType.WriteDescriptorSet,
+                                    DstSet = state.DescriptorSets[frameIndex][binding.Set],
+                                    DstBinding = binding.Binding,
+                                    DescriptorCount = 1,
+                                    DescriptorType = DescriptorType.UniformBuffer,
+                                });
+                                break;
+                            }
+
+                            case DescriptorType.CombinedImageSampler:
+                            case DescriptorType.SampledImage:
+                            case DescriptorType.StorageImage:
+                            case DescriptorType.InputAttachment:
+                            {
+                                int imageStart = imageInfos.Count;
+                                for (int i = 0; i < descriptorCount; i++)
+                                {
+                                    if (!TryResolveTextureInfo(state.Program, binding, binding.DescriptorType, i, out DescriptorImageInfo info))
+                                        return false;
+                                    imageInfos.Add(info);
+                                }
+
+                                imageMap.Add((writes.Count, imageStart, binding, descriptorCount));
+                                writes.Add(new WriteDescriptorSet
+                                {
+                                    SType = StructureType.WriteDescriptorSet,
+                                    DstSet = state.DescriptorSets[frameIndex][binding.Set],
+                                    DstBinding = binding.Binding,
+                                    DescriptorCount = descriptorCount,
+                                    DescriptorType = binding.DescriptorType,
+                                });
+                                break;
+                            }
+
+                            case DescriptorType.UniformTexelBuffer:
+                            case DescriptorType.StorageTexelBuffer:
+                            {
+                                int texelStart = texelBufferViews.Count;
+                                for (int i = 0; i < descriptorCount; i++)
+                                {
+                                    if (!TryResolveTexelBufferInfo(state.Program, binding, i, out BufferView texelView))
+                                        return false;
+                                    texelBufferViews.Add(texelView);
+                                }
+
+                                texelMap.Add((writes.Count, texelStart, binding, descriptorCount));
+                                writes.Add(new WriteDescriptorSet
+                                {
+                                    SType = StructureType.WriteDescriptorSet,
+                                    DstSet = state.DescriptorSets[frameIndex][binding.Set],
+                                    DstBinding = binding.Binding,
+                                    DescriptorCount = descriptorCount,
+                                    DescriptorType = binding.DescriptorType,
+                                });
+                                break;
+                            }
+                        }
+                    }
+
+                    Span<WriteDescriptorSet> writeSpan = CollectionsMarshal.AsSpan(writes);
+                    Span<DescriptorBufferInfo> bufferSpan = CollectionsMarshal.AsSpan(bufferInfos);
+                    Span<DescriptorImageInfo> imageSpan = CollectionsMarshal.AsSpan(imageInfos);
+                    Span<BufferView> texelSpan = CollectionsMarshal.AsSpan(texelBufferViews);
+
+                    // Pin the reusable list storage and patch native pointers into its
+                    // write structs for the duration of the Vulkan update call.
+                    fixed (WriteDescriptorSet* writePtr = writeSpan)
+                    fixed (DescriptorBufferInfo* bufferPtr = bufferSpan)
+                    fixed (DescriptorImageInfo* imagePtr = imageSpan)
+                    fixed (BufferView* texelPtr = texelSpan)
+                    {
+                        foreach ((int writeIndex, int bufferIndex, _, _) in bufferMap)
+                            writePtr[writeIndex].PBufferInfo = bufferPtr + bufferIndex;
+
+                        foreach ((int writeIndex, int imageIndex, _, _) in imageMap)
+                            writePtr[writeIndex].PImageInfo = imagePtr + imageIndex;
+
+                        foreach ((int writeIndex, int texelIndex, _, _) in texelMap)
+                            writePtr[writeIndex].PTexelBufferView = texelPtr + texelIndex;
+
+                        if (writeSpan.Length > 0)
+                        {
+                            if (Renderer.IsDescriptorHeapDrawBindingActive)
+                            {
+                                DescriptorHeapPushDataPayload payload = state.DescriptorHeapPushData[frameIndex];
+                                foreach ((_, int bufferIndex, DescriptorBindingInfo binding, uint descriptorCount) in bufferMap)
+                                {
+                                    if (!Renderer.TryWriteDescriptorHeapBinding(state.Program, binding, payload, bufferPtr + bufferIndex, null, null, descriptorCount, out string heapReason))
+                                    {
+                                        RecordDescriptorFailure(binding, $"descriptor heap buffer write failed: {heapReason}");
+                                        return false;
+                                    }
+                                }
+
+                                foreach ((_, int imageIndex, DescriptorBindingInfo binding, uint descriptorCount) in imageMap)
+                                {
+                                    if (!Renderer.TryWriteDescriptorHeapBinding(state.Program, binding, payload, null, imagePtr + imageIndex, null, descriptorCount, out string heapReason))
+                                    {
+                                        RecordDescriptorFailure(binding, $"descriptor heap image write failed: {heapReason}");
+                                        return false;
+                                    }
+                                }
+
+                                foreach ((_, int texelIndex, DescriptorBindingInfo binding, uint descriptorCount) in texelMap)
+                                {
+                                    if (!Renderer.TryWriteDescriptorHeapBinding(state.Program, binding, payload, null, null, texelPtr + texelIndex, descriptorCount, out string heapReason))
+                                    {
+                                        RecordDescriptorFailure(binding, $"descriptor heap texel write failed: {heapReason}");
+                                        return false;
+                                    }
+                                }
+                            }
+
+                            if (!TryUpdateDescriptorSetsWithTemplates(state, frameIndex, writeSpan, scratch.TemplateWrites) &&
+                                !Renderer.TryUpdateDescriptorSetsTracked(
+                                    (uint)writeSpan.Length,
+                                    writePtr,
+                                    out string descriptorUpdateFailure))
+                            {
+                                if (allowRetirementRetry &&
+                                    descriptorUpdateFailure.Contains("retired Vulkan resource", StringComparison.Ordinal))
+                                {
+                                    // Re-resolve every image snapshot immediately. The failed preflight did not
+                                    // publish native descriptors, and the texture path will replace views that the
+                                    // just-committed generation marked for retirement.
+                                    return UpdateFrameDescriptorSetCore(
+                                        state,
+                                        frameIndex,
+                                        allowRetirementRetry: false);
+                                }
+
+                                Debug.VulkanWarningEvery(
+                                    $"Vulkan.MaterialDescriptorUpdate.RetiredResource.{Data.GetHashCode()}",
+                                    TimeSpan.FromSeconds(1),
+                                    "[Vulkan] Deferred material descriptor update because a render-resource generation retired concurrently: {0}",
+                                    descriptorUpdateFailure);
+                                return false;
+                            }
+                            Renderer.RecordVulkanDescriptorTableGeneration("MaterialDescriptorSets.Update");
+                        }
+                    }
+
+                    return true;
+                }
+                finally
+                {
+                    ReturnDescriptorUpdateScratch(scratch);
+                }
             }
 
-            private bool TryUpdateDescriptorSetsWithTemplates(ProgramDescriptorState state, int frameIndex, WriteDescriptorSet[] writeArray)
+            private bool TryUpdateDescriptorSetsWithTemplates(
+                ProgramDescriptorState state,
+                int frameIndex,
+                ReadOnlySpan<WriteDescriptorSet> writes,
+                List<WriteDescriptorSet> setWrites)
             {
                 if (RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend != EVulkanDescriptorUpdateBackend.Template)
                     return false;
@@ -950,11 +1004,11 @@ namespace XREngine.Rendering.Vulkan
                 DescriptorSet[] frameSets = state.DescriptorSets[frameIndex];
                 for (int setIndex = 0; setIndex < frameSets.Length; setIndex++)
                 {
-                    List<WriteDescriptorSet> setWrites = [];
-                    for (int i = 0; i < writeArray.Length; i++)
+                    setWrites.Clear();
+                    for (int i = 0; i < writes.Length; i++)
                     {
-                        if (writeArray[i].DstSet.Handle == frameSets[setIndex].Handle)
-                            setWrites.Add(writeArray[i]);
+                        if (writes[i].DstSet.Handle == frameSets[setIndex].Handle)
+                            setWrites.Add(writes[i]);
                     }
 
                     if (setWrites.Count == 0)
@@ -1197,13 +1251,11 @@ namespace XREngine.Rendering.Vulkan
                     (int)binding.Binding,
                     arrayIndex,
                     VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding),
-                    samplerName =>
-                    {
-                        if (program.TryGetSamplerTexture(samplerName, out XRTexture? namedTexture))
-                            return namedTexture;
-
-                        return null;
-                    });
+                    program,
+                    static (renderProgram, samplerName) =>
+                        renderProgram.TryGetSamplerTexture(samplerName, out XRTexture? namedTexture)
+                            ? namedTexture
+                            : null);
 
                 texture = textureBinding.Texture;
                 return texture is not null;
@@ -1231,7 +1283,10 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
-                if (!source.TryEnsureDescriptorReadyForUse($"material descriptor '{binding.Name}'", allowSynchronousTextureUpload))
+                string readinessReason = MaterialDescriptorReadinessReasons.GetOrAdd(
+                    binding.Name,
+                    static name => string.Concat("material descriptor '", name, "'"));
+                if (!source.TryEnsureDescriptorReadyForUse(readinessReason, allowSynchronousTextureUpload))
                 {
                     imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
                     if (imageInfo.ImageView.Handle != 0)

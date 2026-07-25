@@ -324,6 +324,22 @@ namespace XREngine.Rendering.XeSS
                 _destroyContext = null;
             }
 
+            internal static void PrepareForModuleUnload()
+            {
+                lock (Sync)
+                {
+                    UnloadLibrary();
+                    if (_frameGenLibraryHandle != IntPtr.Zero)
+                    {
+                        NativeLibrary.Free(_frameGenLibraryHandle);
+                        _frameGenLibraryHandle = IntPtr.Zero;
+                    }
+
+                    _frameGenInitialized = false;
+                    _frameGenLastError = null;
+                }
+            }
+
             private static string[] MarshalStringArray(IntPtr names, uint count)
             {
                 if (names == IntPtr.Zero || count == 0)

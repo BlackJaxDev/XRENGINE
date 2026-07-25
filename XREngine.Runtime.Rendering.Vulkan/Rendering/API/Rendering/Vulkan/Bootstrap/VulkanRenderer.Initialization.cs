@@ -17,6 +17,9 @@ namespace XREngine.Rendering.Vulkan
         ISparseTextureStreamingBackendCapability,
         IStreamlinePresentationBackendCapability
     {
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> ComputeDispatchOperationNames =
+            new(StringComparer.Ordinal);
+
         public override RendererBackendId BackendId => RendererBackendId.Vulkan;
 
         protected override Vk GetAPI()
@@ -199,6 +202,9 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (forceRetirementDrain)
                     EndForcedVulkanRetirementDrain();
+
+                DisposeNativeApi();
+                ReleaseHotReloadManagedCaches();
             }
         }
 
@@ -824,7 +830,9 @@ namespace XREngine.Rendering.Vulkan
 
             FrameOpContext context = CaptureFrameOpContextOrLastActive();
             string programName = string.IsNullOrWhiteSpace(program.Name) ? "UnnamedProgram" : program.Name;
-            string opName = $"DispatchCompute:{programName}";
+            string opName = ComputeDispatchOperationNames.GetOrAdd(
+                programName,
+                static name => string.Concat("DispatchCompute:", name));
             int passIndex = ResolveOrderedPrimaryWorkPassIndex(opName, context.PassMetadata);
             if (passIndex == int.MinValue)
             {
@@ -864,7 +872,7 @@ namespace XREngine.Rendering.Vulkan
                 return ERendererComputeEnqueueStatus.ProgramPending;
             }
 
-            EnqueueFrameOp(new ComputeDispatchOp(
+            EnqueueFrameOp(ComputeDispatchOp.Rent(
                 passIndex,
                 vkProgram,
                 x,
@@ -1023,7 +1031,7 @@ namespace XREngine.Rendering.Vulkan
                 ? ActiveState.GetScissor(clearTargetExtent)
                 : new Rect2D(new Offset2D(0, 0), clearTargetExtent);
 
-            EnqueueFrameOp(new ClearOp(
+            EnqueueFrameOp(ClearOp.Rent(
                 EnsureValidPassIndex(passIndex, "Clear", context.PassMetadata),
                 target,
                 color,

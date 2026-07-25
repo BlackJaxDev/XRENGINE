@@ -92,16 +92,26 @@ namespace XREngine.Rendering.Commands
         private readonly HashSet<RenderCommand> _membership = new(ReferenceRenderCommandComparer.Instance);
         private readonly bool _farToNear;
         private readonly bool _bucketOpaqueState;
+        private readonly Comparison<Entry> _entryComparison;
         private bool _sortDirty;
 
         public SnapshotSortedRenderCommandCollection(IComparer<RenderCommand> sorter)
         {
             _farToNear = sorter.GetType() == typeof(FarToNearRenderCommandSorter);
             _bucketOpaqueState = sorter.GetType() == typeof(OpaqueStateBucketRenderCommandSorter);
+            _entryComparison = CompareEntries;
         }
 
         public int Count => _entries.Count;
         public bool IsReadOnly => false;
+        public RenderCommand this[int index]
+        {
+            get
+            {
+                EnsureSorted();
+                return _entries[index].Command;
+            }
+        }
 
         public void Add(RenderCommand item)
             => Add(item, item.SortOrderKey);
@@ -169,7 +179,7 @@ namespace XREngine.Rendering.Commands
             if (!_sortDirty)
                 return;
 
-            _entries.Sort(CompareEntries);
+            _entries.Sort(_entryComparison);
             _sortDirty = false;
         }
 
@@ -892,8 +902,9 @@ namespace XREngine.Rendering.Commands
 
             bool filterExactTransparentSps = BeginCpuExactTransparentSpsFilter(renderPass);
             uint cpuCmdIndex = 0;
-            foreach (var cmd in list)
+            for (int commandIndex = 0; commandIndex < list.Count; commandIndex++)
             {
+                RenderCommand cmd = GetCommandAt(list, commandIndex);
                 if (ShouldSkipCpuExactTransparentSpsCommand(filterExactTransparentSps, cmd))
                 {
                     cpuCmdIndex++;
@@ -1475,8 +1486,9 @@ namespace XREngine.Rendering.Commands
                 return;
 
             bool filterExactTransparentSps = BeginCpuExactTransparentSpsFilter(renderPass);
-            foreach (var cmd in list)
+            for (int commandIndex = 0; commandIndex < list.Count; commandIndex++)
             {
+                RenderCommand cmd = GetCommandAt(list, commandIndex);
                 if (cmd is IRenderCommandMesh &&
                     !ShouldSkipCpuExactTransparentSpsCommand(filterExactTransparentSps, cmd))
                 {
@@ -1502,8 +1514,9 @@ namespace XREngine.Rendering.Commands
                 return;
 
             bool filterExactTransparentSps = BeginCpuExactTransparentSpsFilter(renderPass);
-            foreach (var cmd in list)
+            for (int commandIndex = 0; commandIndex < list.Count; commandIndex++)
             {
+                RenderCommand cmd = GetCommandAt(list, commandIndex);
                 if (cmd is null)
                     continue;
 
@@ -1560,8 +1573,9 @@ namespace XREngine.Rendering.Commands
                 ?? default;
 
             uint cpuCmdIndex = 0;
-            foreach (var cmd in list)
+            for (int commandIndex = 0; commandIndex < list.Count; commandIndex++)
             {
+                RenderCommand cmd = GetCommandAt(list, commandIndex);
                 if (cmd is null)
                 {
                     cpuCmdIndex++;
@@ -1833,24 +1847,8 @@ namespace XREngine.Rendering.Commands
             if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list) || list.Count == 0)
                 return false;
 
-            if (list is List<RenderCommand> commands)
-            {
-                for (int i = 0; i < commands.Count; i++)
-                    if (IsGpuEligibleMeshCommand(commands[i]))
-                        return true;
-                return false;
-            }
-
-            if (list is SnapshotSortedRenderCommandCollection sortedCommands)
-            {
-                foreach (RenderCommand command in sortedCommands)
-                    if (IsGpuEligibleMeshCommand(command))
-                        return true;
-                return false;
-            }
-
-            foreach (RenderCommand command in list)
-                if (IsGpuEligibleMeshCommand(command))
+            for (int i = 0; i < list.Count; i++)
+                if (IsGpuEligibleMeshCommand(GetCommandAt(list, i)))
                     return true;
 
             return false;
@@ -2094,8 +2092,9 @@ namespace XREngine.Rendering.Commands
             // camera motion can change pass sorting without changing shadow content.
             ulong xor = 0UL;
             ulong sum = 0xD6E8FEB86659FD93UL;
-            foreach (RenderCommand command in commands)
+            for (int commandIndex = 0; commandIndex < commands.Count; commandIndex++)
             {
+                RenderCommand command = GetCommandAt(commands, commandIndex);
                 ulong mixed = MixOcclusionCommandKey(
                     ComputeShadowCasterCommandStateSignature(command) ^ command.StableQueryKey);
                 xor ^= mixed;
@@ -2172,8 +2171,9 @@ namespace XREngine.Rendering.Commands
             ulong xor = 0UL;
             ulong sum = 0x9E3779B97F4A7C15UL;
             meshCommandCount = 0;
-            foreach (RenderCommand command in commands)
+            for (int commandIndex = 0; commandIndex < commands.Count; commandIndex++)
             {
+                RenderCommand command = GetCommandAt(commands, commandIndex);
                 ulong mixed = MixOcclusionCommandKey(command.StableQueryKey);
                 xor ^= mixed;
                 sum += mixed;
@@ -2183,6 +2183,18 @@ namespace XREngine.Rendering.Commands
 
             return MixOcclusionCommandKey(xor ^ BitOperations.RotateLeft(sum, 23) ^ (uint)commands.Count);
         }
+
+        private static RenderCommand GetCommandAt(
+            ICollection<RenderCommand> commands,
+            int index)
+            => commands switch
+            {
+                List<RenderCommand> list => list[index],
+                SnapshotSortedRenderCommandCollection sorted => sorted[index],
+                IReadOnlyList<RenderCommand> list => list[index],
+                _ => throw new InvalidOperationException(
+                    $"Unsupported render-command pass collection type '{commands.GetType().FullName}'."),
+            };
 
         private static ulong MixOcclusionCommandKey(ulong value)
         {

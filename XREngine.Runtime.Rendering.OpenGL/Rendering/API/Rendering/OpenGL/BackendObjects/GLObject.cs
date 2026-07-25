@@ -19,6 +19,7 @@ namespace XREngine.Rendering.OpenGL
                 _data = data;
                 _data.AddWrapper(this);
                 LinkData();
+                _dataLinked = true;
             }
 
             protected override GenericRenderObject Data_Internal => Data;
@@ -27,6 +28,7 @@ namespace XREngine.Rendering.OpenGL
                 => $"{GetType().Name} {(TryGetBindingId(out uint id) ? id.ToString() : "<Ungenerated>")}{(Data.Name is not null ? $" '{Data.Name}'" : "")}";
 
             private T _data;
+            private bool _dataLinked;
             public T Data
             {
                 get => _data;
@@ -37,8 +39,10 @@ namespace XREngine.Rendering.OpenGL
 
                     if (_data is not null)
                     {
-                        UnlinkData();
+                        if (_dataLinked)
+                            UnlinkData();
                         _data.RemoveWrapper(this);
+                        _dataLinked = false;
                     }
 
                     _data = value;
@@ -47,12 +51,25 @@ namespace XREngine.Rendering.OpenGL
                     {
                         _data.AddWrapper(this);
                         LinkData();
+                        _dataLinked = true;
                     }
                 }
             }
 
             protected abstract void UnlinkData();
             protected abstract void LinkData();
+
+            protected internal override void Retire()
+            {
+                if (_dataLinked)
+                {
+                    UnlinkData();
+                    _dataLinked = false;
+                }
+
+                _data.RemoveWrapper(this);
+                Destroy();
+            }
 
             protected override uint CreateObject()
             {

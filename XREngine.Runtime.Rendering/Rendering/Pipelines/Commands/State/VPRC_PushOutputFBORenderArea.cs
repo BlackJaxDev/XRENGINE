@@ -12,8 +12,13 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            ActivePipelineInstance.RenderState.PushRenderArea((int)fbo.Width, (int)fbo.Height);
-            ActivePipelineInstance.RenderState.PushCropArea((int)fbo.Width, (int)fbo.Height);
+            var region = new XREngine.Data.Geometry.BoundingRectangle(
+                0,
+                0,
+                (int)fbo.Width,
+                (int)fbo.Height);
+            ActivePipelineInstance.RenderState.PushRenderAreaState(region);
+            ActivePipelineInstance.RenderState.PushCropAreaState(region);
         }
     }
 }

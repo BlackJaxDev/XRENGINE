@@ -303,6 +303,16 @@ namespace XREngine.Rendering
         private uint _cachedProjectionVersion;
         private RuntimeGraphicsApiKind _cachedProjectionBackend = RuntimeGraphicsApiKind.Unknown;
         private ERenderClipDepthRange _cachedProjectionClipDepthRange = (ERenderClipDepthRange)(-1);
+        private PreparedFrustum? _preparedWorldFrustum;
+        private Matrix4x4 _preparedWorldFrustumProjection;
+        private Matrix4x4 _preparedWorldFrustumTransform;
+        private bool _preparedWorldFrustumValid;
+        private Frustum? _worldFrustum;
+        private Matrix4x4 _worldFrustumProjection;
+        private Matrix4x4 _worldFrustumTransform;
+        private bool _worldFrustumValid;
+        private static readonly Action<object?> PopProjectionJitterAction =
+            static state => ((XRCamera)state!).PopProjectionJitter();
 
         /// <summary>
         /// Optional oblique near clipping plane in world space.
@@ -699,7 +709,7 @@ namespace XREngine.Rendering
 
             InvalidateProjectionMatrices();
 
-            return StateObject.New(PopProjectionJitter);
+            return StateObject.New(PopProjectionJitterAction, this);
         }
 
         /// <summary>
@@ -1102,7 +1112,50 @@ namespace XREngine.Rendering
         /// </summary>
         /// <returns></returns>
         public Frustum WorldFrustum()
-            => UntransformedFrustum().TransformedBy(Transform.RenderMatrix);
+        {
+            Matrix4x4 projection = ProjectionMatrixUnjittered;
+            Matrix4x4 renderTransform = Transform.RenderMatrix;
+            if (_worldFrustumValid &&
+                _worldFrustumProjection.Equals(projection) &&
+                _worldFrustumTransform.Equals(renderTransform))
+            {
+                return _worldFrustum!.Value;
+            }
+
+            Frustum worldFrustum = _worldFrustum ?? new Frustum();
+            Frustum untransformed = UntransformedFrustum();
+            worldFrustum.UpdateTransformed(untransformed, renderTransform);
+            _worldFrustum = worldFrustum;
+            _worldFrustumProjection = projection;
+            _worldFrustumTransform = renderTransform;
+            _worldFrustumValid = true;
+            return worldFrustum;
+        }
+
+        /// <summary>
+        /// Returns a reusable world-space frustum prepared for repeated intersection tests.
+        /// Its backing arrays are refreshed only when the camera projection or render
+        /// transform changes.
+        /// </summary>
+        public PreparedFrustum PreparedWorldFrustum()
+        {
+            Matrix4x4 projection = ProjectionMatrixUnjittered;
+            Matrix4x4 renderTransform = Transform.RenderMatrix;
+            PreparedFrustum prepared = _preparedWorldFrustum ??= new PreparedFrustum();
+            if (_preparedWorldFrustumValid &&
+                _preparedWorldFrustumProjection.Equals(projection) &&
+                _preparedWorldFrustumTransform.Equals(renderTransform))
+            {
+                return prepared;
+            }
+
+            Frustum untransformed = UntransformedFrustum();
+            prepared.UpdateTransformed(untransformed, renderTransform);
+            _preparedWorldFrustumProjection = projection;
+            _preparedWorldFrustumTransform = renderTransform;
+            _preparedWorldFrustumValid = true;
+            return prepared;
+        }
 
         /// <summary>
         /// The projection frustum of this camera with no transformation applied.

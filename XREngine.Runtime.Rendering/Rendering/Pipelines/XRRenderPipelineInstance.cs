@@ -164,7 +164,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     private readonly object _renderGraphValidationLock = new();
     private readonly HashSet<int> _executedRenderGraphPassIndices = [];
     private readonly HashSet<int> _executedBranchRenderGraphPassIndices = [];
+    private static readonly Action<object?> PopRenderGraphBranchScopeAction =
+        static state => ((XRRenderPipelineInstance)state!).PopRenderGraphBranchScope();
     private int _activeRenderGraphBranchDepth;
+    private RenderPipeline? _screenSpaceUiCommandPipeline;
+    private ulong _screenSpaceUiCommandGeneration = ulong.MaxValue;
+    private bool _containsScreenSpaceUiRenderCommand;
 
     private RenderPipeline? _pipeline;
     internal RenderPipeline? AssignedPipeline => _pipeline;
@@ -2731,7 +2736,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (!userInterface.IsScreenSpace)
             return;
 
-        if (ContainsScreenSpaceUiRenderCommand(Pipeline.CommandChain))
+        if (ContainsScreenSpaceUiRenderCommand())
             return;
 
         string key = $"RenderPipeline.MissingScreenSpaceUiCommand.{GetHashCode()}";
@@ -2750,8 +2755,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// <returns>True if a VPRC_RenderScreenSpaceUI command is found; otherwise, false.</returns>
     internal static bool ContainsScreenSpaceUiRenderCommand(ViewportRenderCommandContainer container)
     {
-        foreach (var cmd in container)
+        for (int commandIndex = 0; commandIndex < container.Count; commandIndex++)
         {
+            ViewportRenderCommand cmd = container[commandIndex];
             switch (cmd)
             {
                 case VPRC_RenderScreenSpaceUI:
@@ -2783,6 +2789,29 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     }
 
     /// <summary>
+    /// Returns whether the active command chain renders screen-space UI, rescanning only
+    /// when the pipeline or its command generation changes.
+    /// </summary>
+    internal bool ContainsScreenSpaceUiRenderCommand()
+    {
+        RenderPipeline? pipeline = Pipeline;
+        if (pipeline is null)
+            return false;
+
+        ulong commandGeneration = pipeline.CommandGeneration;
+        if (!ReferenceEquals(_screenSpaceUiCommandPipeline, pipeline) ||
+            _screenSpaceUiCommandGeneration != commandGeneration)
+        {
+            _screenSpaceUiCommandPipeline = pipeline;
+            _screenSpaceUiCommandGeneration = commandGeneration;
+            _containsScreenSpaceUiRenderCommand =
+                ContainsScreenSpaceUiRenderCommand(pipeline.CommandChain);
+        }
+
+        return _containsScreenSpaceUiRenderCommand;
+    }
+
+    /// <summary>
     /// Registers the index of a render graph pass that has been executed during the current frame. This method is used for validation purposes to ensure that all executed passes have corresponding metadata in the render pipeline. If the pass index is valid (not int.MinValue), it adds the index to the set of executed pass indices and, if within a branch scope, also adds it to the set of branch-executed pass indices.
     /// </summary>
     /// <param name="passIndex">The index of the render graph pass that has been executed.</param>
@@ -2808,14 +2837,16 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         lock (_renderGraphValidationLock)
             _activeRenderGraphBranchDepth++;
 
-        return StateObject.New(() =>
+        return StateObject.New(PopRenderGraphBranchScopeAction, this);
+    }
+
+    private void PopRenderGraphBranchScope()
+    {
+        lock (_renderGraphValidationLock)
         {
-            lock (_renderGraphValidationLock)
-            {
-                if (_activeRenderGraphBranchDepth > 0)
-                    _activeRenderGraphBranchDepth--;
-            }
-        });
+            if (_activeRenderGraphBranchDepth > 0)
+                _activeRenderGraphBranchDepth--;
+        }
     }
 
     /// <summary>

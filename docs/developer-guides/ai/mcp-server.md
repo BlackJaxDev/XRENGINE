@@ -462,6 +462,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `bake_shape_components_to_model` | Bake ShapeMeshComponent nodes into one ModelComponent using boolean ops (union/intersect/difference/xor). |
 | `batch_create_nodes` | Create multiple scene nodes in a single call. Each entry: {name, parent_id?, components?: string[], transform?: {x?,y?,z?,pitch?,yaw?,roll?,sx?,sy?,sz?}}. |
 | `batch_set_properties` | Set properties on multiple components/nodes in one call. Each operation: {node_id, component_type?, property_name, value}. |
+| `build_and_reload_renderer` | Build one backend leaf project and activate exactly one validated collectible generation. |
 | `bulk_reparent_nodes` | Reparent multiple scene nodes to a new parent (or root) in one call. |
 | `cancel_viewport_sequence_capture` | Cancel an active viewport sequence capture, drain in-flight readbacks, and finalize its partial manifest/contact sheet. |
 | `capture_openxr_desktop_mirror_texture` | Capture the latest OpenXR desktop mirror texture and report pixel statistics. |
@@ -522,6 +523,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `get_object_properties` | Read all property values from any XRBase-derived instance by GUID. |
 | `get_parent_types` | Walk the inheritance chain upward from a type, including interfaces. |
 | `get_prefab_structure` | Get the node hierarchy for a prefab source or variant. |
+| `get_renderer_reload_status` | Return active backend generation, reload state, counters, timings, and the last actionable error. |
 | `get_render_capabilities` | Get renderer capability flags (GPU, extensions, ray tracing). |
 | `get_render_profiler_stats` | Return the latest render-profiler counters, including Vulkan frame lifecycle timings and command-buffer cache state. |
 | `get_render_state` | Get current rendering pipeline and camera state. |
@@ -580,11 +582,13 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `read_game_script` | Read the contents of a .cs script file from the game project's assets directory. |
 | `redo` | Redo the most recently undone editor change. |
 | `reload_asset` | Force-reload an asset from disk after external edits. Specify by asset GUID or file path. |
+| `reload_renderer_shaders` | Invalidate all loaded shader dependency roots while retaining each backend's last-good programs and pipelines. |
 | `remove_component` | Remove a component from a scene node. |
 | `rename_game_asset` | Rename or move a file or directory within the game project's assets directory. |
 | `rename_game_script` | Rename or move a .cs script file within the game project's assets directory. |
 | `rename_scene_node` | Rename a scene node by ID. |
 | `reparent_node` | Reparent a scene node to a new parent. |
+| `restart_renderer` | Transactionally restart the selected active backend generation. Active OpenXR requires restart_openxr_session=true; active OpenVR remains blocked. |
 | `restore_world_state` | Restore the active world from a previously captured snapshot. |
 | `rotate_transform` | Apply a local rotation to a scene node's transform (degrees). |
 | `run_editor_command` | Execute an allowlisted editor command via MCP (undo/redo/selection/play-mode/save/load/focus/select). |

@@ -27,7 +27,7 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            EnqueueFrameOp(new MemoryBarrierOp(passIndex, mask, context));
+            EnqueueFrameOp(MemoryBarrierOp.Rent(passIndex, mask, context));
         }
 
         /// <summary>

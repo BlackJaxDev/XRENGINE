@@ -1,7 +1,6 @@
 using Silk.NET.Core.Contexts;
 using Silk.NET.OpenGL;
 using System.Collections.Generic;
-using System.Runtime.InteropServices;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 
@@ -19,14 +18,8 @@ public partial class OpenGLRenderer
 
     private bool _hasArbSparseTexture;
     private bool _hasArbSparseTexture2;
-    private unsafe GlGetInternalformativDelegate? _glGetInternalformativ;
-    private unsafe GlTexPageCommitmentArbDelegate? _glTexPageCommitmentArb;
-
-    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
-    private unsafe delegate void GlGetInternalformativDelegate(GLEnum target, GLEnum internalFormat, GLEnum pname, uint bufSize, int* parameters);
-
-    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
-    private unsafe delegate void GlTexPageCommitmentArbDelegate(GLEnum target, int level, int xoffset, int yoffset, int zoffset, uint width, uint height, uint depth, byte commit);
+    private nint _glGetInternalformativ;
+    private nint _glTexPageCommitmentArb;
 
     public SparseTextureStreamingSupport GetSparseTextureStreamingSupport(ESizedInternalFormat format)
     {
@@ -49,7 +42,7 @@ public partial class OpenGLRenderer
         }
 
         LoadSparseTextureDelegates();
-        if (_glGetInternalformativ is null || _glTexPageCommitmentArb is null)
+        if (_glGetInternalformativ == 0 || _glTexPageCommitmentArb == 0)
         {
             Debug.OpenGLWarning("Sparse textures: required ARB entry points could not be loaded. Imported texture streaming will use the tiered fallback.");
             _sparseTextureSupportByFormat[ESizedInternalFormat.Rgba8] = SparseTextureStreamingSupport.Unsupported("Required sparse texture entry points could not be loaded.");
@@ -72,7 +65,7 @@ public partial class OpenGLRenderer
 
     private void CacheSparseTextureSupportForFormat(ESizedInternalFormat format)
     {
-        if (_glGetInternalformativ is null)
+        if (_glGetInternalformativ == 0)
         {
             _sparseTextureSupportByFormat[format] = SparseTextureStreamingSupport.Unsupported("glGetInternalformativ is not available.");
             return;
@@ -81,7 +74,8 @@ public partial class OpenGLRenderer
         unsafe
         {
             int numVirtualPageSizes = 0;
-            _glGetInternalformativ(
+            InvokeGlGetInternalformativ(
+                _glGetInternalformativ,
                 GLEnum.Texture2D,
                 GLObjectBase.ToGLEnum(format),
                 NumVirtualPageSizesArb,
@@ -99,13 +93,15 @@ public partial class OpenGLRenderer
             fixed (int* pageSizeXsPtr = pageSizeXs)
             fixed (int* pageSizeYsPtr = pageSizeYs)
             {
-                _glGetInternalformativ(
+                InvokeGlGetInternalformativ(
+                    _glGetInternalformativ,
                     GLEnum.Texture2D,
                     GLObjectBase.ToGLEnum(format),
                     VirtualPageSizeXArb,
                     (uint)numVirtualPageSizes,
                     pageSizeXsPtr);
-                _glGetInternalformativ(
+                InvokeGlGetInternalformativ(
+                    _glGetInternalformativ,
                     GLEnum.Texture2D,
                     GLObjectBase.ToGLEnum(format),
                     VirtualPageSizeYArb,
@@ -147,18 +143,18 @@ public partial class OpenGLRenderer
         if (Window.GLContext is not INativeContext nativeContext)
             return;
 
-        if (_glGetInternalformativ is null
+        if (_glGetInternalformativ == 0
             && nativeContext.TryGetProcAddress("glGetInternalformativ", out IntPtr getInternalformatProc)
             && getInternalformatProc != IntPtr.Zero)
         {
-            _glGetInternalformativ = Marshal.GetDelegateForFunctionPointer<GlGetInternalformativDelegate>(getInternalformatProc);
+            _glGetInternalformativ = getInternalformatProc;
         }
 
-        if (_glTexPageCommitmentArb is null
+        if (_glTexPageCommitmentArb == 0
             && nativeContext.TryGetProcAddress("glTexPageCommitmentARB", out IntPtr texPageCommitmentProc)
             && texPageCommitmentProc != IntPtr.Zero)
         {
-            _glTexPageCommitmentArb = Marshal.GetDelegateForFunctionPointer<GlTexPageCommitmentArbDelegate>(texPageCommitmentProc);
+            _glTexPageCommitmentArb = texPageCommitmentProc;
         }
     }
 
@@ -181,10 +177,11 @@ public partial class OpenGLRenderer
     {
         unsafe
         {
-            if (_glTexPageCommitmentArb is null)
+            if (_glTexPageCommitmentArb == 0)
                 return false;
 
-            _glTexPageCommitmentArb(
+            InvokeGlTexPageCommitmentArb(
+                _glTexPageCommitmentArb,
                 target,
                 level,
                 xoffset,
@@ -197,4 +194,40 @@ public partial class OpenGLRenderer
             return true;
         }
     }
+
+    private static unsafe void InvokeGlGetInternalformativ(
+        nint entryPoint,
+        GLEnum target,
+        GLEnum internalFormat,
+        GLEnum parameterName,
+        uint bufferSize,
+        int* parameters)
+        => ((delegate* unmanaged[Stdcall]<GLEnum, GLEnum, GLEnum, uint, int*, void>)entryPoint)(
+            target,
+            internalFormat,
+            parameterName,
+            bufferSize,
+            parameters);
+
+    private static unsafe void InvokeGlTexPageCommitmentArb(
+        nint entryPoint,
+        GLEnum target,
+        int level,
+        int xOffset,
+        int yOffset,
+        int zOffset,
+        uint width,
+        uint height,
+        uint depth,
+        byte commit)
+        => ((delegate* unmanaged[Stdcall]<GLEnum, int, int, int, int, uint, uint, uint, byte, void>)entryPoint)(
+            target,
+            level,
+            xOffset,
+            yOffset,
+            zOffset,
+            width,
+            height,
+            depth,
+            commit);
 }

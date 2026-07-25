@@ -201,8 +201,10 @@ namespace XREngine.Rendering
             return Matrix4x4.CreateOrthographicOffCenter(left, right, bottom, top, nearZ, farZ);
         }
 
-        protected override Frustum CalculateUntransformedFrustum(Matrix4x4 inverseProjectionMatrix)
-            => new(Width, Height, NearZ, FarZ);
+        protected override void UpdateUntransformedFrustum(
+            ref Frustum frustum,
+            Matrix4x4 inverseProjectionMatrix)
+            => frustum.Update(Width, Height, NearZ, FarZ);
 
         public override void SetUniforms(XRRenderProgram program)
         {

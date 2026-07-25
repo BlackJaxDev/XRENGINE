@@ -37,6 +37,48 @@ public sealed class RendererBackendModuleSourceContractTests
     }
 
     [Test]
+    public void StableRenderingKernel_HasNoConcreteBackendTypeNamesOrLeafReferences()
+    {
+        string stableRoot = Path.Combine(FindWorkspaceRoot(), "XREngine.Runtime.Rendering");
+        string[] offenders = Directory
+            .EnumerateFiles(stableRoot, "*.cs", SearchOption.AllDirectories)
+            .Where(static path =>
+            {
+                string source = File.ReadAllText(path);
+                return System.Text.RegularExpressions.Regex.IsMatch(
+                    source,
+                    @"\b(?:OpenGLRenderer|VulkanRenderer)\b");
+            })
+            .Select(path => Path.GetRelativePath(stableRoot, path))
+            .ToArray();
+        offenders.ShouldBeEmpty();
+
+        string project = File.ReadAllText(
+            Path.Combine(stableRoot, "XREngine.Runtime.Rendering.csproj"));
+        project.ShouldNotContain("XREngine.Runtime.Rendering.OpenGL");
+        project.ShouldNotContain("XREngine.Runtime.Rendering.Vulkan");
+    }
+
+    [Test]
+    public void LeafBackends_DoNotReferenceEachOther()
+    {
+        string root = FindWorkspaceRoot();
+        string openGlProject = File.ReadAllText(
+            Path.Combine(
+                root,
+                "XREngine.Runtime.Rendering.OpenGL",
+                "XREngine.Runtime.Rendering.OpenGL.csproj"));
+        string vulkanProject = File.ReadAllText(
+            Path.Combine(
+                root,
+                "XREngine.Runtime.Rendering.Vulkan",
+                "XREngine.Runtime.Rendering.Vulkan.csproj"));
+
+        openGlProject.ShouldNotContain("XREngine.Runtime.Rendering.Vulkan");
+        vulkanProject.ShouldNotContain("XREngine.Runtime.Rendering.OpenGL");
+    }
+
+    [Test]
     public void StaticBuiltInsAndCollectibleModulesShareFactoryAndRegistrationContracts()
     {
         string builtIns = ReadWorkspaceFile(
@@ -74,8 +116,9 @@ public sealed class RendererBackendModuleSourceContractTests
             .Where(static path =>
             {
                 string source = File.ReadAllText(path);
-                return source.Contains("OpenGLRenderer", StringComparison.Ordinal)
-                    || source.Contains("VulkanRenderer", StringComparison.Ordinal);
+                return System.Text.RegularExpressions.Regex.IsMatch(
+                    source,
+                    @"\b(?:OpenGLRenderer|VulkanRenderer)\b");
             })
             .Select(path => Path.GetRelativePath(editorRoot, path).Replace('\\', '/'))
             .OrderBy(static path => path, StringComparer.Ordinal)
@@ -118,6 +161,64 @@ public sealed class RendererBackendModuleSourceContractTests
         glImplementation.ShouldContain("IIndirectDrawStateBackendCapability");
         vkImplementation.ShouldContain("ISceneDatabaseDeviceAddressBackendCapability");
         vkImplementation.ShouldContain("is not VkDataBuffer");
+    }
+
+    [Test]
+    public void CollectibleBackends_DoNotCreateUnmanagedDelegateThunks()
+    {
+        string root = FindWorkspaceRoot();
+        string[] backendRoots =
+        [
+            Path.Combine(root, "XREngine.Runtime.Rendering.OpenGL"),
+            Path.Combine(root, "XREngine.Runtime.Rendering.Vulkan"),
+        ];
+        string[] offenders = backendRoots
+            .SelectMany(static backendRoot =>
+                Directory.EnumerateFiles(backendRoot, "*.cs", SearchOption.AllDirectories))
+            .Where(static path =>
+                File.ReadAllText(path).Contains(
+                    "Marshal.GetFunctionPointerForDelegate",
+                    StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(root, path).Replace('\\', '/'))
+            .ToArray();
+
+        offenders.ShouldBeEmpty(
+            "unmanaged entry points must live in a stable bridge; a thunk targeting collectible code roots its load context");
+
+        string bridge = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/Interop/RendererImGuiViewportCallbackBridge.cs");
+        string adapter = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/UI/OpenGLRenderer.ImGuiViewportCallbackAdapter.cs");
+        bridge.ShouldContain("[UnmanagedCallersOnly(");
+        bridge.ShouldContain("Register(");
+        adapter.ShouldContain("IRendererImGuiViewportCallbacks");
+    }
+
+    [Test]
+    public void FailureInjectionHooks_CoverEveryReloadBoundaryCategory()
+    {
+        string source = string.Join(
+            Environment.NewLine,
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RendererReload/RendererReplacementCoordinator.cs"),
+            ReadWorkspaceFile("XREngine.Editor/Rendering/HotReload/RendererBackendBuildService.cs"),
+            ReadWorkspaceFile("XREngine.Editor/Rendering/HotReload/RendererBackendModuleLoader.cs"),
+            ReadWorkspaceFile("XREngine.Editor/Rendering/HotReload/RendererHotReloadService.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLShader.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.LinkOrchestration.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkShader.cs"));
+
+        foreach (XREngine.Rendering.RendererReloadInjectedFailure failure in
+                 Enum.GetValues<XREngine.Rendering.RendererReloadInjectedFailure>())
+        {
+            if (failure == XREngine.Rendering.RendererReloadInjectedFailure.None)
+                continue;
+
+            source.Contains(
+                    $"RendererReloadInjectedFailure.{failure}",
+                    StringComparison.Ordinal)
+                .ShouldBeTrue(
+                    $"the {failure} failure category must be wired to a real reload boundary");
+        }
     }
 
     private static string ReadWorkspaceFile(string relativePath)

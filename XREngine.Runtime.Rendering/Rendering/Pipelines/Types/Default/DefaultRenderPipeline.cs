@@ -178,14 +178,22 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
             return true;
         }
 
-        string? unitTestVrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
-        if (string.Equals(unitTestVrMode, "MonadoOpenXR", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(unitTestVrMode, "OpenXR", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
+        return UnitTestEnvironmentRequestsOpenXr;
+    }
 
-        return IsTruthyEnvironmentValue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr));
+    // Unit-test launch variables are immutable for the process lifetime. Cache
+    // them once instead of materializing environment strings from every
+    // DefaultRenderPipeline condition evaluator on every frame.
+    private static readonly bool UnitTestEnvironmentRequestsOpenXr =
+        ResolveUnitTestEnvironmentRequestsOpenXr();
+
+    private static bool ResolveUnitTestEnvironmentRequestsOpenXr()
+    {
+        string? unitTestVrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
+        return string.Equals(unitTestVrMode, "MonadoOpenXR", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(unitTestVrMode, "OpenXR", StringComparison.OrdinalIgnoreCase) ||
+               IsTruthyEnvironmentValue(
+                   Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr));
     }
 
     private static bool IsTruthyEnvironmentValue(string? value)
@@ -3249,9 +3257,12 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     private static void GetReadyProbes(IReadOnlyList<LightProbeComponent> probes, List<LightProbeComponent> target)
     {
         target.Clear();
-        foreach (var probe in probes)
+        for (int i = 0; i < probes.Count; i++)
+        {
+            LightProbeComponent probe = probes[i];
             if (probe.HasUsableIblTextures)
                 target.Add(probe);
+        }
     }
 
     private static bool IsProbeGiSamplingSuppressedForCurrentPass()

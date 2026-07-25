@@ -370,7 +370,16 @@ public partial class VulkanRenderSettings : XRBase
 [MemoryPackable]
 public partial class VulkanCommandRecordingSettings : XRBase
 {
+    private EVulkanCommandRecordingMode _mode = EVulkanCommandRecordingMode.Auto;
     private bool _primaryCommandBufferReuseEnabled = true;
+
+    [Category("Vulkan Command Recording")]
+    [Description("Selects inline or hybrid Vulkan command recording. Auto enables the validated desktop hybrid path while retaining explicit safety quarantines. XRE_VULKAN_COMMAND_CHAINS=0/1 overrides this setting for diagnostics.")]
+    public EVulkanCommandRecordingMode Mode
+    {
+        get => _mode;
+        set => SetField(ref _mode, value);
+    }
 
     [Category("Vulkan Command Recording")]
     [Description("Reuses correctness-validated primary command buffers and stable secondary command ranges. XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE=0 is the diagnostic disable override.")]

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Threading;
 using Silk.NET.Vulkan;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
 
@@ -227,6 +228,10 @@ public unsafe partial class VulkanRenderer
     private readonly Dictionary<ulong, ulong> _vulkanBufferViewBackingBuffers = new();
     private readonly Dictionary<ulong, VulkanResourceLifetimeKey[]> _vulkanFramebufferAttachments = new();
     private readonly List<VulkanLifetimeSubmission> _vulkanLifetimeSubmissions = new(16);
+    private readonly ThreadLocal<HashSet<ulong>> _vulkanChangedDescriptorSetsScratch =
+        new(static () => []);
+    private readonly ThreadLocal<HashSet<VulkanResourceLifetimeKey>> _vulkanDescriptorReferencesScratch =
+        new(static () => []);
     private long _vulkanResourceGeneration;
     private long _vulkanRetirementSerial;
     private ulong _vulkanLastGraphicsSequence;
@@ -616,9 +621,12 @@ public unsafe partial class VulkanRenderer
             }
 
             VulkanResourceLifetimeKey imageKey = ResourceKey(ObjectType.Image, backingImageHandle);
+            // The view-specific owner is already carried into the final diagnostic.
+            // Reuse it here instead of allocating an owner suffix for every attachment
+            // checked during command-buffer recording.
             VulkanResourceLifetimeRecord image = GetOrRegisterVulkanResource_NoLock(
                 imageKey,
-                $"{owner}.BackingImage");
+                owner);
             if ((image.State &
                  (EVulkanResourceLifetimeState.PendingRetirement |
                   EVulkanResourceLifetimeState.Destroyed)) == 0)
@@ -1180,30 +1188,47 @@ public unsafe partial class VulkanRenderer
         ulong descriptorSetHandle,
         VulkanDescriptorSetLifetimeRecord state)
     {
-        HashSet<VulkanResourceLifetimeKey> uniqueReferences = new();
-        foreach (VulkanDescriptorReferencePair pair in state.References.Values)
+        HashSet<VulkanResourceLifetimeKey> uniqueReferences = _vulkanDescriptorReferencesScratch.Value!;
+        uniqueReferences.Clear();
+        try
         {
-            if (pair.First.IsValid)
-                uniqueReferences.Add(pair.First);
-            if (pair.Second.IsValid)
-                uniqueReferences.Add(pair.Second);
+            foreach (VulkanDescriptorReferencePair pair in state.References.Values)
+            {
+                if (pair.First.IsValid)
+                    uniqueReferences.Add(pair.First);
+                if (pair.Second.IsValid)
+                    uniqueReferences.Add(pair.Second);
+            }
+
+            UpdateVulkanDescriptorSetReferenceIndex_NoLock(descriptorSetHandle, state, uniqueReferences);
+
+            VulkanPublishedDescriptorImageReference[] imageReferences = state.ImageReferences.Count == 0
+                ? []
+                : new VulkanPublishedDescriptorImageReference[state.ImageReferences.Count];
+            int imageIndex = 0;
+            foreach (((uint binding, uint element), VulkanDescriptorImageReference reference) in state.ImageReferences)
+                imageReferences[imageIndex++] = new VulkanPublishedDescriptorImageReference(binding, element, reference);
+
+            VulkanResourceLifetimeKey[] publishedReferences = uniqueReferences.Count == 0
+                ? []
+                : new VulkanResourceLifetimeKey[uniqueReferences.Count];
+            uniqueReferences.CopyTo(publishedReferences);
+            uint[] reflectedImageBindings = state.ReflectedImageBindings.Count == 0
+                ? []
+                : new uint[state.ReflectedImageBindings.Count];
+            state.ReflectedImageBindings.CopyTo(reflectedImageBindings);
+
+            _vulkanPublishedDescriptorSets[descriptorSetHandle] = new VulkanPublishedDescriptorSetSnapshot(
+                state.Generation,
+                publishedReferences,
+                imageReferences,
+                reflectedImageBindings,
+                state.HasReflection);
         }
-
-        UpdateVulkanDescriptorSetReferenceIndex_NoLock(descriptorSetHandle, state, uniqueReferences);
-
-        VulkanPublishedDescriptorImageReference[] imageReferences = state.ImageReferences.Count == 0
-            ? []
-            : new VulkanPublishedDescriptorImageReference[state.ImageReferences.Count];
-        int imageIndex = 0;
-        foreach (((uint binding, uint element), VulkanDescriptorImageReference reference) in state.ImageReferences)
-            imageReferences[imageIndex++] = new VulkanPublishedDescriptorImageReference(binding, element, reference);
-
-        _vulkanPublishedDescriptorSets[descriptorSetHandle] = new VulkanPublishedDescriptorSetSnapshot(
-            state.Generation,
-            uniqueReferences.Count == 0 ? [] : uniqueReferences.ToArray(),
-            imageReferences,
-            state.ReflectedImageBindings.Count == 0 ? [] : state.ReflectedImageBindings.ToArray(),
-            state.HasReflection);
+        finally
+        {
+            uniqueReferences.Clear();
+        }
     }
 
     private void UpdateVulkanDescriptorSetPoolIndex_NoLock(
@@ -1267,7 +1292,8 @@ public unsafe partial class VulkanRenderer
         }
 
         state.IndexedReferences.Clear();
-        state.IndexedReferences.UnionWith(currentReferences);
+        foreach (VulkanResourceLifetimeKey currentReference in currentReferences)
+            state.IndexedReferences.Add(currentReference);
     }
 
     private void RegisterVulkanDescriptorSets(
@@ -1292,84 +1318,91 @@ public unsafe partial class VulkanRenderer
         if (writeCount == 0 || writes is null)
             return;
 
-        HashSet<ulong> changedSets = new();
-        lock (_vulkanResourceLifetimeLock)
+        HashSet<ulong> changedSets = _vulkanChangedDescriptorSetsScratch.Value!;
+        changedSets.Clear();
+        try
         {
-            for (int writeIndex = 0; writeIndex < writeCount; writeIndex++)
+            lock (_vulkanResourceLifetimeLock)
             {
-                WriteDescriptorSet write = writes[writeIndex];
-                if (write.DstSet.Handle == 0)
-                    continue;
-
-                VulkanResourceLifetimeKey setKey = ResourceKey(ObjectType.DescriptorSet, write.DstSet.Handle);
-                VulkanResourceLifetimeRecord setResource = GetOrRegisterVulkanResource_NoLock(setKey, "DescriptorSet.Update");
-                if ((setResource.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) != 0)
-                    throw new InvalidOperationException($"Cannot update retired Vulkan descriptor set {setKey}.");
-
-                if (!_vulkanDescriptorSetLifetimes.TryGetValue(write.DstSet.Handle, out VulkanDescriptorSetLifetimeRecord? setState))
+                for (int writeIndex = 0; writeIndex < writeCount; writeIndex++)
                 {
-                    setState = new VulkanDescriptorSetLifetimeRecord();
-                    _vulkanDescriptorSetLifetimes[write.DstSet.Handle] = setState;
-                }
+                    WriteDescriptorSet write = writes[writeIndex];
+                    if (write.DstSet.Handle == 0)
+                        continue;
 
-                bool setUseCompleted = UpdateVulkanResourceCompletionState_NoLock(setResource);
-                bool bindingSupportsUpdateAfterBind =
-                    setState.UsesUpdateAfterBind && CanUseUpdateAfterBind(write.DescriptorType);
-                if (!setUseCompleted && !bindingSupportsUpdateAfterBind)
-                {
-                    throw new InvalidOperationException(
-                        $"Cannot update in-flight Vulkan descriptor set {setKey}; binding={write.DstBinding} type={write.DescriptorType} was not registered for update-after-bind.");
-                }
+                    VulkanResourceLifetimeKey setKey = ResourceKey(ObjectType.DescriptorSet, write.DstSet.Handle);
+                    VulkanResourceLifetimeRecord setResource = GetOrRegisterVulkanResource_NoLock(setKey, "DescriptorSet.Update");
+                    if ((setResource.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) != 0)
+                        throw new InvalidOperationException($"Cannot update retired Vulkan descriptor set {setKey}.");
 
-                for (uint descriptorIndex = 0; descriptorIndex < write.DescriptorCount; descriptorIndex++)
-                {
-                    (uint Binding, uint Element) bindingKey =
-                        (write.DstBinding, write.DstArrayElement + descriptorIndex);
-                    VulkanDescriptorReferencePair references = ResolveDescriptorReferences(write, descriptorIndex);
-                    ValidateAndPropagateVulkanDescriptorReference_NoLock(
-                        setKey,
-                        setResource,
-                        references.First,
-                        setUseCompleted);
-                    ValidateAndPropagateVulkanDescriptorReference_NoLock(
-                        setKey,
-                        setResource,
-                        references.Second,
-                        setUseCompleted);
-                    if (!setState.References.TryGetValue(bindingKey, out VulkanDescriptorReferencePair previousReferences) ||
-                        previousReferences != references)
+                    if (!_vulkanDescriptorSetLifetimes.TryGetValue(write.DstSet.Handle, out VulkanDescriptorSetLifetimeRecord? setState))
                     {
-                        setState.References[bindingKey] = references;
-                        changedSets.Add(write.DstSet.Handle);
+                        setState = new VulkanDescriptorSetLifetimeRecord();
+                        _vulkanDescriptorSetLifetimes[write.DstSet.Handle] = setState;
                     }
-                    if (write.PImageInfo is not null && IsLifetimeTrackedImageDescriptorType(write.DescriptorType))
+
+                    bool setUseCompleted = UpdateVulkanResourceCompletionState_NoLock(setResource);
+                    bool bindingSupportsUpdateAfterBind =
+                        setState.UsesUpdateAfterBind && CanUseUpdateAfterBind(write.DescriptorType);
+                    if (!setUseCompleted && !bindingSupportsUpdateAfterBind)
                     {
-                        DescriptorImageInfo imageInfo = write.PImageInfo[descriptorIndex];
-                        VulkanDescriptorImageReference imageReference = new(
-                            imageInfo.ImageView,
-                            imageInfo.ImageLayout,
-                            write.DescriptorType);
-                        if (!setState.ImageReferences.TryGetValue(bindingKey, out VulkanDescriptorImageReference previousImage) ||
-                            previousImage != imageReference)
+                        throw new InvalidOperationException(
+                            $"Cannot update in-flight Vulkan descriptor set {setKey}; binding={write.DstBinding} type={write.DescriptorType} was not registered for update-after-bind.");
+                    }
+
+                    for (uint descriptorIndex = 0; descriptorIndex < write.DescriptorCount; descriptorIndex++)
+                    {
+                        (uint Binding, uint Element) bindingKey =
+                            (write.DstBinding, write.DstArrayElement + descriptorIndex);
+                        VulkanDescriptorReferencePair references = ResolveDescriptorReferences(write, descriptorIndex);
+                        ValidateAndPropagateVulkanDescriptorReference_NoLock(
+                            setKey,
+                            setResource,
+                            references.First,
+                            setUseCompleted);
+                        ValidateAndPropagateVulkanDescriptorReference_NoLock(
+                            setKey,
+                            setResource,
+                            references.Second,
+                            setUseCompleted);
+                        if (!setState.References.TryGetValue(bindingKey, out VulkanDescriptorReferencePair previousReferences) ||
+                            previousReferences != references)
                         {
-                            setState.ImageReferences[bindingKey] = imageReference;
+                            setState.References[bindingKey] = references;
+                            changedSets.Add(write.DstSet.Handle);
+                        }
+                        if (write.PImageInfo is not null && IsLifetimeTrackedImageDescriptorType(write.DescriptorType))
+                        {
+                            DescriptorImageInfo imageInfo = write.PImageInfo[descriptorIndex];
+                            VulkanDescriptorImageReference imageReference = new(
+                                imageInfo.ImageView,
+                                imageInfo.ImageLayout,
+                                write.DescriptorType);
+                            if (!setState.ImageReferences.TryGetValue(bindingKey, out VulkanDescriptorImageReference previousImage) ||
+                                previousImage != imageReference)
+                            {
+                                setState.ImageReferences[bindingKey] = imageReference;
+                                changedSets.Add(write.DstSet.Handle);
+                            }
+                        }
+                        else if (setState.ImageReferences.Remove(bindingKey))
+                        {
                             changedSets.Add(write.DstSet.Handle);
                         }
                     }
-                    else
-                    {
-                        if (setState.ImageReferences.Remove(bindingKey))
-                            changedSets.Add(write.DstSet.Handle);
-                    }
+                }
+
+                foreach (ulong descriptorSetHandle in changedSets)
+                {
+                    VulkanDescriptorSetLifetimeRecord state = _vulkanDescriptorSetLifetimes[descriptorSetHandle];
+                    state.Generation++;
+                    PublishVulkanDescriptorSetSnapshot_NoLock(descriptorSetHandle, state);
                 }
             }
-
-            foreach (ulong descriptorSetHandle in changedSets)
-            {
-                VulkanDescriptorSetLifetimeRecord state = _vulkanDescriptorSetLifetimes[descriptorSetHandle];
-                state.Generation++;
-                PublishVulkanDescriptorSetSnapshot_NoLock(descriptorSetHandle, state);
-            }
+        }
+        finally
+        {
+            changedSets.Clear();
         }
     }
 

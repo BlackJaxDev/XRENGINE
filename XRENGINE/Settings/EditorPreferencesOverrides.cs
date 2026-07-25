@@ -155,7 +155,7 @@ namespace XREngine
         }
 
         [Category("Play Mode Overrides")]
-        [Description("Override for showing a confirmation dialog before editor-triggered exit-play requests.")]
+        [Description("Override for showing a confirmation dialog before editor UI exit-play requests. Shift+F5 always bypasses the prompt.")]
         public OverrideableSetting<bool> ConfirmBeforeExitingPlayModeOverride
         {
             get => _confirmBeforeExitingPlayModeOverride;

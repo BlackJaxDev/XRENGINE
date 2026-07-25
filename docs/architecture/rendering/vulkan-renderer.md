@@ -390,12 +390,28 @@ RecordCommandBuffer(imageIndex)
 
 Graphics targets are selected through the resolved render target mode. Dynamic mode records swapchain and `XRFrameBuffer` targets with `vkCmdBeginRendering` / `vkCmdEndRendering`; legacy mode records through `vkCmdBeginRenderPass` / `vkCmdEndRenderPass`. Dynamic FBO scopes reuse `VkFrameBuffer` attachment signatures for image views, formats, load/store ops, clear values, and explicit begin/end layout barriers.
 
-#### Feature-Flagged Command Chains
+#### Vulkan Command-Recording Modes
 
-Vulkan also has a command-chain path that lowers the sorted `FrameOp` stream into reusable packet schedules before recording. It is guarded by environment flags while the legacy frame-op recorder remains the default fallback:
+Vulkan lowers the sorted `FrameOp` stream into reusable packet schedules before
+recording. `Vulkan.CommandRecording.Mode` controls the policy:
+
+| Mode | Behavior |
+|---|---|
+| `Auto` (default) | Uses the validated hybrid primary/secondary path for desktop targets and retains the safety quarantines below. |
+| `Inline` | Records frame operations directly into the primary command buffer. Use this only for correctness or performance bisection. |
+| `Hybrid` | Explicitly requests the supported hybrid path. Safety-quarantined targets still remain inline. |
+
+`XRE_VULKAN_COMMAND_CHAINS=0/1` is a process-level diagnostic override. `0`
+forces inline recording and `1` forces the hybrid request. The explicit `1`
+override is also required to experiment with command chains on external
+OpenXR-owned swapchain targets; `Auto` never promotes those targets. Independent
+desktop rendering while OpenXR is active retains its separate explicit allow
+policy.
+
+Additional diagnostic flags are:
 
 | Flag | Purpose |
-| `XRE_VULKAN_COMMAND_CHAINS=1` | Enables command-chain lowering, secondary mesh command buffers, chain cache lookup, and primary schedule signatures. |
+|---|---|
 | `XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD=1` | Forces deterministic single-thread chain processing for bisection. |
 | `XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING=1` | Keeps command-chain lowering enabled while disabling worker dispatch. |
 | `XRE_VULKAN_PARALLEL_PACKET_BUILD=1` | Builds packet snapshots in parallel and validates them against the sequential result in validation mode. |
@@ -417,7 +433,22 @@ DrainFrameOps()
   -> Record/reuse the primary command buffer from the chain group signature
 ```
 
+The resource planner publishes exact, revisioned framebuffer and buffer
+snapshots. A clean frame reuses those snapshots and the installed chain
+schedule without rescanning the resource registry. When a resource-plan
+revision really changes, lowering builds and installs the replacement schedule
+for that revision in the same frame; it does not deliberately fall back to an
+inline primary for one frame. Descriptor publication and image-view lookup
+likewise retain stable backing storage so camera-only changes do not manufacture
+new structural identities.
+
 The cache is per swapchain image/frame slot and keyed by `CommandChainKey`, which includes render target identity, pass index, view key, volatility, structural signature, and descriptor/resource generation inputs. Static scene chains can refresh camera/model/material frame data without re-recording secondary command buffers. Dynamic UI text and profiler/overlay work is isolated into volatile chains so it does not dirty static scene chains.
+
+Reusable chains also track the ordered baked uniform-slot mapping and every
+bound program's binding identity plus successful-link generation. A changed
+draw occurrence order or shader/program relink therefore re-records the
+affected secondary instead of replaying stale dynamic offsets, pipeline
+layouts, or descriptors.
 
 Primary command-buffer reuse is tracked separately from secondary reuse. A primary can be reused when the pass-group layout, schedule signature, and ordered secondary command-buffer handles are unchanged. When only frame data changes, the chain metrics report frame-data refreshes rather than command-buffer records. The profiler/runtime stat surface exposes scheduled, recorded, reused, refreshed, dirty-reason, secondary-count, primary-record/reuse, worker-record, and render-thread-wait metrics.
 
@@ -426,6 +457,11 @@ The worker infrastructure owns per-worker graphics/compute command pools, scratc
 VR and shadow passes use explicit command-chain view specialization. VR eye chains use left/right eye indices, with a multiview sentinel reserved for single-pass stereo. Shadow chains include light identity, cascade/face identity, target identity, and shadow atlas/fallback state in their structural signatures so atlas repacks or stale-tile fallback modes dirty only the affected chains.
 
 Optional multi-queue scheduling is metadata-only in this phase. The queue scheduler classifies graphics, secondary graphics, compute, and transfer eligibility, validates dependency/timeline data in validation mode, then emits a graphics fallback node for actual execution.
+
+Mutable GPU-driven indirect/count streams remain on the Vulkan primary command
+buffer because replay through cached secondaries has not completed cross-vendor
+acceptance. This is a command-ownership quarantine only: it does not introduce
+CPU readback or replace the requested GPU-driven submission path.
 
 ### The Render Graph
 
@@ -619,7 +655,16 @@ Save location: %LOCALAPPDATA%/XREngine/Vulkan/PipelineCache/pcache_v{vendor}_{de
 - Cache key includes vendor, device, driver version, and API version to invalidate on driver updates
 - Logs the cache path, loaded byte count, saved byte count, and save duration
 
-Mesh renderers also keep a small per-renderer cache of generated combined `XRRenderProgram` instances keyed by material shader revision, Vulkan feature axes, shader stages, and generated vertex source identity. Pipeline invalidation can retire/recreate `VkPipeline` objects, but it must not destroy and relink the same shader program just because geometry, descriptors, or fixed-function state changed.
+Mesh renderers also keep a small per-renderer cache of generated combined
+`XRRenderProgram` instances keyed by material shader revision, Vulkan feature
+axes, shader stages, and generated vertex source identity. Before constructing
+diagnostic names or hashing shader source, the hot path probes an
+allocation-free `GeneratedProgramState` snapshot whose immutable strings use
+reference identity. Base mesh-version labels are cached as well. Consequently,
+a clean draw lookup neither rebuilds program identity strings nor re-hashes
+shader text. Pipeline invalidation can retire/recreate `VkPipeline` objects, but
+it must not destroy and relink the same shader program just because geometry,
+descriptors, or fixed-function state changed.
 
 ### SPIR-V Shader Artifact Cache
 

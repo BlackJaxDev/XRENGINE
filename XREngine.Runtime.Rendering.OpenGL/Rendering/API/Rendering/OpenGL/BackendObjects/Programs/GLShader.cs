@@ -31,11 +31,13 @@ namespace XREngine.Rendering.OpenGL
             protected override void UnlinkData()
             {
                 Data.PropertyChanged -= Data_PropertyChanged;
+                Data.SourceChanged -= Data_SourceChanged;
             }
 
             protected override void LinkData()
             {
                 Data.PropertyChanged += Data_PropertyChanged;
+                Data.SourceChanged += Data_SourceChanged;
                 OnSourceChanged();
                 // Set the include directory path from the source file's directory
                 UpdateLocalIncludeDirectory();
@@ -55,14 +57,15 @@ namespace XREngine.Rendering.OpenGL
                 switch (e.PropertyName)
                 {
                     case nameof(XRShader.Source):
-                        OnSourceChanged();
+                        UpdateLocalIncludeDirectory();
                         break;
                     case nameof(XRShader.Type):
-                        //Have to regenerate a new shader with the new type
-                        Destroy();
                         break;
                 }
             }
+
+            private void Data_SourceChanged(XRShader shader)
+                => OnSourceChanged();
 
             public override EGLObjectType Type => EGLObjectType.Shader;
             
@@ -277,6 +280,15 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public bool Compile(out string? info, bool printLogInfo = true)
             {
+                if (RendererReloadFailureInjection.IsEnabled(
+                        RendererReloadInjectedFailure.ShaderCompile))
+                {
+                    info = "Injected OpenGL shader compile failure.";
+                    IsCompiled = false;
+                    return false;
+                }
+                RendererReloadFailureInjection.DelayIfEnabled(
+                    RendererReloadInjectedFailure.DelayedCompletion);
                 MeasureRenderingShaderGlCall(
                     "glCompileShader",
                     () => Api.CompileShader(BindingId),
@@ -317,6 +329,14 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public bool Compile()
             {
+                if (RendererReloadFailureInjection.IsEnabled(
+                        RendererReloadInjectedFailure.ShaderCompile))
+                {
+                    IsCompiled = false;
+                    return false;
+                }
+                RendererReloadFailureInjection.DelayIfEnabled(
+                    RendererReloadInjectedFailure.DelayedCompletion);
                 MeasureRenderingShaderGlCall(
                     "glCompileShader",
                     () => Api.CompileShader(BindingId),

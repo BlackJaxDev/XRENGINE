@@ -70,6 +70,9 @@ public static partial class EditorUnitTests
         private const float CameraPreviewBottomMargin = 12.0f;
         private static readonly long VRStereoPreviewBindingRefreshPeriodTicks =
             XREngine.Timers.EngineTimer.SecondsToStopwatchTicks(0.1);
+        private static readonly long FpsOverlayRefreshPeriodTicks =
+            XREngine.Timers.EngineTimer.SecondsToStopwatchTicks(0.25);
+        private static long _lastFpsOverlayRefreshTicks;
 
         private readonly record struct CameraPreviewRequest(CameraComponent Camera, string Label);
 
@@ -90,6 +93,16 @@ public static partial class EditorUnitTests
                 if (_fpsAvg.Count > 60)
                     _fpsAvg.Dequeue();
             }
+
+            // The sample window remains frame-accurate, while formatting and rebuilding
+            // the diagnostic text at 4 Hz avoids turning the FPS overlay itself into a
+            // per-frame layout and upload benchmark.
+            if (_lastFpsOverlayRefreshTicks != 0 &&
+                renderTimestampTicks - _lastFpsOverlayRefreshTicks < FpsOverlayRefreshPeriodTicks)
+            {
+                return;
+            }
+            _lastFpsOverlayRefreshTicks = renderTimestampTicks;
 
             float averageHz = _fpsAvg.Count > 0 ? MathF.Round(_fpsAvg.Sum() / _fpsAvg.Count) : 0.0f;
             double renderMs = Engine.Time.Timer.Render.Delta * 1000.0;
@@ -443,6 +456,10 @@ public static partial class EditorUnitTests
             text.OutlineColor = new ColorF4(0.0f, 0.0f, 0.0f, 1.0f);
             text.OutlineThickness = 2.0f;
             text.OutlineAffectsSpacing = true;
+            // The FPS updater belongs to the persistent editor shell. Hidden editor roots are
+            // briefly deactivated while play scenes are replaced, so retain this one-time tick
+            // registration and let the world dispatcher suspend it during the transition.
+            text.UnregisterTicksOnStop = false;
             text.RegisterAnimationTick<UITextComponent>(TickFPS);
             var textTransform = textNode.GetTransformAs<UIBoundableTransform>(true)!;
             textTransform.Width = FpsOverlayWidth;

@@ -8,8 +8,6 @@ using System.Text.RegularExpressions;
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 using XREngine;
-using XREngine.Core.Files;
-using XREngine.Data.Core;
 using XREngine.Diagnostics;
 
 namespace XREngine.Rendering.Vulkan;
@@ -41,7 +39,6 @@ public unsafe partial class VulkanRenderer
     public class VkShader(VulkanRenderer api, XRShader data) : VkObject<XRShader>(api, data)
     {
         private ShaderModule _shaderModule;
-        private TextFile? _attachedSource;
         private readonly List<DescriptorBindingInfo> _descriptorBindings = new();
         private string _entryPoint = "main";
         private PipelineShaderStageCreateInfo _shaderStageCreateInfo;
@@ -57,6 +54,7 @@ public unsafe partial class VulkanRenderer
         private Task<VulkanShaderArtifact>? _asyncCompileTask;
         private int _asyncCompileShaderConfigVersion = -1;
         private bool _asyncCompileUsesVulkanClipDepthRemap;
+        private long _asyncCompileSourceRevision = -1;
         private string _asyncCompileTransformFeedbackPlanIdentity = string.Empty;
         private int _failedShaderConfigVersion = -1;
         private bool _failedUsesVulkanClipDepthRemap;
@@ -148,6 +146,7 @@ public unsafe partial class VulkanRenderer
 
             int shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
             bool usesVulkanClipDepthRemap = UsesVulkanClipDepthRemap();
+            long sourceRevision = Data.SourceRevision;
             if (LastCompileFailure is not null &&
                 _failedShaderConfigVersion == shaderConfigVersion &&
                 _failedUsesVulkanClipDepthRemap == usesVulkanClipDepthRemap &&
@@ -165,10 +164,12 @@ public unsafe partial class VulkanRenderer
                 if (_asyncCompileTask is null ||
                     _asyncCompileShaderConfigVersion != shaderConfigVersion ||
                     _asyncCompileUsesVulkanClipDepthRemap != usesVulkanClipDepthRemap ||
+                    _asyncCompileSourceRevision != sourceRevision ||
                     !string.Equals(_asyncCompileTransformFeedbackPlanIdentity, transformFeedbackPlanIdentity, StringComparison.Ordinal))
                 {
                     _asyncCompileShaderConfigVersion = shaderConfigVersion;
                     _asyncCompileUsesVulkanClipDepthRemap = usesVulkanClipDepthRemap;
+                    _asyncCompileSourceRevision = sourceRevision;
                     _asyncCompileTransformFeedbackPlanIdentity = transformFeedbackPlanIdentity;
                     IsCompilePending = true;
                     IsCompiled = false;
@@ -211,6 +212,13 @@ public unsafe partial class VulkanRenderer
                     if (ReferenceEquals(_asyncCompileTask, task))
                         _asyncCompileTask = null;
                 }
+            }
+
+            if (Data.SourceRevision != sourceRevision)
+            {
+                reason = "StaleShaderRevision";
+                RuntimeEngine.Rendering.Stats.RecordShaderVariant(failed: true);
+                return false;
             }
 
             try
@@ -612,41 +620,21 @@ public unsafe partial class VulkanRenderer
 
         protected override void LinkData()
         {
-            Data.PropertyChanged += OnShaderPropertyChanged;
-            AttachToSource(Data.Source);
+            RendererReloadFailureInjection.ThrowIfEnabled(
+                RendererReloadInjectedFailure.ShaderCompile,
+                "Vulkan shader compilation");
+            RendererReloadFailureInjection.DelayIfEnabled(
+                RendererReloadInjectedFailure.DelayedCompletion);
+            Data.SourceChanged += OnShaderSourceChanged;
         }
 
         protected override void UnlinkData()
         {
-            Data.PropertyChanged -= OnShaderPropertyChanged;
-            AttachToSource(null);
+            Data.SourceChanged -= OnShaderSourceChanged;
             DestroyShaderResources();
         }
 
-        private void OnShaderPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
-        {
-            bool sourceChanged = e.PropertyName == nameof(XRShader.Source);
-            bool typeChanged = e.PropertyName == nameof(XRShader.Type);
-            if (!sourceChanged && !typeChanged)
-                return;
-
-            if (sourceChanged)
-                AttachToSource(Data.Source);
-
-            Invalidate();
-        }
-
-        private void AttachToSource(TextFile? source)
-        {
-            if (_attachedSource == source)
-                return;
-
-            _attachedSource?.TextChanged -= OnSourceTextChanged;
-            _attachedSource = source;
-            _attachedSource?.TextChanged += OnSourceTextChanged;
-        }
-
-        private void OnSourceTextChanged()
+        private void OnShaderSourceChanged(XRShader shader)
             => Invalidate();
 
         internal void EnsureCompilePolicyCurrent()

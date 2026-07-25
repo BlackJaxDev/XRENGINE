@@ -137,7 +137,7 @@ public unsafe partial class VulkanRenderer
         if (passIndex == int.MinValue)
             return ERendererComputeEnqueueStatus.NoPassContext;
 
-        EnqueueFrameOp(new MemoryBarrierOp(passIndex, mask, context));
+        EnqueueFrameOp(MemoryBarrierOp.Rent(passIndex, mask, context));
         return ERendererComputeEnqueueStatus.Enqueued;
     }
 

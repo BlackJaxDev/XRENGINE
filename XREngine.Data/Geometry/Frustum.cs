@@ -165,20 +165,27 @@ namespace XREngine.Data.Geometry
         }
 
         public Frustum() { }
-        public Frustum(Matrix4x4 invProj) : this(
-            DivideW(Vector4.Transform(new Vector3(-1.0f, -1.0f, 0.0f), invProj)),
-            DivideW(Vector4.Transform(new Vector3(-1.0f, 1.0f, 0.0f), invProj)),
-            DivideW(Vector4.Transform(new Vector3(1.0f, -1.0f, 0.0f), invProj)),
-            DivideW(Vector4.Transform(new Vector3(1.0f, 1.0f, 0.0f), invProj)),
-            DivideW(Vector4.Transform(new Vector3(-1.0f, -1.0f, 1.0f), invProj)),
-            DivideW(Vector4.Transform(new Vector3(-1.0f, 1.0f, 1.0f), invProj)),
-            DivideW(Vector4.Transform(new Vector3(1.0f, -1.0f, 1.0f), invProj)),
-            DivideW(Vector4.Transform(new Vector3(1.0f, 1.0f, 1.0f), invProj))) { }
+        public Frustum(Matrix4x4 invProj) : this()
+            => Update(invProj);
+
+        public void Update(Matrix4x4 invProj)
+            => UpdatePoints(
+                DivideW(Vector4.Transform(new Vector3(-1.0f, -1.0f, 0.0f), invProj)),
+                DivideW(Vector4.Transform(new Vector3(-1.0f, 1.0f, 0.0f), invProj)),
+                DivideW(Vector4.Transform(new Vector3(1.0f, -1.0f, 0.0f), invProj)),
+                DivideW(Vector4.Transform(new Vector3(1.0f, 1.0f, 0.0f), invProj)),
+                DivideW(Vector4.Transform(new Vector3(-1.0f, -1.0f, 1.0f), invProj)),
+                DivideW(Vector4.Transform(new Vector3(-1.0f, 1.0f, 1.0f), invProj)),
+                DivideW(Vector4.Transform(new Vector3(1.0f, -1.0f, 1.0f), invProj)),
+                DivideW(Vector4.Transform(new Vector3(1.0f, 1.0f, 1.0f), invProj)));
         
         private static Vector3 DivideW(Vector4 v)
             => new(v.X / v.W, v.Y / v.W, v.Z / v.W);
 
         public Frustum(float width, float height, float nearPlane, float farPlane) : this()
+            => Update(width, height, nearPlane, farPlane);
+
+        public void Update(float width, float height, float nearPlane, float farPlane)
         {
             float 
                 w = width / 2.0f, 
@@ -227,6 +234,16 @@ namespace XREngine.Data.Geometry
            Vector3 up,
            Vector3 position)
            : this()
+            => Update(fovY, aspect, nearZ, farZ, forward, up, position);
+
+        public void Update(
+            float fovY,
+            float aspect,
+            float nearZ,
+            float farZ,
+            Vector3 forward,
+            Vector3 up,
+            Vector3 position)
         {
             float
                 tan = (float)Math.Tan(XRMath.DegToRad(fovY / 2.0f)),
@@ -584,11 +601,20 @@ namespace XREngine.Data.Geometry
         public Frustum TransformedBy(Matrix4x4 worldMatrix)
         {
             Frustum f = new();
-            for (int i = 0; i < 8; i++)
-                f._corners[i] = Vector3.Transform(_corners[i], worldMatrix);
-            for (int i = 0; i < 6; i++)
-                f._planes[i] = Plane.Transform(_planes[i], worldMatrix);
+            f.UpdateTransformed(this, worldMatrix);
             return f;
+        }
+
+        /// <summary>
+        /// Refreshes this frustum from another frustum and a world transform while
+        /// preserving the existing plane and corner arrays.
+        /// </summary>
+        public void UpdateTransformed(in Frustum source, in Matrix4x4 worldMatrix)
+        {
+            for (int i = 0; i < 8; i++)
+                _corners[i] = Vector3.Transform(source._corners[i], worldMatrix);
+            for (int i = 0; i < 6; i++)
+                _planes[i] = Plane.Transform(source._planes[i], worldMatrix);
         }
 
         public override string ToString()

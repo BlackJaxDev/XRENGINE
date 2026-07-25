@@ -93,16 +93,17 @@ public static class XRBufferPolicyResolver
     public static XRBufferMemoryPolicy FromUsage(EBufferUsage usage, bool shouldMap, EBufferMapStorageFlags storageFlags, EBufferMapRangeFlags rangeFlags)
     {
         if (shouldMap ||
-            storageFlags.HasFlag(EBufferMapStorageFlags.Persistent) ||
-            rangeFlags.HasFlag(EBufferMapRangeFlags.Persistent))
+            (storageFlags & EBufferMapStorageFlags.Persistent) != 0 ||
+            (rangeFlags & EBufferMapRangeFlags.Persistent) != 0)
         {
-            return storageFlags.HasFlag(EBufferMapStorageFlags.Read) || rangeFlags.HasFlag(EBufferMapRangeFlags.Read)
+            return (storageFlags & EBufferMapStorageFlags.Read) != 0 ||
+                   (rangeFlags & EBufferMapRangeFlags.Read) != 0
                 ? XRBufferMemoryPolicy.CpuGpuSharedDiagnostic
                 : XRBufferMemoryPolicy.CpuToGpuPersistentRing;
         }
 
-        if (storageFlags.HasFlag(EBufferMapStorageFlags.Read) ||
-            rangeFlags.HasFlag(EBufferMapRangeFlags.Read) ||
+        if ((storageFlags & EBufferMapStorageFlags.Read) != 0 ||
+            (rangeFlags & EBufferMapRangeFlags.Read) != 0 ||
             usage is EBufferUsage.StaticRead or EBufferUsage.DynamicRead or EBufferUsage.StreamRead)
         {
             return XRBufferMemoryPolicy.GpuToCpuReadback;
@@ -170,6 +171,6 @@ public static class XRBufferPolicyResolver
         };
 
     private static bool HasPersistentIntent(EBufferMapStorageFlags storageFlags, EBufferMapRangeFlags rangeFlags)
-        => storageFlags.HasFlag(EBufferMapStorageFlags.Persistent) ||
-           rangeFlags.HasFlag(EBufferMapRangeFlags.Persistent);
+        => (storageFlags & EBufferMapStorageFlags.Persistent) != 0 ||
+           (rangeFlags & EBufferMapRangeFlags.Persistent) != 0;
 }

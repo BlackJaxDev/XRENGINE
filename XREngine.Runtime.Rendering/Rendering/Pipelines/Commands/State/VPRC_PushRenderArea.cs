@@ -8,6 +8,6 @@ namespace XREngine.Rendering.Pipelines.Commands
         public required Func<BoundingRectangle> RegionGetter { get; set; }
 
         protected override void Execute()
-            => ActivePipelineInstance.RenderState.PushRenderArea(RegionGetter());
+            => ActivePipelineInstance.RenderState.PushRenderAreaState(RegionGetter());
     }
 }

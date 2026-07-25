@@ -5,5 +5,8 @@ public unsafe partial class VulkanRenderer
     internal sealed record PublishFramebufferForSamplingOp(
         int PassIndex,
         XRFrameBuffer FrameBuffer,
-        FrameOpContext Context) : FrameOp(PassIndex, FrameBuffer, Context);
+        FrameOpContext Context) : FrameOp(PassIndex, FrameBuffer, Context)
+    {
+        public XRFrameBuffer FrameBuffer { get; internal set; } = FrameBuffer;
+    }
 }

@@ -52,6 +52,14 @@ namespace XREngine.Rendering
     {
         /// <inheritdoc />
         public virtual RendererBackendId BackendId => default;
+        public long BackendGeneration { get; internal set; }
+        private int _acceptsBackendWork = 1;
+
+        /// <summary>
+        /// False after quiescing starts. Retired generations may destroy their existing
+        /// objects but may not create or publish new backend work.
+        /// </summary>
+        public bool AcceptsBackendWork => Volatile.Read(ref _acceptsBackendWork) != 0;
 
         #region Constants / Statics
         /// <summary>
@@ -100,6 +108,13 @@ namespace XREngine.Rendering
 
             public void Dispose()
             {
+                if (_previousThreadCurrent is { AcceptsBackendWork: false })
+                {
+                    _threadCurrent = _globalCurrent;
+                    _hasThreadCurrentOverride = _globalCurrent is not null;
+                    return;
+                }
+
                 _threadCurrent = _previousThreadCurrent;
                 _hasThreadCurrentOverride = _previousHasThreadCurrentOverride;
             }
@@ -576,6 +591,28 @@ namespace XREngine.Rendering
             AbstractRenderAPIObject? obj;
             using (_roCacheLock.EnterScope())
             {
+                if (_renderObjectCache.TryGetValue(renderObject, out obj))
+                {
+                    if (generateNow && !obj.IsGenerated)
+                    {
+                        if (!AcceptsBackendWork)
+                        {
+                            throw new InvalidOperationException(
+                                $"Renderer '{GetType().Name}' generation {BackendGeneration} is retired and cannot generate API wrappers.");
+                        }
+
+                        obj.Generate();
+                    }
+
+                    return obj;
+                }
+
+                if (!AcceptsBackendWork)
+                {
+                    throw new InvalidOperationException(
+                        $"Renderer '{GetType().Name}' generation {BackendGeneration} is retired and cannot create API wrappers.");
+                }
+
                 obj = _renderObjectCache.GetOrAdd(
                     renderObject,
                     static (key, renderer) => renderer.CreateAPIRenderObject(key),
@@ -621,27 +658,40 @@ namespace XREngine.Rendering
                     return;
 
                 cachedObjects = [.. _renderObjectCache];
-                _renderObjectCache.Clear();
             }
 
+            List<Exception>? failures = null;
             foreach (var pair in cachedObjects)
             {
                 try
                 {
-                    pair.Key.RemoveWrapper(pair.Value);
+                    pair.Value.Retire();
+                    // Retirement is the deterministic terminal lifetime boundary for this
+                    // renderer generation. A later finalizer must not invoke virtual backend
+                    // code after the module has begun unloading.
+                    GC.SuppressFinalize(pair.Value);
                 }
-                catch
+                catch (Exception ex)
                 {
-                }
-
-                try
-                {
-                    pair.Value.Destroy();
-                }
-                catch
-                {
+                    (failures ??= []).Add(ex);
                 }
             }
+
+            using (_roCacheLock.EnterScope())
+                _renderObjectCache.Clear();
+
+            if (failures is not null)
+            {
+                throw new AggregateException(
+                    $"Failed to destroy {failures.Count} API wrapper operation(s) for renderer generation {BackendGeneration}.",
+                    failures);
+            }
+        }
+
+        internal void BeginBackendRetirement()
+        {
+            Interlocked.Exchange(ref _acceptsBackendWork, 0);
+            Active = false;
         }
 
         /// <summary>
@@ -1396,6 +1446,18 @@ namespace XREngine.Rendering
             private set => _api = value;
         }
         protected abstract TAPI GetAPI();
+
+        /// <summary>
+        /// Releases the native API wrapper at the renderer teardown boundary instead of
+        /// retaining a collectible backend generation until finalization.
+        /// </summary>
+        protected void DisposeNativeApi()
+        {
+            TAPI? api = _api;
+            _api = null;
+            api?.Dispose();
+            GC.SuppressFinalize(this);
+        }
 
         //protected void VerifyExt<T>(string name, ref T? output) where T : NativeExtension<TAPI>
         //{

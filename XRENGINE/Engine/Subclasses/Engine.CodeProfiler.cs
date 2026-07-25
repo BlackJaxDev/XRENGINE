@@ -23,7 +23,7 @@ namespace XREngine
         {
 #if DEBUG
             private bool _enableFrameLogging = true;
-            private bool _enableComponentTiming = true;
+            private bool _enableComponentTiming = false;
 #else
             private bool _enableFrameLogging = false;
             private bool _enableComponentTiming = false;

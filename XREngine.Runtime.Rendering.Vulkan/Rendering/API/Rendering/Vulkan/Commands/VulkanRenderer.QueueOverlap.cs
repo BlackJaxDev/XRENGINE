@@ -20,6 +20,34 @@ public unsafe partial class VulkanRenderer
 {
     private VulkanBarrierPlanner.QueueOwnershipConfig BuildQueueOwnershipConfig(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
+        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+        if (frameId != 0)
+        {
+            if (_queueOwnershipConfigCacheFrameId != frameId)
+            {
+                _queueOwnershipConfigCacheFrameId = frameId;
+                _queueOwnershipConfigCache.Clear();
+            }
+
+            for (int index = 0; index < _queueOwnershipConfigCache.Count; index++)
+            {
+                QueueOwnershipConfigCacheEntry entry = _queueOwnershipConfigCache[index];
+                if (ReferenceEquals(entry.PassMetadata, passMetadata))
+                    return entry.Config;
+            }
+        }
+
+        VulkanBarrierPlanner.QueueOwnershipConfig config = BuildQueueOwnershipConfigCore(passMetadata, frameId);
+        if (frameId != 0)
+            _queueOwnershipConfigCache.Add(new QueueOwnershipConfigCacheEntry(passMetadata, config));
+
+        return config;
+    }
+
+    private VulkanBarrierPlanner.QueueOwnershipConfig BuildQueueOwnershipConfigCore(
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+        ulong frameId)
+    {
         QueueFamilyIndices familyIndices = FamilyQueueIndices;
         uint graphicsFamily = familyIndices.GraphicsFamilyIndex ?? 0u;
         uint candidateComputeFamily = familyIndices.ComputeFamilyIndex ?? graphicsFamily;
@@ -30,7 +58,15 @@ public unsafe partial class VulkanRenderer
 
         bool promotedMode;
         bool demotedMode;
-        EVulkanQueueOverlapMode overlapMode = ResolveQueueOverlapMode(profile, metrics, out promotedMode, out demotedMode);
+        bool advanceAdaptivePolicy = frameId == 0 || _lastQueueOverlapPolicyFrameId != frameId;
+        if (advanceAdaptivePolicy && frameId != 0)
+            _lastQueueOverlapPolicyFrameId = frameId;
+        EVulkanQueueOverlapMode overlapMode = ResolveQueueOverlapMode(
+            profile,
+            metrics,
+            advanceAdaptivePolicy,
+            out promotedMode,
+            out demotedMode);
 
         bool useComputeOwnership =
             overlapMode is EVulkanQueueOverlapMode.GraphicsCompute or EVulkanQueueOverlapMode.GraphicsComputeTransfer &&
@@ -82,6 +118,10 @@ public unsafe partial class VulkanRenderer
             computeFamily,
             transferFamily);
     }
+
+    private readonly record struct QueueOwnershipConfigCacheEntry(
+        IReadOnlyCollection<RenderPassMetadata>? PassMetadata,
+        VulkanBarrierPlanner.QueueOwnershipConfig Config);
 
     private QueueOverlapMetrics CaptureQueueOverlapMetrics(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
@@ -171,7 +211,12 @@ public unsafe partial class VulkanRenderer
             || name.Contains("indirect", StringComparison.OrdinalIgnoreCase);
     }
 
-    private EVulkanQueueOverlapMode ResolveQueueOverlapMode(EVulkanGpuDrivenProfile profile, in QueueOverlapMetrics metrics, out bool promotedMode, out bool demotedMode)
+    private EVulkanQueueOverlapMode ResolveQueueOverlapMode(
+        EVulkanGpuDrivenProfile profile,
+        in QueueOverlapMetrics metrics,
+        bool advanceAdaptivePolicy,
+        out bool promotedMode,
+        out bool demotedMode)
     {
         promotedMode = false;
         demotedMode = false;
@@ -185,6 +230,9 @@ public unsafe partial class VulkanRenderer
             _queueOverlapModeStartFrameDeltaMs = -1.0;
             return requestedMode;
         }
+
+        if (!advanceAdaptivePolicy)
+            return _autoQueueOverlapMode;
 
         if (!VulkanFeatureProfile.IsActive)
         {

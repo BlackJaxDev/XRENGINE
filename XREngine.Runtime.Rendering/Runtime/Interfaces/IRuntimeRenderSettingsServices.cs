@@ -259,6 +259,12 @@ public interface IRuntimeRenderSettingsServices
     /// Gets the Vulkan queue-overlap policy.
     /// </summary>
     EVulkanQueueOverlapMode VulkanQueueOverlapMode => RuntimeRenderingHostServiceDefaults.VulkanQueueOverlapMode;
+
+    /// <summary>
+    /// Gets the Vulkan command-recording policy.
+    /// </summary>
+    EVulkanCommandRecordingMode VulkanCommandRecordingMode => RuntimeRenderingHostServiceDefaults.VulkanCommandRecordingMode;
+
     bool EnableVulkanPrimaryCommandBufferReuse => RuntimeRenderingHostServiceDefaults.EnableVulkanPrimaryCommandBufferReuse;
 
     /// <summary>

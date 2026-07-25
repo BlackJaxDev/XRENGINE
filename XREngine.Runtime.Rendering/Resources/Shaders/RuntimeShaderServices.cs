@@ -13,19 +13,24 @@ public interface IRuntimeShaderServices
 public static class RuntimeShaderServices
 {
     private static IRuntimeShaderServices? _current;
+
     public static IRuntimeShaderServices? Current
     {
         get => _current;
         set
         {
-            var prev = _current;
+            if (ReferenceEquals(_current, value))
+                return;
+
+            if (_current is IRuntimeShaderChangeSource previousChangeSource)
+                previousChangeSource.ShaderSourceFileChanged -= OnShaderSourceFileChanged;
+
             _current = value;
-            // TEMPORARY DIAGNOSTIC: trace who changes the service
-            if (prev?.GetType() != value?.GetType())
-            {
-                var st = new System.Diagnostics.StackTrace(true).ToString().Replace("\n", " | ").Replace("\r", "");
-                Console.Error.WriteLine($"[RSS-DIAG] {prev?.GetType().Name ?? "null"} → {value?.GetType().Name ?? "null"} STACK: {st}");
-            }
+            if (value is IRuntimeShaderChangeSource nextChangeSource)
+                nextChangeSource.ShaderSourceFileChanged += OnShaderSourceFileChanged;
         }
     }
+
+    private static void OnShaderSourceFileChanged(ShaderSourceFileChange change)
+        => ShaderSourceDependencyIndex.QueueFileChange(change);
 }

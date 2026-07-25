@@ -1,6 +1,7 @@
 using XREngine.Extensions;
 using JoltPhysicsSharp;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Numerics;
 using XREngine.Core;
 using XREngine.Data.Colors;
@@ -65,7 +66,7 @@ namespace XREngine
                 /// </summary>
                 private sealed class DebugLineOverlayBatch(float lineWidth)
                 {
-                    public readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, ColorF4 color)> Lines = [];
+                    public readonly List<(Vector3 pos0, Vector3 pos1, ColorF4 color)> Lines = [];
                     public readonly ConcurrentQueue<(Vector3 pos0, Vector3 pos1, ColorF4 color)> LineQueue = [];
                     public readonly InstancedDebugVisualizer Visualizer = new(0.005f, lineWidth);
 
@@ -88,12 +89,10 @@ namespace XREngine
                         uint lineCount = (uint)Lines.Count;
                         Visualizer.LineCount = lineCount;
 
-                        int index = 0;
-                        foreach (var (start, end, color) in Lines)
+                        for (int index = 0; index < Lines.Count; ++index)
                         {
-                            if ((uint)index >= lineCount)
-                                break;
-                            Visualizer.SetLineAt(index++, start, end, color);
+                            var (start, end, color) = Lines[index];
+                            Visualizer.SetLineAt(index, start, end, color);
                         }
 
                         Lines.Clear();
@@ -126,6 +125,8 @@ namespace XREngine
                     private const float MinimumLineWidth = 0.0001f;
                     private const float MaximumLineWidth = 0.05f;
                     private readonly ConcurrentDictionary<int, DebugLineOverlayBatch> _batches = [];
+                    private readonly object _batchSnapshotLock = new();
+                    private DebugLineOverlayBatch[] _batchSnapshot = [];
 
                     public void AddBox(ReadOnlySpan<Vector3> points, ColorF4 color, float lineWidth)
                     {
@@ -147,38 +148,44 @@ namespace XREngine
 
                     public void DequeueLines()
                     {
-                        foreach (var pair in _batches)
-                            pair.Value.DequeueLines();
+                        DebugLineOverlayBatch[] batches = Volatile.Read(ref _batchSnapshot);
+                        for (int i = 0; i < batches.Length; i++)
+                            batches[i].DequeueLines();
                     }
 
                     public void Populate()
                     {
-                        foreach (var pair in _batches)
-                            pair.Value.Populate();
+                        DebugLineOverlayBatch[] batches = Volatile.Read(ref _batchSnapshot);
+                        for (int i = 0; i < batches.Length; i++)
+                            batches[i].Populate();
                     }
 
                     public void Render()
                     {
-                        foreach (var pair in _batches)
-                            pair.Value.Render();
+                        DebugLineOverlayBatch[] batches = Volatile.Read(ref _batchSnapshot);
+                        for (int i = 0; i < batches.Length; i++)
+                            batches[i].Render();
                     }
 
                     public void ClearQueues()
                     {
-                        foreach (var pair in _batches)
-                            pair.Value.ClearQueues();
+                        DebugLineOverlayBatch[] batches = Volatile.Read(ref _batchSnapshot);
+                        for (int i = 0; i < batches.Length; i++)
+                            batches[i].ClearQueues();
                     }
 
                     public void ClearBags()
                     {
-                        foreach (var pair in _batches)
-                            pair.Value.ClearBags();
+                        DebugLineOverlayBatch[] batches = Volatile.Read(ref _batchSnapshot);
+                        for (int i = 0; i < batches.Length; i++)
+                            batches[i].ClearBags();
                     }
 
                     public void ClearVisuals()
                     {
-                        foreach (var pair in _batches)
-                            pair.Value.ClearVisuals();
+                        DebugLineOverlayBatch[] batches = Volatile.Read(ref _batchSnapshot);
+                        for (int i = 0; i < batches.Length; i++)
+                            batches[i].ClearVisuals();
                     }
 
                     private DebugLineOverlayBatch GetBatch(float lineWidth)
@@ -186,21 +193,37 @@ namespace XREngine
                         float normalizedWidth = Math.Clamp(lineWidth, MinimumLineWidth, MaximumLineWidth);
                         normalizedWidth = MathF.Round(normalizedWidth / LineWidthStep) * LineWidthStep;
                         int key = BitConverter.SingleToInt32Bits(normalizedWidth);
-                        return _batches.GetOrAdd(
-                            key,
-                            static (_, width) => new DebugLineOverlayBatch(width),
-                            normalizedWidth);
+                        if (_batches.TryGetValue(key, out DebugLineOverlayBatch? existing))
+                            return existing;
+
+                        DebugLineOverlayBatch created = new(normalizedWidth);
+                        DebugLineOverlayBatch batch = _batches.GetOrAdd(key, created);
+                        if (ReferenceEquals(batch, created))
+                            AddToSnapshot(created);
+                        return batch;
+                    }
+
+                    private void AddToSnapshot(DebugLineOverlayBatch batch)
+                    {
+                        lock (_batchSnapshotLock)
+                        {
+                            DebugLineOverlayBatch[] previous = _batchSnapshot;
+                            DebugLineOverlayBatch[] next = new DebugLineOverlayBatch[previous.Length + 1];
+                            Array.Copy(previous, next, previous.Length);
+                            next[^1] = batch;
+                            Volatile.Write(ref _batchSnapshot, next);
+                        }
                     }
                 }
 
                 private sealed class DebugPrimitiveSceneState
                 {
-                    public readonly ConcurrentBag<(Vector3 pos, ColorF4 color)> Points = [];
-                    public readonly ConcurrentBag<(Vector3 pos, ColorF4 color)> DepthTestedPoints = [];
-                    public readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, ColorF4 color)> Lines = [];
-                    public readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, ColorF4 color)> DepthTestedLines = [];
-                    public readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> Triangles = [];
-                    public readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> DepthTestedTriangles = [];
+                    public readonly List<(Vector3 pos, ColorF4 color)> Points = [];
+                    public readonly List<(Vector3 pos, ColorF4 color)> DepthTestedPoints = [];
+                    public readonly List<(Vector3 pos0, Vector3 pos1, ColorF4 color)> Lines = [];
+                    public readonly List<(Vector3 pos0, Vector3 pos1, ColorF4 color)> DepthTestedLines = [];
+                    public readonly List<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> Triangles = [];
+                    public readonly List<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> DepthTestedTriangles = [];
 
                     public readonly ConcurrentQueue<(Vector3 pos, ColorF4 color)> PointQueue = [];
                     public readonly ConcurrentQueue<(Vector3 pos, ColorF4 color)> DepthTestedPointQueue = [];
@@ -381,13 +404,17 @@ namespace XREngine
                     scene.Visualizer.TriangleCount = (uint)scene.Triangles.Count;
                     scene.DepthTestedVisualizer.TriangleCount = (uint)scene.DepthTestedTriangles.Count;
 
-                    int i = 0;
-                    foreach (var (pos0, pos1, pos2, color) in scene.Triangles)
-                        scene.Visualizer.SetTriangleAt(i++, pos0, pos1, pos2, color);
+                    for (int i = 0; i < scene.Triangles.Count; ++i)
+                    {
+                        var (pos0, pos1, pos2, color) = scene.Triangles[i];
+                        scene.Visualizer.SetTriangleAt(i, pos0, pos1, pos2, color);
+                    }
 
-                    i = 0;
-                    foreach (var (pos0, pos1, pos2, color) in scene.DepthTestedTriangles)
-                        scene.DepthTestedVisualizer.SetTriangleAt(i++, pos0, pos1, pos2, color);
+                    for (int i = 0; i < scene.DepthTestedTriangles.Count; ++i)
+                    {
+                        var (pos0, pos1, pos2, color) = scene.DepthTestedTriangles[i];
+                        scene.DepthTestedVisualizer.SetTriangleAt(i, pos0, pos1, pos2, color);
+                    }
 
                     scene.Triangles.Clear();
                     scene.DepthTestedTriangles.Clear();
@@ -398,13 +425,17 @@ namespace XREngine
                     scene.Visualizer.LineCount = (uint)scene.Lines.Count;
                     scene.DepthTestedVisualizer.LineCount = (uint)scene.DepthTestedLines.Count;
 
-                    int i = 0;
-                    foreach (var (pos0, pos1, color) in scene.Lines)
-                        scene.Visualizer.SetLineAt(i++, pos0, pos1, color);
+                    for (int i = 0; i < scene.Lines.Count; ++i)
+                    {
+                        var (pos0, pos1, color) = scene.Lines[i];
+                        scene.Visualizer.SetLineAt(i, pos0, pos1, color);
+                    }
 
-                    i = 0;
-                    foreach (var (pos0, pos1, color) in scene.DepthTestedLines)
-                        scene.DepthTestedVisualizer.SetLineAt(i++, pos0, pos1, color);
+                    for (int i = 0; i < scene.DepthTestedLines.Count; ++i)
+                    {
+                        var (pos0, pos1, color) = scene.DepthTestedLines[i];
+                        scene.DepthTestedVisualizer.SetLineAt(i, pos0, pos1, color);
+                    }
 
                     scene.Lines.Clear();
                     scene.DepthTestedLines.Clear();
@@ -415,13 +446,17 @@ namespace XREngine
                     scene.Visualizer.PointCount = (uint)scene.Points.Count;
                     scene.DepthTestedVisualizer.PointCount = (uint)scene.DepthTestedPoints.Count;
 
-                    int i = 0;
-                    foreach (var (pos, color) in scene.Points)
-                        scene.Visualizer.SetPointAt(i++, pos, color);
+                    for (int i = 0; i < scene.Points.Count; ++i)
+                    {
+                        var (pos, color) = scene.Points[i];
+                        scene.Visualizer.SetPointAt(i, pos, color);
+                    }
 
-                    i = 0;
-                    foreach (var (pos, color) in scene.DepthTestedPoints)
-                        scene.DepthTestedVisualizer.SetPointAt(i++, pos, color);
+                    for (int i = 0; i < scene.DepthTestedPoints.Count; ++i)
+                    {
+                        var (pos, color) = scene.DepthTestedPoints[i];
+                        scene.DepthTestedVisualizer.SetPointAt(i, pos, color);
+                    }
 
                     scene.Points.Clear();
                     scene.DepthTestedPoints.Clear();

@@ -18,10 +18,15 @@ public abstract partial class GenericRenderObject : XRAsset
     private readonly ConcurrentHashSet<AbstractRenderAPIObject> _apiWrappers = [];
 
     internal static readonly ConcurrentDictionary<Type, List<GenericRenderObject>> _roCache = [];
+    private static long _renderObjectCacheRevision;
 
     public static IReadOnlyDictionary<Type, List<GenericRenderObject>> RenderObjectCache => _roCache;
 
     private static readonly AsyncLocal<int> ApiWrapperCreationSuppressionDepth = new();
+    private string? _cachedDescribingName;
+    private string? _cachedDescribingObjectName;
+    private int _cachedDescribingCacheIndex = int.MinValue;
+    private long _cachedDescribingCacheRevision = -1;
 
     public static IDisposable EnterApiWrapperCreationSuppressionScope()
         => new ApiWrapperCreationSuppressionScope();
@@ -95,6 +100,7 @@ public abstract partial class GenericRenderObject : XRAsset
             if (!_roCache.TryGetValue(type, out var list))
                 _roCache.TryAdd(type, list = []);
             list.Add(this);
+            _renderObjectCacheRevision++;
         }
 
         if (ApiWrapperCreationSuppressionDepth.Value == 0)
@@ -122,16 +128,34 @@ public abstract partial class GenericRenderObject : XRAsset
         lock (RenderObjectCache)
         {
             if (_roCache.TryGetValue(GetType(), out var list))
-                list.Remove(this);
+            {
+                if (list.Remove(this))
+                    _renderObjectCacheRevision++;
+            }
         }
     }
 
     public string GetDescribingName()
     {
-        string name = $"{GetType().Name} {GetCacheIndex()}";
-        if (!string.IsNullOrWhiteSpace(Name))
-            name += $" '{Name}'";
-        return name;
+        long cacheRevision = Volatile.Read(ref _renderObjectCacheRevision);
+        string? objectName = string.IsNullOrWhiteSpace(Name) ? null : Name;
+        string? cached = _cachedDescribingName;
+        if (cached is not null &&
+            cacheRevision == _cachedDescribingCacheRevision &&
+            string.Equals(objectName, _cachedDescribingObjectName, StringComparison.Ordinal))
+        {
+            return cached;
+        }
+
+        int cacheIndex = GetCacheIndex();
+        cached = objectName is null
+            ? $"{GetType().Name} {cacheIndex}"
+            : $"{GetType().Name} {cacheIndex} '{objectName}'";
+        _cachedDescribingCacheIndex = cacheIndex;
+        _cachedDescribingCacheRevision = cacheRevision;
+        _cachedDescribingObjectName = objectName;
+        _cachedDescribingName = cached;
+        return cached;
     }
 
     protected override void OnDestroying()
@@ -153,7 +177,10 @@ public abstract partial class GenericRenderObject : XRAsset
         lock (RenderObjectCache)
         {
             if (_roCache.TryGetValue(GetType(), out var list))
-                list.Remove(this);
+            {
+                if (list.Remove(this))
+                    _renderObjectCacheRevision++;
+            }
         }
     }
 

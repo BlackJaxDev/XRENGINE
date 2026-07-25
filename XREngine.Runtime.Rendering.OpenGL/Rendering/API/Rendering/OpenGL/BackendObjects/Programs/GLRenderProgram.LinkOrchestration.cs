@@ -409,6 +409,13 @@ namespace XREngine.Rendering.OpenGL
                     return true;
                 }
 
+                if (RendererReloadFailureInjection.IsEnabled(
+                        RendererReloadInjectedFailure.ProgramLink))
+                {
+                    Debug.OpenGLWarning("Injected OpenGL program link failure.");
+                    return false;
+                }
+
                 RuntimeEngine.Rendering.Stats.RecordShaderVariant(requested: true);
 
                 if (IsLinkPreparationPending)
@@ -472,7 +479,8 @@ namespace XREngine.Rendering.OpenGL
                         _asyncBinaryUploadQueueWaitPending = false;
                         if (asyncResult.Status == GLProgramBinaryUploadQueue.UploadStatus.Success)
                         {
-                            AdoptLinkedBuildProgram(pendingId);
+                            if (!AdoptLinkedBuildProgram(pendingId))
+                                return IsLinked;
                             IsLinked = true;
                             double reflectionMilliseconds = ReflectRuntimeBindingStateAfterBinaryLoad();
                             RegisterCurrentLinkedProgramForSharing(asyncResult.CacheKey, asyncResult.Format, pendingId);
@@ -540,7 +548,8 @@ namespace XREngine.Rendering.OpenGL
                             CompleteUberBackendTracking(true, compileMilliseconds: compileResult.CompileMilliseconds, linkMilliseconds: compileResult.LinkMilliseconds);
                             if (ShouldLogRenderingShaderLinkVerbose())
                                 Debug.OpenGL($"[ShaderCache] READY hash={Hash}, shared-context compileMs={compileResult.CompileMilliseconds:F2}, linkMs={compileResult.LinkMilliseconds:F2}.");
-                            AdoptLinkedBuildProgram(pendingId2);
+                            if (!AdoptLinkedBuildProgram(pendingId2))
+                                return IsLinked;
                             IsLinked = true;
                             long reflectionStart = Stopwatch.GetTimestamp();
                             using var uniformsProf = RuntimeEngine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms", ProfilerScopeKind.OneOffInvoke);
@@ -918,7 +927,8 @@ namespace XREngine.Rendering.OpenGL
                         }
                         else
                         {
-                            AdoptLinkedBuildProgram(bindingId);
+                            if (!AdoptLinkedBuildProgram(bindingId))
+                                return IsLinked;
                             IsLinked = true;
                             double reflectionMilliseconds = ReflectRuntimeBindingStateAfterBinaryLoad();
                             RegisterCurrentLinkedProgramForSharing(binProg.CacheKey, format, bindingId);
@@ -1481,7 +1491,8 @@ namespace XREngine.Rendering.OpenGL
                         }
                         else
                         {
-                            AdoptLinkedBuildProgram(bindingId);
+                            if (!AdoptLinkedBuildProgram(bindingId))
+                                return IsLinked;
                             IsLinked = true;
                             SynchronousSourceRetryHashes.TryRemove(Hash, out _);
                             DriverParallelSourceTimeouts.TryRemove(Hash, out _);

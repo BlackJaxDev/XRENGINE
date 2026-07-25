@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
@@ -10,6 +11,9 @@ namespace XREngine.Rendering.Pipelines.Commands
 {
     public partial class VPRC_RenderQuadToFBO : ViewportRenderCommand
     {
+        private static readonly ConcurrentDictionary<(string Source, string Destination, string? Variant), string>
+            QuadBlitPassNames = new();
+
         /// <summary>
         /// Resolves the destination label for this command, which is used for profiling and logging.
         /// </summary>
@@ -54,9 +58,11 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <param name="variant">An optional variant name.</param>
         /// <returns>The constructed render graph pass name.</returns>
         protected static string BuildQuadBlitPassName(string sourceFboName, string destination, string? variant = null)
-            => string.IsNullOrWhiteSpace(variant)
-                ? $"QuadBlit_{sourceFboName}_to_{destination}"
-                : $"QuadBlit_{variant}_{sourceFboName}_to_{destination}";
+            => QuadBlitPassNames.GetOrAdd(
+                (sourceFboName, destination, variant),
+                static key => string.IsNullOrWhiteSpace(key.Variant)
+                    ? $"QuadBlit_{key.Source}_to_{key.Destination}"
+                    : $"QuadBlit_{key.Variant}_{key.Source}_to_{key.Destination}");
 
         /// <summary>
         /// Resolves the resource name for a descriptor based on its kind and original name.
@@ -384,22 +390,17 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <returns>The index of the render pass if found; otherwise, int.MinValue.</returns>
         protected int ResolvePassIndex(string passName, out bool hasRenderGraphMetadata)
         {
-            var metadata = ParentPipeline?.PassMetadata;
-            if (metadata is not { Count: > 0 } renderPasses)
+            RenderPipeline? pipeline = ParentPipeline;
+            if (pipeline?.PassMetadata is not { Count: > 0 })
             {
                 hasRenderGraphMetadata = false;
                 return int.MinValue;
             }
 
             hasRenderGraphMetadata = true;
-
-            foreach (var match in renderPasses)
-            {
-                if (string.Equals(match.Name, passName, StringComparison.OrdinalIgnoreCase))
-                    return match.PassIndex;
-            }
-
-            return int.MinValue;
+            return pipeline.TryGetRenderPassIndex(passName, out int passIndex)
+                ? passIndex
+                : int.MinValue;
         }
 
         /// <summary>

@@ -145,6 +145,17 @@ internal partial class Program
         // Start play mode controller
         EditorPlayModeController.Initialize();
 
+        if (args.Any(
+                argument => string.Equals(
+                    argument,
+                    "--renderer-development",
+                    StringComparison.OrdinalIgnoreCase)))
+        {
+            EditorImGuiUI.EnableRendererDevelopmentMode();
+            EngineDebug.Out(
+                "Renderer development mode enabled. Structural backend edits use the in-editor transactional build/reload workflow.");
+        }
+
         // Start vr pawn switcher to allow switching between desktop and VR pawns in the editor without restarting
         EditorOpenXrPawnSwitcher.Initialize();
 

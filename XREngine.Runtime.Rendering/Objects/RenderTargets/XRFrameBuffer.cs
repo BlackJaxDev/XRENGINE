@@ -10,6 +10,13 @@ namespace XREngine.Rendering
     [RuntimeOnly]
     public class XRFrameBuffer : GenericRenderObject
     {
+        private static readonly Action<object?> UnbindFromReadingAction =
+            static state => ((XRFrameBuffer)state!).UnbindFromReading();
+        private static readonly Action<object?> UnbindFromWritingAction =
+            static state => ((XRFrameBuffer)state!).UnbindFromWriting();
+        private static readonly Action<object?> UnbindAction =
+            static state => ((XRFrameBuffer)state!).Unbind();
+
         public XRFrameBuffer() { }
         public XRFrameBuffer(params (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[]? targets)
             => SetRenderTargets(targets);
@@ -355,7 +362,7 @@ namespace XREngine.Rendering
         public StateObject BindForReadingState()
         {
             BindForReading();
-            return StateObject.New(UnbindFromReading);
+            return StateObject.New(UnbindFromReadingAction, this);
         }
         public void UnbindFromReading()
         {
@@ -418,7 +425,7 @@ namespace XREngine.Rendering
         public StateObject BindForWritingState()
         {
             BindForWriting();
-            return StateObject.New(UnbindFromWriting);
+            return StateObject.New(UnbindFromWritingAction, this);
         }
         public void UnbindFromWriting()
         {
@@ -452,7 +459,7 @@ namespace XREngine.Rendering
         public StateObject BindState()
         {
             Bind();
-            return StateObject.New(Unbind);
+            return StateObject.New(UnbindAction, this);
         }
 
         public void Unbind()

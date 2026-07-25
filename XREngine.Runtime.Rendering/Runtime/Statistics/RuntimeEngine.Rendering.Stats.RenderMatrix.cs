@@ -42,13 +42,9 @@ namespace XREngine
 
                     /// <summary>
                     /// Enables detailed render-matrix listener tracking (per listener type).
+                    /// This diagnostic is opt-in because Delegate.GetInvocationList allocates.
                     /// </summary>
-                    public static bool EnableRenderMatrixListenerTracking { get; set; } =
-#if XRE_PUBLISHED
-                    false;
-#else
-                        true;
-#endif
+                    public static bool EnableRenderMatrixListenerTracking { get; set; }
 
                     /// <summary>
                     /// Whether render-matrix stats have been populated at least once.

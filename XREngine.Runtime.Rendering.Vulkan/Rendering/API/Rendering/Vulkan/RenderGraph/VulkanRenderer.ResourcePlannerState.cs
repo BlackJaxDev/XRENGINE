@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -334,7 +335,9 @@ public unsafe partial class VulkanRenderer
             return null;
 
         FrameOpContext context = CreateFrameOpContext(pipeline, viewport);
-        return !FrameOpContextHasPlannerResources(context) ? null : new ExternalResourcePlannerReadbackScope(this, context);
+        return !FrameOpContextHasPlannerResources(context)
+            ? null
+            : PooledExternalResourcePlannerReadbackScope.Rent(this, context);
     }
 
     internal override bool TryPrepareRenderResourceGeneration(
@@ -886,6 +889,63 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Removes the interface-boxing allocation from the render-pipeline scope
+    /// override. Nested pipelines rent distinct instances, and disposed instances
+    /// remain thread-local so the steady-state render loop only resets their value
+    /// state.
+    /// </summary>
+    private sealed class PooledExternalResourcePlannerReadbackScope : IDisposable
+    {
+        [ThreadStatic]
+        private static PooledExternalResourcePlannerReadbackScope? t_free;
+
+        private PooledExternalResourcePlannerReadbackScope? _next;
+        private ExternalResourcePlannerReadbackScope _scope;
+        private bool _leased;
+
+        public static PooledExternalResourcePlannerReadbackScope Rent(
+            VulkanRenderer renderer,
+            in FrameOpContext context)
+        {
+            PooledExternalResourcePlannerReadbackScope? pooled = t_free;
+            if (pooled is null)
+            {
+                pooled = new PooledExternalResourcePlannerReadbackScope();
+            }
+            else
+            {
+                t_free = pooled._next;
+                pooled._next = null;
+            }
+
+            pooled._scope = new ExternalResourcePlannerReadbackScope(renderer, context);
+            pooled._leased = true;
+            return pooled;
+        }
+
+        public void Dispose()
+        {
+            if (!_leased)
+                return;
+
+            try
+            {
+                _scope.Dispose();
+            }
+            finally
+            {
+                _leased = false;
+                _scope = default;
+                _next = t_free;
+                t_free = this;
+            }
+        }
+
+        internal static void ReleaseCurrentThreadPool()
+            => t_free = null;
+    }
+
     private static bool TryFindBestCompatibleFrameOpPlannerState(
         in FrameOpContext context,
         FrameOpResourcePlannerSwitchingState switchingState,
@@ -1066,12 +1126,115 @@ public unsafe partial class VulkanRenderer
         return plannerContext;
     }
 
+    private bool TryReusePreparedFrameOpResourcePlannerStates(
+        ulong frameOpsSignature,
+        out ulong plannerRevision)
+    {
+        plannerRevision = ResourcePlannerRevision;
+        FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
+        if (!IsDeviceOperational ||
+            !FrameOpResourcePlannerSwitchingEnabled ||
+            frameOpsSignature == 0 ||
+            !switchingState.HasPreparedPlan ||
+            switchingState.PreparedFrameOpsSignature != frameOpsSignature ||
+            !switchingState.HasPreparationState ||
+            switchingState.ActiveKeys.Count == 0)
+        {
+            InvalidatePreparedFrameOpResourcePlan(switchingState);
+            return false;
+        }
+
+        ResourcePlannerRuntimeState preparationState = switchingState.PreparationState;
+        if (!IsReusableFrameOpResourcePlannerState(preparationState) ||
+            !preparationState.HasResourcePlannerFastPathKey ||
+            preparationState.ResourcePlannerSignature == ulong.MaxValue)
+        {
+            InvalidatePreparedFrameOpResourcePlan(switchingState);
+            return false;
+        }
+
+        ResourcePlannerFastPathKey fastPathKey = preparationState.ResourcePlannerFastPathKey;
+        int currentRegistryRevision = fastPathKey.Registry?.DescriptorRevision ?? 0;
+        int currentPassMetadataRevision = ComputePassMetadataRevisionStamp(fastPathKey.ActivePassMetadata);
+        VulkanBarrierPlanner.QueueOwnershipConfig currentQueueOwnership =
+            BuildQueueOwnershipConfig(fastPathKey.ActivePassMetadata);
+        if (currentRegistryRevision != fastPathKey.RegistryDescriptorRevision ||
+            currentPassMetadataRevision != fastPathKey.ActivePassMetadataRevision ||
+            !currentQueueOwnership.Equals(fastPathKey.QueueOwnership) ||
+            SupportsTransformFeedback != fastPathKey.SupportsTransformFeedback)
+        {
+            InvalidatePreparedFrameOpResourcePlan(switchingState);
+            return false;
+        }
+
+        foreach (FrameOpPlannerStateKey key in switchingState.ActiveKeys)
+        {
+            if (!switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState state) ||
+                !IsReusableFrameOpResourcePlannerState(state))
+            {
+                InvalidatePreparedFrameOpResourcePlan(switchingState);
+                return false;
+            }
+        }
+
+        ResetActiveFrameOpResourcePlannerState(switchingState);
+        switchingState.RecordingScopeActive = false;
+        switchingState.SwitchingActive = switchingState.ActiveKeys.Count > 1;
+        foreach (FrameOpPlannerStateKey key in switchingState.ActiveKeys)
+            MarkFrameOpResourcePlannerStateUsed(switchingState, key);
+
+        plannerRevision = switchingState.PreparedPlanRevision;
+        RecordPhysicalPlanCacheTelemetry(
+            hit: true,
+            preparationState.CompiledRenderGraph.Plan.Generation);
+        AssertFrameOpPlannerAllocatorOwnership(switchingState);
+        return true;
+    }
+
+    private void RememberPreparedFrameOpResourcePlannerStates(
+        ulong frameOpsSignature,
+        ulong plannerRevision)
+    {
+        FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
+        if (!IsDeviceOperational ||
+            !FrameOpResourcePlannerSwitchingEnabled ||
+            frameOpsSignature == 0 ||
+            !switchingState.HasPreparationState ||
+            switchingState.ActiveKeys.Count == 0 ||
+            !IsReusableFrameOpResourcePlannerState(switchingState.PreparationState))
+        {
+            InvalidatePreparedFrameOpResourcePlan(switchingState);
+            return;
+        }
+
+        switchingState.PreparedFrameOpsSignature = frameOpsSignature;
+        switchingState.PreparedPlanRevision = plannerRevision;
+        switchingState.HasPreparedPlan = true;
+    }
+
+    private static bool IsReusableFrameOpResourcePlannerState(in ResourcePlannerRuntimeState state)
+        => state.ResourcePlanner is not null &&
+           state.ResourceAllocator is not null &&
+           !state.ResourceAllocator.IsRetired &&
+           state.ResourceAllocator.OwnershipId == state.AllocatorOwnershipId &&
+           state.BarrierPlanner is not null &&
+           state.CompiledRenderGraph is not null;
+
+    private static void InvalidatePreparedFrameOpResourcePlan(
+        FrameOpResourcePlannerSwitchingState switchingState)
+    {
+        switchingState.PreparedFrameOpsSignature = 0;
+        switchingState.PreparedPlanRevision = 0;
+        switchingState.HasPreparedPlan = false;
+    }
+
     private ulong PrepareFrameOpResourcePlannerStatesForFrameOps(FrameOp[] ops, ulong frameOpsSignature = 0)
     {
         if (!IsDeviceOperational)
             return ResourcePlannerRevision;
 
         FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
+        InvalidatePreparedFrameOpResourcePlan(switchingState);
         switchingState.SwitchingActive = false;
         switchingState.RecordingScopeActive = false;
         switchingState.HasActiveKey = false;
@@ -1265,6 +1428,7 @@ public unsafe partial class VulkanRenderer
 
         if (prunedCount > 0)
         {
+            InvalidatePreparedFrameOpResourcePlan(switchingState);
             RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
                 new FrameOutputWorkTelemetry(
                     PlannerPrunes: prunedCount,
@@ -1563,6 +1727,7 @@ public unsafe partial class VulkanRenderer
     private void DestroyFrameOpResourcePlannerStates()
     {
         FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
+        InvalidatePreparedFrameOpResourcePlan(switchingState);
         if (switchingState.States.Count == 0 && !switchingState.HasPreparationState)
             return;
 
@@ -3263,6 +3428,9 @@ public unsafe partial class VulkanRenderer
             switchingState.HasPreparationState = false;
         }
 
+        if (staleKeys.Count > 0 || preparationReferencedAllocator)
+            InvalidatePreparedFrameOpResourcePlan(switchingState);
+
         switchingState.SwitchingActive = switchingState.ActiveKeys.Count > 1;
         if (staleKeys.Count > 0)
         {
@@ -4263,18 +4431,13 @@ public unsafe partial class VulkanRenderer
         return hash.ToHashCode();
     }
 
-    private sealed class PassMetadataSignatureCacheEntry
-    {
-        public int RevisionStamp = int.MinValue;
-        public int Signature;
-    }
-
     // Frame-op contexts are copied into every draw packet, but the pipeline pass metadata
     // behind them is immutable until a pass revision changes. Without this cache the planner
     // walks every pass, usage, dependency, and schema once per draw while constructing planner
     // keys; a clean command-chain replay can consequently spend more CPU hashing than drawing.
-    private static readonly ConditionalWeakTable<IReadOnlyCollection<RenderPassMetadata>, PassMetadataSignatureCacheEntry>
-        PassMetadataSignatureCache = new();
+    private const int MaxPassMetadataSignatureCacheEntries = 128;
+    private static readonly ConcurrentDictionary<IReadOnlyCollection<RenderPassMetadata>, RenderPassMetadataSignatureCacheEntry>
+        PassMetadataSignatureCache = new(ReferenceEqualityComparer.Instance);
 
     private static int ComputePassMetadataSignature(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
@@ -4282,9 +4445,12 @@ public unsafe partial class VulkanRenderer
             return 0;
 
         int revisionStamp = ComputePassMetadataRevisionStamp(passMetadata);
-        PassMetadataSignatureCacheEntry cacheEntry = PassMetadataSignatureCache.GetValue(
+        if (PassMetadataSignatureCache.Count >= MaxPassMetadataSignatureCacheEntries)
+            PassMetadataSignatureCache.Clear();
+
+        RenderPassMetadataSignatureCacheEntry cacheEntry = PassMetadataSignatureCache.GetOrAdd(
             passMetadata,
-            static _ => new PassMetadataSignatureCacheEntry());
+            static _ => new RenderPassMetadataSignatureCacheEntry());
         lock (cacheEntry)
         {
             if (cacheEntry.RevisionStamp == revisionStamp)
@@ -4445,11 +4611,13 @@ public unsafe partial class VulkanRenderer
         // Short-circuit: well-known EDefaultRenderPass values are always valid.
         // Metadata may lag behind runtime enqueues (conditional pipeline paths,
         // hot-reload) — accept standard passes without warning.
-        if (passIndex != int.MinValue && Enum.IsDefined(typeof(EDefaultRenderPass), passIndex))
+        if (passIndex != int.MinValue &&
+            Enum.IsDefined<EDefaultRenderPass>((EDefaultRenderPass)passIndex))
             return passIndex;
 
         bool hasMetadata = passMetadata is { Count: > 0 };
-        bool passDefinedInMetadata = hasMetadata && passMetadata!.Any(m => m.PassIndex == passIndex);
+        bool passDefinedInMetadata = hasMetadata &&
+            PassMetadataContainsPassIndex(passMetadata!, passIndex);
 
         if (passIndex != int.MinValue && (!hasMetadata || passDefinedInMetadata))
             return passIndex;
@@ -4458,7 +4626,7 @@ public unsafe partial class VulkanRenderer
         if (passIndex == int.MinValue)
         {
             bool currentPassDefined = currentPassIndex != int.MinValue &&
-                (!hasMetadata || passMetadata!.Any(m => m.PassIndex == currentPassIndex));
+                (!hasMetadata || PassMetadataContainsPassIndex(passMetadata!, currentPassIndex));
 
             if (currentPassDefined)
                 return currentPassIndex;
@@ -4466,7 +4634,7 @@ public unsafe partial class VulkanRenderer
             if (hasMetadata && !opName.Contains("Compute", StringComparison.OrdinalIgnoreCase))
             {
                 const int preRenderPass = (int)EDefaultRenderPass.PreRender;
-                if (passMetadata!.Any(m => m.PassIndex == preRenderPass))
+                if (PassMetadataContainsPassIndex(passMetadata!, preRenderPass))
                     return preRenderPass;
             }
         }
@@ -4492,6 +4660,26 @@ public unsafe partial class VulkanRenderer
             RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.GetType().Name ?? "null");
 
         return fallback;
+    }
+
+    private static bool PassMetadataContainsPassIndex(
+        IReadOnlyCollection<RenderPassMetadata> passMetadata,
+        int passIndex)
+    {
+        if (passMetadata is IReadOnlyList<RenderPassMetadata> list)
+        {
+            for (int i = 0; i < list.Count; i++)
+                if (list[i].PassIndex == passIndex)
+                    return true;
+
+            return false;
+        }
+
+        foreach (RenderPassMetadata metadata in passMetadata)
+            if (metadata.PassIndex == passIndex)
+                return true;
+
+        return false;
     }
 
     private static int ResolveFallbackPassIndex(string opName, IReadOnlyCollection<RenderPassMetadata>? passMetadata)

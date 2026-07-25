@@ -92,6 +92,32 @@ public unsafe partial class VulkanRenderer
     [ThreadStatic]
     private static int _threadOpenXrResourcePlannerScopeDepth;
 
+    private void ReleaseCurrentThreadOpenXrCaches()
+    {
+        if (ReferenceEquals(_threadOpenXrExternalSwapchainRenderer, this))
+        {
+            _threadOpenXrExternalSwapchainRenderer = null;
+            _threadOpenXrExternalSwapchainRenderDepth = 0;
+            _threadOpenXrExternalSwapchainTargetRegion = default;
+            _threadOpenXrExternalSwapchainTargetIdentity = 0;
+            _threadOpenXrExternalSwapchainTargetName = null;
+            _threadOpenXrExternalSwapchainContextKind = default;
+        }
+
+        if (ReferenceEquals(_threadSynchronousResourceUploadBlockRenderer, this))
+        {
+            _threadSynchronousResourceUploadBlockRenderer = null;
+            _threadSynchronousResourceUploadBlockDepth = 0;
+        }
+
+        if (!ReferenceEquals(_threadOpenXrResourcePlannerScopeRenderer, this))
+            return;
+
+        _threadOpenXrResourcePlannerScopeRenderer = null;
+        _threadOpenXrResourcePlannerScopeKey = default;
+        _threadOpenXrResourcePlannerScopeDepth = 0;
+    }
+
     public override bool IsRenderingExternalSwapchainTarget => IsThreadOpenXrExternalSwapchainTarget;
     internal bool IsPrewarmingOpenXrExternalSwapchainTarget =>
         IsThreadOpenXrExternalSwapchainTarget &&
@@ -645,7 +671,7 @@ public unsafe partial class VulkanRenderer
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule"))
                 {
                     using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule.Sort"))
-                        ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+                        ops = _renderGraphCompiler.SortFrameOpsCore(ops, CompiledRenderGraph);
                     if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                     {
                         Debug.VulkanWarningEvery(
@@ -2190,7 +2216,7 @@ public unsafe partial class VulkanRenderer
                 }
 
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordMirror.PlanAndSchedule.Sort"))
-                    ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+                    ops = _renderGraphCompiler.SortFrameOpsCore(ops, CompiledRenderGraph);
                 if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                 {
                     Debug.VulkanWarningEvery(
@@ -4301,7 +4327,7 @@ public unsafe partial class VulkanRenderer
                     "eye swapchain prewarm");
 
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.PrewarmEye.Sort"))
-                    ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+                    ops = _renderGraphCompiler.SortFrameOpsCore(ops, CompiledRenderGraph);
                 if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                 {
                     Debug.VulkanWarningEvery(
@@ -4419,7 +4445,7 @@ public unsafe partial class VulkanRenderer
                     "eye mirror prewarm");
 
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.PrewarmEyeMirror.Sort"))
-                    ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+                    ops = _renderGraphCompiler.SortFrameOpsCore(ops, CompiledRenderGraph);
                 if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                 {
                     Debug.VulkanWarningEvery(
@@ -4721,7 +4747,8 @@ public unsafe partial class VulkanRenderer
                 ResourceRegistrySignatureSnapshot = ComputeResourceRegistrySignature(activeRegistry),
             };
             context = RefreshFrameOpContextRecordingFingerprint(context);
-            FrameOp op = RebaseFrameOpTargetsToActiveResourcePlan(capturedOp with { Context = context }, activeRegistry);
+            capturedOp.Context = context;
+            FrameOp op = RebaseFrameOpTargetsToActiveResourcePlan(capturedOp, activeRegistry);
             ops[opIndex] = op;
 
             ComputeDispatchSnapshot? snapshot = op switch
@@ -4773,29 +4800,32 @@ public unsafe partial class VulkanRenderer
         RenderResourceRegistry activeRegistry)
     {
         XRFrameBuffer? target = ResolveActiveFrameBuffer(op.Target, activeRegistry);
-        return op switch
+        switch (op)
         {
-            ClearOp clear => clear with { Target = target },
-            MeshDrawOp meshDraw => meshDraw with { Target = target },
-            QueryOp query => query with { Target = target },
-            IndirectDrawOp indirect => indirect with { Target = target },
-            TransformFeedbackOp transformFeedback => transformFeedback with { Target = target },
-            BlitOp blit => RebaseBlitTargets(blit, activeRegistry),
-            PublishFramebufferForSamplingOp publish => RebasePublishedFramebuffer(publish, activeRegistry),
-            _ => op,
-        };
+            case BlitOp blit:
+                return RebaseBlitTargets(blit, activeRegistry);
+            case PublishFramebufferForSamplingOp publish:
+                return RebasePublishedFramebuffer(publish, activeRegistry);
+            case ClearOp:
+            case MeshDrawOp:
+            case QueryOp:
+            case IndirectDrawOp:
+            case TransformFeedbackOp:
+                op.Target = target;
+                break;
+        }
+
+        return op;
     }
 
     private static BlitOp RebaseBlitTargets(BlitOp blit, RenderResourceRegistry activeRegistry)
     {
         XRFrameBuffer? inFbo = ResolveActiveFrameBuffer(blit.InFbo, activeRegistry);
         XRFrameBuffer? outFbo = ResolveActiveFrameBuffer(blit.OutFbo, activeRegistry);
-        return blit with
-        {
-            InFbo = inFbo,
-            OutFbo = outFbo,
-            Target = outFbo,
-        };
+        blit.InFbo = inFbo;
+        blit.OutFbo = outFbo;
+        blit.Target = outFbo;
+        return blit;
     }
 
     private static PublishFramebufferForSamplingOp RebasePublishedFramebuffer(
@@ -4803,11 +4833,9 @@ public unsafe partial class VulkanRenderer
         RenderResourceRegistry activeRegistry)
     {
         XRFrameBuffer frameBuffer = ResolveActiveFrameBuffer(publish.FrameBuffer, activeRegistry) ?? publish.FrameBuffer;
-        return publish with
-        {
-            FrameBuffer = frameBuffer,
-            Target = frameBuffer,
-        };
+        publish.FrameBuffer = frameBuffer;
+        publish.Target = frameBuffer;
+        return publish;
     }
 
     private static XRFrameBuffer? ResolveActiveFrameBuffer(
