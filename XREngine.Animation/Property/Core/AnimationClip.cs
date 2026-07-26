@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using MemoryPack;
 using XREngine.Animation.IK;
 using XREngine.Core.Files;
@@ -299,6 +299,8 @@ namespace XREngine.Animation
                     HasMuscleChannels = imported.HasMuscleChannels;
                     HasRootMotion = imported.HasRootMotion;
                     HasIKGoals = imported.HasIKGoals;
+                    SourceMaterialBindings = imported.SourceMaterialBindings;
+                    MaterialBindingDiagnostics = imported.MaterialBindingDiagnostics;
                     SampleRate = imported.SampleRate;
                     RootMember = imported.RootMember;
                     return true;

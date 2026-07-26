@@ -21,9 +21,10 @@ public sealed class UnityMaterialImportResult
     public PoiyomiMaterialDescriptor? PoiyomiDescriptor { get; init; }
     public string[] Warnings { get; init; } = [];
     public MaterialConversionDiagnostic[] Diagnostics { get; init; } = [];
+    public MaterialConversionReport? ConversionReport { get; init; }
 }
 
-public static class UnityMaterialImporter
+public static partial class UnityMaterialImporter
 {
     private static readonly ConcurrentDictionary<string, XRTexture2D> DefaultUberSamplerTextures = new(StringComparer.Ordinal);
     private static readonly ConditionalWeakTable<XRMaterial, UnityMaterialDocument> PoiyomiSourceDocuments = new();
@@ -56,7 +57,13 @@ public static class UnityMaterialImporter
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
             warnings.Add($"Could not parse Unity material '{normalizedPath}'. {ex.Message}");
-            return new UnityMaterialImportResult { Warnings = [.. warnings] };
+            return new UnityMaterialImportResult
+            {
+                Warnings = [.. warnings],
+                ConversionReport = MaterialConversionReportBuilder.CreateFailure(
+                    normalizedPath,
+                    warnings[0]),
+            };
         }
 
         var resolver = new UnityAssetResolver(projectRoot ?? ResolveUnityProjectRoot(normalizedPath));
@@ -82,6 +89,15 @@ public static class UnityMaterialImporter
                 : ConvertGenericUnityMaterial(document, resolver, warnings);
 
             material.OriginalPath = normalizedPath;
+            MaterialConversionReport conversionReport = MaterialConversionReportBuilder.Create(
+                normalizedPath,
+                shaderPath,
+                material,
+                poiyomiDescriptor,
+                warnings,
+                diagnostics,
+                EMaterialConversionOutcome.Converted);
+            MaterialConversionReportRegistry.Instance.Set(material, conversionReport);
             return new UnityMaterialImportResult
             {
                 Material = material,
@@ -93,6 +109,7 @@ public static class UnityMaterialImporter
                 PoiyomiDescriptor = poiyomiDescriptor,
                 Warnings = [.. warnings],
                 Diagnostics = [.. diagnostics],
+                ConversionReport = conversionReport,
             };
         }
         catch (Exception ex) when (isPoiyomiToon || isLilToon)
@@ -103,6 +120,15 @@ public static class UnityMaterialImporter
             {
                 XRMaterial material = ConvertGenericUnityMaterial(document, resolver, warnings);
                 material.OriginalPath = normalizedPath;
+                MaterialConversionReport conversionReport = MaterialConversionReportBuilder.Create(
+                    normalizedPath,
+                    shaderPath,
+                    material,
+                    poiyomiDescriptor,
+                    warnings,
+                    diagnostics,
+                    EMaterialConversionOutcome.GenericFallback);
+                MaterialConversionReportRegistry.Instance.Set(material, conversionReport);
                 return new UnityMaterialImportResult
                 {
                     Material = material,
@@ -114,6 +140,7 @@ public static class UnityMaterialImporter
                     PoiyomiDescriptor = poiyomiDescriptor,
                     Warnings = [.. warnings],
                     Diagnostics = [.. diagnostics],
+                    ConversionReport = conversionReport,
                 };
             }
             catch (Exception fallbackException)
@@ -249,6 +276,8 @@ public static class UnityMaterialImporter
             diagnostics,
             warnings);
 
+        ApplyPoiyomiPhase57(material, document, resolver, diagnostics, warnings);
+        ApplyPoiyomiPhase810(material, document, resolver, diagnostics, warnings);
         ApplyPoiyomiRenderState(material, document, diagnostics);
         PoiyomiSourceDocuments.Remove(material);
         PoiyomiSourceDocuments.Add(material, document);
@@ -848,30 +877,10 @@ public static class UnityMaterialImporter
         ICollection<MaterialConversionDiagnostic> diagnostics,
         ICollection<string> warnings)
     {
-        if (document.TryGetPositive("_EnableOutlines") || outlineMaskSource is not null)
-        {
-            AddDiagnostic(
-                diagnostics,
-                warnings,
-                MaterialConversionDiagnosticCodes.IntentionalNativeDifference,
-                "Poiyomi outline authoring was preserved, but no outline pass was enabled because inverse-hull rendering is not implemented yet.",
-                "_EnableOutlines");
-        }
-
-        ReportUnsupportedIntegration(document, "_LTCGIEnabled", "LTCGI", diagnostics, warnings);
-        ReportUnsupportedIntegration(document, "_EnableMirrorOptions", "VRChat mirror visibility", diagnostics, warnings);
-        ReportUnsupportedIntegration(document, "_MirrorTextureEnabled", "VRChat mirror textures", diagnostics, warnings);
-        ReportUnsupportedIntegration(document, "_AlphaAudioLinkEnabled", "AudioLink", diagnostics, warnings);
-
-        if (document.ValidKeywords.Contains("POI_AUDIOLINK"))
-        {
-            AddDiagnostic(
-                diagnostics,
-                warnings,
-                MaterialConversionDiagnosticCodes.IntegrationUnavailable,
-                "AudioLink state was preserved, but the XRENGINE AudioLink integration is unavailable.",
-                "POI_AUDIOLINK");
-        }
+        // Phases 8-10 own outlines and provider-backed integrations. Keep this
+        // method for source features that still require an intentional native
+        // classification instead of reporting already-supported behavior.
+        _ = outlineMaskSource;
     }
 
     private static void ReportUnsupportedIntegration(

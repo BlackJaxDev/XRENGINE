@@ -6,26 +6,32 @@ using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Scene.Importers;
 
 namespace XREngine.UnitTests.Rendering;
 
 [TestFixture]
+[NonParallelizable]
 public sealed class UnityPoiyomiMaterialImporterTests
 {
     private IRuntimeShaderServices? _previousServices;
+    private IRuntimeRenderingHostServices? _previousRenderingServices;
 
     [SetUp]
     public void SetUp()
     {
         _previousServices = RuntimeShaderServices.Current;
+        _previousRenderingServices = RuntimeRenderingHostServices.Current;
         RuntimeShaderServices.Current = new FileBackedRuntimeShaderServices();
+        RuntimeRenderingHostServices.Current = RuntimeRenderingBootstrap.CreateEngineHostServices();
     }
 
     [TearDown]
     public void TearDown()
     {
         RuntimeShaderServices.Current = _previousServices;
+        RuntimeRenderingHostServices.Current = _previousRenderingServices!;
     }
 
     [Test]

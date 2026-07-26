@@ -404,6 +404,7 @@ namespace XREngine.Rendering.Shaders.Generator
         {
             WriteUniformBufferBlocks();
             base.WriteUniforms();
+            WritePoiyomiVertexEffectUniforms();
             if (UseDirectionalCascadeInstancedLayering)
             {
                 Line("uniform int CascadeLayerCount;");
@@ -415,6 +416,28 @@ namespace XREngine.Rendering.Shaders.Generator
                 Line("uniform int PointShadowFaceIndices[6];");
                 Line("uniform mat4 PointShadowViewProjectionMatrices[6];");
             }
+        }
+
+        private void WritePoiyomiVertexEffectUniforms()
+        {
+            Line("uniform float _PoiVertexEffectsEnabled;");
+            Line("uniform vec3 _VertexManipulationLocalTranslation;");
+            Line("uniform vec3 _VertexManipulationLocalRotation;");
+            Line("uniform vec3 _VertexManipulationLocalRotationSpeed;");
+            Line("uniform vec3 _VertexManipulationLocalScale;");
+            Line("uniform vec3 _VertexManipulationWorldTranslation;");
+            Line("uniform float _VertexManipulationHeight;");
+            Line("uniform float _VertexRoundingEnabled;");
+            Line("uniform float _VertexRoundingDivision;");
+            Line("uniform float _VertexBarrelMode;");
+            Line("uniform float _VertexBarrelWidth;");
+            Line("uniform float _VertexBarrelAlpha;");
+            Line("uniform float _VertexBarrelHeight;");
+            Line("uniform vec4 _PoiVertexGlitch;");
+            Line("uniform vec4 _PoiUzumore;");
+            Line("uniform vec4 _PoiNaturalEquation;");
+            Line("uniform vec4 _PoiDepthBulge;");
+            Line();
         }
 
         /// <summary>
@@ -605,6 +628,8 @@ namespace XREngine.Rendering.Shaders.Generator
                 }
             }
 
+            WritePoiyomiVertexEffects(hasNormals);
+
             Line();
             if (hasNormals)
             {
@@ -618,6 +643,42 @@ namespace XREngine.Rendering.Shaders.Generator
             }
 
             ResolvePosition(FinalPositionName);
+        }
+
+        private void WritePoiyomiVertexEffects(bool hasNormals)
+        {
+            Line("if (_PoiVertexEffectsEnabled > 0.0001f)");
+            using (OpenBracketState())
+            {
+                Line("vec3 xrePoiScale = max(abs(_VertexManipulationLocalScale), vec3(0.0001f));");
+                Line($"{FinalPositionName}.xyz *= xrePoiScale;");
+                Line("vec3 xrePoiAngles = radians(_VertexManipulationLocalRotation + _VertexManipulationLocalRotationSpeed * EngineTime);");
+                Line("vec3 xrePoiC = cos(xrePoiAngles);");
+                Line("vec3 xrePoiS = sin(xrePoiAngles);");
+                Line("mat3 xrePoiRotation = mat3(xrePoiC.y*xrePoiC.z, xrePoiC.z*xrePoiS.x*xrePoiS.y-xrePoiC.x*xrePoiS.z, xrePoiS.x*xrePoiS.z+xrePoiC.x*xrePoiC.z*xrePoiS.y, xrePoiC.y*xrePoiS.z, xrePoiC.x*xrePoiC.z+xrePoiS.x*xrePoiS.y*xrePoiS.z, xrePoiC.x*xrePoiS.y*xrePoiS.z-xrePoiC.z*xrePoiS.x, -xrePoiS.y, xrePoiC.y*xrePoiS.x, xrePoiC.x*xrePoiC.y);");
+                Line($"{FinalPositionName}.xyz = xrePoiRotation * {FinalPositionName}.xyz;");
+                if (hasNormals)
+                    Line($"{FinalNormalName} = normalize(xrePoiRotation * {FinalNormalName});");
+                Line($"{FinalPositionName}.xyz += _VertexManipulationLocalTranslation;");
+                if (hasNormals)
+                    Line($"{FinalPositionName}.xyz += normalize({FinalNormalName}) * _VertexManipulationHeight;");
+                Line("float xrePoiUzumorePhase = dot(" + FinalPositionName + ".xyz, _PoiUzumore.xyz) + EngineTime * _PoiUzumore.w;");
+                if (hasNormals)
+                    Line($"{FinalPositionName}.xyz += normalize({FinalNormalName}) * sin(xrePoiUzumorePhase) * _PoiUzumore.w;");
+                Line($"{FinalPositionName}.xyz += (inverse({EEngineUniform.ModelMatrix}) * vec4(_VertexManipulationWorldTranslation, 0.0f)).xyz;");
+                Line("if (_VertexRoundingEnabled > 0.5f)");
+                using (OpenBracketState())
+                {
+                    Line("float xrePoiInterval = max(abs(_VertexRoundingDivision), 0.0001f);");
+                    Line($"{FinalPositionName}.xyz = floor({FinalPositionName}.xyz / xrePoiInterval + 0.5f) * xrePoiInterval;");
+                }
+                Line("if (_VertexBarrelMode > 0.5f)");
+                using (OpenBracketState())
+                {
+                    Line($"float xrePoiBarrel = smoothstep(0.0f, max(_VertexBarrelHeight, 0.0001f), abs({FinalPositionName}.y));");
+                    Line($"{FinalPositionName}.xz *= 1.0f + _VertexBarrelWidth * mix(_VertexBarrelAlpha, 1.0f, xrePoiBarrel);");
+                }
+            }
         }
 
         private void WriteComputeBaseAssignments(bool hasNormals, bool hasTangents)
@@ -1078,7 +1139,8 @@ namespace XREngine.Rendering.Shaders.Generator
 
                 AssignFragPosOut(localInputPosName);
                 Assign_GL_Position(finalPosName);
-                if (UseDirectionalCascadeInstancedLayering)
+                WritePoiyomiVertexEffectUniforms();
+            if (UseDirectionalCascadeInstancedLayering)
                     AssignDirectionalCascadeLayeredPosition(localInputPosName);
                 if (UsePointLightInstancedLayering)
                     AssignPointLightLayeredPosition(localInputPosName);

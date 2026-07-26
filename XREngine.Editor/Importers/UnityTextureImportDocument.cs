@@ -24,6 +24,8 @@ public sealed record UnityTextureImportDocument
     public float MipBias { get; init; }
     public int Anisotropy { get; init; } = 1;
     public int RawShape { get; init; } = 1;
+    public int FlipbookRows { get; init; } = 1;
+    public int FlipbookColumns { get; init; } = 1;
     public UnityTextureShape Shape { get; init; } = UnityTextureShape.Texture2D;
     public Dictionary<string, string> UnknownSerializedFields { get; init; } = new(StringComparer.Ordinal);
 

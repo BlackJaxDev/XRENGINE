@@ -109,6 +109,16 @@ public sealed partial class XRMaterialInspector
         foreach (ShaderUiFeature feature in uberManifest.Features)
             DrawPendingUberFeatureResolution(material, feature, ref toolbarVariantChanged);
 
+        if (DrawPoiyomiAuthoringTree(
+            material,
+            uberFragmentShader,
+            uberManifest,
+            featureLookup,
+            unavailableFeatureIds,
+            parameterLookup,
+            samplerLookup,
+            ref toolbarVariantChanged))
+            return;
         List<ShaderUiProperty> categoryProperties = uiState.CategoryUberProperties;
         foreach (string rawCategory in categoryNames)
         {

@@ -65,6 +65,7 @@ layout(location = 22) out float FragViewIndex;
 // Uniforms
 // ============================================
 #include "uniforms.glsl"
+#include "poiyomi_vertex_effects.glsl"
 
 // Per-eye view and projection matrices. Unlike the OVR path, we need the
 // forward view matrices too because we don't re-invert — both eyes' clip
@@ -99,12 +100,9 @@ void main() {
 	vec3 tan  = Tangent.xyz;
 #endif
 	float tanSign = Tangent.w;
+	poiApplyVertexEffects(pos, norm, TexCoord0, Color0, u_CameraPosition, u_ModelMatrix, u_Time);
 
-#ifdef XRENGINE_OUTLINE_PASS
-	// The companion draw reuses the canonical vertex path so skinning,
-	// blendshape/deformation inputs, UVs, and stereo routing cannot drift.
-	pos += norm * (_OutlineWidth * 0.01);
-#endif
+	poiApplyOutlineLocal(pos, norm, Color0, u_ModelMatrix);
 
 	// Object -> world (shared by both eyes).
 	vec4 worldPosition = u_ModelMatrix * vec4(pos, 1.0);
@@ -115,6 +113,8 @@ void main() {
 	// stereo extension then routes each eye to its own viewport/layer.
 	gl_Position            = LeftEyeProjMatrix_VTX  * LeftEyeViewMatrix_VTX  * worldPosition;
 	gl_SecondaryPositionNV = RightEyeProjMatrix_VTX * RightEyeViewMatrix_VTX * worldPosition;
+	poiApplyOutlineClip(gl_Position, norm, LeftEyeProjMatrix_VTX * LeftEyeViewMatrix_VTX * u_ModelMatrix);
+	poiApplyOutlineClip(gl_SecondaryPositionNV, norm, RightEyeProjMatrix_VTX * RightEyeViewMatrix_VTX * u_ModelMatrix);
 	// Left eye = layer 0; secondary_view_offset = 1 places right eye on layer 1.
 	gl_Layer = 0;
 

@@ -27,6 +27,15 @@ namespace XREngine.Rendering
         public event Action<XRMaterialBase, XRRenderProgram>? SettingUniforms;
         public void OnSettingUniforms(XRRenderProgram program)
             => SettingUniforms?.Invoke(this, program);
+
+        /// <summary>
+        /// Uploads material-owned deformation inputs to the active vertex
+        /// program, including generated auxiliary-pass programs.
+        /// </summary>
+        public event Action<XRRenderProgram>? SettingVertexUniforms;
+
+        public void OnSettingVertexUniforms(XRRenderProgram program)
+            => SettingVertexUniforms?.Invoke(program);
         public bool HasSettingUniformsHandlers
             => SettingUniforms is not null;
 

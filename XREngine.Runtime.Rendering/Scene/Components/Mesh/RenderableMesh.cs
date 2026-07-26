@@ -171,6 +171,7 @@ namespace XREngine.Components.Scene.Mesh
             var mat = CurrentLODRenderer?.Material;
             if (mat is not null)
                 _rc.RenderPass = mat.RenderPass;
+            RefreshPoiyomiVertexCullingBounds();
 
             // Seed startup transform state now that the render command and render info exist.
             // This avoids the first registration frame depending on a later queued matrix update.
@@ -279,7 +280,7 @@ namespace XREngine.Components.Scene.Mesh
             {
                 Matrix4x4 basis = GetCurrentCullingBasisMatrix(Component.Transform);
                 _rc.WorldMatrix = basis;
-                RenderInfo.LocalCullingVolume = _bindPoseBounds;
+                RenderInfo.LocalCullingVolume = ExpandPoiyomiLocalBounds(_bindPoseBounds, rend?.Material);
                 RenderInfo.CullingOffsetMatrix = basis;
             }
 
@@ -442,6 +443,7 @@ namespace XREngine.Components.Scene.Mesh
                         bool skinned = (rend?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
                         CaptureRenderDeformationSettings(skinned);
                         _rc.WorldMatrix = skinned ? Matrix4x4.Identity : GetCurrentTransformMatrix(Component.Transform);
+                        RefreshPoiyomiVertexCullingBounds();
                     }
                     break;
             }

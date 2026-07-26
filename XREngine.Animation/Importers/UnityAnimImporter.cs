@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Numerics;
+using System.Text.RegularExpressions;
 using Unity;
 using XREngine.Animation;
 using XREngine.Animation.IK;
@@ -230,6 +231,8 @@ namespace XREngine.Animation.Importers
 
             var curves = new List<ScalarCurve>();
             var vecCurves = new List<VectorCurve>();
+            var materialBindings = new List<UnityMaterialAnimationBinding>();
+            var materialBindingDiagnostics = new List<string>();
 
             // Some exporters duplicate data between m_FloatCurves and m_EditorCurves.
             // Prefer m_FloatCurves when present; fall back to m_EditorCurves.
@@ -243,6 +246,7 @@ namespace XREngine.Animation.Importers
             TryReadCurveList(clipMap, "m_ScaleCurves", curves, vecCurves);
             TryReadCurveList(clipMap, "m_EulerCurves", curves, vecCurves);
             TryReadCurveList(clipMap, "m_RotationCurves", curves, vecCurves);
+            ReadMaterialObjectReferenceBindings(clipMap, materialBindings, materialBindingDiagnostics);
 
             float length = Math.Max(0.0f, stopTime - startTime);
             if (length <= 0.0f)
@@ -446,6 +450,18 @@ namespace XREngine.Animation.Importers
 
                 string nodePath = NormalizePath(c.Path);
 
+                if (TryParseMaterialBinding(
+                    nodePath,
+                    c.Attribute,
+                    c.ClassId,
+                    out UnityMaterialAnimationBinding? materialBinding))
+                {
+                    var anim = BuildFloatAnim(c, length, looped, sampleRate, valueScale: 1.0f, startTime);
+                    builder.AddMaterialFloatAnimation(materialBinding, anim);
+                    materialBindings.Add(materialBinding);
+                    continue;
+                }
+
                 // Humanoid (muscle) curves: these typically have an empty path and classID 95,
                 // and the attribute is a human-readable muscle name like "Neck Nod Down-Up".
                 // We map these strings to the underlying int value of EHumanoidValue and forward to HumanoidComponent.SetValue(int, float).
@@ -531,6 +547,8 @@ namespace XREngine.Animation.Importers
             clip.ClipKind = humanoidMuscleCount > 0
                 ? EAnimationClipKind.UnityHumanoidMuscle
                 : EAnimationClipKind.GenericTransform;
+            clip.SourceMaterialBindings = [.. materialBindings.Distinct()];
+            clip.MaterialBindingDiagnostics = [.. materialBindingDiagnostics];
 
             return clip;
         }
@@ -599,6 +617,20 @@ namespace XREngine.Animation.Importers
                 };
 
                 AddTransformScalarPropertyAnimation(nodePath, propertyName, anim);
+            }
+
+            public void AddMaterialFloatAnimation(UnityMaterialAnimationBinding binding, PropAnimFloat anim)
+            {
+                var node = GetSceneNodeByPath(binding.NodePath);
+                var getComp = GetOrAddMethod(node, "GetComponent", ["ModelComponent"], animatedArgIndex: -1, cacheReturnValue: true);
+                var getBinding = GetOrAddMethod(
+                    getComp,
+                    "GetMaterialAnimationBinding",
+                    [binding.MaterialSlot, binding.SourceProperty, binding.Component],
+                    animatedArgIndex: -1,
+                    cacheReturnValue: true);
+                var setter = GetOrAddMethod(getBinding, "SetFloat", [0.0f], animatedArgIndex: 0, cacheReturnValue: false);
+                setter.Animation = anim;
             }
 
             public void AddBlendshapeAnimation(string nodePath, string blendshapeName, PropAnimFloat anim)
@@ -1058,6 +1090,87 @@ namespace XREngine.Animation.Importers
                         max = Math.Max(max, k.Time);
 
             return max;
+        }
+
+        private static bool TryParseMaterialBinding(
+            string nodePath,
+            string attribute,
+            int? classId,
+            out UnityMaterialAnimationBinding? binding)
+        {
+            binding = null;
+            Match match = Regex.Match(
+                attribute,
+                @"^(?:(?:m_)?materials?\.Array\.data\[(?<slot>\d+)\]|material(?:\[(?<slot2>\d+)\])?)\.(?<property>_[A-Za-z0-9_]+?)(?:\.(?<component>[rgbaxyzw]))?$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (!match.Success)
+                return false;
+
+            int slot = 0;
+            string slotText = match.Groups["slot"].Success
+                ? match.Groups["slot"].Value
+                : match.Groups["slot2"].Value;
+            if (slotText.Length > 0)
+                int.TryParse(slotText, NumberStyles.Integer, CultureInfo.InvariantCulture, out slot);
+
+            string property = match.Groups["property"].Value;
+            int component = match.Groups["component"].Success
+                ? "rgbaxyzw".IndexOf(match.Groups["component"].Value[0])
+                : -1;
+            if (component >= 4)
+                component -= 4;
+
+            UnityMaterialAnimationValueKind kind = component >= 0
+                ? (property.Contains("Color", StringComparison.OrdinalIgnoreCase)
+                    ? UnityMaterialAnimationValueKind.Color
+                    : UnityMaterialAnimationValueKind.Vector)
+                : (property.Contains("Mode", StringComparison.OrdinalIgnoreCase) ||
+                   property.Contains("Enabled", StringComparison.OrdinalIgnoreCase) ||
+                   property.Contains("Toggle", StringComparison.OrdinalIgnoreCase)
+                    ? UnityMaterialAnimationValueKind.Int
+                    : UnityMaterialAnimationValueKind.Float);
+
+            binding = new UnityMaterialAnimationBinding(
+                nodePath,
+                attribute,
+                property,
+                property,
+                slot,
+                component,
+                kind,
+                classId);
+            return true;
+        }
+
+        private static void ReadMaterialObjectReferenceBindings(
+            YamlMappingNode clipMap,
+            ICollection<UnityMaterialAnimationBinding> bindings,
+            ICollection<string> diagnostics)
+        {
+            YamlSequenceNode? sequence = GetSequenceOrNull(clipMap, "m_PPtrCurves");
+            if (sequence is null)
+                return;
+
+            foreach (YamlNode node in sequence.Children)
+            {
+                if (node is not YamlMappingNode item)
+                    continue;
+
+                string attribute = GetScalarString(item, "attribute") ?? string.Empty;
+                string nodePath = NormalizePath(GetScalarString(item, "path"));
+                int? classId = GetScalarInt(item, "classID");
+                if (!TryParseMaterialBinding(nodePath, attribute, classId, out UnityMaterialAnimationBinding? parsed))
+                    continue;
+
+                UnityMaterialAnimationValueKind kind =
+                    parsed.SourceProperty.Contains("Tex", StringComparison.OrdinalIgnoreCase) ||
+                    parsed.SourceProperty.Contains("Map", StringComparison.OrdinalIgnoreCase)
+                        ? UnityMaterialAnimationValueKind.Texture
+                        : UnityMaterialAnimationValueKind.ObjectReference;
+                bindings.Add(parsed with { ValueKind = kind });
+                diagnostics.Add(
+                    $"Preserved Unity object-reference curve '{attribute}'. Runtime application requires resolved XRTexture key values.");
+            }
         }
 
         private static bool TryMapTransformComponent(string attribute, out string kind, out char component)

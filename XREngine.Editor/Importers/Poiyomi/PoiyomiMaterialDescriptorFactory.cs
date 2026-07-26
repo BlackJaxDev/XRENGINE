@@ -77,7 +77,7 @@ public static class PoiyomiMaterialDescriptorFactory
                 diagnostics?.Add(new MaterialConversionDiagnostic(
                     MaterialConversionDiagnosticCodes.UnsupportedTextureAsset,
                     MaterialConversionDiagnosticSeverity.Info,
-                    $"Unity texture shape '{importSettings!.Shape}' was preserved without flattening and requires a native array/cube binding in a later conversion phase.",
+                    $"Unity texture shape '{importSettings!.Shape}' was preserved for native array/cube binding.",
                     binding.SemanticName));
             }
         }

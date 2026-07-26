@@ -20,6 +20,8 @@ public partial class XRMaterial
     private const int UberConstantPropertyEditDebounceMilliseconds = 180;
     private const string ShaderProgramMaterialVariantKind = "MaterialVariant";
     private static readonly ConcurrentDictionary<string, XRTexture2D> UberDefaultSamplerTextures = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, XRTexture2DArray> UberDefaultArraySamplerTextures = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, XRTextureCube> UberDefaultCubeSamplerTextures = new(StringComparer.Ordinal);
 
     [YamlIgnore]
     private XRShader? _uberCanonicalFragmentShader;
@@ -199,7 +201,7 @@ public partial class XRMaterial
 
             if (property.IsSampler)
             {
-                texturesChanged |= EnsureUberDefaultSamplerTexture(property.Name);
+                texturesChanged |= EnsureUberDefaultSamplerTexture(property);
                 continue;
             }
 
@@ -281,15 +283,36 @@ public partial class XRMaterial
         return true;
     }
 
-    private bool EnsureUberDefaultSamplerTexture(string samplerName)
+    private bool EnsureUberDefaultSamplerTexture(ShaderUiProperty property)
     {
         foreach (XRTexture? texture in Textures)
         {
-            if (texture?.SamplerName?.Equals(samplerName, StringComparison.Ordinal) == true)
+            if (texture?.SamplerName?.Equals(property.Name, StringComparison.Ordinal) == true)
                 return false;
         }
 
-        XRTexture2D defaultTexture = GetDefaultUberSamplerTexture(samplerName);
+        XRTexture defaultTexture = property.GlslType switch
+        {
+            "sampler2DArray" => UberDefaultArraySamplerTextures.GetOrAdd(
+                property.Name,
+                static key => new XRTexture2DArray(CreateDefaultUberSamplerTexture(key))
+                {
+                    Name = key,
+                    SamplerName = key,
+                    AutoGenerateMipmaps = false,
+                    Resizable = false,
+                }),
+            "samplerCube" => UberDefaultCubeSamplerTextures.GetOrAdd(
+                property.Name,
+                static key => new XRTextureCube(1u)
+                {
+                    Name = key,
+                    SamplerName = key,
+                    AutoGenerateMipmaps = false,
+                    Resizable = false,
+                }),
+            _ => GetDefaultUberSamplerTexture(property.Name),
+        };
         EventList<XRTexture?> updated = [.. Textures, defaultTexture];
         Textures = updated;
         return true;
