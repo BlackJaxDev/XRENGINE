@@ -527,7 +527,7 @@ public static partial class EditorImGuiUI
 
         private static XRWorldInstance? ResolveEditorWorldInstance()
         {
-            foreach (var window in Engine.Windows)
+            foreach (var window in RuntimeEngine.Windows)
             {
                 if (window?.TargetWorldInstance is XRWorldInstance worldInstance)
                     return worldInstance;

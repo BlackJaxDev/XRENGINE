@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -80,6 +79,9 @@ void main()
     private XRMaterial? _stereoMaterial;
     private XRQuadFrameBuffer? _stereoQuad;
     private XRTexture? _resolvedSourceTexture;
+    private string? _cachedPassSourceTextureName;
+    private string? _cachedPassSourceFboName;
+    private string? _cachedRenderGraphPassName;
 
     public string? SourceTextureName { get; set; }
     public string? SourceFBOName { get; set; }
@@ -335,14 +337,24 @@ void main()
         XRViewport? viewport = null;
         if (ViewportIndex.HasValue)
         {
-            viewport = targetWindow.Viewports.FirstOrDefault(x => x.Index == ViewportIndex.Value);
+            int requestedIndex = ViewportIndex.Value;
+            for (int i = 0; i < targetWindow.Viewports.Count; ++i)
+            {
+                XRViewport candidate = targetWindow.Viewports[i];
+                if (candidate.Index != requestedIndex)
+                    continue;
+
+                viewport = candidate;
+                break;
+            }
+
             viewport ??= ViewportIndex.Value >= 0 && ViewportIndex.Value < targetWindow.Viewports.Count
                 ? targetWindow.Viewports[ViewportIndex.Value]
                 : null;
         }
 
         viewport ??= instance.RenderState.WindowViewport;
-        viewport ??= targetWindow.Viewports.FirstOrDefault();
+        viewport ??= targetWindow.Viewports.Count > 0 ? targetWindow.Viewports[0] : null;
         if (viewport is not null)
             return viewport.Region;
 
@@ -367,26 +379,33 @@ void main()
         => SourceTextureName ?? SourceFBOName ?? "Output";
 
     private string BuildRenderGraphPassName()
-        => $"RenderToWindow_{GetSourceDisplayName()}";
+    {
+        if (_cachedRenderGraphPassName is not null &&
+            string.Equals(_cachedPassSourceTextureName, SourceTextureName, StringComparison.Ordinal) &&
+            string.Equals(_cachedPassSourceFboName, SourceFBOName, StringComparison.Ordinal))
+        {
+            return _cachedRenderGraphPassName;
+        }
+
+        _cachedPassSourceTextureName = SourceTextureName;
+        _cachedPassSourceFboName = SourceFBOName;
+        _cachedRenderGraphPassName = string.Concat("RenderToWindow_", GetSourceDisplayName());
+        return _cachedRenderGraphPassName;
+    }
 
     private int ResolvePassIndex(string passName, out bool hasRenderGraphMetadata)
     {
-        var metadata = ParentPipeline?.PassMetadata;
-        if (metadata is not { Count: > 0 } renderPasses)
+        RenderPipeline? pipeline = ParentPipeline;
+        if (pipeline?.PassMetadata is not { Count: > 0 })
         {
             hasRenderGraphMetadata = false;
             return int.MinValue;
         }
 
         hasRenderGraphMetadata = true;
-
-        foreach (var match in renderPasses)
-        {
-            if (string.Equals(match.Name, passName, StringComparison.OrdinalIgnoreCase))
-                return match.PassIndex;
-        }
-
-        return int.MinValue;
+        return pipeline.TryGetRenderPassIndex(passName, out int passIndex)
+            ? passIndex
+            : int.MinValue;
     }
 
     private XRFrameBuffer? ResolveSourceFrameBuffer(XRRenderPipelineInstance instance, XRTexture sourceTexture)
@@ -397,8 +416,10 @@ void main()
         if (FrameBufferContainsColorTexture(instance.RenderState.OutputFBO, sourceTexture))
             return instance.RenderState.OutputFBO;
 
-        foreach (XRFrameBuffer candidate in instance.Resources.EnumerateFrameBufferInstances())
+        XRFrameBuffer[] frameBuffers = instance.Resources.GetFrameBufferInstanceSnapshot();
+        for (int i = 0; i < frameBuffers.Length; ++i)
         {
+            XRFrameBuffer candidate = frameBuffers[i];
             if (FrameBufferContainsColorTexture(candidate, sourceTexture))
                 return candidate;
         }
@@ -411,8 +432,10 @@ void main()
         if (frameBuffer?.Targets is null)
             return false;
 
-        foreach (var (target, attachment, _, _) in frameBuffer.Targets)
+        var targets = frameBuffer.Targets;
+        for (int i = 0; i < targets.Length; ++i)
         {
+            var (target, attachment, _, _) = targets[i];
             if (attachment is < EFrameBufferAttachment.ColorAttachment0 or > EFrameBufferAttachment.ColorAttachment31)
                 continue;
 

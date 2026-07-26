@@ -446,7 +446,7 @@ namespace XREngine.Scene
             {
                 try
                 {
-                    frusta.Add(cameras[i].WorldFrustum().Prepare());
+                    frusta.Add(cameras[i].PreparedWorldFrustum());
                 }
                 catch
                 {

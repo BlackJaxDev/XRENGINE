@@ -1,7 +1,6 @@
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering.Compute;
@@ -126,9 +125,7 @@ internal sealed partial class SkinningPrepassDispatcher
                 return true;
             foreach (var wrapper in buffer.APIWrappers)
             {
-                if (wrapper is OpenGLRenderer.GLDataBuffer gl && !gl.IsReadyForRendering)
-                    return false;
-                if (wrapper is VulkanRenderer.VkDataBuffer vk && !vk.IsReadyForRendering)
+                if (wrapper is IApiDataBuffer apiBuffer && !apiBuffer.BackendIsReadyForGpuUse)
                     return false;
             }
             return true;
@@ -231,10 +228,8 @@ internal sealed partial class SkinningPrepassDispatcher
                 return;
             foreach (var wrapper in buffer.APIWrappers)
             {
-                if (wrapper is OpenGLRenderer.GLDataBuffer gl && !gl.IsReadyForRendering)
-                    gl.EnsureStorageAllocatedForGpuCopy();
-                else if (wrapper is VulkanRenderer.VkDataBuffer vk)
-                    vk.EnsureStorageAllocatedForGpuUse();
+                if (wrapper is IApiDataBuffer apiBuffer && !apiBuffer.BackendIsReadyForGpuUse)
+                    apiBuffer.EnsureStorageAllocatedForGpuUse();
             }
         }
 
@@ -264,10 +259,8 @@ internal sealed partial class SkinningPrepassDispatcher
                 return "null";
             foreach (var wrapper in buffer.APIWrappers)
             {
-                if (wrapper is OpenGLRenderer.GLDataBuffer gl)
-                    return gl.IsReadyForRendering ? "ready" : "PENDING";
-                if (wrapper is VulkanRenderer.VkDataBuffer vk)
-                    return vk.IsReadyForRendering ? "ready" : "PENDING";
+                if (wrapper is IApiDataBuffer apiBuffer)
+                    return apiBuffer.BackendIsReadyForGpuUse ? "ready" : "PENDING";
             }
             return "NOWRAP";
         }

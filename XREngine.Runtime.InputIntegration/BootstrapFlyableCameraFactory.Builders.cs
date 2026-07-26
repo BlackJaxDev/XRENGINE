@@ -6,7 +6,7 @@ namespace XREngine.Runtime.Bootstrap.Builders;
 
 public static class BootstrapFlyableCameraFactory
 {
-    private const string DefaultFlyableCameraPawnTypeName = "XREngine.Components.FlyingCameraPawnComponent, XREngine";
+    private const string DefaultFlyableCameraPawnTypeName = "XREngine.Components.FlyingCameraPawnComponent, XREngine.Runtime.InputIntegration";
 
     public static XRComponent CreateFlyableCameraPawn(SceneNode cameraNode, bool allowEditorPawn)
     {

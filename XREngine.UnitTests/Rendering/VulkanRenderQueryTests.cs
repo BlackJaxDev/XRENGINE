@@ -319,6 +319,14 @@ public sealed class VulkanRenderQueryTests
     }
 
     [Test]
+    public void PipelineProfiler_UsesArenaBackedTimestampObjectsOnlyForOpenGl()
+    {
+        RenderPipelineGpuProfiler.UsesImmediateTimestampQueryObjects(RendererBackendId.OpenGL).ShouldBeTrue();
+        RenderPipelineGpuProfiler.UsesImmediateTimestampQueryObjects(RendererBackendId.Vulkan).ShouldBeFalse();
+        RenderPipelineGpuProfiler.UsesImmediateTimestampQueryObjects(new RendererBackendId("custom")).ShouldBeFalse();
+    }
+
+    [Test]
     public void SlotAllocator_SteadyStateDoesNotAllocateManagedMemory()
     {
         RenderQuerySlotAllocator allocator = new(64u);

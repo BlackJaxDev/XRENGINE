@@ -2,13 +2,10 @@ using System;
 using System.Diagnostics;
 using System.Numerics;
 using XREngine.Data.Rendering;
-using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan;
-using XREngine.Rendering.XeSS;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -51,9 +48,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRTexture? _bridgeMotionTexture;
         private XRFrameBuffer? _bridgeExposureTextureFbo;
         private XRTexture? _bridgeExposureTexture;
-        private NvidiaDlssManager.Native.NativeVulkanSession? _nativeDlssSession;
-        private NvidiaDlssManager.Native.NativeFrameGenerationSession? _nativeDlssFrameGenerationSession;
-        private VulkanRenderer? _nativeDlssRenderer;
+        private IRuntimeVendorUpscaleSession? _nativeDlssSession;
+        private IRuntimeVendorUpscaleSession? _nativeDlssFrameGenerationSession;
+        private IVulkanVendorUpscaleBackendCapability? _nativeDlssRenderer;
         private XRTexture2D? _nativeDlssOutputTexture;
         private XRFrameBuffer? _nativeDlssOutputFbo;
         private uint _nativeDlssViewportId;
@@ -274,7 +271,8 @@ void main()
                     FailRequestedVendorFeature("VR vendor upscale/frame generation", vrVendorFailure);
             }
 
-            if (vendorResourcesReady && vendorPathAllowedInCurrentView && !ForceFallbackBlit && viewport?.Window?.Renderer is VulkanRenderer)
+            if (vendorResourcesReady && vendorPathAllowedInCurrentView && !ForceFallbackBlit &&
+                viewport?.Window?.Renderer?.BackendId == RendererBackendId.Vulkan)
             {
                 if (TryRunNativeVulkanVendor(out string nativeFailure))
                     return;
@@ -286,12 +284,14 @@ void main()
             }
             else if (vendorResourcesReady && vendorPathAllowedInCurrentView &&
                 !ForceFallbackBlit &&
-                viewport?.Window?.Renderer is OpenGLRenderer openGlRenderer &&
+                viewport?.Window?.Renderer is IRuntimeRendererHost bridgeRenderer &&
+                bridgeRenderer.TryGetBackendCapability<IOpenGlVendorUpscaleBackendCapability>(out var openGlBridge) &&
+                openGlBridge is not null &&
                 IsBridgePathRequested() &&
                 hasColorTexture &&
                 resolvedColorTexture is not null)
             {
-                if (TryRunBridge(openGlRenderer, viewport, sourceFrameBuffer, resolvedColorTexture, out string bridgeFailure))
+                if (TryRunBridge(openGlBridge, viewport, sourceFrameBuffer, resolvedColorTexture, out string bridgeFailure))
                     return;
 
                 if (requestedVendorFeature)
@@ -466,13 +466,13 @@ void main()
 
         private static bool ShouldEncodeFallbackOutputForSwapchain(XRFrameBuffer? destination)
             => destination is null
-                && AbstractRenderer.Current is VulkanRenderer renderer
-                && renderer.StreamlineFrameGenerationSwapchainActive
-                && renderer.SwapchainImageFormat is Silk.NET.Vulkan.Format.B8G8R8A8Unorm
-                    or Silk.NET.Vulkan.Format.R8G8B8A8Unorm;
+                && AbstractRenderer.Current is IRuntimeRendererHost renderer
+                && renderer.TryGetBackendCapability<IStreamlinePresentationBackendCapability>(out var capability)
+                && capability?.StreamlineFrameGenerationSwapchainActive == true
+                && capability.SwapchainRequiresSrgbEncoding;
 
         private bool TryRunBridge(
-            OpenGLRenderer renderer,
+            IOpenGlVendorUpscaleBackendCapability renderer,
             XRViewport viewport,
             XRFrameBuffer? sourceFrameBuffer,
             XRTexture resolvedColorTexture,
@@ -480,8 +480,8 @@ void main()
         {
             failureReason = string.Empty;
 
-            VulkanUpscaleBridge? bridge = RuntimeEngine.Rendering.GetVulkanUpscaleBridge(viewport);
-            if (bridge is null || !bridge.TryResolveCurrentFrameSlot(out VulkanUpscaleBridgeFrameSlot? slot) || slot is null)
+            IVulkanUpscaleBridge? bridge = RuntimeEngine.Rendering.GetVulkanUpscaleBridge(viewport);
+            if (bridge is null || !bridge.TryResolveCurrentFrame(out VulkanUpscaleBridgeFrameInfo slot))
             {
                 failureReason = RuntimeEngine.Rendering.DescribeVulkanUpscaleBridgeUnavailability(
                     viewport,
@@ -606,8 +606,8 @@ void main()
 
             bool dlssEnabled = IsNvidiaDlssFeatureRequested();
             bool xessEnabled = RuntimeEngine.EffectiveSettings.EnableIntelXess;
-            bool dlssSupported = dlssEnabled && NvidiaDlssManager.IsSupported;
-            bool xessSupported = xessEnabled && IntelXessManager.IsSupported;
+            bool dlssSupported = dlssEnabled && VendorUpscaleRuntime.IsDlssSupported;
+            bool xessSupported = xessEnabled && VendorUpscaleRuntime.IsXessSupported;
 
             if (IsNvidiaDlaaRequested())
             {
@@ -617,8 +617,8 @@ void main()
                     return true;
                 }
 
-                failureReason = !string.IsNullOrWhiteSpace(NvidiaDlssManager.LastError)
-                    ? NvidiaDlssManager.LastError!
+                failureReason = !string.IsNullOrWhiteSpace(VendorUpscaleRuntime.DlssLastError)
+                    ? VendorUpscaleRuntime.DlssLastError!
                     : "NVIDIA DLAA requires a supported DLSS runtime.";
                 return false;
             }
@@ -652,18 +652,18 @@ void main()
                 }
             }
 
-            failureReason = dlssEnabled && !string.IsNullOrWhiteSpace(NvidiaDlssManager.LastError)
-                ? NvidiaDlssManager.LastError!
-                : xessEnabled && !string.IsNullOrWhiteSpace(IntelXessManager.LastError)
-                    ? IntelXessManager.LastError!
+            failureReason = dlssEnabled && !string.IsNullOrWhiteSpace(VendorUpscaleRuntime.DlssLastError)
+                ? VendorUpscaleRuntime.DlssLastError!
+                : xessEnabled && !string.IsNullOrWhiteSpace(VendorUpscaleRuntime.XessLastError)
+                    ? VendorUpscaleRuntime.XessLastError!
                     : "No supported bridge vendor runtime is currently available.";
             return false;
         }
 
         private bool TryCreateBridgeDispatchParameters(
-            OpenGLRenderer renderer,
+            IOpenGlVendorUpscaleBackendCapability renderer,
             XRViewport viewport,
-            VulkanUpscaleBridge bridge,
+            IVulkanUpscaleBridge bridge,
             EVulkanUpscaleBridgeVendor vendor,
             XRCamera camera,
             ColorGradingSettings? colorGrading,
@@ -731,7 +731,7 @@ void main()
                 InputHeight = (uint)Math.Max(1, frameResources.InternalHeight),
                 OutputWidth = (uint)Math.Max(1, frameResources.DisplayWidth),
                 OutputHeight = (uint)Math.Max(1, frameResources.DisplayHeight),
-                FrameIndex = unchecked((uint)Math.Max(0L, renderer._frameCounter)),
+                FrameIndex = unchecked((uint)renderer.FrameIndex),
                 ResetHistory = resetHistory,
                 ReverseDepth = camera.IsReversedDepth,
                 IsOrthographic = camera.Parameters is XROrthographicCameraParameters,
@@ -789,7 +789,7 @@ void main()
         }
 
         private bool TryResolveBridgeExposureSource(
-            OpenGLRenderer renderer,
+            IOpenGlVendorUpscaleBackendCapability renderer,
             ColorGradingSettings? colorGrading,
             out XRFrameBuffer? bridgeExposureFbo,
             out string failureReason)
@@ -837,7 +837,7 @@ void main()
 
         private bool ShouldResetBridgeHistory(
             XRCamera camera,
-            VulkanUpscaleBridge bridge,
+            IVulkanUpscaleBridge bridge,
             XRFrameBuffer sourceColorFbo,
             bool outputHdr)
         {
@@ -874,7 +874,7 @@ void main()
 
         private void RememberBridgeDispatch(
             XRCamera camera,
-            VulkanUpscaleBridge bridge,
+            IVulkanUpscaleBridge bridge,
             in VulkanUpscaleBridgeDispatchParameters dispatchParameters)
         {
             _bridgeDispatchHistoryValid = true;
@@ -896,21 +896,21 @@ void main()
 
         private static void ReportNativeFallback()
         {
-            if (RuntimeEngine.EffectiveSettings.EnableIntelXess && !IntelXessManager.IsSupported && !_reportedXessUnavailable)
+            if (RuntimeEngine.EffectiveSettings.EnableIntelXess && !VendorUpscaleRuntime.IsXessSupported && !_reportedXessUnavailable)
             {
                 _reportedXessUnavailable = true;
-                string reason = string.IsNullOrWhiteSpace(IntelXessManager.LastError)
+                string reason = string.IsNullOrWhiteSpace(VendorUpscaleRuntime.XessLastError)
                     ? "runtime unavailable"
-                    : IntelXessManager.LastError!;
+                    : VendorUpscaleRuntime.XessLastError!;
                 Debug.RenderingError($"Intel XeSS is enabled but unavailable ({reason}). No fallback blit will be rendered for an explicit vendor request.");
             }
 
-            if (IsNvidiaDlssFeatureRequested() && !NvidiaDlssManager.IsSupported && !_reportedDlssUnavailable)
+            if (IsNvidiaDlssFeatureRequested() && !VendorUpscaleRuntime.IsDlssSupported && !_reportedDlssUnavailable)
             {
                 _reportedDlssUnavailable = true;
-                string reason = string.IsNullOrWhiteSpace(NvidiaDlssManager.LastError)
+                string reason = string.IsNullOrWhiteSpace(VendorUpscaleRuntime.DlssLastError)
                     ? "runtime unavailable"
-                    : NvidiaDlssManager.LastError!;
+                    : VendorUpscaleRuntime.DlssLastError!;
                 Debug.RenderingError($"NVIDIA DLSS/DLAA is enabled but unavailable ({reason}). No fallback blit will be rendered for an explicit vendor request.");
             }
         }
@@ -937,7 +937,7 @@ void main()
         }
 
         private bool TryResolveBridgeColorSource(
-            OpenGLRenderer renderer,
+            IOpenGlVendorUpscaleBackendCapability renderer,
             XRFrameBuffer? sourceFrameBuffer,
             XRTexture resolvedColorTexture,
             out XRFrameBuffer? bridgeSourceFbo,
@@ -975,7 +975,7 @@ void main()
         }
 
         private bool TryResolveBridgeDepthSource(
-            OpenGLRenderer renderer,
+            IOpenGlVendorUpscaleBackendCapability renderer,
             out XRFrameBuffer? bridgeDepthFbo,
             out string failureReason)
         {
@@ -1008,7 +1008,7 @@ void main()
         }
 
         private bool TryResolveBridgeMotionSource(
-            OpenGLRenderer renderer,
+            IOpenGlVendorUpscaleBackendCapability renderer,
             out XRFrameBuffer? bridgeMotionFbo,
             out string failureReason)
         {
@@ -1048,7 +1048,7 @@ void main()
         }
 
         private bool TryEnsureBridgeHelperFrameBuffer(
-            OpenGLRenderer renderer,
+            IOpenGlVendorUpscaleBackendCapability renderer,
             XRTexture texture,
             EFrameBufferAttachment attachment,
             string frameBufferName,
@@ -1076,14 +1076,11 @@ void main()
                 };
                 cachedTexture = texture;
 
-                if (renderer.GenericToAPI<GLFrameBuffer>(cachedFrameBuffer) is not GLFrameBuffer glFrameBuffer)
+                if (!renderer.TryGenerateFrameBuffer(cachedFrameBuffer, out failureReason))
                 {
                     DestroyBridgeHelperFrameBuffer(ref cachedFrameBuffer, ref cachedTexture);
-                    failureReason = $"Failed to create the OpenGL framebuffer wrapper for bridge helper '{frameBufferName}'.";
                     return false;
                 }
-
-                glFrameBuffer.Generate();
             }
 
             frameBuffer = cachedFrameBuffer;
@@ -1094,7 +1091,7 @@ void main()
             XRFrameBuffer sourceColorFbo,
             XRFrameBuffer sourceDepthFbo,
             XRFrameBuffer sourceMotionFbo,
-            VulkanUpscaleBridgeFrameSlot slot,
+            VulkanUpscaleBridgeFrameInfo slot,
             out string failureReason)
         {
             if (sourceColorFbo.Width != slot.SourceColorFrameBuffer.Width || sourceColorFbo.Height != slot.SourceColorFrameBuffer.Height)
@@ -1153,7 +1150,7 @@ void main()
             => RuntimeEngine.EffectiveSettings.EnableIntelXess
             || IsNvidiaDlssFeatureRequested()
             || RuntimeEngine.Rendering.Settings.EnableIntelXessFrameGeneration
-            || NvidiaDlssManager.IsFrameGenerationRequested;
+            || VendorUpscaleRuntime.IsDlssFrameGenerationRequested;
 
         private static bool IsNvidiaDlssFeatureRequested()
             => RuntimeEngine.EffectiveSettings.EnableNvidiaDlss
@@ -1216,7 +1213,7 @@ void main()
         }
 
         private static bool ShouldRecreateBridgeAfterDispatchFailure(string failureReason)
-            => !NvidiaDlssManager.Native.IsTerminalBridgeFailureMessage(failureReason);
+            => !VendorUpscaleRuntime.IsTerminalBridgeFailureMessage(failureReason);
 
         private static void DestroyBridgeHelperFrameBuffer(ref XRFrameBuffer? frameBuffer, ref XRTexture? cachedTexture)
         {
@@ -1425,7 +1422,7 @@ void main()
         }
 
         private bool TryEnsureNativeDlssSession(
-            VulkanRenderer renderer,
+            IVulkanVendorUpscaleBackendCapability renderer,
             XRViewport viewport,
             out string failureReason)
         {
@@ -1449,10 +1446,9 @@ void main()
             _nativeDlssViewportId = 0;
             _nativeDlssDispatchHistoryValid = false;
 
-            if (!NvidiaDlssManager.Native.TryCreateNativeVulkanSession(
-                    renderer,
+            if (!renderer.TryCreateDlssSession(
                     viewportId,
-                    out NvidiaDlssManager.Native.NativeVulkanSession? session,
+                    out IRuntimeVendorUpscaleSession? session,
                     out failureReason)
                 || session is null)
             {
@@ -1466,7 +1462,7 @@ void main()
         }
 
         private bool TryEnsureNativeDlssFrameGenerationSession(
-            VulkanRenderer renderer,
+            IVulkanVendorUpscaleBackendCapability renderer,
             XRViewport viewport,
             out string failureReason)
         {
@@ -1491,10 +1487,9 @@ void main()
             }
             _nativeDlssDispatchHistoryValid = false;
 
-            if (!NvidiaDlssManager.Native.TryCreateNativeFrameGenerationSession(
-                    renderer,
+            if (!renderer.TryCreateFrameGenerationSession(
                     viewportId,
-                    out NvidiaDlssManager.Native.NativeFrameGenerationSession? session,
+                    out IRuntimeVendorUpscaleSession? session,
                     out failureReason)
                 || session is null)
             {
@@ -1508,7 +1503,7 @@ void main()
         }
 
         private bool TryCreateNativeDlssDispatchParameters(
-            VulkanRenderer renderer,
+            IVulkanVendorUpscaleBackendCapability renderer,
             XRViewport viewport,
             XRCamera camera,
             ColorGradingSettings? colorGrading,
@@ -1579,7 +1574,7 @@ void main()
                 // Viewport commands are prepared before WindowRenderCallback advances the
                 // Vulkan frame counter. Streamline tokens must identify the upcoming frame
                 // so their constants match the PCL markers and proxy Present call.
-                FrameIndex = unchecked((uint)Math.Min(uint.MaxValue, renderer.VulkanFrameCounter + 1UL)),
+                FrameIndex = unchecked((uint)Math.Min(uint.MaxValue, renderer.FrameIndex + 1UL)),
                 ResetHistory = resetHistory,
                 ReverseDepth = camera.IsReversedDepth,
                 IsOrthographic = camera.Parameters is XROrthographicCameraParameters,
@@ -1724,7 +1719,7 @@ void main()
                 return false;
             }
 
-            if (viewport.Window?.Renderer is not VulkanRenderer)
+            if (viewport.Window?.Renderer.BackendId != RendererBackendId.Vulkan)
             {
                 failureReason = "Intel XeSS native dispatch requires the Vulkan renderer.";
                 return false;
@@ -1736,9 +1731,9 @@ void main()
                 return false;
             }
 
-            if (!IntelXessManager.IsSupported)
+            if (!VendorUpscaleRuntime.IsXessSupported)
             {
-                failureReason = IntelXessManager.LastError ?? "Intel XeSS support probe failed.";
+                failureReason = VendorUpscaleRuntime.XessLastError ?? "Intel XeSS support probe failed.";
                 return false;
             }
 
@@ -1761,11 +1756,11 @@ void main()
                 : null;
 
             // Keep the internal resolution aligned with XeSS expectations.
-            IntelXessManager.ApplyToViewport(viewport, RuntimeEngine.Rendering.Settings);
+            VendorUpscaleRuntime.ApplyXessToViewport(viewport, RuntimeEngine.Rendering.Settings);
 
             if (RuntimeEngine.Rendering.Settings.EnableIntelXessFrameGeneration)
             {
-                bool frameGenOk = IntelXessManager.Native.TryDispatchFrameGeneration(
+                bool frameGenOk = VendorUpscaleRuntime.TryDispatchXessFrameGeneration(
                     viewport,
                     sourceFbo,
                     motion,
@@ -1784,7 +1779,7 @@ void main()
                 }
             }
 
-            bool upscaleOk = IntelXessManager.Native.TryDispatchUpscale(
+            bool upscaleOk = VendorUpscaleRuntime.TryDispatchXessUpscale(
                 viewport,
                 sourceFbo,
                 destination,
@@ -1796,7 +1791,7 @@ void main()
             if (upscaleOk)
                 return true;
 
-            failureReason = IntelXessManager.LastError ?? $"errorCode={errorCode}";
+            failureReason = VendorUpscaleRuntime.XessLastError ?? $"errorCode={errorCode}";
             if (!_reportedXessFailure)
             {
                 _reportedXessFailure = true;
@@ -1810,7 +1805,7 @@ void main()
         {
             failureReason = string.Empty;
             bool dlssRequested = IsNvidiaDlssFeatureRequested();
-            bool frameGenRequested = NvidiaDlssManager.IsFrameGenerationRequested;
+            bool frameGenRequested = VendorUpscaleRuntime.IsDlssFrameGenerationRequested;
 
             if (!dlssRequested && !frameGenRequested)
                 return false;
@@ -1828,21 +1823,23 @@ void main()
                 return false;
             }
 
-            if (viewport.Window?.Renderer is not VulkanRenderer renderer)
+            if (viewport.Window?.Renderer is not IRuntimeRendererHost rendererHost ||
+                !rendererHost.TryGetBackendCapability<IVulkanVendorUpscaleBackendCapability>(out var renderer) ||
+                renderer is null)
             {
-                failureReason = "NVIDIA DLSS/DLSS-G native dispatch requires the Vulkan renderer.";
+                failureReason = "NVIDIA DLSS/DLSS-G native dispatch requires the Vulkan vendor-upscale capability.";
                 return false;
             }
 
-            if (dlssRequested && !NvidiaDlssManager.IsSupported)
+            if (dlssRequested && !VendorUpscaleRuntime.IsDlssSupported)
             {
-                failureReason = NvidiaDlssManager.LastError ?? "NVIDIA DLSS support probe failed.";
+                failureReason = VendorUpscaleRuntime.DlssLastError ?? "NVIDIA DLSS support probe failed.";
                 return false;
             }
 
-            if (frameGenRequested && !NvidiaDlssManager.Native.IsFrameGenerationAvailable(out string? frameGenerationSupportFailure))
+            if (frameGenRequested && !VendorUpscaleRuntime.IsDlssFrameGenerationAvailable(out string? frameGenerationSupportFailure))
             {
-                failureReason = frameGenerationSupportFailure ?? NvidiaDlssManager.Native.LastError ?? "NVIDIA DLSS frame generation support probe failed.";
+                failureReason = frameGenerationSupportFailure ?? VendorUpscaleRuntime.DlssLastError ?? "NVIDIA DLSS frame generation support probe failed.";
                 return false;
             }
 
@@ -1928,45 +1925,6 @@ void main()
                 return false;
             }
 
-            if (!renderer.TryResolveStreamlineImage(sourceColorTexture, depthOnly: false, out VulkanRenderer.VulkanStreamlineImage sourceColorImage, out string sourceImageFailure))
-            {
-                failureReason = sourceImageFailure;
-                return false;
-            }
-
-            if (!renderer.TryResolveStreamlineImage(depthTexture, depthOnly: true, out VulkanRenderer.VulkanStreamlineImage depthImage, out string depthImageFailure))
-            {
-                failureReason = depthImageFailure;
-                return false;
-            }
-
-            if (!renderer.TryResolveStreamlineImage(motionTexture, depthOnly: false, out VulkanRenderer.VulkanStreamlineImage motionImage, out string motionImageFailure))
-            {
-                failureReason = motionImageFailure;
-                return false;
-            }
-
-            VulkanRenderer.VulkanStreamlineImage outputImage = default;
-            if (dlssRequested
-                && outputTexture is not null
-                && !renderer.TryResolveStreamlineImage(outputTexture, depthOnly: false, out outputImage, out string outputImageFailure))
-            {
-                failureReason = outputImageFailure;
-                return false;
-            }
-
-            VulkanRenderer.VulkanStreamlineImage? exposureImage = null;
-            if (exposureTexture is not null)
-            {
-                if (!renderer.TryResolveStreamlineImage(exposureTexture, depthOnly: false, out VulkanRenderer.VulkanStreamlineImage resolvedExposure, out string exposureFailure))
-                {
-                    failureReason = exposureFailure;
-                    return false;
-                }
-
-                exposureImage = resolvedExposure;
-            }
-
             if (frameGenRequested && !dlssRequested)
             {
                 (uint hudlessWidth, uint hudlessHeight) = ResolveTextureExtent(sourceColorTexture);
@@ -1979,23 +1937,22 @@ void main()
 
             if (frameGenRequested)
             {
-                VulkanRenderer.VulkanStreamlineImage hudlessImage = dlssRequested
-                    ? outputImage
-                    : sourceColorImage;
+                XRTexture hudlessTexture = dlssRequested
+                    ? outputTexture!
+                    : sourceColorTexture;
 
-                bool frameGenOk = NvidiaDlssManager.Native.TryDispatchFrameGeneration(
+                bool frameGenOk = renderer.TryDispatchFrameGeneration(
                     viewport,
                     in dispatchParameters,
-                    in depthImage,
-                    in motionImage,
-                    in hudlessImage,
-                    NvidiaDlssManager.ResolveFrameGenerationMode(),
+                    depthTexture,
+                    motionTexture,
+                    hudlessTexture,
                     out int frameGenError,
                     out string? frameGenMessage);
 
                 if (!frameGenOk)
                 {
-                    failureReason = frameGenMessage ?? NvidiaDlssManager.Native.LastError ?? $"errorCode={frameGenError}";
+                    failureReason = frameGenMessage ?? VendorUpscaleRuntime.DlssLastError ?? $"errorCode={frameGenError}";
                     if (!_reportedDlssFrameGenUnavailable)
                     {
                         _reportedDlssFrameGenUnavailable = true;
@@ -2015,13 +1972,15 @@ void main()
                         return false;
                     }
 
-                    renderer.EnqueueDlssFrameGeneration(
-                        frameGenPassIndex,
-                        _nativeDlssFrameGenerationSession!,
-                        depthImage,
-                        motionImage,
-                        sourceColorImage,
-                        dispatchParameters);
+                    if (!renderer.TryEnqueueFrameGeneration(
+                            frameGenPassIndex,
+                            _nativeDlssFrameGenerationSession!,
+                            depthTexture,
+                            motionTexture,
+                            sourceColorTexture,
+                            dispatchParameters,
+                            out failureReason))
+                        return false;
 
                     _fallbackSourceTexture = sourceColorTexture;
                     _fallbackApplySharpen = false;
@@ -2052,25 +2011,29 @@ void main()
                 return false;
             }
 
-            renderer.EnqueueDlssUpscale(
-                passIndex,
-                _nativeDlssSession!,
-                sourceColorImage,
-                depthImage,
-                motionImage,
-                outputImage,
-                exposureImage,
-                dispatchParameters);
+            if (!renderer.TryEnqueueDlssUpscale(
+                    passIndex,
+                    _nativeDlssSession!,
+                    sourceColorTexture,
+                    depthTexture,
+                    motionTexture,
+                    dlssOutputTexture,
+                    exposureTexture,
+                    dispatchParameters,
+                    out failureReason))
+                return false;
 
             if (frameGenRequested)
             {
-                renderer.EnqueueDlssFrameGeneration(
-                    passIndex,
-                    _nativeDlssFrameGenerationSession!,
-                    depthImage,
-                    motionImage,
-                    outputImage,
-                    dispatchParameters);
+                if (!renderer.TryEnqueueFrameGeneration(
+                        passIndex,
+                        _nativeDlssFrameGenerationSession!,
+                        depthTexture,
+                        motionTexture,
+                        dlssOutputTexture,
+                        dispatchParameters,
+                        out failureReason))
+                    return false;
             }
 
             _fallbackSourceTexture = dlssOutputTexture;

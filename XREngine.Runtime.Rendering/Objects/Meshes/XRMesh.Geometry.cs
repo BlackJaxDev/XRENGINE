@@ -192,7 +192,7 @@ public partial class XRMesh
         }
         catch (Exception ex)
         {
-            RuntimeRenderingHostServices.Current.LogException(ex);
+            RuntimeRenderingHostServices.Diagnostics.LogException(ex);
         }
         finally
         {
@@ -259,10 +259,10 @@ public partial class XRMesh
         program.Uniform("sdfMinBounds", Bounds.Min);
         program.Uniform("sdfMaxBounds", Bounds.Max);
         program.Uniform("sdfResolution", resolution);
-        RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(() =>
+        RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadTask(() =>
         {
             const int ls = 8;
-            RuntimeRenderingHostServices.Current.DispatchCompute(
+            RuntimeRenderingHostServices.BackendInterop.DispatchCompute(
                 program,
                 (uint)((resolution.X + ls - 1) / ls),
                 (uint)((resolution.Y + ls - 1) / ls),
@@ -377,7 +377,7 @@ public partial class XRMesh
         }
 
         if (error is not null)
-            RuntimeRenderingHostServices.Current.LogException(error);
+            RuntimeRenderingHostServices.Diagnostics.LogException(error);
 
         if (buf is null || callbacks is null)
             return;
@@ -390,7 +390,7 @@ public partial class XRMesh
             }
             catch (Exception ex)
             {
-                RuntimeRenderingHostServices.Current.LogException(ex);
+                RuntimeRenderingHostServices.Diagnostics.LogException(ex);
             }
         }
     }

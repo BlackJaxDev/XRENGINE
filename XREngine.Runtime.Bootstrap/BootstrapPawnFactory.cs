@@ -252,7 +252,7 @@ public static class BootstrapPawnFactory
         persp!.HorizontalFieldOfView = FirstPersonDesktopHorizontalFieldOfView;
         persp.NearZ = 0.1f;
         persp.FarZ = 100000.0f;
-        firstPersonCam.Camera.RenderPipeline = Engine.Rendering.NewRenderPipeline(stereo: false);
+        firstPersonCam.Camera.RenderPipeline = RuntimeEngine.Rendering.NewRenderPipeline(stereo: false);
         firstPersonCam.Camera.RenderPipeline.OverrideProtected = true;
         firstPersonCam.CullWithFrustum = true;
         if (pawn is null)

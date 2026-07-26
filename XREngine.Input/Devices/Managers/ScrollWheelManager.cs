@@ -3,7 +3,6 @@ using System.Diagnostics;
 
 namespace XREngine.Input.Devices
 {
-    public delegate void DelMouseScroll(float diff);
     [Serializable]
     public class ScrollWheelManager : InputManagerBase
     {

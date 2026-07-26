@@ -12,7 +12,6 @@ using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Data.Rendering;
-using XREngine.Scene.Importers;
 
 namespace XREngine.Scene.Prefabs
 {
@@ -175,7 +174,7 @@ namespace XREngine.Scene.Prefabs
 
             if (string.Equals(Path.GetExtension(filePath), ".prefab", StringComparison.OrdinalIgnoreCase))
             {
-                RootNode = UnitySceneImporter.ImportPrefab(filePath);
+                RootNode = UnityEditorImportBridge.ImportPrefab(filePath);
                 return RootNode is not null;
             }
 

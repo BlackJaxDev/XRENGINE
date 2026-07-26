@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Scene.Transforms;
 
@@ -50,7 +50,7 @@ namespace XREngine.Components
             }
 
             public override void Render(TransformBase transform)
-                => Engine.Rendering.Debug.RenderCylinder(
+                => RuntimeEngine.Rendering.Debug.RenderCylinder(
                     Matrix4x4.CreateTranslation(LocalOffset) * transform.RenderMatrix,
                     LocalUpAxis,
                     Radius,

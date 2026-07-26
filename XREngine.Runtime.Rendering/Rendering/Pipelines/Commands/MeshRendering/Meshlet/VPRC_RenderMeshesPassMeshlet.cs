@@ -1,7 +1,6 @@
 using System.Threading;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
-using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
@@ -47,8 +46,8 @@ internal static class VPRC_RenderMeshesPassMeshlet
            && gpuPass.ZeroReadbackProgramPendingThisFrame;
 
     private static bool IsActiveRendererOpenGL()
-        => AbstractRenderer.Current is OpenGLRenderer
-           || RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport?.Window?.Renderer is OpenGLRenderer;
+        => AbstractRenderer.Current?.BackendId == RendererBackendId.OpenGL
+           || RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport?.Window?.Renderer?.BackendId == RendererBackendId.OpenGL;
 
     private static void WarnMeshletProgramWarmupFallback(int renderPass, int pendingProgramCount)
     {

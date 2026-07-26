@@ -92,7 +92,7 @@ internal sealed class TextureUploadScheduler
         if (bytes <= 0)
             return;
 
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+        long currentFrame = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
         long previousFrame = Interlocked.Exchange(ref _progressiveUploadBytesFrameTicks, currentFrame);
         if (previousFrame != currentFrame)
             Interlocked.Exchange(ref _progressiveUploadBytesScheduledThisFrame, 0L);
@@ -111,7 +111,7 @@ internal sealed class TextureUploadScheduler
 
     private long GetBytesScheduledThisFrame()
     {
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+        long currentFrame = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
         if (Volatile.Read(ref _progressiveUploadBytesFrameTicks) != currentFrame)
             return 0L;
 

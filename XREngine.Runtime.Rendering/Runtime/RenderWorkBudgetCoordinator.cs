@@ -159,12 +159,18 @@ internal static class RenderWorkBudgetCoordinator
         builder.Append("RenderWorkLastShadowMs: ").Append(snapshot.LastShadowAtlasMilliseconds.ToString("F3")).AppendLine();
         builder.Append("RenderWorkStartupBoostActive: ").Append(snapshot.StartupBoostActive).AppendLine();
         XRBufferWriteTelemetry.AppendProfilerSummary(builder);
-        Vulkan.VulkanTextureUploadService.AppendProfilerSummary(builder);
+        if (TextureStreamingBackendRegistry.TryGet(
+                RuntimeGraphicsApiKind.Vulkan,
+                out ITextureStreamingBackendProvider? textureStreaming)
+            && textureStreaming is not null)
+        {
+            textureStreaming.AppendProfilerSummary(builder);
+        }
     }
 
     private static void EnsureFrame()
     {
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+        long currentFrame = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
         long previousFrame = Volatile.Read(ref s_frameId);
         if (previousFrame == currentFrame)
             return;
@@ -190,7 +196,7 @@ internal static class RenderWorkBudgetCoordinator
 
     private static double GetEffectiveTextureUploadBudgetMilliseconds()
     {
-        double configuredBudget = RuntimeRenderingHostServices.Current.TextureUploadFrameBudgetMilliseconds;
+        double configuredBudget = RuntimeRenderingHostServices.Settings.TextureUploadFrameBudgetMilliseconds;
         if (configuredBudget <= 0.0 || !IsStartupBoostActive())
             return configuredBudget;
 

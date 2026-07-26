@@ -1,4 +1,4 @@
-﻿using XREngine.Components;
+using XREngine.Components;
 using XREngine.Data.Trees;
 using XREngine.Rendering;
 using XREngine.Rendering.Info;
@@ -12,6 +12,6 @@ namespace XREngine
     {
         RenderInfo[] RenderedObjects { get; }
         float IRenderableBase.TransformDepth => (this as XRComponent)?.Transform?.Depth ?? 0;
-        protected bool IsShadowPass => RuntimeRenderingHostServices.Current.IsShadowPass;
+        protected bool IsShadowPass => RuntimeRenderingHostServices.FrameTiming.IsShadowPass;
     }
 }

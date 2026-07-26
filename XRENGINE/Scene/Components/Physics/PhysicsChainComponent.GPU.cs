@@ -298,7 +298,7 @@ public partial class PhysicsChainComponent
                 _particleTrees[treeIndex].Root.RecalculateMatrixHierarchy(
                     forceWorldRecalc: true,
                     setRenderMatrixNow: true,
-                    childRecalcType: Engine.Rendering.Settings.RecalcChildMatricesLoopType).Wait();
+                    childRecalcType: Engine.EffectiveSettings.RecalcChildMatricesLoopType).Wait();
                 GPUPhysicsChainDispatcher.RecordHierarchyRecalcTicks(System.Diagnostics.Stopwatch.GetTimestamp() - hierarchyStart);
             }
         }
@@ -917,45 +917,4 @@ public partial class PhysicsChainComponent
     internal float GetGpuDebugInterpolationAlpha()
         => ComputeRenderAlpha();
 
-    internal static XRMaterial? CreateGpuDebugPointMaterial()
-    {
-        XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-        XRShader[] vertexShaders = [vertShader];
-
-        XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "gs", "PointInstance.gs"), EShaderType.Geometry);
-        XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "fs", "InstancedDebugPrimitivePoint.fs"), EShaderType.Fragment);
-        ShaderVar[] vars =
-        [
-            new ShaderFloat(0.005f, "PointSize"),
-            new ShaderInt(0, "TotalPoints"),
-        ];
-        var mat = new XRMaterial(vars, [.. vertexShaders, geomShader, fragShader]);
-        mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
-        mat.RenderOptions.CullMode = ECullMode.None;
-        mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
-        mat.EnableTransparency((int)EDefaultRenderPass.OnTopForward);
-        XRMaterial.ConfigureGizmoMaterial(mat);
-        return mat;
-    }
-
-    internal static XRMaterial? CreateGpuDebugLineMaterial()
-    {
-        XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-        XRShader[] vertexShaders = [vertShader];
-
-        XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "gs", "LineInstance.gs"), EShaderType.Geometry);
-        XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "fs", "InstancedDebugPrimitiveLine.fs"), EShaderType.Fragment);
-        ShaderVar[] vars =
-        [
-            new ShaderFloat(0.001f, "LineWidth"),
-            new ShaderInt(0, "TotalLines"),
-        ];
-        var mat = new XRMaterial(vars, [.. vertexShaders, geomShader, fragShader]);
-        mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions;
-        mat.RenderOptions.CullMode = ECullMode.None;
-        mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
-        mat.EnableTransparency((int)EDefaultRenderPass.OnTopForward);
-        XRMaterial.ConfigureGizmoMaterial(mat);
-        return mat;
-    }
 }

@@ -96,14 +96,14 @@ public sealed class ModelBvhPreviewComponent : DebugVisualize3DComponent
 
     protected override void Render()
     {
-        if (Engine.Rendering.State.IsShadowPass)
+        if (RuntimeEngine.Rendering.State.IsShadowPass)
             return;
 
         var model = ResolveModelComponent();
         if (model is null)
             return;
 
-        var camera = Engine.Rendering.State.RenderingCamera;
+        var camera = RuntimeEngine.Rendering.State.RenderingCamera;
         IVolume? frustum = camera?.WorldFrustum();
 
         foreach (RenderableMesh mesh in model.Meshes)

@@ -6,7 +6,7 @@ namespace XREngine.Core.Attributes
     /// Declares that this type can replace one or more legacy type names during deserialization.
     /// This is used for backward compatibility when types are renamed, moved, or made abstract.
     /// </summary>
-    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true, Inherited = false)]
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Enum, AllowMultiple = true, Inherited = false)]
     public sealed class XRTypeRedirectAttribute(params string[] legacyTypeNames) : Attribute
     {
         /// <summary>

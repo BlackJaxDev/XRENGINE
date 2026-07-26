@@ -13,11 +13,11 @@ public sealed class PhysicsChainDebugDefaultTests
         string fields = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent Fields.cs");
         string component = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent.cs");
         string gpu = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent.GPU.cs");
-        string dispatcherDebug = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.Debug.cs");
+        string dispatcherDebug = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.Debug.cs");
 
         fields.ShouldContain("private bool _debugDrawChains;");
         fields.ShouldNotContain("private bool _debugDrawChains = true;");
-        component.ShouldContain("if (!IsActiveInHierarchy || Engine.Rendering.State.IsShadowPass || !DebugDrawChains)");
+        component.ShouldContain("if (!IsActiveInHierarchy || RuntimeEngine.Rendering.State.IsShadowPass || !DebugDrawChains)");
         gpu.ShouldContain("GPUPhysicsChainDispatcher.Instance.RenderSelectedGpuDebug()");
         dispatcherDebug.ShouldContain("if (!request.Component.DebugDrawChains");
         dispatcherDebug.IndexOf("if (!request.Component.DebugDrawChains", StringComparison.Ordinal)
@@ -27,7 +27,7 @@ public sealed class PhysicsChainDebugDefaultTests
     [Test]
     public void ActiveRequests_PreserveStableDispatchBucketOrderWithoutSorting()
     {
-        string dispatcher = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
+        string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
 
         dispatcher.ShouldContain("request.NeedsUpdate && request.DispatchIsolationKey == 0");
         dispatcher.ShouldContain("request.NeedsUpdate && request.DispatchIsolationKey != 0");
@@ -39,7 +39,7 @@ public sealed class PhysicsChainDebugDefaultTests
     [Test]
     public void GpuDebugBufferGrowth_RebindsReplacementAllocations()
     {
-        string dispatcherDebug = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.Debug.cs");
+        string dispatcherDebug = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.Debug.cs");
 
         dispatcherDebug.ShouldContain("ReplaceDebugRendererBuffer(_gpuDebugPointsRenderer, _gpuDebugPointsBuffer)");
         dispatcherDebug.ShouldContain("ReplaceDebugRendererBuffer(_gpuDebugLinesRenderer, _gpuDebugLinesBuffer)");

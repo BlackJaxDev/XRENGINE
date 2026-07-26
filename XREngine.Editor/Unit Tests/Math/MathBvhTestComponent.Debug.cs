@@ -11,13 +11,13 @@ public sealed partial class MathBvhTestComponent
 {
     private void RenderDebug()
     {
-        if (Engine.Rendering.State.IsShadowPass || Engine.Rendering.State.IsLightProbePass)
+        if (RuntimeEngine.Rendering.State.IsShadowPass || RuntimeEngine.Rendering.State.IsLightProbePass)
             return;
 
         // Vulkan accepts compute work only while a render-graph pass identity is active.
         // Keep this render callback visible even when debug drawing is disabled so benchmark
         // copies continue exercising their GPU BVH without a separate out-of-pass render job.
-        using IDisposable passScope = Engine.Rendering.State.PushRenderGraphPassIndex(
+        using IDisposable passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(
             (int)XREngine.Data.Rendering.EDefaultRenderPass.OnTopForward);
         ExecuteQueuedGpuWorkload();
 
@@ -414,7 +414,7 @@ public sealed partial class MathBvhTestComponent
             MathF.Max(
                 new Vector3(localToWorld.M21, localToWorld.M22, localToWorld.M23).Length(),
                 new Vector3(localToWorld.M31, localToWorld.M32, localToWorld.M33).Length()));
-        Engine.Rendering.Debug.RenderSphere(
+        RuntimeEngine.Rendering.Debug.RenderSphere(
             Vector3.Transform(sphere.Center, localToWorld),
             sphere.Radius * scale,
             solid: false,
@@ -443,7 +443,7 @@ public sealed partial class MathBvhTestComponent
             ? ValidationPassed ? ValidationPassedColor : ValidationFailedColor
             : ValidationPendingColor;
         Vector3 worldPosition = Vector3.Transform(new Vector3(0.0f, 6.3f, 0.0f), Transform.RenderMatrix);
-        Engine.Rendering.Debug.RenderSphere(worldPosition, 0.18f, solid: true, color);
+        RuntimeEngine.Rendering.Debug.RenderSphere(worldPosition, 0.18f, solid: true, color);
     }
 
     private static void RenderLocalBox(in AABB bounds, in Matrix4x4 localToWorld, ColorF4 color)
@@ -453,7 +453,7 @@ public sealed partial class MathBvhTestComponent
         orientation.M42 = 0.0f;
         orientation.M43 = 0.0f;
         Vector3 worldCenter = Vector3.Transform(bounds.Center, localToWorld);
-        Engine.Rendering.Debug.RenderBox(bounds.HalfExtents, worldCenter, orientation, solid: false, color);
+        RuntimeEngine.Rendering.Debug.RenderBox(bounds.HalfExtents, worldCenter, orientation, solid: false, color);
     }
 
     private static void RenderLocalOverlayBox(
@@ -468,7 +468,7 @@ public sealed partial class MathBvhTestComponent
         orientation.M42 = 0.0f;
         orientation.M43 = 0.0f;
         Vector3 worldCenter = Vector3.Transform(bounds.Center, localToWorld);
-        Engine.Rendering.Debug.RenderOverlayBox(
+        RuntimeEngine.Rendering.Debug.RenderOverlayBox(
             bounds.HalfExtents,
             worldCenter,
             orientation,
@@ -478,13 +478,13 @@ public sealed partial class MathBvhTestComponent
     }
 
     private static void RenderLocalLine(Vector3 localStart, Vector3 localEnd, in Matrix4x4 localToWorld, ColorF4 color)
-        => Engine.Rendering.Debug.RenderLine(
+        => RuntimeEngine.Rendering.Debug.RenderLine(
             Vector3.Transform(localStart, localToWorld),
             Vector3.Transform(localEnd, localToWorld),
             color);
 
     private static void RenderLocalPoint(Vector3 localPoint, in Matrix4x4 localToWorld, ColorF4 color)
-        => Engine.Rendering.Debug.RenderPoint(Vector3.Transform(localPoint, localToWorld), color);
+        => RuntimeEngine.Rendering.Debug.RenderPoint(Vector3.Transform(localPoint, localToWorld), color);
 
     private static Vector4 ToVector4(ColorF4 color)
         => new(color.R, color.G, color.B, color.A);

@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Animation;
 using XREngine.Components;
 using XREngine.Components.Capture.Lights;
@@ -49,20 +49,20 @@ public static partial class EditorUnitTests
 
         _emulatedVrStereoPreviewHooked = true;
 
-        Engine.Windows.PostAnythingAdded += OnWindowAddedForEmulatedVRStereoPreview;
-        foreach (var window in Engine.Windows)
+        RuntimeEngine.Windows.PostAnythingAdded += OnWindowAddedForEmulatedVRStereoPreview;
+        foreach (var window in RuntimeEngine.Windows)
             OnWindowAddedForEmulatedVRStereoPreview(window);
     }
 
     private static void OnWindowAddedForEmulatedVRStereoPreview(XRWindow window)
         => Engine.InvokeOnMainThread(
-            () => Engine.VRState.InitRenderEmulated(window),
+            () => RuntimeEngine.VRState.InitRenderEmulated(window),
             "UnitTestingWorld: Init scene-only VR stereo",
             executeNowIfAlreadyMainThread: true);
 
     public static void ApplyRenderSettingsFromToggles()
     {
-        var s = Engine.Rendering.Settings;
+        var s = RuntimeEngine.Rendering.Settings;
         var debug = Engine.EditorPreferences.Debug;
         var runtimeSettings = RuntimeBootstrapState.Settings;
 

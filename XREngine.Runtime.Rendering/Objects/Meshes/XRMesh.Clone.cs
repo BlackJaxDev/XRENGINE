@@ -7,7 +7,7 @@ public partial class XRMesh
 {
     public XRMesh Clone()
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope("XRMesh Clone");
+        using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRMesh Clone");
 
         XRMesh clone = new()
         {
@@ -96,7 +96,7 @@ public partial class XRMesh
 
     internal XRMesh CloneForRuntimeTransformRebind()
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope("XRMesh Runtime Transform Rebind Clone");
+        using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRMesh Runtime Transform Rebind Clone");
 
         XRMesh clone = new()
         {

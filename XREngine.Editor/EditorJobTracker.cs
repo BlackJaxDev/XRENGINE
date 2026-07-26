@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace XREngine.Editor;
 
@@ -44,7 +43,12 @@ public static class EditorJobTracker
 
     private static readonly object _lock = new();
     private static readonly Dictionary<Guid, TrackedJob> _trackedJobs = new();
+    private static readonly List<Guid> _cleanupScratch = [];
+    private static readonly Comparison<TrackedJobSnapshot> SnapshotComparison = CompareSnapshots;
     private static readonly TimeSpan CompletedRetention = TimeSpan.FromSeconds(10);
+    private static TrackedJobSnapshot[] _cachedSnapshots = [];
+    private static int _snapshotRevision;
+    private static int _cachedSnapshotRevision = -1;
 
     public static void Track(Job job, string label, Func<object?, string?>? payloadFormatter = null)
     {
@@ -60,6 +64,7 @@ public static class EditorJobTracker
 
             var tracked = new TrackedJob(job.Id, job, label, payloadFormatter);
             _trackedJobs[job.Id] = tracked;
+            InvalidateSnapshots();
 
             tracked.ProgressHandler = (j, value) => UpdateTrackedInternal(j.Id, value, null);
             tracked.ProgressWithPayloadHandler = (j, value, payload) => UpdateTrackedInternal(j.Id, value, payload);
@@ -88,6 +93,7 @@ public static class EditorJobTracker
                 Status = string.IsNullOrWhiteSpace(initialStatus) ? label : initialStatus
             };
             _trackedJobs[operationId] = tracked;
+            InvalidateSnapshots();
         }
 
         return operationId;
@@ -125,18 +131,29 @@ public static class EditorJobTracker
         lock (_lock)
         {
             CleanupExpiredEntries();
+            if (_cachedSnapshotRevision == _snapshotRevision)
+                return _cachedSnapshots;
 
-            return [.. _trackedJobs.Values
-                .OrderByDescending(t => t.State == TrackedJobState.Running)
-                .ThenByDescending(t => t.LastUpdated)
-                .Select(t => new TrackedJobSnapshot(
-                    t.Id,
-                    t.Label,
-                    t.State == TrackedJobState.Running ? t.Progress : 1f,
-                    t.Status,
-                    t.State,
-                    t.LastUpdated,
-                    t.HasDeterminateProgress))];
+            TrackedJobSnapshot[] snapshots = new TrackedJobSnapshot[_trackedJobs.Count];
+            int index = 0;
+            foreach (TrackedJob tracked in _trackedJobs.Values)
+            {
+                snapshots[index++] = new TrackedJobSnapshot(
+                    tracked.Id,
+                    tracked.Label,
+                    tracked.State == TrackedJobState.Running ? tracked.Progress : 1f,
+                    tracked.Status,
+                    tracked.State,
+                    tracked.LastUpdated,
+                    tracked.HasDeterminateProgress);
+            }
+
+            if (snapshots.Length > 1)
+                Array.Sort(snapshots, SnapshotComparison);
+
+            _cachedSnapshots = snapshots;
+            _cachedSnapshotRevision = _snapshotRevision;
+            return snapshots;
         }
     }
 
@@ -163,6 +180,7 @@ public static class EditorJobTracker
             }
 
             tracked.LastUpdated = DateTime.UtcNow;
+            InvalidateSnapshots();
         }
     }
 
@@ -188,6 +206,7 @@ public static class EditorJobTracker
             tracked.LastUpdated = DateTime.UtcNow;
 
             DetachHandlers(tracked);
+            InvalidateSnapshots();
         }
     }
 
@@ -211,13 +230,39 @@ public static class EditorJobTracker
 
     private static void CleanupExpiredEntries()
     {
-        var now = DateTime.UtcNow;
-        var toRemove = _trackedJobs
-            .Where(pair => pair.Value.State != TrackedJobState.Running && (now - pair.Value.LastUpdated) > CompletedRetention)
-            .Select(pair => pair.Key)
-            .ToList();
+        DateTime now = DateTime.UtcNow;
+        _cleanupScratch.Clear();
+        foreach (KeyValuePair<Guid, TrackedJob> pair in _trackedJobs)
+            if (pair.Value.State != TrackedJobState.Running &&
+                now - pair.Value.LastUpdated > CompletedRetention)
+            {
+                _cleanupScratch.Add(pair.Key);
+            }
 
-        foreach (var jobId in toRemove)
-            _trackedJobs.Remove(jobId);
+        if (_cleanupScratch.Count == 0)
+            return;
+
+        for (int i = 0; i < _cleanupScratch.Count; i++)
+            _trackedJobs.Remove(_cleanupScratch[i]);
+        _cleanupScratch.Clear();
+        InvalidateSnapshots();
+    }
+
+    private static int CompareSnapshots(TrackedJobSnapshot left, TrackedJobSnapshot right)
+    {
+        bool leftRunning = left.State == TrackedJobState.Running;
+        bool rightRunning = right.State == TrackedJobState.Running;
+        int runningOrder = rightRunning.CompareTo(leftRunning);
+        return runningOrder != 0
+            ? runningOrder
+            : right.UpdatedAt.CompareTo(left.UpdatedAt);
+    }
+
+    private static void InvalidateSnapshots()
+    {
+        unchecked
+        {
+            _snapshotRevision++;
+        }
     }
 }

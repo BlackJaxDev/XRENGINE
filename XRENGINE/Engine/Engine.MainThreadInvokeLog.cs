@@ -104,7 +104,7 @@ namespace XREngine
                 builder.Append("CallerThreadPool: ").Append(currentThread.IsThreadPoolThread).AppendLine();
                 builder.Append("CallerThreadBackground: ").Append(currentThread.IsBackground).AppendLine();
                 builder.Append("CallerApartmentState: ").Append(currentThread.GetApartmentState()).AppendLine();
-                builder.Append("RenderThreadId: ").Append(RenderThreadId).AppendLine();
+                builder.Append("RenderThreadId: ").Append(RuntimeEngine.RenderThreadId).AppendLine();
                 builder.Append("UpdateThreadId: ").Append(UpdateThreadId).AppendLine();
                 builder.Append("PhysicsThreadId: ").Append(PhysicsThreadId).AppendLine();
                 builder.Append("QueuedRenderJobsNow: ").Append(GetQueuedRenderThreadJobCount()).AppendLine();

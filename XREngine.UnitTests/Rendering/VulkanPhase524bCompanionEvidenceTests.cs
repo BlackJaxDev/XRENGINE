@@ -23,7 +23,7 @@ public sealed class VulkanPhase524bCompanionEvidenceTests
     [Test]
     public void StrictSpsFrameOutputPacing_IdentifiesOneConcreteMultiviewExternalTarget()
     {
-        FrameOutputPacingDecision pacing = OpenXRAPI.CreateOpenXrStereoFrameOutputPacing(
+        FrameOutputPacingDecision pacing = VulkanXrGraphicsBinding.CreateOpenXrStereoFrameOutputPacing(
             renderFrameId: 41UL,
             externalImageSlot: 2);
 

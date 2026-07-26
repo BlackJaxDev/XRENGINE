@@ -81,7 +81,7 @@ public sealed class PhysicsChainGpuKernelFamilyTests
     public void Dispatcher_UsesExplicitProgramsLabelsAndZeroReadbackCounters()
     {
         string dispatcher = ReadWorkspaceFile(
-            "XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.Kernels.cs");
+            "XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.Kernels.cs");
 
         dispatcher.ShouldContain("PhysicsChainBranched.comp");
         dispatcher.ShouldContain("GPUPhysicsChainDispatcher.Solver.ShortLinear");

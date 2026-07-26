@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using NUnit.Framework;
 using Shouldly;
@@ -47,8 +47,8 @@ public sealed class GpuIndirectPhase6SortingTests
     [Test]
     public void Phase6_HostAndShaderContracts_ArePresent()
     {
-        string hostSource = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs");
-        hostSource.ShouldContain("GpuSortPolicy.ResolveSortDomain(RenderPass, Engine.Rendering.Settings.GpuSortDomainPolicy)");
+        string hostSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
+        hostSource.ShouldContain("GpuSortPolicy.ResolveSortDomain(RenderPass, RuntimeEngine.Rendering.Settings.GpuSortDomainPolicy)");
         hostSource.ShouldContain("_buildKeysComputeShader.Uniform(\"SortDomain\"");
         hostSource.ShouldContain("_buildKeysComputeShader.Uniform(\"SortDirection\"");
 

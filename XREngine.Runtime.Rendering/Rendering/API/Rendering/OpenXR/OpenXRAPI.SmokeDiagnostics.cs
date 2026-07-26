@@ -202,7 +202,7 @@ public unsafe partial class OpenXRAPI
         }
 
         if (!_smokeFoveationResolution.IsSupported &&
-            RuntimeRenderingHostServices.Current.VrFoveationRequireRequested &&
+            RuntimeRenderingHostServices.Presentation.VrFoveationRequireRequested &&
             !string.IsNullOrWhiteSpace(_smokeFoveationResolution.Diagnostic))
         {
             AddFailureIfMissing(
@@ -251,7 +251,7 @@ public unsafe partial class OpenXRAPI
 
     private void ResetSmokeDiagnostics()
     {
-        ResetStrictSpsBoundaryCaptureDiagnostics();
+        ResetGraphicsBackendDiagnostics();
         lock (_smokeDiagnosticsLock)
         {
             _smokeRuntimeStateTransitions.Clear();

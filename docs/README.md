@@ -15,6 +15,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Rendering Runtime Overview](architecture/rendering/runtime-overview.md)
 - [Frame Lifecycle And Dispatch Paths](architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
 - [Mesh Submission Strategies](architecture/rendering/mesh-submission-strategies.md)
+- [Renderer Backend Hot Reload](architecture/rendering/renderer-backend-hot-reload.md)
 - [CPU Scene BVH](architecture/rendering/cpu-scene-bvh.md)
 - [GPU Scene BVH](architecture/rendering/gpu-scene-bvh.md)
 - [Scene Architecture](architecture/scene/overview.md)
@@ -69,6 +70,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 ## Work Docs
 
 - [Work Docs Index](work/README.md)
+- [Apple Platform and MoltenVK Support Design](work/design/platform/apple-platform-moltenvk-support-design.md)
 - [Runtime Modularization Plan](work/design/runtime-modularization-plan.md)
 - [Texture Runtime, Streaming, And Virtual Texturing Design](work/design/texturing/texture-runtime-streaming-virtual-texturing-design.md)
 - [Transparency And OIT Implementation Plan](work/design/rendering/transparency-and-oit-implementation-plan.md)

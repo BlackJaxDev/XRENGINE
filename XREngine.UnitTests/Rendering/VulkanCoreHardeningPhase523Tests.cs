@@ -10,7 +10,7 @@ public sealed class VulkanCoreHardeningPhase523Tests
     public void ImageViews_AreInternedByCompleteStructuralIdentityAndReferenceCounted()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Textures/VulkanRenderer.ImageViewLifetime.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Textures/VulkanRenderer.ImageViewLifetime.cs");
 
         foreach (string identityField in new[]
                  {
@@ -30,7 +30,7 @@ public sealed class VulkanCoreHardeningPhase523Tests
         source.ShouldContain("entry.ReferenceCount = 0");
 
         string imageBacked = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
         imageBacked.ShouldContain("CreateView(descriptor, _view)");
         imageBacked.ShouldContain("IsLiveImageViewStructurallyEquivalent(reusableView, in viewInfo)");
     }
@@ -39,7 +39,7 @@ public sealed class VulkanCoreHardeningPhase523Tests
     public void MeshAndDeformationBuffers_CompareStableStructuralIdentity()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Buffers.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Buffers.cs");
 
         foreach (string identityField in new[]
                  {
@@ -59,7 +59,7 @@ public sealed class VulkanCoreHardeningPhase523Tests
     public void ExternalIndirectIndexBuffer_IsNotOverwrittenByTheMeshWrapper()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Buffers.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Buffers.cs");
 
         int externalBranch = source.IndexOf("else if (_triangleIndexBufferExternallyProvided)", StringComparison.Ordinal);
         int meshBranch = source.IndexOf("else if (Mesh is not null)", externalBranch, StringComparison.Ordinal);
@@ -72,9 +72,9 @@ public sealed class VulkanCoreHardeningPhase523Tests
     public void RetirementReverseIndex_DirtiesOnlyExactRecordedDependents()
     {
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
         string allocation = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferAllocation.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs");
 
         lifetime.ShouldContain("InvalidateCachedCommandBuffersForRetiringResource(key, generation, resourceOwner, dependentCommandBuffers)");
         lifetime.ShouldContain("InvalidateCachedCommandBuffersByHandle(");
@@ -88,7 +88,7 @@ public sealed class VulkanCoreHardeningPhase523Tests
     public void DescriptorGeneration_IsPublishedOncePerDirtyEpoch()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture.cs");
         int start = source.IndexOf("protected void MarkDescriptorPublished()", StringComparison.Ordinal);
         int end = source.IndexOf("protected void MarkUploaded()", start, StringComparison.Ordinal);
         start.ShouldBeGreaterThanOrEqualTo(0);

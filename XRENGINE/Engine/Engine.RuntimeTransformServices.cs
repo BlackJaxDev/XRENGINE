@@ -22,12 +22,12 @@ internal sealed class EngineRuntimeTransformServices : IRuntimeTransformServices
     public bool RenderTransformLines => Engine.EditorPreferences.Debug.RenderTransformLines;
     public bool RenderTransformPoints => Engine.EditorPreferences.Debug.RenderTransformPoints;
     public bool RenderTransformCapsules => Engine.EditorPreferences.Debug.RenderTransformCapsules;
-    public bool TransformCullingIsAxisAligned => Engine.Rendering.Settings.TransformCullingIsAxisAligned;
-    public bool IsShadowPass => Engine.Rendering.State.IsShadowPass;
+    public bool TransformCullingIsAxisAligned => RuntimeEngine.Rendering.Settings.TransformCullingIsAxisAligned;
+    public bool IsShadowPass => RuntimeEngine.Rendering.State.IsShadowPass;
     public bool IsRenderThread => Engine.IsRenderThread;
     public bool IsEditing => Engine.PlayMode.IsEditing;
-    public ELoopType ChildRecalculationLoopType => Engine.Rendering.Settings.RecalcChildMatricesLoopType;
-    public ERenderMatrixUpdateMode RenderMatrixUpdateMode => Engine.Rendering.Settings.RenderMatrixUpdateMode;
+    public ELoopType ChildRecalculationLoopType => Engine.EffectiveSettings.RecalcChildMatricesLoopType;
+    public ERenderMatrixUpdateMode RenderMatrixUpdateMode => RuntimeEngine.Rendering.Settings.RenderMatrixUpdateMode;
     public float UpdateDeltaSeconds => Engine.Time.Timer.Update.Delta;
     public float DilatedUpdateDeltaSeconds => Engine.Time.Timer.Update.DilatedDelta;
     public long UpdateDeltaTicks => Engine.Time.Timer.Update.DeltaTicks;
@@ -41,16 +41,16 @@ internal sealed class EngineRuntimeTransformServices : IRuntimeTransformServices
     public ColorF4 TransformCapsuleColor => Engine.EditorPreferences.Theme.TransformCapsuleColor;
 
     public void RecordRenderMatrixChange(Delegate? listeners)
-        => Engine.Rendering.Stats.RenderMatrix.RecordRenderMatrixChange(listeners);
+        => RuntimeEngine.Rendering.Stats.RenderMatrix.RecordRenderMatrixChange(listeners);
 
     public void RenderLine(Vector3 start, Vector3 end, ColorF4 color)
-        => Engine.Rendering.Debug.RenderLine(start, end, color);
+        => RuntimeEngine.Rendering.Debug.RenderLine(start, end, color);
 
     public void RenderPoint(Vector3 position, ColorF4 color)
-        => Engine.Rendering.Debug.RenderPoint(position, color);
+        => RuntimeEngine.Rendering.Debug.RenderPoint(position, color);
 
     public void RenderCapsule(Capsule capsule, ColorF4 color)
-        => Engine.Rendering.Debug.RenderCapsule(capsule, color);
+        => RuntimeEngine.Rendering.Debug.RenderCapsule(capsule, color);
 
     public void LogRendering(string message)
         => Debug.Rendering(message);

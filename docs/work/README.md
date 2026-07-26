@@ -151,6 +151,7 @@ Avoid top-level subsystem buckets such as `docs/work/rendering/` for investigati
 
 - [design/affine-matrix-integration-plan.md](design/affine-matrix-integration-plan.md)
 - [design/advanced-flat-mirror-rendering-design.md](design/advanced-flat-mirror-rendering-design.md)
+- [design/platform/apple-platform-moltenvk-support-design.md](design/platform/apple-platform-moltenvk-support-design.md)
 - [design/rendering/atmospheric-scattering-component-design.md](design/rendering/atmospheric-scattering-component-design.md)
 - [design/cuda-usage-opportunities-design.md](design/cuda-usage-opportunities-design.md)
 - [design/default-render-pipeline-improvement-plan.md](design/default-render-pipeline-improvement-plan.md)

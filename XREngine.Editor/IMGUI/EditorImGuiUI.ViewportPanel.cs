@@ -73,7 +73,7 @@ public static partial class EditorImGuiUI
     /// </summary>
     private static void DisplayScenePanelImage()
     {
-        XRWindow? window = Engine.Windows.Count > 0 ? Engine.Windows[0] : null;
+        XRWindow? window = RuntimeEngine.Windows.Count > 0 ? RuntimeEngine.Windows[0] : null;
         if (window is null)
             return;
 
@@ -81,52 +81,26 @@ public static partial class EditorImGuiUI
         if (texture is null)
             return;
 
-        nint handle;
-        bool flipTextureY = false;
-        if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
+        if (!EditorTexturePreviewService.TryGetHandle(
+                texture,
+                out nint handle,
+                out bool flipTextureY,
+                out string? failureReason))
         {
-            IntPtr textureId = EditorRenderThread.Invoke(
-                () => vkRenderer.RegisterImGuiTexture(texture),
-                "ViewportPanel.RegisterVulkanScenePanelTexture",
-                RenderThreadJobKind.TextureUpload);
-            if (textureId == IntPtr.Zero)
+            if (!_scenePanelVulkanTextureFailedLogged)
             {
-                if (!_scenePanelVulkanTextureFailedLogged)
-                {
-                    _scenePanelVulkanTextureFailedLogged = true;
-                    XREngine.Debug.Rendering("[ScenePanel] Vulkan RegisterImGuiTexture returned zero for ScenePanelTexture.");
-                }
-
-                return;
+                _scenePanelVulkanTextureFailedLogged = true;
+                XREngine.Debug.Rendering($"[ScenePanel] Texture interop failed: {failureReason}");
             }
 
-            handle = (nint)textureId;
-            if (!_scenePanelPathLogged)
-            {
-                _scenePanelPathLogged = true;
-                XREngine.Debug.Rendering($"[ScenePanel] Displaying ScenePanelTexture via Vulkan ImGui handle={(long)textureId} size={texture.Width}x{texture.Height}.");
-            }
-        }
-        else if (AbstractRenderer.Current is OpenGLRenderer renderer)
-        {
-            var glTexture = EditorRenderThread.Invoke(
-                () => renderer.GenericToAPI<GLTexture2D>(texture),
-                "ViewportPanel.ResolveOpenGLScenePanelTexture",
-                RenderThreadJobKind.TextureUpload);
-            if (glTexture is null || glTexture.BindingId == 0 || glTexture.BindingId == OpenGLRenderer.GLObjectBase.InvalidBindingId)
-                return;
-
-            handle = (nint)glTexture.BindingId;
-            flipTextureY = true;
-            if (!_scenePanelPathLogged)
-            {
-                _scenePanelPathLogged = true;
-                XREngine.Debug.Rendering($"[ScenePanel] Displaying ScenePanelTexture via OpenGL handle={glTexture.BindingId} size={texture.Width}x{texture.Height}.");
-            }
-        }
-        else
-        {
             return;
+        }
+
+        if (!_scenePanelPathLogged)
+        {
+            _scenePanelPathLogged = true;
+            XREngine.Debug.Rendering(
+                $"[ScenePanel] Displaying ScenePanelTexture via {AbstractRenderer.Current?.BackendId} handle={(long)handle} size={texture.Width}x{texture.Height}.");
         }
 
         // Get the content region size for the image
@@ -146,10 +120,10 @@ public static partial class EditorImGuiUI
 
     private static void EnsureScenePanelRenderRegionProvider()
     {
-        if (Engine.Rendering.ScenePanelRenderRegionProvider is not null)
+        if (RuntimeEngine.Rendering.ScenePanelRenderRegionProvider is not null)
             return;
 
-        Engine.Rendering.ScenePanelRenderRegionProvider = window =>
+        RuntimeEngine.Rendering.ScenePanelRenderRegionProvider = window =>
         {
             if (!Engine.IsEditor || !Engine.PlayMode.IsEditing)
                 return null;
@@ -166,7 +140,7 @@ public static partial class EditorImGuiUI
 
     private static void UpdateScenePanelRenderRegion()
     {
-        XRWindow? window = Engine.Windows.Count > 0 ? Engine.Windows[0] : null;
+        XRWindow? window = RuntimeEngine.Windows.Count > 0 ? RuntimeEngine.Windows[0] : null;
         if (window is null)
         {
             _scenePanelRenderRegion = null;

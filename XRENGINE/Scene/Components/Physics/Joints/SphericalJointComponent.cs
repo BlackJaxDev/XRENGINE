@@ -179,9 +179,9 @@ namespace XREngine.Components.Physics
 
             for (int i = 0; i < segments; i++)
             {
-                Engine.Rendering.Debug.RenderLine(ring[i], ring[i + 1], ColorF4.Yellow);
+                RuntimeEngine.Rendering.Debug.RenderLine(ring[i], ring[i + 1], ColorF4.Yellow);
                 if (i % 4 == 0)
-                    Engine.Rendering.Debug.RenderLine(tip, ring[i], new ColorF4(1f, 1f, 0f, 0.5f));
+                    RuntimeEngine.Rendering.Debug.RenderLine(tip, ring[i], new ColorF4(1f, 1f, 0f, 0.5f));
             }
         }
     }

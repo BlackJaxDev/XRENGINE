@@ -21,7 +21,6 @@ namespace XREngine.Editor;
 public static class EditorPlayModeController
 {
     private static bool _initialized;
-    private static readonly Dictionary<LocalInputInterface, ShortcutHandlers> _shortcutHandlers = new(ReferenceEqualityComparer.Instance);
 
     private sealed record PlayerPossessionSnapshot(
         Type ControllerType,
@@ -35,8 +34,6 @@ public static class EditorPlayModeController
     /// Must survive snapshot restore (which can replace scene nodes/components).
     /// </summary>
     private static readonly Dictionary<ELocalPlayerIndex, PlayerPossessionSnapshot> _editorPossessionSnapshot = [];
-
-    private record ShortcutHandlers(Action PlayPause, Action Stop, Action StepFrame);
 
     /// <summary>
     /// Initializes the editor play mode controller.
@@ -56,8 +53,9 @@ public static class EditorPlayModeController
         Engine.PlayMode.Paused += OnPaused;
         Engine.PlayMode.Resumed += OnResumed;
 
-        // Register keyboard shortcuts
-        LocalInputInterface.GlobalRegisters.Add(RegisterPlayModeInput);
+        // Editor play controls belong to the window rather than the possessed pawn so they
+        // remain available when a GameMode owns input or no gameplay pawn is possessed.
+        XRWindow.AnyWindowKeyDown += OnAnyWindowKeyDown;
 
         _initialized = true;
         Debug.Out("EditorPlayModeController initialized");
@@ -78,6 +76,7 @@ public static class EditorPlayModeController
         Engine.PlayMode.PostSnapshotRestore -= OnPostSnapshotRestore;
         Engine.PlayMode.Paused -= OnPaused;
         Engine.PlayMode.Resumed -= OnResumed;
+        XRWindow.AnyWindowKeyDown -= OnAnyWindowKeyDown;
 
         _initialized = false;
     }
@@ -256,85 +255,51 @@ public static class EditorPlayModeController
 
     #region Keyboard Shortcuts
 
-    private static void RegisterPlayModeInput(InputInterface inputInterface)
+    private static void OnAnyWindowKeyDown(XRWindow window, EKey key)
     {
-        if (inputInterface is not LocalInputInterface local)
-            return;
-
-        if (inputInterface.Unregister)
+        if (key == EKey.F6)
         {
-            // Unregistration is handled automatically by the input system
-            // when Unregister is true, just remove our handlers reference
-            _shortcutHandlers.Remove(local);
+            Engine.EnqueueUpdateThreadTask(HandleStepFrameShortcut);
             return;
         }
 
-        if (_shortcutHandlers.ContainsKey(local))
+        if (key != EKey.F5)
             return;
 
-        Action playPauseHandler = () => HandlePlayPauseShortcut(local);
-        Action stopHandler = () => HandleStopShortcut(local);
-        Action stepFrameHandler = () => HandleStepFrameShortcut(local);
-
-        _shortcutHandlers[local] = new ShortcutHandlers(playPauseHandler, stopHandler, stepFrameHandler);
-
-        // F5 = Play/Pause toggle, Shift+F5 = Stop
-        local.RegisterKeyEvent(EKey.F5, EButtonInputType.Pressed, playPauseHandler);
-        // F6 = Step frame (when paused)
-        local.RegisterKeyEvent(EKey.F6, EButtonInputType.Pressed, stepFrameHandler);
+        bool forceExit = IsForceExitShortcut(
+            key,
+            window.IsKeyPressed(EKey.ShiftLeft),
+            window.IsKeyPressed(EKey.ShiftRight));
+        Engine.EnqueueUpdateThreadTask(forceExit
+            ? ForceExitPlayModeFromShortcut
+            : HandlePlayPauseShortcut);
     }
 
-    private static void HandlePlayPauseShortcut(LocalInputInterface input)
+    private static void HandlePlayPauseShortcut()
     {
-        bool shiftHeld = IsShiftDown(input);
-
-        if (shiftHeld)
-        {
-            // Shift+F5 = Stop
-            if (Engine.PlayMode.IsPlaying || Engine.PlayMode.IsPaused)
-            {
-                EditorState.RequestExitPlayMode();
-            }
-        }
-        else
-        {
-            // F5 = Toggle play/pause
-            if (Engine.PlayMode.IsEditing)
-            {
-                EditorState.RequestEnterPlayMode();
-            }
-            else if (Engine.PlayMode.IsPlaying)
-            {
-                EditorState.Pause();
-            }
-            else if (Engine.PlayMode.IsPaused)
-            {
-                EditorState.Resume();
-            }
-        }
+        // F5 = Toggle play/pause
+        if (Engine.PlayMode.IsEditing)
+            EditorState.RequestEnterPlayMode();
+        else if (Engine.PlayMode.IsPlaying)
+            EditorState.Pause();
+        else if (Engine.PlayMode.IsPaused)
+            EditorState.Resume();
     }
 
-    private static void HandleStopShortcut(LocalInputInterface input)
+    internal static bool IsForceExitShortcut(EKey key, bool leftShiftDown, bool rightShiftDown)
+        => key == EKey.F5 && (leftShiftDown || rightShiftDown);
+
+    private static void ForceExitPlayModeFromShortcut()
     {
         if (Engine.PlayMode.IsPlaying || Engine.PlayMode.IsPaused)
-        {
-            EditorState.RequestExitPlayMode();
-        }
+            EditorState.ExitPlayMode();
     }
 
-    private static void HandleStepFrameShortcut(LocalInputInterface input)
+    private static void HandleStepFrameShortcut()
     {
         if (Engine.PlayMode.IsPaused)
-        {
             EditorState.StepFrame();
-        }
     }
-
-    private static bool IsShiftDown(LocalInputInterface input)
-        => input.GetKeyState(EKey.ShiftLeft, EButtonInputType.Held)
-        || input.GetKeyState(EKey.ShiftRight, EButtonInputType.Held)
-        || input.GetKeyState(EKey.ShiftLeft, EButtonInputType.Pressed)
-        || input.GetKeyState(EKey.ShiftRight, EButtonInputType.Pressed);
 
     #endregion
 
@@ -344,13 +309,13 @@ public static class EditorPlayModeController
     {
         // Get the world currently being viewed in the editor
         // First try the first window's target world
-        var window = Engine.Windows.FirstOrDefault();
+        var window = RuntimeEngine.Windows.FirstOrDefault();
         return window?.TargetWorldInstance?.TargetWorldObject as XRWorld;
     }
 
     private static void LogPlayerBindings(string phase)
     {
-        Debug.Out($"[EditorPlayModeController] {phase}: SnapshotCount={_editorPossessionSnapshot.Count} Windows={Engine.Windows.Count}");
+        Debug.Out($"[EditorPlayModeController] {phase}: SnapshotCount={_editorPossessionSnapshot.Count} Windows={RuntimeEngine.Windows.Count}");
 
         for (int playerIndex = 0; playerIndex < Engine.State.LocalPlayers.Length; playerIndex++)
         {
@@ -466,8 +431,8 @@ public static class EditorPlayModeController
             // Ensure the player is registered with a valid viewport on a live window.
             // NOTE: localPlayer.Viewport can be non-null but stale across snapshot restore; use the
             // defensive XRWindow helper to repair the player ↔ viewport linkage.
-            var window = Engine.Windows.FirstOrDefault(w => w.Viewports.Any(vp => vp.AssociatedPlayer?.LocalPlayerIndex == playerIndex))
-                ?? Engine.Windows.FirstOrDefault();
+            var window = RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Any(vp => vp.AssociatedPlayer?.LocalPlayerIndex == playerIndex))
+                ?? RuntimeEngine.Windows.FirstOrDefault();
             if (window is null)
             {
                 Debug.Out($"[EditorPlayModeController] Cannot restore editor pawn: no windows exist (player {playerIndex}).");

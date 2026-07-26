@@ -358,7 +358,50 @@ The viewport rendering step dispatches differently based on context:
 - **Editor scene-panel mode**: Renders to an offscreen FBO for docking in the ImGui editor UI
 - **VR mirror composition**: Delegates to OpenXR for desktop mirror rendering
 
-A **circuit breaker** protects the render loop — if exceptions occur repeatedly, frames are temporarily skipped with exponential backoff (up to 5 seconds) to prevent log spam and runaway failures. Importantly, even when viewport rendering fails, the Vulkan `WindowRenderCallback` still runs to ensure the swapchain presents (otherwise the window shows uninitialized white content).
+A **circuit breaker** protects the window render loop. Exceptions that escape
+the complete callback temporarily suppress later callbacks with a linear
+100 ms-per-consecutive-failure backoff capped at five seconds. Viewport and
+world pre/post-render failures are isolated before the Vulkan end-of-frame
+work, so `WindowRenderCallback` still runs and the swapchain can present known
+content instead of remaining uninitialized.
+
+### Vulkan desktop frame coordinator
+
+Vulkan's `WindowRenderCallback` is a short coordinator, not the implementation
+of every end-of-frame operation. It creates one stack-only
+`DesktopFrameAttempt`, then calls responsibility-specific phases:
+
+1. preflight the live surface, resize policy, and resource generations;
+2. prepare the attempt's captured desktop frame slot;
+3. acquire and prepare a swapchain image;
+4. record scene and volatile overlay command buffers;
+5. submit;
+6. present or apply the required recovery policy; and
+7. publish telemetry and finalize acquire/upload ownership.
+
+The attempt captures its frame number and desktop in-flight slot at entry.
+Those values do not change even if global renderer state advances later.
+Acquire and upload ownership transitions are explicit, and finalization fails
+if an acquired image or upload batch remains unresolved. The outer failure
+boundary settles a granted acquire before propagating a primary exception;
+telemetry cleanup cannot hide that primary exception.
+
+Entry also publishes a coherent atomic desktop activity snapshot:
+`IsActive`, `FrameNumber`, and `FrameSlot`. Reentrant callbacks are rejected
+without consuming a frame number. The matching publication token is required
+to clear activity, so an old exit cannot clear a newer attempt. OpenXR uses the
+same snapshot when deciding whether desktop retirement work is safe. Desktop
+entry/exit and OpenXR's complete retirement check-and-drain interval hold the
+same `_desktopFrameRetirementGate`, closing the cross-thread race between
+classifying a desktop slot as inactive and destroying its retired resources.
+
+The circuit breaker remains an `XRWindow` policy around this backend
+coordinator. Device loss does not use normal backoff recovery: Vulkan records
+the first failing operation, marks the logical device terminal, fails pending
+completion markers/readbacks, and stops further submission. `XRWindow` detects
+that terminal state before and during rendering and attempts to recreate the
+renderer on the existing window. A successful recreation resets the circuit
+breaker and invalidates renderer-dependent resources.
 
 ---
 
@@ -426,7 +469,8 @@ AbstractRenderer<TAPI> where TAPI : NativeAPI
       └── VulkanRenderer : AbstractRenderer<Vk>
             GetAPI()        → Vk.GetApi()
             Initialize()    → Full Vulkan setup (instance → swapchain → sync)
-            WindowRenderCallback() → Acquire/Record/Submit/Present
+            WindowRenderCallback() → short phase coordinator:
+                                     Preflight/Slot/Acquire/Record/Submit/Present/Finalize
 ```
 
 ---

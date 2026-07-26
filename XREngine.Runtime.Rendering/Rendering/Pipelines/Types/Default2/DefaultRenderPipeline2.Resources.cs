@@ -190,7 +190,7 @@ public partial class DefaultRenderPipeline2
             ?? instance.LastSceneCamera?.AntiAliasingModeOverride
             ?? instance.LastRenderingCamera?.AntiAliasingModeOverride
             ?? viewport?.ActiveCamera?.AntiAliasingModeOverride
-            ?? RuntimeRenderingHostServices.Current.DefaultAntiAliasingMode;
+            ?? RuntimeRenderingHostServices.FrameTiming.DefaultAntiAliasingMode;
 
     private static void DeclareImportedResources(RenderPipelineResourceLayoutBuilder builder)
     {
@@ -1870,7 +1870,7 @@ public partial class DefaultRenderPipeline2
 
     private static bool TryResolveCurrentResourceFeatureMask(out ulong featureMask)
     {
-        XRRenderPipelineInstance? pipeline = RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext as XRRenderPipelineInstance
+        XRRenderPipelineInstance? pipeline = RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext as XRRenderPipelineInstance
             ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
 
         if (pipeline?.CurrentResourceBuildContext is XRRenderPipelineInstance.ResourceBuildContext context)

@@ -616,7 +616,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         shadowPipelineSource.ShouldContain("internal int IndexedClearRegionCount");
         shadowPipelineSource.ShouldContain("renderer?.SetRenderArea(region);");
         shadowPipelineSource.ShouldContain("renderer?.CropRenderArea(region);");
-        shadowPipelineSource.ShouldContain("Engine.Rendering.State.ClearByBoundFBO();");
+        shadowPipelineSource.ShouldContain("RuntimeEngine.Rendering.State.ClearByBoundFBO();");
         shadowPipelineSource.ShouldContain("renderer?.SetIndexedViewportScissors(regions.AsSpan(0, count), regions.AsSpan(0, count));");
 
         string pointSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "PointLightComponent.cs"));
@@ -1071,26 +1071,21 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     {
         string lightSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.cs"));
         lightSource.ShouldContain("protected override bool UsesAtlasShadowViewport");
-        lightSource.ShouldContain("Engine.Rendering.Settings.UseDirectionalShadowAtlas");
+        lightSource.ShouldContain("RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas");
 
-        string renderSettingsSource = LoadRepoSource(Path.Combine("XRENGINE", "Engine", "Subclasses", "Rendering", "Engine.Rendering.Settings.cs"));
+        string renderSettingsSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Runtime", "Settings", "RuntimeEngine.Rendering.EngineSettings.cs"));
         renderSettingsSource.ShouldContain("Volatile.Read(ref _useDirectionalShadowAtlas)");
         renderSettingsSource.ShouldContain("Volatile.Write(ref _useDirectionalShadowAtlas, value)");
         renderSettingsSource.ShouldContain("Maximum number of dynamic shadow atlas pages per light-family atlas.");
         renderSettingsSource.ShouldContain("Math.Clamp(value, 1, 64)");
 
-        string runtimeFacadeSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Runtime", "RuntimeEngineFacade.cs"));
-        runtimeFacadeSource.ShouldContain("ProvidesShadowAtlasSettings");
-        runtimeFacadeSource.ShouldContain("services.MaxShadowAtlasPages");
-        runtimeFacadeSource.ShouldContain("services.UseDirectionalShadowAtlas");
-
         string runtimeHostSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Runtime", "RuntimeRenderingHostServices.cs"));
         runtimeHostSource.ShouldContain("bool ProvidesShadowAtlasSettings");
         runtimeHostSource.ShouldContain("int MaxShadowAtlasPages");
 
-        string engineHostSource = LoadRepoSource(Path.Combine("XRENGINE", "Engine", "Engine.RuntimeRenderingHostServices.cs"));
+        string engineHostSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Bootstrap", "RenderingHost", "Engine.RuntimeRenderingHostServices.cs"));
         engineHostSource.ShouldContain("public bool ProvidesShadowAtlasSettings => true;");
-        engineHostSource.ShouldContain("Engine.Rendering.Settings.MaxShadowAtlasPages");
+        engineHostSource.ShouldContain("RuntimeEngine.Rendering.Settings.MaxShadowAtlasPages");
 
         string cascadeSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.CascadeShadows.cs"));
         cascadeSource.ShouldContain("private DirectionalCascadeAtlasSlot _primaryAtlasSlot;");
@@ -1518,7 +1513,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         string glMaterialSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "OpenGL", "Types", "Meshes", "GLMaterial.cs"));
         glMaterialSource.ShouldContain("Data.ShadowUniformSourceMaterial");
         glMaterialSource.ShouldContain("shadowUniformSource.OnSettingShadowUniforms(materialProgram.Data);");
-        glMaterialSource.ShouldContain("Engine.Rendering.State.IsShadowPass && Data.HasSettingShadowUniformHandlers");
+        glMaterialSource.ShouldContain("RuntimeEngine.Rendering.State.IsShadowPass && Data.HasSettingShadowUniformHandlers");
         glMaterialSource.ShouldContain("Data.OnSettingShadowUniforms(materialProgram.Data);");
 
         string uberSource = LoadShaderSource("Uber/UberShader.frag");

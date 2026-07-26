@@ -17,7 +17,6 @@ using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 using XREngine.Rendering.Shaders.Generator;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
-using static XREngine.Rendering.OpenGL.OpenGLRenderer;
 using static XREngine.Rendering.XRMesh;
 
 namespace XREngine.Rendering
@@ -58,6 +57,9 @@ namespace XREngine.Rendering
     [MemoryPackable(GenerateType.NoGenerate)]
     public partial class XRMeshRenderer : XRAsset
     {
+        private const string NvStereoViewRenderingExtension = "GL_NV_stereo_view_rendering";
+        private const string OvrMultiview2Extension = "GL_OVR_multiview2";
+        private const string ExtMultiviewExtension = "GL_EXT_multiview";
         private static int _settingsRevision;
 
         static XRMeshRenderer()
@@ -127,22 +129,24 @@ namespace XREngine.Rendering
             /// Surfaced by the shader-program-links panel so each program tells the engineer what pass
             /// and stereo strategy it is for.
             /// </summary>
+            private string? _versionKindLabel;
             public virtual string VersionKindLabel
+                => _versionKindLabel ??= ResolveVersionKindLabel();
+
+            private string ResolveVersionKindLabel()
             {
-                get
+                Type type = GetType();
+                if (type.IsGenericType)
                 {
-                    Type t = GetType();
-                    if (t.IsGenericType)
-                    {
-                        Type genericArg = t.GetGenericArguments()[0];
-                        string raw = genericArg.Name;
-                        const string suffix = "VertexShaderGenerator";
-                        return raw.EndsWith(suffix, StringComparison.Ordinal)
-                            ? raw[..^suffix.Length]
-                            : raw;
-                    }
-                    return t.Name;
+                    Type genericArg = type.GetGenericArguments()[0];
+                    string raw = genericArg.Name;
+                    const string suffix = "VertexShaderGenerator";
+                    return raw.EndsWith(suffix, StringComparison.Ordinal)
+                        ? raw[..^suffix.Length]
+                        : raw;
                 }
+
+                return type.Name;
             }
 
             public void ResetVertexShaderSource()
@@ -309,15 +313,15 @@ namespace XREngine.Rendering
         public BaseVersion GetPointLightAtlasInstancedVersion() => GetOrCreateVersion(9);
 
         private static bool HasNVStereoViewRendering(XRShader x)
-            => x.HasExtension(GLShader.EXT_GL_NV_STEREO_VIEW_RENDERING, XRShader.EExtensionBehavior.Require);
+            => x.HasExtension(NvStereoViewRenderingExtension, XRShader.EExtensionBehavior.Require);
         private static bool HasMultiViewExtension(XRShader x)
             =>
-                x.HasExtension(GLShader.EXT_GL_OVR_MULTIVIEW2, XRShader.EExtensionBehavior.Require) ||
-                x.HasExtension(GLShader.EXT_GL_EXT_MULTIVIEW, XRShader.EExtensionBehavior.Require);
+                x.HasExtension(OvrMultiview2Extension, XRShader.EExtensionBehavior.Require) ||
+                x.HasExtension(ExtMultiviewExtension, XRShader.EExtensionBehavior.Require);
         private static bool NoSpecialExtensions(XRShader x) => 
-            !x.HasExtension(GLShader.EXT_GL_OVR_MULTIVIEW2, XRShader.EExtensionBehavior.Require) && 
-            !x.HasExtension(GLShader.EXT_GL_EXT_MULTIVIEW, XRShader.EExtensionBehavior.Require) &&
-            !x.HasExtension(GLShader.EXT_GL_NV_STEREO_VIEW_RENDERING, XRShader.EExtensionBehavior.Require);
+            !x.HasExtension(OvrMultiview2Extension, XRShader.EExtensionBehavior.Require) &&
+            !x.HasExtension(ExtMultiviewExtension, XRShader.EExtensionBehavior.Require) &&
+            !x.HasExtension(NvStereoViewRenderingExtension, XRShader.EExtensionBehavior.Require);
 
         public XRMeshRenderer() : this(null, null) { }
         public XRMeshRenderer(XRMesh? mesh, XRMaterial? material)

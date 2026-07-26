@@ -127,9 +127,9 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
             .Replace("\r\n", "\n");
         string forwardSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.ForwardLighting.cs")
             .Replace("\r\n", "\n");
-        string dirtyReasonSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferDirtyReasons.cs")
+        string dirtyReasonSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferDirtyReasons.cs")
             .Replace("\r\n", "\n");
-        string loweringSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs")
+        string loweringSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs")
             .Replace("\r\n", "\n");
 
         directionalSource.ShouldContain("GetSampleableCascadedShadowReceiverTexture");

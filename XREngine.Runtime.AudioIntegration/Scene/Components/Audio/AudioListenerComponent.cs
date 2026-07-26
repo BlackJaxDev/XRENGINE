@@ -95,13 +95,13 @@ namespace XREngine.Components
                 return;
 
             Listener = RuntimeAudioIntegrationServices.Current.NewListener(Name);
-            (World as IRuntimeAudioListenerWorld)?.Listeners.Add(Listener);
+            (World as IRuntimeAudioListenerWorld)?.AddAudioListener(Listener);
         }
 
         private void DestroyListener()
         {
             if (Listener is not null)
-                (World as IRuntimeAudioListenerWorld)?.Listeners.Remove(Listener);
+                (World as IRuntimeAudioListenerWorld)?.RemoveAudioListener(Listener);
 
             Listener?.Dispose();
             Listener = null;

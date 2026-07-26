@@ -507,7 +507,7 @@ namespace XREngine.Rendering
         /// Returns the currently rendering pipeline's invalid material.
         /// Returns null if the current rendering pipeline is not set or does not have an invalid material.
         /// </summary>
-        public static XRMaterial? InvalidMaterial => RuntimeRenderingHostServices.Current.InvalidMaterial;
+        public static XRMaterial? InvalidMaterial => RuntimeRenderingHostServices.Assets.InvalidMaterial;
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
@@ -936,11 +936,10 @@ namespace XREngine.Rendering
 
         private static bool ShouldCreateShaderPipelineProgram(bool allowWhenShaderPipelinesDisabled = false)
         {
-            IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
-            if (host.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+            if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
                 return allowWhenShaderPipelinesDisabled;
 
-            return allowWhenShaderPipelinesDisabled || host.AllowShaderPipelines;
+            return allowWhenShaderPipelinesDisabled || RuntimeRenderingHostServices.Settings.AllowShaderPipelines;
         }
 
         private bool EnsureShaderPipelineUberSourceReady()
@@ -1065,7 +1064,7 @@ namespace XREngine.Rendering
         }
 
         private static bool ExactTransparencyEnabled
-            => RuntimeRenderingHostServices.Current.EnableExactTransparencyTechniques;
+            => RuntimeRenderingHostServices.Settings.EnableExactTransparencyTechniques;
 
         private const int UberBlendModeOpaque = 0;
         private const int UberBlendModeCutout = 1;
@@ -1213,7 +1212,7 @@ namespace XREngine.Rendering
         }
 
         private static void ConfigureMaterialProgram(XRMaterialBase material, XRRenderProgram program)
-            => RuntimeRenderingHostServices.Current.ConfigureMaterialProgram(material, program);
+            => RuntimeRenderingHostServices.BackendInterop.ConfigureMaterialProgram(material, program);
 
         private static Dictionary<uint, BlendMode> CreateWeightedBlendedOitBlendModes()
             => new()

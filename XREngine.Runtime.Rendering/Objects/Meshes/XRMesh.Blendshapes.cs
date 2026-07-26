@@ -39,9 +39,9 @@ public partial class XRMesh
 
     private unsafe void PopulateBlendshapeBuffers(Vertex[] sourceList)
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope();
+        using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope();
 
-        bool intVarType = RuntimeRenderingHostServices.Current.UseIntegerUniformsInShaders;
+        bool intVarType = RuntimeRenderingHostServices.Settings.UseIntegerUniformsInShaders;
         string[] blendshapeNames = BlendshapeNames ?? [];
 
         BlendshapeCounts = new XRDataBuffer(ECommonBufferType.BlendshapeCount.ToString(), EBufferTarget.ArrayBuffer, (uint)sourceList.Length,
@@ -51,7 +51,7 @@ public partial class XRMesh
         List<Vector3> deltas = [Vector3.Zero];
         List<IVector4> blendshapeIndices = [];
 
-        bool remapDeltas = RuntimeRenderingHostServices.Current.RemapBlendshapeDeltas;
+        bool remapDeltas = RuntimeRenderingHostServices.Settings.RemapBlendshapeDeltas;
 
         int blendshapeDeltaIndicesIndex = 0;
         int sourceCount = sourceList.Length;
@@ -206,7 +206,7 @@ public partial class XRMesh
 
     private unsafe int[]? PopulateBlendshapeDeltas(bool intVarType, List<Vector3> deltas, List<IVector4> blendshapeIndices)
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope();
+        using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope();
 
         BlendshapeDeltas = new XRDataBuffer($"{ECommonBufferType.BlendshapeDeltas}Buffer", EBufferTarget.ShaderStorageBuffer,
             (uint)deltas.Count, EComponentType.Float, 4, false, false);
@@ -253,7 +253,7 @@ public partial class XRMesh
 
     private unsafe int[] PopulateRemappedBlendshapeDeltas(bool intVarType, List<Vector3> deltas, List<IVector4> blendshapeIndices)
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope();
+        using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope();
 
         Remapper deltaRemap = new();
         deltaRemap.Remap(deltas, null);
@@ -303,7 +303,7 @@ public partial class XRMesh
 
     private unsafe void PopulateSparseBlendshapeBuffers(bool intVarType, List<IVector4>?[] sparseRecordsByShape, int[]? deltaRemap)
     {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope();
+        using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope();
 
         int shapeCount = sparseRecordsByShape.Length;
         int recordCount = 0;

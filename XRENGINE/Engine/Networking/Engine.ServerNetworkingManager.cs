@@ -504,7 +504,7 @@ namespace XREngine
 
             private static XRWorldInstance? ResolvePrimaryWorldInstance()
             {
-                foreach (var window in Engine.Windows)
+                foreach (var window in RuntimeEngine.Windows)
                 {
                     if (window?.TargetWorldInstance is XRWorldInstance worldInstance)
                         return worldInstance;

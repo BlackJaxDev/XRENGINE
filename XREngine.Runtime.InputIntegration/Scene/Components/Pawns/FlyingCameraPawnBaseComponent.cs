@@ -1,0 +1,419 @@
+using XREngine.Extensions;
+using XREngine.Core.Attributes;
+using System.ComponentModel;
+using XREngine.Input.Devices;
+using XREngine.Rendering;
+using XREngine.Rendering.UI;
+
+namespace XREngine.Components
+{
+    [XRTypeRedirect("XREngine.Components.FlyingCameraPawnBaseComponent")]
+    public abstract class FlyingCameraPawnBaseComponent : PawnComponent
+    {
+        /// <summary>Typed rendering-layer view of the core pawn camera.</summary>
+        public new CameraComponent? CameraComponent
+        {
+            get => base.CameraComponent as CameraComponent;
+            set => base.CameraComponent = value;
+        }
+
+        /// <summary>Typed input-layer view of the core pawn input provider.</summary>
+        public new LocalInputInterface? LocalInput => base.LocalInput as LocalInputInterface;
+
+        /// <summary>Typed rendering-layer view of the core pawn viewport.</summary>
+        public new XRViewport? Viewport => base.Viewport as XRViewport;
+        protected static readonly bool CameraInputDiagnosticsEnabled =
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DebugCameraInput), "1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CameraInputDiag), "1", StringComparison.OrdinalIgnoreCase);
+
+        protected float
+            _incRight = 0.0f,
+            _incForward = 0.0f,
+            _incUp = 0.0f,
+            _incPitch = 0.0f,
+            _incYaw = 0.0f;
+
+        public float Yaw
+        {
+            get => _yaw;
+            set => SetField(ref _yaw, value.RemapToRange(-180.0f, 180.0f));
+        }
+        public float Pitch
+        {
+            get => _pitch;
+            set => SetField(ref _pitch, value.RemapToRange(-180.0f, 180.0f));
+        }
+
+        public void SetYawPitch(float yaw, float pitch)
+        {
+            Yaw = yaw;
+            Pitch = pitch;
+        }
+
+        public void AddYawPitch(float yawDiff, float pitchDiff)
+            => SetYawPitch(Yaw + yawDiff, Pitch + pitchDiff);
+
+        protected abstract void YawPitchUpdated();
+
+        [Browsable(false)]
+        public bool ShiftPressed
+        {
+            get => _shiftPressed;
+            private set => SetField(ref _shiftPressed, value);
+        }
+
+        [Browsable(false)]
+        public bool CtrlPressed
+        {
+            get => _ctrlPressed;
+            private set => SetField(ref _ctrlPressed, value);
+        }
+
+        [Browsable(false)]
+        public bool RightClickPressed
+        {
+            get => _rightClickPressed;
+            private set => SetField(ref _rightClickPressed, value);
+        }
+
+        [Browsable(false)]
+        public bool LeftClickPressed
+        {
+            get => _leftClickPressed;
+            private set => SetField(ref _leftClickPressed, value);
+        }
+
+        protected bool
+            _ctrlPressed = false,
+            _shiftPressed = false,
+            _rightClickPressed = false,
+            _leftClickPressed = false;
+
+        private float _yaw;
+        private float _pitch;
+
+        [Browsable(false)]
+        public bool Rotating => _rightClickDragging && _ctrlPressed;
+
+        [Browsable(false)]
+        public bool Translating => _rightClickDragging && !_ctrlPressed;
+
+        [Browsable(false)]
+        public bool Moving => Rotating || Translating;
+
+        [Category("Movement")]
+        public float ScrollSpeed { get; set; } = 7.0f;
+
+        [Category("Movement")]
+        public float MouseRotateSpeed { get; set; } = 0.75f;
+
+        [Category("Movement")]
+        public float MouseTranslateSpeed { get; set; } = 0.01f;
+
+        [Category("Movement")]
+        public float GamepadRotateSpeed { get; set; } = 2.0f;
+
+        [Category("Movement")]
+        public float GamepadTranslateSpeed { get; set; } = 30.0f;
+
+        [Category("Movement")]
+        public float KeyboardTranslateSpeed { get; set; } = 10.0f;
+
+        [Category("Movement")]
+        public float KeyboardRotateSpeed { get; set; } = 1.0f;
+
+        public override void RegisterInput(object inputInterface)
+        {
+            if (inputInterface is not InputInterface input)
+                return;
+            input.RegisterMouseScroll(OnScrolled);
+            input.RegisterMouseMove(MouseMove, EMouseMoveType.Relative);
+
+            input.RegisterMouseButtonContinuousState(EMouseButton.LeftClick, OnLeftClick);
+            input.RegisterMouseButtonContinuousState(EMouseButton.RightClick, OnRightClick);
+
+            input.RegisterKeyStateChange(EKey.A, MoveLeft);
+            input.RegisterKeyStateChange(EKey.W, MoveForward);
+            input.RegisterKeyStateChange(EKey.S, MoveBackward);
+            input.RegisterKeyStateChange(EKey.D, MoveRight);
+            input.RegisterKeyStateChange(EKey.Q, MoveDown);
+            input.RegisterKeyStateChange(EKey.E, MoveUp);
+
+            input.RegisterKeyStateChange(EKey.Up, PitchUp);
+            input.RegisterKeyStateChange(EKey.Down, PitchDown);
+            input.RegisterKeyStateChange(EKey.Left, YawLeft);
+            input.RegisterKeyStateChange(EKey.Right, YawRight);
+
+            input.RegisterKeyStateChange(EKey.ControlLeft, OnControl);
+            input.RegisterKeyStateChange(EKey.ControlRight, OnControl);
+            input.RegisterKeyStateChange(EKey.ShiftLeft, OnShift);
+            input.RegisterKeyStateChange(EKey.ShiftRight, OnShift);
+
+            input.RegisterAxisUpdate(EGamePadAxis.LeftThumbstickX, OnLeftStickX, false);
+            input.RegisterAxisUpdate(EGamePadAxis.LeftThumbstickY, OnLeftStickY, false);
+            input.RegisterAxisUpdate(EGamePadAxis.RightThumbstickX, OnRightStickX, false);
+            input.RegisterAxisUpdate(EGamePadAxis.RightThumbstickY, OnRightStickY, false);
+
+            input.RegisterButtonPressed(EGamePadButton.RightBumper, MoveUp);
+            input.RegisterButtonPressed(EGamePadButton.LeftBumper, MoveDown);
+        }
+
+        public bool AllowKeyboardInput
+            => Controller?.FocusedInteractable is null;
+
+        protected virtual void MoveDown(bool pressed)
+        {
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
+                _incUp += KeyboardTranslateSpeed * (pressed ? -1.0f : 1.0f);
+            LogKeyboardInput(nameof(MoveDown), pressed, allowed);
+        }
+        protected virtual void MoveUp(bool pressed)
+        {
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
+                _incUp += KeyboardTranslateSpeed * (pressed ? 1.0f : -1.0f);
+            LogKeyboardInput(nameof(MoveUp), pressed, allowed);
+        }
+        protected virtual void MoveLeft(bool pressed)
+        {
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
+                _incRight += KeyboardTranslateSpeed * (pressed ? -1.0f : 1.0f);
+            LogKeyboardInput(nameof(MoveLeft), pressed, allowed);
+        }
+        protected virtual void MoveRight(bool pressed)
+        {
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
+                _incRight += KeyboardTranslateSpeed * (pressed ? 1.0f : -1.0f);
+            LogKeyboardInput(nameof(MoveRight), pressed, allowed);
+        }
+        protected virtual void MoveBackward(bool pressed)
+        {
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
+                _incForward += KeyboardTranslateSpeed * (pressed ? -1.0f : 1.0f);
+            LogKeyboardInput(nameof(MoveBackward), pressed, allowed);
+        }
+        protected virtual void MoveForward(bool pressed)
+        {
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
+                _incForward += KeyboardTranslateSpeed * (pressed ? 1.0f : -1.0f);
+            LogKeyboardInput(nameof(MoveForward), pressed, allowed);
+        }
+
+        protected virtual void OnLeftStickX(float value)
+            => _incRight = value * GamepadTranslateSpeed;
+        protected virtual void OnLeftStickY(float value)
+            => _incForward = value * GamepadTranslateSpeed;
+        protected virtual void OnRightStickX(float value)
+            => _incYaw = -value * GamepadRotateSpeed;
+        protected virtual void OnRightStickY(float value)
+            => _incPitch = value * GamepadRotateSpeed;
+
+        protected virtual void YawRight(bool pressed)
+        {
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
+                _incYaw -= KeyboardRotateSpeed * (pressed ? 1.0f : -1.0f);
+            LogKeyboardInput(nameof(YawRight), pressed, allowed);
+        }
+        protected virtual void YawLeft(bool pressed)
+        {
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
+                _incYaw += KeyboardRotateSpeed * (pressed ? 1.0f : -1.0f);
+            LogKeyboardInput(nameof(YawLeft), pressed, allowed);
+        }
+        protected virtual void PitchDown(bool pressed)
+        {
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
+                _incPitch -= KeyboardRotateSpeed * (pressed ? 1.0f : -1.0f);
+            LogKeyboardInput(nameof(PitchDown), pressed, allowed);
+        }
+        protected virtual void PitchUp(bool pressed)
+        {
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
+                _incPitch += KeyboardRotateSpeed * (pressed ? 1.0f : -1.0f);
+            LogKeyboardInput(nameof(PitchUp), pressed, allowed);
+        }
+
+        protected void LogKeyboardInput(string action, bool pressed, bool allowed)
+        {
+            if (!CameraInputDiagnosticsEnabled)
+                return;
+
+            Debug.Out($"[CameraInput] action={action} pressed={pressed} allowed={allowed} incRight={_incRight:0.###} incUp={_incUp:0.###} incForward={_incForward:0.###} incYaw={_incYaw:0.###} incPitch={_incPitch:0.###}");
+        }
+
+        protected void OnShift(bool pressed)
+        {
+            // Modifier keys are NOT gated by AllowKeyboardInput � they must always
+            // update so that Ctrl+right-click rotation works even when a UI element
+            // has focus (e.g., after clicking a toolbar button).
+            ShiftPressed = pressed;
+        }
+        private void OnControl(bool pressed)
+        {
+            CtrlPressed = pressed;
+        }
+
+        public bool IsHoveringUI()
+        {
+            foreach (UICanvasInputComponent canvasInput in LinkedUICanvasInputs.OfType<UICanvasInputComponent>())
+            {
+                if (canvasInput.TopMostInteractable is { } interactable)
+                {
+                    // Re-validate that the cursor is actually inside the interactable's
+                    // world-space bounds. TopMostInteractable is set asynchronously during
+                    // SwapBuffers so it can be stale by the time input handlers read it.
+                    // Use AxisAlignedRegion (world-space AABB) rather than Contains() which
+                    // relies on ScreenToLocal and can give incorrect results for nested elements.
+                    if (interactable.UITransform is UIBoundableTransform bt
+                        && !bt.AxisAlignedRegion.Contains(canvasInput.CursorPositionWorld2D))
+                        continue;
+
+                    Debug.UI($"[IsHoveringUI] TopMostInteractable = {interactable.GetType().Name} ('{interactable.Name}') on canvas '{canvasInput.Name}'");
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        protected bool _rightClickDragging = false;
+
+        /// <summary>
+        /// True while right mouse is held but drag hasn't activated yet because
+        /// IsHoveringUI() returned true on the initial press frame. Tick()
+        /// retries activation every frame until hover clears or the button is released.
+        /// </summary>
+        private bool _rightClickPendingDragActivation = false;
+
+        /// <summary>
+        /// Called by subclasses' Tick() each frame. If right-click is held but drag
+        /// hasn't started yet (due to a stale hover result on the press frame),
+        /// this retries activation.
+        /// </summary>
+        /// <returns>True if drag activation just succeeded this frame.</returns>
+        protected bool TryActivatePendingRightClickDrag()
+        {
+            if (!_rightClickPendingDragActivation || _rightClickDragging)
+                return false;
+
+            if (IsHoveringUI())
+                return false;
+
+            _rightClickPendingDragActivation = false;
+            _rightClickDragging = true;
+            //Debug.UI($"[TryActivatePendingRightClickDrag] Drag activated (retry), LinkedUICanvasInputs.Count={LinkedUICanvasInputs.Count}");
+
+            var controller = Controller;
+            controller?.FocusedInteractable = null;
+
+            return true;
+        }
+
+        protected virtual void OnRightClick(bool pressed)
+        {
+            bool stateChanged = RightClickPressed != pressed;
+
+            RightClickPressed = pressed;
+
+            if (pressed)
+            {
+                if (!stateChanged)
+                    return;
+
+                bool hovering = IsHoveringUI();
+                _rightClickDragging = !hovering;
+                _rightClickPendingDragActivation = hovering; // retry in Tick if hover was stale
+                //Debug.UI($"[OnRightClick] pressed, IsHoveringUI={hovering}, _rightClickDragging={_rightClickDragging}, LinkedUICanvasInputs.Count={LinkedUICanvasInputs.Count}");
+
+                // When right-clicking in the viewport (not over UI), clear the focused
+                // UI component so that keyboard input (WASD, arrows) is restored.
+                if (_rightClickDragging)
+                {
+                    var ctrl = Controller;
+                    ctrl?.FocusedInteractable = null;
+                }
+            }
+            else
+            {
+                _rightClickDragging = false;
+                _rightClickPendingDragActivation = false;
+            }
+        }
+        protected virtual void OnLeftClick(bool pressed)
+            => LeftClickPressed = pressed;
+
+        protected override void OnComponentActivated()
+        {
+            base.OnComponentActivated();
+            RegisterTick(ETickGroup.Normal, InputConsumptionTickOrder, Tick);
+        }
+        protected override void OnComponentDeactivated()
+        {
+            base.OnComponentDeactivated();
+            UnregisterTick(ETickGroup.Normal, InputConsumptionTickOrder, Tick);
+        }
+
+        protected abstract void OnScrolled(float diff);
+        protected abstract void MouseMove(float x, float y);
+        protected abstract void Tick();
+
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(Yaw):
+                case nameof(Pitch):
+                    YawPitchUpdated();
+                    break;
+            }
+        }
+
+        //Dictionary<ComboModifier, Action<bool>> _combos = new Dictionary<ComboModifier, Action<bool>>();
+
+        //private void ExecuteCombo(EMouseButton button, bool pressed)
+        //{
+        //    //ComboModifier mod = GetModifier(button, _alt, _ctrl, _shift);
+        //    //if (_combos.ContainsKey(mod))
+        //    //    _combos[mod](pressed);
+        //}
+
+        //private ComboModifier GetModifier(EMouseButton button, bool alt, bool ctrl, bool shift)
+        //{
+        //    ComboModifier mod = ComboModifier.None;
+
+        //    if (button == EMouseButton.LeftClick)
+        //        mod |= ComboModifier.LeftClick;
+        //    else if (button == EMouseButton.RightClick)
+        //        mod |= ComboModifier.RightClick;
+        //    else if (button == EMouseButton.MiddleClick)
+        //        mod |= ComboModifier.MiddleClick;
+
+        //    if (_ctrl)
+        //        mod |= ComboModifier.Ctrl;
+        //    if (_alt)
+        //        mod |= ComboModifier.Alt;
+        //    if (_shift)
+        //        mod |= ComboModifier.Shift;
+
+        //    return mod;
+        //}
+        //public void SetInputCombo(Action<bool> func, EMouseButton button, bool alt, bool ctrl, bool shift)
+        //{
+        //    ComboModifier mod = GetModifier(button, alt, ctrl, shift);
+        //    if (mod != ComboModifier.None)
+        //        if (_combos.ContainsKey(mod))
+        //            _combos[mod] = func;
+        //        else
+        //            _combos.Add(mod, func);
+        //}
+    }
+}

@@ -10,6 +10,7 @@ Documentation for XREngine's rendering system — how windows are created, graph
 | [Rendering Runtime Overview](runtime-overview.md) | How worlds, visibility collection, GPUScene, render pipelines, and pass execution fit together at runtime. |
 | [Rendering Frame Lifecycle And Dispatch Paths](frame-lifecycle-and-dispatch-paths.md) | The end-to-end `CollectVisible -> SwapBuffers -> Render` lifecycle, how worlds/viewports/scenes hand buffers across threads, and how CPU, GPU, BVH, octree, quadtree, and meshlet-related paths fit together. |
 | [Render Pipeline Resource Lifecycle](render-pipeline-resource-lifecycle.md) | Implemented contract for declared pipeline resources, generation-based materialization, staged resize, and atomic resource swaps. Design source: [proposal](../../work/design/rendering/render-pipeline-resource-lifecycle-design.md). |
+| [Renderer Backend Hot Reload](renderer-backend-hot-reload.md) | Three-level shader, managed-delta, and collectible OpenGL/Vulkan backend reload architecture, ownership, transaction, workflow, diagnostics, and limits. |
 | [XRDataBuffer RHI Write Model](xrdatabuffer-rhi-write-model.md) | Backend-neutral buffer write contract for memory policy, scoped writers, dirty ranges, upload routes, persistent rings, readback tickets, readiness, and diagnostics. |
 | [World Shader Prewarm Graph](../../work/design/rendering/world-shader-prewarm-graph-design.md) | Design proposal for collecting world, component, transform, asset, render-pipeline, shader, and material dependencies into prewarmable shader program combinations. |
 | [Mesh Submission Strategies](mesh-submission-strategies.md) | The `EMeshSubmissionStrategy` contract for CPU direct, instrumented GPU indirect, zero-readback GPU indirect, and meshlet submission. |
@@ -61,10 +62,10 @@ Program.Main()
 | **Initialization** | Eager (in constructor via `InitGL`) | Deferred (in `Initialize()`: instance → device → swapchain) |
 | **Frame completion** | Automatic (Silk.NET SwapBuffers) | Explicit (acquire → record → submit → present) |
 | **Command model** | Immediate-mode state machine | Command buffer recording + deferred submission |
-| **Synchronization** | Implicit (driver-managed) | Explicit (semaphores + fences, double-buffered) |
+| **Synchronization** | Implicit (driver-managed) | Binary acquire/present semaphores plus graphics timeline completion |
 | **Shader format** | GLSL (compiled by driver) | GLSL → SPIR-V (compiled at build/runtime) |
 | **Pipeline state** | Mutable global state | Immutable pipeline objects (cached to disk) |
-| **`WindowRenderCallback`** | Empty (no-op) | Full frame lifecycle (~180 lines) |
+| **`WindowRenderCallback`** | Empty (no-op) | 89-line coordinator: preflight → captured slot → acquire → prepare → record → submit → present → finalization; focused owners are mapped in `Vulkan/Frame/README.md` |
 
 ## Shared Post-Processing Defaults
 

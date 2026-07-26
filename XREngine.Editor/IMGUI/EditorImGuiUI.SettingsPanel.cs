@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using XREngine;
 using XREngine.Core.Files;
+using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Editor;
@@ -41,14 +42,10 @@ public static partial class EditorImGuiUI
         private static void RebuildImGuiFontAtlasForOpenGlWindows()
         {
             int rebuilt = 0;
-            foreach (var window in Engine.Windows)
-            {
-                if (window?.Renderer is not OpenGLRenderer glRenderer)
-                    continue;
-
-                glRenderer.ForceRebuildImGuiFontAtlas();
-                rebuilt++;
-            }
+            foreach (IRenderTexturePreviewBackendCapability capability
+                     in EditorRendererCapabilityResolver.Enumerate<IRenderTexturePreviewBackendCapability>())
+                if (capability.RebuildFontAtlas())
+                    rebuilt++;
 
             if (rebuilt == 0)
                 Debug.TexturesWarning("No OpenGL renderer windows were available to rebuild ImGui font atlas.");

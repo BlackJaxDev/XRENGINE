@@ -120,7 +120,13 @@ public sealed class PipelinePostProcessState
     {
         ArgumentNullException.ThrowIfNull(backingType);
         lock (_stagesSync)
-            return _stages.Values.FirstOrDefault(stage => stage.Descriptor?.BackingType == backingType);
+        {
+            foreach (PostProcessStageState stage in _stages.Values)
+                if (stage.Descriptor?.BackingType == backingType)
+                    return stage;
+
+            return null;
+        }
     }
 
     public PostProcessStageState? GetStage<TBacking>() where TBacking : class
@@ -130,7 +136,13 @@ public sealed class PipelinePostProcessState
     {
         ArgumentException.ThrowIfNullOrEmpty(parameterName);
         lock (_stagesSync)
-            return _stages.Values.FirstOrDefault(stage => stage.Values.ContainsKey(parameterName));
+        {
+            foreach (PostProcessStageState stage in _stages.Values)
+                if (stage.Values.ContainsKey(parameterName))
+                    return stage;
+
+            return null;
+        }
     }
 
     private void SynchronizeStages()

@@ -10,7 +10,7 @@ public sealed class VulkanCoreHardeningPhase51Tests
     public void UnknownPassInitialization_UsesExactRecordedSubresources()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string method = SliceBetween(
             source,
             "private void EmitInitialImageAspectBarriers(",
@@ -28,11 +28,11 @@ public sealed class VulkanCoreHardeningPhase51Tests
     public void OrderedCommandBuffers_SeedEntryStateAndValidateGeneration()
     {
         string synchronization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
         string imgui = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs");
         string dynamicText = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.SecondaryCommandBuffers.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
 
         synchronization.ShouldContain("EntrySubresources");
         synchronization.ShouldContain("SeedRecordedImageLayoutState(");
@@ -46,7 +46,7 @@ public sealed class VulkanCoreHardeningPhase51Tests
     public void ExplicitBarrierOldLayout_IsNeverRewrittenFromGlobalState()
     {
         string synchronization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
         string barrier = SliceBetween(
             synchronization,
             "private void ValidateRecordedImageBarrierOldLayout(",
@@ -61,11 +61,11 @@ public sealed class VulkanCoreHardeningPhase51Tests
     public void DescriptorAndUiTransitions_AreExplicitAndConsumerScoped()
     {
         string descriptorLayouts = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorImageLayouts.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorImageLayouts.cs");
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
         string imgui = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs");
 
         descriptorLayouts.ShouldNotContain("TryTransitionDedicatedImageLayout");
         lifetime.ShouldContain("ReflectedImageBindings");
@@ -79,24 +79,27 @@ public sealed class VulkanCoreHardeningPhase51Tests
     [Test]
     public void RejectedAcquiredFramesAndRetirementHaveBoundedRecovery()
     {
-        string frameLoop = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
+        string frameLoop = string.Concat(
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Acquire.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recovery.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DesktopPresentationPolicy.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Presentation.cs"));
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
         string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
 
-        frameLoop.ShouldContain("else if (result == Result.SuboptimalKhr)");
-        frameLoop.ShouldContain("TryPresentAbortedDirtyFrame");
+        frameLoop.ShouldContain("case Result.SuboptimalKhr:");
+        frameLoop.ShouldContain("TryRecoverRejectedDesktopImage");
         frameLoop.ShouldContain("if (!imageWasEverPresented)");
-        frameLoop.ShouldContain("if (!imageHasValidPresentedContent)");
-        frameLoop.ShouldContain("Refusing skipped-frame present for unwritten swapchain image");
+        frameLoop.ShouldContain("if (!imageHasValidCompletedContent)");
+        frameLoop.ShouldContain("ERejectedDesktopFramePolicyReason.NoCompletedFinalWrite");
         frameLoop.ShouldContain("PresentedWithoutValidFinalWrite");
         frameLoop.ShouldNotContain("OldLayout = ImageLayout.Undefined,\n                            NewLayout = ImageLayout.PresentSrcKhr");
         lifetime.ShouldContain("_vulkanResourceCommandBufferDependencies");
         lifetime.ShouldContain("InvalidateCachedCommandBuffersForRetiringResource(");
         retirement.ShouldContain("TryBeginDestroyVulkanResourceGeneration(");
-        retirement.ShouldContain("CompleteRetiredImageDeduplication(frameSlot, in r)");
+        retirement.ShouldContain("CompleteRetiredImageDeduplication(frameSlot, in entry)");
         retirement.ShouldNotContain("Api!.FreeMemory(device, memory, null)");
     }
 
@@ -104,7 +107,7 @@ public sealed class VulkanCoreHardeningPhase51Tests
     public void Vulkan14FeatureChains_AreGatedByCorePromotionOrEnabledExtension()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
 
         source.ShouldContain("promotedToCore = IsVulkanApiVersionAtLeast(properties.ApiVersion, 1u, 4u)");
         source.ShouldContain("if (!promotedToCore && !extensionEnabled)");
@@ -117,11 +120,11 @@ public sealed class VulkanCoreHardeningPhase51Tests
     public void SwapchainAcquireAndSecondaryInheritance_MatchTheirExecutionScopes()
     {
         string extensions = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs");
         string recording = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string secondaries = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.SecondaryCommandBuffers.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
 
         extensions.ShouldContain("VK_EXT_swapchain_colorspace");
         extensions.ShouldContain("IsInstanceExtensionAvailable(ExtSwapchainColorspaceExtensionName)");

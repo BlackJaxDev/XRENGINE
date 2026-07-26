@@ -11,7 +11,7 @@ public sealed class DebugVisualizerSourceContractTests
     [Test]
     public void LineInstanceRewrites_ForceFreshUploadWhenCountIsUnchanged()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Scene/Physics/Physx/InstancedDebugVisualizer.cs").Replace("\r\n", "\n");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Physics/DebugVisualization/InstancedDebugVisualizer.cs").Replace("\r\n", "\n");
 
         source.ShouldContain("private void MarkLinesDirty()\n            => _lineDirtyBytes = checked(");
 
@@ -31,12 +31,12 @@ public sealed class DebugVisualizerSourceContractTests
     [Test]
     public void OpenGlRenderPath_PreparesDynamicRenderDataEveryDrawAfterBuffersAreBound()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Rendering.cs").Replace("\r\n", "\n");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Rendering.cs").Replace("\r\n", "\n");
 
         AssertContainsInOrder(
             source,
-            "if (!BuffersBound)\n                    {\n                        Renderer.MeshGenerationQueue.EnqueueGeneration(this);",
-            "return;\n                    }",
+            "if (!BuffersBound)\n                {\n                    Renderer.MeshGenerationQueue.EnqueueGeneration(this);",
+            "return true;\n                }",
             "PrepareDynamicRenderData();",
             "BindSSBOs(mat!);",
             "BindSSBOs(vtx!);");
@@ -45,7 +45,7 @@ public sealed class DebugVisualizerSourceContractTests
     [Test]
     public void OpenGlUploadQueue_PredictiveSkipCannotPreventFirstChunkProgress()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Resources/Uploads/GLUploadQueue.cs").Replace("\r\n", "\n");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Resources/Uploads/GLUploadQueue.cs").Replace("\r\n", "\n");
 
         AssertContainsInOrder(
             source,
@@ -59,12 +59,12 @@ public sealed class DebugVisualizerSourceContractTests
     [Test]
     public void DebugPrimitiveQueues_AreScopedToTheActiveVisualScene()
     {
-        string source = ReadWorkspaceFile("XREngine/Engine/Subclasses/Rendering/Engine.Rendering.Debug.cs").Replace("\r\n", "\n");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngine.Rendering.Debug.cs").Replace("\r\n", "\n");
 
         source.ShouldContain("private sealed class DebugPrimitiveSceneState");
         source.ShouldContain("private static readonly DebugPrimitiveSceneState _debug3D = new();");
         source.ShouldContain("private static readonly DebugPrimitiveSceneState _debug2D = new();");
-        source.ShouldContain("Engine.Rendering.State.RenderingScene is VisualScene2D");
+        source.ShouldContain("RuntimeEngine.Rendering.State.RenderingScene is VisualScene2D");
 
         string renderShapes = SliceMethod(source, "public static void RenderShapes(bool depthTested)");
         renderShapes.ShouldContain("DebugPrimitiveSceneState scene = ResolveDebugPrimitiveSceneState();");
@@ -95,12 +95,12 @@ public sealed class DebugVisualizerSourceContractTests
     [Test]
     public void ScreenSpaceUiTransformDebug_OnlyRunsInThe2DVisualScene()
     {
-        string uiTransform = ReadWorkspaceFile("XRENGINE/Scene/Components/UI/Core/Transforms/UITransform.cs").Replace("\r\n", "\n");
-        string uiBoundableTransform = ReadWorkspaceFile("XRENGINE/Scene/Components/UI/Core/Transforms/UIBoundableTransform.cs").Replace("\r\n", "\n");
+        string uiTransform = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/UI/Core/Transforms/UITransform.cs").Replace("\r\n", "\n");
+        string uiBoundableTransform = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/UI/Core/Transforms/UIBoundableTransform.cs").Replace("\r\n", "\n");
 
         uiTransform.ShouldContain("DebugRenderInfo2D.PreCollectCommandsCallback = ShouldRenderDebug2D;");
         uiTransform.ShouldContain("=> IsScreenSpaceCanvas();");
-        uiTransform.ShouldContain("=> !IsScreenSpaceCanvas() || Engine.Rendering.State.RenderingScene is VisualScene2D;");
+        uiTransform.ShouldContain("=> !IsScreenSpaceCanvas() || RuntimeEngine.Rendering.State.RenderingScene is VisualScene2D;");
 
         string uiRenderDebug = SliceMethod(uiTransform, "protected override void RenderDebug()");
         AssertContainsInOrder(

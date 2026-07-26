@@ -1,7 +1,11 @@
+using XREngine.Rendering;
+
 namespace XREngine;
 
 internal sealed class RuntimeThemePreferences
 {
+    public ColorF4 Bounds2DColor => RuntimeRenderingHostServices.FrameTiming.Bounds2DColor;
+
     public ColorF4 MeshBoundsContainedColor { get; set; } = ColorF4.Green;
     public ColorF4 MeshBoundsIntersectedColor { get; set; } = ColorF4.Yellow;
     public ColorF4 MeshBoundsDisjointColor { get; set; } = ColorF4.Red;

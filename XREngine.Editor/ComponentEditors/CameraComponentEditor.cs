@@ -248,7 +248,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         // Authoritative viewport bindings: scan live windows.
         var boundViewports = BoundViewportScratch;
         boundViewports.Clear();
-        foreach (var vp in Engine.EnumerateActiveViewports())
+        foreach (var vp in RuntimeEngine.EnumerateActiveViewports())
         {
             if (ReferenceEquals(vp.CameraComponent, component))
                 boundViewports.Add(vp);
@@ -441,7 +441,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         var pipeline = component.Camera.RenderPipeline;
         ImGuiAssetUtilities.DrawAssetField<RenderPipeline>("CameraRenderPipeline", pipeline, asset =>
         {
-            component.Camera.RenderPipeline = asset ?? Engine.Rendering.NewRenderPipeline();
+            component.Camera.RenderPipeline = asset ?? RuntimeEngine.Rendering.NewRenderPipeline();
         }, allowClear: false, allowCreateOrReplace: true);
 
         ImGui.TextDisabled("Default Render Target Asset");
@@ -617,11 +617,11 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             return;
 
         var cam = component.Camera;
-        int totalLights = Engine.Rendering.State.ForwardPlusLocalLightCount;
-        int tilesX = Engine.Rendering.State.ForwardPlusTileCountX;
-        int tilesY = Engine.Rendering.State.ForwardPlusTileCountY;
-        int maxPerTile = Engine.Rendering.State.ForwardPlusMaxLightsPerTile;
-        int tileSize = Engine.Rendering.State.ForwardPlusTileSize;
+        int totalLights = RuntimeEngine.Rendering.State.ForwardPlusLocalLightCount;
+        int tilesX = RuntimeEngine.Rendering.State.ForwardPlusTileCountX;
+        int tilesY = RuntimeEngine.Rendering.State.ForwardPlusTileCountY;
+        int maxPerTile = RuntimeEngine.Rendering.State.ForwardPlusMaxLightsPerTile;
+        int tileSize = RuntimeEngine.Rendering.State.ForwardPlusTileSize;
 
         ImGui.TextDisabled($"Tiles: {tilesX} x {tilesY} ({tileSize}px)   MaxLightsPerTile: {maxPerTile}");
         if (totalLights <= 0)
@@ -701,7 +701,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
     private static XRViewport? ResolvePrimaryRuntimeViewport()
         => (Engine.State.MainPlayer?.Viewport as XRViewport)
-            ?? Engine.EnumerateActiveViewports().FirstOrDefault();
+            ?? RuntimeEngine.EnumerateActiveViewports().FirstOrDefault();
 
     private static EAntiAliasingMode ResolveEffectiveAaMode(XRCamera? camera)
         => camera?.AntiAliasingModeOverride ?? Engine.EffectiveSettings.AntiAliasingMode;
@@ -779,7 +779,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         if (ImGui.Checkbox("Override TSR Scale##TsrScaleOverrideToggle", ref hasOverride))
         {
             camera.TsrRenderScaleOverride = hasOverride
-                ? Engine.Rendering.Settings.TsrRenderScale
+                ? RuntimeEngine.Rendering.Settings.TsrRenderScale
                 : null;
         }
         if (ImGui.IsItemHovered())
@@ -793,7 +793,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
                 camera.TsrRenderScaleOverride = scale;
         }
 
-        ImGui.TextDisabled($"Global TSR Scale: {Engine.Rendering.Settings.TsrRenderScale:0.00}x");
+        ImGui.TextDisabled($"Global TSR Scale: {RuntimeEngine.Rendering.Settings.TsrRenderScale:0.00}x");
     }
 
     private static void DrawOutputHDROverride(CameraComponent component)
@@ -808,7 +808,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         if (ImGui.Checkbox("Override HDR##HDROverrideToggle", ref hasOverride))
         {
             camera.OutputHDROverride = hasOverride
-                ? Engine.Rendering.Settings.OutputHDR
+                ? RuntimeEngine.Rendering.Settings.OutputHDR
                 : null;
         }
         if (ImGui.IsItemHovered())
@@ -822,7 +822,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         }
 
         // Show what the global setting is for reference
-        ImGui.TextDisabled($"Global HDR: {(Engine.Rendering.Settings.OutputHDR ? "On" : "Off")}");
+        ImGui.TextDisabled($"Global HDR: {(RuntimeEngine.Rendering.Settings.OutputHDR ? "On" : "Off")}");
     }
 
     private static readonly string[] InternalResolutionModeNames = 
@@ -1620,7 +1620,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
     private static void DrawSchemaStageSelection(PostProcessStageEntry stage, XRCamera camera, CameraComponent? component)
     {
-        bool effectiveHDR = camera.OutputHDROverride ?? Engine.Rendering.Settings.OutputHDR;
+        bool effectiveHDR = camera.OutputHDROverride ?? RuntimeEngine.Rendering.Settings.OutputHDR;
         bool tonemappingDisabled = effectiveHDR && stage.Descriptor.Key.Equals(TonemappingStageKey, StringComparison.OrdinalIgnoreCase);
 
         ImGui.PushID(stage.Descriptor.Key);
@@ -1883,7 +1883,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             bool changed2 = ImGui.DragFloat3(param.DisplayName, ref value, param.Step ?? 0.001f);
             if (changed2)
             {
-                value = NormalizeLuminanceWeights(value, Engine.Rendering.Settings.DefaultLuminance);
+                value = NormalizeLuminanceWeights(value, RuntimeEngine.Rendering.Settings.DefaultLuminance);
                 state.SetValue(param.Name, value);
             }
             ImGuiUndoHelper.TrackDragUndo(param.DisplayName, undoTarget);
@@ -1892,7 +1892,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             if (ImGui.SmallButton("Default"))
             {
                 using var _ = Undo.TrackChange("Luminance Weights Default", undoTarget);
-                value = NormalizeLuminanceWeights(Engine.Rendering.Settings.DefaultLuminance, Engine.Rendering.Settings.DefaultLuminance);
+                value = NormalizeLuminanceWeights(RuntimeEngine.Rendering.Settings.DefaultLuminance, RuntimeEngine.Rendering.Settings.DefaultLuminance);
                 state.SetValue(param.Name, value);
             }
 
@@ -1900,7 +1900,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             if (ImGui.SmallButton("Rec.709"))
             {
                 using var _ = Undo.TrackChange("Luminance Weights Rec.709", undoTarget);
-                value = NormalizeLuminanceWeights(new Vector3(0.2126f, 0.7152f, 0.0722f), Engine.Rendering.Settings.DefaultLuminance);
+                value = NormalizeLuminanceWeights(new Vector3(0.2126f, 0.7152f, 0.0722f), RuntimeEngine.Rendering.Settings.DefaultLuminance);
                 state.SetValue(param.Name, value);
             }
 
@@ -1908,7 +1908,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             if (ImGui.SmallButton("Rec.601"))
             {
                 using var _ = Undo.TrackChange("Luminance Weights Rec.601", undoTarget);
-                value = NormalizeLuminanceWeights(new Vector3(0.299f, 0.587f, 0.114f), Engine.Rendering.Settings.DefaultLuminance);
+                value = NormalizeLuminanceWeights(new Vector3(0.299f, 0.587f, 0.114f), RuntimeEngine.Rendering.Settings.DefaultLuminance);
                 state.SetValue(param.Name, value);
             }
 
@@ -1916,7 +1916,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             if (ImGui.SmallButton("Equal"))
             {
                 using var _ = Undo.TrackChange("Luminance Weights Equal", undoTarget);
-                value = NormalizeLuminanceWeights(new Vector3(1.0f, 1.0f, 1.0f), Engine.Rendering.Settings.DefaultLuminance);
+                value = NormalizeLuminanceWeights(new Vector3(1.0f, 1.0f, 1.0f), RuntimeEngine.Rendering.Settings.DefaultLuminance);
                 state.SetValue(param.Name, value);
             }
 
@@ -2277,94 +2277,11 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         handle = nint.Zero;
         failure = null;
 
-        if (TryGetVulkanRenderer() is VulkanRenderer vkRenderer)
-        {
-            IntPtr textureId = EditorRenderThread.Invoke(
-                () => vkRenderer.RegisterImGuiTexture(texture),
-                "CameraComponentEditor.RegisterVulkanPreviewTexture",
-                RenderThreadJobKind.TextureUpload);
-            if (textureId == IntPtr.Zero)
-            {
-                failure = "Texture has not been uploaded to the GPU yet.";
-                return false;
-            }
-
-            handle = (nint)textureId;
-            return true;
-        }
-
-        OpenGLRenderer? renderer = TryGetOpenGLRenderer();
-        if (renderer is null)
-        {
-            failure = "Preview requires the OpenGL or Vulkan renderer.";
-            return false;
-        }
-
-        IGLTexture? glTexture = texture switch
-        {
-            XRTexture2D texture2D => EditorRenderThread.Invoke(
-                () => renderer.GenericToAPI<GLTexture2D>(texture2D),
-                "CameraComponentEditor.ResolveOpenGLPreviewTexture2D",
-                RenderThreadJobKind.TextureUpload),
-            XRTexture2DArrayView textureArrayView => EditorRenderThread.Invoke(
-                () => renderer.GenericToAPI<GLTextureView>(textureArrayView),
-                "CameraComponentEditor.ResolveOpenGLPreviewTextureView",
-                RenderThreadJobKind.TextureUpload),
-            _ => null,
-        };
-
-        if (glTexture is null)
-        {
-            failure = "Preview currently supports 2D textures and array-layer views only.";
-            return false;
-        }
-
-        return TryGetGlTextureHandle(glTexture, out handle, out failure);
-    }
-
-    private static bool TryGetGlTextureHandle(IGLTexture glTexture, out nint handle, out string? failure)
-    {
-        handle = nint.Zero;
-        failure = null;
-
-        if (glTexture is null)
-        {
-            failure = "Texture has not been uploaded to the GPU yet.";
-            return false;
-        }
-
-        if (glTexture.BindingId == 0 || glTexture.BindingId == OpenGLRenderer.GLObjectBase.InvalidBindingId)
-        {
-            failure = "Texture binding identifier is invalid.";
-            return false;
-        }
-
-        handle = (nint)glTexture.BindingId;
-        return true;
-    }
-
-    private static OpenGLRenderer? TryGetOpenGLRenderer()
-    {
-        if (AbstractRenderer.Current is OpenGLRenderer current)
-            return current;
-
-        foreach (var window in Engine.Windows)
-            if (window.Renderer is OpenGLRenderer renderer)
-                return renderer;
-
-        return null;
-    }
-
-    private static VulkanRenderer? TryGetVulkanRenderer()
-    {
-        if (AbstractRenderer.Current is VulkanRenderer current)
-            return current;
-
-        foreach (var window in Engine.Windows)
-            if (window.Renderer is VulkanRenderer renderer)
-                return renderer;
-
-        return null;
+        return EditorTexturePreviewService.TryGetHandle(
+            texture,
+            out handle,
+            out _,
+            out failure);
     }
 
     private static Vector2 CalculatePreviewSize(Vector2 pixelSize)

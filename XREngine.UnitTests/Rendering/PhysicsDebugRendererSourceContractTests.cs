@@ -10,13 +10,13 @@ public sealed class PhysicsDebugRendererSourceContractTests
     public void WorldRenderer_UploadsEachGenerationOnceAndReusesItAcrossViews()
     {
         string renderer = ReadWorkspaceFile(
-            "XRENGINE/Scene/Physics/Debug/PhysicsDebugFrameRenderer.cs");
+            "XREngine.Runtime.Rendering/Rendering/Physics/DebugVisualization/PhysicsDebugFrameRenderer.cs");
         renderer.ShouldContain("if (_uploadedGeneration != frame.Generation)");
         renderer.ShouldContain("_uploadedGeneration = frame.Generation;");
         renderer.ShouldContain("ReusedViewCount++;");
 
         string world = ReadWorkspaceFile(
-            "XRENGINE/Rendering/XRWorldInstance.RuntimeRenderWorld.cs");
+            "XRENGINE/Rendering/XRWorldInstance.PhysicsDebug.cs");
         world.ShouldContain("private PhysicsDebugFrameRenderer _physicsDebugFrameRenderer = new();");
         world.ShouldContain("_physicsDebugFrameRenderer.Render(PhysicsScene.DebugFrames, depthMode);");
     }
@@ -25,7 +25,7 @@ public sealed class PhysicsDebugRendererSourceContractTests
     public void PersistentVisualizer_GrowsGeometricallyAndShrinksOnlyAfterHysteresis()
     {
         string visualizer = ReadWorkspaceFile(
-            "XRENGINE/Scene/Physics/Physx/InstancedDebugVisualizer.cs");
+            "XREngine.Runtime.Rendering/Rendering/Physics/DebugVisualization/InstancedDebugVisualizer.cs");
         visualizer.ShouldContain("private const int ShrinkHysteresisFrames = 600;");
         visualizer.ShouldContain("grown = checked(grown + Math.Max(grown >> 1, 1u));");
         visualizer.ShouldContain("if (++underuseFrames < ShrinkHysteresisFrames)");
@@ -62,7 +62,7 @@ public sealed class PhysicsDebugRendererSourceContractTests
     public void WorldReplacement_DisposesAndRecreatesRetainedDebugResources()
     {
         string world = ReadWorkspaceFile(
-            "XRENGINE/Rendering/XRWorldInstance.RuntimeRenderWorld.cs");
+            "XRENGINE/Rendering/XRWorldInstance.PhysicsDebug.cs");
         string lifecycle = ReadWorkspaceFile(
             "XRENGINE/Rendering/XRWorldInstance.cs");
         world.ShouldContain("_physicsDebugFrameRenderer.Dispose();");

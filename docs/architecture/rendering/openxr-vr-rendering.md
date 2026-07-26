@@ -62,14 +62,14 @@ The OpenXR integration is implemented as the `OpenXRAPI` partial class, split ac
 | `OpenXRAPI.RuntimeStateMachine.cs` | State machine: Desktop → Instance → System → Session → Running (320 lines) |
 | `OpenXRAPI.XrCalls.cs` | Low-level OpenXR calls: `CreateSystem`, `BeginFrame`, `WaitFrame`, `LocateViews` (329 lines) |
 | `OpenXRAPI.FrameLifecycle.cs` | Frame lifecycle: `RenderFrame`, `RenderEye`, `CollectVisible`, `SwapBuffers` (825 lines) |
-| `OpenXRAPI.OpenGL.cs` | OpenGL binding: session, swapchains, FBOs, blit pipeline, mirror (931 lines) |
-| `OpenXRAPI.OpenGL.Wgl.cs` | WGL P/Invoke helpers (13 lines) |
-| `OpenXRAPI.Vulkan.cs` | Vulkan binding: session, swapchains, parallel partitions (173 lines) |
+| `XREngine.Runtime.Rendering.OpenGL/.../OpenGlXrGraphicsBinding.Implementation.cs` | OpenGL binding: session, swapchains, FBOs, blit pipeline, mirror |
+| `XREngine.Runtime.Rendering.OpenGL/.../OpenGlXrGraphicsBinding.Wgl.cs` | WGL P/Invoke helpers |
+| `XREngine.Runtime.Rendering.Vulkan/.../VulkanXrGraphicsBinding.Implementation.cs` | Vulkan binding: session, swapchains, and parallel partitions |
 | `OpenXRAPI.Input.cs` | Action sets, hand/tracker poses, interaction profile bindings (503 lines) |
 | `OpenXRAPI.NativeLoader.cs` | Native DLL resolver: probes SteamVR, Oculus, registry paths (~170 lines) |
 | `OpenXRAPI.IPD.cs` | IPD measurement from eye view positions (40 lines) |
 | `OpenXRAPI.SmokeDiagnostics.cs` | Structured smoke summary for no-HMD OpenXR validation |
-| `XrGraphicsBindings.cs` | `IXrGraphicsBinding` interface + OpenGL/Vulkan implementations (109 lines) |
+| `IXrGraphicsBinding.cs` / `OpenXrGraphicsBindingRegistry.cs` | Stable graphics-binding contract and static, AOT-safe backend registration |
 
 ---
 
@@ -229,7 +229,7 @@ This is not needed for Vulkan, which can create sessions from any thread since d
 
 ### OpenGL Session (WGL)
 
-`CreateOpenGLSession()` in `OpenXRAPI.OpenGL.cs`:
+`CreateOpenGLSession()` in `OpenGlXrGraphicsBinding.Implementation.cs`:
 
 1. Cache the `GL` API handle from the `OpenGLRenderer`
 2. Get the current WGL context handles via P/Invoke:
@@ -255,7 +255,7 @@ This is not needed for Vulkan, which can create sessions from any thread since d
 
 ### Vulkan Session
 
-`CreateVulkanSession()` in `OpenXRAPI.Vulkan.cs`:
+`CreateVulkanSession()` in `VulkanXrGraphicsBinding.Implementation.cs`:
 
 1. Query `GraphicsRequirementsVulkanKHR` via `KHR_vulkan_enable`
 2. Detect multi-queue support on the `VulkanRenderer` for parallel eye rendering
@@ -281,7 +281,23 @@ SteamVR also expects `xrGetVulkanGraphicsDeviceKHR` to be called on the same Ope
 
 When SteamVR clamps the app Vulkan instance below Vulkan 1.3, renderer code that normally uses dynamic rendering or synchronization2 must call the loaded KHR extension commands (`vkCmdBeginRenderingKHR`, `vkCmdEndRenderingKHR`, `vkQueueSubmit2KHR`, and `vkCmdPipelineBarrier2KHR`). Direct Vulkan 1.3 entry points are not guaranteed to exist on that instance.
 
-Vulkan OpenXR session creation waits for startup texture streaming and allocation pressure to settle before calling `xrCreateSession`. It also waits briefly for desktop command buffers to stop being dirtied and for submitted desktop frame slots to retire, but those desktop-idle gates are bounded so normal editor preview rendering cannot starve SteamVR session creation forever. The actual session transition still serializes with in-flight Vulkan work and idles the device before and after `xrCreateSession` and swapchain creation.
+Vulkan OpenXR session creation waits for startup texture streaming and
+allocation pressure to settle before calling `xrCreateSession`. The desktop
+readiness contract also requires:
+
+- startup presentation to have ended;
+- at least four accepted desktop frame attempts;
+- at least one completed or resize-skipped desktop frame tick;
+- no desktop attempt active in the atomic activity snapshot;
+- a 250 ms command-buffer dirty quiet period, bounded by a two-second wait; and
+- submitted desktop slot timeline work to retire, also bounded by two seconds.
+
+The two bounded gates log when they are bypassed, so normal editor preview
+rendering cannot starve session creation forever. They are readiness filters,
+not substitutes for synchronization: the runtime graphics transition still
+serializes with in-flight Vulkan work and idles the device before and after
+`xrCreateSession` and swapchain creation. A lost or unavailable Vulkan device
+always defers session start.
 
 The Vulkan path is otherwise simpler because all handles (`VkInstance`, `VkPhysicalDevice`, `VkDevice`) are plain integers that don't require thread-local context.
 
@@ -295,7 +311,7 @@ Both backends create **one swapchain per eye** using `ViewConfigurationType.Prim
 
 ### OpenGL Swapchains
 
-`InitializeOpenGLSwapchains()` in `OpenXRAPI.OpenGL.cs`:
+`InitializeOpenGLSwapchains()` in `OpenGlXrGraphicsBinding.Implementation.cs`:
 
 ```
 For each eye (0 = left, 1 = right):
@@ -334,7 +350,7 @@ The FBOs allow the engine to render directly into runtime-owned textures. Each `
 
 ### Vulkan Swapchains
 
-`InitializeVulkanSwapchains()` in `OpenXRAPI.Vulkan.cs`:
+`InitializeVulkanSwapchains()` in `VulkanXrGraphicsBinding.Implementation.cs`:
 
 ```
 For each eye (0 = left, 1 = right):
@@ -426,7 +442,7 @@ pending resource keys.
 
 Useful diagnostics:
 
-- View-mode logs from `OpenXRAPI.Vulkan.cs` report requested mode, effective
+- View-mode logs from `VulkanXrGraphicsBinding.Implementation.cs` report requested mode, effective
   path, temporal history policy, parallel gate state, swapchain formats, and
   true-stereo support.
 - `SinglePassStereo` automatically selects the true-stereo staging path when
@@ -472,6 +488,40 @@ Troubleshooting quick checks:
 ---
 
 ## Frame Lifecycle
+
+### Vulkan desktop/OpenXR ownership boundary
+
+Desktop presentation and OpenXR eye rendering share one `VulkanRenderer`, but
+they do not share a mutable "current frame" identity.
+
+- A desktop attempt atomically publishes one coherent
+  `DesktopFrameActivitySnapshot` containing its active state, immutable frame
+  number, and captured desktop slot.
+- Desktop frame-data slots occupy the desktop range, whose size is at least the
+  larger of the desktop swapchain-image count and the two desktop in-flight
+  slots.
+- Vulkan reserves two additional frame-data/descriptor slots after that range
+  for the two OpenXR eye resource-planner states. Eye recording resolves its
+  slot from that reserved range rather than aliasing the current desktop slot.
+
+Before eye recording, OpenXR waits for its selected eye frame-data slot. It may
+also drain retired resources from completed submitted **desktop** slots. The
+drain captures the atomic activity snapshot, skips the active desktop slot, and
+skips any slot whose graphics timeline value is still pending; it continues
+through other completed slots instead of abandoning the entire drain.
+
+Desktop attempt entry/exit and the complete OpenXR retirement check-and-drain
+interval hold the same `_desktopFrameRetirementGate`. This is a cross-thread
+lease: a new desktop attempt cannot enter after OpenXR has classified a slot as
+drainable but before destruction completes. If a desktop attempt is already
+active when OpenXR acquires the gate, its atomically published slot is excluded
+from that drain.
+
+`VK_ERROR_DEVICE_LOST` from an OpenXR eye submit or fence wait enters the same
+terminal Vulkan device-loss state used by desktop presentation. Subsequent eye
+render/copy work and session-start checks defer instead of issuing more Vulkan
+work. The surrounding `XRWindow` owns renderer recreation; OpenXR does not try
+to repair the lost logical device inside an eye frame.
 
 ### Three-Phase Frame Model
 
@@ -682,7 +732,7 @@ RenderEye(viewIndex, renderCallback)
 
 The OpenGL eye rendering uses a two-stage approach: render to mirror FBO, then blit to swapchain.
 
-`RenderViewportsToSwapchain()` in `OpenXRAPI.OpenGL.cs` is the render callback passed to `RenderEye()`:
+`RenderViewportsToSwapchain()` in `OpenGlXrGraphicsBinding.Implementation.cs` is the render callback passed to `RenderEye()`:
 
 ```
 RenderViewportsToSwapchain(textureHandle, viewIndex)
@@ -748,7 +798,7 @@ runtime-camera path available behind the output cadence scheduler, and
 `CyclopeanReconstruct` is the depth-aware reconstruction target tracked in
 [VR Mirror Cyclopean Reconstruction TODO](../../work/todo/rendering/vr/vr-mirror-cyclopean-reconstruction-todo.md).
 
-`TryRenderDesktopMirrorComposition()` in `OpenXRAPI.OpenGL.cs`:
+`TryRenderDesktopMirrorComposition()` in `OpenGlXrGraphicsBinding.Implementation.cs`:
 
 ```
 TryRenderDesktopMirrorComposition(targetWidth, targetHeight)

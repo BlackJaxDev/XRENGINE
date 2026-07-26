@@ -13,12 +13,10 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan;
-using XREngine.Rendering.XeSS;
 using XREngine.Scene;
 using static XREngine.RuntimeEngine.Rendering.State;
 
@@ -161,7 +159,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     private static bool IsVulkanRuntimeActiveOrExpected()
     {
         if (IsVulkan ||
-            RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+            RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
         {
             return true;
         }
@@ -172,7 +170,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
 
     private static bool IsOpenXrRuntimeRequestedOrExpected()
     {
-        if (RuntimeRenderingHostServices.Current.IsOpenXrRuntimeRequested ||
+        if (RuntimeRenderingHostServices.Presentation.IsOpenXrRuntimeRequested ||
             RuntimeEngine.GameSettings?.VRRuntime == EVRRuntime.OpenXR ||
             RuntimeEngine.VRState.IsOpenXRActive ||
             RuntimeEngine.VRState.OpenXRApi is not null)
@@ -180,14 +178,22 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
             return true;
         }
 
-        string? unitTestVrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
-        if (string.Equals(unitTestVrMode, "MonadoOpenXR", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(unitTestVrMode, "OpenXR", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
+        return UnitTestEnvironmentRequestsOpenXr;
+    }
 
-        return IsTruthyEnvironmentValue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr));
+    // Unit-test launch variables are immutable for the process lifetime. Cache
+    // them once instead of materializing environment strings from every
+    // DefaultRenderPipeline condition evaluator on every frame.
+    private static readonly bool UnitTestEnvironmentRequestsOpenXr =
+        ResolveUnitTestEnvironmentRequestsOpenXr();
+
+    private static bool ResolveUnitTestEnvironmentRequestsOpenXr()
+    {
+        string? unitTestVrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
+        return string.Equals(unitTestVrMode, "MonadoOpenXR", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(unitTestVrMode, "OpenXR", StringComparison.OrdinalIgnoreCase) ||
+               IsTruthyEnvironmentValue(
+                   Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr));
     }
 
     private static bool IsTruthyEnvironmentValue(string? value)
@@ -438,7 +444,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
 
     private static bool IsRenderingExternalSwapchainTarget()
     {
-        AbstractRenderer? renderer = RuntimeRenderingHostServices.Current.CurrentRenderer as AbstractRenderer
+        AbstractRenderer? renderer = RuntimeRenderingHostServices.FrameTiming.CurrentRenderer as AbstractRenderer
             ?? AbstractRenderer.Current;
         return renderer?.IsRenderingExternalSwapchainTarget == true;
     }
@@ -464,7 +470,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     private static bool RuntimeRequestDlssVendorFeature
         => RuntimeEngine.EffectiveSettings.EnableNvidiaDlss
         || ResolveAntiAliasingMode() == EAntiAliasingMode.Dlaa
-        || NvidiaDlssManager.IsFrameGenerationRequested;
+        || VendorUpscaleRuntime.IsDlssFrameGenerationRequested;
 
     private static bool RuntimeRequestXessVendorFeature
         => ResolveAntiAliasingMode() != EAntiAliasingMode.Dlaa
@@ -1902,9 +1908,9 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
 
     private static bool TryResolveDlssInternalResolutionScale(out float scale)
     {
-        if (RuntimeEngine.EffectiveSettings.EnableNvidiaDlss && NvidiaDlssManager.IsSupported)
+        if (RuntimeEngine.EffectiveSettings.EnableNvidiaDlss && VendorUpscaleRuntime.IsDlssSupported)
         {
-            scale = NvidiaDlssManager.GetRecommendedRenderScale(RuntimeEngine.Rendering.Settings);
+            scale = VendorUpscaleRuntime.GetDlssRecommendedRenderScale(RuntimeEngine.Rendering.Settings);
             return scale < 1.0f;
         }
 
@@ -1914,9 +1920,9 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
 
     private static bool TryResolveXessInternalResolutionScale(out float scale)
     {
-        if (RuntimeEngine.EffectiveSettings.EnableIntelXess && IntelXessManager.IsSupported)
+        if (RuntimeEngine.EffectiveSettings.EnableIntelXess && VendorUpscaleRuntime.IsXessSupported)
         {
-            scale = IntelXessManager.GetRecommendedRenderScale(RuntimeEngine.Rendering.Settings);
+            scale = VendorUpscaleRuntime.GetXessRecommendedRenderScale(RuntimeEngine.Rendering.Settings);
             return scale < 1.0f;
         }
 
@@ -2003,7 +2009,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     }
 
     private static bool ShouldUseDirectVulkanFinalPresent()
-        => AbstractRenderer.Current is VulkanRenderer && !RuntimeEnableVendorUpscale;
+        => AbstractRenderer.Current?.BackendId == RendererBackendId.Vulkan && !RuntimeEnableVendorUpscale;
 
     private static bool ShouldUseDirectFinalPresent()
         => IsRenderingExternalSwapchainTarget() || ShouldUseDirectVulkanFinalPresent();
@@ -3251,9 +3257,12 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     private static void GetReadyProbes(IReadOnlyList<LightProbeComponent> probes, List<LightProbeComponent> target)
     {
         target.Clear();
-        foreach (var probe in probes)
+        for (int i = 0; i < probes.Count; i++)
+        {
+            LightProbeComponent probe = probes[i];
             if (probe.HasUsableIblTextures)
                 target.Add(probe);
+        }
     }
 
     private static bool IsProbeGiSamplingSuppressedForCurrentPass()

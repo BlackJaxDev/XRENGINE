@@ -217,7 +217,7 @@ public sealed partial class GpuBvhTree
                     unsafe
                     {
                         // Phase B invariant: every GPU->CPU readback must be
-                        // recorded in Engine.Rendering.Stats so
+                        // recorded in RuntimeEngine.Rendering.Stats so
                         // GpuReadbackBytes stays honest under the instrumented
                         // strategy. This is a 4-byte read, but it counts.
                         RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(sizeof(uint));

@@ -52,7 +52,7 @@ public partial class XRMesh
         // starves the pinned Update / FixedUpdate / CollectVisible loops.
         _ = parallel;
         int count = firstAppearanceArray?.Length ?? sourceList.Length;
-        using var _s = RuntimeRenderingHostServices.Current.StartProfileScope("PopulateVertexData (remapped)");
+        using var _s = RuntimeRenderingHostServices.Profiling.StartProfileScope("PopulateVertexData (remapped)");
         var actions = vertexActions as DelVertexAction[] ?? [.. vertexActions];
 
         for (int i = 0; i < count; i++)
@@ -67,7 +67,7 @@ public partial class XRMesh
     private void PopulateVertexData(IEnumerable<DelVertexAction> vertexActions, Vertex[] sourceList, int count, Matrix4x4? dataTransform, bool parallel)
     {
         _ = parallel;
-        using var _s = RuntimeRenderingHostServices.Current.StartProfileScope("PopulateVertexData");
+        using var _s = RuntimeRenderingHostServices.Profiling.StartProfileScope("PopulateVertexData");
         var actions = vertexActions as DelVertexAction[] ?? [.. vertexActions];
 
         for (int i = 0; i < count; i++)

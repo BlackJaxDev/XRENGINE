@@ -17,7 +17,7 @@ internal static class EditorOpenXrPawnSwitcher
             return;
 
         _initialized = true;
-        Engine.VRState.OpenXRSessionRunningChanged += OnOpenXRSessionRunningChanged;
+        RuntimeEngine.VRState.OpenXRSessionRunningChanged += OnOpenXRSessionRunningChanged;
     }
 
     private static void OnOpenXRSessionRunningChanged(bool running)

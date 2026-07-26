@@ -41,7 +41,7 @@ public sealed class UICanvasInputComponentEditor : IXRComponentEditor
 
         EditorImGuiUI.DrawReadOnlyField("Explicit Canvas", DescribeComponent(input.Canvas));
         EditorImGuiUI.DrawReadOnlyField("Resolved Canvas", DescribeComponent(input.GetCameraCanvas()));
-        EditorImGuiUI.DrawReadOnlyField("Owning Pawn", DescribeComponent(input.OwningPawn));
+        EditorImGuiUI.DrawReadOnlyField("Owning Pawn", DescribeComponent(input.OwningPawn as XRComponent));
         EditorImGuiUI.DrawReadOnlyField("Focused", DescribeComponent(input.FocusedComponent));
         EditorImGuiUI.DrawReadOnlyField("Topmost Interactable", DescribeComponent(input.TopMostInteractable));
         EditorImGuiUI.DrawReadOnlyField("Topmost Element", DescribeComponent(input.TopMostElement));

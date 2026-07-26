@@ -10,7 +10,7 @@ namespace XREngine.Input.Devices
     /// Handles input from keyboards, mice, gamepads, etc.
     /// </summary>
     [Serializable]
-    public abstract class InputInterface(int serverIndex) : XRBase
+    public abstract class InputInterface(int serverIndex) : XRBase, IInputRegistration
     {
         public event DelWantsInputsRegistered? InputRegistration;
         protected void OnInputRegistration()

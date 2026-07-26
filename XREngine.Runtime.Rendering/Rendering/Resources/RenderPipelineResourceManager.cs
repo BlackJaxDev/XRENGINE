@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Numerics;
 using System.Text;
 using XREngine.Data.Rendering;
-using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering.Resources;
 
@@ -59,7 +58,7 @@ public sealed class RenderPipelineResourceManager
             completed = true;
             return true;
         }
-        catch (Exception ex) when (VulkanRenderer.IsExpectedVulkanImageAllocationDeferral(ex))
+        catch (Exception ex) when (IsExpectedBackendImageAllocationDeferral(ex))
         {
             generation.AddDiagnostic(ex.Message);
             if (instance.ActiveGeneration is not null)
@@ -99,6 +98,11 @@ public sealed class RenderPipelineResourceManager
             return false;
         }
     }
+
+    private static bool IsExpectedBackendImageAllocationDeferral(Exception exception)
+        => AbstractRenderer.Current is IRuntimeRendererHost renderer
+           && renderer.TryGetBackendCapability<IVulkanAllocatorStreamingBackendCapability>(out var allocator)
+           && allocator?.IsExpectedImageAllocationDeferral(exception) == true;
 
     private static bool ShouldYieldMaterialization(
         long startTimestamp,

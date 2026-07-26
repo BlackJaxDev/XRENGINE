@@ -496,11 +496,11 @@ public sealed class MeshOptimizerInteropTests
     public void MeshTaskIndirectCountDispatch_UsesBackendCountPathAndShaderGate()
     {
         string rendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Generic/AbstractRenderer.cs").Replace("\r\n", "\n");
-        string vulkanSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Meshlets/VulkanRenderer.Meshlets.cs").Replace("\r\n", "\n");
-        string vulkanExtensions = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs").Replace("\r\n", "\n");
-        string vulkanLogicalDevice = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs").Replace("\r\n", "\n");
-        string vulkanCommandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs").Replace("\r\n", "\n");
-        string openGlSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Features/Meshlets/OpenGLRenderer.Meshlets.cs").Replace("\r\n", "\n");
+        string vulkanSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Meshlets/VulkanRenderer.Meshlets.cs").Replace("\r\n", "\n");
+        string vulkanExtensions = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs").Replace("\r\n", "\n");
+        string vulkanLogicalDevice = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs").Replace("\r\n", "\n");
+        string vulkanCommandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs").Replace("\r\n", "\n");
+        string openGlSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Features/Meshlets/OpenGLRenderer.Meshlets.cs").Replace("\r\n", "\n");
 
         rendererSource.ShouldContain("TryDrawMeshTasksIndirectCount(");
         rendererSource.ShouldContain("SupportsProductionMeshletShaders()");
@@ -669,8 +669,8 @@ public sealed class MeshOptimizerInteropTests
     {
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs").Replace("\r\n", "\n");
         string passCore = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Core.cs").Replace("\r\n", "\n");
-        string openGlSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Features/Meshlets/OpenGLRenderer.Meshlets.cs").Replace("\r\n", "\n");
-        string vulkanSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Meshlets/VulkanRenderer.Meshlets.cs").Replace("\r\n", "\n");
+        string openGlSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Features/Meshlets/OpenGLRenderer.Meshlets.cs").Replace("\r\n", "\n");
+        string vulkanSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Meshlets/VulkanRenderer.Meshlets.cs").Replace("\r\n", "\n");
 
         hybridSource.ShouldContain("TryRenderMeshletMaterialTable(");
         hybridSource.ShouldContain("EnsureMeshletMaterialTableProgram(");
@@ -752,7 +752,7 @@ public sealed class MeshOptimizerInteropTests
         string passCore = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Core.cs").Replace("\r\n", "\n");
         string passIndirect = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs").Replace("\r\n", "\n");
         string gpuSceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.AddRemove.cs").Replace("\r\n", "\n");
-        string statsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.GpuMeshlets.cs").Replace("\r\n", "\n");
+        string statsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.GpuMeshlets.cs").Replace("\r\n", "\n");
         string taskShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Meshlets/MeshletCulling.task").Replace("\r\n", "\n");
         string extTaskShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Meshlets/MeshletCullingExt.task").Replace("\r\n", "\n");
 
@@ -801,8 +801,8 @@ public sealed class MeshOptimizerInteropTests
     [Test]
     public void DefaultPipelines_WireMeshletDebugDisplayCommand()
     {
-        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
-        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
 
         pipelineSource.ShouldContain("c.Add<VPRC_RenderMeshletDebugDisplay>();");
         pipeline2Source.ShouldContain("c.Add<VPRC_RenderMeshletDebugDisplay>();");
@@ -867,8 +867,8 @@ public sealed class MeshOptimizerInteropTests
     [Test]
     public void VulkanIndirectBuffers_CanAlsoBeWrittenByCompute()
     {
-        string allocatorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/VulkanResourceAllocator.cs").Replace("\r\n", "\n");
-        string dataBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs").Replace("\r\n", "\n");
+        string allocatorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/VulkanResourceAllocator.cs").Replace("\r\n", "\n");
+        string dataBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs").Replace("\r\n", "\n");
 
         allocatorSource.ShouldContain("EBufferTarget.DrawIndirectBuffer => BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit");
         allocatorSource.ShouldContain("EBufferTarget.DispatchIndirectBuffer => BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit");

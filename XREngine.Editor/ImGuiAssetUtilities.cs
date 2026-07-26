@@ -905,46 +905,12 @@ internal static class ImGuiAssetUtilities
             return false;
         }
 
-        if (TryGetVulkanRenderer() is VulkanRenderer vkRenderer)
-        {
-            IntPtr textureId = EditorRenderThread.Invoke(
-                () => vkRenderer.RegisterImGuiTexture(texture),
-                "ImGuiAssetUtilities.RegisterVulkanPreviewTexture",
-                RenderThreadJobKind.TextureUpload);
-            if (textureId == IntPtr.Zero)
-            {
-                failureReason = "Texture not uploaded";
-                return false;
-            }
-
-            handle = (nint)textureId;
-        }
-        else if (TryGetOpenGLRenderer() is OpenGLRenderer renderer)
-        {
-            var apiTexture = EditorRenderThread.Invoke(
-                () => renderer.GenericToAPI<GLTexture2D>(texture),
-                "ImGuiAssetUtilities.ResolveOpenGLPreviewTexture",
-                RenderThreadJobKind.TextureUpload);
-            if (apiTexture is null)
-            {
-                failureReason = "Texture not uploaded";
-                return false;
-            }
-
-            uint binding = apiTexture.BindingId;
-            if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
-            {
-                failureReason = "Texture not ready";
-                return false;
-            }
-
-            handle = (nint)binding;
-        }
-        else
-        {
-            failureReason = "Preview requires OpenGL or Vulkan renderer";
+        if (!EditorTexturePreviewService.TryGetHandle(
+                texture,
+                out handle,
+                out _,
+                out failureReason))
             return false;
-        }
 
         displaySize = GetPreviewSizeForEdge(pixelSize, maxEdge);
         return true;
@@ -964,30 +930,6 @@ internal static class ImGuiAssetUtilities
 
         float scale = maxEdge / largest;
         return new Vector2(width * scale, height * scale);
-    }
-
-    private static OpenGLRenderer? TryGetOpenGLRenderer()
-    {
-        if (AbstractRenderer.Current is OpenGLRenderer current)
-            return current;
-
-        foreach (var window in Engine.Windows)
-            if (window.Renderer is OpenGLRenderer renderer)
-                return renderer;
-
-        return null;
-    }
-
-    private static VulkanRenderer? TryGetVulkanRenderer()
-    {
-        if (AbstractRenderer.Current is VulkanRenderer current)
-            return current;
-
-        foreach (var window in Engine.Windows)
-            if (window.Renderer is VulkanRenderer renderer)
-                return renderer;
-
-        return null;
     }
 
     // (Inline inspector UI is now toggled by clicking the asset field itself.)

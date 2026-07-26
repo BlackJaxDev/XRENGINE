@@ -1076,7 +1076,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
     private void Render()
     {
-        if (!IsActiveInHierarchy || Engine.Rendering.State.IsShadowPass || !DebugDrawChains)
+        if (!IsActiveInHierarchy || RuntimeEngine.Rendering.State.IsShadowPass || !DebugDrawChains)
             return;
 
         if (UseGPU)
@@ -1105,7 +1105,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             if (p.ParentIndex >= 0 && p.ParentIndex < particleCount)
             {
                 Particle p0 = particles[p.ParentIndex];
-                Engine.Rendering.Debug.RenderLine(p.Position, p0.Position, ColorF4.White);
+                RuntimeEngine.Rendering.Debug.RenderLine(p.Position, p0.Position, ColorF4.White);
 
                 float radius = p.Radius * _objectScale;
                 if (radius > 0.0f)
@@ -1127,11 +1127,11 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         float segmentLengthSquared = Vector3.DistanceSquared(start, end);
         if (segmentLengthSquared <= 1e-8f)
         {
-            Engine.Rendering.Debug.RenderSphere(start, radius, false, ColorF4.Yellow);
+            RuntimeEngine.Rendering.Debug.RenderSphere(start, radius, false, ColorF4.Yellow);
             return;
         }
 
-        Engine.Rendering.Debug.RenderCapsule(start, end, radius, false, ColorF4.Yellow);
+        RuntimeEngine.Rendering.Debug.RenderCapsule(start, end, radius, false, ColorF4.Yellow);
     }
 
     public void SetWeight(float w)

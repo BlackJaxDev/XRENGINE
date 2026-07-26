@@ -16,7 +16,7 @@ public sealed class WindowResizeControllerTests
     public void VulkanSwapchainRecreation_DoesNotPumpNativeWindowEvents()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
 
         source.ShouldNotContain("Window.DoEvents()");
     }
@@ -421,6 +421,24 @@ public sealed class WindowResizeControllerTests
         mouse.ApplySnapshot(accumulator.ConsumeLatest());
         mouse.TickStates(1.0f / 60.0f);
         scrollEventCount.ShouldBe(1);
+    }
+
+    [Test]
+    public void WindowInputSnapshotAccumulator_ExposesCurrentKeyStateBeforeSnapshotConsumption()
+    {
+        WindowInputSnapshotAccumulator accumulator = new();
+
+        accumulator.RecordKeyDown(EKey.ShiftLeft).ShouldBeTrue();
+        accumulator.RecordKeyDown(EKey.ShiftLeft).ShouldBeFalse();
+        accumulator.IsKeyPressed(EKey.ShiftLeft).ShouldBeTrue();
+
+        accumulator.RecordKeyDown(EKey.F5).ShouldBeTrue();
+        accumulator.IsKeyPressed(EKey.F5).ShouldBeTrue();
+
+        accumulator.RecordKeyUp(EKey.ShiftLeft);
+        accumulator.IsKeyPressed(EKey.ShiftLeft).ShouldBeFalse();
+        accumulator.RecordKeyDown(EKey.ShiftLeft).ShouldBeTrue();
+        accumulator.IsKeyPressed(EKey.F5).ShouldBeTrue();
     }
 
     [Test]

@@ -9,6 +9,7 @@ using XREngine.Data.Trees;
 using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Rendering.VideoStreaming;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using static XREngine.Rendering.XRWorldInstance;
 
@@ -59,7 +60,7 @@ namespace XREngine
     ///   <item><description><b>Engine.cs</b> - Core fields, events, constructor, and basic properties</description></item>
     ///   <item><description><b>Engine.Threading.cs</b> - Threading properties and task scheduling</description></item>
     ///   <item><description><b>Engine.Lifecycle.cs</b> - Engine lifecycle (Run, Initialize, Cleanup)</description></item>
-    ///   <item><description><b>Engine.Windows.cs</b> - Window and viewport management</description></item>
+    ///   <item><description><b>RuntimeEngine.cs</b> - Runtime.Rendering-owned window and viewport registry</description></item>
     ///   <item><description><b>Engine.Settings.cs</b> - Settings properties and change handlers</description></item>
     ///   <item><description><b>Engine.Networking.cs</b> - Networking and VR initialization</description></item>
     ///   <item><description><b>Engine.ViewportRebind.cs</b> - Play mode diagnostics and viewport rebinding</description></item>
@@ -72,11 +73,6 @@ namespace XREngine
         // ═══════════════════════════════════════════════════════════════════════════════════════════
         // WINDOW MANAGEMENT
         // ═══════════════════════════════════════════════════════════════════════════════════════════
-
-        /// <summary>
-        /// Collection of all active engine windows.
-        /// </summary>
-        private static readonly EventList<XRWindow> _windows = [];
 
         /// <summary>
         /// Counter for suppressed cleanup requests to prevent premature shutdown.
@@ -203,12 +199,54 @@ namespace XREngine
         /// <summary>
         /// Provides a profiler hook for external systems.
         /// </summary>
-        private static IDisposable ExternalProfilingHook(string sampleName) => Profiler.Start(sampleName);
+        private static IDisposable ExternalProfilingHook(string sampleName)
+            => StartPooledProfilerScope(sampleName);
 
-        private static readonly EngineRenderThreadHost s_renderThreadHost = new();
+        /// <summary>
+        /// Bridges the value-type code-profiler scope through interfaces that expose
+        /// <see cref="IDisposable"/> without boxing a new scope on every hot-path call.
+        /// </summary>
+        internal static IDisposable StartPooledProfilerScope(string sampleName)
+            => PooledExternalProfilerScope.Rent(Profiler.Start(sampleName));
+
+        private sealed class PooledExternalProfilerScope : IDisposable
+        {
+            [ThreadStatic]
+            private static Stack<PooledExternalProfilerScope>? t_available;
+
+            private CodeProfiler.ProfilerScope _scope;
+            private bool _active;
+
+            public static PooledExternalProfilerScope Rent(CodeProfiler.ProfilerScope scope)
+            {
+                Stack<PooledExternalProfilerScope> available = t_available ??= new();
+                PooledExternalProfilerScope wrapper =
+                    available.Count != 0 ? available.Pop() : new PooledExternalProfilerScope();
+                wrapper._scope = scope;
+                wrapper._active = true;
+                return wrapper;
+            }
+
+            public void Dispose()
+            {
+                if (!_active)
+                    return;
+
+                _active = false;
+                _scope.Dispose();
+                _scope = default;
+                (t_available ??= new()).Push(this);
+            }
+        }
+
+        private static readonly RuntimeRenderThreadHost s_renderThreadHost = new(
+            () => WindowPumpHost.IsRunning,
+            runUntilPredicate => Time.Timer.BlockForRendering(runUntilPredicate),
+            () => Time.Timer.WaitToRender(),
+            () => Time.Timer.Stop());
         private static readonly EngineWindowPumpHost s_windowPumpHost = new();
 
-        internal static EngineRenderThreadHost RenderThreadHost => s_renderThreadHost;
+        internal static RuntimeRenderThreadHost RenderThreadHost => s_renderThreadHost;
         internal static EngineWindowPumpHost WindowPumpHost => s_windowPumpHost;
         internal static bool StartupOpenXrRuntimeRequested { get; private set; }
         public static global::XREngine.Rendering.WindowMailboxDiagnostics WindowThreadMailboxDiagnostics
@@ -221,9 +259,12 @@ namespace XREngine
             => Profiler.CaptureLinkedChildContext();
 
         private static IDisposable ExternalLinkedProfilingHook(object? context, string sampleName)
-            => context is CodeProfiler.LinkedScopeContext linkedContext
+        {
+            CodeProfiler.ProfilerScope scope = context is CodeProfiler.LinkedScopeContext linkedContext
                 ? Profiler.StartLinkedChild(linkedContext, sampleName, ProfilerScopeKind.OneOffInvoke)
                 : Profiler.Start(sampleName, ProfilerScopeKind.OneOffInvoke);
+            return PooledExternalProfilerScope.Rent(scope);
+        }
 
         /// <summary>
         /// Static constructor that initializes default settings and wires up internal event handlers.
@@ -238,8 +279,8 @@ namespace XREngine
             // creates a JobManager with worker threads, and can deadlock on the
             // type-initializer lock. Initialize() will re-set this to the same value.
             int bootstrapThreadId = Environment.CurrentManagedThreadId;
-            RenderThreadId = bootstrapThreadId;
-            WindowThreadId = bootstrapThreadId;
+            RuntimeEngine.AssignRenderThread(bootstrapThreadId);
+            RuntimeEngine.AssignWindowThread(bootstrapThreadId);
 
             // Suppress all settings cascades during type initialization.
             // No worlds, viewports, windows, or audio devices exist yet, so Apply
@@ -259,6 +300,7 @@ namespace XREngine
                 UpdateEffectiveEditorPreferences();
             }
 
+            EngineRenderingSettingsApplication.InitializeSettingsApplicationBoundary();
             Debug.InitializeExceptionTracing();
 
             // Wire up timer events for deferred processing
@@ -268,6 +310,8 @@ namespace XREngine
             RuntimePawnHostServices.Current = new EngineRuntimePawnHostServices();
             GameModeCompositionBootstrap.RegisterBuiltInGameModes();
             RuntimeThreadServices.Current = new EngineRuntimeThreadServices();
+            RuntimeModelImportServices.Current = new EngineRuntimeModelImportServices();
+            RuntimeSceneImportServices.Current = new UnityEditorImportBridge();
 
             RuntimeAnimationHostServices.Current = new EngineRuntimeAnimationHostServices();
             RuntimePhysicsServices.Current = new EngineRuntimePhysicsServices();
@@ -279,12 +323,6 @@ namespace XREngine
             XREngine.Scene.RuntimeSceneNodeServices.Current = new EngineRuntimeSceneNodeServices();
             XREngine.Components.Scene.Volumes.RuntimeSceneStreamingHostServices.Current = new EngineRuntimeSceneStreamingHostServices();
             RuntimeTransformServices.Current = new EngineRuntimeTransformServices();
-            RuntimeRenderObjectServices.Current = new EngineRuntimeRenderObjectServices();
-            RuntimeShaderServices.Current = new EngineRuntimeShaderServices();
-            RuntimeRenderingHostServices.Current = new EngineRuntimeRenderingHostServices();
-            RuntimeVrRenderingServices.Current = new EngineRuntimeVrRenderingServices();
-            RuntimeRenderingHostServices.GameCachePath = ConvexHullDiskCache.ResolveCacheRoot();
-            RuntimeVideoStreamingServices.Current = new EngineRuntimeVideoStreamingServices();
             RuntimePlayerControllerServices.Current = new EngineRuntimePlayerControllerServices();
             RuntimeVrInputServices.Current = new EngineRuntimeVrInputServices();
             RuntimeVrStateServices.Current = new EngineRuntimeVrStateServices();
@@ -297,12 +335,12 @@ namespace XREngine
             IRenderTree.ProfilingHook = ExternalProfilingHook;
             IRenderTree.OctreeStatsHook = (adds, moves, removes, skipped) =>
             {
-                for (int i = 0; i < adds; i++) Rendering.Stats.Octree.RecordOctreeAdd();
-                for (int i = 0; i < moves; i++) Rendering.Stats.Octree.RecordOctreeMove();
-                for (int i = 0; i < removes; i++) Rendering.Stats.Octree.RecordOctreeRemove();
+                for (int i = 0; i < adds; i++) RuntimeEngine.Rendering.Stats.Octree.RecordOctreeAdd();
+                for (int i = 0; i < moves; i++) RuntimeEngine.Rendering.Stats.Octree.RecordOctreeMove();
+                for (int i = 0; i < removes; i++) RuntimeEngine.Rendering.Stats.Octree.RecordOctreeRemove();
             };
-            IRenderTree.OctreeSwapTimingHook = Rendering.Stats.Octree.RecordOctreeSwapTiming;
-            IRenderTree.OctreeRaycastTimingHook = Rendering.Stats.Octree.RecordOctreeRaycastTiming;
+            IRenderTree.OctreeSwapTimingHook = RuntimeEngine.Rendering.Stats.Octree.RecordOctreeSwapTiming;
+            IRenderTree.OctreeRaycastTimingHook = RuntimeEngine.Rendering.Stats.Octree.RecordOctreeRaycastTiming;
 
             // Snapshot restore can invalidate runtime-only bindings (viewport/world/camera).
             // Rebind right after restore (pre-BeginPlay) and once more after play begins.
@@ -397,121 +435,6 @@ namespace XREngine
         /// They are also distinct from <see cref="XRWorld"/>, which is just the serialized data for a world.
         /// </remarks>
         public static IReadOnlyCollection<XRWorldInstance> WorldInstances => XRWorldInstance.WorldInstances.Values;
-
-        /// <summary>
-        /// The list of currently active and rendering windows.
-        /// </summary>
-        public static IEventListReadOnly<XRWindow> Windows => _windows;
-
-        public enum EViewportEnumerationMode
-        {
-            ExcludeVrEyeViewports,
-            IncludeVrEyeViewports,
-        }
-
-        /// <summary>
-        /// Enumerates all active viewports across all active windows.
-        /// </summary>
-        public static IEnumerable<XRViewport> EnumerateActiveViewports(EViewportEnumerationMode mode = EViewportEnumerationMode.ExcludeVrEyeViewports)
-        {
-            foreach (XRWindow window in _windows)
-                foreach (XRViewport viewport in window.Viewports)
-                    yield return viewport;
-
-            if (mode != EViewportEnumerationMode.IncludeVrEyeViewports)
-                yield break;
-
-            XRViewport? leftEye = VRState.LeftEyeViewport;
-            if (leftEye is not null && !IsViewportInAnyActiveWindow(leftEye))
-                yield return leftEye;
-
-            XRViewport? rightEye = VRState.RightEyeViewport;
-            if (rightEye is not null && !IsViewportInAnyActiveWindow(rightEye))
-                yield return rightEye;
-        }
-
-        /// <summary>
-        /// Enumerates all active viewports from the render thread and returns a stable snapshot.
-        /// </summary>
-        /// <remarks>
-        /// If called from a non-render thread, work is enqueued to the render thread and this method blocks
-        /// until the snapshot has been produced.
-        /// </remarks>
-        public static IReadOnlyList<XRViewport> EnumerateActiveViewportsOnMainThread(EViewportEnumerationMode mode = EViewportEnumerationMode.ExcludeVrEyeViewports)
-        {
-            if (IsRenderThread)
-                return [.. EnumerateActiveViewports(mode)];
-
-            var completion = new TaskCompletionSource<IReadOnlyList<XRViewport>>(TaskCreationOptions.RunContinuationsAsynchronously);
-            EnqueueMainThreadTask(() =>
-            {
-                try
-                {
-                    completion.TrySetResult([.. EnumerateActiveViewports(mode)]);
-                }
-                catch (Exception ex)
-                {
-                    completion.TrySetException(ex);
-                }
-            }, "Engine.EnumerateActiveViewportsOnMainThread");
-
-            return completion.Task.GetAwaiter().GetResult();
-        }
-
-        /// <summary>
-        /// Enumerates active viewports for a specific active window.
-        /// </summary>
-        public static IEnumerable<XRViewport> EnumerateActiveViewports(XRWindow? window, EViewportEnumerationMode mode = EViewportEnumerationMode.ExcludeVrEyeViewports)
-        {
-            if (window is null)
-                yield break;
-
-            foreach (XRViewport viewport in window.Viewports)
-                yield return viewport;
-
-            if (mode != EViewportEnumerationMode.IncludeVrEyeViewports)
-                yield break;
-
-            XRViewport? leftEye = VRState.LeftEyeViewport;
-            if (leftEye is not null && ReferenceEquals(leftEye.Window, window) && !window.Viewports.Contains(leftEye))
-                yield return leftEye;
-
-            XRViewport? rightEye = VRState.RightEyeViewport;
-            if (rightEye is not null && ReferenceEquals(rightEye.Window, window) && !window.Viewports.Contains(rightEye))
-                yield return rightEye;
-        }
-
-        /// <summary>
-        /// Enumerates all active (window, viewport) pairs across active windows.
-        /// </summary>
-        public static IEnumerable<(XRWindow Window, XRViewport Viewport)> EnumerateActiveWindowViewports(EViewportEnumerationMode mode = EViewportEnumerationMode.ExcludeVrEyeViewports)
-        {
-            foreach (XRWindow window in _windows)
-                foreach (XRViewport viewport in window.Viewports)
-                    yield return (window, viewport);
-
-            if (mode != EViewportEnumerationMode.IncludeVrEyeViewports)
-                yield break;
-
-            XRViewport? leftEye = VRState.LeftEyeViewport;
-            if (leftEye?.Window is XRWindow leftWindow && !leftWindow.Viewports.Contains(leftEye))
-                yield return (leftWindow, leftEye);
-
-            XRViewport? rightEye = VRState.RightEyeViewport;
-            if (rightEye?.Window is XRWindow rightWindow && !rightWindow.Viewports.Contains(rightEye))
-                yield return (rightWindow, rightEye);
-        }
-
-        private static bool IsViewportInAnyActiveWindow(XRViewport viewport)
-        {
-            foreach (XRWindow window in _windows)
-            {
-                if (window.Viewports.Contains(viewport))
-                    return true;
-            }
-
-            return false;
-        }
 
         #endregion
 

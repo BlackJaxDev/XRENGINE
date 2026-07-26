@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <Platforms>AnyCPU;x64</Platforms>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill.vert"
+                      LogicalName="XREngine.Rendering.UI.Ultralight.Shaders.shader_fill.vert" />
+    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill.frag"
+                      LogicalName="XREngine.Rendering.UI.Ultralight.Shaders.shader_fill.frag" />
+    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill_path.vert"
+                      LogicalName="XREngine.Rendering.UI.Ultralight.Shaders.shader_fill_path.vert" />
+    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill_path.frag"
+                      LogicalName="XREngine.Rendering.UI.Ultralight.Shaders.shader_fill_path.frag" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ImGui.NET" Version="1.90.8.1" />
+    <PackageReference Include="Silk.NET.Core" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Input" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Input.Glfw" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenGL" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenGL.Extensions.AMD" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenGL.Extensions.ARB" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenGL.Extensions.EXT" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenGL.Extensions.ImGui" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenGL.Extensions.INTEL" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenGL.Extensions.KHR" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenGL.Extensions.NV" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenGL.Extensions.OVR" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenGLES.Extensions.EXT" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenGLES.Extensions.NV" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.WGL.Extensions.ARB" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Windowing" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Windowing.Glfw" Version="2.23.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="XREngine.UnitTests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
+  </ItemGroup>
+
+</Project>

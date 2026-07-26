@@ -12,15 +12,27 @@ public abstract class AbstractRenderAPIObject : XRBase, IDisposable
     {
         ArgumentNullException.ThrowIfNull(owner);
         Owner = owner;
+        OwnerGeneration = owner is IRuntimeRendererHost renderer
+            ? renderer.BackendGeneration
+            : 0;
     }
 
     public IRenderApiWrapperOwner Owner { get; }
+    public long OwnerGeneration { get; }
 
     private bool disposedValue;
 
     public abstract bool IsGenerated { get; }
     public abstract void Generate();
     public abstract void Destroy();
+
+    /// <summary>
+    /// Permanently detaches this wrapper from its logical object before a renderer
+    /// generation is retired. Unlike <see cref="Destroy"/>, retirement must also remove
+    /// managed event subscriptions for wrappers that never generated a native handle.
+    /// </summary>
+    protected internal virtual void Retire()
+        => Destroy();
 
     protected virtual void Dispose(bool disposing)
     {
@@ -50,6 +62,21 @@ public abstract class AbstractRenderAPIObject : XRBase, IDisposable
     public abstract string GetDescribingName();
 
     public virtual nint GetHandle() => 0;
+
+    /// <summary>
+    /// Rejects a stale wrapper before it can call into a retired collectible backend.
+    /// Backend operations may use this at public submission boundaries.
+    /// </summary>
+    protected void ValidateOwnerGeneration()
+    {
+        if (Owner is not AbstractRenderer renderer)
+            return;
+        if (renderer.AcceptsBackendWork && renderer.BackendGeneration == OwnerGeneration)
+            return;
+
+        throw new InvalidOperationException(
+            $"API wrapper '{GetType().Name}' belongs to retired renderer generation {OwnerGeneration}; active owner generation is {renderer.BackendGeneration}.");
+    }
 }
 
 public interface IRenderPreparationState

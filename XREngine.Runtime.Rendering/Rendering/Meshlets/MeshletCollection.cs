@@ -3,7 +3,6 @@ using System.Runtime.InteropServices;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Rendering.Meshlets
 {
@@ -258,10 +257,12 @@ namespace XREngine.Rendering.Meshlets
             if (_taskMeshProgram is null)
                 return false;
 
-            if (AbstractRenderer.Current is not OpenGLRenderer gl)
+            if (AbstractRenderer.Current is not IRuntimeRendererHost renderer ||
+                !renderer.TryGetBackendCapability<IMeshTaskDrawBackendCapability>(out var meshTask) ||
+                meshTask is null)
                 return false;
 
-            if (gl.NVMeshShader is null)
+            if (!meshTask.SupportsMeshTaskDraw)
             {
                 Debug.LogWarning("NV_mesh_shader not supported on current OpenGL context.");
                 return false;
@@ -273,9 +274,7 @@ namespace XREngine.Rendering.Meshlets
             UpdateBuffers();
             UpdateCommandVisibilityBuffer(visibilityScene, commandVisibility);
 
-            gl.RawGL.Disable(Silk.NET.OpenGL.EnableCap.CullFace);
-            gl.RawGL.Disable(Silk.NET.OpenGL.EnableCap.StencilTest);
-            gl.RawGL.Disable(Silk.NET.OpenGL.EnableCap.Blend);
+            meshTask.PrepareMeshTaskDraw();
 
             // Use task/mesh program
             _taskMeshProgram.Use();
@@ -327,7 +326,7 @@ namespace XREngine.Rendering.Meshlets
             if (numGroups == 0)
                 return false;
 
-            gl.NVMeshShader.DrawMeshTask(0, numGroups);
+            meshTask.DrawMeshTasks(0, numGroups);
             return true;
         }
 

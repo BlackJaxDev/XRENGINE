@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Scene.Transforms;
 
@@ -42,7 +42,7 @@ namespace XREngine.Components
             public bool DepthTested { get; set; } = depthTested;
 
             public override void Render(TransformBase transform)
-                => Engine.Rendering.Debug.RenderBox(
+                => RuntimeEngine.Rendering.Debug.RenderBox(
                     HalfExtents,
                     LocalOffset,
                     transform.RenderMatrix,

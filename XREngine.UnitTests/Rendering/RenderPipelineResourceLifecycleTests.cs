@@ -2443,7 +2443,7 @@ public sealed class RenderPipelineResourceLifecycleTests
     public void VulkanReadbackScope_UsesCapturedRenderedFrameGenerationAndTarget()
     {
         string plannerSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
         int matchStart = plannerSource.IndexOf(
             "private static bool FrameOpContextMatchesPlannerStateKey",
             StringComparison.Ordinal);
@@ -2453,7 +2453,7 @@ public sealed class RenderPipelineResourceLifecycleTests
         matchBody.ShouldContain("ResolveResourcePlanOutputTargetIdentity(context) == key.OutputTargetIdentity");
 
         string readbackSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Readback.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Readback.cs");
         Regex.Matches(
             readbackSource,
             "_lastWindowPresentFrameOpContext is \\{ \\} context\\s+\\? EnterFrameOpResourcePlannerReadbackScope\\(in context\\)")
@@ -2467,7 +2467,7 @@ public sealed class RenderPipelineResourceLifecycleTests
     public void VulkanSwapchainRecreation_DoesNotWaitForWholeDeviceIdle()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
         int methodStart = source.IndexOf("private bool RecreateSwapChain()", StringComparison.Ordinal);
         int methodEnd = source.IndexOf("private void DestroyAllSwapChainObjects()", methodStart, StringComparison.Ordinal);
         string method = source[methodStart..methodEnd];

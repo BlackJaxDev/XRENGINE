@@ -1,6 +1,7 @@
 using System.Globalization;
 using ImGuiNET;
 using XREngine.Components;
+using XREngine.Rendering.UI;
 using static XREngine.Editor.EditorImGuiUI;
 
 namespace XREngine.Editor.ComponentEditors;
@@ -111,8 +112,11 @@ public sealed class UICanvasComponentEditor : IXRComponentEditor
         ImGui.Spacing();
     }
 
-    private static string DescribeComponent(XRComponent? component)
-        => component is null
-            ? "None"
-            : $"{component.SceneNode?.Name ?? "<unnamed>"} ({component.GetType().Name})";
+    private static string DescribeComponent(IUICanvasInputSource? input)
+        => input switch
+        {
+            null => "None",
+            XRComponent component => $"{component.SceneNode?.Name ?? "<unnamed>"} ({component.GetType().Name})",
+            _ => input.GetType().Name,
+        };
 }

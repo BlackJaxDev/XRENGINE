@@ -42,7 +42,7 @@ public sealed class GpuIndirectPhase3PolicyTests
     [Test]
     public void VulkanFeatureProfile_AllRuntimeProfilesAllowGpuRenderDispatch()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/VulkanFeatureProfile.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Vulkan/VulkanFeatureProfile.cs");
 
         source.ShouldContain("private static bool ProfileAllowsGpuRenderDispatch");
         source.ShouldContain("EVulkanGpuDrivenProfile.ShippingFast => true");
@@ -60,7 +60,7 @@ public sealed class GpuIndirectPhase3PolicyTests
         EMeshSubmissionStrategy.GpuMeshletInstrumented.UsesGpuBvhCulling().ShouldBeTrue();
         EMeshSubmissionStrategy.GpuMeshletZeroReadback.UsesGpuBvhCulling().ShouldBeTrue();
 
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/VulkanFeatureProfile.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Vulkan/VulkanFeatureProfile.cs");
         source.ShouldContain("ResolveGpuBvhUsage(EMeshSubmissionStrategy strategy)");
         source.ShouldContain("if (!strategy.UsesGpuBvhCulling())");
         source.ShouldContain("return ProfileAllowsGpuBvh;");
@@ -186,8 +186,8 @@ public sealed class GpuIndirectPhase3PolicyTests
     [Test]
     public void VulkanMeshRenderer_ExternalTriangleIndexBufferSurvivesPreparation()
     {
-        string meshRendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
-        string buffersSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Buffers.cs");
+        string meshRendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
+        string buffersSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Buffers.cs");
 
         meshRendererSource.ShouldContain("private bool _triangleIndexBufferExternallyProvided;");
         buffersSource.ShouldContain("else if (_triangleIndexBufferExternallyProvided)");
@@ -244,7 +244,7 @@ public sealed class GpuIndirectPhase3PolicyTests
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Traditional/VPRC_RenderMeshesPassTraditional.cs");
 
         source.ShouldContain("VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics");
-        source.ShouldContain("Engine.Rendering.Stats.GpuFallback.RecordGpuCpuFallback(1, 0);");
+        source.ShouldContain("RuntimeEngine.Rendering.Stats.GpuFallback.RecordGpuCpuFallback(1, 0);");
         source.ShouldContain("CPU mesh safety-net suppressed for policy");
     }
 

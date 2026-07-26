@@ -492,7 +492,7 @@ smoothedVelocity = lerp(smoothedVelocity, rawVelocity, 1 - smoothing * 0.9)
 | File | Description |
 |------|-------------|
 | `XRENGINE/Scene/Components/Physics/GPUPhysicsChainComponent.cs` | Main component |
-| `XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs` | Batched dispatcher |
+| `XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs` | Batched dispatcher |
 | `Build/CommonAssets/Shaders/Compute/PhysicsChain.comp` | Main physics shader |
 | `Build/CommonAssets/Shaders/Compute/PhysicsChain/SkipUpdateParticles.comp` | Skip-update shader |
 

@@ -137,7 +137,7 @@ public static class BootstrapWorldFactory
         Action? restoreRuntimeShadowSettings = null;
         if (settings.UseStartupShadowThrottlingForModelImports)
         {
-            var renderSettings = Engine.Rendering.Settings;
+            var renderSettings = RuntimeEngine.Rendering.Settings;
             int previousMaxShadowTilesRenderedPerFrame = renderSettings.MaxShadowTilesRenderedPerFrame;
             float previousMaxShadowRenderMilliseconds = renderSettings.MaxShadowRenderMilliseconds;
 
@@ -304,7 +304,7 @@ public static class BootstrapWorldFactory
                 JobPriority.Low);
         }
 
-        if (Engine.Windows.Count > 0 && !Engine.StartingUp)
+        if (RuntimeEngine.Windows.Count > 0 && !Engine.StartingUp)
         {
             QueueSkyTextureLoad();
             return;

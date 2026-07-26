@@ -30,7 +30,7 @@ This document describes how the OpenGL 4.6 renderer is initialized, how it manag
 `OpenGLRenderer` is a partial class that extends `AbstractRenderer<GL>` (where `GL` is Silk.NET's OpenGL 4.6 binding). It obtains an OpenGL context from the Silk.NET window's `GLContext` and wraps all engine render objects with GL-specific API wrappers.
 
 ```csharp
-// XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Bootstrap/OpenGLRenderer.cs
+// XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Bootstrap/OpenGLRenderer.cs
 public partial class OpenGLRenderer : AbstractRenderer<GL>
 ```
 
@@ -69,7 +69,7 @@ Editor-only OpenGL diagnostics are exposed as
 ## Source File Inventory
 
 The OpenGL renderer lives under
-`XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/` and follows the
+`XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/` and follows the
 same backend taxonomy as Vulkan where the API concepts line up. Namespaces
 intentionally remain `XREngine.Rendering.OpenGL`; folder names define source
 ownership and navigation.

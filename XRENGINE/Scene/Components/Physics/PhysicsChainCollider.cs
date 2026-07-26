@@ -407,7 +407,7 @@ public class PhysicsChainCollider : PhysicsChainColliderBase, IRenderable
 
     private void RenderGizmos()
     {
-        if (!IsActiveInHierarchy || Engine.Rendering.State.IsShadowPass)
+        if (!IsActiveInHierarchy || RuntimeEngine.Rendering.State.IsShadowPass)
             return;
 
         Prepare();
@@ -417,7 +417,7 @@ public class PhysicsChainCollider : PhysicsChainColliderBase, IRenderable
         {
             case 0:
             case 1:
-                Engine.Rendering.Debug.RenderSphere(_center0, _scaledRadius, false, color);
+                RuntimeEngine.Rendering.Debug.RenderSphere(_center0, _scaledRadius, false, color);
                 break;
             case 2:
             case 3:
@@ -434,13 +434,13 @@ public class PhysicsChainCollider : PhysicsChainColliderBase, IRenderable
     {
         if (radius0 != radius1)
         {
-            Engine.Rendering.Debug.RenderLine(c0, c1, color);
-            Engine.Rendering.Debug.RenderSphere(c0, radius0, false, color);
-            Engine.Rendering.Debug.RenderSphere(c1, radius1, false, color);
+            RuntimeEngine.Rendering.Debug.RenderLine(c0, c1, color);
+            RuntimeEngine.Rendering.Debug.RenderSphere(c0, radius0, false, color);
+            RuntimeEngine.Rendering.Debug.RenderSphere(c1, radius1, false, color);
         }
         else
         {
-            Engine.Rendering.Debug.RenderCapsule(c0, c1, radius0, false, color);
+            RuntimeEngine.Rendering.Debug.RenderCapsule(c0, c1, radius0, false, color);
         }
     }
 }

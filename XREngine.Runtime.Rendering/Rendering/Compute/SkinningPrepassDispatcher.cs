@@ -2,14 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Numerics;
-using Silk.NET.OpenGL;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using State = XREngine.RuntimeEngine.Rendering.State;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering.Compute;
@@ -747,20 +745,20 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             return;
         foreach (var wrapper in buffer.APIWrappers)
         {
-            if (wrapper is OpenGLRenderer.GLDataBuffer gl && !gl.IsReadyForRendering)
-                gl.EnsureStorageAllocatedForGpuCopy();
-            else if (wrapper is VulkanRenderer.VkDataBuffer vk)
-                vk.EnsureStorageAllocatedForGpuUse();
+            if (wrapper is IApiDataBuffer apiBuffer && !apiBuffer.BackendIsReadyForGpuUse)
+                apiBuffer.EnsureStorageAllocatedForGpuUse();
         }
     }
 
     private static void ClearOpenGlComputeBindings()
     {
-        if (AbstractRenderer.Current is not OpenGLRenderer glRenderer)
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null ||
+            !((IRuntimeRendererHost)renderer).TryGetBackendCapability<IComputeBindingCleanupBackendCapability>(out var capability) ||
+            capability is null)
             return;
 
-        for (uint binding = 0u; binding <= SkinningPrepassBindings.Max; binding++)
-            glRenderer.RawGL.BindBufferBase(GLEnum.ShaderStorageBuffer, binding, 0);
+        capability.ClearStorageBufferBindings(SkinningPrepassBindings.Max);
     }
 
     private EmptyStorageBuffers GetEmptyStorageBuffers()

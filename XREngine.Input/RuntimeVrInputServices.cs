@@ -3,6 +3,7 @@ using System.Numerics;
 
 namespace XREngine.Input;
 
+#if false
 public enum RuntimeVrActionValueType
 {
     Boolean,
@@ -151,6 +152,7 @@ public delegate void RuntimeVrVector2Changed(Vector2 oldValue, Vector2 newValue)
 public delegate void RuntimeVrVector3Changed(Vector3 oldValue, Vector3 newValue);
 public delegate void RuntimeVrPoseChanged(in RuntimeVrPoseState pose);
 public delegate void RuntimeVrSkeletonSummaryChanged(in RuntimeVrSkeletonSummary summary);
+#endif
 
 public interface IRuntimeVrInputServices
 {

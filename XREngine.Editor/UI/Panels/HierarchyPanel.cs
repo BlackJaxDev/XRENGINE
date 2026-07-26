@@ -1292,7 +1292,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
         return transform?.SceneNode;
     }
 
-    private UICanvasInputComponent? GetCanvasInput()
+    private IUICanvasInputSource? GetCanvasInput()
         => BoundableTransform.GetCanvasComponent()?.GetInputComponent();
 
     internal static bool IsDoubleClick(SceneNode? currentNode, SceneNode? lastClickedNode, long nowTicks, long lastClickTicks, float thresholdSeconds)

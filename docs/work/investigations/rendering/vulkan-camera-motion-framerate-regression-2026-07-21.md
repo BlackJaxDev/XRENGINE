@@ -1,7 +1,8 @@
 # Vulkan Camera-Motion Framerate Regression Investigation
 
 **Date:** 2026-07-21  
-**Status:** Active; visual corruption is fixed, camera-motion performance is not yet resolved  
+**Status:** Fixed and optimized on the full desktop `DefaultRenderPipeline` as of 2026-07-25; external OpenXR targets and mutable GPU-driven indirect/count streams remain explicitly quarantined
+
 **Backend / workload:** Vulkan, Debug Unit Testing World, desktop editor viewport
 
 ## Problem Statement
@@ -81,19 +82,22 @@ Three packet strategies were tested:
 2. **All compatible draws in a pass/view:** reduced approximately 500 chains to roughly 30-45, but regressed sustained motion. A one-mesh change in the main visible set invalidated and re-recorded an entire packet of up to 64 draws. This broad strategy has been rejected.
 3. **Shadow views only:** intended to aggregate the stable 393-draw cascade membership while retaining per-draw reuse for the changing main view. The first benchmark did not activate because generic shadow render-graph passes such as `DepthPrePass` were incorrectly classified as `RenderViewKind.Main`.
 
-The current source now treats `PendingMeshDraw.ShadowUniformState.IsShadowPass` as the authoritative view-kind signal before falling back to pass-name heuristics. The editor build succeeds; a post-change live benchmark is pending.
+The current source now treats `PendingMeshDraw.ShadowUniformState.IsShadowPass` as the authoritative view-kind signal before falling back to pass-name heuristics. Focused tests and the post-change default-policy live benchmark pass.
 
 ### Mixed programs inside a shadow secondary are Vulkan-valid in this path
 
 Each scheduled draw independently binds its graphics pipeline, layout-aware descriptor sets and dynamic offsets, vertex/index buffers, and push constants. Aggregated packet hashes are ordered and include every draw's structural signature, prepared-program binding identity, descriptor schema, and descriptor publication dependency. Compatibility also requires the same pass, target, view, and frame-op planner state.
 
-The remaining lifecycle caveat is shader/program relinking under an unchanged binding identity: command-chain dependencies need an explicit program/pipeline revision or a guaranteed invalidation on layout destruction/relink.
+Shader/program relinking under an unchanged binding identity is now covered by
+an explicit successful-link generation. Ordered packet dependencies hash every
+draw's program binding identity and link generation, so an affected secondary
+cannot survive a relink with stale pipeline-layout state.
 
 ### Reused secondaries must retain their baked uniform-slot mapping
 
 A scheduled secondary bakes each draw's dynamic-uniform-buffer offset. The current frame recomputes occurrence slots from the visible draw order. If an earlier occurrence for the same renderer/family becomes invisible or reorders, refreshing the new slot cannot make the old baked offset valid.
 
-The current source now stores an ordered uniform-slot signature after recording each chain. Before reuse it compares the freshly assigned slot mapping and forces re-recording when the mapping differs. This is a correctness guard for the original per-mesh wrong-transform/wrong-camera symptom; build and live validation are pending.
+The current source now stores an ordered uniform-slot signature after recording each chain. Before reuse it compares the freshly assigned slot mapping and forces re-recording when the mapping differs. This is a correctness guard for the original per-mesh wrong-transform/wrong-camera symptom; the focused regression test and multi-position live validation pass.
 
 ## Measurement Ledger
 
@@ -135,28 +139,177 @@ The second camera position intersects dark foreground geometry, but its scene ge
 - Restricted reusable packets to operations classified as `FrameDataOnly`; dynamic overlay/gizmo/profiler/UI-like mesh commands remain inline.
 - Stored and validated the ordered dynamic-uniform slot mapping baked into each reusable secondary.
 
-## Open Correctness Items
+## Correctness Closure
 
-1. Add regression coverage proving dynamic overlay/gizmo/profiler/UI-like mesh commands cannot aggregate into reusable `FrameDataOnly` packets.
-2. Add regression coverage proving a changed same-renderer/family occurrence order invalidates a secondary with a different baked uniform-slot signature.
-3. Add an explicit graphics-program/pipeline-layout revision to command-chain dependencies, or prove that every relink/layout destruction path invalidates affected chains.
-4. Re-run Standard Validation after the shadow-view classification and uniform-slot changes, then inspect both motion screenshots and `log_vulkan.log`.
+1. Dynamic overlay/gizmo/profiler/UI-like mesh commands are covered by volatility-classification tests and cannot aggregate into reusable `FrameDataOnly` packets.
+2. Ordered baked uniform slots have a direct regression test; reordering changes the signature and forces re-recording.
+3. Successful program relinks increment a generation included in ordered command-chain pipeline dependencies.
+4. The default-policy live run completed multi-position camera motion with coherent captures and clean Vulkan validation/logs.
 
-## Likely Next Steps
+Further work is optimization rather than a correctness prerequisite: reduce
+descriptor-publication/resource-plan churn in post-processing chains, profile
+frame-data refresh separately for main and shadow views, and complete
+cross-vendor acceptance before moving mutable GPU-driven indirect/count streams
+into reusable secondaries.
 
-1. Build and test the packet-volatility and uniform-slot validity guards.
-2. Benchmark the corrected shadow-view classification. Confirm that the 393 cascade draws collapse into bounded multi-draw shadow chains while main-view draws remain fine-grained.
-3. Compare chain counts, chains recorded/reused/refreshed, packet construction, primary recording, submission, and allocations against the baseline report.
-4. If per-draw frame-data refresh remains dominant, profile `TryRefreshReusableCommandBufferFrameData` separately for main and shadow views. Determine whether immutable material data can be skipped for shadow refreshes while still updating model/camera/cascade data.
-5. Add the program/pipeline revision invalidation test and remaining packet/slot regression tests.
-6. Run the focused Vulkan unit-test filters, a clean editor build, and `git diff --check`.
-7. Run a warmed Release measurement before setting a final performance gate; Debug absolute frame times are not a shipping target.
-8. Capture at least two final camera positions and inspect the newest Vulkan/rendering logs for VUIDs, descriptor/resource mismatches, device loss, and crash markers.
+## 2026-07-24 Physics Testing Follow-Up
+
+The reported Physics Testing run was:
+
+- `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-24_20-02-31_pid30780/`
+
+That run selected a mailbox Vulkan swapchain and later resized from `1920x1080`
+to `2560x1369`. It logged display-synchronized VSync focus transitions. Startup
+also rendered the four-cascade directional group in `78.70 ms` against the
+configured `2.00 ms` shadow budget. The run contained no Vulkan VUID or device
+loss, but it did not have the per-frame profile stream enabled, so its exact
+manual-motion interval cannot be divided precisely between frame recording and
+shadow refresh from that log alone.
+
+A controlled Debug/Physics Testing comparison used the isolated session:
+
+- `Build/_AgentValidation/mcp-sessions/vk-camera-fps-20260724/`
+
+The same four-second interpolated camera path produced:
+
+| Configuration / phase | Whole-frame average | Achieved-rate average | Vulkan-frame average | Primary-recording average | Reuse outcome |
+|---|---:|---:|---:|---:|---|
+| Command chains off, stationary | 6.04 ms | 159.53 Hz | 3.00 ms | 0.00 ms | clean primary reuse |
+| Command chains off, moving | 16.82 ms | 53.38 Hz | 12.91 ms | 10.51 ms | 18/18 primaries recorded |
+| Command chains off, settled | 6.41 ms | 141.01 Hz | 3.09 ms | 0.00 ms | 4/4 primaries reused |
+| Command chains on, moving | 9.22 ms | 98.63 Hz | 4.75 ms | 0.00 ms | 18/18 primaries reused; 25.28 chains/frame reused |
+
+This isolates the current Physics Testing cliff to inline-primary invalidation:
+without command chains, a changed camera pose deliberately dirties the inline
+desktop primary and records it again. With command chains enabled, the thin
+primary stays reusable and per-draw camera data is refreshed through reusable
+secondary ranges. The `30 FPS` observation is therefore not a hard-coded camera
+limit; it is the frame-pacing result when the additional recording and
+camera-dependent work push the reported scene toward a roughly `33 ms` frame.
+
+Directional cascades remain an amplifier rather than a ruled-out cost. Camera
+motion changes cascade fit/content, the atlas policy can force fresh refreshes,
+and critical directional refreshes bypass the soft time budget. The controlled
+run recorded slow grouped refreshes of `28.18-92.56 ms` in some startup/camera
+transition frames. A shadow-disabled reverse-path experiment changed the
+visible draw schedule and was not a valid isolated comparison, so it is not
+used to assign a percentage to shadow work.
+
+Both controlled configurations completed with zero Vulkan validation errors,
+device loss, dropped frame operations, or submission rejections. Captures from
+different camera positions changed coherently and did not show stale-frame
+sampling:
+
+- `Build/_AgentValidation/mcp-sessions/vk-camera-fps-20260724/mcp-captures/static-session/Screenshot_20260724_202047_000_9fa4a121cc564533831bc52472025906.png`
+- `Build/_AgentValidation/mcp-sessions/vk-camera-fps-20260724/mcp-captures/command-chains-on/Screenshot_20260724_202949_274_0e69d5ca34dc40f9bc1e03b914a615f3.png`
+
+`rdc doctor` passed, including Vulkan-layer registration. A RenderDoc capture
+was not needed for this pass because the Vulkan CPU-stage counters and the
+command-chain A/B isolated the dominant cost before GPU replay inspection.
+
+## Permanent Fix And Default-Policy Validation
+
+The permanent desktop fix makes hybrid command recording the safe default
+instead of relying on a launch-time opt-in:
+
+- `Vulkan.CommandRecording.Mode` defaults to `Auto`.
+- `Auto` uses the hybrid path for validated desktop targets, keeping a thin
+  reusable primary while refreshing camera/model/material data independently
+  from cached secondary command structure.
+- `XRE_VULKAN_COMMAND_CHAINS=0/1` remains a diagnostic override.
+- External OpenXR-owned targets require an explicit `=1` experiment and mutable
+  GPU-driven indirect/count operations remain inline on the Vulkan primary.
+- Ordered uniform-slot dependencies and per-program successful-link
+  generations close the known stale-secondary correctness gaps.
+
+The isolated Debug/Physics Testing session
+`Build/_AgentValidation/mcp-sessions/vk-hybrid-default-20260724/` ran with
+`XRE_VULKAN_COMMAND_CHAINS` unset. Only command-chain tracing was enabled. The
+same four-second camera path measured:
+
+| Phase | Whole-frame average | Achieved-rate average | Vulkan-frame average | Primary-recording average |
+|---|---:|---:|---:|---:|
+| Stationary before | 10.69 ms | 78.7 Hz | 7.13 ms | 0.00 ms |
+| Moving | 11.45 ms | 78.1 Hz | 7.91 ms | 0.00 ms |
+| Stationary after | 11.07 ms | 80.6 Hz | 7.51 ms | 0.00 ms |
+
+Camera motion added approximately `0.76 ms` to the sampled whole-frame
+average, rather than the inline path's previous `10.51 ms` primary-recording
+spike. During motion the hybrid schedule continued to record/reuse secondaries
+while the thin primary remained reusable. The profiler ended with zero Vulkan
+validation errors, dropped frame operations, or dropped draws.
+
+Inspected settled and mid-motion captures retained coherent scene geometry:
+
+- `Build/_AgentValidation/mcp-sessions/vk-hybrid-default-20260724/mcp-captures/Screenshot_20260724_210455_846_aa2bcacc0cd5413e9531f05c84ba0a60.png`
+- `Build/_AgentValidation/mcp-sessions/vk-hybrid-default-20260724/mcp-captures/Screenshot_20260724_210458_230_6e4a01b00a794dccae310e1a0f16c178.png`
+
+The flushed session logs contain zero VUIDs, validation errors, error/fatal
+entries, device loss, or unhandled exceptions.
 
 ## Exit Criteria
 
-- No recurrence of displaced meshes, stale-camera rendering, or device loss during sustained camera motion.
-- Shadow refresh frames use bounded multi-draw shadow chains rather than approximately 393 one-draw secondaries.
-- A changing main visible set does not invalidate unrelated shadow work or large packets of otherwise reusable main draws.
-- Warmed Release camera-motion frame time is no longer dominated by command-buffer recording/refresh.
-- Focused tests, build, Vulkan validation, logs, and multi-position screenshots are clean.
+- [x] No recurrence of displaced meshes, stale-camera rendering, or device loss during sustained camera motion.
+- [x] Shadow refreshes are isolated from changing main-view packets and can use bounded shadow-only aggregation.
+- [x] A changing main visible set does not force inline primary re-recording.
+- [x] Default desktop camera-motion frame time is no longer dominated by primary command-buffer recording.
+- [x] Focused tests, editor build, Vulkan validation, logs, and multi-position screenshots are clean.
+
+## 2026-07-25 Full DefaultRenderPipeline Optimization
+
+The follow-up deliberately kept `ForceDebugOpaquePipeline=false`. All numbers
+in this section are from `DefaultRenderPipeline`; `DebugOpaque` was not used as
+the solution.
+
+The remaining steady-state cost was distributed across resource-plan scans,
+short-lived frame-operation and binding snapshots, editor/scene collection,
+and repeated generated-program identity construction. The production-path
+cleanup now:
+
+- retains exact resource-registry, pass-name, viewport, output, descriptor, and
+  image-view snapshots;
+- pools frame operations, mesh draws, binding snapshots, uniform arrays,
+  descriptor update scratch, profiler bridges, and other frame-bounded state;
+- installs a changed resource-plan schedule immediately instead of forcing a
+  one-frame inline-primary fallback;
+- skips Forward+ texture/buffer/dispatch work when there are no local point or
+  spot lights;
+- removes LINQ, captured closures, boxing, string construction, and temporary
+  collections from the measured scene, UI, event, transform, culling, and
+  Vulkan submission hot paths;
+- probes an allocation-free generated-program state before constructing names
+  or hashing shader source, and caches the mesh-version label that previously
+  changed reference identity on every draw.
+
+The final profiler-off allocation trace,
+`Build/_AgentValidation/mcp-sessions/vk-default-pipeline-final13-20260725/reports/default-pipeline-gc-camera-motion-final16-alloc.nettrace`,
+contains no sampled `EnsureProgram`, `BuildGeneratedProgramAxes`,
+`BuildGeneratedProgramIdentity`, `CaptureGeneratedProgramState`,
+`VersionKindLabel`, `ProfilerScope`, or listener-name formatting allocation.
+Remaining Vulkan samples are first-use or structural collection growth during
+visibility/resource changes rather than a recurring generated-program miss.
+
+Retained-history reads avoid perturbing the update thread with continuous MCP
+JSON serialization. The warmed Debug Physics Testing results were:
+
+| Phase | Latest frame | p50 | p95 | Output / equivalent rate | Primary outcome |
+|---|---:|---:|---:|---:|---|
+| Stationary retained sample | 4.79 ms | 4.33 ms | 4.87 ms | 209.7 Hz reported | clean reuse |
+| Smooth four-second motion, final cache | 5.44 ms | 5.55 ms | 7.89 ms | 181.2 Hz reported | 0 recorded, 1 reused in final frame |
+| Stationary confirmation after motion and one-shot CPU dump | 4.84 ms | 4.41 ms | 5.10 ms | about 227 Hz from median frame time | clean reuse |
+
+The motion and stationary confirmations ended with zero Vulkan validation
+errors and zero dropped frame operations. An intentionally extreme eight-leg
+camera-jump stress test did produce five genuine structural records while the
+visible/shadow set changed radically; that is bounded changed work, not the
+old every-frame primary invalidation.
+
+The final inspected Vulkan readback is:
+
+- `Build/_AgentValidation/mcp-sessions/vk-default-pipeline-final13-20260725/mcp-captures/Screenshot_20260725_011606_243_5626bcad4e724e73a3e635ddd5f44e54.png`
+
+One diagnostic pitfall was fixed during measurement:
+`dump_cpu_frame_profile` previously enabled detailed frame logging when no
+snapshot existed and left it enabled. That made later traces measure profiler
+tree construction and boxed scopes. The dump now restores the disabled state,
+and external profiler scopes use a thread-local pooled bridge.

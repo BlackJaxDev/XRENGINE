@@ -27,11 +27,11 @@ public sealed class VolumetricFogVolumeComponentEditor : IXRComponentEditor
 
     private static void RenderEditingBounds(VolumetricFogVolumeComponent fogVolume)
     {
-        if (Engine.Rendering.State.IsShadowPass)
+        if (RuntimeEngine.Rendering.State.IsShadowPass)
             return;
 
         Matrix4x4 renderMatrix = fogVolume.Transform.RenderMatrix;
         ColorF4 color = fogVolume.HasRenderableVolume ? ActiveBoundsColor : InactiveBoundsColor;
-        Engine.Rendering.Debug.RenderBox(fogVolume.HalfExtents, Vector3.Zero, renderMatrix, false, color);
+        RuntimeEngine.Rendering.Debug.RenderBox(fogVolume.HalfExtents, Vector3.Zero, renderMatrix, false, color);
     }
 }

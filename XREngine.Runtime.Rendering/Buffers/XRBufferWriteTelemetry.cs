@@ -185,7 +185,7 @@ public static class XRBufferWriteTelemetry
 
     private static void EnsureFrame()
     {
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+        long currentFrame = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
         long previousFrame = Volatile.Read(ref s_frameId);
         if (previousFrame == currentFrame)
             return;

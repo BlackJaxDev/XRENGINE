@@ -73,11 +73,11 @@ namespace XREngine.Components.Scene.Transforms
         //{
         //    //base.RenderDebug();
 
-        //    if (Engine.Rendering.State.IsShadowPass)
+        //    if (renderState.IsShadowPass)
         //        return;
 
-        //    Engine.Rendering.Debug.RenderSphere(WorldTranslation, TraceRadius, false, Color.Black);
-        //    Engine.Rendering.Debug.RenderLine(ParentWorldMatrix.Translation, WorldTranslation, Color.Black);
+        //    debugRenderer.RenderSphere(WorldTranslation, TraceRadius, false, Color.Black);
+        //    debugRenderer.RenderLine(ParentWorldMatrix.Translation, WorldTranslation, Color.Black);
         //}
 
         protected override Matrix4x4 CreateLocalMatrix()

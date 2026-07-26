@@ -12,9 +12,9 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void IndirectCountSubmissionEnablesAndRequiresCoreIndirectFeatures()
     {
         string logicalDevice = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
         string extensions = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs");
 
         logicalDevice.ShouldContain("supportedFeatures.MultiDrawIndirect");
         logicalDevice.ShouldContain("deviceFeatures.MultiDrawIndirect = Vk.True");
@@ -25,7 +25,7 @@ public sealed class VulkanCoreHardeningPhase524Tests
         logicalDevice.ShouldContain("_supportsDrawIndirectFirstInstance;");
         logicalDevice.ShouldContain("_usesCoreDrawIndirectCountCommands = true");
         string recording = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         recording.ShouldContain("Api!.CmdDrawIndexedIndirectCount(");
         recording.ShouldContain("else if (_khrDrawIndirectCount is not null)");
         extensions.ShouldContain("private bool _supportsMultiDrawIndirect;");
@@ -49,11 +49,11 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void DeferredComputeDispatchCapturesImmutableBufferGenerationsWithoutExtraSnapshotMaps()
     {
         string snapshot = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.ComputeDispatchSnapshot.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.ComputeDispatchSnapshot.cs");
         string binding = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.VulkanComputeBufferBinding.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.VulkanComputeBufferBinding.cs");
         string program = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
 
         snapshot.ShouldContain("Dictionary<uint, VulkanComputeBufferBinding> Buffers");
         snapshot.ShouldContain("Dictionary<string, VulkanComputeBufferBinding> BuffersByName");
@@ -70,7 +70,7 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void VulkanIndirectGeometryUsesRobustAccessAndRejectsInvalidAtlasIndices()
     {
         string logicalDevice = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
         string atlas = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.AtlasManagement.cs");
 
@@ -84,7 +84,7 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void RecordingUsesCapacityBackedCommandLocalDependencyAndLayoutStorage()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
 
         source.ShouldContain("HashSet<VulkanResourceLifetimeKey> Dependencies = new(64)");
         source.ShouldContain("List<VulkanImageAccessRangeDelta> ImageAccessDeltas = new(32)");
@@ -200,11 +200,11 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void FramebufferRecordingReusesAttachmentAndLayoutScratchStorage()
     {
         string frameBuffer = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
         string recording = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string scratch = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecordingScratch.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecordingScratch.cs");
 
         frameBuffer.ShouldContain("AttachmentBuildInfo[] _attachmentBuildScratch = []");
         frameBuffer.ShouldContain("_attachmentBuildScratch.AsSpan(0, colorAttachmentCount)");
@@ -228,9 +228,9 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void HotDependencyAndBarrierPathsAvoidGlobalLocks()
     {
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
         string layouts = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
 
         int dependencyStart = lifetime.IndexOf("private void TrackVulkanCommandBufferResource(", StringComparison.Ordinal);
         int dependencyEnd = lifetime.IndexOf("private void TrackVulkanCommandBufferResource_NoLock(", dependencyStart, StringComparison.Ordinal);
@@ -249,9 +249,9 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void DescriptorReferencesPublishImmutableGenerationsAndExpandOncePerRecording()
     {
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
         string batch = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
 
         lifetime.ShouldContain("VulkanPublishedDescriptorSetSnapshot");
         lifetime.ShouldContain("PublishVulkanDescriptorSetSnapshot_NoLock");
@@ -268,9 +268,9 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void RetirementPublishesCommandLocalDependenciesBeforeCapturingPins()
     {
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
         string batch = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
 
         batch.ShouldContain("PublishCommandBufferTrackingDependenciesBeforeResourceRetirement");
         batch.ShouldContain("batch.Dependencies.Contains(resourceKey)");
@@ -296,9 +296,9 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void DebugDescriptorValidationCachesDescriptorAndLayoutGenerations()
     {
         string batch = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
 
         batch.ShouldContain("ValidatedDescriptorGenerations");
         batch.ShouldContain("(ulong DescriptorGeneration, ulong LayoutVersion)");
@@ -310,9 +310,9 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void ImageRangesCoalesceBeforeOneBulkPublication()
     {
         string batch = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
         string layouts = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
 
         batch.ShouldContain("TryMergeRanges");
         batch.ShouldContain("LevelCount = Math.Max(left.LevelCount, 1u) + Math.Max(right.LevelCount, 1u)");
@@ -325,11 +325,11 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void SubmissionConsumesTouchedArraysInsteadOfGlobalDictionaryScans()
     {
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
         string lifetimeRecord = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.VulkanCommandBufferLifetimeRecord.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.VulkanCommandBufferLifetimeRecord.cs");
         string layouts = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
 
         lifetime.ShouldContain("TouchedDependencies");
         lifetimeRecord.ShouldContain("List<KeyValuePair<VulkanResourceLifetimeKey, ulong>> TouchedDependencies = new(64)");
@@ -400,7 +400,7 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void DynamicBufferDescriptorsNeverRequestUpdateAfterBind()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLayoutCache.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLayoutCache.cs");
         int switchStart = source.IndexOf("return descriptorType switch", StringComparison.Ordinal);
         int switchEnd = source.IndexOf("};", switchStart, StringComparison.Ordinal);
         switchStart.ShouldBeGreaterThanOrEqualTo(0);
@@ -419,9 +419,9 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void DescriptorVariantsRemainOwnedUntilRendererCleanupAndTrackPerSetCapabilities()
     {
         string descriptors = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
         string program = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
 
         descriptors.ShouldNotContain("RetireSupersededDescriptorAllocations");
         descriptors.ShouldContain("DescriptorSetUsesUpdateAfterBind((uint)setIndex)");

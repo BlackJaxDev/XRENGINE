@@ -27,8 +27,14 @@ namespace XREngine.Rendering
         private ShaderUiManifest? _uiManifestCache;
         private string? _uiManifestCachePath;
         private string? _uiManifestCacheText;
+        private long _sourceRevision;
 
         public event Action<XRShader>? SourceChanged;
+
+        /// <summary>
+        /// Monotonic logical source revision used to reject stale asynchronous compile results.
+        /// </summary>
+        public long SourceRevision => Interlocked.Read(ref _sourceRevision);
 
         internal EShaderType _type = EShaderType.Fragment;
         public EShaderType Type
@@ -183,6 +189,7 @@ namespace XREngine.Rendering
             {
                 case nameof(Type):
                     InvalidateResolvedSourceCache();
+                    Interlocked.Increment(ref _sourceRevision);
                     MarkDirty();
                     SourceChanged?.Invoke(this);
                     break;
@@ -198,9 +205,20 @@ namespace XREngine.Rendering
         private void OnSourceTextChanged()
         {
             InvalidateResolvedSourceCache();
+            Interlocked.Increment(ref _sourceRevision);
 
             //When the source text changes, we need to mark the shader as dirty so it can be recompiled
             MarkDirty();
+            SourceChanged?.Invoke(this);
+        }
+
+        internal void NotifySourceDependencyChanged(string reason)
+        {
+            InvalidateResolvedSourceCache();
+            Interlocked.Increment(ref _sourceRevision);
+            MarkDirty();
+            RuntimeShaderServices.Current?.LogWarning(
+                $"Shader dependency changed for '{Name ?? FilePath ?? "UnnamedShader"}': {reason}");
             SourceChanged?.Invoke(this);
         }
 
@@ -320,6 +338,8 @@ namespace XREngine.Rendering
                         _resolvedSourceCachePath = sourcePath;
                         _resolvedSourceDependencies = resolvedPayload.FileDependencies;
                     }
+
+                    ShaderSourceDependencyIndex.Update(this, sourcePath, resolvedPayload.FileDependencies);
                 }
 
                 return true;
@@ -415,43 +435,76 @@ namespace XREngine.Rendering
         /// <returns></returns>
         public bool HasExtension(string name, params EExtensionBehavior[] allowedBehaviors)
         {
-            if (Source is null)
+            if (!TryGetExtensionBehavior(name, out EExtensionBehavior behavior))
                 return false;
 
-            string? text = Source.Text;
-            if (text is null)
-                return false;
-
-            int index = text.IndexOf($"#extension {name}", StringComparison.InvariantCultureIgnoreCase);
-            if (index == -1)
-                return false;
-
-            //If the user passes no behaviors, then any behavior is allowed
             if (allowedBehaviors.Length == 0)
                 return true;
 
-            int end = text.IndexOfAny(['\r', '\n'], index);
-            if (end == -1)
-                end = text.Length;
+            for (int i = 0; i < allowedBehaviors.Length; i++)
+                if (allowedBehaviors[i] == behavior)
+                    return true;
+            return false;
+        }
 
-            string line = text[index..end];
+        /// <summary>
+        /// Allocation-free overload for the common single-behavior query used while
+        /// selecting a mesh renderer version.
+        /// </summary>
+        public bool HasExtension(string name, EExtensionBehavior allowedBehavior)
+            => TryGetExtensionBehavior(name, out EExtensionBehavior behavior) &&
+               behavior == allowedBehavior;
 
-            //#extension extension_name? : behavior?
-            string[] parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length < 4)
+        private bool TryGetExtensionBehavior(string name, out EExtensionBehavior behavior)
+        {
+            behavior = EExtensionBehavior.Disable;
+            string? text = Source?.Text;
+            if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(name))
                 return false;
 
-            string behavior = parts[3];
-            EExtensionBehavior behaviorEnum = behavior switch
+            const string directive = "#extension";
+            int searchStart = 0;
+            while (searchStart < text.Length)
             {
-                "enable" => EExtensionBehavior.Enable,
-                "require" => EExtensionBehavior.Require,
-                "warn" => EExtensionBehavior.Warn,
-                "disable" => EExtensionBehavior.Disable,
-                _ => EExtensionBehavior.Disable
-            };
+                int directiveIndex = text.IndexOf(directive, searchStart, StringComparison.OrdinalIgnoreCase);
+                if (directiveIndex < 0)
+                    return false;
 
-            return allowedBehaviors.Contains(behaviorEnum);
+                int lineEnd = directiveIndex + directive.Length;
+                while (lineEnd < text.Length && text[lineEnd] is not ('\r' or '\n'))
+                    lineEnd++;
+
+                ReadOnlySpan<char> line = text.AsSpan(
+                    directiveIndex + directive.Length,
+                    lineEnd - directiveIndex - directive.Length).TrimStart();
+                if (line.StartsWith(name, StringComparison.OrdinalIgnoreCase))
+                {
+                    int cursor = name.Length;
+                    if (cursor == line.Length || char.IsWhiteSpace(line[cursor]) || line[cursor] == ':')
+                    {
+                        int colon = line[cursor..].IndexOf(':');
+                        if (colon >= 0)
+                        {
+                            ReadOnlySpan<char> behaviorText = line[(cursor + colon + 1)..].Trim();
+                            if (behaviorText.Equals("enable", StringComparison.OrdinalIgnoreCase))
+                                behavior = EExtensionBehavior.Enable;
+                            else if (behaviorText.Equals("require", StringComparison.OrdinalIgnoreCase))
+                                behavior = EExtensionBehavior.Require;
+                            else if (behaviorText.Equals("warn", StringComparison.OrdinalIgnoreCase))
+                                behavior = EExtensionBehavior.Warn;
+                            else if (behaviorText.Equals("disable", StringComparison.OrdinalIgnoreCase))
+                                behavior = EExtensionBehavior.Disable;
+                            else
+                                return false;
+                            return true;
+                        }
+                    }
+                }
+
+                searchStart = lineEnd + 1;
+            }
+
+            return false;
         }
 
         public ConcurrentDictionary<string, bool> _existingUniforms = new();

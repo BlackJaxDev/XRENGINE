@@ -630,7 +630,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private bool ShouldPrepareAtlasGroupedFaceCollection()
         {
-            if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+            if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
             {
                 // Share the directional-cascade safety gate: grouped atlas rendering
                 // depends on indexed viewport/scissor state and shader viewport/layer
@@ -1284,7 +1284,7 @@ namespace XREngine.Components.Capture.Lights.Types
             for (int i = 0; i < _shadowCameras.Length; i++)
             {
                 XRCamera cam = _shadowCameras[i];
-                output.Add(cam.WorldFrustum().Prepare());
+                output.Add(cam.PreparedWorldFrustum());
             }
         }
     }

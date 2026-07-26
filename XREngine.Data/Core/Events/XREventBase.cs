@@ -24,7 +24,7 @@ namespace XREngine.Data.Core
             if (!HasProfilingHooks)
                 return null;
 
-            return BeginProfiling(FormatListenerProfilingName(prefix, listener, index));
+            return BeginProfiling(GetListenerProfilingName(prefix, listener, index));
         }
 
         protected IDisposable? BeginLinkedListenerProfiling(object? context, string prefix, TListener listener, int index)
@@ -32,19 +32,29 @@ namespace XREngine.Data.Core
             if (!HasProfilingHooks)
                 return null;
 
-            string name = FormatListenerProfilingName(prefix, listener, index);
+            string name = GetListenerProfilingName(prefix, listener, index);
             return context is null
                 ? BeginProfiling(name)
                 : BeginLinkedProfiling(context, name);
         }
 
-        private static string FormatListenerProfilingName(string prefix, TListener listener, int index)
+        private Dictionary<(string Prefix, TListener Listener, int Index), string>? _listenerProfilingNames;
+
+        private string GetListenerProfilingName(string prefix, TListener listener, int index)
         {
+            Dictionary<(string Prefix, TListener Listener, int Index), string> cache =
+                _listenerProfilingNames ??= [];
+            var key = (prefix, listener, index);
+            if (cache.TryGetValue(key, out string? cached))
+                return cached;
+
             var method = listener.Method;
             string owner = method.DeclaringType?.FullName
                 ?? listener.Target?.GetType().FullName
                 ?? "<unknown>";
-            return $"{prefix}[{index}] {owner}.{method.Name}";
+            string name = $"{prefix}[{index}] {owner}.{method.Name}";
+            cache.Add(key, name);
+            return name;
         }
 
         protected void WithProfiling(string name, Action action)
@@ -122,6 +132,7 @@ namespace XREngine.Data.Core
             if (!HasPendingAdds && !HasPendingRemoves)
                 return;
 
+            _listenerProfilingNames?.Clear();
             while (PendingAdds.TryDequeue(out TListener? add))
             {
                 Interlocked.Decrement(ref _pendingAddsCount);

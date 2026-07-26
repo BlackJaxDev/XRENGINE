@@ -121,7 +121,7 @@ Regression coverage for this contract lives in `XREngine.UnitTests/Rendering/Giz
 - `XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderDebugShapes.cs`
 - `XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderDebugGpuBvh.cs`
 - `XREngine.Editor/Scene/Components/Editing/TransformTool3D.cs`
-- `XRENGINE/Scene/Physics/Physx/InstancedDebugVisualizer.cs`
+- `XREngine.Runtime.Rendering/Rendering/Physics/DebugVisualization/InstancedDebugVisualizer.cs`
 - `Build/CommonAssets/Shaders/Scene3D/PostProcess.fs`
 - `Build/CommonAssets/Shaders/Scene3D/PostProcessStereo.fs`
 - `Build/CommonAssets/Shaders/Scene3D/TemporalSuperResolution.fs`

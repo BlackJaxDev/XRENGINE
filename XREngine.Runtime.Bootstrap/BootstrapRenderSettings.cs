@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 
@@ -20,21 +20,21 @@ public static class BootstrapRenderSettings
 
         _emulatedVrStereoPreviewHooked = true;
 
-        Engine.Windows.PostAnythingAdded += OnWindowAddedForEmulatedVRStereoPreview;
-        foreach (var window in Engine.Windows)
+        RuntimeEngine.Windows.PostAnythingAdded += OnWindowAddedForEmulatedVRStereoPreview;
+        foreach (var window in RuntimeEngine.Windows)
             OnWindowAddedForEmulatedVRStereoPreview(window);
     }
 
     private static void OnWindowAddedForEmulatedVRStereoPreview(XRWindow window)
         => Engine.InvokeOnMainThread(
-            () => Engine.VRState.InitRenderEmulated(window),
+            () => RuntimeEngine.VRState.InitRenderEmulated(window),
             "Bootstrap: Init scene-only VR stereo",
             executeNowIfAlreadyMainThread: true);
 
     public static void Apply()
     {
         var settings = RuntimeBootstrapState.Settings;
-        var renderSettings = Engine.Rendering.Settings;
+        var renderSettings = RuntimeEngine.Rendering.Settings;
         var debug = Engine.EditorPreferences.Debug;
         ApplyOpenGLShaderLinkSettings(settings);
 
@@ -63,7 +63,7 @@ public static class BootstrapRenderSettings
             Engine.GameSettings.AntiAliasingModeOverride = new OverrideableSetting<EAntiAliasingMode>(
                 settings.CameraAntiAliasingModeOverride.Value,
                 hasOverride: true);
-            Engine.Rendering.ApplyAntiAliasingPreference();
+            EngineRenderingSettingsApplication.ApplyAntiAliasingPreference();
         }
 
         bool requiresIndependentDesktopWindow = settings.VRPawn && (settings.AllowEditingInVR || settings.PreviewVRStereoViews);
@@ -142,9 +142,9 @@ public static class BootstrapRenderSettings
     {
         try
         {
-            Engine.Rendering.ApplyEditorPreferencesChange(null);
+            EngineRenderingSettingsApplication.ApplyEditorPreferencesChange(null);
 
-            foreach (var window in Engine.Windows)
+            foreach (var window in RuntimeEngine.Windows)
                 window.RequestRenderStateRecheck(resetCircuitBreaker: true);
 
             Debug.Rendering($"[BootstrapRenderSettings] Reapplied editor render state after bootstrap ({reason}).");
@@ -157,7 +157,7 @@ public static class BootstrapRenderSettings
 
     public static void ApplyOpenGLShaderLinkSettings(UnitTestingWorldSettings settings)
     {
-        var renderSettings = Engine.Rendering.Settings;
+        var renderSettings = RuntimeEngine.Rendering.Settings;
         bool applied = false;
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering)))
@@ -263,7 +263,7 @@ public static class BootstrapRenderSettings
         int rawCompilerThreadCount,
         int appliedCompilerThreadCount)
     {
-        var renderSettings = Engine.Rendering.Settings;
+        var renderSettings = RuntimeEngine.Rendering.Settings;
         string compilerThreads = rawCompilerThreadCount == appliedCompilerThreadCount
             ? appliedCompilerThreadCount.ToString()
             : $"{rawCompilerThreadCount}->{appliedCompilerThreadCount}";

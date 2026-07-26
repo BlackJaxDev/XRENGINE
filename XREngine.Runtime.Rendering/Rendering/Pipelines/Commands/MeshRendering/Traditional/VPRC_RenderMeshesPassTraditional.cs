@@ -1,5 +1,4 @@
 using XREngine.Rendering.Commands;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 using System;
 using System.Threading;
@@ -147,7 +146,9 @@ internal static class VPRC_RenderMeshesPassTraditional
     private static bool ShouldUseOpenGLShaderWarmupFallback(EMeshSubmissionStrategy strategy)
         => strategy.IsGpuZeroReadbackStrategy()
            && IsActiveRendererOpenGL()
-           && OpenGLRenderer.GLRenderProgram.HasPendingAsyncPrograms;
+           && AbstractRenderer.Current is IRuntimeRendererHost renderer
+           && renderer.TryGetBackendCapability<IRendererStartupWarmupBackendCapability>(out var warmup)
+           && warmup?.HasPendingAsyncPrograms == true;
 
     private static bool ShouldUseOpenGLZeroReadbackProgramWarmupFallback(
         EMeshSubmissionStrategy strategy,
@@ -157,12 +158,12 @@ internal static class VPRC_RenderMeshesPassTraditional
            && gpuPass.ZeroReadbackProgramPendingThisFrame;
 
     private static bool IsActiveRendererOpenGL()
-        => AbstractRenderer.Current is OpenGLRenderer
-           || RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport?.Window?.Renderer is OpenGLRenderer;
+        => AbstractRenderer.Current?.BackendId == RendererBackendId.OpenGL
+           || RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport?.Window?.Renderer?.BackendId == RendererBackendId.OpenGL;
 
     private static bool IsActiveRendererVulkan()
-        => AbstractRenderer.Current is VulkanRenderer
-           || RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport?.Window?.Renderer is VulkanRenderer;
+        => AbstractRenderer.Current?.BackendId == RendererBackendId.Vulkan
+           || RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport?.Window?.Renderer?.BackendId == RendererBackendId.Vulkan;
 
     private static string GetCpuSafetyNetPolicyName()
     {

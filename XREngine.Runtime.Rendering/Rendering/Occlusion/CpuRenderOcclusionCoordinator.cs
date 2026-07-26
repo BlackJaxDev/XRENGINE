@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using XREngine.Data.Geometry;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering.Occlusion
@@ -213,7 +212,7 @@ namespace XREngine.Rendering.Occlusion
 
         private static bool ShouldScheduleHardwareQueries(PassState state, int frameOffset = 0)
         {
-            if (RuntimeRenderingHostServices.Current.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan)
+            if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan)
                 return true;
 
             return IsVulkanHardwareQueryBatchFrame(
@@ -1194,8 +1193,10 @@ namespace XREngine.Rendering.Occlusion
             XRCamera? camera,
             OcclusionViewOwnership ownership)
         {
-            IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
-            IRuntimeRenderCommandExecutionState? renderState = host.ActiveRenderCommandExecutionState;
+            IRuntimeRenderCommandExecutionState? renderState =
+                RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState;
+            IRuntimeRenderPresentationServices presentation =
+                RuntimeRenderingHostServices.Presentation;
             bool stereoPass = renderState?.StereoPass == true || RuntimeEngine.Rendering.State.IsStereoPass;
             bool eyeCamera = camera?.StereoEyeLeft.HasValue == true;
             // Occlusion state is isolated per render pipeline instance: desktop, each VR
@@ -1212,9 +1213,9 @@ namespace XREngine.Rendering.Occlusion
             }
             else if (stereoPass)
             {
-                scope = host.EnableVrFoveatedViewSet
+                scope = presentation.EnableVrFoveatedViewSet
                     ? EOcclusionViewScope.VrFoveatedView
-                    : host.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo
+                    : presentation.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo
                         ? EOcclusionViewScope.VrSinglePassStereo
                         : EOcclusionViewScope.VrStereoPair;
                 viewId = 0;
@@ -1227,12 +1228,12 @@ namespace XREngine.Rendering.Occlusion
                     : left ? EOcclusionViewScope.VrLeftEye : EOcclusionViewScope.VrRightEye;
                 viewId = left ? 0 : 1;
             }
-            else if (host.IsInVR && host.VrMirrorComposeFromEyeTextures)
+            else if (presentation.IsInVR && presentation.VrMirrorComposeFromEyeTextures)
             {
                 scope = EOcclusionViewScope.MirrorOnly;
                 viewId = 0;
             }
-            else if (host.IsInVR && host.RenderWindowsWhileInVR)
+            else if (presentation.IsInVR && presentation.RenderWindowsWhileInVR)
             {
                 scope = EOcclusionViewScope.EditorDesktopWhileVr;
                 viewId = 0;
@@ -1270,7 +1271,8 @@ namespace XREngine.Rendering.Occlusion
                RuntimeEngine.EffectiveSettings.CpuQueryOcclusionStereoMode != ECpuQueryStereoMode.StereoPairShared;
 
         private static bool IsHardwareQueryBackendSupported()
-            => AbstractRenderer.Current is OpenGLRenderer or VulkanRenderer;
+            => AbstractRenderer.Current?.BackendId is var backendId &&
+               (backendId == RendererBackendId.OpenGL || backendId == RendererBackendId.Vulkan);
 
         private QueryState GetOrCreateQueryState(PassState state, uint sourceCommandIndex)
         {
@@ -1364,36 +1366,18 @@ namespace XREngine.Rendering.Occlusion
 
         private static bool BeginBackendQuery(XRRenderQuery query)
         {
-            if (AbstractRenderer.Current is OpenGLRenderer gl)
-            {
-                GLRenderQuery? glQuery = gl.GenericToAPI<GLRenderQuery>(query);
-                if (glQuery is null)
-                    return false;
-
-                return glQuery.BeginQuery() == ERenderQueryReadStatus.Ready;
-            }
-
-            if (AbstractRenderer.Current is VulkanRenderer vk)
-                return vk.EnqueueOcclusionQueryBegin(query);
-
-            return false;
+            IRuntimeRendererHost? renderer = AbstractRenderer.Current;
+            return renderer is not null &&
+                renderer.TryGetBackendCapability<IOcclusionQueryBackendCapability>(out var capability) &&
+                capability?.BeginOcclusionQuery(query) == true;
         }
 
         private static bool EndBackendQuery(XRRenderQuery query)
         {
-            if (AbstractRenderer.Current is OpenGLRenderer gl)
-            {
-                GLRenderQuery? glQuery = gl.GenericToAPI<GLRenderQuery>(query);
-                if (glQuery is null)
-                    return false;
-
-                return glQuery.EndQuery() == ERenderQueryReadStatus.Ready;
-            }
-
-            if (AbstractRenderer.Current is VulkanRenderer vk)
-                return vk.EnqueueOcclusionQueryEnd(query);
-
-            return false;
+            IRuntimeRendererHost? renderer = AbstractRenderer.Current;
+            return renderer is not null &&
+                renderer.TryGetBackendCapability<IOcclusionQueryBackendCapability>(out var capability) &&
+                capability?.EndOcclusionQuery(query) == true;
         }
 
         private void ResolveAvailableResults(PassState state)
@@ -1496,7 +1480,7 @@ namespace XREngine.Rendering.Occlusion
 
         private static bool ShouldDelayPendingQueryPoll(QueryState queryState, ulong frameId)
         {
-            if (AbstractRenderer.Current is not VulkanRenderer)
+            if (AbstractRenderer.Current?.BackendId != RendererBackendId.Vulkan)
                 return false;
 
             ulong age = frameId >= queryState.PendingSinceFrame
@@ -2030,7 +2014,7 @@ namespace XREngine.Rendering.Occlusion
                 RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMaxQueriesPerFrame,
                 RuntimeEngine.EffectiveSettings.CpuQueryOcclusionVisibleDemotionBudgetFraction,
                 RuntimeEngine.EffectiveSettings.CpuQueryOcclusionRecoveryMinCadenceFrames,
-                AbstractRenderer.Current is VulkanRenderer
+                AbstractRenderer.Current?.BackendId == RendererBackendId.Vulkan
                     ? (int)VulkanQueryResolveMinLatencyFrames
                     : 1);
 
@@ -2320,7 +2304,7 @@ namespace XREngine.Rendering.Occlusion
                 state.LastCameraSnapshot,
                 current,
                 vrScope,
-                RuntimeRenderingHostServices.Current.RenderDeltaSeconds,
+                RuntimeRenderingHostServices.FrameTiming.RenderDeltaSeconds,
                 out CpuOcclusionMotionClassification classification);
             state.LastCameraSnapshot = current;
             return classification;

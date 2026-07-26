@@ -290,7 +290,8 @@ namespace XREngine.Data.Geometry
 
         public EContainment ContainsAABB(AABB box, float tolerance = float.Epsilon)
         {
-            Vector3[] corners = box.GetCorners();
+            Span<Vector3> corners = stackalloc Vector3[8];
+            box.GetCorners(corners);
             bool allInside = true;
             bool anyInside = false;
             for (int i = 0; i < corners.Length; i++)

@@ -4,9 +4,7 @@ using XREngine;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.RenderGraph;
-using Silk.NET.OpenGL;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -140,19 +138,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         private int ResolvePassIndex(string passName)
-        {
-            var metadata = ParentPipeline?.PassMetadata;
-            if (metadata is null)
-                return int.MinValue;
-
-            foreach (RenderPassMetadata pass in metadata)
-            {
-                if (string.Equals(pass.Name, passName, StringComparison.OrdinalIgnoreCase))
-                    return pass.PassIndex;
-            }
-
-            return int.MinValue;
-        }
+            => ParentPipeline?.TryGetRenderPassIndex(passName, out int passIndex) == true
+                ? passIndex
+                : int.MinValue;
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)
         {

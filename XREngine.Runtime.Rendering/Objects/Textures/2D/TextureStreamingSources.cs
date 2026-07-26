@@ -37,7 +37,7 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
             cancellationToken.ThrowIfCancellationRequested();
             long totalStartTimestamp = XRTexture2D.StartImportedTextureTiming();
             long readStartTimestamp = XRTexture2D.StartImportedTextureTiming();
-            byte[] assetBytes = RuntimeRenderingHostServices.Current.ReadAllBytes(assetPath);
+            byte[] assetBytes = RuntimeRenderingHostServices.Assets.ReadAllBytes(assetPath);
             double cacheReadMilliseconds = XRTexture2D.CompleteImportedTextureTiming(readStartTimestamp);
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -46,7 +46,7 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
             {
                 double cacheParseMilliseconds = XRTexture2D.CompleteImportedTextureTiming(parseStartTimestamp);
                 TextureRuntimeDiagnostics.LogCacheRead(
-                    RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                    RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                     _fallbackSource?.SourcePath ?? assetPath,
                     assetPath,
                     residentData.SourceWidth,
@@ -65,7 +65,7 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
             double failedPayloadParseMilliseconds = XRTexture2D.CompleteImportedTextureTiming(parseStartTimestamp);
             cancellationToken.ThrowIfCancellationRequested();
 
-            XRTexture2D? scratch = RuntimeRenderingHostServices.Current.LoadAsset<XRTexture2D>(assetPath);
+            XRTexture2D? scratch = RuntimeRenderingHostServices.Assets.LoadAsset<XRTexture2D>(assetPath);
             if (scratch is not null)
             {
                 TextureStreamingResidentData loadedResidentData = XRTexture2D.BuildResidentDataFromLoadedTexture(
@@ -74,7 +74,7 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
                     includeMipChain,
                     cancellationToken);
                 TextureRuntimeDiagnostics.LogCacheRead(
-                    RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                    RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                     _fallbackSource?.SourcePath ?? assetPath,
                     assetPath,
                     loadedResidentData.SourceWidth,

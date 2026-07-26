@@ -127,6 +127,155 @@ public sealed class VulkanCoreHardeningPhase21Tests
     }
 
     [Test]
+    public void InteractiveResizePlannerExtents_IsolateDownscaledMainViewportFromOneToOneUiPreview()
+    {
+        VulkanInteractiveResizePlannerExtentCache cache = new(capacity: 4);
+        VulkanRenderer.FrameOpContext main = CreateContext(
+            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+            descriptorGeneration: 10) with
+        {
+            PipelineIdentity = 301,
+            ViewportIdentity = 401,
+            OutputFrameBufferIdentity = 501,
+            OutputTargetIdentity = 601,
+            DisplayWidth = 1920,
+            DisplayHeight = 1080,
+            InternalWidth = 1280,
+            InternalHeight = 720,
+        };
+        VulkanRenderer.FrameOpContext uiPreview = CreateContext(
+            VulkanRenderer.EVulkanFrameOpContextKind.UiPreview,
+            descriptorGeneration: 10) with
+        {
+            PipelineIdentity = 302,
+            ViewportIdentity = 402,
+            OutputFrameBufferIdentity = 502,
+            OutputTargetIdentity = 602,
+            DisplayWidth = 800,
+            DisplayHeight = 600,
+            InternalWidth = 800,
+            InternalHeight = 600,
+        };
+
+        VulkanInteractiveResizePlannerContextKey mainKey =
+            VulkanRenderer.BuildInteractiveResizePlannerContextKey(main);
+        VulkanInteractiveResizePlannerContextKey uiPreviewKey =
+            VulkanRenderer.BuildInteractiveResizePlannerContextKey(uiPreview);
+        VulkanInteractiveResizePlannerExtentSnapshot mainSnapshot = new(
+            main.DisplayWidth,
+            main.DisplayHeight,
+            main.InternalWidth,
+            main.InternalHeight);
+        VulkanInteractiveResizePlannerExtentSnapshot uiPreviewSnapshot = new(
+            uiPreview.DisplayWidth,
+            uiPreview.DisplayHeight,
+            uiPreview.InternalWidth,
+            uiPreview.InternalHeight);
+
+        cache.GetOrCapture(mainKey, mainSnapshot, out bool capturedMain, out _).ShouldBe(mainSnapshot);
+        cache.GetOrCapture(uiPreviewKey, uiPreviewSnapshot, out bool capturedUiPreview, out _).ShouldBe(uiPreviewSnapshot);
+
+        capturedMain.ShouldBeTrue();
+        capturedUiPreview.ShouldBeTrue();
+        mainKey.ShouldNotBe(uiPreviewKey);
+        cache.Count.ShouldBe(2);
+
+        VulkanInteractiveResizePlannerExtentSnapshot resizedMainCandidate = new(1600, 900, 1067, 600);
+        VulkanInteractiveResizePlannerExtentSnapshot resizedUiPreviewCandidate = new(720, 540, 720, 540);
+        cache.GetOrCapture(mainKey, resizedMainCandidate, out capturedMain, out _).ShouldBe(mainSnapshot);
+        cache.GetOrCapture(uiPreviewKey, resizedUiPreviewCandidate, out capturedUiPreview, out _).ShouldBe(uiPreviewSnapshot);
+
+        capturedMain.ShouldBeFalse();
+        capturedUiPreview.ShouldBeFalse();
+
+        long allocatedBytesBefore = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < 1_024; i++)
+            cache.GetOrCapture(mainKey, resizedMainCandidate, out capturedMain, out _);
+        long allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - allocatedBytesBefore;
+
+        allocatedBytes.ShouldBe(0);
+        capturedMain.ShouldBeFalse();
+
+        VulkanRenderer.FrameOpContext rotatedMainTarget = main with { OutputTargetIdentity = 999 };
+        VulkanRenderer.BuildInteractiveResizePlannerContextKey(rotatedMainTarget).ShouldBe(mainKey);
+
+        cache.Clear();
+        cache.Count.ShouldBe(0);
+        cache.GetOrCapture(mainKey, resizedMainCandidate, out capturedMain, out _).ShouldBe(resizedMainCandidate);
+        capturedMain.ShouldBeTrue();
+    }
+
+    [Test]
+    public void InteractiveResizePlannerExtentCache_OverflowPreservesExistingSnapshotsAndReportsOnce()
+    {
+        VulkanInteractiveResizePlannerExtentCache cache = new(capacity: 2);
+        VulkanRenderer.FrameOpContext main = CreateContext(
+            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+            descriptorGeneration: 1) with
+        {
+            PipelineIdentity = 701,
+            ViewportIdentity = 801,
+            OutputFrameBufferIdentity = 901,
+        };
+        VulkanRenderer.FrameOpContext uiPreview = CreateContext(
+            VulkanRenderer.EVulkanFrameOpContextKind.UiPreview,
+            descriptorGeneration: 1) with
+        {
+            PipelineIdentity = 702,
+            ViewportIdentity = 802,
+            OutputFrameBufferIdentity = 902,
+        };
+        VulkanRenderer.FrameOpContext diagnostic = CreateContext(
+            VulkanRenderer.EVulkanFrameOpContextKind.DiagnosticCapture,
+            descriptorGeneration: 1) with
+        {
+            PipelineIdentity = 703,
+            ViewportIdentity = 803,
+            OutputFrameBufferIdentity = 903,
+        };
+        VulkanInteractiveResizePlannerContextKey mainKey =
+            VulkanRenderer.BuildInteractiveResizePlannerContextKey(main);
+        VulkanInteractiveResizePlannerContextKey uiPreviewKey =
+            VulkanRenderer.BuildInteractiveResizePlannerContextKey(uiPreview);
+        VulkanInteractiveResizePlannerContextKey diagnosticKey =
+            VulkanRenderer.BuildInteractiveResizePlannerContextKey(diagnostic);
+        VulkanInteractiveResizePlannerExtentSnapshot mainSnapshot = new(1920, 1080, 1280, 720);
+        VulkanInteractiveResizePlannerExtentSnapshot uiPreviewSnapshot = new(800, 600, 800, 600);
+        VulkanInteractiveResizePlannerExtentSnapshot diagnosticCandidate = new(640, 360, 640, 360);
+
+        cache.GetOrCapture(mainKey, mainSnapshot, out bool captured, out bool reportOverflow);
+        captured.ShouldBeTrue();
+        reportOverflow.ShouldBeFalse();
+        cache.GetOrCapture(uiPreviewKey, uiPreviewSnapshot, out captured, out reportOverflow);
+        captured.ShouldBeTrue();
+        reportOverflow.ShouldBeFalse();
+
+        cache.GetOrCapture(diagnosticKey, diagnosticCandidate, out captured, out reportOverflow)
+            .ShouldBe(diagnosticCandidate);
+        captured.ShouldBeFalse();
+        reportOverflow.ShouldBeTrue();
+        cache.Count.ShouldBe(2);
+
+        VulkanInteractiveResizePlannerExtentSnapshot changedDiagnosticCandidate = new(320, 180, 320, 180);
+        cache.GetOrCapture(diagnosticKey, changedDiagnosticCandidate, out captured, out reportOverflow)
+            .ShouldBe(changedDiagnosticCandidate);
+        captured.ShouldBeFalse();
+        reportOverflow.ShouldBeFalse();
+
+        VulkanInteractiveResizePlannerExtentSnapshot changedMainCandidate = new(1600, 900, 1067, 600);
+        cache.GetOrCapture(mainKey, changedMainCandidate, out captured, out reportOverflow)
+            .ShouldBe(mainSnapshot);
+        captured.ShouldBeFalse();
+        reportOverflow.ShouldBeFalse();
+
+        cache.Clear();
+        cache.GetOrCapture(diagnosticKey, changedDiagnosticCandidate, out captured, out reportOverflow)
+            .ShouldBe(changedDiagnosticCandidate);
+        captured.ShouldBeTrue();
+        reportOverflow.ShouldBeFalse();
+    }
+
+    [Test]
     public void AlternatingPlannerContexts_RetainDistinctAllocatorOwners()
     {
         VulkanRenderer.FrameOpContext[] contexts =

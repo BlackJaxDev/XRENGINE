@@ -211,9 +211,9 @@ namespace XREngine.Editor.Mcp
                     AddFromRoot(root, "editor_scene");
             }
 
-            for (int windowIndex = 0; windowIndex < Engine.Windows.Count; windowIndex++)
+            for (int windowIndex = 0; windowIndex < RuntimeEngine.Windows.Count; windowIndex++)
             {
-                XRWindow window = Engine.Windows[windowIndex];
+                XRWindow window = RuntimeEngine.Windows[windowIndex];
                 for (int viewportIndex = 0; viewportIndex < window.Viewports.Count; viewportIndex++)
                 {
                     XRViewport viewport = window.Viewports[viewportIndex];
@@ -262,20 +262,13 @@ namespace XREngine.Editor.Mcp
         public static Task<McpToolResponse> ListVulkanImageAllocationDiagnosticsAsync(
             [McpName("limit"), Description("Maximum number of largest allocations to return.")] int limit = 64)
         {
-            VulkanRenderer? renderer = AbstractRenderer.Current as VulkanRenderer;
-            if (renderer is null)
-            {
-                renderer = Engine.Windows
-                    .Select(static window => window.Renderer)
-                    .OfType<VulkanRenderer>()
-                    .FirstOrDefault();
-            }
-
-            if (renderer is null)
+            if (!EditorRendererCapabilityResolver.TryGetForBackend(
+                    RendererBackendId.Vulkan,
+                    out IRenderBackendDiagnosticsCapability diagnostics))
                 return Task.FromResult(new McpToolResponse("The active renderer is not Vulkan.", isError: true));
 
-            object diagnostics = renderer.GetLiveImageAllocationDiagnostics(limit);
-            return Task.FromResult(new McpToolResponse("Listed Vulkan image allocation diagnostics.", diagnostics));
+            object snapshot = diagnostics.GetLiveImageAllocationDiagnostics(limit);
+            return Task.FromResult(new McpToolResponse("Listed Vulkan image allocation diagnostics.", snapshot));
         }
 
         [XRMcp(Name = "get_vulkan_frame_op_trace", Permission = McpPermissionLevel.ReadOnly)]
@@ -284,20 +277,13 @@ namespace XREngine.Editor.Mcp
             [McpName("limit"), Description("Maximum entries to return.")] int limit = 128,
             [McpName("target_contains"), Description("Optional case-insensitive filter applied to target, pass, and detail text.")] string? targetContains = null)
         {
-            VulkanRenderer? renderer = AbstractRenderer.Current as VulkanRenderer;
-            if (renderer is null)
-            {
-                renderer = Engine.Windows
-                    .Select(static window => window.Renderer)
-                    .OfType<VulkanRenderer>()
-                    .FirstOrDefault();
-            }
-
-            if (renderer is null)
+            if (!EditorRendererCapabilityResolver.TryGetForBackend(
+                    RendererBackendId.Vulkan,
+                    out IRenderBackendDiagnosticsCapability diagnostics))
                 return Task.FromResult(new McpToolResponse("The active renderer is not Vulkan.", isError: true));
 
-            object diagnostics = renderer.GetLastFrameOpTraceDiagnostics(limit, targetContains);
-            return Task.FromResult(new McpToolResponse("Retrieved Vulkan frame-op trace diagnostics.", diagnostics));
+            object snapshot = diagnostics.GetLastFrameOperationTraceDiagnostics(limit, targetContains);
+            return Task.FromResult(new McpToolResponse("Retrieved Vulkan frame-op trace diagnostics.", snapshot));
         }
 
         [XRMcp(Name = "capture_render_pipeline_texture", Permission = McpPermissionLevel.ReadOnly)]
@@ -355,8 +341,8 @@ namespace XREngine.Editor.Mcp
             Action? deferredHandler = null;
 
             XRWindow? window = viewport.Window
-                ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
-                ?? Engine.Windows.FirstOrDefault();
+                ?? RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
+                ?? RuntimeEngine.Windows.FirstOrDefault();
             if (window is null)
                 return new McpToolResponse("No window found for the target viewport.", isError: true);
 
@@ -514,8 +500,8 @@ namespace XREngine.Editor.Mcp
             }
 
             XRTexture2D? texture = leftEye
-                ? Engine.VRState.OpenXRApi?.PreviewLeftEyeTexture
-                : Engine.VRState.OpenXRApi?.PreviewRightEyeTexture;
+                ? RuntimeEngine.VRState.OpenXRApi?.PreviewLeftEyeTexture
+                : RuntimeEngine.VRState.OpenXRApi?.PreviewRightEyeTexture;
             if (texture is null)
                 return new McpToolResponse($"OpenXR {(leftEye ? "left" : "right")} eye preview texture is not available.", isError: true);
 
@@ -523,7 +509,7 @@ namespace XREngine.Editor.Mcp
             if (viewport is null)
                 return new McpToolResponse("No viewport found.", isError: true);
 
-            XRWindow? window = viewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
+            XRWindow? window = viewport.Window ?? RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
             if (window is null)
                 return new McpToolResponse("No window found for the target viewport.", isError: true);
 
@@ -668,7 +654,7 @@ namespace XREngine.Editor.Mcp
                 tonemapType = parsedTonemap;
             }
 
-            XRTexture2D? texture = Engine.VRState.OpenXRApi?.DesktopMirrorTexture;
+            XRTexture2D? texture = RuntimeEngine.VRState.OpenXRApi?.DesktopMirrorTexture;
             if (texture is null)
                 return new McpToolResponse("OpenXR desktop mirror texture is not available.", isError: true);
 
@@ -676,7 +662,7 @@ namespace XREngine.Editor.Mcp
             if (viewport is null)
                 return new McpToolResponse("No viewport found.", isError: true);
 
-            XRWindow? window = viewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
+            XRWindow? window = viewport.Window ?? RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
             if (window is null)
                 return new McpToolResponse("No window found for the target viewport.", isError: true);
 
@@ -900,9 +886,7 @@ namespace XREngine.Editor.Mcp
             if (record.Instance is not XRTexture texture)
                 throw new InvalidOperationException($"Texture resource '{textureName}' has no live texture instance.");
 
-            using IDisposable? plannerScope = renderer is VulkanRenderer vulkanRenderer
-                ? vulkanRenderer.EnterPipelineResourcePlannerReadbackScope(instance, viewport)
-                : null;
+            using IDisposable? plannerScope = viewport.EnterRenderPipelineReadbackScope();
 
             return CaptureTexture(
                 renderer,
@@ -982,11 +966,11 @@ namespace XREngine.Editor.Mcp
             XRWindow window,
             bool? flipVerticallyOverride)
         {
-            RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.Current.GetWindowRenderBackend(window);
+            RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.Factories.GetWindowRenderBackend(window);
             if (backend == RuntimeGraphicsApiKind.Unknown)
-                backend = RuntimeRenderingHostServices.Current.CurrentRenderBackend;
+                backend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
 
-            ERenderClipSpaceYDirection clipY = RuntimeRenderingHostServices.Current.ClipSpaceYDirection;
+            ERenderClipSpaceYDirection clipY = RuntimeRenderingHostServices.Settings.ClipSpaceYDirection;
             ERenderClipSpaceYDirection framebufferY = backend == RuntimeGraphicsApiKind.Unknown
                 ? (renderer.ScreenshotRequiresVerticalFlip ? ERenderClipSpaceYDirection.YUp : ERenderClipSpaceYDirection.YDown)
                 : RenderClipSpacePolicy.FramebufferTextureYDirection(backend);

@@ -525,12 +525,20 @@ namespace XREngine.Data.Trees
             //IsLoopingItems = false;
         }
         public void FindAllIntersecting(Vector2 point, SortedSet<T> intersecting, Predicate<T>? predicate = null)
+            => FindAllIntersecting(point, intersecting, [], predicate);
+
+        public void FindAllIntersecting(
+            Vector2 point,
+            SortedSet<T> intersecting,
+            List<T> buffer,
+            Predicate<T>? predicate = null)
         {
             ArgumentNullException.ThrowIfNull(intersecting);
+            ArgumentNullException.ThrowIfNull(buffer);
 
             // Collect into a plain list first so the SortedSet comparer never runs
             // while mutable render-order keys may be changing on another thread.
-            List<T> buffer = [];
+            buffer.Clear();
             FindAllIntersectingInternal(point, buffer, predicate);
 
             // Rebuild the set under a lock so callers that share the set across
@@ -541,6 +549,7 @@ namespace XREngine.Data.Trees
                 foreach (T item in buffer)
                     intersecting.Add(item);
             }
+            buffer.Clear();
         }
 
         private void FindAllIntersectingInternal(Vector2 point, List<T> buffer, Predicate<T>? predicate)

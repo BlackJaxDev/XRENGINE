@@ -1,0 +1,5 @@
+﻿License file not detected for referenced binary item.
+
+Project: XREngine.Runtime.Rendering.csproj
+Path: ..\Build\Dependencies\FFmpeg\HlsReference\win-x64\*.dll
+

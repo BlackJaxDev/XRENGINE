@@ -10,6 +10,13 @@ namespace XREngine.Rendering
     [RuntimeOnly]
     public class XRFrameBuffer : GenericRenderObject
     {
+        private static readonly Action<object?> UnbindFromReadingAction =
+            static state => ((XRFrameBuffer)state!).UnbindFromReading();
+        private static readonly Action<object?> UnbindFromWritingAction =
+            static state => ((XRFrameBuffer)state!).UnbindFromWriting();
+        private static readonly Action<object?> UnbindAction =
+            static state => ((XRFrameBuffer)state!).Unbind();
+
         public XRFrameBuffer() { }
         public XRFrameBuffer(params (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[]? targets)
             => SetRenderTargets(targets);
@@ -355,7 +362,7 @@ namespace XREngine.Rendering
         public StateObject BindForReadingState()
         {
             BindForReading();
-            return StateObject.New(UnbindFromReading);
+            return StateObject.New(UnbindFromReadingAction, this);
         }
         public void UnbindFromReading()
         {
@@ -397,17 +404,17 @@ namespace XREngine.Rendering
 
                 long attachmentBytes = target switch
                 {
-                    XRTexture2D tex2D => (long)tex2D.Width * tex2D.Height * RuntimeRenderingHostServices.Current.GetBytesPerPixel(tex2D.SizedInternalFormat),
-                    XRTexture2DArray tex2DArray => (long)tex2DArray.Width * tex2DArray.Height * tex2DArray.Depth * RuntimeRenderingHostServices.Current.GetBytesPerPixel(tex2DArray.SizedInternalFormat),
-                    XRTexture2DArrayView tex2DArrayView => (long)tex2DArrayView.Width * tex2DArrayView.Height * RuntimeRenderingHostServices.Current.GetBytesPerPixel(tex2DArrayView.ViewedTexture.SizedInternalFormat),
-                    XRRenderBuffer renderBuffer => (long)renderBuffer.Width * renderBuffer.Height * RuntimeRenderingHostServices.Current.GetBytesPerPixel(renderBuffer.Type),
+                    XRTexture2D tex2D => (long)tex2D.Width * tex2D.Height * RuntimeRenderingHostServices.BackendInterop.GetBytesPerPixel(tex2D.SizedInternalFormat),
+                    XRTexture2DArray tex2DArray => (long)tex2DArray.Width * tex2DArray.Height * tex2DArray.Depth * RuntimeRenderingHostServices.BackendInterop.GetBytesPerPixel(tex2DArray.SizedInternalFormat),
+                    XRTexture2DArrayView tex2DArrayView => (long)tex2DArrayView.Width * tex2DArrayView.Height * RuntimeRenderingHostServices.BackendInterop.GetBytesPerPixel(tex2DArrayView.ViewedTexture.SizedInternalFormat),
+                    XRRenderBuffer renderBuffer => (long)renderBuffer.Width * renderBuffer.Height * RuntimeRenderingHostServices.BackendInterop.GetBytesPerPixel(renderBuffer.Type),
                     _ => (long)target.Width * target.Height * 4 // Default estimate of 4 bytes per pixel
                 };
 
                 totalBytes += attachmentBytes;
             }
 
-            RuntimeRenderingHostServices.Current.AddFrameBufferBandwidth(totalBytes);
+            RuntimeRenderingHostServices.BackendInterop.AddFrameBufferBandwidth(totalBytes);
         }
 
         private void OnBindForWrite()
@@ -418,7 +425,7 @@ namespace XREngine.Rendering
         public StateObject BindForWritingState()
         {
             BindForWriting();
-            return StateObject.New(UnbindFromWriting);
+            return StateObject.New(UnbindFromWritingAction, this);
         }
         public void UnbindFromWriting()
         {
@@ -452,7 +459,7 @@ namespace XREngine.Rendering
         public StateObject BindState()
         {
             Bind();
-            return StateObject.New(Unbind);
+            return StateObject.New(UnbindAction, this);
         }
 
         public void Unbind()
@@ -589,7 +596,7 @@ namespace XREngine.Rendering
                     cuberef.Bind();
                     cuberef.AttachFaceToFBO(this, Attachment, ECubemapFace.PosX + LayerIndex, MipLevel);
                     break;
-                case XRTexture2DArray arrayref when arrayref.OVRMultiViewParameters is XRTexture2DArray.OVRMultiView ovr && !RuntimeRenderingHostServices.Current.IsNvidia:
+                case XRTexture2DArray arrayref when arrayref.OVRMultiViewParameters is XRTexture2DArray.OVRMultiView ovr && !RuntimeRenderingHostServices.FrameTiming.IsNvidia:
                     arrayref.Bind();
                     arrayref.AttachToFBO_OVRMultiView(this, Attachment, MipLevel, ovr.Offset, ovr.NumViews);
                     break;

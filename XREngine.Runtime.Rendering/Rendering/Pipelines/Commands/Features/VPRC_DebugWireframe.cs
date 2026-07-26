@@ -1,5 +1,3 @@
-using Silk.NET.OpenGL;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands;
@@ -32,7 +30,10 @@ public sealed class VPRC_DebugWireframe : ViewportRenderCommand
         if (Body is null)
             return;
 
-        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+        IRuntimeRendererHost? renderer = AbstractRenderer.Current;
+        if (renderer is null ||
+            !renderer.TryGetBackendCapability<IRasterizationModeBackendCapability>(out var rasterization) ||
+            rasterization is null)
         {
             if (ExecuteBodyWhenUnsupported)
             {
@@ -44,14 +45,14 @@ public sealed class VPRC_DebugWireframe : ViewportRenderCommand
         }
 
         using var branchScope = ActivePipelineInstance.PushRenderGraphBranchScope();
-        renderer.RawGL.PolygonMode(GLEnum.FrontAndBack, GLEnum.Line);
+        rasterization.SetWireframeRasterization(true);
         try
         {
             Body.Execute();
         }
         finally
         {
-            renderer.RawGL.PolygonMode(GLEnum.FrontAndBack, GLEnum.Fill);
+            rasterization.SetWireframeRasterization(false);
         }
     }
 

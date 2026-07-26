@@ -253,7 +253,7 @@ namespace XREngine.Rendering.Info
             orientation.M41 = 0.0f;
             orientation.M42 = 0.0f;
             orientation.M43 = 0.0f;
-            RuntimeRenderingHostServices.Current.RenderDebugBox(worldBox.LocalHalfExtents, worldBox.WorldCenter, orientation, false, ColorF4.Red);
+            RuntimeRenderingHostServices.DebugDrawing.RenderDebugBox(worldBox.LocalHalfExtents, worldBox.WorldCenter, orientation, false, ColorF4.Red);
         }
 
         private void TryQueueOctreeMove()
@@ -266,7 +266,7 @@ namespace XREngine.Rendering.Info
                 _lastQueuedWorldBounds.HasValue &&
                 BoxNearlyEqual(_lastQueuedWorldBounds.Value, worldBounds.Value))
             {
-                RuntimeRenderingHostServices.Current.RecordOctreeSkippedMove();
+                RuntimeRenderingHostServices.DebugDrawing.RecordOctreeSkippedMove();
                 return;
             }
 

@@ -316,10 +316,13 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     private PhysicsChainBenchmarkSettleSnapshot CaptureBenchmarkSettleSnapshot()
     {
         GPUPhysicsChainBandwidthSnapshot bandwidth = GPUPhysicsChainDispatcher.GetBandwidthPressureSnapshot();
-        int pendingUploads = AbstractRenderer.Current is OpenGLRenderer glRenderer
-            ? glRenderer.MeshGenerationQueue.PendingCount
-            : 0;
-        int rendererCount = Engine.Rendering.Stats.SceneAssets.VisibleRendererCount;
+        int pendingUploads =
+            EditorRendererCapabilityResolver.TryGetForBackend(
+                RendererBackendId.OpenGL,
+                out IRendererStartupWarmupBackendCapability warmup)
+                ? warmup.PendingStartupWorkCount
+                : 0;
+        int rendererCount = RuntimeEngine.Rendering.Stats.SceneAssets.VisibleRendererCount;
 
         // There is not yet a backend-neutral pipeline compilation queue. GPU
         // capacity and dispatch readiness are represented by the stable
@@ -401,8 +404,10 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         // The spawn produced many new meshes that queue for GPU upload. Boost the
         // per-frame mesh generation budget so the backlog drains in seconds rather
         // than minutes. The budget auto-restores when the queue empties.
-        if (AbstractRenderer.Current is OpenGLRenderer glRenderer)
-            glRenderer.MeshGenerationQueue.BoostBudgetUntilDrained(100.0);
+        if (EditorRendererCapabilityResolver.TryGetForBackend(
+                RendererBackendId.OpenGL,
+                out IRendererStartupWarmupBackendCapability warmup))
+            warmup.BoostMeshGenerationBudgetUntilDrained(100.0);
     }
 
     private void StopBenchmark(bool destroyInstances, bool updateStatus, bool cancelled)
@@ -1017,8 +1022,8 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
 
     private static FontGlyphSet LoadTitleLabelFont()
         => FontGlyphSet.LoadEngineFont(
-            Engine.Rendering.Settings.DefaultFontFolder,
-            Engine.Rendering.Settings.DefaultFontFileName,
+            RuntimeEngine.Rendering.Settings.DefaultFontFolder,
+            RuntimeEngine.Rendering.Settings.DefaultFontFileName,
             new XRFontImportOptions
             {
                 AtlasMode = EFontAtlasImportMode.Mtsdf,
@@ -1030,8 +1035,8 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
 
     private static FontGlyphSet LoadDetailLabelFont()
         => FontGlyphSet.LoadEngineFont(
-            Engine.Rendering.Settings.DefaultFontFolder,
-            Engine.Rendering.Settings.DefaultFontFileName,
+            RuntimeEngine.Rendering.Settings.DefaultFontFolder,
+            RuntimeEngine.Rendering.Settings.DefaultFontFileName,
             new XRFontImportOptions
             {
                 AtlasMode = EFontAtlasImportMode.Mtsdf,

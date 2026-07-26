@@ -1,8 +1,7 @@
 using System;
-using Silk.NET.OpenGL;
+using System.Runtime.InteropServices;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Rendering.Compute;
 
@@ -47,40 +46,32 @@ internal sealed partial class SkinningPrepassDispatcher
                 }
                 return;
             }
-            if (AbstractRenderer.Current is not OpenGLRenderer glRenderer)
+            if (AbstractRenderer.Current is not IRuntimeRendererHost renderer ||
+                !renderer.TryGetBackendCapability<IBufferDiagnosticReadbackBackendCapability>(out var readback) ||
+                readback is null)
                 return;
 
-            uint id = 0u;
-            foreach (var wrapper in buf.APIWrappers)
-                if (wrapper is OpenGLRenderer.GLDataBuffer gl && gl.TryGetBindingId(out id))
-                    break;
-            if (id == 0u)
+            if (!readback.TryGetBufferByteSize(buf, out ulong allocatedBytes))
             {
                 if (st.LoggedCount < 3)
                 {
                     st.LoggedCount++;
                     Debug.LogWarning(
-                        $"[SkinReadback] *** NO-OUTPUT-GLID *** verts={mesh.VertexCount} SkinnedPositionsBuffer has no GL binding id " +
-                        $"(output not yet GPU-resident; skinned draw may read garbage).");
+                        $"[SkinReadback] *** NO-OUTPUT-BACKEND-BUFFER *** verts={mesh.VertexCount} " +
+                        "SkinnedPositionsBuffer is not resident in the active backend.");
                 }
                 return;
             }
 
-            var rawGl = glRenderer.RawGL;
-            // Ensure the compute shader's writes are visible to this client read.
-            rawGl.MemoryBarrier((uint)(GLEnum.BufferUpdateBarrierBit | GLEnum.ShaderStorageBarrierBit));
-
-            rawGl.BindBuffer(GLEnum.ShaderStorageBuffer, id);
-            // Query the ACTUAL allocated GPU byte size. If this is smaller than vertexCount*16,
+            // Query the actual backend allocation. If this is smaller than vertexCount*16,
             // the output buffer is under-allocated -> compute writes/draw reads run out of range.
-            rawGl.GetBufferParameter(GLEnum.ShaderStorageBuffer, GLEnum.BufferSize, out int gpuBytes);
+            long gpuBytes = checked((long)allocatedBytes);
             long expectedBytes = (long)mesh.VertexCount * 4L * sizeof(float);
 
             int maxSampleVerts = gpuBytes > 0 ? (int)(gpuBytes / (4 * sizeof(float))) : 0;
             int sample = Math.Min(Math.Min(mesh.VertexCount, 512), maxSampleVerts);
             if (sample <= 0)
             {
-                rawGl.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
                 st.LoggedCount++;
                 Debug.LogWarning(
                     $"[SkinReadback] *** NO-GPU-DATA *** verts={mesh.VertexCount} gpuBytes={gpuBytes} expectedBytes={expectedBytes}.");
@@ -88,10 +79,13 @@ internal sealed partial class SkinningPrepassDispatcher
             }
 
             float[] data = new float[sample * 4];
-            // GetBufferSubData(target) reads the buffer bound to target; bind explicitly first.
-            fixed (float* p = data)
-                rawGl.GetBufferSubData(GLEnum.ShaderStorageBuffer, IntPtr.Zero, (nuint)(sample * 4 * sizeof(float)), p);
-            rawGl.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
+            if (!readback.TryReadBufferBytes(buf, 0, MemoryMarshal.AsBytes(data.AsSpan()), out string route))
+            {
+                st.LoggedCount++;
+                Debug.LogWarning(
+                    $"[SkinReadback] *** READBACK-FAILED *** verts={mesh.VertexCount} route={route}.");
+                return;
+            }
 
             bool underAllocated = gpuBytes < expectedBytes;
 
@@ -134,10 +128,7 @@ internal sealed partial class SkinningPrepassDispatcher
             // explosion (NaN/Inf/huge) even after the cap so a frozen-bad state keeps reporting.
             bool shouldLog = st.LoggedCount < 3 || significant || directExplosion;
             if (!shouldLog)
-            {
-                rawGl.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
                 return;
-            }
             st.LoggedCount++;
             st.LastMinX = minX; st.LastMaxX = maxX; st.LastMinY = minY; st.LastMaxY = maxY; st.LastMinZ = minZ; st.LastMaxZ = maxZ;
             st.HasLast = true;
@@ -154,37 +145,49 @@ internal sealed partial class SkinningPrepassDispatcher
             float maxDisp = -1f, maxRatio = -1f;
             float in0x = 0f, in0y = 0f, in0z = 0f;
             int inPosId = 0, inBytes = 0;
-            rawGl.GetInteger(GLEnum.ShaderStorageBufferBinding, SkinningPrepassBindings.NonInterleavedPositionInput, out inPosId);
-            if (inPosId != 0)
+            XRDataBuffer? inputPositions = mesh.PositionsBuffer;
+            if (inputPositions is not null &&
+                readback.TryGetBufferByteSize(inputPositions, out ulong inputAllocatedBytes))
             {
-                rawGl.BindBuffer(GLEnum.ShaderStorageBuffer, (uint)inPosId);
-                rawGl.GetBufferParameter(GLEnum.ShaderStorageBuffer, GLEnum.BufferSize, out inBytes);
+                foreach (object wrapper in inputPositions.APIWrappers)
+                    if (wrapper is IApiDataBuffer apiBuffer &&
+                        apiBuffer.TryGetBindingId(out uint bindingId))
+                    {
+                        inPosId = checked((int)bindingId);
+                        break;
+                    }
+
+                inBytes = checked((int)Math.Min(inputAllocatedBytes, int.MaxValue));
                 int inVerts = inBytes / (3 * sizeof(float)); // tight vec3
                 int inSample = Math.Min(sample, inVerts);
                 if (inSample > 0)
                 {
                     float[] indata = new float[inSample * 3];
-                    fixed (float* p = indata)
-                        rawGl.GetBufferSubData(GLEnum.ShaderStorageBuffer, IntPtr.Zero, (nuint)(inSample * 3 * sizeof(float)), p);
-                    in0x = indata[0]; in0y = indata[1]; in0z = indata[2];
-                    for (int i = 0; i < inSample; i++)
+                    if (readback.TryReadBufferBytes(
+                        inputPositions,
+                        0,
+                        MemoryMarshal.AsBytes(indata.AsSpan()),
+                        out _))
                     {
-                        float ox = data[i * 4], oy = data[i * 4 + 1], oz = data[i * 4 + 2];
-                        if (float.IsNaN(ox) || float.IsNaN(oy) || float.IsNaN(oz))
-                            continue;
-                        float ix = indata[i * 3], iy = indata[i * 3 + 1], iz = indata[i * 3 + 2];
-                        float disp = MathF.Sqrt((ox - ix) * (ox - ix) + (oy - iy) * (oy - iy) + (oz - iz) * (oz - iz));
-                        if (disp > maxDisp) maxDisp = disp;
-                        float inLen = MathF.Sqrt(ix * ix + iy * iy + iz * iz);
-                        float outLen = MathF.Sqrt(ox * ox + oy * oy + oz * oz);
-                        if (inLen > 0.01f)
+                        in0x = indata[0]; in0y = indata[1]; in0z = indata[2];
+                        for (int i = 0; i < inSample; i++)
                         {
-                            float ratio = outLen / inLen;
-                            if (ratio > maxRatio) maxRatio = ratio;
+                            float ox = data[i * 4], oy = data[i * 4 + 1], oz = data[i * 4 + 2];
+                            if (float.IsNaN(ox) || float.IsNaN(oy) || float.IsNaN(oz))
+                                continue;
+                            float ix = indata[i * 3], iy = indata[i * 3 + 1], iz = indata[i * 3 + 2];
+                            float disp = MathF.Sqrt((ox - ix) * (ox - ix) + (oy - iy) * (oy - iy) + (oz - iz) * (oz - iz));
+                            if (disp > maxDisp) maxDisp = disp;
+                            float inLen = MathF.Sqrt(ix * ix + iy * iy + iz * iz);
+                            float outLen = MathF.Sqrt(ox * ox + oy * oy + oz * oz);
+                            if (inLen > 0.01f)
+                            {
+                                float ratio = outLen / inLen;
+                                if (ratio > maxRatio) maxRatio = ratio;
+                            }
                         }
                     }
                 }
-                rawGl.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
             }
 
             // CPU client-side source positions for the SAME source-position buffer. Comparing the
@@ -198,7 +201,7 @@ internal sealed partial class SkinningPrepassDispatcher
             {
                 cpuBytes = (long)posBuf.ElementCount * posBuf.ElementSize;
                 foreach (var w in posBuf.APIWrappers)
-                    if (w is OpenGLRenderer.GLDataBuffer glp && glp.TryGetBindingId(out cpuId))
+                    if (w is IApiDataBuffer apiBuffer && apiBuffer.TryGetBindingId(out cpuId))
                         break;
                 if (posBuf.Address.Pointer != null && posBuf.ElementCount > 0)
                 {
@@ -273,39 +276,40 @@ internal sealed partial class SkinningPrepassDispatcher
             // downstream (palette sane on GPU but geometry/index/shader wrong). Client-side palette
             // was already proven sane (DetectSkinPaletteExplosion never fired), so a bad GPU entry
             // here means the GPU palette buffer content diverges from the client buffer.
-            DebugReadbackSkinPalette(mesh, rawGl, st.DispatchCount);
+            DebugReadbackSkinPalette(mesh, readback, st.DispatchCount);
         }
 
         /// <summary>
         /// Reads the actual GPU SkinPaletteBuffer content (3 vec4 rows per bone; translation is the
         /// W component of each row) and reports the bone with the largest translation magnitude.
         /// </summary>
-        private unsafe void DebugReadbackSkinPalette(XRMesh mesh, Silk.NET.OpenGL.GL rawGl, int dispatchIndex)
+        private void DebugReadbackSkinPalette(
+            XRMesh mesh,
+            IBufferDiagnosticReadbackBackendCapability readback,
+            int dispatchIndex)
         {
-            // Read the buffer ACTUALLY bound at the palette SSBO slot the shader used, not a
-            // C# property that may be null/divergent. This is still live at readback because
-            // ClearOpenGlComputeBindings runs later in the finally block.
-            rawGl.GetInteger(GLEnum.ShaderStorageBufferBinding, SkinningPrepassBindings.SkinPalette, out int paletteId);
-            uint pid = (uint)paletteId;
-            if (pid == 0u)
+            XRDataBuffer? paletteBuffer = _renderer.ActiveSkinPaletteBuffer;
+            if (paletteBuffer is null)
             {
-                Debug.LogWarning($"[SkinPaletteGpu] verts={mesh.VertexCount} dispatch#{dispatchIndex} *** NO PALETTE BOUND AT BINDING 0 ***.");
+                Debug.LogWarning($"[SkinPaletteGpu] verts={mesh.VertexCount} dispatch#{dispatchIndex} *** NO ACTIVE PALETTE BUFFER ***.");
                 return;
             }
 
-            rawGl.BindBuffer(GLEnum.ShaderStorageBuffer, pid);
-            rawGl.GetBufferParameter(GLEnum.ShaderStorageBuffer, GLEnum.BufferSize, out int pBytes);
+            if (!readback.TryGetBufferByteSize(paletteBuffer, out ulong paletteBytes))
+                return;
+
+            int pBytes = checked((int)Math.Min(paletteBytes, int.MaxValue));
             int boneEntries = pBytes / (12 * sizeof(float));
             if (boneEntries <= 0)
-            {
-                rawGl.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
                 return;
-            }
 
             float[] pdata = new float[boneEntries * 12];
-            fixed (float* p = pdata)
-                rawGl.GetBufferSubData(GLEnum.ShaderStorageBuffer, IntPtr.Zero, (nuint)(boneEntries * 12 * sizeof(float)), p);
-            rawGl.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
+            if (!readback.TryReadBufferBytes(
+                paletteBuffer,
+                0,
+                MemoryMarshal.AsBytes(pdata.AsSpan()),
+                out _))
+                return;
 
             float worstTrans = 0f;
             int worstBone = -1;

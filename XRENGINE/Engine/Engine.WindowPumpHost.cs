@@ -429,7 +429,7 @@ internal sealed class EngineWindowPumpHost : IDisposable
     {
         int threadId = Environment.CurrentManagedThreadId;
         Volatile.Write(ref _threadId, threadId);
-        Engine.SetWindowThreadId(threadId);
+        RuntimeEngine.AssignWindowThread(threadId);
         _started.Set();
 
         try

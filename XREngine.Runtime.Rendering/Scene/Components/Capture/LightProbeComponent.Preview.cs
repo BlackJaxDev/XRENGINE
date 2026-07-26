@@ -92,7 +92,7 @@ namespace XREngine.Components.Capture.Lights
                 {
                     _previewSphereFallbackLogged = true;
                     TextureRuntimeDiagnostics.LogFallbackTextureBound(
-                        RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                        RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                         nameof(LightProbeComponent),
                         "Texture0",
                         "light probe preview has no materialized environment texture");

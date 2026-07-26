@@ -34,7 +34,15 @@ namespace XREngine.Data.Core
 
         public void Invoke()
         {
-            WithProfiling("XREvent.Invoke", InvokeInternal);
+            IDisposable? sample = BeginProfiling("XREvent.Invoke");
+            if (sample is null)
+            {
+                InvokeInternal();
+                return;
+            }
+
+            using (sample)
+                InvokeInternal();
         }
 
         private void InvokeInternal()
@@ -211,27 +219,37 @@ namespace XREngine.Data.Core
 
         public void Invoke(T item)
         {
-            WithProfiling("XREvent<T>.Invoke", () =>
+            IDisposable? sample = BeginProfiling("XREvent<T>.Invoke");
+            if (sample is null)
             {
-                using (BeginProfiling("XREvent<T>.ConsumeQueues"))
-                {
-                    ConsumeQueues("XREvent<T>.ConsumeQueues");
-                }
+                InvokeInternal(item);
+                return;
+            }
 
-                using (BeginProfiling("XREvent<T>.Actions"))
-                {
-                    for (int i = 0; i < Actions.Count; i++)
-                    {
-                        using var listenerSample = BeginListenerProfiling("XREvent<T>.Action", Actions[i], i);
-                        Actions[i].Invoke(item);
-                    }
-                }
+            using (sample)
+                InvokeInternal(item);
+        }
 
-                using (BeginProfiling("XREvent<T>.PersistentCalls"))
+        private void InvokeInternal(T item)
+        {
+            using (BeginProfiling("XREvent<T>.ConsumeQueues"))
+            {
+                ConsumeQueues("XREvent<T>.ConsumeQueues");
+            }
+
+            using (BeginProfiling("XREvent<T>.Actions"))
+            {
+                for (int i = 0; i < Actions.Count; i++)
                 {
-                    InvokePersistentCalls(item);
+                    using var listenerSample = BeginListenerProfiling("XREvent<T>.Action", Actions[i], i);
+                    Actions[i].Invoke(item);
                 }
-            });
+            }
+
+            using (BeginProfiling("XREvent<T>.PersistentCalls"))
+            {
+                InvokePersistentCalls(item);
+            }
         }
 
         public async Task InvokeAsync(T item)

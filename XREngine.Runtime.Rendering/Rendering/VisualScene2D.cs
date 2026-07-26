@@ -17,7 +17,7 @@ namespace XREngine.Scene
     /// <summary>
     /// Represents a scene with special optimizations for rendering in 2D.
     /// </summary>
-    public class VisualScene2D : VisualScene
+    public partial class VisualScene2D : VisualScene
     {
         public VisualScene2D() { }
 
@@ -53,7 +53,7 @@ namespace XREngine.Scene
 
         private static void RenderSpatialTreeNode((QuadtreeNodeBase node, bool intersects) data)
         {
-            var host = RuntimeRenderingHostServices.Current;
+            IRuntimeRenderDebugDrawingServices host = RuntimeRenderingHostServices.DebugDrawing;
             var color = data.intersects
                 ? host.QuadtreeIntersectedBoundsColor
                 : host.QuadtreeContainedBoundsColor;
@@ -103,23 +103,7 @@ namespace XREngine.Scene
                 // the deferred Swap that normally runs in GlobalSwapBuffers).
                 RenderTree.Swap();
 
-                bool IntersectionTest(RenderInfo2D item, BoundingRectangleF cullingVolume, bool containsOnly)
-                {
-                    if (item.CullingVolume is null)
-                        return false;
-
-                    var contain = cullingVolume.ContainmentOf(item.CullingVolume.Value);
-                    return containsOnly ? contain == EContainment.Contains : contain != EContainment.Disjoint;
-                }
-
                 int walkedCount = 0;
-                void AddRenderCommands(ITreeItem item)
-                {
-                    walkedCount++;
-                    if (item is RenderInfo renderable)
-                        renderable.CollectCommands(commands, camera);
-                }
-
                 if (collectionVolume is null)
                 {
                     // UI painter's order must follow stable scene insertion order when no culling
@@ -132,7 +116,23 @@ namespace XREngine.Scene
                     }
                 }
                 else
-                    RenderTree.CollectVisible(collectionVolume, false, AddRenderCommands, IntersectionTest);
+                {
+                    CollectionContextStack contextStack = t_collectionContextStack ??= new CollectionContextStack();
+                    contextStack.Push(commands, camera);
+                    try
+                    {
+                        RenderTree.CollectVisible(
+                            collectionVolume,
+                            false,
+                            CollectRenderCommandsCallback,
+                            IntersectionTestCallback);
+                        walkedCount = contextStack.Current.WalkedCount;
+                    }
+                    finally
+                    {
+                        contextStack.Pop();
+                    }
+                }
 
                 //if (_diagFrames < 10 || _diagFrames % 300 == 0)
                 //    Debug.UI($"[VS2D:Collect] frame={_diagFrames} flatCount={_renderables.Count} treeWalked={walkedCount} treeBounds={RenderTree.Bounds} vol={collectionVolume?.ToString() ?? "null"}");

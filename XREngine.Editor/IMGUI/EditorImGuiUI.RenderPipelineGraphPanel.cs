@@ -192,7 +192,7 @@ public static partial class EditorImGuiUI
 
     private static RenderPipeline? TryGetActiveRenderPipeline()
     {
-        foreach (var viewport in Engine.EnumerateActiveViewports())
+        foreach (var viewport in RuntimeEngine.EnumerateActiveViewports())
         {
             var pipeline = viewport?.RenderPipeline;
             if (pipeline is not null)
