@@ -145,21 +145,17 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
 
     private int ResolvePassIndex(string passName, out bool hasRenderGraphMetadata)
     {
-        var metadata = ParentPipeline?.PassMetadata;
-        if (metadata is not { Count: > 0 } renderPasses)
+        RenderPipeline? pipeline = ParentPipeline;
+        if (pipeline?.PassMetadata is not { Count: > 0 })
         {
             hasRenderGraphMetadata = false;
             return int.MinValue;
         }
 
         hasRenderGraphMetadata = true;
-        foreach (var match in renderPasses)
-        {
-            if (string.Equals(match.Name, passName, StringComparison.OrdinalIgnoreCase))
-                return match.PassIndex;
-        }
-
-        return int.MinValue;
+        return pipeline.TryGetRenderPassIndex(passName, out int passIndex)
+            ? passIndex
+            : int.MinValue;
     }
 
     private string GetSourceDisplayName()

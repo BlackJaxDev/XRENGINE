@@ -152,7 +152,7 @@ The visible simulated-HMD preview is the `monado-service.exe` windowed composito
 - `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.XrCalls.cs`
 - `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.RenderModels.cs`
 - `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Input.RuntimeNeutral.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.OpenGL.cs`
+- `XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenXR/OpenGlXrGraphicsBinding.Implementation.cs`
 - `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Pacing.cs`
 - `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.RuntimeStateMachine.cs`
 - `XREngine.Runtime.Rendering/Runtime/RuntimeVrRenderingServices.cs`

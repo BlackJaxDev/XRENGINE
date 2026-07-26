@@ -144,8 +144,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             string stencilResource = MakeFboStencilResource(frameBufferName);
             XRFrameBuffer? frameBuffer = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.GetFBO<XRFrameBuffer>(frameBufferName);
 
-            foreach (RenderPassMetadata pass in GetTopologicalPassOrder(metadata))
+            IReadOnlyList<RenderPassMetadata> orderedPasses = GetTopologicalPassOrder(metadata);
+            for (int passIndex = 0; passIndex < orderedPasses.Count; ++passIndex)
             {
+                RenderPassMetadata pass = orderedPasses[passIndex];
                 for (int i = 0; i < pass.ResourceUsages.Count; i++)
                 {
                     RenderPassResourceUsage usage = pass.ResourceUsages[i];

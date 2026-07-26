@@ -70,7 +70,7 @@ public sealed class PhysicsChainGpuResidencyTests
     [Test]
     public void DispatcherSource_HasNoLegacySteadyStateRepackOrResidentCopyPath()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Compute/GPUPhysicsChainDispatcher.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
 
         source.ShouldContain("BuildResidentArenaBuffers");
         source.ShouldContain("GPUPhysicsChainUploadPlan.Create");

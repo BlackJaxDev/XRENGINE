@@ -1263,7 +1263,7 @@ namespace XREngine
                     continue;
 
                 // Important: do NOT call property getters here.
-                // Some getters have side effects or require a specific thread/context (e.g., OpenGLRenderer.Version).
+                // Some getters have side effects or require a specific thread/context (for example, backend version queries).
                 // Field traversal (incl. auto-property backing fields) is sufficient for asset reference discovery.
 
                 var fields = GetAllInstanceFields(type, ShouldReflectInto).ToArray();

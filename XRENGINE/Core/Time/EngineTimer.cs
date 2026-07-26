@@ -414,7 +414,7 @@ namespace XREngine.Timers
                     {
                         long waitStartTicks = TimeTicks();
                         _renderDone.Wait(-1);
-                        Engine.Rendering.Stats.FrameLifecycle.RecordCollectWaitForRender(TimeTicks() - waitStartTicks);
+                        RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordCollectWaitForRender(TimeTicks() - waitStartTicks);
                     }
 
                     if (!IsRunning)
@@ -560,7 +560,7 @@ namespace XREngine.Timers
 
                     if (_visibilityGenerationGate.TryRecordStaleReuse(requiredGeneration))
                     {
-                        Engine.Rendering.Stats.FrameLifecycle.RecordStaleCollectReuse();
+                        RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordStaleCollectReuse();
                         reusedPreviousVisibility = true;
                         break;
                     }
@@ -569,7 +569,7 @@ namespace XREngine.Timers
                 long waitStartTicks = TimeTicks();
                 if (!_visibilityGenerationGate.WaitForPublication())
                     return;
-                Engine.Rendering.Stats.FrameLifecycle.RecordRenderWaitForCollect(TimeTicks() - waitStartTicks);
+                RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordRenderWaitForCollect(TimeTicks() - waitStartTicks);
             }
 
             if (!IsRunning)
@@ -739,8 +739,7 @@ namespace XREngine.Timers
                     Render.LastTimestampTicks = timestampTicks;
                     Volatile.Write(ref _renderReadyForNextCollectSignaled, 0);
 
-                    Engine.Rendering.State.BeginRenderFrame();
-                    ulong renderFrameId = Engine.Rendering.State.RenderFrameId;
+                    ulong renderFrameId = RuntimeEngine.Rendering.BeginRenderFrame();
                     long renderFrameStartTicks = TimeTicks();
                     Engine.SetDispatchingRenderFrame(true);
                     try
@@ -767,8 +766,7 @@ namespace XREngine.Timers
 
                     long renderFrameElapsedTicks = Math.Max(0L, timestampTicks - renderFrameStartTicks);
                     double renderFrameMs = renderFrameElapsedTicks * 1000.0 / Stopwatch.Frequency;
-                    Engine.Rendering.Stats.FrameOutputs.RecordWholeFrameRenderThread(renderFrameId, renderFrameElapsedTicks);
-                    Engine.Rendering.Stats.FrameOutputs.SnapshotAndReset();
+                    RuntimeEngine.Rendering.CompleteRenderFrame(renderFrameId, renderFrameElapsedTicks);
                     XREngine.Rendering.RenderPipelineGpuProfiler.Instance.RecordRenderThreadFrameMs(renderFrameId, renderFrameMs);
                     PresentFrameId = renderFrameId;
                 }

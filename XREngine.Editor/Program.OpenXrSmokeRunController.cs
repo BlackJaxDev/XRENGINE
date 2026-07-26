@@ -70,7 +70,7 @@ internal partial class Program
         private readonly OpenXrSmokeOutputLedgerEntry[] _outputLedger;
         private readonly OpenXrSmokeOcclusionEvidenceLedgerEntry[] _occlusionEvidenceLedger;
         private readonly CpuOcclusionValidationEvidenceSnapshot[] _occlusionEvidenceScratch;
-        private readonly Engine.Rendering.Stats.FrameOutputEntrySnapshot[] _currentOutputScratch;
+        private readonly RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] _currentOutputScratch;
         private OpenXrSmokeCaptureLedgerEntry[] _strictSpsBoundaryCaptureLedger = [];
         private readonly object _ledgerLock = new();
         private readonly List<string> _failures = [];
@@ -129,7 +129,7 @@ internal partial class Program
             _outputLedger = new OpenXrSmokeOutputLedgerEntry[targetFrames * MaxOutputSnapshotsPerFrame];
             _occlusionEvidenceLedger = new OpenXrSmokeOcclusionEvidenceLedgerEntry[targetFrames * MaxOcclusionEvidenceSnapshotsPerFrame];
             _occlusionEvidenceScratch = new CpuOcclusionValidationEvidenceSnapshot[MaxOcclusionEvidenceSnapshotsPerFrame];
-            _currentOutputScratch = new Engine.Rendering.Stats.FrameOutputEntrySnapshot[MaxOutputSnapshotsPerFrame];
+            _currentOutputScratch = new RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[MaxOutputSnapshotsPerFrame];
             Phase524bTemporalStateDiagnostics.Reset();
         }
 
@@ -191,10 +191,13 @@ internal partial class Program
             if (!Enabled || _installed)
                 return;
 
-            Engine.Rendering.Settings.TsrRenderScale = (float)_tsrResolutionScaleRequested;
+            RuntimeEngine.Rendering.Settings.TsrRenderScale = (float)_tsrResolutionScaleRequested;
             bool injectDesktopRejection = ReadBooleanEnvironmentVariable(
                 XREngineEnvironmentVariables.VulkanPhase524bInjectDesktopRejection);
-            VulkanRenderer.ResetPhase524bDesktopRejectionEvidence(injectDesktopRejection);
+            if (EditorRendererCapabilityResolver.TryGetRegistered(
+                    RendererBackendId.Vulkan,
+                    out IOpenXrSmokeDiagnosticsBackendCapability smokeDiagnostics))
+                smokeDiagnostics.ResetDesktopRejectionEvidence(injectDesktopRejection);
 
             Engine.Time.Timer.UpdateFrame += Update;
             _installed = true;
@@ -216,7 +219,7 @@ internal partial class Program
 
             _finished = true;
             string? logDirectory = TryGetLogDirectory();
-            OpenXRAPI? summaryApi = Engine.VRState.OpenXRApi ?? _subscribedApi;
+            OpenXRAPI? summaryApi = RuntimeEngine.VRState.OpenXRApi ?? _subscribedApi;
             OpenXrSmokeSummary summary = summaryApi?.CreateSmokeSummary(logDirectory)
                 ?? _preTeardownSmokeSummary
                 ?? new OpenXrSmokeSummary
@@ -400,10 +403,10 @@ internal partial class Program
             }
 
             float requestedTsrScale = (float)_tsrResolutionScaleRequested;
-            if (Math.Abs(Engine.Rendering.Settings.TsrRenderScale - requestedTsrScale) > float.Epsilon)
-                Engine.Rendering.Settings.TsrRenderScale = requestedTsrScale;
+            if (Math.Abs(RuntimeEngine.Rendering.Settings.TsrRenderScale - requestedTsrScale) > float.Epsilon)
+                RuntimeEngine.Rendering.Settings.TsrRenderScale = requestedTsrScale;
 
-            OpenXRAPI? currentApi = Engine.VRState.OpenXRApi;
+            OpenXRAPI? currentApi = RuntimeEngine.VRState.OpenXRApi;
             if (currentApi is not null)
                 EnsureSmokeFrameSubscription(currentApi);
 
@@ -521,21 +524,21 @@ internal partial class Program
 
             if (ReadBooleanEnvironmentVariable(XREngineEnvironmentVariables.VulkanPhase525Validation))
             {
-                Engine.Rendering.Stats.FrameOutputWorkSnapshot frameWindowWork =
-                    Engine.Rendering.Stats.FrameOutputs.LastManifest.Work;
+                RuntimeEngine.Rendering.Stats.FrameOutputWorkSnapshot frameWindowWork =
+                    RuntimeEngine.Rendering.Stats.FrameOutputs.LastManifest.Work;
                 _phase525FrameWindowGlobalInFlightWaitCount += frameWindowWork.GlobalInFlightWaitCount;
                 _phase525FrameWindowForceFlushCount += frameWindowWork.ForceFlushCount;
                 _phase525SwapchainRetirementQueuedCount +=
-                    Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementQueuedCount;
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementQueuedCount;
                 _phase525SwapchainRetirementDrainedCount +=
-                    Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementDrainedCount;
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementDrainedCount;
                 _phase525SwapchainRetirementDeferredCount +=
-                    Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementDeferredCount;
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementDeferredCount;
                 _phase525SwapchainRetirementPendingHighWater = Math.Max(
                     _phase525SwapchainRetirementPendingHighWater,
-                    Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementPendingHighWater);
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementPendingHighWater);
                 _phase525SwapchainRetirementFinalPendingCount =
-                    Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementPendingCount;
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementPendingCount;
             }
 
             if (completedFrames <= _warmupFrames)
@@ -551,31 +554,31 @@ internal partial class Program
                     _strictSpsBoundaryCaptureLedger = api.GetStrictSpsBoundaryCaptureLedger();
 
                 int retiredResourceCount =
-                    Engine.Rendering.Stats.Vulkan.VulkanRetiredDescriptorPoolCount +
-                    Engine.Rendering.Stats.Vulkan.VulkanRetiredDescriptorSetCount +
-                    Engine.Rendering.Stats.Vulkan.VulkanRetiredCommandBufferCount +
-                    Engine.Rendering.Stats.Vulkan.VulkanRetiredQueryPoolCount +
-                    Engine.Rendering.Stats.Vulkan.VulkanRetiredBufferViewCount +
-                    Engine.Rendering.Stats.Vulkan.VulkanRetiredPipelineCount +
-                    Engine.Rendering.Stats.Vulkan.VulkanRetiredFramebufferCount +
-                    Engine.Rendering.Stats.Vulkan.VulkanRetiredBufferCount +
-                    Engine.Rendering.Stats.Vulkan.VulkanRetiredBufferMemoryCount +
-                    Engine.Rendering.Stats.Vulkan.VulkanRetiredImageCount +
-                    Engine.Rendering.Stats.Vulkan.VulkanRetiredImageViewCount +
-                    Engine.Rendering.Stats.Vulkan.VulkanRetiredSamplerCount +
-                    Engine.Rendering.Stats.Vulkan.VulkanRetiredImageMemoryCount;
-                Engine.Rendering.Stats.FrameOutputManifestSnapshot outputManifest =
-                    Engine.Rendering.Stats.FrameOutputs.LastManifest;
-                Engine.Rendering.Stats.FrameOutputWorkSnapshot outputWork = outputManifest.Work;
-                Engine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs = outputManifest.Outputs;
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanRetiredDescriptorPoolCount +
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanRetiredDescriptorSetCount +
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanRetiredCommandBufferCount +
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanRetiredQueryPoolCount +
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanRetiredBufferViewCount +
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanRetiredPipelineCount +
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanRetiredFramebufferCount +
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanRetiredBufferCount +
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanRetiredBufferMemoryCount +
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanRetiredImageCount +
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanRetiredImageViewCount +
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanRetiredSamplerCount +
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanRetiredImageMemoryCount;
+                RuntimeEngine.Rendering.Stats.FrameOutputManifestSnapshot outputManifest =
+                    RuntimeEngine.Rendering.Stats.FrameOutputs.LastManifest;
+                RuntimeEngine.Rendering.Stats.FrameOutputWorkSnapshot outputWork = outputManifest.Work;
+                RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs = outputManifest.Outputs;
                 ulong renderFrameId = api.SmokeLastRenderedFrameId;
                 if (renderFrameId == 0UL)
                 {
                     renderFrameId = outputManifest.FrameId != 0UL
                         ? outputManifest.FrameId
-                        : Engine.Rendering.State.RenderFrameId;
+                        : RuntimeEngine.Rendering.State.RenderFrameId;
                 }
-                int currentOutputRequiredCount = Engine.Rendering.Stats.FrameOutputs.CopyCurrentOutputs(_currentOutputScratch);
+                int currentOutputRequiredCount = RuntimeEngine.Rendering.Stats.FrameOutputs.CopyCurrentOutputs(_currentOutputScratch);
                 int currentOutputCount = Math.Min(currentOutputRequiredCount, _currentOutputScratch.Length);
                 if (currentOutputRequiredCount > _currentOutputScratch.Length)
                     _outputLedgerOverflow = true;
@@ -594,20 +597,20 @@ internal partial class Program
                     out int currentSubmitEvents,
                     out int currentOverlayEvents,
                     out int currentPresentEvents);
-                bool validationLayersEnabled = Engine.Rendering.Stats.Vulkan.VulkanValidationLayersEnabled;
-                bool synchronizationValidationEnabled = Engine.Rendering.Stats.Vulkan.VulkanSynchronizationValidationEnabled;
-                int validationErrorCount = Engine.Rendering.Stats.Vulkan.VulkanValidationErrorCount;
-                int queueSubmitCount = Engine.Rendering.Stats.Vulkan.VulkanQueueSubmitCount;
-                int presentAttemptCount = Engine.Rendering.Stats.Vulkan.VulkanPresentAttemptCount;
-                int presentAcceptedCount = Engine.Rendering.Stats.Vulkan.VulkanPresentAcceptedCount;
-                int lastPresentResult = Engine.Rendering.Stats.Vulkan.VulkanLastPresentResult;
+                bool validationLayersEnabled = RuntimeEngine.Rendering.Stats.Vulkan.VulkanValidationLayersEnabled;
+                bool synchronizationValidationEnabled = RuntimeEngine.Rendering.Stats.Vulkan.VulkanSynchronizationValidationEnabled;
+                int validationErrorCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanValidationErrorCount;
+                int queueSubmitCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanQueueSubmitCount;
+                int presentAttemptCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPresentAttemptCount;
+                int presentAcceptedCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPresentAcceptedCount;
+                int lastPresentResult = RuntimeEngine.Rendering.Stats.Vulkan.VulkanLastPresentResult;
                 bool lifetimeValidationPassed = validationLayersEnabled &&
                     validationErrorCount == 0 &&
                     outputWork.SubmissionRejectionCount == 0;
                 bool desktopFinalWriteObserved =
-                    (Engine.Rendering.Stats.Vulkan.VulkanSceneSwapchainWriters > 0 ||
-                     Engine.Rendering.Stats.Vulkan.VulkanFrameOpSwapchainWriteCount > 0) &&
-                    Engine.Rendering.Stats.Vulkan.VulkanMissingSceneSwapchainWriteFrames == 0;
+                    (RuntimeEngine.Rendering.Stats.Vulkan.VulkanSceneSwapchainWriters > 0 ||
+                     RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameOpSwapchainWriteCount > 0) &&
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanMissingSceneSwapchainWriteFrames == 0;
                 bool desktopPresentPhaseObserved = HasDesktopPresentPhase(outputs);
                 bool desktopPresentAccepted = presentAttemptCount > 0 && presentAcceptedCount == presentAttemptCount;
                 int plannerStateCount = CountDistinctPlannerStates(
@@ -633,9 +636,13 @@ internal partial class Program
 
                 _validationLayersObserved |= validationLayersEnabled;
                 _synchronizationValidationObserved |= synchronizationValidationEnabled;
-                _vulkanRenderTargetModeEffective = AbstractRenderer.Current is VulkanRenderer vulkanRenderer
-                    ? vulkanRenderer.EffectiveRenderTargetMode.ToString()
-                    : Engine.EffectiveSettings.VulkanRenderTargetMode.ToString();
+                _vulkanRenderTargetModeEffective =
+                    EditorRendererCapabilityResolver.TryGetForBackend(
+                        RendererBackendId.Vulkan,
+                        out IRenderBackendDiagnosticsCapability diagnostics)
+                    && diagnostics.EffectiveRenderTargetMode is { } effectiveMode
+                        ? effectiveMode
+                        : Engine.EffectiveSettings.VulkanRenderTargetMode.ToString();
                 _vulkanDiagnosticPresetEffective = Engine.EffectiveSettings.VulkanDiagnosticPreset.ToString();
                 _occlusionCullingModeEffective = Engine.EffectiveSettings.GpuOcclusionCullingMode.ToString();
                 _mirrorModeEffective = outputManifest.MirrorMode.ToString();
@@ -672,86 +679,86 @@ internal partial class Program
                     RightExternalImageSlot = api.GetSmokeEyeLastImageSlot(1),
                     StrictSequentialFallbackAttemptCount = strictFallbackCount,
                     StrictSequentialFallbackAttemptDelta = strictFallbackDelta,
-                    FrameTotalMilliseconds = Engine.Rendering.Stats.Vulkan.VulkanFrameTotalMs,
-                    FrameGpuMilliseconds = Engine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs,
-                    FrameWaitFenceMilliseconds = Engine.Rendering.Stats.Vulkan.VulkanFrameWaitFenceMs,
-                    FrameRecordMilliseconds = Engine.Rendering.Stats.Vulkan.VulkanFrameRecordCommandBufferMs,
-                    FrameSubmitMilliseconds = Engine.Rendering.Stats.Vulkan.VulkanFrameSubmitMs,
-                    FramePresentMilliseconds = Engine.Rendering.Stats.Vulkan.VulkanFramePresentMs,
+                    FrameTotalMilliseconds = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameTotalMs,
+                    FrameGpuMilliseconds = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs,
+                    FrameWaitFenceMilliseconds = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameWaitFenceMs,
+                    FrameRecordMilliseconds = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameRecordCommandBufferMs,
+                    FrameSubmitMilliseconds = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameSubmitMs,
+                    FramePresentMilliseconds = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFramePresentMs,
                     ValidationErrorCount = validationErrorCount,
                     ValidationLayersEnabled = validationLayersEnabled,
                     SynchronizationValidationEnabled = synchronizationValidationEnabled,
                     LifetimeValidationEnabled = validationLayersEnabled,
                     LifetimeValidationPassed = lifetimeValidationPassed,
-                    DeviceLocalAllocationCount = Engine.Rendering.Stats.Vulkan.VulkanDeviceLocalAllocationCount,
-                    DeviceLocalAllocatedBytes = Engine.Rendering.Stats.Vulkan.VulkanDeviceLocalAllocatedBytes,
-                    UploadAllocationCount = Engine.Rendering.Stats.Vulkan.VulkanUploadAllocationCount,
-                    UploadAllocatedBytes = Engine.Rendering.Stats.Vulkan.VulkanUploadAllocatedBytes,
-                    DescriptorPoolCreateCount = Engine.Rendering.Stats.Vulkan.VulkanDescriptorPoolCreateCount,
-                    DescriptorPoolDestroyCount = Engine.Rendering.Stats.Vulkan.VulkanDescriptorPoolDestroyCount,
-                    DescriptorPoolResetCount = Engine.Rendering.Stats.Vulkan.VulkanDescriptorPoolResetCount,
-                    ResourceCreatedCount = Engine.Rendering.Stats.ResourceChurn.CreatedCount,
-                    ResourceRecreatedCount = Engine.Rendering.Stats.ResourceChurn.RecreatedCount,
-                    ResourceResizedCount = Engine.Rendering.Stats.ResourceChurn.ResizedCount,
-                    ResourceDestroyedCount = Engine.Rendering.Stats.ResourceChurn.DestroyedCount,
-                    PipelineCompileRequiredCount = Engine.Rendering.Stats.Vulkan.VulkanPipelineCompileRequiredCount,
-                    PipelineCompileCompletedCount = Engine.Rendering.Stats.Vulkan.VulkanPipelineCompileCompletedCount,
-                    PipelineBackgroundCompileCompletedCount = Engine.Rendering.Stats.Vulkan.VulkanPipelineBackgroundCompileCompletedCount,
+                    DeviceLocalAllocationCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanDeviceLocalAllocationCount,
+                    DeviceLocalAllocatedBytes = RuntimeEngine.Rendering.Stats.Vulkan.VulkanDeviceLocalAllocatedBytes,
+                    UploadAllocationCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanUploadAllocationCount,
+                    UploadAllocatedBytes = RuntimeEngine.Rendering.Stats.Vulkan.VulkanUploadAllocatedBytes,
+                    DescriptorPoolCreateCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanDescriptorPoolCreateCount,
+                    DescriptorPoolDestroyCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanDescriptorPoolDestroyCount,
+                    DescriptorPoolResetCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanDescriptorPoolResetCount,
+                    ResourceCreatedCount = RuntimeEngine.Rendering.Stats.ResourceChurn.CreatedCount,
+                    ResourceRecreatedCount = RuntimeEngine.Rendering.Stats.ResourceChurn.RecreatedCount,
+                    ResourceResizedCount = RuntimeEngine.Rendering.Stats.ResourceChurn.ResizedCount,
+                    ResourceDestroyedCount = RuntimeEngine.Rendering.Stats.ResourceChurn.DestroyedCount,
+                    PipelineCompileRequiredCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPipelineCompileRequiredCount,
+                    PipelineCompileCompletedCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPipelineCompileCompletedCount,
+                    PipelineBackgroundCompileCompletedCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPipelineBackgroundCompileCompletedCount,
                     PipelineForegroundCompileCompletedCount = Math.Max(
                         0,
-                        Engine.Rendering.Stats.Vulkan.VulkanPipelineCompileCompletedCount -
-                        Engine.Rendering.Stats.Vulkan.VulkanPipelineBackgroundCompileCompletedCount),
-                    PipelineAsyncQueuedCount = Engine.Rendering.Stats.Vulkan.VulkanPipelineAsyncQueuedCount,
-                    PipelineQueueRejectedCount = Engine.Rendering.Stats.Vulkan.VulkanPipelineQueueRejectedCount,
-                    PipelineDrawNotReadyCount = Engine.Rendering.Stats.Vulkan.VulkanPipelineDrawNotReadyCount,
-                    RequiredPipelinePendingCount = Engine.Rendering.Stats.Vulkan.VulkanRequiredPipelinePendingCount,
-                    PipelineRecordDeferredCount = Engine.Rendering.Stats.Vulkan.VulkanPipelineRecordDeferredCount,
-                    RenderThreadShaderCompileCount = Engine.Rendering.Stats.Vulkan.VulkanRenderThreadShaderCompileCount,
-                    ResourcePlanReplacementCount = Engine.Rendering.Stats.Vulkan.VulkanRetiredResourcePlanReplacements,
-                    SwapchainRetirementQueuedCount = Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementQueuedCount,
-                    SwapchainRetirementDrainedCount = Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementDrainedCount,
-                    SwapchainRetirementPendingCount = Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementPendingCount,
-                    SwapchainRetirementPendingHighWater = Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementPendingHighWater,
-                    SwapchainRetirementDeferredCount = Engine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementDeferredCount,
-                    CommandBufferCleanReuseCount = Engine.Rendering.Stats.Vulkan.VulkanCommandBufferCleanReuseCount,
-                    CommandBufferRecordCount = Engine.Rendering.Stats.Vulkan.VulkanCommandBufferRecordCount,
-                    PrimaryCommandBufferReuseCount = Engine.Rendering.Stats.Vulkan.VulkanPrimaryCommandBuffersReused,
-                    PrimaryCommandBufferRecordCount = Engine.Rendering.Stats.Vulkan.VulkanPrimaryCommandBuffersRecorded,
-                    CommandBufferDecisionReasonMask = (int)Engine.Rendering.Stats.Vulkan.VulkanCommandBufferDecisionReasonMask,
-                    GlobalFallbackInvalidationCount = Engine.Rendering.Stats.Vulkan.VulkanGlobalFallbackInvalidations,
+                        RuntimeEngine.Rendering.Stats.Vulkan.VulkanPipelineCompileCompletedCount -
+                        RuntimeEngine.Rendering.Stats.Vulkan.VulkanPipelineBackgroundCompileCompletedCount),
+                    PipelineAsyncQueuedCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPipelineAsyncQueuedCount,
+                    PipelineQueueRejectedCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPipelineQueueRejectedCount,
+                    PipelineDrawNotReadyCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPipelineDrawNotReadyCount,
+                    RequiredPipelinePendingCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanRequiredPipelinePendingCount,
+                    PipelineRecordDeferredCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPipelineRecordDeferredCount,
+                    RenderThreadShaderCompileCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanRenderThreadShaderCompileCount,
+                    ResourcePlanReplacementCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanRetiredResourcePlanReplacements,
+                    SwapchainRetirementQueuedCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementQueuedCount,
+                    SwapchainRetirementDrainedCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementDrainedCount,
+                    SwapchainRetirementPendingCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementPendingCount,
+                    SwapchainRetirementPendingHighWater = RuntimeEngine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementPendingHighWater,
+                    SwapchainRetirementDeferredCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanSwapchainRetirementDeferredCount,
+                    CommandBufferCleanReuseCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBufferCleanReuseCount,
+                    CommandBufferRecordCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBufferRecordCount,
+                    PrimaryCommandBufferReuseCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryCommandBuffersReused,
+                    PrimaryCommandBufferRecordCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryCommandBuffersRecorded,
+                    CommandBufferDecisionReasonMask = (int)RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBufferDecisionReasonMask,
+                    GlobalFallbackInvalidationCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanGlobalFallbackInvalidations,
                     RetiredResourceCount = retiredResourceCount,
-                    LifetimeLiveResourceCount = Engine.Rendering.Stats.Vulkan.VulkanLifetimeLiveResourceCount,
-                    TrackedDescriptorSetCount = Engine.Rendering.Stats.Vulkan.VulkanTrackedDescriptorSetCount,
-                    LifetimePendingRetirementCount = Engine.Rendering.Stats.Vulkan.VulkanLifetimePendingRetirementCount,
-                    LifetimeOldestPendingRetirementAgeMilliseconds = Engine.Rendering.Stats.Vulkan.VulkanLifetimeOldestPendingRetirementAgeMilliseconds,
-                    MeshFrameDataArenaChunkCount = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataArenaChunkCount,
-                    MeshFrameDataMappedBytes = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataMappedBytes,
-                    MeshFrameDataReservedBytes = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataReservedBytes,
-                    MeshFrameDataReservationCount = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataReservationCount,
-                    MeshFrameDataGeneration = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataGeneration,
-                    MeshFrameDataRecordingLeases = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataRecordingLeases,
-                    MeshFrameDataCachedLeases = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataCachedLeases,
-                    MeshFrameDataSubmittedLeases = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataSubmittedLeases,
-                    MeshFrameDataActiveGenerationCount = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataActiveGenerationCount,
-                    MeshFrameDataLeaseRetainedGenerationCount = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataLeaseRetainedGenerationCount,
-                    MeshFrameDataManifestGeneration = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataManifestGeneration,
-                    MeshFrameDataManifestPublicationCount = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataManifestPublicationCount,
-                    MeshFrameDataManifestLateRegistrationCount = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataManifestLateRegistrationCount,
-                    MeshFrameDataManifestRendererCount = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataManifestRendererCount,
-                    MeshFrameDataManifestFamilyCount = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataManifestFamilyCount,
-                    MeshFrameDataManifestIsSealed = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataManifestIsSealed,
-                    MeshDescriptorAllocationVariants = Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorAllocationVariants,
-                    MeshDescriptorPools = Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorPools,
-                    MeshDescriptorAllocatedSets = Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorAllocatedSets,
-                    MeshDescriptorReservedSets = Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorReservedSets,
-                    MeshFrameDataArenaChunkHighWater = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataArenaChunkHighWater,
-                    MeshFrameDataMappedBytesHighWater = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataMappedBytesHighWater,
-                    MeshFrameDataReservedBytesHighWater = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataReservedBytesHighWater,
-                    MeshFrameDataReservationHighWater = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataReservationHighWater,
-                    MeshFrameDataLeaseHighWater = Engine.Rendering.Stats.Vulkan.VulkanMeshFrameDataLeaseHighWater,
-                    MeshDescriptorAllocationVariantHighWater = Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorAllocationVariantHighWater,
-                    MeshDescriptorPoolHighWater = Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorPoolHighWater,
-                    MeshDescriptorSetHighWater = Engine.Rendering.Stats.Vulkan.VulkanMeshDescriptorSetHighWater,
+                    LifetimeLiveResourceCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanLifetimeLiveResourceCount,
+                    TrackedDescriptorSetCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanTrackedDescriptorSetCount,
+                    LifetimePendingRetirementCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanLifetimePendingRetirementCount,
+                    LifetimeOldestPendingRetirementAgeMilliseconds = RuntimeEngine.Rendering.Stats.Vulkan.VulkanLifetimeOldestPendingRetirementAgeMilliseconds,
+                    MeshFrameDataArenaChunkCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataArenaChunkCount,
+                    MeshFrameDataMappedBytes = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataMappedBytes,
+                    MeshFrameDataReservedBytes = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataReservedBytes,
+                    MeshFrameDataReservationCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataReservationCount,
+                    MeshFrameDataGeneration = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataGeneration,
+                    MeshFrameDataRecordingLeases = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataRecordingLeases,
+                    MeshFrameDataCachedLeases = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataCachedLeases,
+                    MeshFrameDataSubmittedLeases = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataSubmittedLeases,
+                    MeshFrameDataActiveGenerationCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataActiveGenerationCount,
+                    MeshFrameDataLeaseRetainedGenerationCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataLeaseRetainedGenerationCount,
+                    MeshFrameDataManifestGeneration = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataManifestGeneration,
+                    MeshFrameDataManifestPublicationCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataManifestPublicationCount,
+                    MeshFrameDataManifestLateRegistrationCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataManifestLateRegistrationCount,
+                    MeshFrameDataManifestRendererCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataManifestRendererCount,
+                    MeshFrameDataManifestFamilyCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataManifestFamilyCount,
+                    MeshFrameDataManifestIsSealed = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataManifestIsSealed,
+                    MeshDescriptorAllocationVariants = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshDescriptorAllocationVariants,
+                    MeshDescriptorPools = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshDescriptorPools,
+                    MeshDescriptorAllocatedSets = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshDescriptorAllocatedSets,
+                    MeshDescriptorReservedSets = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshDescriptorReservedSets,
+                    MeshFrameDataArenaChunkHighWater = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataArenaChunkHighWater,
+                    MeshFrameDataMappedBytesHighWater = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataMappedBytesHighWater,
+                    MeshFrameDataReservedBytesHighWater = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataReservedBytesHighWater,
+                    MeshFrameDataReservationHighWater = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataReservationHighWater,
+                    MeshFrameDataLeaseHighWater = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshFrameDataLeaseHighWater,
+                    MeshDescriptorAllocationVariantHighWater = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshDescriptorAllocationVariantHighWater,
+                    MeshDescriptorPoolHighWater = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshDescriptorPoolHighWater,
+                    MeshDescriptorSetHighWater = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshDescriptorSetHighWater,
                     QueueSubmitCount = queueSubmitCount,
                     SubmitCompleted = projectionLayerSubmitted &&
                         queueSubmitCount > 0 &&
@@ -789,9 +796,9 @@ internal partial class Program
                     CommandGeneration = commandGeneration,
                     MirrorMode = outputManifest.MirrorMode.ToString(),
                     VrActive = outputManifest.VrActive,
-                    SceneSwapchainWriterCount = Engine.Rendering.Stats.Vulkan.VulkanSceneSwapchainWriters,
-                    SwapchainWriteCount = Engine.Rendering.Stats.Vulkan.VulkanFrameOpSwapchainWriteCount,
-                    MissingSceneSwapchainWriteCount = Engine.Rendering.Stats.Vulkan.VulkanMissingSceneSwapchainWriteFrames,
+                    SceneSwapchainWriterCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanSceneSwapchainWriters,
+                    SwapchainWriteCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameOpSwapchainWriteCount,
+                    MissingSceneSwapchainWriteCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanMissingSceneSwapchainWriteFrames,
                     DesktopFinalWriteObserved = desktopFinalWriteObserved,
                     DesktopPresentObserved = desktopPresentPhaseObserved && presentAttemptCount > 0,
                     DesktopPresentAttemptCount = presentAttemptCount,
@@ -829,7 +836,7 @@ internal partial class Program
                      outputIndex < currentOutputCount && outputsWrittenThisFrame < MaxOutputSnapshotsPerFrame;
                      outputIndex++)
                 {
-                    ref readonly Engine.Rendering.Stats.FrameOutputEntrySnapshot output =
+                    ref readonly RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot output =
                         ref _currentOutputScratch[outputIndex];
                     if (!IsCurrentOpenXrOutput(in output, renderFrameId))
                         continue;
@@ -968,7 +975,7 @@ internal partial class Program
         }
 
         private void AppendOutputLedgerEntry(
-            in Engine.Rendering.Stats.FrameOutputEntrySnapshot output,
+            in RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot output,
             ulong manifestFrameId,
             bool lifetimeValidationPassed,
             int presentAttemptCount,
@@ -1054,14 +1061,14 @@ internal partial class Program
         }
 
         private static bool IsCurrentOpenXrOutput(
-            in Engine.Rendering.Stats.FrameOutputEntrySnapshot output,
+            in RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot output,
             ulong renderFrameId)
             => output.FrameId == renderFrameId &&
                 (output.OutputKind == EFrameOutputKind.OpenXREyeSubmit ||
                  output.Request.Target.TargetClass == ERenderOutputTargetClass.RuntimeExternalImage);
 
         private static int CountCurrentOpenXrOutputs(
-            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs,
+            RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs,
             int outputCount,
             ulong renderFrameId)
         {
@@ -1075,15 +1082,15 @@ internal partial class Program
         }
 
         private static int CountNewCurrentOpenXrViewFamilies(
-            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] snapshottedOutputs,
-            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] currentOutputs,
+            RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] snapshottedOutputs,
+            RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] currentOutputs,
             int currentOutputCount,
             ulong renderFrameId)
         {
             int count = 0;
             for (int i = 0; i < currentOutputCount; i++)
             {
-                ref readonly Engine.Rendering.Stats.FrameOutputEntrySnapshot candidate = ref currentOutputs[i];
+                ref readonly RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot candidate = ref currentOutputs[i];
                 if (!IsCurrentOpenXrOutput(in candidate, renderFrameId))
                     continue;
 
@@ -1123,7 +1130,7 @@ internal partial class Program
         }
 
         private static void CountCurrentOpenXrOutputEvents(
-            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs,
+            RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs,
             int outputCount,
             ulong renderFrameId,
             out int outputEvents,
@@ -1143,7 +1150,7 @@ internal partial class Program
             presentEvents = 0;
             for (int i = 0; i < outputCount; i++)
             {
-                ref readonly Engine.Rendering.Stats.FrameOutputEntrySnapshot output = ref outputs[i];
+                ref readonly RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot output = ref outputs[i];
                 if (!IsCurrentOpenXrOutput(in output, renderFrameId))
                     continue;
                 outputEvents += output.OutputEventCount;
@@ -1157,7 +1164,7 @@ internal partial class Program
         }
 
         private static bool HasSubmittedVrEyes(
-            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs,
+            RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs,
             int outputCount,
             ulong renderFrameId)
         {
@@ -1165,7 +1172,7 @@ internal partial class Program
             bool right = false;
             for (int i = 0; i < outputCount; i++)
             {
-                ref readonly Engine.Rendering.Stats.FrameOutputEntrySnapshot output = ref outputs[i];
+                ref readonly RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot output = ref outputs[i];
                 if (!IsCurrentOpenXrOutput(in output, renderFrameId))
                     continue;
                 if (!output.SubmitObserved || output.OutputKind != EFrameOutputKind.OpenXREyeSubmit)
@@ -1177,11 +1184,11 @@ internal partial class Program
             return left && right;
         }
 
-        private static bool HasDesktopPresentPhase(Engine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs)
+        private static bool HasDesktopPresentPhase(RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs)
         {
             for (int i = 0; i < outputs.Length; i++)
             {
-                Engine.Rendering.Stats.FrameOutputEntrySnapshot output = outputs[i];
+                RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot output = outputs[i];
                 if (output.PresentObserved && output.OutputKind == EFrameOutputKind.Present)
                     return true;
             }
@@ -1189,8 +1196,8 @@ internal partial class Program
         }
 
         private static int CountDistinctPlannerStates(
-            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] finalizedOutputs,
-            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] currentOutputs,
+            RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] finalizedOutputs,
+            RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] currentOutputs,
             int currentOutputCount,
             ulong renderFrameId)
         {
@@ -1213,7 +1220,7 @@ internal partial class Program
         }
 
         private static bool TryAddPlannerState(
-            in Engine.Rendering.Stats.FrameOutputEntrySnapshot output,
+            in RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot output,
             Span<PlannerStateIdentity> identities,
             ref int count)
         {
@@ -1236,8 +1243,8 @@ internal partial class Program
         }
 
         private static int CountDistinctCommandVariants(
-            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] finalizedOutputs,
-            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] currentOutputs,
+            RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] finalizedOutputs,
+            RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] currentOutputs,
             int currentOutputCount,
             ulong renderFrameId)
         {
@@ -1260,7 +1267,7 @@ internal partial class Program
         }
 
         private static bool TryAddCommandVariant(
-            in Engine.Rendering.Stats.FrameOutputEntrySnapshot output,
+            in RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot output,
             Span<CommandVariantIdentity> identities,
             ref int count)
         {
@@ -1285,8 +1292,8 @@ internal partial class Program
         }
 
         private static ulong ResolveMaximumResourcePlanGeneration(
-            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] finalizedOutputs,
-            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] currentOutputs,
+            RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] finalizedOutputs,
+            RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] currentOutputs,
             int currentOutputCount,
             ulong renderFrameId)
         {
@@ -1309,8 +1316,8 @@ internal partial class Program
         }
 
         private static ulong ResolveMaximumCommandGeneration(
-            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] finalizedOutputs,
-            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] currentOutputs,
+            RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] finalizedOutputs,
+            RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] currentOutputs,
             int currentOutputCount,
             ulong renderFrameId)
         {
@@ -1358,8 +1365,11 @@ internal partial class Program
                 : _antiAliasingModeEffective;
             summary.TsrResolutionScaleRequested = _tsrResolutionScaleRequested;
             summary.TsrResolutionScaleEffective = _subscribedApi?.SmokeEffectiveTsrRenderScale
-                ?? Engine.Rendering.Settings.TsrRenderScale;
-            summary.DesktopRejectionEvidence = VulkanRenderer.CapturePhase524bDesktopRejectionEvidence();
+                ?? RuntimeEngine.Rendering.Settings.TsrRenderScale;
+            if (EditorRendererCapabilityResolver.TryGetRegistered(
+                    RendererBackendId.Vulkan,
+                    out IOpenXrSmokeDiagnosticsBackendCapability smokeDiagnostics))
+                summary.DesktopRejectionEvidence = smokeDiagnostics.CaptureDesktopRejectionEvidence();
             summary.OcclusionCullingModeRequested =
                 Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OcclusionCullingMode) ?? string.Empty;
             summary.OcclusionCullingModeEffective = _occlusionCullingModeEffective;
@@ -1896,8 +1906,8 @@ internal partial class Program
                 if (!HasTwoEyesAtLeast(summary.PerEyeReleaseCounts, submittedTarget))
                     failures.Add("Per-eye xrReleaseSwapchainImage counts did not reach submitted frame count.");
                 bool expectsDesktopMirrorComposition =
-                    Engine.Rendering.Settings.RenderWindowsWhileInVR &&
-                    Engine.Rendering.Settings.VrMirrorComposeFromEyeTextures;
+                    RuntimeEngine.Rendering.Settings.RenderWindowsWhileInVR &&
+                    RuntimeEngine.Rendering.Settings.VrMirrorComposeFromEyeTextures;
                 if (expectsDesktopMirrorComposition && !summary.DesktopMirrorComposed)
                     failures.Add("OpenXR desktop mirror composition was not observed during rendered-layer smoke frames.");
             }

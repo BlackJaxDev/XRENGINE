@@ -23,9 +23,7 @@ public interface IRuntimeRenderWorld : IRuntimeWorldContext
     Lights3DCollection Lights { get; }
     EventList<CameraComponent> FramebufferCameras { get; }
     ColorF3 GetEffectiveAmbientColor();
-    void GlobalPreCollectVisible()
-    {
-    }
+    void GlobalPreCollectVisible();
     void GlobalPreRender();
     void GlobalPostRender();
     void DebugRenderPhysics(PhysicsDebugDepthMode depthMode);

@@ -295,7 +295,7 @@ public sealed class StereoPostProcessContractTests
         string quadCommand = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderQuadToFBO.Internal.cs");
         string vulkanFramebuffer = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
 
         resources.ShouldContain("TsrMonoReferenceTextureName");
         resources.ShouldContain("CreateTsrMonoReferenceFBO(0)");
@@ -365,9 +365,9 @@ public sealed class StereoPostProcessContractTests
     public void MotionVectorDrawSnapshot_UsesIndependentPerEyeCurrentMatricesAndExactKeyDiagnostics()
     {
         string meshSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
         string uniformSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
         meshSource.ShouldContain("viewProjectionMatrixUnjitteredSnapshot = temporalData.CurrViewProjectionUnjittered;");
         meshSource.ShouldContain("rightEyeViewProjectionMatrixUnjitteredSnapshot = temporalData.RightEyeCurrViewProjectionUnjittered;");
         uniformSource.ShouldContain("draw.ViewProjectionMatrixUnjittered");

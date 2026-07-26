@@ -10,6 +10,7 @@ namespace XREngine.Data.Geometry
     /// </summary>
     [Serializable]
     public struct BoundingRectangle(IVector2 translation, IVector2 bounds, Vector2 localOriginPercentage)
+        : IEquatable<BoundingRectangle>
     {
         /// <summary>
         /// A rectangle with a location at 0,0 (bottom left), a size of 0, and a local origin at the bottom left.
@@ -374,6 +375,30 @@ namespace XREngine.Data.Geometry
 
         public override readonly string ToString()
             => string.Format("[X:{0} Y:{1} W:{2} H:{3}]", OriginTranslation.X, OriginTranslation.Y, Width, Height);
+
+        public readonly bool Equals(BoundingRectangle other)
+            => _translation.X == other._translation.X &&
+               _translation.Y == other._translation.Y &&
+               _bounds.X == other._bounds.X &&
+               _bounds.Y == other._bounds.Y &&
+               _localOriginPercentage.Equals(other._localOriginPercentage);
+
+        public override readonly bool Equals(object? obj)
+            => obj is BoundingRectangle other && Equals(other);
+
+        public override readonly int GetHashCode()
+            => HashCode.Combine(
+                _translation.X,
+                _translation.Y,
+                _bounds.X,
+                _bounds.Y,
+                _localOriginPercentage);
+
+        public static bool operator ==(BoundingRectangle left, BoundingRectangle right)
+            => left.Equals(right);
+
+        public static bool operator !=(BoundingRectangle left, BoundingRectangle right)
+            => !left.Equals(right);
 
         public readonly IVector2 ClosestPoint(IVector2 point)
             => point.Clamped(BottomLeft, TopRight);

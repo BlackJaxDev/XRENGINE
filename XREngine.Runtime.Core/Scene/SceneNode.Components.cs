@@ -190,7 +190,15 @@ namespace XREngine.Scene
         /// Returns the first component of type T attached to the scene node.
         /// </summary>
         public T1? GetComponent<T1>() where T1 : XRComponent
-            => ComponentsInternal.FirstOrDefault(x => x is T1) as T1;
+        {
+            for (int i = 0; i < ComponentsInternal.Count; ++i)
+            {
+                if (ComponentsInternal[i] is T1 component)
+                    return component;
+            }
+
+            return null;
+        }
 
         /// <summary>
         /// Gets or adds a component of type T to the scene node.
@@ -213,7 +221,15 @@ namespace XREngine.Scene
         /// Returns the last component of type T attached to the scene node.
         /// </summary>
         public T1? GetLastComponent<T1>() where T1 : XRComponent
-            => ComponentsInternal.LastOrDefault(x => x is T1) as T1;
+        {
+            for (int i = ComponentsInternal.Count - 1; i >= 0; --i)
+            {
+                if (ComponentsInternal[i] is T1 component)
+                    return component;
+            }
+
+            return null;
+        }
 
         /// <summary>
         /// Returns all components of type T attached to the scene node.
@@ -225,7 +241,16 @@ namespace XREngine.Scene
         /// Returns the first component of type attached to the scene node.
         /// </summary>
         public XRComponent? GetComponent(Type type)
-            => ComponentsInternal.FirstOrDefault(type.IsInstanceOfType);
+        {
+            for (int i = 0; i < ComponentsInternal.Count; ++i)
+            {
+                XRComponent component = ComponentsInternal[i];
+                if (type.IsInstanceOfType(component))
+                    return component;
+            }
+
+            return null;
+        }
 
         /// <summary>
         /// Returns the first component with the specified type name.
@@ -233,7 +258,16 @@ namespace XREngine.Scene
         /// <param name="typeName">The simple name of the component type to find.</param>
         /// <returns>The first matching component, or <c>null</c> if not found.</returns>
         public XRComponent? GetComponent(string typeName)
-            => ComponentsInternal.FirstOrDefault(x => string.Equals(x.GetType().Name, typeName));
+        {
+            for (int i = 0; i < ComponentsInternal.Count; ++i)
+            {
+                XRComponent component = ComponentsInternal[i];
+                if (string.Equals(component.GetType().Name, typeName, StringComparison.Ordinal))
+                    return component;
+            }
+
+            return null;
+        }
 
         /// <summary>
         /// Returns the first component with the specified type name on this node or any descendant.
@@ -257,13 +291,24 @@ namespace XREngine.Scene
         /// Returns the component at the given index.
         /// </summary>
         public XRComponent? GetComponentAtIndex(int index)
-            => ComponentsInternal.ElementAtOrDefault(index);
+            => (uint)index < (uint)ComponentsInternal.Count
+                ? ComponentsInternal[index]
+                : null;
 
         /// <summary>
         /// Returns the last component of type attached to the scene node.
         /// </summary>
         public XRComponent? GetLastComponent(Type type)
-            => ComponentsInternal.LastOrDefault(type.IsInstanceOfType);
+        {
+            for (int i = ComponentsInternal.Count - 1; i >= 0; --i)
+            {
+                XRComponent component = ComponentsInternal[i];
+                if (type.IsInstanceOfType(component))
+                    return component;
+            }
+
+            return null;
+        }
 
         /// <summary>
         /// Returns all components of type attached to the scene node.
@@ -275,13 +320,13 @@ namespace XREngine.Scene
         /// Returns true if the scene node has a component of the given type attached to it.
         /// </summary>
         public bool HasComponent(Type requiredType)
-            => ComponentsInternal.Any(requiredType.IsInstanceOfType);
+            => GetComponent(requiredType) is not null;
 
         /// <summary>
         /// Returns true if the scene node has a component of type T attached to it.
         /// </summary>
         public bool HasComponent<T>() where T : XRComponent
-            => ComponentsInternal.Any(x => x is T);
+            => GetComponent<T>() is not null;
 
         /// <summary>
         /// Attempts to retrieve the first component of the given type attached to the scene node.
@@ -307,7 +352,7 @@ namespace XREngine.Scene
         public bool TryGetComponents(Type type, out IEnumerable<XRComponent> comps)
         {
             comps = GetComponents(type);
-            return comps.Any();
+            return HasComponent(type);
         }
 
         /// <summary>
@@ -316,7 +361,7 @@ namespace XREngine.Scene
         public bool TryGetComponents<T>(out IEnumerable<T> comps) where T : XRComponent
         {
             comps = GetComponents<T>();
-            return comps.Any();
+            return HasComponent<T>();
         }
 
         #endregion

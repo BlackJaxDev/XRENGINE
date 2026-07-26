@@ -6,6 +6,7 @@ namespace XREngine.Input;
 /// <summary>
 /// Identifies the VR runtime currently driving tracked poses.
 /// </summary>
+#if false
 public enum RuntimeVrRuntimeKind
 {
     /// <summary>
@@ -55,6 +56,7 @@ public readonly record struct RuntimeVrTrackerInfo(
     string? RoleName,
     bool PoseAvailable,
     bool RuntimeReported);
+#endif
 
 /// <summary>
 /// Runtime-facing service contract for VR state, calibration, devices, and pose lookup.

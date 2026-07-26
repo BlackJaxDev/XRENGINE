@@ -601,19 +601,21 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline
 
     private static RvcCapabilityMatrix BuildRuntimeCapabilityMatrix(in RvcRenderingSettings settings)
     {
-        IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
-        RuntimeGraphicsApiKind backend = host.CurrentRenderBackend;
-        IRuntimeRendererHost? renderer = host.CurrentRenderer;
+        IRuntimeRenderFrameTimingServices frameTiming = RuntimeRenderingHostServices.FrameTiming;
+        IRuntimeRenderSettingsServices settingsServices = RuntimeRenderingHostServices.Settings;
+        IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
+        RuntimeGraphicsApiKind backend = frameTiming.CurrentRenderBackend;
+        IRuntimeRendererHost? renderer = frameTiming.CurrentRenderer;
         bool vulkan = backend == RuntimeGraphicsApiKind.Vulkan;
         bool openGl = backend == RuntimeGraphicsApiKind.OpenGL;
         ERvcDescriptorBackend rendererDescriptorBackend = renderer?.RvcDescriptorBackend ?? ERvcDescriptorBackend.None;
         ERvcVulkanProductionFeature rendererVulkanFeatures = renderer?.RvcVulkanProductionFeatures ?? ERvcVulkanProductionFeature.None;
         bool descriptorHeap = rendererDescriptorBackend == ERvcDescriptorBackend.DescriptorHeap;
         bool descriptorIndexing = rendererDescriptorBackend == ERvcDescriptorBackend.DescriptorIndexing ||
-            (rendererDescriptorBackend == ERvcDescriptorBackend.None && vulkan && host.EnableVulkanDescriptorIndexing);
+            (rendererDescriptorBackend == ERvcDescriptorBackend.None && vulkan && settingsServices.EnableVulkanDescriptorIndexing);
         bool rendererVisibilityTargets = renderer?.SupportsRvcVisibilityTargets == true;
-        bool openXrRuntimeFoveation = host.IsOpenXRActive && host.VrFoveationMode != EVrFoveationMode.Off;
-        bool openXrQuadViews = host.IsOpenXRActive && settings.QuadViewEnabled;
+        bool openXrRuntimeFoveation = presentation.IsOpenXRActive && presentation.VrFoveationMode != EVrFoveationMode.Off;
+        bool openXrQuadViews = presentation.IsOpenXRActive && settings.QuadViewEnabled;
 
         return new(
             ForwardPlusOracleAvailable: true,
@@ -628,7 +630,7 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline
             OpenXrQuadViewsSupported: openXrQuadViews,
             OpenXrRuntimeFoveationSupported: openXrRuntimeFoveation,
             OpenXrDepthLayersSupported: false,
-            OpenXrVisibilityMaskSupported: host.RvcOpenXrVisibilityMaskEnabled && (renderer?.SupportsRvcOpenXrVisibilityMaskStencil != false || openGl),
+            OpenXrVisibilityMaskSupported: presentation.RvcOpenXrVisibilityMaskEnabled && (renderer?.SupportsRvcOpenXrVisibilityMaskStencil != false || openGl),
             MultiviewSupported: settings.QuadViewEnabled ? false : (rendererVulkanFeatures & ERvcVulkanProductionFeature.Multiview) != 0,
             StaticMeshVisibilitySourceSupported: renderer?.SupportsRvcStaticMeshVisibilitySource == true || openGl,
             SkinnedComputeVisibilitySourceSupported: renderer?.SupportsRvcSkinnedComputeVisibilitySource == true,

@@ -91,8 +91,10 @@ namespace XREngine.Rendering
             return api.CVR.GetProjectionMatrix(eye, NearZ, FarZ).ToNumerics().Transposed();
         }
 
-        protected override Frustum CalculateUntransformedFrustum(Matrix4x4 inverseProjectionMatrix)
-            => new(inverseProjectionMatrix);
+        protected override void UpdateUntransformedFrustum(
+            ref Frustum frustum,
+            Matrix4x4 inverseProjectionMatrix)
+            => frustum.Update(inverseProjectionMatrix);
 
         /// <summary>
         /// Creates a new OpenVR camera from previous parameters.

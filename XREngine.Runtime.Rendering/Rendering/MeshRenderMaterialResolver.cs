@@ -304,8 +304,9 @@ public static class MeshRenderMaterialResolver
 
     private static bool UsesPointLightShadowCubemap(XRMaterial material)
     {
-        foreach (XRTexture? texture in material.Textures)
+        for (int i = 0; i < material.Textures.Count; i++)
         {
+            XRTexture? texture = material.Textures[i];
             if (texture is XRTextureCube { SamplerName: "ShadowMap" })
                 return true;
         }
@@ -315,8 +316,9 @@ public static class MeshRenderMaterialResolver
 
     private static bool HasPointLightShadowDepthShader(XRMaterial material)
     {
-        foreach (var shader in material.FragmentShaders)
+        for (int i = 0; i < material.FragmentShaders.Count; i++)
         {
+            XRShader shader = material.FragmentShaders[i];
             if (shader.Source.FilePath?.EndsWith("PointLightShadowDepth.fs", StringComparison.OrdinalIgnoreCase) == true)
                 return true;
         }

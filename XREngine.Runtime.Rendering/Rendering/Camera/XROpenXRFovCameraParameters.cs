@@ -72,10 +72,10 @@ namespace XREngine.Rendering
             return Matrix4x4.CreatePerspectiveOffCenter(l, r, b, t, n, FarZ);
         }
 
-        protected override Frustum CalculateUntransformedFrustum(Matrix4x4 inverseProjectionMatrix)
-        {
-            return new Frustum(inverseProjectionMatrix);
-        }
+        protected override void UpdateUntransformedFrustum(
+            ref Frustum frustum,
+            Matrix4x4 inverseProjectionMatrix)
+            => frustum.Update(inverseProjectionMatrix);
 
         public override Vector2 GetFrustumSizeAtDistance(float distance)
         {

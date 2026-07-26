@@ -1052,13 +1052,71 @@ public sealed class SwapchainContextCoalescingTests
     }
 
     [Test]
-    public void VulkanPassValidation_AllowsActiveParentPassAcrossNestedPipelineMetadata()
+    public void FrameOpContextPipeline_InheritedPassUsesDeclaringPipeline()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+        XRRenderPipelineInstance parentPipeline = new();
+        XRRenderPipelineInstance nestedPipeline = new();
 
-        source.ShouldContain("int currentPassIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;");
-        source.ShouldContain("if (passIndex != int.MinValue && passIndex == currentPassIndex)");
-        source.ShouldContain("return passIndex;");
+        VulkanRenderer.ResolveFrameOpContextPipeline(
+            nestedPipeline,
+            parentPipeline,
+            100_087).ShouldBeSameAs(parentPipeline);
+        VulkanRenderer.ResolveFrameOpContextPipeline(
+            nestedPipeline,
+            parentPipeline,
+            int.MinValue).ShouldBeSameAs(nestedPipeline);
+        VulkanRenderer.ResolveFrameOpContextPipeline(
+            nestedPipeline,
+            null,
+            100_087).ShouldBeSameAs(nestedPipeline);
+
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+        source.ShouldNotContain("if (passIndex != int.MinValue && passIndex == currentPassIndex)");
+    }
+
+    [Test]
+    public void FrameOpContextFlags_InheritedPassUsesDeclaringPipelineState()
+    {
+        XRRenderPipelineInstance parentPipeline = new();
+        XRRenderPipelineInstance nestedPipeline = new();
+        FrameOpContext parentContext = CtxPipelineA with
+        {
+            PipelineIdentity = parentPipeline.InstanceId,
+            PipelineInstance = parentPipeline,
+        };
+
+        using (parentPipeline.RenderState.PushMainAttributes(
+            viewport: null,
+            scene: null,
+            camera: null,
+            stereoRightEyeCamera: null,
+            target: null,
+            shadowPass: true,
+            stereoPass: true,
+            globalMaterialOverride: null,
+            screenSpaceUI: null,
+            meshRenderCommands: null))
+        using (nestedPipeline.RenderState.PushMainAttributes(
+            viewport: null,
+            scene: null,
+            camera: null,
+            stereoRightEyeCamera: null,
+            target: null,
+            shadowPass: false,
+            stereoPass: false,
+            globalMaterialOverride: null,
+            screenSpaceUI: null,
+            meshRenderCommands: null))
+        using (RuntimeEngine.Rendering.State.PushRenderingPipeline(nestedPipeline))
+        {
+            RuntimeEngine.Rendering.State.IsStereoPass.ShouldBeFalse();
+            RuntimeEngine.Rendering.State.IsShadowPass.ShouldBeFalse();
+            VulkanRenderer.ResolveFrameOpContextStereoEnabled(parentContext).ShouldBeTrue();
+            VulkanRenderer.ResolveFrameOpContextShadowPass(parentContext).ShouldBeTrue();
+            VulkanRenderer.ResolveFrameOpContextMultiviewEnabled(
+                parentContext,
+                VulkanRenderer.ResolveFrameOpContextStereoEnabled(parentContext)).ShouldBeFalse();
+        }
     }
 
     #endregion

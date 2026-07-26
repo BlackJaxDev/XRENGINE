@@ -39,6 +39,8 @@ public sealed class RenderResourceRegistry
     private int _instanceRevision;
     private int _cachedInstanceSnapshotRevision;
     private XRTexture[] _cachedTextureInstances = [];
+    private XRFrameBuffer[] _cachedFrameBufferInstances = [];
+    private XRDataBuffer[] _cachedBufferInstances = [];
     private XRRenderBuffer[] _cachedRenderBufferInstances = [];
 
     /// <summary>
@@ -67,7 +69,7 @@ public sealed class RenderResourceRegistry
     public int DescriptorRevision => Volatile.Read(ref _descriptorRevision);
 
     /// <summary>
-    /// Monotonic counter for changes to the live texture/renderbuffer bindings.
+    /// Monotonic counter for changes to live resource bindings.
     /// </summary>
     internal int InstanceRevision => Volatile.Read(ref _instanceRevision);
 
@@ -233,7 +235,11 @@ public sealed class RenderResourceRegistry
             record = RegisterFrameBufferDescriptor(descriptor);
         }
 
-        record.Bind(frameBuffer);
+        if (!ReferenceEquals(record.Instance, frameBuffer))
+        {
+            record.Bind(frameBuffer);
+            MarkInstancesChanged();
+        }
     }
 
     /// <summary>
@@ -263,7 +269,11 @@ public sealed class RenderResourceRegistry
             record = RegisterBufferDescriptor(descriptor);
         }
 
-        record.Bind(buffer, ownsInstance);
+        if (!ReferenceEquals(record.Instance, buffer) || record.OwnsInstance != ownsInstance)
+        {
+            record.Bind(buffer, ownsInstance);
+            MarkInstancesChanged();
+        }
     }
 
     /// <summary>
@@ -408,6 +418,15 @@ public sealed class RenderResourceRegistry
     }
 
     /// <summary>
+    /// Returns a stable snapshot of bound framebuffers, rebuilt only after an instance mutation.
+    /// </summary>
+    internal XRFrameBuffer[] GetFrameBufferInstanceSnapshot()
+    {
+        RefreshInstanceSnapshotsIfNeeded();
+        return _cachedFrameBufferInstances;
+    }
+
+    /// <summary>
     /// Enumerates currently bound data-buffer instances, skipping descriptor-only records.
     /// </summary>
     public IEnumerable<XRDataBuffer> EnumerateBufferInstances()
@@ -415,6 +434,15 @@ public sealed class RenderResourceRegistry
         foreach (RenderBufferResource record in _buffers.Values)
             if (record.Instance is XRDataBuffer buffer)
                 yield return buffer;
+    }
+
+    /// <summary>
+    /// Returns a stable snapshot of bound data buffers, rebuilt only after an instance mutation.
+    /// </summary>
+    internal XRDataBuffer[] GetBufferInstanceSnapshot()
+    {
+        RefreshInstanceSnapshotsIfNeeded();
+        return _cachedBufferInstances;
     }
 
     /// <summary>
@@ -465,6 +493,7 @@ public sealed class RenderResourceRegistry
             return;
         
         record.DestroyInstance();
+        MarkInstancesChanged();
         MarkDescriptorsChanged();
     }
 
@@ -477,6 +506,7 @@ public sealed class RenderResourceRegistry
             return;
         
         record.DestroyInstance();
+        MarkInstancesChanged();
         MarkDescriptorsChanged();
     }
 
@@ -548,6 +578,14 @@ public sealed class RenderResourceRegistry
             _cachedTextureInstances = _textures.Values
                 .Select(static record => record.Instance)
                 .OfType<XRTexture>()
+                .ToArray();
+            _cachedFrameBufferInstances = _frameBuffers.Values
+                .Select(static record => record.Instance)
+                .OfType<XRFrameBuffer>()
+                .ToArray();
+            _cachedBufferInstances = _buffers.Values
+                .Select(static record => record.Instance)
+                .OfType<XRDataBuffer>()
                 .ToArray();
             _cachedRenderBufferInstances = _renderBuffers.Values
                 .Select(static record => record.Instance)

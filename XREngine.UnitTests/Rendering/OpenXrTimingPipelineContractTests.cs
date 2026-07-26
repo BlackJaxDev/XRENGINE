@@ -16,32 +16,32 @@ public sealed class OpenXrTimingPipelineContractTests
         long first = System.Diagnostics.Stopwatch.Frequency;
         long second = first + (System.Diagnostics.Stopwatch.Frequency / 2);
 
-        double observedRate = Engine.Rendering.Stats.FrameOutputs.UpdateObservedCompletionRateHz(
+        double observedRate = RuntimeEngine.Rendering.Stats.FrameOutputs.UpdateObservedCompletionRateHz(
             previousRateHz: 0.0,
             previousCompletionTimestamp: first,
             completionTimestamp: second);
 
         observedRate.ShouldBe(2.0, tolerance: 0.01);
-        Engine.Rendering.Stats.FrameOutputs.CalculateCompletionIntervalMilliseconds(first, second)
+        RuntimeEngine.Rendering.Stats.FrameOutputs.CalculateCompletionIntervalMilliseconds(first, second)
             .ShouldBe(500.0, tolerance: 0.01);
-        Engine.Rendering.Stats.FrameOutputs.ResolveEffectiveDeadlineMilliseconds(
+        RuntimeEngine.Rendering.Stats.FrameOutputs.ResolveEffectiveDeadlineMilliseconds(
                 ERenderOutputClass.XrCritical,
                 requestedDeadlineMs: 500.0,
                 activeBudgetMs: 1000.0 / 90.0)
             .ShouldBe(1000.0 / 90.0, tolerance: 0.01);
-        Engine.Rendering.Stats.FrameOutputs.IsCompletedOutputDeadlineMissed(
+        RuntimeEngine.Rendering.Stats.FrameOutputs.IsCompletedOutputDeadlineMissed(
             isDue: true,
             completed: true,
             completedFrameMs: 250.0,
             deadlineMs: 1000.0 / 90.0,
             hardDeadline: true).ShouldBeTrue();
-        Engine.Rendering.Stats.FrameOutputs.IsCompletedOutputDeadlineMissed(
+        RuntimeEngine.Rendering.Stats.FrameOutputs.IsCompletedOutputDeadlineMissed(
             isDue: true,
             completed: false,
             completedFrameMs: 0.0,
             deadlineMs: 1000.0 / 90.0,
             hardDeadline: true).ShouldBeTrue();
-        Engine.Rendering.Stats.FrameOutputs.IsCompletedOutputDeadlineMissed(
+        RuntimeEngine.Rendering.Stats.FrameOutputs.IsCompletedOutputDeadlineMissed(
             isDue: true,
             completed: true,
             completedFrameMs: 8.0,
@@ -49,7 +49,7 @@ public sealed class OpenXrTimingPipelineContractTests
             hardDeadline: true).ShouldBeFalse();
 
         string frameOutputs = ReadWorkspaceFile(
-            "XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.FrameOutputs.cs");
+            "XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.FrameOutputs.cs");
         frameOutputs.ShouldContain("destination[copied++] = CreateObservedCompletionSnapshot(");
         frameOutputs.ShouldContain("bool completed = IsOutputFamilyCompleted(output);");
         frameOutputs.ShouldContain("candidate.Request.ViewFamilyId == output.Request.ViewFamilyId");
@@ -60,12 +60,12 @@ public sealed class OpenXrTimingPipelineContractTests
     {
         string frameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
         string runtimeDefaults = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderingHostServiceDefaults.cs");
-        string runtimeSettings = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderSettings.cs");
-        string engineSettings = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs");
+        string runtimeSettings = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs");
+        string engineSettings = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs");
         string editorProgram = ReadWorkspaceFile("XREngine.Editor/Program.cs");
         string environmentVariables = ReadWorkspaceFile("XREngine.Data/Environment/XREngineEnvironmentVariables.cs");
-        string vulkanOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs");
-        string vrState = ReadWorkspaceFile("XRENGINE/Engine/Engine.VRState.cs");
+        string vulkanOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs");
+        string vrState = ReadWorkspaceFile("XRENGINE/Engine/EngineVrLifecycle.cs");
 
         frameLifecycle.ShouldContain("internal void EnginePostRenderTick()");
         frameLifecycle.ShouldContain("private void Window_PostRenderViewportsCallback()");
@@ -103,26 +103,27 @@ public sealed class OpenXrTimingPipelineContractTests
     public void VulkanOpenXr_EyeSubmitRecordsBothEyesBeforeOneFenceWait()
     {
         string frameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
-        string vulkanOpenXrApi = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs");
-        string vulkanRendererOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
-        string vulkanCommandBufferState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferState.cs")
-            + ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.OwnedCommandChainSecondaryPool.cs");
-        string vulkanCommandChainLowering = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandChainLowering.cs");
-        string vkDataBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
-        string vulkanComputeDescriptors = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.ComputeDescriptors.cs");
-        string vulkanDynamicUniformRingBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs");
-        string vulkanResourceRetirement = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
-        string vulkanFrameLoop = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
+        string vulkanOpenXrApi = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs");
+        string vulkanRendererOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string vulkanCommandBufferState = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs")
+            + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.OwnedCommandChainSecondaryPool.cs");
+        string vulkanCommandChainLowering = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string vkDataBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
+        string vulkanComputeDescriptors = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.ComputeDescriptors.cs");
+        string vulkanDynamicUniformRingBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs");
+        string vulkanResourceRetirement = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+        string vulkanFrameLoop = ReadVulkanDesktopFrameLoopSources();
         string renderPipelineGpuProfiler = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/RenderPipelineGpuProfiler.cs");
-        string vulkanInitialization = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
-        string vulkanSwapchain = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
+        string vulkanInitialization = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
+        string vulkanSwapchain = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
         string unitTestUi = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.UserInterface.cs");
         string defaultPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs");
         string defaultPipelineMain = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
         string defaultPipeline2 = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs");
 
         frameLifecycle.ShouldContain("StartProfileScope(\"OpenXR.RenderFrame.TryRenderVulkanEyesBatch\")");
-        frameLifecycle.ShouldContain("TryRenderVulkanEyesBatch(projectionViews, out vulkanBatchHandled)");
+        frameLifecycle.ShouldContain("binding.TryRenderViewsBatch(");
+        frameLifecycle.ShouldContain("out vulkanBatchHandled");
 
         vulkanOpenXrApi.ShouldContain("OpenXrVulkanSerialEyeSubmit");
         vulkanOpenXrApi.ShouldContain("AcquireAndWaitOpenXrEyeImage(0");
@@ -142,8 +143,8 @@ public sealed class OpenXrTimingPipelineContractTests
         vulkanOpenXrApi.ShouldContain("ShouldCopyDirectVulkanEyeSwapchainPreview");
         vulkanOpenXrApi.ShouldContain("bool copiedPreview = shouldCopyPreview &&");
         vulkanOpenXrApi.ShouldContain("VulkanCaptureEyeOutputs");
-        vulkanOpenXrApi.ShouldContain("RuntimeRenderingHostServices.Current.VrCopyEyePreviewTextures");
-        vulkanOpenXrApi.ShouldContain("RuntimeRenderingHostServices.Current.VrMirrorComposeFromEyeTextures");
+        vulkanOpenXrApi.ShouldContain("RuntimeRenderingHostServices.Presentation.VrCopyEyePreviewTextures");
+        vulkanOpenXrApi.ShouldContain("RuntimeRenderingHostServices.Presentation.VrMirrorComposeFromEyeTextures");
 
         vulkanRendererOpenXr.ShouldContain("OpenXrEyeMirrorRenderRequest");
         vulkanRendererOpenXr.ShouldContain("TryRenderOpenXrEyeMirrorFrameBuffers");
@@ -275,13 +276,13 @@ public sealed class OpenXrTimingPipelineContractTests
         commandChainSecondaryTeardown.ShouldNotContain("Api!.DestroyCommandPool(device, pool, null);");
         commandChainSecondaryTeardown.ShouldNotContain("ownsPool && pool.Handle != 0 && !_deviceLost");
         string commandChainWorkerPoolTeardown = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
         commandChainWorkerPoolTeardown.ShouldContain("Api!.DestroyCommandPool(device, pool, null);");
         commandChainWorkerPoolTeardown.ShouldNotContain("!_deviceLost");
         vkDataBuffer.ShouldContain("Renderer.MarkCommandBuffersDirty(\"VkDataBufferRecreated\");");
         vkDataBuffer.ShouldContain("Renderer.MarkOpenXrPrimaryCommandBufferVariantsDirty();");
         vulkanFrameLoop.ShouldContain("Command buffer for image {0} was dirtied after recording and before submit");
-        vulkanFrameLoop.ShouldContain("RecreateSwapchainImmediately(\"Command buffer dirtied before submit - recovering timeline/present state\")");
+        vulkanFrameLoop.ShouldContain("Command buffer dirtied before submit - recovering timeline/present state");
         vulkanComputeDescriptors.ShouldContain("private void EnsureComputeDescriptorCacheCapacity");
         vulkanComputeDescriptors.ShouldContain("Array.Resize(ref _computeDescriptorCaches, imageCount);");
         vulkanDynamicUniformRingBuffer.ShouldContain("private void EnsureDynamicUniformRingBufferCapacity");
@@ -339,8 +340,8 @@ public sealed class OpenXrTimingPipelineContractTests
         defaultPipelineResources.ShouldContain("&& !UsesOpenXrVulkanDesktopSafePath(profile)\n        && profile.AntiAliasingMode == EAntiAliasingMode.Msaa");
 
         unitTestUi.ShouldContain("ShouldFlipOpenXrVulkanStereoPreviewUv");
-        unitTestUi.ShouldContain("Engine.VRState.IsOpenXRActive");
-        unitTestUi.ShouldContain("RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan");
+        unitTestUi.ShouldContain("RuntimeEngine.VRState.IsOpenXRActive");
+        unitTestUi.ShouldContain("RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan");
         unitTestUi.ShouldContain("target.FlipVerticalUVCoord = flipVerticalUVCoord;");
 
         string directEyeRecord = SliceMethod(
@@ -368,7 +369,7 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void VulkanOpenXr_EyePreviewCopyUpdatesReadyTargetsDuringAllocatorPressure()
     {
-        string vulkanRendererOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string vulkanRendererOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
 
         string copyMethod = SliceMethod(
             vulkanRendererOpenXr,
@@ -396,7 +397,7 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void VulkanOpenXr_PreviewTargetFormatFallbackDoesNotRecurse()
     {
-        string vulkanOpenXrApi = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs");
+        string vulkanOpenXrApi = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs");
 
         string previewTargets = SliceMethod(
             vulkanOpenXrApi,
@@ -410,7 +411,7 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void VulkanOpenXr_EyeRenderingGateDoesNotInheritDesktopAllocationBackoff()
     {
-        string vulkanRendererOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string vulkanRendererOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
 
         string eyeRenderingGate = SliceMethod(
             vulkanRendererOpenXr,
@@ -484,7 +485,7 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void VulkanFboLayoutQuery_FallsBackToAttachmentSourceTrackedLayout()
     {
-        string commandRecording = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string commandRecording = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
         string queryCurrentLayouts = SliceMethod(
             commandRecording,
@@ -509,7 +510,7 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void VulkanDynamicRenderingFboTransition_UsesQueriedAttachmentOldLayoutFallback()
     {
-        string commandRecording = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string commandRecording = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
         string transition = SliceMethod(
             commandRecording,
@@ -527,8 +528,8 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void VulkanImageLayoutReuseSignature_IncludesPhysicalSubresourceLayouts()
     {
-        string synchronization = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
-        string allocator = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/VulkanResourceAllocator.cs");
+        string synchronization = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+        string allocator = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/VulkanResourceAllocator.cs");
 
         synchronization.ShouldContain("group.AppendLayoutSignature(ref hash);");
         synchronization.ShouldNotContain("group.CaptureLayoutSnapshot();");
@@ -557,8 +558,8 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void ShadowAtlasSettings_DirtyRendererResourcesForOpenXrPrimaryReuse()
     {
-        string engineSettings = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs");
-        string resourceRetirement = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+        string engineSettings = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs");
+        string resourceRetirement = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
 
         string spotAtlasSetter = SliceMethod(
             engineSettings,
@@ -598,15 +599,12 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void VulkanIndexedViewportScissor_StateChangesDoNotForceDirtyCachedPrimaries()
     {
-        string frameLoop = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
-        string renderStateMutation = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.RenderStateMutation.cs");
+        string renderStateApi = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.RenderStateApi.cs");
+        string renderStateMutation = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.RenderStateMutation.cs");
 
-        frameLoop.ShouldContain("ActiveState.SetIndexedViewportScissors(viewports[..count], scissors[..count]);");
-        frameLoop.ShouldContain("ActiveState.ClearIndexedViewportScissors();");
-        SliceMethod(frameLoop, "public override bool SetIndexedViewportScissors", "public override void ClearIndexedViewportScissors")
-            .ShouldNotContain("MarkCommandBuffersDirty");
-        SliceMethod(frameLoop, "public override void ClearIndexedViewportScissors", "protected override AbstractRenderAPIObject CreateAPIRenderObject")
-            .ShouldNotContain("MarkCommandBuffersDirty");
+        renderStateApi.ShouldContain("ActiveState.SetIndexedViewportScissors(viewports[..count], scissors[..count]);");
+        renderStateApi.ShouldContain("ActiveState.ClearIndexedViewportScissors();");
+        renderStateApi.ShouldNotContain("MarkCommandBuffersDirty");
         renderStateMutation.ShouldContain("public bool SetIndexedViewportScissors(");
         renderStateMutation.ShouldContain("if (unchanged)");
         renderStateMutation.ShouldContain("return false;");
@@ -616,18 +614,18 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void VulkanImageViews_AreTrackedAndSweptBeforeLogicalDeviceDestroy()
     {
-        string imageViewLifetime = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Textures/VulkanRenderer.ImageViewLifetime.cs");
-        string pipelineLayoutLifetime = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Pipelines/VulkanRenderer.PipelineLayoutLifetime.cs");
-        string resourceRetirement = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
-        string initialization = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
-        string openXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
-        string imageBackedTexture = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
-        string textureView = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureView.cs");
-        string renderProgram = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
-        string renderProgramPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgramPipeline.cs");
-        string imgui = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs");
-        string renderBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkRenderBuffer.cs");
-        string swapchainViews = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Textures/VulkanRenderer.SwapchainImageViews.cs");
+        string imageViewLifetime = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Textures/VulkanRenderer.ImageViewLifetime.cs");
+        string pipelineLayoutLifetime = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Pipelines/VulkanRenderer.PipelineLayoutLifetime.cs");
+        string resourceRetirement = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+        string initialization = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
+        string openXr = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string imageBackedTexture = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string textureView = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureView.cs");
+        string renderProgram = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+        string renderProgramPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgramPipeline.cs");
+        string imgui = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs");
+        string renderBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkRenderBuffer.cs");
+        string swapchainViews = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Textures/VulkanRenderer.SwapchainImageViews.cs");
 
         imageViewLifetime.ShouldContain("private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, string> _liveImageViewHandles = new();");
         imageViewLifetime.ShouldContain("internal void TrackLiveImageView(ImageView imageView, string owner = \"unknown\")");
@@ -685,9 +683,9 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void VulkanCommandChains_DoNotBroadDirtyForRepeatedSkippedMeshPreparation()
     {
-        string dirtyReasons = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferDirtyReasons.cs");
-        string meshRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
-        string meshUniforms = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
+        string dirtyReasons = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferDirtyReasons.cs");
+        string meshRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
+        string meshUniforms = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
 
         dirtyReasons.ShouldContain("VulkanPrimaryCommandBufferReuseEnabled || CommandChainsEnabledForCurrentRecording || t_frameOpCapture is not null");
 
@@ -714,13 +712,13 @@ public sealed class OpenXrTimingPipelineContractTests
     {
         string[] textureUploadFiles =
         [
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture1D.cs",
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture1DArray.cs",
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture2D.cs",
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture2DArray.cs",
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture3D.cs",
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureCube.cs",
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureCubeArray.cs",
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture1D.cs",
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture1DArray.cs",
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture2D.cs",
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture2DArray.cs",
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture3D.cs",
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureCube.cs",
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureCubeArray.cs",
         ];
 
         foreach (string file in textureUploadFiles)
@@ -733,7 +731,7 @@ public sealed class OpenXrTimingPipelineContractTests
             source.ShouldContain("RecreateImageForFullTextureDataUpload(");
         }
 
-        string imageBackedTexture = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string imageBackedTexture = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
 
         imageBackedTexture.ShouldContain("if (!ValidateCopyBufferToImageRegion(mipLevel, baseArrayLayer, layerCount, extent))");
         imageBackedTexture.ShouldContain("layerCount > arrayLayerCount - baseArrayLayer");
@@ -747,7 +745,7 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void VulkanCommandChains_DescriptorReuseTracksConcreteImageIdentityAndMutableFrameSources()
     {
-        string descriptors = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
+        string descriptors = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
         string canReuse = SliceMethod(
             descriptors,
             "internal bool CanReuseRecordedDescriptorSets(\n\t\t\tXRMaterial material",
@@ -773,16 +771,23 @@ public sealed class OpenXrTimingPipelineContractTests
         string frameSourceFingerprint = SliceMethod(
             descriptors,
             "private void AddFrameSourceSamplerDescriptorResourceFingerprint",
-            "private ulong ComputeReferencedProgramBufferResourceFingerprint");
+            "private bool TryRefreshFrameSourceDescriptorSetsForDraw");
 
         frameSourceFingerprint.ShouldContain("hash.Add(FrameSourceMutableDescriptorSignature);");
+        frameSourceFingerprint.ShouldContain("AddTextureDescriptorResourceFingerprint(ref hash, texture);");
         frameSourceFingerprint.ShouldNotContain("texture?.GetHashCode()");
-        frameSourceFingerprint.ShouldNotContain("DescriptorViewType");
-        frameSourceFingerprint.ShouldNotContain("DescriptorGeneration");
-        frameSourceFingerprint.ShouldNotContain("DescriptorImage.Handle");
-        frameSourceFingerprint.ShouldNotContain("ResourceAllocatorIdentity");
+        string textureResourceFingerprint = SliceMethod(
+            descriptors,
+            "private void AddTextureDescriptorResourceFingerprint",
+            "private bool TryResolveBuffers");
+        textureResourceFingerprint.ShouldContain("hash.Add(snapshot.View.Handle);");
+        textureResourceFingerprint.ShouldContain("hash.Add(snapshot.Sampler.Handle);");
+        textureResourceFingerprint.ShouldContain("hash.Add(imageSource.DescriptorGeneration);");
+        textureResourceFingerprint.ShouldContain("hash.Add(texelSource.DescriptorBufferView.Handle);");
         descriptors.ShouldContain("private bool TryRefreshFrameSourceDescriptorSetsForDraw");
-        descriptors.ShouldContain("Renderer.UpdateDescriptorSetsTracked(1, &write);");
+        descriptors.ShouldContain("Renderer.TryUpdateDescriptorSetsTracked(1, &write, out string updateFailureReason)");
+        descriptors.ShouldContain("reason = $\"frame-source sampler '{binding.Name}' update deferred: {updateFailureReason}\";");
+        descriptors.ShouldContain("Deferred frame-source sampler descriptor update because a render-resource generation retired concurrently");
         descriptors.ShouldContain("FrameSourceDescriptorWriteMatches(allocation, descriptorSlotIndex, binding, descriptorCount, resolvedImageInfos)");
         descriptors.ShouldContain("RecordFrameSourceDescriptorWriteSignature(allocation, descriptorSlotIndex, binding, descriptorCount, resolvedImageInfos);");
         descriptors.ShouldContain("ComputeDescriptorImageInfoSignature(binding.DescriptorType, imageInfos)");
@@ -790,7 +795,7 @@ public sealed class OpenXrTimingPipelineContractTests
         descriptors.ShouldContain("SnapshotHasFrameSourceSampler(snapshot, pipeline)");
         descriptors.ShouldContain("DescriptorBindingsHaveFrameSourceSampler(material, _program.DescriptorBindings)");
 
-        string meshRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
+        string meshRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
         string samplerUnitHashing = SliceMethod(
             meshRenderer,
             "private static ulong HashSamplerUnitBindings",
@@ -825,12 +830,12 @@ public sealed class OpenXrTimingPipelineContractTests
         snapshotHashing.ShouldNotContain("source.DescriptorView.Handle");
         meshRenderer.ShouldContain("AddTextureDescriptorSignature(ref item, binding.Texture);");
 
-        string drawing = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
+        string drawing = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
         drawing.ShouldContain("TryRefreshFrameSourceDescriptorSetsForDraw(imageIndex, drawUniformSlot, material, draw.ProgramBindingSnapshot");
         drawing.ShouldContain("bool frameSourceDescriptorsReady = TryRefreshFrameSourceDescriptorSetsForDraw(");
         drawing.ShouldContain("draw.ProgramBindingSnapshot,\n\t\t\t\tout string frameSourceDescriptorReason);");
 
-        string frameOpSignatures = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpSignatures.cs");
+        string frameOpSignatures = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpSignatures.cs");
         frameOpSignatures.ShouldContain("AddProgramBindingSignatureParts(parts, opIndex, opType, \"program\", draw.ProgramBindingSnapshot, meshDraw.Context.PipelineInstance);");
         frameOpSignatures.ShouldContain("HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline)");
         frameOpSignatures.ShouldContain("IsMutableFrameSourceSamplerNameForSignatureDebug");
@@ -840,12 +845,12 @@ public sealed class OpenXrTimingPipelineContractTests
         frameOpSignatures.ShouldContain("ComputeCommandBufferDataBufferSignature(indirect.IndirectBuffer)");
         frameOpSignatures.ShouldContain("indirectBuffer=0x{indirect.IndirectBuffer.BufferHandle?.Handle");
 
-        string commandChainLowering = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandChainLowering.cs");
+        string commandChainLowering = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
         commandChainLowering.ShouldContain("HashProgramBindingSnapshot(ref hash, snapshot, includeMutableFrameSourceDescriptors: true);");
         commandChainLowering.ShouldContain("ComputeCommandBufferDataBufferSignature(indirect.IndirectBuffer)");
         commandChainLowering.ShouldContain("ComputeCommandBufferDataBufferSignature(meshTask.CountBuffer)");
 
-        string program = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+        string program = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
         string programSamplerFingerprint = SliceMethod(
             program,
             "private ulong ComputeSamplerResourceFingerprintItem",
@@ -859,14 +864,14 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void PoseThreading_UsesLockedCachesAndExplicitRecalcTiming()
     {
-        string openGl = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.OpenGL.cs");
+        string sceneViews = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.SceneViews.cs");
         string state = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs");
         string frameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
         string runtimeVrState = ReadWorkspaceFile("XREngine.Input/RuntimeVrStateServices.cs");
-        string engineVrState = ReadWorkspaceFile("XRENGINE/Engine/Engine.VRState.cs");
+        string engineVrState = ReadWorkspaceFile("XRENGINE/Engine/EngineVrLifecycle.cs");
 
         string collectCameraUpdate = SliceMethod(
-            openGl,
+            sceneViews,
             "private float UpdateOpenXrEyeCameraFromView",
             "private void ApplyOpenXrEyePoseForRenderThread");
         string collectVisible = SliceMethod(
@@ -878,9 +883,10 @@ public sealed class OpenXrTimingPipelineContractTests
             "private void PrepareNextFrameForPacingOwner()",
             "private void EndBegunFrameWithoutLayers");
 
-        collectCameraUpdate.ShouldContain("TryGetOpenXrViewPoseAndFov(viewIndex, OpenXrPoseTiming.Predicted");
-        openGl.ShouldContain("TryGetCachedOpenXrViewForTiming");
-        openGl.ShouldContain("TryGetCachedOpenXrViewForTimingNoLock");
+        collectCameraUpdate.ShouldContain("TryGetOpenXrViewPoseAndFov(");
+        collectCameraUpdate.ShouldContain("OpenXrPoseTiming.Predicted");
+        sceneViews.ShouldContain("TryGetCachedOpenXrViewForTiming");
+        sceneViews.ShouldContain("TryGetCachedOpenXrViewForTimingNoLock");
         state.ShouldContain("TryGetEyeLocalPose(OpenXrPoseTiming.Predicted");
         state.ShouldContain("_openXrPredLeftEyeLocalPose");
         state.ShouldContain("_openXrPredRightEyeLocalPose");
@@ -893,8 +899,8 @@ public sealed class OpenXrTimingPipelineContractTests
         prepareNextFrame.ShouldNotContain("InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming.Predicted)");
         frameLifecycle.ShouldNotContain("InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming.Late)");
         frameLifecycle.ShouldContain("ApplyOpenXrEyePoseForRenderThread instead");
-        openGl.ShouldContain("private void ApplyOpenXrEyePoseForRenderThread");
-        openGl.ShouldContain("camera.Transform.SetRenderMatrix(eyeRender, recalcAllChildRenderMatrices: false);");
+        sceneViews.ShouldContain("private void ApplyOpenXrEyePoseForRenderThread");
+        sceneViews.ShouldContain("localPose * rootRender");
         runtimeVrState.ShouldContain("Action<RuntimeVrPoseTiming>?");
         engineVrState.ShouldNotContain("PoseTimingForRecalc");
     }
@@ -903,7 +909,7 @@ public sealed class OpenXrTimingPipelineContractTests
     public void TimingStats_AreRecordedAndSurfacedThroughProfiler()
     {
         string xrCalls = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.XrCalls.cs");
-        string stats = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.Vr.cs");
+        string stats = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vr.cs");
         string packet = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");
         string sender = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfilerSender.cs");
         string editorSource = ReadWorkspaceFile("XREngine.Editor/EngineProfilerDataSource.cs");
@@ -929,34 +935,29 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void VulkanFrameLoop_ReleasesCollectBeforeBlockingDesktopPresent()
     {
-        string frameLoop = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
-        string submitToPresent = SliceMethod(
-            frameLoop,
-            "submitQueueTime += Stopwatch.GetElapsedTime(stageStartTimestamp);",
-            "// 6. Present the image");
+        string coordinator = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
+        string submission = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Submission.cs");
+        string presentation = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Presentation.cs");
 
-        submitToPresent.ShouldContain("RuntimeRenderingHostServices.Current.MarkRenderFrameReadyForCollect(XRWindow);");
-
-        int releaseIndex = frameLoop.IndexOf(
-            "RuntimeRenderingHostServices.Current.MarkRenderFrameReadyForCollect(XRWindow);",
-            StringComparison.Ordinal);
-        int presentIndex = frameLoop.IndexOf(
-            "StartProfileScope(\"Vulkan.FrameLifecycle.QueuePresent\")",
-            StringComparison.Ordinal);
-
-        releaseIndex.ShouldBeGreaterThanOrEqualTo(0);
-        presentIndex.ShouldBeGreaterThan(releaseIndex);
+        submission.ShouldContain("MarkRenderFrameReadyForCollect(XRWindow)");
+        submission.ShouldContain("attempt.CollectReleased = true;");
+        presentation.ShouldContain("Vulkan.FrameLifecycle.QueuePresent");
+        coordinator.IndexOf("SubmitDesktopFrame(ref attempt)", StringComparison.Ordinal)
+            .ShouldBeLessThan(coordinator.IndexOf("PresentSubmittedDesktopFrame(ref attempt)", StringComparison.Ordinal));
     }
 
     [Test]
     public void VulkanOpenXr_HotPathSuccessLogsAreDiagnosticGated()
     {
-        string commandState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferState.cs");
-        string commandRecording = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
-        string frameLoop = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
-        string resourcePlannerState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
-        string rendererOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
-        string openXrVulkan = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs");
+        string commandState = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
+        string commandRecording = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string frameLoop = ReadVulkanDesktopFrameLoopSources();
+        string resourcePlannerState = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+        string rendererOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string openXrVulkan = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs");
 
         commandState.ShouldContain("private static bool VulkanFrameDiagnosticsTraceEnabled");
         commandState.ShouldContain("CommandRecordingDiagnosticsEnabled ||");
@@ -1022,10 +1023,10 @@ public sealed class OpenXrTimingPipelineContractTests
     {
         string state = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs");
         string collectVisiblePosePolicy = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.OpenXrCollectVisiblePosePolicy.cs");
-        string settings = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs");
+        string settings = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs");
         string defaults = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderingHostServiceDefaults.cs");
-        string runtimeSettings = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderSettings.cs");
-        string hostInterface = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderingHostServices.cs");
+        string runtimeSettings = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs");
+        string hostInterface = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderPresentationServices.cs");
         string environmentVariables = ReadWorkspaceFile("XREngine.Data/Environment/XREngineEnvironmentVariables.cs");
         string editorProgram = ReadWorkspaceFile("XREngine.Editor/Program.cs");
         string input = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Input.cs");
@@ -1145,7 +1146,7 @@ public sealed class OpenXrTimingPipelineContractTests
         string xrCalls = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.XrCalls.cs");
         string cameraIntegration = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.OpenGL.cs");
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.SceneViews.cs");
         string validationScene = ReadWorkspaceFile(
             "XREngine.Runtime.Bootstrap/BootstrapPhase524bValidationBuilder.cs");
 
@@ -1223,7 +1224,7 @@ public sealed class OpenXrTimingPipelineContractTests
         string xrCalls = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.XrCalls.cs");
         string frameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
         string runtimeStateMachine = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.RuntimeStateMachine.cs");
-        string vulkan = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs");
+        string vulkan = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs");
 
         program.ShouldContain("ExitStartupFailure = 21");
         program.ShouldContain("ExitFrameTimeout = 22");
@@ -1326,9 +1327,9 @@ public sealed class OpenXrTimingPipelineContractTests
         string frameLedger = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXrSmokeFrameLedgerEntry.cs");
         string outputLedger = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXrSmokeOutputLedgerEntry.cs");
         string telemetry = ReadWorkspaceFile("XREngine.Runtime.Core/Settings/Contracts/Records/FrameOutputTelemetry.cs");
-        string frameOutputs = ReadWorkspaceFile("XREngine/Engine/Subclasses/Rendering/Engine.Rendering.Stats.FrameOutputs.cs");
-        string vulkanStats = ReadWorkspaceFile("XREngine/Engine/Subclasses/Rendering/Engine.Rendering.Stats.Vulkan.cs");
-        string frameLoop = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
+        string frameOutputs = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.FrameOutputs.cs");
+        string vulkanStats = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.cs");
+        string frameLoop = ReadVulkanDesktopFrameLoopSources();
         string validator = ReadWorkspaceFile("Tools/Validate-VulkanPhase524b.ps1");
 
         summary.ShouldContain("CurrentSchemaVersion = 9");
@@ -1358,7 +1359,7 @@ public sealed class OpenXrTimingPipelineContractTests
         frameOutputs.ShouldContain("PresentObserved |= telemetry.Phase == EFrameOutputPhase.Present");
         frameOutputs.ShouldContain("CopyCurrentOutputs(Span<FrameOutputEntrySnapshot> destination)");
         vulkanStats.ShouldContain("RecordVulkanPresentResult(int result, bool accepted)");
-        frameLoop.ShouldContain("RecordVulkanPresentResult((int)result, presentAccepted)");
+        frameLoop.ShouldContain("RecordVulkanPresentResult(");
 
         validator.ShouldContain("Measure-SteadyStateGauge");
         validator.ShouldContain("previousTerminalWindowAverage");
@@ -1385,12 +1386,13 @@ public sealed class OpenXrTimingPipelineContractTests
         string program = ReadWorkspaceFile("XREngine.Editor/Program.cs");
         string settingsStore = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/UnitTestingWorldSettingsStore.cs");
         string hostServices = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderingHostServices.cs");
-        string hostInterface = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderingHostServices.cs");
+        string hostInterface = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderPresentationServices.cs");
         string state = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs");
         string instance = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/Instance.cs");
         string runtimeStateMachine = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.RuntimeStateMachine.cs");
-        string vulkanInstance = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Instance.cs");
-        string vulkanSyncObjects = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.SyncObjects.cs");
+        string vulkanBinding = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.cs");
+        string vulkanInstance = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Instance.cs");
+        string vulkanSyncObjects = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.SyncObjects.cs");
 
         program.ShouldContain("ConfigureOpenXrRuntimeServiceRecovery(settings)");
         program.ShouldContain("RuntimeRenderingHostServices.OpenXrRuntimeServiceEnsurer");
@@ -1410,7 +1412,9 @@ public sealed class OpenXrTimingPipelineContractTests
         runtimeStateMachine.ShouldContain("OpenXrRuntimeLossReason.SessionLostError => 60");
         runtimeStateMachine.ShouldContain("TryEnsureOpenXrRuntimeService($\"OpenXR runtime loss: {lossReason}\")");
 
-        instance.ShouldContain("InvalidateOpenXrVulkanEnable2BootstrapInstance(\"OpenXR runtime instance teardown\")");
+        instance.ShouldContain("binding.InvalidateRendererOwnedInstance(renderer, \"OpenXR runtime instance teardown\")");
+        vulkanBinding.ShouldContain("InvalidateRendererOwnedInstance(AbstractRenderer renderer, string reason)");
+        vulkanBinding.ShouldContain("InvalidateOpenXrVulkanEnable2BootstrapInstance(reason)");
         vulkanInstance.ShouldContain("internal bool InvalidateOpenXrVulkanEnable2BootstrapInstance(string reason)");
         vulkanInstance.ShouldContain("AbandonXrInstanceOnDispose(reason)");
         vulkanInstance.ShouldContain("UsesOpenXrVulkanEnable2Creation");
@@ -1479,29 +1483,29 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void RuntimeVrDesktopView_DoesNotReuseEyeCommandsOrEditorImGuiWhenDesktopEditingDisabled()
     {
-        string vrState = ReadWorkspaceFile("XRENGINE/Engine/Engine.VRState.cs");
+        string vrState = ReadWorkspaceFile("XRENGINE/Engine/EngineVrLifecycle.cs");
         string vrDeviceTransform = ReadWorkspaceFile("XREngine.Runtime.InputIntegration/Scene/Transforms/VR/VRDeviceTransformBase.cs");
-        string openXrApi = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.OpenGL.cs");
+        string openXrApi = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.SceneViews.cs");
         string openXrState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs");
         string openXrFrameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
         string bootstrapPawns = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/BootstrapPawnFactory.cs");
         string editorUnitTestingPawns = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.Pawns.cs");
         string editorImGui = ReadWorkspaceFile("XREngine.Editor/IMGUI/EditorImGuiUI.ImGui.cs");
-        string hostServices = ReadWorkspaceFile("XRENGINE/Engine/Engine.RuntimeRenderingHostServices.cs");
-        string frameOutputs = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.FrameOutputs.cs");
+        string hostServices = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
+        string frameOutputs = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.FrameOutputs.cs");
 
         vrState.ShouldContain("ConfigureDesktopViewportForVrWindow(window);");
         int initSinglePassIndex = vrState.IndexOf("private static void InitSinglePass", StringComparison.Ordinal);
         initSinglePassIndex.ShouldBeGreaterThanOrEqualTo(0);
         vrState.IndexOf("ConfigureDesktopViewportForVrWindow(window);", initSinglePassIndex, StringComparison.Ordinal)
             .ShouldBeGreaterThan(initSinglePassIndex);
-        vrState.ShouldContain("bool shareStereoCommands = RuntimeRenderingHostServices.Current.VrMirrorComposeFromEyeTextures;");
-        vrState.ShouldNotContain("!RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR ||");
+        vrState.ShouldContain("bool shareStereoCommands = RuntimeRenderingHostServices.Presentation.VrMirrorComposeFromEyeTextures;");
+        vrState.ShouldNotContain("!RuntimeRenderingHostServices.Presentation.RenderWindowsWhileInVR ||");
         vrState.ShouldContain("desktopViewport.MeshRenderCommandsOverride = null");
         vrState.ShouldContain("desktopViewport.AutomaticallyCollectVisible = true");
         vrState.ShouldContain("desktopViewport.AutomaticallySwapBuffers = true");
         vrState.ShouldContain("_sharedMeshRenderCommands.IsRenderCommandSnapshotAuthority = true;");
-        vrState.ShouldNotContain("bool independentDesktopView = RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR && !shareStereoCommands;");
+        vrState.ShouldNotContain("bool independentDesktopView = RuntimeRenderingHostServices.Presentation.RenderWindowsWhileInVR && !shareStereoCommands;");
         vrDeviceTransform.ShouldContain("RuntimeVrStateServices.IsOpenXRActive && this is XREngine.Scene.Transforms.VRHeadsetTransform");
         vrDeviceTransform.ShouldContain("SetRenderMatrix(renderMatrix, recalcAllChildRenderMatrices: !isOpenXrHeadset)");
         vrDeviceTransform.ShouldNotContain("PropagateOpenXrHeadsetRenderMatrixToNonEyeChildren");
@@ -1526,8 +1530,9 @@ public sealed class OpenXrTimingPipelineContractTests
         editorImGui.ShouldContain("Engine.Input.SetUIInputCaptured(false)");
         hostServices.ShouldContain("output.OutputKind == EFrameOutputKind.DesktopScene && output.RenderPhaseSceneRendered");
         hostServices.ShouldContain("if (autoSkipWhenOverBudget && ShouldHoldDesktopOutputForVrPressure(frameId, manifest))");
-        hostServices.ShouldNotContain("bool independentDesktopScene =");
-        hostServices.ShouldNotContain("outputKind == EFrameOutputKind.DesktopScene;\r\n            if (independentDesktopScene)");
+        hostServices.ShouldContain("bool independentDesktopScene =\n                RuntimeEngine.Rendering.Settings.VrMirrorMode == EVrMirrorMode.FullIndependentRender;");
+        CountOccurrences(hostServices, "independentDesktopScene,")
+            .ShouldBeGreaterThanOrEqualTo(2);
         hostServices.ShouldNotContain("if (output.SceneRendered ||");
         frameOutputs.ShouldContain("public bool RenderPhaseSceneRendered");
         frameOutputs.ShouldContain("telemetry.Phase == EFrameOutputPhase.Render && telemetry.SceneRendered");
@@ -1628,8 +1633,8 @@ public sealed class OpenXrTimingPipelineContractTests
     public void EditorDepthHitAndPreviewRenderTargets_DoNotDependOnOpenXrSwapchainAlpha()
     {
         string editorPawn = ReadWorkspaceFile("XREngine.Editor/EditorFlyingCameraPawnComponent.cs");
-        string uiMaterial = ReadWorkspaceFile("XREngine/Scene/Components/UI/Core/UIMaterialComponent.cs");
-        string uiViewport = ReadWorkspaceFile("XREngine/Scene/Components/UI/Core/UIViewportComponent.cs");
+        string uiMaterial = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/UI/Core/UIMaterialComponent.cs");
+        string uiViewport = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/UI/Core/UIViewportComponent.cs");
         string editorUnitTestingUi = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.UserInterface.cs");
         string xrViewport = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/XRViewport.cs");
         string xrPipelineInstance = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs");
@@ -1659,7 +1664,8 @@ public sealed class OpenXrTimingPipelineContractTests
         xrViewport.ShouldContain("_renderPipeline.ViewportResized(Width, Height, this);");
         xrPipelineInstance.ShouldContain("public void InternalResolutionResized(int internalWidth, int internalHeight, XRViewport? viewport)");
         xrPipelineInstance.ShouldContain("viewport ??= RenderState.WindowViewport ?? LastWindowViewport;");
-        xrPipelineInstance.ShouldContain("if (viewport.AllowAutomaticInternalResolution)");
+        xrPipelineInstance.ShouldContain("if (viewport.AllowAutomaticInternalResolution &&");
+        xrPipelineInstance.ShouldContain("!ShouldDeferResourceGenerationForInteractiveWindowResize(viewport))");
         cameraComponent.ShouldContain("if (!viewport.AllowAutomaticInternalResolution)");
         cameraComponent.ShouldContain("return;");
         editorUnitTestingUi.ShouldContain("private const int PreviewOverlayZIndex = int.MaxValue;");
@@ -1957,7 +1963,7 @@ public sealed class OpenXrTimingPipelineContractTests
 
         effectiveSettings.ShouldNotContain("ShouldIgnorePersistedCpuDirectMeshSubmissionForceForUnitTestingOpenXrVulkan");
         effectiveSettings.ShouldNotContain("Ignoring persisted ForceMeshSubmissionStrategy=CpuDirect");
-        effectiveSettings.ShouldContain("return Rendering.Settings.ForceMeshSubmissionStrategy;");
+        effectiveSettings.ShouldContain("return RuntimeEngine.Rendering.Settings.ForceMeshSubmissionStrategy;");
         effectiveSettings.ShouldContain("EffectiveSettingsEnvOverrides.ForceMeshSubmissionStrategy");
     }
 
@@ -2106,8 +2112,8 @@ public sealed class OpenXrTimingPipelineContractTests
     {
         string state = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs");
         string pacingMode = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.OpenXrRenderPacingMode.cs");
-        string settings = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs");
-        string stats = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.Vr.cs");
+        string settings = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs");
+        string stats = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vr.cs");
         string packet = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");
         string sender = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfilerSender.cs");
         string editorSource = ReadWorkspaceFile("XREngine.Editor/EngineProfilerDataSource.cs");
@@ -2195,7 +2201,7 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void FrustumExpansion_RecordsOnlyForPaddedFrustumPolicy()
     {
-        string openGl = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.OpenGL.cs");
+        string openGl = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.SceneViews.cs");
 
         string cameraUpdate = SliceMethod(
             openGl,
@@ -2210,7 +2216,7 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void VulkanOpenXr_DirectEyeSwapchainsUsePerEyeDepthTargets()
     {
-        string vulkanOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string vulkanOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
 
         vulkanOpenXr.ShouldContain("private readonly OpenXrDepthTarget[] _openXrCachedDepthTargets = new OpenXrDepthTarget[OpenXrEyeResourcePlannerStateCount];");
         vulkanOpenXr.ShouldContain("private readonly Extent2D[] _openXrCachedDepthExtents = new Extent2D[OpenXrEyeResourcePlannerStateCount];");
@@ -2238,7 +2244,7 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void VulkanOpenXr_RetiredResourceDrainCleansCompletedSlotsIncludingImages()
     {
-        string vulkanOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string vulkanOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
 
         vulkanOpenXr.ShouldContain("DrainRetiredResourcesFromCompletedSubmittedFrameSlots");
         vulkanOpenXr.ShouldNotContain("DrainRetiredResourcesIfSubmittedFrameSlotsCompleted");
@@ -2251,10 +2257,17 @@ public sealed class OpenXrTimingPipelineContractTests
             "private void DrainRetiredResourcesFromCompletedSubmittedFrameSlots",
             "private void WaitForOpenXrFrameDataSlot");
 
-        drainMethod.ShouldContain("int frameSlotCount = Math.Min(_frameSlotTimelineValues.Length, MAX_FRAMES_IN_FLIGHT);");
-        drainMethod.ShouldContain("Volatile.Read(ref _windowRenderCallbackInProgress)");
-        drainMethod.ShouldContain("activeDesktopFrameSlot = desktopFrameActive ? currentFrame : -1");
+        drainMethod.ShouldContain("lock (_desktopFrameRetirementGate)");
+        drainMethod.ShouldContain("int frameSlotCount = Math.Min(");
+        drainMethod.ShouldContain("_frameSlotTimelineValues.Length");
+        drainMethod.ShouldContain("DesktopFrameActivitySnapshot desktopActivity =");
+        drainMethod.ShouldContain("CaptureDesktopFrameActivity();");
+        drainMethod.ShouldContain("desktopActivity.IsActive &&");
+        drainMethod.ShouldContain("i == desktopActivity.FrameSlot");
+        drainMethod.ShouldContain("desktopActivity.FrameNumber");
         drainMethod.ShouldContain("skipped retired-resource drain for active desktop frame slot");
+        drainMethod.ShouldNotContain("_windowRenderCallbackInProgress");
+        drainMethod.ShouldNotContain("_desktopFrameSlot");
         drainMethod.ShouldContain("DrainRetiredPipelines(i, int.MaxValue);");
         drainMethod.ShouldContain("DrainRetiredBuffers(i, int.MaxValue);");
         drainMethod.ShouldContain("DrainRetiredFramebuffers(i, int.MaxValue);");
@@ -2265,7 +2278,7 @@ public sealed class OpenXrTimingPipelineContractTests
 
         string pendingSlotBranch = SliceMethod(
             drainMethod,
-            "if (value != 0 && !HasTimelineValueCompleted(_graphicsTimelineSemaphore, value))",
+            "if (value != 0 &&",
             "DrainRetiredDescriptorPools(i, int.MaxValue);");
 
         pendingSlotBranch.ShouldContain("continue;");
@@ -2294,6 +2307,20 @@ public sealed class OpenXrTimingPipelineContractTests
 
         return source[start..end];
     }
+
+    private static string ReadVulkanDesktopFrameLoopSources()
+        => string.Concat(
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Preflight.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Preflight.Policy.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.SwapchainPolicy.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.FrameSlots.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Acquire.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recording.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recovery.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Submission.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Presentation.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Telemetry.cs"));
 
     private static string ReadWorkspaceFile(string relativePath)
     {

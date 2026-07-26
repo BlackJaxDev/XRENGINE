@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Scene.Transforms;
 
@@ -23,7 +23,7 @@ namespace XREngine.Components
             }
 
             public override void Render(TransformBase transform)
-                => Engine.Rendering.Debug.RenderPoint(transform.TransformPoint(LocalOffset), Color);
+                => RuntimeEngine.Rendering.Debug.RenderPoint(transform.TransformPoint(LocalOffset), Color);
         }
     }
 }

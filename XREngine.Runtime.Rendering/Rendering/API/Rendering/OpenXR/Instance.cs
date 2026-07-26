@@ -3,7 +3,6 @@ using Silk.NET.Core.Native;
 using Silk.NET.OpenXR;
 using System.Runtime.InteropServices;
 using System.Text;
-using XREngine.Rendering.Vulkan;
 using System.Linq;
 using OxrExtDebugUtils = global::Silk.NET.OpenXR.Extensions.EXT.ExtDebugUtils;
 using System.Collections.Generic;
@@ -46,8 +45,9 @@ public unsafe partial class OpenXRAPI
         {
             Api?.DestroyInstance(_instance);
         }
-        else if (Window?.Renderer is VulkanRenderer vulkanRenderer &&
-            vulkanRenderer.InvalidateOpenXrVulkanEnable2BootstrapInstance("OpenXR runtime instance teardown"))
+        else if (Window?.Renderer is AbstractRenderer renderer &&
+            TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding) &&
+            binding.InvalidateRendererOwnedInstance(renderer, "OpenXR runtime instance teardown"))
         {
             Debug.VulkanWarning("[OpenXR] Dropped stale renderer-owned XR instance so runtime recovery can create a fresh session instance.");
         }
@@ -67,13 +67,19 @@ public unsafe partial class OpenXRAPI
         EnsureSteamVrRunningIfActiveRuntime();
 
         var appInfo = MakeAppInfo();
-        var renderer = Window?.Renderer is VulkanRenderer ? ERenderer.Vulkan : ERenderer.OpenGL;
+        AbstractRenderer? activeRenderer = Window?.Renderer;
+        ERenderer renderer = activeRenderer?.BackendId == RendererBackendId.Vulkan
+            ? ERenderer.Vulkan
+            : ERenderer.OpenGL;
 
-        if (Window?.Renderer is VulkanRenderer vulkanRenderer &&
-            vulkanRenderer.TryGetOpenXrVulkanEnable2BootstrapInstance(
-                out XR rendererOwnedApi,
+        if (activeRenderer is not null &&
+            TryGetOrCreateGraphicsBinding(activeRenderer, out IXrGraphicsBinding? binding) &&
+            binding.TryGetRendererOwnedInstance(
+                activeRenderer,
+                out XR? rendererOwnedApi,
                 out Instance rendererOwnedInstance,
-                out string[] rendererOwnedExtensions))
+                out string[] rendererOwnedExtensions) &&
+            rendererOwnedApi is not null)
         {
             if (!ReferenceEquals(Api, rendererOwnedApi))
             {

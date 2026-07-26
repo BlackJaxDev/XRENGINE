@@ -125,7 +125,8 @@ namespace XREngine.Data.Geometry
 
         public readonly EContainment ContainsAABB(AABB box, float tolerance = float.Epsilon)
         {
-            var corners = box.GetCorners();
+            Span<Vector3> corners = stackalloc Vector3[8];
+            box.GetCorners(corners);
             foreach (Vector3 corner in corners)
                 if (!ContainsPoint(corner, tolerance))
                     return EContainment.Disjoint;

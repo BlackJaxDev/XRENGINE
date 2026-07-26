@@ -270,7 +270,7 @@ public static partial class EditorImGuiUI
         HashSet<string> binaryKeys = new(StringComparer.Ordinal);
         bool materializeAllRows = ShouldMaterializeAllShaderProgramLinkRows();
 
-        foreach (XRWindow? window in Engine.Windows)
+        foreach (XRWindow? window in RuntimeEngine.Windows)
         {
             if (window?.Renderer is not OpenGLRenderer renderer)
                 continue;
@@ -1568,10 +1568,10 @@ public static partial class EditorImGuiUI
 
     private static void LogShaderProgramLifecycleSummary()
     {
-        foreach (XRWindow? window in Engine.Windows)
+        foreach (XRWindow? window in RuntimeEngine.Windows)
         {
             if (window?.Renderer is OpenGLRenderer renderer)
-                ShaderProgramLifecycleDiagnostics.LogSummary(renderer.ProgramBinaryUploadQueue);
+                ShaderProgramLifecycleDiagnostics.LogSummary(renderer.GetProgramBinaryUploadSummary());
         }
     }
 }

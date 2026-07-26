@@ -713,7 +713,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void RenderHighlight()
     {
-        if (Engine.Rendering.State.IsShadowPass)
+        if (RuntimeEngine.Rendering.State.IsShadowPass)
             return;
 
         if (RenderHoveredPrimitive)
@@ -726,14 +726,14 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 pos = WorldDragPoint.Value;
             else
                 pos = Viewport.NormalizedViewportToWorldCoordinate(DepthHitNormalizedViewportPoint!.Value);
-            Engine.Rendering.Debug.RenderSphere(pos, (Viewport.Camera?.DistanceFromWorldPosition(pos) ?? 1.0f) * 0.05f, false, ColorF4.Yellow);
+            RuntimeEngine.Rendering.Debug.RenderSphere(pos, (Viewport.Camera?.DistanceFromWorldPosition(pos) ?? 1.0f) * 0.05f, false, ColorF4.Yellow);
         }
 
         if (RenderFrustum && !DebugCameraMode)
         {
             var cam = this.GetCamera();
             if (cam is not null)
-                Engine.Rendering.Debug.RenderFrustum(cam.Camera.WorldFrustum(), ColorF4.Red);
+                RuntimeEngine.Rendering.Debug.RenderFrustum(cam.Camera.WorldFrustum(), ColorF4.Red);
         }
 
         // Render debug camera visualization when in debug mode
@@ -744,18 +744,18 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private void RenderPickModeOverlay()
     {
         if (_meshHitPoint is Vector3 meshHit)
-            Engine.Rendering.Debug.RenderPoint(meshHit, ColorF4.Yellow);
+            RuntimeEngine.Rendering.Debug.RenderPoint(meshHit, ColorF4.Yellow);
         switch (RaycastMode)
         {
             case ERaycastHitMode.Faces when _facePickResult is Triangle hit:
                 RenderStippledTriangle(hit);
                 break;
             case ERaycastHitMode.Lines when _edgePickResult is MeshEdgePickResult edgeHit:
-                Engine.Rendering.Debug.RenderLine(edgeHit.EdgeStart, edgeHit.EdgeEnd, ColorF4.Cyan);
-                Engine.Rendering.Debug.RenderPoint(edgeHit.ClosestPoint, ColorF4.Yellow);
+                RuntimeEngine.Rendering.Debug.RenderLine(edgeHit.EdgeStart, edgeHit.EdgeEnd, ColorF4.Cyan);
+                RuntimeEngine.Rendering.Debug.RenderPoint(edgeHit.ClosestPoint, ColorF4.Yellow);
                 break;
             case ERaycastHitMode.Points when _vertexPickResult is MeshVertexPickResult vertexHit:
-                Engine.Rendering.Debug.RenderPoint(vertexHit.Position, ColorF4.Yellow);
+                RuntimeEngine.Rendering.Debug.RenderPoint(vertexHit.Position, ColorF4.Yellow);
                 break;
         }
     }
@@ -766,9 +766,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private void RenderStippledTriangle(Triangle triangle)
     {
         // Render edge lines
-        Engine.Rendering.Debug.RenderLine(triangle.A, triangle.B, HoveredFaceEdgeColor);
-        Engine.Rendering.Debug.RenderLine(triangle.B, triangle.C, HoveredFaceEdgeColor);
-        Engine.Rendering.Debug.RenderLine(triangle.C, triangle.A, HoveredFaceEdgeColor);
+        RuntimeEngine.Rendering.Debug.RenderLine(triangle.A, triangle.B, HoveredFaceEdgeColor);
+        RuntimeEngine.Rendering.Debug.RenderLine(triangle.B, triangle.C, HoveredFaceEdgeColor);
+        RuntimeEngine.Rendering.Debug.RenderLine(triangle.C, triangle.A, HoveredFaceEdgeColor);
 
         // Render stippled fill
         EnsureStippledTriangleRenderer();
@@ -1023,22 +1023,22 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private void RenderFrustumWireframe(Frustum frustum)
     {
         // Near plane edges
-        Engine.Rendering.Debug.RenderLine(frustum.LeftTopNear, frustum.RightTopNear, DebugFrustumNearPlaneColor);
-        Engine.Rendering.Debug.RenderLine(frustum.RightTopNear, frustum.RightBottomNear, DebugFrustumNearPlaneColor);
-        Engine.Rendering.Debug.RenderLine(frustum.RightBottomNear, frustum.LeftBottomNear, DebugFrustumNearPlaneColor);
-        Engine.Rendering.Debug.RenderLine(frustum.LeftBottomNear, frustum.LeftTopNear, DebugFrustumNearPlaneColor);
+        RuntimeEngine.Rendering.Debug.RenderLine(frustum.LeftTopNear, frustum.RightTopNear, DebugFrustumNearPlaneColor);
+        RuntimeEngine.Rendering.Debug.RenderLine(frustum.RightTopNear, frustum.RightBottomNear, DebugFrustumNearPlaneColor);
+        RuntimeEngine.Rendering.Debug.RenderLine(frustum.RightBottomNear, frustum.LeftBottomNear, DebugFrustumNearPlaneColor);
+        RuntimeEngine.Rendering.Debug.RenderLine(frustum.LeftBottomNear, frustum.LeftTopNear, DebugFrustumNearPlaneColor);
 
         // Far plane edges
-        Engine.Rendering.Debug.RenderLine(frustum.LeftTopFar, frustum.RightTopFar, DebugFrustumFarPlaneColor);
-        Engine.Rendering.Debug.RenderLine(frustum.RightTopFar, frustum.RightBottomFar, DebugFrustumFarPlaneColor);
-        Engine.Rendering.Debug.RenderLine(frustum.RightBottomFar, frustum.LeftBottomFar, DebugFrustumFarPlaneColor);
-        Engine.Rendering.Debug.RenderLine(frustum.LeftBottomFar, frustum.LeftTopFar, DebugFrustumFarPlaneColor);
+        RuntimeEngine.Rendering.Debug.RenderLine(frustum.LeftTopFar, frustum.RightTopFar, DebugFrustumFarPlaneColor);
+        RuntimeEngine.Rendering.Debug.RenderLine(frustum.RightTopFar, frustum.RightBottomFar, DebugFrustumFarPlaneColor);
+        RuntimeEngine.Rendering.Debug.RenderLine(frustum.RightBottomFar, frustum.LeftBottomFar, DebugFrustumFarPlaneColor);
+        RuntimeEngine.Rendering.Debug.RenderLine(frustum.LeftBottomFar, frustum.LeftTopFar, DebugFrustumFarPlaneColor);
 
         // Connecting edges (frustum sides)
-        Engine.Rendering.Debug.RenderLine(frustum.LeftTopNear, frustum.LeftTopFar, DebugFrustumColor);
-        Engine.Rendering.Debug.RenderLine(frustum.RightTopNear, frustum.RightTopFar, DebugFrustumColor);
-        Engine.Rendering.Debug.RenderLine(frustum.RightBottomNear, frustum.RightBottomFar, DebugFrustumColor);
-        Engine.Rendering.Debug.RenderLine(frustum.LeftBottomNear, frustum.LeftBottomFar, DebugFrustumColor);
+        RuntimeEngine.Rendering.Debug.RenderLine(frustum.LeftTopNear, frustum.LeftTopFar, DebugFrustumColor);
+        RuntimeEngine.Rendering.Debug.RenderLine(frustum.RightTopNear, frustum.RightTopFar, DebugFrustumColor);
+        RuntimeEngine.Rendering.Debug.RenderLine(frustum.RightBottomNear, frustum.RightBottomFar, DebugFrustumColor);
+        RuntimeEngine.Rendering.Debug.RenderLine(frustum.LeftBottomNear, frustum.LeftBottomFar, DebugFrustumColor);
     }
 
     /// <summary>
@@ -1048,19 +1048,19 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         // Render near plane as filled quad
         var nearPlaneColor = new ColorF4(DebugFrustumNearPlaneColor.R, DebugFrustumNearPlaneColor.G, DebugFrustumNearPlaneColor.B, 0.15f);
-        Engine.Rendering.Debug.RenderTriangle(
+        RuntimeEngine.Rendering.Debug.RenderTriangle(
             new Triangle(frustum.LeftTopNear, frustum.RightTopNear, frustum.RightBottomNear),
             nearPlaneColor, true);
-        Engine.Rendering.Debug.RenderTriangle(
+        RuntimeEngine.Rendering.Debug.RenderTriangle(
             new Triangle(frustum.LeftTopNear, frustum.RightBottomNear, frustum.LeftBottomNear),
             nearPlaneColor, true);
 
         // Render far plane as filled quad
         var farPlaneColor = new ColorF4(DebugFrustumFarPlaneColor.R, DebugFrustumFarPlaneColor.G, DebugFrustumFarPlaneColor.B, 0.1f);
-        Engine.Rendering.Debug.RenderTriangle(
+        RuntimeEngine.Rendering.Debug.RenderTriangle(
             new Triangle(frustum.LeftTopFar, frustum.RightBottomFar, frustum.RightTopFar),
             farPlaneColor, true);
-        Engine.Rendering.Debug.RenderTriangle(
+        RuntimeEngine.Rendering.Debug.RenderTriangle(
             new Triangle(frustum.LeftTopFar, frustum.LeftBottomFar, frustum.RightBottomFar),
             farPlaneColor, true);
     }
@@ -1079,12 +1079,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         var up = Vector3.Transform(Globals.Up, _storedEditorCameraRotation);
 
         // Render camera position sphere
-        Engine.Rendering.Debug.RenderSphere(_storedEditorCameraPosition, gizmoSize * 0.3f, false, ColorF4.White);
+        RuntimeEngine.Rendering.Debug.RenderSphere(_storedEditorCameraPosition, gizmoSize * 0.3f, false, ColorF4.White);
 
         // Render camera axes
-        Engine.Rendering.Debug.RenderLine(_storedEditorCameraPosition, _storedEditorCameraPosition + forward * axisLength, ColorF4.Blue);
-        Engine.Rendering.Debug.RenderLine(_storedEditorCameraPosition, _storedEditorCameraPosition + right * axisLength * 0.5f, ColorF4.Red);
-        Engine.Rendering.Debug.RenderLine(_storedEditorCameraPosition, _storedEditorCameraPosition + up * axisLength * 0.5f, ColorF4.Green);
+        RuntimeEngine.Rendering.Debug.RenderLine(_storedEditorCameraPosition, _storedEditorCameraPosition + forward * axisLength, ColorF4.Blue);
+        RuntimeEngine.Rendering.Debug.RenderLine(_storedEditorCameraPosition, _storedEditorCameraPosition + right * axisLength * 0.5f, ColorF4.Red);
+        RuntimeEngine.Rendering.Debug.RenderLine(_storedEditorCameraPosition, _storedEditorCameraPosition + up * axisLength * 0.5f, ColorF4.Green);
 
         // Render a small pyramid to indicate the camera direction
         var pyramidTip = _storedEditorCameraPosition + forward * gizmoSize;
@@ -1101,11 +1101,11 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
         // Draw pyramid edges
         foreach (var corner in baseCorners)
-            Engine.Rendering.Debug.RenderLine(pyramidTip, corner, ColorF4.Yellow);
+            RuntimeEngine.Rendering.Debug.RenderLine(pyramidTip, corner, ColorF4.Yellow);
 
         // Draw base edges
         for (int i = 0; i < 4; i++)
-            Engine.Rendering.Debug.RenderLine(baseCorners[i], baseCorners[(i + 1) % 4], ColorF4.Yellow);
+            RuntimeEngine.Rendering.Debug.RenderLine(baseCorners[i], baseCorners[(i + 1) % 4], ColorF4.Yellow);
     }
 
     /// <summary>
@@ -1188,11 +1188,11 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         get
         {
-            var host = RuntimeRenderingHostServices.Current;
-            return host.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan &&
-                   host.IsInVR &&
-                   host.IsOpenXRActive &&
-                   host.RenderWindowsWhileInVR;
+            IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
+            return RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan &&
+                   presentation.IsInVR &&
+                   presentation.IsOpenXRActive &&
+                   presentation.RenderWindowsWhileInVR;
         }
     }
 
@@ -1227,7 +1227,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             _wantsScreenshot = false;
             //rend.GetScreenshotAsync(vp.Region, false, ScreenshotCallback);
 
-            var pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+            var pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
             if (pipeline is not null)
             {
                 string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
@@ -1357,7 +1357,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         //foreach (var x in _lastPhysicsPickResults.Values)
         //    foreach (var (c2, _) in x)
         //        if (c2?.SceneNode is not null)
-        //            Engine.Rendering.Debug.RenderLine(_lastRaycastSegment.Start, _lastRaycastSegment.End, ColorF4.Green);
+        //            RuntimeEngine.Rendering.Debug.RenderLine(_lastRaycastSegment.Start, _lastRaycastSegment.End, ColorF4.Green);
     }
 
     private void OctreeRaycastCallback(SortedDictionary<float, List<(RenderInfo3D item, object? data)>> dictionary)
@@ -1687,9 +1687,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 };
 
                 if (name is not null)
-                    Engine.Rendering.Debug.RenderText(point.Value, name, ColorF4.Black);
+                    RuntimeEngine.Rendering.Debug.RenderText(point.Value, name, ColorF4.Black);
             }
-            //Engine.Rendering.Debug.RenderPoint(point.Value, ColorF4.Red);
+            //RuntimeEngine.Rendering.Debug.RenderPoint(point.Value, ColorF4.Red);
         }
 
         RenderableMesh? firstHitMesh = null;
@@ -1875,7 +1875,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private static bool ShouldFlipDepthReadbackY()
     {
-        RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.Current.CurrentRenderBackend;
+        RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
         if (backend == RuntimeGraphicsApiKind.Unknown)
             return false;
 
@@ -1902,8 +1902,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             : ReadDepthSample(vp, fbo, clamped, flippedCoordinate);
         EditorDepthHitReadbackSample current = CoordinatesEqual(currentCoordinate, flippedCoordinate) ? flipped : unflipped;
 
-        RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.Current.CurrentRenderBackend;
-        ERenderClipSpaceYDirection clipY = RuntimeRenderingHostServices.Current.ClipSpaceYDirection;
+        RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
+        ERenderClipSpaceYDirection clipY = RuntimeRenderingHostServices.Settings.ClipSpaceYDirection;
         ERenderClipSpaceYDirection framebufferY = backend == RuntimeGraphicsApiKind.Unknown
             ? clipY
             : RenderClipSpacePolicy.FramebufferTextureYDirection(backend);

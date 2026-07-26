@@ -1096,12 +1096,70 @@ namespace XREngine
         /// <summary>
         /// Rate-limited Vulkan log. Intended for per-frame diagnostics.
         /// </summary>
+        public static void VulkanEvery<T>(string key, TimeSpan interval, string message, T arg)
+        {
+    #if DEBUG || EDITOR
+            if (!ShouldLogEvery(key, interval))
+                return;
+            Vulkan(message, arg!);
+    #endif
+        }
+
+        /// <summary>
+        /// Rate-limited Vulkan log whose arguments remain allocation-free while the message is suppressed.
+        /// </summary>
+        public static void VulkanEvery<T1, T2>(
+            string key,
+            TimeSpan interval,
+            string message,
+            T1 arg1,
+            T2 arg2)
+        {
+    #if DEBUG || EDITOR
+            if (!ShouldLogEvery(key, interval))
+                return;
+            Vulkan(message, arg1!, arg2!);
+    #endif
+        }
+
+        /// <summary>
+        /// Rate-limited Vulkan log. Intended for per-frame diagnostics.
+        /// </summary>
         public static void VulkanEvery(string key, TimeSpan interval, string message, params object[] args)
         {
     #if DEBUG || EDITOR
             if (!ShouldLogEvery(key, interval))
                 return;
             Vulkan(message, args);
+    #endif
+        }
+
+        /// <summary>
+        /// Rate-limited Vulkan warning without stack trace (keeps logs readable).
+        /// </summary>
+        public static void VulkanWarningEvery<T>(string key, TimeSpan interval, string message, T arg)
+        {
+    #if DEBUG || EDITOR
+            if (!ShouldLogEvery(key, interval))
+                return;
+            Log(ELogCategory.Vulkan, EOutputVerbosity.Normal, false, "[WARN] " + message, arg!);
+    #endif
+        }
+
+        /// <summary>
+        /// Rate-limited Vulkan warning whose arguments remain allocation-free while the message is suppressed.
+        /// </summary>
+        public static void VulkanWarningEvery<T1, T2>(
+            string key,
+            TimeSpan interval,
+            string message,
+            T1 arg1,
+            T2 arg2)
+        {
+    #if DEBUG || EDITOR
+            if (!ShouldLogEvery(key, interval))
+                return;
+            Log(ELogCategory.Vulkan, EOutputVerbosity.Normal, false, "[WARN] " + message, arg1!, arg2!);
     #endif
         }
 

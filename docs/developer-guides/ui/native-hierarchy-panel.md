@@ -49,6 +49,6 @@ The hierarchy uses reusable native UI support that is now available outside the 
 - `XREngine.Editor/UI/Panels/HierarchyPanel.cs`
 - `XREngine.Editor/UI/EditorDragDropUtility.cs`
 - `XREngine.Editor/UI/EditorStyles.cs`
-- `XRENGINE/Scene/Components/Pawns/UICanvasInputComponent.cs`
-- `XRENGINE/Scene/Components/UI/Interactable/UIContextMenuComponent.cs`
-- `XRENGINE/Scene/Components/UI/Core/Interactable/UITextInputComponent.cs`
+- `XREngine.Runtime.InputIntegration/Scene/Components/Pawns/UICanvasInputComponent.cs`
+- `XREngine.Runtime.Rendering/Scene/Components/UI/Interactable/UIContextMenuComponent.cs`
+- `XREngine.Runtime.Rendering/Scene/Components/UI/Core/Interactable/UITextInputComponent.cs`

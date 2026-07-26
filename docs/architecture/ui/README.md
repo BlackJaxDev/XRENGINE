@@ -14,14 +14,14 @@ This directory contains comprehensive documentation for the XREngine UI layout s
 - Issues 1, 3, and 4 are fixed; issue 2 (camera WASD/mouse interaction) is still active.
 - Current diagnostics show `IsHoveringUI` is false and `_rightClickDragging` is true, so UI hover gating is not the blocker.
 - No `MoveForward` log entries appeared in the latest run, suggesting key state callbacks are not firing or movement is not applied.
-- Added temporary debug logging to trace key presses and mouse deltas; see [XRENGINE/Scene/Components/Pawns/FlyingCameraPawnBaseComponent.cs](../../../XRENGINE/Scene/Components/Pawns/FlyingCameraPawnBaseComponent.cs) and [XRENGINE/Scene/Components/Pawns/FlyingCameraPawn.cs](../../../XRENGINE/Scene/Components/Pawns/FlyingCameraPawn.cs).
+- Added temporary debug logging to trace key presses and mouse deltas; see [XREngine.Runtime.InputIntegration/Scene/Components/Pawns/FlyingCameraPawnBaseComponent.cs](../../../XREngine.Runtime.InputIntegration/Scene/Components/Pawns/FlyingCameraPawnBaseComponent.cs) and [XREngine.Runtime.InputIntegration/Scene/Components/Pawns/FlyingCameraPawn.cs](../../../XREngine.Runtime.InputIntegration/Scene/Components/Pawns/FlyingCameraPawn.cs).
 
 ## Quick Orientation
 
 The UI layout system lives in:
 
 ```
-XRENGINE/Scene/Components/UI/Core/
+XREngine.Runtime.Rendering/Scene/Components/UI/Core/
 ├── Transforms/
 │   ├── UILayoutSystem.cs          ← Centralized static layout engine
 │   ├── UITransform.cs             ← Base class for all UI transforms

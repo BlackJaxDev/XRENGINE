@@ -40,7 +40,7 @@ namespace XREngine
             /// </summary>
             public static int? JobWorkers
                 => OverrideableSettingExtensions.ResolveCascadeNullable(
-                    Rendering.Settings.JobWorkers,
+                    RuntimeEngine.Rendering.Settings.JobWorkers,
                     GameSettings?.JobWorkersOverride,
                     UserSettings?.JobWorkersOverride);
 
@@ -50,7 +50,7 @@ namespace XREngine
             /// </summary>
             public static int? JobWorkerCap
                 => OverrideableSettingExtensions.ResolveCascadeNullable(
-                    Rendering.Settings.JobWorkerCap,
+                    RuntimeEngine.Rendering.Settings.JobWorkerCap,
                     GameSettings?.JobWorkerCapOverride,
                     UserSettings?.JobWorkerCapOverride);
 
@@ -60,7 +60,7 @@ namespace XREngine
             /// </summary>
             public static int? JobQueueLimit
                 => OverrideableSettingExtensions.ResolveCascadeNullable(
-                    Rendering.Settings.JobQueueLimit,
+                    RuntimeEngine.Rendering.Settings.JobQueueLimit,
                     GameSettings?.JobQueueLimitOverride,
                     UserSettings?.JobQueueLimitOverride);
 
@@ -70,7 +70,7 @@ namespace XREngine
             /// </summary>
             public static int? JobQueueWarningThreshold
                 => OverrideableSettingExtensions.ResolveCascadeNullable(
-                    Rendering.Settings.JobQueueWarningThreshold,
+                    RuntimeEngine.Rendering.Settings.JobQueueWarningThreshold,
                     GameSettings?.JobQueueWarningThresholdOverride,
                     UserSettings?.JobQueueWarningThresholdOverride);
 
@@ -90,7 +90,7 @@ namespace XREngine
             /// </summary>
             public static RenderBackendFallbackPolicy RenderBackendFallbackPolicy
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.Vulkan.Startup.FallbackPolicy,
+                    RuntimeEngine.Rendering.Settings.Vulkan.Startup.FallbackPolicy,
                     GameSettings?.RenderBackendFallbackPolicyOverride,
                     UserSettings?.RenderBackendFallbackPolicyOverride);
 
@@ -99,8 +99,8 @@ namespace XREngine
             /// Resolved from: Project Override > Engine Default.
             /// </summary>
             public static EVulkanGpuDrivenProfile VulkanGpuDrivenProfile
-                => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.VulkanGpuDrivenProfile,
+                => OverrideableSettingExtensions.ResolveValueCascade(
+                    RuntimeEngine.Rendering.Settings.VulkanGpuDrivenProfile,
                     GameSettings?.VulkanGpuDrivenProfileOverride,
                     null);
 
@@ -108,37 +108,43 @@ namespace XREngine
             /// Gets whether Vulkan descriptor indexing should be enabled when supported.
             /// </summary>
             public static bool EnableVulkanDescriptorIndexing
-                => Rendering.Settings.EnableVulkanDescriptorIndexing;
+                => RuntimeEngine.Rendering.Settings.EnableVulkanDescriptorIndexing;
 
             /// <summary>
             /// Gets whether Vulkan material-table population is enabled.
             /// </summary>
             public static bool EnableVulkanBindlessMaterialTable
-                => Rendering.Settings.EnableVulkanBindlessMaterialTable;
+                => RuntimeEngine.Rendering.Settings.EnableVulkanBindlessMaterialTable;
 
             /// <summary>
             /// Gets the effective Vulkan bindless material-table policy.
             /// </summary>
             public static EVulkanBindlessMaterialMode VulkanBindlessMaterialMode
-                => Rendering.Settings.VulkanBindlessMaterialMode;
+                => RuntimeEngine.Rendering.Settings.VulkanBindlessMaterialMode;
 
             /// <summary>
             /// Gets whether Vulkan descriptor contracts should be validated.
             /// </summary>
             public static bool ValidateVulkanDescriptorContracts
-                => Rendering.Settings.ValidateVulkanDescriptorContracts;
+                => RuntimeEngine.Rendering.Settings.ValidateVulkanDescriptorContracts;
 
             /// <summary>
             /// Gets optional Vulkan geometry fetch strategy.
             /// </summary>
             public static EVulkanGeometryFetchMode VulkanGeometryFetchMode
-                => Rendering.Settings.VulkanGeometryFetchMode;
+                => RuntimeEngine.Rendering.Settings.VulkanGeometryFetchMode;
 
             /// <summary>
             /// Gets active Vulkan queue overlap mode selection.
             /// </summary>
             public static EVulkanQueueOverlapMode VulkanQueueOverlapMode
-                => Rendering.Settings.VulkanQueueOverlapMode;
+                => RuntimeEngine.Rendering.Settings.VulkanQueueOverlapMode;
+
+            /// <summary>
+            /// Gets the active Vulkan command-recording policy.
+            /// </summary>
+            public static EVulkanCommandRecordingMode VulkanCommandRecordingMode
+                => RuntimeEngine.Rendering.Settings.VulkanCommandRecordingMode;
 
             /// <summary>
             /// Gets the effective Vulkan diagnostics preset.
@@ -152,7 +158,7 @@ namespace XREngine
             /// Environment flags are merged by the Vulkan diagnostic resolver.
             /// </summary>
             public static EVulkanDiagnosticFlags VulkanDiagnosticFlags
-                => Rendering.Settings.VulkanDiagnosticFlags;
+                => RuntimeEngine.Rendering.Settings.VulkanDiagnosticFlags;
 
             /// <summary>
             /// Gets the effective Vulkan target mode used to choose dynamic rendering or legacy render passes.
@@ -160,7 +166,7 @@ namespace XREngine
             /// </summary>
             public static EVulkanRenderTargetMode VulkanRenderTargetMode
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.VulkanRenderTargetMode,
+                    RuntimeEngine.Rendering.Settings.VulkanRenderTargetMode,
                     GameSettings?.VulkanRenderTargetModeOverride,
                     null);
 
@@ -174,15 +180,15 @@ namespace XREngine
                         RenderBackendFallbackPolicy),
                     new EffectiveOpenGLRenderSettings(
                         AllowShaderPipelines,
-                        Rendering.Settings.AllowBinaryProgramCaching,
-                        Rendering.Settings.AsyncProgramBinaryUpload,
-                        Rendering.Settings.AsyncProgramCompilation,
-                        Rendering.Settings.OpenGLProgramCompileLinkWorkerCount,
-                        Rendering.Settings.MaxAsyncShaderProgramsPerFrame,
-                        Rendering.Settings.OpenGLShaderLinkStrategy,
-                        Rendering.Settings.OpenGLShaderCompilerThreadCount,
-                        Rendering.Settings.OpenGLParallelShaderCompileProbeEnabled,
-                        Rendering.Settings.OpenGLParallelShaderCompileProbeTimeoutMs,
+                        RuntimeEngine.Rendering.Settings.AllowBinaryProgramCaching,
+                        RuntimeEngine.Rendering.Settings.AsyncProgramBinaryUpload,
+                        RuntimeEngine.Rendering.Settings.AsyncProgramCompilation,
+                        RuntimeEngine.Rendering.Settings.OpenGLProgramCompileLinkWorkerCount,
+                        RuntimeEngine.Rendering.Settings.MaxAsyncShaderProgramsPerFrame,
+                        RuntimeEngine.Rendering.Settings.OpenGLShaderLinkStrategy,
+                        RuntimeEngine.Rendering.Settings.OpenGLShaderCompilerThreadCount,
+                        RuntimeEngine.Rendering.Settings.OpenGLParallelShaderCompileProbeEnabled,
+                        RuntimeEngine.Rendering.Settings.OpenGLParallelShaderCompileProbeTimeoutMs,
                         UseDetailPreservingComputeMipmaps),
                     new EffectiveVulkanRenderSettings(
                         VulkanGpuDrivenProfile,
@@ -195,10 +201,10 @@ namespace XREngine
                         VulkanRenderTargetMode,
                         RenderBackendFallbackPolicy,
                         new EffectiveVulkanRobustnessSettings(
-                            Rendering.Settings.VulkanRobustnessSettings.AllocatorBackend,
-                            Rendering.Settings.VulkanRobustnessSettings.SyncBackend,
-                            Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend,
-                            Rendering.Settings.VulkanRobustnessSettings.DynamicUniformBufferEnabled)));
+                            RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.AllocatorBackend,
+                            RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.SyncBackend,
+                            RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend,
+                            RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.DynamicUniformBufferEnabled)));
 
             /// <summary>
             /// Gets the effective GPU render dispatch setting.
@@ -226,7 +232,7 @@ namespace XREngine
                     return parsed;
                 }
 
-                return Rendering.Settings.VulkanDiagnosticPreset;
+                return RuntimeEngine.Rendering.Settings.VulkanDiagnosticPreset;
             }
 
             /// <summary>
@@ -247,7 +253,7 @@ namespace XREngine
                 }
 
                 return OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.CpuSceneCullingStructure,
+                    RuntimeEngine.Rendering.Settings.CpuSceneCullingStructure,
                     GameSettings?.CpuSceneCullingStructureOverride,
                     null);
             }
@@ -256,7 +262,7 @@ namespace XREngine
             /// Gets the active GPU culling data layout mode.
             /// </summary>
             public static EGpuCullingDataLayout GpuCullingDataLayout
-                => Rendering.Settings.GpuCullingDataLayout;
+                => RuntimeEngine.Rendering.Settings.GpuCullingDataLayout;
 
             /// <summary>
             /// Gets the active occlusion culling mode for GPU indirect rendering.
@@ -273,86 +279,86 @@ namespace XREngine
                     return parsed;
                 }
 
-                return Rendering.Settings.GpuOcclusionCullingMode;
+                return RuntimeEngine.Rendering.Settings.GpuOcclusionCullingMode;
             }
 
             public static int CpuQueryOcclusionRetestPeriodFrames
-                => Rendering.Settings.CpuQueryOcclusionRetestPeriodFrames;
+                => RuntimeEngine.Rendering.Settings.CpuQueryOcclusionRetestPeriodFrames;
 
             public static int CpuQueryOcclusionMaxQueriesPerFrame
-                => Rendering.Settings.CpuQueryOcclusionMaxQueriesPerFrame;
+                => RuntimeEngine.Rendering.Settings.CpuQueryOcclusionMaxQueriesPerFrame;
 
             public static float CpuQueryOcclusionVisibleDemotionBudgetFraction
-                => Rendering.Settings.CpuQueryOcclusionVisibleDemotionBudgetFraction;
+                => RuntimeEngine.Rendering.Settings.CpuQueryOcclusionVisibleDemotionBudgetFraction;
 
             public static int CpuQueryOcclusionRecoveryMinCadenceFrames
-                => Rendering.Settings.CpuQueryOcclusionRecoveryMinCadenceFrames;
+                => RuntimeEngine.Rendering.Settings.CpuQueryOcclusionRecoveryMinCadenceFrames;
 
             public static float CpuQueryOcclusionSmallMotionMeters
-                => Rendering.Settings.CpuQueryOcclusionSmallMotionMeters;
+                => RuntimeEngine.Rendering.Settings.CpuQueryOcclusionSmallMotionMeters;
 
             public static float CpuQueryOcclusionMediumMotionMeters
-                => Rendering.Settings.CpuQueryOcclusionMediumMotionMeters;
+                => RuntimeEngine.Rendering.Settings.CpuQueryOcclusionMediumMotionMeters;
 
             public static float CpuQueryOcclusionLargeMotionMeters
-                => Rendering.Settings.CpuQueryOcclusionLargeMotionMeters;
+                => RuntimeEngine.Rendering.Settings.CpuQueryOcclusionLargeMotionMeters;
 
             public static float CpuQueryOcclusionCameraCutMeters
-                => Rendering.Settings.CpuQueryOcclusionCameraCutMeters;
+                => RuntimeEngine.Rendering.Settings.CpuQueryOcclusionCameraCutMeters;
 
             public static float CpuQueryOcclusionSmallRotationDegrees
-                => Rendering.Settings.CpuQueryOcclusionSmallRotationDegrees;
+                => RuntimeEngine.Rendering.Settings.CpuQueryOcclusionSmallRotationDegrees;
 
             public static float CpuQueryOcclusionMediumRotationDegrees
-                => Rendering.Settings.CpuQueryOcclusionMediumRotationDegrees;
+                => RuntimeEngine.Rendering.Settings.CpuQueryOcclusionMediumRotationDegrees;
 
             public static float CpuQueryOcclusionLargeRotationDegrees
-                => Rendering.Settings.CpuQueryOcclusionLargeRotationDegrees;
+                => RuntimeEngine.Rendering.Settings.CpuQueryOcclusionLargeRotationDegrees;
 
             public static float CpuQueryOcclusionCameraCutRotationDegrees
-                => Rendering.Settings.CpuQueryOcclusionCameraCutRotationDegrees;
+                => RuntimeEngine.Rendering.Settings.CpuQueryOcclusionCameraCutRotationDegrees;
 
             public static float CpuQueryOcclusionVrHeadMotionMeters
-                => Rendering.Settings.CpuQueryOcclusionVrHeadMotionMeters;
+                => RuntimeEngine.Rendering.Settings.CpuQueryOcclusionVrHeadMotionMeters;
 
             public static float CpuQueryOcclusionVrHeadRotationDegrees
-                => Rendering.Settings.CpuQueryOcclusionVrHeadRotationDegrees;
+                => RuntimeEngine.Rendering.Settings.CpuQueryOcclusionVrHeadRotationDegrees;
 
             public static ECpuQueryStereoMode CpuQueryOcclusionStereoMode
-                => Rendering.Settings.CpuQueryOcclusionStereoMode;
+                => RuntimeEngine.Rendering.Settings.CpuQueryOcclusionStereoMode;
 
             public static int CpuQueryOcclusionMaxPendingFrames
-                => Rendering.Settings.CpuQueryOcclusionMaxPendingFrames;
+                => RuntimeEngine.Rendering.Settings.CpuQueryOcclusionMaxPendingFrames;
 
             /// <summary>
             /// Gets whether the opt-in CPU software occlusion culler is enabled.
             /// </summary>
             public static bool EnableCpuSoftwareOcclusionCulling
-                => Rendering.Settings.EnableCpuSoftwareOcclusionCulling;
+                => RuntimeEngine.Rendering.Settings.EnableCpuSoftwareOcclusionCulling;
 
             public static int CpuSocBufferWidth
-                => Rendering.Settings.CpuSocBufferWidth;
+                => RuntimeEngine.Rendering.Settings.CpuSocBufferWidth;
 
             public static int CpuSocBufferHeight
-                => Rendering.Settings.CpuSocBufferHeight;
+                => RuntimeEngine.Rendering.Settings.CpuSocBufferHeight;
 
             public static int CpuSocOccluderTriangleBudget
-                => Rendering.Settings.CpuSocOccluderTriangleBudget;
+                => RuntimeEngine.Rendering.Settings.CpuSocOccluderTriangleBudget;
 
             public static int CpuSocMaxOccluders
-                => Rendering.Settings.CpuSocMaxOccluders;
+                => RuntimeEngine.Rendering.Settings.CpuSocMaxOccluders;
 
             public static float CpuSocMinOccluderScreenArea
-                => Rendering.Settings.CpuSocMinOccluderScreenArea;
+                => RuntimeEngine.Rendering.Settings.CpuSocMinOccluderScreenArea;
 
             public static bool CpuSocUseAvx2
-                => Rendering.Settings.CpuSocUseAvx2;
+                => RuntimeEngine.Rendering.Settings.CpuSocUseAvx2;
 
             public static bool CpuSocDebugVisualization
-                => Rendering.Settings.CpuSocDebugVisualization;
+                => RuntimeEngine.Rendering.Settings.CpuSocDebugVisualization;
 
             public static bool CpuSocDebugForceVisible
-                => Rendering.Settings.CpuSocDebugForceVisible;
+                => RuntimeEngine.Rendering.Settings.CpuSocDebugForceVisible;
 
             /// <summary>
             /// Gets the effective BVH leaf primitive budget for GPU builds.
@@ -360,7 +366,7 @@ namespace XREngine
             /// </summary>
             public static uint BvhLeafMaxPrims
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.BvhLeafMaxPrims,
+                    RuntimeEngine.Rendering.Settings.BvhLeafMaxPrims,
                     GameSettings?.BvhLeafMaxPrimsOverride,
                     null);
 
@@ -370,7 +376,7 @@ namespace XREngine
             /// </summary>
             public static EBvhMode BvhMode
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.BvhMode,
+                    RuntimeEngine.Rendering.Settings.BvhMode,
                     GameSettings?.BvhModeOverride,
                     null);
 
@@ -380,7 +386,7 @@ namespace XREngine
             /// </summary>
             public static bool BvhRefitOnlyWhenStable
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.BvhRefitOnlyWhenStable,
+                    RuntimeEngine.Rendering.Settings.BvhRefitOnlyWhenStable,
                     GameSettings?.BvhRefitOnlyWhenStableOverride,
                     null);
 
@@ -390,7 +396,7 @@ namespace XREngine
             /// </summary>
             public static uint RaycastBufferSize
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.RaycastBufferSize,
+                    RuntimeEngine.Rendering.Settings.RaycastBufferSize,
                     GameSettings?.RaycastBufferSizeOverride,
                     null);
 
@@ -400,7 +406,7 @@ namespace XREngine
             /// </summary>
             public static bool EnableGpuBvhTimingQueries
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.EnableGpuBvhTimingQueries,
+                    RuntimeEngine.Rendering.Settings.EnableGpuBvhTimingQueries,
                     GameSettings?.EnableGpuBvhTimingQueriesOverride,
                     null);
 
@@ -410,7 +416,7 @@ namespace XREngine
             /// </summary>
             public static bool EnableGpuIndirectDebugLogging
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.EnableGpuIndirectDebugLogging,
+                    RuntimeEngine.Rendering.Settings.EnableGpuIndirectDebugLogging,
                     GameSettings?.EnableGpuIndirectDebugLoggingOverride,
                     UserSettings?.EnableGpuIndirectDebugLoggingOverride);
 
@@ -420,7 +426,7 @@ namespace XREngine
             /// </summary>
             public static bool EnableGpuIndirectValidationLogging
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.EnableGpuIndirectValidationLogging,
+                    RuntimeEngine.Rendering.Settings.EnableGpuIndirectValidationLogging,
                     GameSettings?.EnableGpuIndirectValidationLoggingOverride,
                     UserSettings?.EnableGpuIndirectValidationLoggingOverride);
 
@@ -430,7 +436,7 @@ namespace XREngine
             /// </summary>
             public static bool EnableGpuIndirectCpuFallback
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.EnableGpuIndirectCpuFallback,
+                    RuntimeEngine.Rendering.Settings.EnableGpuIndirectCpuFallback,
                     GameSettings?.EnableGpuIndirectCpuFallbackOverride,
                     UserSettings?.EnableGpuIndirectCpuFallbackOverride);
 
@@ -440,7 +446,7 @@ namespace XREngine
             /// </summary>
             public static bool EnableZeroReadbackMaterialScatter
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.EnableZeroReadbackMaterialScatter,
+                    RuntimeEngine.Rendering.Settings.EnableZeroReadbackMaterialScatter,
                     GameSettings?.EnableZeroReadbackMaterialScatterOverride,
                     UserSettings?.EnableZeroReadbackMaterialScatterOverride);
 
@@ -460,7 +466,7 @@ namespace XREngine
                 }
 
                 EZeroReadbackMaterialDrawPath cascaded = OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.ZeroReadbackMaterialDrawPath,
+                    RuntimeEngine.Rendering.Settings.ZeroReadbackMaterialDrawPath,
                     GameSettings?.ZeroReadbackMaterialDrawPathOverride,
                     UserSettings?.ZeroReadbackMaterialDrawPathOverride);
 
@@ -501,7 +507,7 @@ namespace XREngine
                     return parsed;
                 }
 
-                return Rendering.Settings.ForceMeshSubmissionStrategy;
+                return RuntimeEngine.Rendering.Settings.ForceMeshSubmissionStrategy;
             }
 
             /// <summary>
@@ -510,7 +516,7 @@ namespace XREngine
             /// </summary>
             public static EAntiAliasingMode AntiAliasingMode
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.AntiAliasingMode,
+                    RuntimeEngine.Rendering.Settings.AntiAliasingMode,
                     GameSettings?.AntiAliasingModeOverride,
                     UserSettings?.AntiAliasingModeOverride);
 
@@ -520,7 +526,7 @@ namespace XREngine
             /// </summary>
             public static uint MsaaSampleCount
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.MsaaSampleCount,
+                    RuntimeEngine.Rendering.Settings.MsaaSampleCount,
                     GameSettings?.MsaaSampleCountOverride,
                     UserSettings?.MsaaSampleCountOverride);
 
@@ -550,7 +556,7 @@ namespace XREngine
             /// </summary>
             public static bool EnableNvidiaDlss
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.EnableNvidiaDlss,
+                    RuntimeEngine.Rendering.Settings.EnableNvidiaDlss,
                     GameSettings?.EnableNvidiaDlssOverride,
                     UserSettings?.EnableNvidiaDlssOverride);
 
@@ -560,7 +566,7 @@ namespace XREngine
             /// </summary>
             public static EDlssQualityMode DlssQuality
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.DlssQuality,
+                    RuntimeEngine.Rendering.Settings.DlssQuality,
                     GameSettings?.DlssQualityOverride,
                     UserSettings?.DlssQualityOverride);
 
@@ -570,7 +576,7 @@ namespace XREngine
             /// </summary>
             public static bool EnableNvidiaDlssFrameGeneration
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.EnableNvidiaDlssFrameGeneration,
+                    RuntimeEngine.Rendering.Settings.EnableNvidiaDlssFrameGeneration,
                     GameSettings?.EnableNvidiaDlssFrameGenerationOverride,
                     UserSettings?.EnableNvidiaDlssFrameGenerationOverride);
 
@@ -580,7 +586,7 @@ namespace XREngine
             /// </summary>
             public static ENvidiaDlssFrameGenerationMode NvidiaDlssFrameGenerationMode
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.NvidiaDlssFrameGenerationMode,
+                    RuntimeEngine.Rendering.Settings.NvidiaDlssFrameGenerationMode,
                     GameSettings?.NvidiaDlssFrameGenerationModeOverride,
                     UserSettings?.NvidiaDlssFrameGenerationModeOverride);
 
@@ -590,7 +596,7 @@ namespace XREngine
             /// </summary>
             public static bool EnableIntelXess
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.EnableIntelXess,
+                    RuntimeEngine.Rendering.Settings.EnableIntelXess,
                     GameSettings?.EnableIntelXessOverride,
                     UserSettings?.EnableIntelXessOverride);
 
@@ -600,7 +606,7 @@ namespace XREngine
             /// </summary>
             public static EXessQualityMode XessQuality
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.XessQuality,
+                    RuntimeEngine.Rendering.Settings.XessQuality,
                     GameSettings?.XessQualityOverride,
                     UserSettings?.XessQualityOverride);
 
@@ -614,7 +620,7 @@ namespace XREngine
             /// </summary>
             public static bool TickGroupedItemsInParallel
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.TickGroupedItemsInParallel,
+                    RuntimeEngine.Rendering.Settings.TickGroupedItemsInParallel,
                     GameSettings?.TickGroupedItemsInParallelOverride,
                     UserSettings?.TickGroupedItemsInParallelOverride);
 
@@ -687,7 +693,7 @@ namespace XREngine
             public static bool AllowShaderPipelines
                 => GameSettings?.AllowShaderPipelinesOverride is { HasOverride: true } projectOverride
                     ? projectOverride.Value
-                    : Rendering.Settings.AllowShaderPipelines;
+                    : RuntimeEngine.Rendering.Settings.AllowShaderPipelines;
 
             /// <summary>
             /// Gets the effective skeletal skinning setting.
@@ -696,7 +702,7 @@ namespace XREngine
             public static bool AllowSkinning
                 => GameSettings?.AllowSkinningOverride is { HasOverride: true } projectOverride
                     ? projectOverride.Value
-                    : Rendering.Settings.AllowSkinning;
+                    : RuntimeEngine.Rendering.Settings.AllowSkinning;
 
             /// <summary>
             /// Gets the effective integer weighting IDs setting.
@@ -705,7 +711,7 @@ namespace XREngine
             public static bool UseIntegerWeightingIds
                 => GameSettings?.UseIntegerWeightingIdsOverride is { HasOverride: true } projectOverride
                     ? projectOverride.Value
-                    : Rendering.Settings.UseIntegerWeightingIds;
+                    : RuntimeEngine.Rendering.Settings.UseIntegerWeightingIds;
 
             /// <summary>
             /// Gets the effective child matrix recalculation loop type.
@@ -714,7 +720,7 @@ namespace XREngine
             public static ELoopType RecalcChildMatricesLoopType
                 => GameSettings?.RecalcChildMatricesLoopTypeOverride is { HasOverride: true } projectOverride
                     ? projectOverride.Value
-                    : Rendering.Settings.RecalcChildMatricesLoopType;
+                    : RuntimeEngine.Rendering.Settings.RecalcChildMatricesLoopType;
 
             /// <summary>
             /// Gets the effective skinned mesh bounds recompute policy.
@@ -723,7 +729,7 @@ namespace XREngine
             public static ESkinnedBoundsRecomputePolicy SkinnedBoundsRecomputePolicy
                 => GameSettings?.SkinnedBoundsRecomputePolicyOverride is { HasOverride: true } projectOverride
                     ? projectOverride.Value
-                    : Rendering.Settings.SkinnedBoundsRecomputePolicy;
+                    : RuntimeEngine.Rendering.Settings.SkinnedBoundsRecomputePolicy;
 
             /// <summary>
             /// Gets whether the Never skinned-bounds policy still allows one initial runtime build.
@@ -732,7 +738,7 @@ namespace XREngine
             public static bool AllowInitialSkinnedBoundsBuildWhenNever
                 => GameSettings?.AllowInitialSkinnedBoundsBuildWhenNeverOverride is { HasOverride: true } projectOverride
                     ? projectOverride.Value
-                    : Rendering.Settings.AllowInitialSkinnedBoundsBuildWhenNever;
+                    : RuntimeEngine.Rendering.Settings.AllowInitialSkinnedBoundsBuildWhenNever;
 
             /// <summary>
             /// Gets the effective compute shader skinning setting.
@@ -741,19 +747,19 @@ namespace XREngine
             public static bool CalculateSkinningInComputeShader
                 => GameSettings?.CalculateSkinningInComputeShaderOverride is { HasOverride: true } projectOverride
                     ? projectOverride.Value
-                    : Rendering.Settings.CalculateSkinningInComputeShader;
+                    : RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader;
 
             /// <summary>
             /// Gets whether skinned mesh bounds should be evaluated on the GPU.
             /// </summary>
             public static bool CalculateSkinnedBoundsInComputeShader
-                => Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
+                => RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
 
             /// <summary>
             /// Gets whether GPU skinned bounds may write directly into GPU command AABB buffers.
             /// </summary>
             public static bool SkinnedBoundsGpuDirectAabbWrite
-                => Rendering.Settings.SkinnedBoundsGpuDirectAabbWrite;
+                => RuntimeEngine.Rendering.Settings.SkinnedBoundsGpuDirectAabbWrite;
 
             /// <summary>
             /// Gets the effective compute shader blendshapes setting.
@@ -762,7 +768,7 @@ namespace XREngine
             public static bool CalculateBlendshapesInComputeShader
                 => GameSettings?.CalculateBlendshapesInComputeShaderOverride is { HasOverride: true } projectOverride
                     ? projectOverride.Value
-                    : Rendering.Settings.CalculateBlendshapesInComputeShader;
+                    : RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader;
 
             /// <summary>
             /// Gets the effective detail-preserving compute mipmap setting.
@@ -771,7 +777,7 @@ namespace XREngine
             public static bool UseDetailPreservingComputeMipmaps
                 => GameSettings?.UseDetailPreservingComputeMipmapsOverride is { HasOverride: true } projectOverride
                     ? projectOverride.Value
-                    : Rendering.Settings.UseDetailPreservingComputeMipmaps;
+                    : RuntimeEngine.Rendering.Settings.UseDetailPreservingComputeMipmaps;
 
             #endregion
 
@@ -784,7 +790,7 @@ namespace XREngine
             public static float TransformReplicationKeyframeIntervalSec
                 => GameSettings?.TransformReplicationKeyframeIntervalSecOverride is { HasOverride: true } projectOverride
                     ? projectOverride.Value
-                    : Rendering.Settings.TransformReplicationKeyframeIntervalSec;
+                    : RuntimeEngine.Rendering.Settings.TransformReplicationKeyframeIntervalSec;
 
             /// <summary>
             /// Gets the effective minimum interval in seconds between replicated tick updates for world objects.
@@ -793,7 +799,7 @@ namespace XREngine
             public static float TimeBetweenReplications
                 => GameSettings?.TimeBetweenReplicationsOverride is { HasOverride: true } projectOverride
                     ? projectOverride.Value
-                    : Rendering.Settings.TimeBetweenReplications;
+                    : RuntimeEngine.Rendering.Settings.TimeBetweenReplications;
 
             #endregion
 
@@ -805,7 +811,7 @@ namespace XREngine
             /// </summary>
             public static EOutputVerbosity OutputVerbosity
                 => OverrideableSettingExtensions.ResolveCascade(
-                    Rendering.Settings.OutputVerbosity,
+                    RuntimeEngine.Rendering.Settings.OutputVerbosity,
                     GameSettings?.OutputVerbosityOverride,
                     UserSettings?.OutputVerbosityOverride);
 

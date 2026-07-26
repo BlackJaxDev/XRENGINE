@@ -178,7 +178,7 @@ public partial class UIEditorComponent : UIComponent
 
         ////World.Name = "TestWorld";
         //_inspector = inspector;
-        //inspector.InspectedObjects = [Engine.Rendering.Settings];
+        //inspector.InspectedObjects = [RuntimeEngine.Rendering.Settings];
 
         ////Create the dockable windows transform for panels
         //var dockableNode = splitChild.NewChild<UIDockingRootComponent>(out var root);

@@ -432,7 +432,9 @@ public static partial class EditorImGuiUI
         // Use a normal button for consistent sizing/alignment, then draw the icon ourselves.
         // This avoids ImageButton shrinking the icon due to frame padding.
         Vector2 buttonMin = ImGui.GetCursorScreenPos();
-        bool clicked = ImGui.Button($"##{id}", buttonSize);
+        ImGui.PushID(id);
+        bool clicked = ImGui.Button("##ToolbarIcon", buttonSize);
+        ImGui.PopID();
 
         Vector2 buttonMax = buttonMin + buttonSize;
 

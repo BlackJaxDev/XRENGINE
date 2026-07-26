@@ -68,6 +68,7 @@ public class PawnComponent : XRComponent, IRuntimeInputControllablePawn, IRuntim
     }
 
     public EventList<XRComponent> LinkedUICanvasInputs { get; } = [];
+    ICollection<XRComponent> IRuntimeInputControllablePawn.LinkedUiInputComponents => LinkedUICanvasInputs;
 
     protected virtual void PostPossess() => PostPossessed?.Invoke(this);
     protected virtual void PrePossess() => PrePossessed?.Invoke(this);
@@ -105,11 +106,31 @@ public class PawnComponent : XRComponent, IRuntimeInputControllablePawn, IRuntim
 
         PrePossess();
         if (Controller is { IsLocal: true })
-        {
-            Debug.Out($"[PawnComponent] Possessed by local controller, registering tick. InputDevice={Controller.InputDevice?.GetType().Name}");
-            RegisterTick(ETickGroup.Normal, InputDispatchTickOrder, TickInput);
-        }
+            RegisterLocalInputTick();
         PostPossess();
+    }
+
+    protected override void OnComponentActivated()
+    {
+        base.OnComponentActivated();
+        RegisterLocalInputTick();
+    }
+
+    protected override void OnComponentDeactivated()
+    {
+        if (Controller is { IsLocal: true })
+            UnregisterTick(ETickGroup.Normal, InputDispatchTickOrder, TickInput);
+
+        base.OnComponentDeactivated();
+    }
+
+    private void RegisterLocalInputTick()
+    {
+        if (Controller is not { IsLocal: true } controller)
+            return;
+
+        Debug.Out($"[PawnComponent] Possessed by local controller, registering tick. InputDevice={controller.InputDevice?.GetType().Name}");
+        RegisterTick(ETickGroup.Normal, InputDispatchTickOrder, TickInput);
     }
 
     private void TickInput()

@@ -4,7 +4,6 @@ namespace XREngine.Input.Devices
 {
     public delegate void DelSendButtonPressedState(int buttonIndex, EButtonInputType inputType, bool pressed);
     public delegate void DelSendButtonAction(int buttonIndex, EButtonInputType inputType);
-    public delegate void DelButtonState(bool pressed);
     [Serializable]
     public class ButtonManager : InputManagerBase
     {

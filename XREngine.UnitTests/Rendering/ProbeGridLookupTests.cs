@@ -252,7 +252,7 @@ public sealed class ProbeGridLookupTests
     [Test]
     public void ProbePacking_SphereRadiiAreStoredInWComponents()
     {
-        string source = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
+        string source = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
 
         source.ShouldContain("InfluenceInner = new Vector4(probe.InfluenceBoxInnerExtents, probe.InfluenceSphereInnerRadius)");
         source.ShouldContain("InfluenceOuter = new Vector4(probe.InfluenceBoxOuterExtents, probe.InfluenceSphereOuterRadius)");
@@ -343,7 +343,7 @@ public sealed class ProbeGridLookupTests
     [Test]
     public void Pipeline_GridBuildUpgradesFromFallbackOnlyToCellTetraCandidates()
     {
-        string source = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
+        string source = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
 
         source.ShouldContain("BuildProbeGrid(_cachedProbePositionData, _cachedProbeParamData, null);");
         source.ShouldContain("BuildProbeGrid(_cachedProbePositionData, _cachedProbeParamData, tetraList);");
@@ -353,7 +353,7 @@ public sealed class ProbeGridLookupTests
     [Test]
     public void PipelineDefineConstant_Exists()
     {
-        string source = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
+        string source = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
         source.ShouldContain("ProbeDebugFallbackDefine");
         source.ShouldContain("XRENGINE_PROBE_DEBUG_FALLBACK");
     }

@@ -14,7 +14,7 @@ namespace XREngine.Data.Core
         public T NewValue { get; } = newValue;
         public bool AllowChange { get; set; } = true;
         string? IXRPropertyChangingEventArgs.PropertyName { get; } = propertyName;
-        object? IXRPropertyChangingEventArgs.CurrentValue { get; } = currentValue;
-        object? IXRPropertyChangingEventArgs.NewValue { get; } = newValue;
+        object? IXRPropertyChangingEventArgs.CurrentValue => CurrentValue;
+        object? IXRPropertyChangingEventArgs.NewValue => NewValue;
     }
 }

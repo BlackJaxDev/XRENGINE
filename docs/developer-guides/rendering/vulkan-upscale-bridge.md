@@ -153,6 +153,30 @@ DLSS frame generation is wired on the native Vulkan default renderer:
 - The optional hidden secondary Vulkan GPU compute context is suppressed while DLSS/DLAA/DLSS-G is active, with a diagnostic and main-renderer job fallback. Streamline and the engine's presentation resources are process-global and must remain bound to the presentation renderer.
 - `XRE_BYPASS_VENDOR_UPSCALE=1` is not allowed to silently bypass a requested vendor feature; it is reported as an error while DLSS/XeSS/frame generation is enabled.
 
+### Desktop frame-loop ownership
+
+P4.8b keeps swapchain creation and destruction in
+`Frame/VulkanRenderer.Swapchain.cs`, but owns proxy acquire/present and PCL
+ordering in focused lifecycle phases:
+
+- `Frame/VulkanRenderer.FrameLoop.Acquire.cs` selects native versus Streamline
+  acquire, then applies the same typed acquire result and ownership policy.
+- `Frame/VulkanRenderer.FrameLoop.Submission.cs` brackets the tracked queue
+  submit with render-submit PCL markers. Successful submit ownership/timeline
+  publication occurs before later marker or staging-trim failures are exposed.
+- `Frame/VulkanRenderer.FrameLoop.Presentation.cs` disables frame generation
+  before incompatible fallback presentation, emits present PCL markers, and
+  routes both native and proxy present through the tracked queue gateway.
+- `Features/Upscaling/VulkanRenderer.StreamlineFrameLifecycle.cs` owns the
+  shared PCL marker/frame-generation helpers used by those phases.
+- Rejected/deferred frames settle through the common `FrameLoop.Recovery.*`
+  owners and reuse the same presentation primitive; they do not construct a
+  second `PresentInfoKHR` path.
+
+The native and Streamline paths are covered by source/policy tests, but final
+DLSS-G behavior still requires supported NVIDIA hardware and a deployed
+Streamline runtime.
+
 ## Diagnostics And Validation
 
 The bridge path emits capability diagnostics through `Engine.Rendering.DescribeVulkanUpscaleBridgeUnavailability(...)` and fail-fast render errors from `VPRC_VendorUpscale` when a requested vendor feature cannot run. Per-dispatch timing is reported as `DispatchMs=...` so live import and vendor evaluation cost can be captured on hardware.
@@ -174,16 +198,17 @@ Manual hardware validation is still required for final runtime confidence:
 
 ## Key Files
 
-- `XRENGINE/Rendering/Pipelines/Commands/Features/VPRC_VendorUpscale.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Bootstrap/OpenGLRenderer.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridge.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridgeSidecar.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridgeProbe.cs`
-- `XRENGINE/Rendering/DLSS/StreamlineNative.cs`
-- `XRENGINE/Rendering/DLSS/NvidiaDlssManager.cs`
-- `XRENGINE/Rendering/XeSS/IntelXessNative.cs`
-- `XRENGINE/Rendering/XeSS/IntelXessManager.cs`
-- `XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.VulkanUpscaleBridge.cs`
+- `XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_VendorUpscale.cs`
+- `XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Bootstrap/OpenGLRenderer.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridge.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridgeSidecar.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridgeProbe.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanRenderer.StreamlineFrameLifecycle.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/DLSS/StreamlineNative.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/DLSS/NvidiaDlssManager.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/XeSS/IntelXessNative.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/XeSS/IntelXessManager.cs`
+- `XREngine.Runtime.Rendering/Runtime/RuntimeEngine.Rendering.VulkanUpscaleBridge.cs`
 - `XREngine.UnitTests/Rendering/NativeInteropSmokeTests.cs`
 - `XREngine.UnitTests/Rendering/VulkanUpscaleBridgeTodoCompletionTests.cs`
 

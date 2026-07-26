@@ -71,7 +71,7 @@ public partial class XRTexture2D
         if (HasAssetExtension(normalizedPath))
             return normalizedPath;
 
-        string authorityPath = RuntimeRenderingHostServices.Current.ResolveTextureStreamingAuthorityPath(normalizedPath);
+        string authorityPath = RuntimeRenderingHostServices.Assets.ResolveTextureStreamingAuthorityPath(normalizedPath);
         if (string.IsNullOrWhiteSpace(authorityPath))
             return normalizedPath;
 
@@ -126,8 +126,8 @@ public partial class XRTexture2D
             return;
 
         double totalMilliseconds = decodeMilliseconds + cloneMilliseconds + resizeMilliseconds + mipBuildMilliseconds;
-        double decodeResizeThreshold = RuntimeRenderingHostServices.Current.TextureSlowCpuDecodeResizeMilliseconds;
-        double mipBuildThreshold = RuntimeRenderingHostServices.Current.TextureSlowMipBuildMilliseconds;
+        double decodeResizeThreshold = RuntimeRenderingHostServices.Settings.TextureSlowCpuDecodeResizeMilliseconds;
+        double mipBuildThreshold = RuntimeRenderingHostServices.Settings.TextureSlowMipBuildMilliseconds;
         if (totalMilliseconds < ImportedTextureTimingLogThresholdMilliseconds
             && decodeMilliseconds < decodeResizeThreshold
             && cloneMilliseconds < decodeResizeThreshold
@@ -138,7 +138,7 @@ public partial class XRTexture2D
         }
 
         TextureRuntimeDiagnostics.LogCpuTextureWorkSlow(
-            RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+            RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
             sourceLabel,
             sourceWidth,
             sourceHeight,
@@ -269,7 +269,7 @@ public partial class XRTexture2D
             || texture.SparseTextureStreamingCommittedBytes > 0L)
         {
             TextureRuntimeDiagnostics.LogSparseStateClearedForDenseUpload(
-                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                 texture.Name,
                 texture.FilePath,
                 texture.SparseTextureStreamingResidentBaseMipLevel,
@@ -327,7 +327,7 @@ public partial class XRTexture2D
             || texture.SparseTextureStreamingCommittedBytes > 0L)
         {
             TextureRuntimeDiagnostics.LogSparseStateClearedForDenseUpload(
-                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
                 texture.Name,
                 texture.FilePath,
                 texture.SparseTextureStreamingResidentBaseMipLevel,
@@ -389,7 +389,7 @@ public partial class XRTexture2D
         int mipCount = includeMipChain
             ? XRTexture.GetSmallestMipmapLevel(residentWidth, residentHeight) + 1
             : 1;
-        int bytesPerPixel = Math.Max(1, RuntimeRenderingHostServices.Current.GetBytesPerPixel(format));
+        int bytesPerPixel = Math.Max(1, RuntimeRenderingHostServices.BackendInterop.GetBytesPerPixel(format));
 
         long totalBytes = 0L;
         for (int mipIndex = 0; mipIndex < mipCount; mipIndex++)

@@ -167,7 +167,7 @@ namespace XREngine.Components
 
                 // Snapshot restore / play-mode transitions can temporarily desync runtime-only links.
                 // The authoritative source of "is this camera used" is whether any live viewport points at it.
-                foreach (var viewport in RuntimeRenderingHostServices.Current.EnumerateActiveViewports())
+                foreach (var viewport in RuntimeRenderingHostServices.Factories.EnumerateActiveViewports())
                     if (viewport is XRViewport xrViewport && ReferenceEquals(xrViewport.CameraComponent, this))
                         return true;
 
@@ -181,7 +181,7 @@ namespace XREngine.Components
         /// <returns>The local player controller using this camera, or null if not in use by any local player.</returns>
         public IPawnController? GetUsingLocalPlayer()
         {
-            foreach (var player in RuntimeRenderingHostServices.Current.EnumerateLocalPlayers())
+            foreach (var player in RuntimeRenderingHostServices.Factories.EnumerateLocalPlayers())
             {
                 if (player is null)
                     continue;
@@ -192,7 +192,7 @@ namespace XREngine.Components
 
             // Fallback: player.Viewport is runtime-only and can be temporarily null/stale after snapshot restore.
             // If a viewport is bound to this camera, trust the viewport's AssociatedPlayer.
-            foreach (var viewport in RuntimeRenderingHostServices.Current.EnumerateActiveViewports())
+            foreach (var viewport in RuntimeRenderingHostServices.Factories.EnumerateActiveViewports())
                 if (viewport is XRViewport xrViewport && ReferenceEquals(xrViewport.CameraComponent, this) && xrViewport.AssociatedPlayer is not null)
                     return xrViewport.AssociatedPlayer;
 
@@ -417,7 +417,7 @@ namespace XREngine.Components
             var cam = SceneNode is null
                 ? new XRCamera { Parameters = parameters }
                 : new XRCamera(Transform, parameters);
-            cam.DepthMode = RuntimeRenderingHostServices.Current.ResolveSceneCameraDepthModePreference();
+            cam.DepthMode = RuntimeRenderingHostServices.Factories.ResolveSceneCameraDepthModePreference();
             cam.PropertyChanged += CameraPropertyChanged;
             cam.ViewportAdded += ViewportAdded;
             cam.ViewportRemoved += ViewportRemoved;
@@ -457,7 +457,7 @@ namespace XREngine.Components
         /// </summary>
         /// <param name="playerIndex"></param>
         public IRuntimeInputControllablePawn? SetAsPlayerView(ELocalPlayerIndex playerIndex)
-            => RuntimeRenderingHostServices.Current.EnsurePawnForCamera(SceneNode, this, playerIndex);
+            => RuntimeRenderingHostServices.Factories.EnsurePawnForCamera(SceneNode, this, playerIndex);
 
         /// <summary>
         /// Helper method to set this camera as the view of the player with the given index.
@@ -466,7 +466,7 @@ namespace XREngine.Components
         /// <typeparam name="T"></typeparam>
         /// <param name="playerIndex"></param>
         public void SetAsPlayerView<T>(ELocalPlayerIndex playerIndex) where T : XRComponent, IRuntimeInputControllablePawn
-            => RuntimeRenderingHostServices.Current.EnsurePawnForCamera(SceneNode, this, playerIndex, typeof(T));
+            => RuntimeRenderingHostServices.Factories.EnsurePawnForCamera(SceneNode, this, playerIndex, typeof(T));
 
         protected override void OnTransformChanged()
         {

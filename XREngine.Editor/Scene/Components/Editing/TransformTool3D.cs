@@ -1638,17 +1638,17 @@ namespace XREngine.Scene.Components.Editing
 
         private void Render()
         {
-            if ((!_hiCam && !_hiSphere && !_hiAxis.Any) || Engine.Rendering.State.IsShadowPass || !RenderDebugInfo)
+            if ((!_hiCam && !_hiSphere && !_hiAxis.Any) || RuntimeEngine.Rendering.State.IsShadowPass || !RenderDebugInfo)
                 return;
 
-            var camera = Engine.Rendering.State.RenderingCamera;
+            var camera = RuntimeEngine.Rendering.State.RenderingCamera;
             if (camera != null && !camera.CullingMask.Contains(DefaultLayers.GizmosIndex))
                 return;
             
-            Engine.Rendering.Debug.RenderPoint(_lastPointWorld, ColorF4.Black);
+            RuntimeEngine.Rendering.Debug.RenderPoint(_lastPointWorld, ColorF4.Black);
 
             if (camera != null)
-                Engine.Rendering.Debug.RenderLine(
+                RuntimeEngine.Rendering.Debug.RenderLine(
                     _lastPointWorld,
                     _lastPointWorld + Vector3.TransformNormal(_worldDragPlaneNormal, Transform.WorldMatrix) * camera.DistanceScaleOrthographic(Transform.WorldTranslation, 5.0f),
                     ColorF4.Black);

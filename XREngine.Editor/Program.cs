@@ -83,6 +83,7 @@ internal partial class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        RuntimeRenderingBootstrap.InstallEngineHostServices();
         WriteBootstrapTrace("Editor process entry.");
         InstallGlobalCrashDiagnostics();
 
@@ -143,6 +144,17 @@ internal partial class Program
 
         // Start play mode controller
         EditorPlayModeController.Initialize();
+
+        if (args.Any(
+                argument => string.Equals(
+                    argument,
+                    "--renderer-development",
+                    StringComparison.OrdinalIgnoreCase)))
+        {
+            EditorImGuiUI.EnableRendererDevelopmentMode();
+            EngineDebug.Out(
+                "Renderer development mode enabled. Structural backend edits use the in-editor transactional build/reload workflow.");
+        }
 
         // Start vr pawn switcher to allow switching between desktop and VR pawns in the editor without restarting
         EditorOpenXrPawnSwitcher.Initialize();
@@ -248,7 +260,7 @@ internal partial class Program
     {
         if (TryGetOpenXrRenderPacingModeEnv(out OpenXRAPI.OpenXrRenderPacingMode envMode))
         {
-            XREngine.Engine.Rendering.Settings.OpenXrRenderPacingMode = envMode;
+            XREngine.RuntimeEngine.Rendering.Settings.OpenXrRenderPacingMode = envMode;
             WriteBootstrapTrace($"OpenXR render pacing overridden to {envMode} via {XREngineEnvironmentVariables.OpenXrRenderPacingMode}.");
             return;
         }
@@ -257,7 +269,7 @@ internal partial class Program
             return;
 
         OpenXRAPI.OpenXrRenderPacingMode mode = RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
-        XREngine.Engine.Rendering.Settings.OpenXrRenderPacingMode = mode;
+        XREngine.RuntimeEngine.Rendering.Settings.OpenXrRenderPacingMode = mode;
         WriteBootstrapTrace($"OpenXR Vulkan unit-testing launch forcing render pacing to {mode} after editor preferences loaded.");
     }
 
@@ -282,9 +294,9 @@ internal partial class Program
         if (!TryGetOpenXrPoseTimeOffsetMsEnv(out float offsetMs))
             return;
 
-        XREngine.Engine.Rendering.Settings.OpenXrPoseTimeOffsetMs = offsetMs;
+        XREngine.RuntimeEngine.Rendering.Settings.OpenXrPoseTimeOffsetMs = offsetMs;
         WriteBootstrapTrace(
-            $"OpenXR pose time offset overridden to {XREngine.Engine.Rendering.Settings.OpenXrPoseTimeOffsetMs:F2} ms via {XREngineEnvironmentVariables.OpenXrPoseTimeOffsetMs}.");
+            $"OpenXR pose time offset overridden to {XREngine.RuntimeEngine.Rendering.Settings.OpenXrPoseTimeOffsetMs:F2} ms via {XREngineEnvironmentVariables.OpenXrPoseTimeOffsetMs}.");
     }
 
     private static bool TryGetOpenXrPoseTimeOffsetMsEnv(out float offsetMs)
@@ -719,7 +731,7 @@ internal partial class Program
             s_startupTimerStopped = 0;
             Engine.StartupPresentationEnabled = true;
             s_startupStopwatch = Stopwatch.StartNew();
-            Engine.Windows.PostAdded += OnStartupWindowAdded;
+            RuntimeEngine.Windows.PostAdded += OnStartupWindowAdded;
         }
     }
 
@@ -792,14 +804,16 @@ internal partial class Program
         Engine.EnqueueRenderThreadTask(
             () =>
             {
-                if (window.Renderer is not OpenGLRenderer glRenderer)
+                IRuntimeRendererHost rendererHost = window.Renderer;
+                if (!rendererHost.TryGetBackendCapability<IRendererStartupWarmupBackendCapability>(out var warmup) ||
+                    warmup is null)
                     return;
 
-                glRenderer.MeshGenerationQueue.BoostBudgetUntilDrained(
+                warmup.BoostStartupBudgets(
                     StartupMeshGenerationBudgetMs,
                     StartupMeshGenerationNormalRendererCap,
-                    StartupMeshGenerationPriorityRendererCap);
-                glRenderer.UploadQueue.BoostBudgetUntilDrained(StartupUploadBudgetMs);
+                    StartupMeshGenerationPriorityRendererCap,
+                    StartupUploadBudgetMs);
                 WriteBootstrapTrace(
                     $"Enabled GL startup warmup budgets: mesh={StartupMeshGenerationBudgetMs:F0}ms/{StartupMeshGenerationNormalRendererCap} normal renderers, upload={StartupUploadBudgetMs:F0}ms.");
             },
@@ -835,7 +849,7 @@ internal partial class Program
 
         // The OpenGL front-buffer luminance probe can force a large first-frame sync.
         // The second-frame fallback gives a stable startup marker without blocking presentation.
-        if (renderer is OpenGLRenderer)
+        if (renderer.BackendId == RendererBackendId.OpenGL)
             return;
 
         if (Interlocked.CompareExchange(ref s_captureInFlight, 1, 0) != 0)
@@ -878,7 +892,7 @@ internal partial class Program
         var elapsed = s_startupStopwatch?.Elapsed.TotalMilliseconds ?? 0;
         EngineDebug.Out($"{messagePrefix} in {elapsed:F0} ms.");
         window.PostRenderViewportsCallback -= OnStartupPostRenderViewports;
-        Engine.Windows.PostAdded -= OnStartupWindowAdded;
+        RuntimeEngine.Windows.PostAdded -= OnStartupWindowAdded;
         FlushDeferredStartupWork();
     }
 
@@ -1061,7 +1075,7 @@ internal partial class Program
         }
 
         // Apply engine settings
-        Engine.Rendering.Settings.OutputVerbosity = EOutputVerbosity.Verbose;
+        RuntimeEngine.Rendering.Settings.OutputVerbosity = EOutputVerbosity.Verbose;
 
         // Allow overriding networking mode via env var for quick local testing.
         string? netOverride = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.NetMode);

@@ -69,7 +69,7 @@ public sealed class VPRC_BuildAccelerationStructure : ViewportRenderCommand
         }
 
         int passIndex = ResolveRenderGraphPassIndex();
-        if (passIndex == int.MinValue && AbstractRenderer.Current is VulkanRenderer)
+        if (passIndex == int.MinValue && AbstractRenderer.Current?.BackendId == RendererBackendId.Vulkan)
         {
             Debug.RenderingWarningEvery(
                 "BuildAccelerationStructure.MissingRenderGraphPass",

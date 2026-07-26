@@ -376,7 +376,7 @@ public sealed class ForwardDepthNormalVariantTests : GpuTestBase
     {
         string source = LoadRepoSource(Path.Combine("XREngine", "Rendering", "API", "Rendering", "OpenGL", "Types", "Meshes", "GLMaterial.cs"));
 
-        source.ShouldContain("Engine.Rendering.State.IsShadowPass");
+        source.ShouldContain("RuntimeEngine.Rendering.State.IsShadowPass");
         source.ShouldContain("!materialProgram.HasActiveSamplerUniforms()");
         source.ShouldContain("if (isSamplerFreeShadowBindingPath)");
         source.ShouldContain("return;");

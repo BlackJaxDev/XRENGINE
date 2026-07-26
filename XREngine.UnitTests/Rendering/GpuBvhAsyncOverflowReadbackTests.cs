@@ -139,7 +139,7 @@ public sealed class GpuBvhAsyncOverflowReadbackTests
     {
         string abstractRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Generic/AbstractRenderer.cs");
         string fence = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Generic/XRGpuFence.cs");
-        string openGlFence = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Frame/OpenGLRenderer.GpuFence.cs");
+        string openGlFence = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Frame/OpenGLRenderer.GpuFence.cs");
 
         abstractRenderer.ShouldContain("public virtual XRGpuFence? InsertGpuFence()");
         fence.ShouldContain("public enum EGpuFenceStatus");

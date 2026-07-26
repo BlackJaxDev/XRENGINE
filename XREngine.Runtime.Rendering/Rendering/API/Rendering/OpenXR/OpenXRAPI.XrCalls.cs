@@ -288,7 +288,7 @@ public unsafe partial class OpenXRAPI
         AssertOpenXrRenderThread("xrEndFrame");
         long start = Stopwatch.GetTimestamp();
         Result result;
-        using (var endFrameSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.XrEndFrame"))
+        using (var endFrameSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.XrEndFrame"))
         {
             result = CheckResult(Api.EndFrame(_session, in frameEndInfo), "xrEndFrame");
         }
@@ -664,31 +664,9 @@ public unsafe partial class OpenXRAPI
 
         TearDownSessionResourcesOnOwningThread(true);
 
-        if (_gl is not null)
-        {
-            if (_blitReadFbo != 0)
-            {
-                _gl.DeleteFramebuffer(_blitReadFbo);
-                _blitReadFbo = 0;
-            }
-            if (_blitDrawFbo != 0)
-            {
-                _gl.DeleteFramebuffer(_blitDrawFbo);
-                _blitDrawFbo = 0;
-            }
-        }
-
         try
         {
-            _viewportMirrorFbo?.Destroy();
-            _viewportMirrorFbo = null;
-            _viewportMirrorDepth?.Destroy();
-            _viewportMirrorDepth = null;
-            _viewportMirrorColor?.Destroy();
-            _viewportMirrorColor = null;
-            DestroyVulkanEyeMirrorTargets();
-            DestroyVulkanStereoRenderTarget();
-            DestroyOpenXrPreviewTargets();
+            DestroyGraphicsBackendResources();
         }
         catch
         {
@@ -698,47 +676,10 @@ public unsafe partial class OpenXRAPI
 
     internal void CleanupSwapchains()
     {
-        bool skippedGlFramebufferDeletes = false;
+        _graphicsBinding?.CleanupSwapchains(this);
+
         for (int i = 0; i < _viewCount; i++)
         {
-            uint[]? swapchainFramebuffers = _swapchainFramebuffers[i];
-            var gl = _gl;
-            if (swapchainFramebuffers is not null && gl is not null)
-            {
-                if (wglGetCurrentContext() != 0)
-                {
-                    foreach (var fbo in swapchainFramebuffers)
-                    {
-                        try
-                        {
-                            gl.DeleteFramebuffer(fbo);
-                        }
-                        catch (Exception ex)
-                        {
-                            skippedGlFramebufferDeletes = true;
-                            RecordSmokeWarning($"OpenXR skipped deleting GL swapchain framebuffer {fbo}: {ex.Message}");
-                            break;
-                        }
-                    }
-                }
-                else
-                {
-                    skippedGlFramebufferDeletes = true;
-                }
-            }
-
-            if (_swapchainImagesGL[i] != null)
-            {
-                Marshal.FreeHGlobal((nint)_swapchainImagesGL[i]);
-                _swapchainImagesGL[i] = null;
-            }
-
-            if (_swapchainImagesVK[i] != null)
-            {
-                Marshal.FreeHGlobal((nint)_swapchainImagesVK[i]);
-                _swapchainImagesVK[i] = null;
-            }
-
             if (_swapchainImagesDX[i] != null)
             {
                 Marshal.FreeHGlobal((nint)_swapchainImagesDX[i]);
@@ -748,7 +689,6 @@ public unsafe partial class OpenXRAPI
             if (_swapchains[i].Handle != 0)
                 Api.DestroySwapchain(_swapchains[i]);
 
-            _swapchainFramebuffers[i] = null;
             _swapchainImageCounts[i] = 0;
             _swapchainWidths[i] = 0;
             _swapchainHeights[i] = 0;
@@ -756,8 +696,5 @@ public unsafe partial class OpenXRAPI
         }
 
         _viewCount = 0;
-
-        if (skippedGlFramebufferDeletes)
-            RecordSmokeWarning("OpenXR skipped one or more GL swapchain framebuffer deletes because no current OpenGL context was available during teardown.");
     }
 }

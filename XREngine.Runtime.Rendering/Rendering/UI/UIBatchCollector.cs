@@ -76,8 +76,8 @@ public sealed class UIBatchCollector : IDisposable
         public Vector4 OutlineColor;
         public float OutlineThickness;
         public Vector4 UIXYWH;
+        public int GlyphOffset;
         public int GlyphCount;
-        public (Vector4 transform, Vector4 uvs)[] Glyphs;
     }
 
     /// <summary>
@@ -93,6 +93,7 @@ public sealed class UIBatchCollector : IDisposable
         public int DebugMode;
         public bool HasOutline;
         public readonly List<TextEntry> Entries = [];
+        public readonly List<(Vector4 transform, Vector4 uvs)> Glyphs = [];
         public int TotalGlyphs;
 
         public void Clear()
@@ -105,6 +106,7 @@ public sealed class UIBatchCollector : IDisposable
             DebugMode = 0;
             HasOutline = false;
             Entries.Clear();
+            Glyphs.Clear();
             TotalGlyphs = 0;
         }
     }
@@ -402,7 +404,7 @@ public sealed class UIBatchCollector : IDisposable
         float distanceRangeMiddle,
         float msdfFillBias,
         int debugMode,
-        (Vector4 transform, Vector4 uvs)[] glyphs)
+        List<(Vector4 transform, Vector4 uvs)> glyphs)
     {
         var state = GetOrCreateCollectPassState(renderPass);
         var groups = GetOrCreatePool(_collectTextGroups, renderPass);
@@ -434,6 +436,10 @@ public sealed class UIBatchCollector : IDisposable
             passes.AddCPU(AcquireMarker(renderPass, zIndex, EBatchMarkerKind.Text, groupIndex));
         }
 
+        int glyphOffset = batch.Glyphs.Count;
+        for (int i = 0; i < glyphs.Count; i++)
+            batch.Glyphs.Add(glyphs[i]);
+
         batch.Entries.Add(new TextEntry
         {
             WorldMatrix = worldMatrix,
@@ -441,15 +447,15 @@ public sealed class UIBatchCollector : IDisposable
             OutlineColor = outlineColor,
             OutlineThickness = outlineThickness,
             UIXYWH = uixywh,
-            GlyphCount = glyphs.Length,
-            Glyphs = glyphs
+            GlyphOffset = glyphOffset,
+            GlyphCount = glyphs.Count,
         });
         batch.HasOutline |= outlineThickness > 0.0f && outlineColor.W > 0.0f;
-        batch.TotalGlyphs += glyphs.Length;
+        batch.TotalGlyphs += glyphs.Count;
 
         if (s_textAddDiagCount++ < 40)
         {
-            var firstGlyph = glyphs.Length > 0 ? glyphs[0] : default;
+            var firstGlyph = glyphs.Count > 0 ? glyphs[0] : default;
             Debug.Log(
                 ELogCategory.UI,
                 "[FpsTextDiag] UIBatchCollector.AddTextQuad #{0}: pass={1} z={2} group={3} entries={4} totalGlyphs={5} glyphs={6} atlasType={7} range={8:F2} middle={9:F2} bias={10:F2} debugMode={11} color=({12:F2},{13:F2},{14:F2},{15:F2}) worldT=({16:F1},{17:F1},{18:F1}) bounds=({19:F1},{20:F1},{21:F1},{22:F1}) firstTfm=({23:F2},{24:F2},{25:F2},{26:F2}) firstUv=({27:F5},{28:F5},{29:F5},{30:F5}) atlas=({31}x{32})",
@@ -459,7 +465,7 @@ public sealed class UIBatchCollector : IDisposable
                 state.ActiveGroupIndex,
                 batch.Entries.Count,
                 batch.TotalGlyphs,
-                glyphs.Length,
+                glyphs.Count,
                 atlasType,
                 distanceRange,
                 distanceRangeMiddle,
@@ -1037,7 +1043,9 @@ public sealed class UIBatchCollector : IDisposable
         if (s_textRenderDiagCount++ < 40)
         {
             var firstEntry = batchData.Entries[0];
-            var firstGlyph = firstEntry.GlyphCount > 0 ? firstEntry.Glyphs[0] : default;
+            var firstGlyph = firstEntry.GlyphCount > 0
+                ? batchData.Glyphs[firstEntry.GlyphOffset]
+                : default;
             string projectedGlyph = GetProjectedGlyphSummary(in firstEntry.WorldMatrix, in firstGlyph.transform);
             Debug.Log(
                 ELogCategory.UI,
@@ -1265,7 +1273,7 @@ public sealed class UIBatchCollector : IDisposable
             // Write glyph data
             for (int g = 0; g < entry.GlyphCount; g++)
             {
-                var (transform, uvs) = entry.Glyphs[g];
+                var (transform, uvs) = batchData.Glyphs[entry.GlyphOffset + g];
                 glyphTransforms[glyphIndex] = transform;
                 glyphUvs[glyphIndex] = uvs;
                 glyphIndices[glyphIndex] = (uint)t;

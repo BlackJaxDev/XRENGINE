@@ -312,7 +312,7 @@ public static class BootstrapLightingBuilder
 
     private static void EnableRequiredDynamicLightShadowAtlases(int pointLightCount, int spotLightCount)
     {
-        var renderSettings = Engine.Rendering.Settings;
+        var renderSettings = RuntimeEngine.Rendering.Settings;
 
         if (pointLightCount > 0)
             renderSettings.UsePointShadowAtlas = true;

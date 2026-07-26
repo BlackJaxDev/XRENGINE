@@ -5,10 +5,10 @@ using System.Threading.Tasks;
 using XREngine;
 using XREngine.Data.Core;
 using XREngine.Rendering.Occlusion;
-using GpuPipelineStats = XREngine.Engine.Rendering.Stats.GpuPipelineProfiler;
+using GpuPipelineStats = XREngine.RuntimeEngine.Rendering.Stats.GpuPipelineProfiler;
 using OcclusionTelemetry = XREngine.Rendering.Occlusion.OcclusionTelemetry;
-using VrStats = XREngine.Engine.Rendering.Stats.Vr;
-using VulkanStats = XREngine.Engine.Rendering.Stats.Vulkan;
+using VrStats = XREngine.RuntimeEngine.Rendering.Stats.Vr;
+using VulkanStats = XREngine.RuntimeEngine.Rendering.Stats.Vulkan;
 
 namespace XREngine.Editor.Mcp
 {
@@ -71,16 +71,16 @@ namespace XREngine.Editor.Mcp
                 {
                     frame_lifecycle = new
                     {
-                        collect_visible_late_policy = Engine.Rendering.Stats.FrameLifecycle.CollectVisibleLatePolicy,
-                        requested_collect_generation = Engine.Rendering.Stats.FrameLifecycle.RequestedCollectGeneration,
-                        completed_collect_generation = Engine.Rendering.Stats.FrameLifecycle.CompletedCollectGeneration,
-                        published_collect_generation = Engine.Rendering.Stats.FrameLifecycle.PublishedCollectGeneration,
-                        consumed_collect_generation = Engine.Rendering.Stats.FrameLifecycle.ConsumedCollectGeneration,
-                        required_collect_generation = Engine.Rendering.Stats.FrameLifecycle.RequiredCollectGeneration,
-                        collect_wait_for_render_ms = Engine.Rendering.Stats.FrameLifecycle.CollectWaitForRenderMs,
-                        render_wait_for_collect_ms = Engine.Rendering.Stats.FrameLifecycle.RenderWaitForCollectMs,
-                        render_wait_reason = Engine.Rendering.Stats.FrameLifecycle.RenderWaitReason,
-                        stale_collect_reuse_frames = Engine.Rendering.Stats.FrameLifecycle.StaleCollectReuseFrames,
+                        collect_visible_late_policy = RuntimeEngine.Rendering.Stats.FrameLifecycle.CollectVisibleLatePolicy,
+                        requested_collect_generation = RuntimeEngine.Rendering.Stats.FrameLifecycle.RequestedCollectGeneration,
+                        completed_collect_generation = RuntimeEngine.Rendering.Stats.FrameLifecycle.CompletedCollectGeneration,
+                        published_collect_generation = RuntimeEngine.Rendering.Stats.FrameLifecycle.PublishedCollectGeneration,
+                        consumed_collect_generation = RuntimeEngine.Rendering.Stats.FrameLifecycle.ConsumedCollectGeneration,
+                        required_collect_generation = RuntimeEngine.Rendering.Stats.FrameLifecycle.RequiredCollectGeneration,
+                        collect_wait_for_render_ms = RuntimeEngine.Rendering.Stats.FrameLifecycle.CollectWaitForRenderMs,
+                        render_wait_for_collect_ms = RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderWaitForCollectMs,
+                        render_wait_reason = RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderWaitReason,
+                        stale_collect_reuse_frames = RuntimeEngine.Rendering.Stats.FrameLifecycle.StaleCollectReuseFrames,
                     },
                     gpu_pipeline = new
                     {
@@ -91,7 +91,7 @@ namespace XREngine.Editor.Mcp
                         status = GpuPipelineStats.GpuRenderPipelineStatusMessage,
                         frame_ms = GpuPipelineStats.GpuRenderPipelineFrameMs,
                     },
-                    frame_outputs = BuildFrameOutputManifest(Engine.Rendering.Stats.FrameOutputs.LastManifest),
+                    frame_outputs = BuildFrameOutputManifest(RuntimeEngine.Rendering.Stats.FrameOutputs.LastManifest),
                     occlusion = new
                     {
                         effective_mode = OcclusionTelemetry.LastEffectiveMode.ToString(),
@@ -368,13 +368,13 @@ namespace XREngine.Editor.Mcp
                 }));
         }
 
-        private static object BuildFrameOutputManifest(Engine.Rendering.Stats.FrameOutputManifestSnapshot snapshot)
+        private static object BuildFrameOutputManifest(RuntimeEngine.Rendering.Stats.FrameOutputManifestSnapshot snapshot)
         {
-            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs = snapshot.Outputs ?? [];
+            RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs = snapshot.Outputs ?? [];
             object[] outputData = new object[outputs.Length];
             for (int i = 0; i < outputs.Length; i++)
             {
-                Engine.Rendering.Stats.FrameOutputEntrySnapshot output = outputs[i];
+                RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot output = outputs[i];
                 outputData[i] = new
                 {
                     frame_id = output.FrameId,

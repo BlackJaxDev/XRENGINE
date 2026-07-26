@@ -6,15 +6,10 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <Platforms>AnyCPU;x64</Platforms>
-    <VmaBridgeProject>$(MSBuildProjectDirectory)\..\Build\Native\VulkanMemoryAllocatorBridge\VulkanMemoryAllocatorBridge.vcxproj</VmaBridgeProject>
-    <VmaBridgeNativeDll>$(MSBuildProjectDirectory)\runtimes\win-x64\native\VulkanMemoryAllocatorBridge.Native.dll</VmaBridgeNativeDll>
-    <VmaBridgeBuildStateFile>$(BaseIntermediateOutputPath)vma-active-native-configuration.txt</VmaBridgeBuildStateFile>
-    <VmaBridgeBuildStampFile>$(BaseIntermediateOutputPath)vma-native-build.stamp</VmaBridgeBuildStampFile>
+    <RiveSharpManagedDll>$(MSBuildProjectDirectory)\..\Build\Submodules\rive-sharp\RiveSharp\bin\$(Configuration)\netstandard2.0\RiveSharp.dll</RiveSharpManagedDll>
+    <DefineConstants Condition="Exists('$(RiveSharpManagedDll)')">$(DefineConstants);XRENGINE_HAS_RIVESHARP</DefineConstants>
+    <Freetype64Source Condition="'$(Freetype64Source)' == ''">$(NuGetPackageRoot)sharpfont.dependencies\2.6.0\bin\msvc12\x64\freetype6.dll</Freetype64Source>
   </PropertyGroup>
-
-  <ItemGroup>
-    <VmaBridgeBuildInput Include="$(VmaBridgeProject);$(MSBuildProjectDirectory)\..\Build\Native\VulkanMemoryAllocatorBridge\**\*.cpp;$(MSBuildProjectDirectory)\..\Build\Native\VulkanMemoryAllocatorBridge\**\*.h;$(MSBuildProjectDirectory)\..\Build\Native\VulkanMemoryAllocatorBridge\**\*.hpp" />
-  </ItemGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
     <DebugType>embedded</DebugType>
@@ -33,23 +28,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Remove="Rendering\API\Rendering\Vulkan\Features\Raytracing\VulkanRenderer.Raytracing.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill.vert" />
-    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill.frag" />
-    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill_path.vert" />
-    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill_path.frag" />
-  </ItemGroup>
-
-  <ItemGroup>
     <PackageReference Include="BitsKit" Version="1.2.0" />
-    <PackageReference Include="AssimpNetter" Version="6.0.2.1" />
     <PackageReference Include="DotnetNoise" Version="1.0.0" />
     <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1" />
     <PackageReference Include="GraphQL" Version="8.8.3" />
     <PackageReference Include="ImmediateReflection" Version="2.0.0" />
+    <PackageReference Include="ImGui.NET" Version="1.90.8.1" />
     <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
     <PackageReference Include="MathNet.Numerics.Providers.CUDA" Version="5.0.0" />
     <PackageReference Include="System.IO.Hashing" Version="10.0.3" />
@@ -74,17 +58,6 @@
     <PackageReference Include="Silk.NET.Input.Extensions" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Input.Glfw" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Input.Sdl" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenGL" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenGL.Extensions.AMD" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenGL.Extensions.ARB" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenGL.Extensions.EXT" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenGL.Extensions.ImGui" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenGL.Extensions.INTEL" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenGL.Extensions.KHR" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenGL.Extensions.NV" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenGL.Extensions.OVR" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenGLES.Extensions.EXT" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenGLES.Extensions.NV" Version="2.23.0" />
     <PackageReference Include="Silk.NET.OpenXR" Version="2.23.0" />
     <PackageReference Include="Silk.NET.OpenXR.Extensions.EXT" Version="2.23.0" />
     <PackageReference Include="Silk.NET.OpenXR.Extensions.HTC" Version="2.23.0" />
@@ -93,21 +66,6 @@
     <PackageReference Include="Silk.NET.OpenXR.Extensions.MSFT" Version="2.23.0" />
     <PackageReference Include="Silk.NET.OpenXR.Extensions.VALVE" Version="2.23.0" />
     <PackageReference Include="Silk.NET.SDL" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.Vulkan" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.Vulkan.Extensions.AMD" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.Vulkan.Extensions.ARM" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.Vulkan.Extensions.EXT" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.Vulkan.Extensions.FB" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.Vulkan.Extensions.HUAWEI" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.Vulkan.Extensions.INTEL" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.Vulkan.Extensions.KHR" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.Vulkan.Extensions.NV" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.Vulkan.Extensions.NVX" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.Vulkan.Extensions.QNX" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.Vulkan.Extensions.VALVE" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.Shaderc" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.Vulkan.Loader.Native" Version="2025.9.12" />
-    <PackageReference Include="Silk.NET.WGL.Extensions.ARB" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Windowing" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Windowing.Common" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Windowing.Extensions" Version="2.23.0" />
@@ -127,79 +85,61 @@
     <Reference Include="OpenVR.NET">
       <HintPath>..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll</HintPath>
     </Reference>
+    <Reference Include="RiveSharp" Condition="Exists('$(RiveSharpManagedDll)')">
+      <HintPath>$(RiveSharpManagedDll)</HintPath>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\XREngine.Animation\XREngine.Animation.csproj" />
-    <ProjectReference Include="..\XREngine.Audio\XREngine.Audio.csproj" />
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
-    <ProjectReference Include="..\XREngine.Fbx\XREngine.Fbx.csproj" />
-    <ProjectReference Include="..\XREngine.Input\XREngine.Input.csproj" />
-    <ProjectReference Include="..\XREngine.Modeling\XREngine.Modeling.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="Rendering\API\Rendering\Vulkan\Features\Raytracing\VulkanRenderer.Raytracing.cs" />
-    <None Include="runtimes\win-x64\native\VulkanMemoryAllocatorBridge.Native.dll">
+    <None Include="$(RiveSharpManagedDll)" Pack="true" PackagePath="lib\$(TargetFramework)\" Visible="false" Condition="Exists('$(RiveSharpManagedDll)')" />
+    <None Update="runtimes\win-x64\native\rive.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <TargetPath>VulkanMemoryAllocatorBridge.Native.dll</TargetPath>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
-    <None Include="runtimes\win-x64\native\VulkanMemoryAllocatorBridge.Native.pdb" Condition="Exists('runtimes\win-x64\native\VulkanMemoryAllocatorBridge.Native.pdb')">
+    <None Include="..\Build\Dependencies\FFmpeg\HlsReference\win-x64\*.dll" Condition="Exists('..\Build\Dependencies\FFmpeg\HlsReference\win-x64')">
+      <Link>%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <TargetPath>VulkanMemoryAllocatorBridge.Native.pdb</TargetPath>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
+    <None Include="..\docs\licenses\nuget\FFmpeg.AutoGen-7.1.1-LGPL-3.0.txt" Condition="Exists('..\docs\licenses\nuget\FFmpeg.AutoGen-7.1.1-LGPL-3.0.txt')">
+      <Link>licenses\FFmpeg.AutoGen-LGPL-3.0.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <Content Include="$(Freetype64Source)" Condition="Exists('$(Freetype64Source)')">
+      <Link>freetype6.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 
-  <Target Name="PrepareVulkanMemoryAllocatorBridgeBuildState"
-          BeforeTargets="BuildVulkanMemoryAllocatorBridge"
-          Condition="'$(XREngineUseExistingNativeBridges)' != 'true' and '$(OS)' == 'Windows_NT' and Exists('$(VmaBridgeProject)')">
-    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(VmaBridgeBuildStateFile)'))" />
-    <PropertyGroup>
-      <VmaBridgeCurrentBuildState>$(Configuration)|x64|$(VULKAN_SDK)</VmaBridgeCurrentBuildState>
-    </PropertyGroup>
-    <WriteLinesToFile File="$(VmaBridgeBuildStateFile)" Lines="$(VmaBridgeCurrentBuildState)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  <Target Name="ForceFreetype64" AfterTargets="Build" Condition="Exists('$(Freetype64Source)')">
+    <Copy SourceFiles="$(Freetype64Source)" DestinationFiles="$(OutDir)freetype6.dll" SkipUnchangedFiles="false" />
   </Target>
 
-  <Target Name="BuildVulkanMemoryAllocatorBridge"
-          BeforeTargets="PrepareForBuild"
-          Inputs="@(VmaBridgeBuildInput);$(VmaBridgeBuildStateFile)"
-          Outputs="$(VmaBridgeNativeDll);$(VmaBridgeBuildStampFile)"
-          Condition="'$(XREngineUseExistingNativeBridges)' != 'true' and '$(OS)' == 'Windows_NT' and Exists('$(VmaBridgeProject)')">
-    <PropertyGroup>
-      <VsWhereExe>$(MSBuildProgramFiles32)\Microsoft Visual Studio\Installer\vswhere.exe</VsWhereExe>
-      <VmaBridgeMsBuildPathFile>$(BaseIntermediateOutputPath)vma-bridge-msbuild-path.txt</VmaBridgeMsBuildPathFile>
-    </PropertyGroup>
-
-    <MakeDir Directories="$(BaseIntermediateOutputPath)" />
-    <Exec Condition="Exists('$(VsWhereExe)')" Command="&quot;$(VsWhereExe)&quot; -latest -requires Microsoft.Component.MSBuild -find &quot;MSBuild\**\Bin\MSBuild.exe&quot; &gt; &quot;$(VmaBridgeMsBuildPathFile)&quot;" />
-    <ReadLinesFromFile Condition="Exists('$(VmaBridgeMsBuildPathFile)')" File="$(VmaBridgeMsBuildPathFile)">
-      <Output TaskParameter="Lines" PropertyName="VmaBridgeMsBuildPath" />
-    </ReadLinesFromFile>
-
-    <PropertyGroup>
-      <VmaBridgeMsBuildPath Condition="'$(VmaBridgeMsBuildPath)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe')">$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe</VmaBridgeMsBuildPath>
-      <VmaBridgeMsBuildPath Condition="'$(VmaBridgeMsBuildPath)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe')">$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe</VmaBridgeMsBuildPath>
-      <VmaBridgeMsBuildPath Condition="'$(VmaBridgeMsBuildPath)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe')">$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe</VmaBridgeMsBuildPath>
-      <VmaBridgeMsBuildPath Condition="'$(VmaBridgeMsBuildPath)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe')">$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe</VmaBridgeMsBuildPath>
-      <VmaBridgeMsBuildPath Condition="'$(VmaBridgeMsBuildPath)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe')">$(MSBuildProgramFiles32)\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe</VmaBridgeMsBuildPath>
-      <VmaBridgeMsBuildPath Condition="'$(VmaBridgeMsBuildPath)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe')">$(MSBuildProgramFiles32)\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe</VmaBridgeMsBuildPath>
-    </PropertyGroup>
-
-    <Message Condition="'$(VmaBridgeMsBuildPath)' == '' and Exists('$(VmaBridgeNativeDll)')" Importance="high" Text="Skipping VulkanMemoryAllocatorBridge native rebuild because Visual Studio MSBuild.exe was not found; using existing $(VmaBridgeNativeDll)." />
-    <Error Condition="'$(VmaBridgeMsBuildPath)' == '' and !Exists('$(VmaBridgeNativeDll)')" Text="Could not locate Visual Studio MSBuild.exe required to build VulkanMemoryAllocatorBridge.vcxproj, and $(VmaBridgeNativeDll) is missing." />
-    <Message Condition="'$(VmaBridgeMsBuildPath)' != '' and '$(VULKAN_SDK)' == '' and Exists('$(VmaBridgeNativeDll)')" Importance="high" Text="Skipping VulkanMemoryAllocatorBridge native rebuild because VULKAN_SDK is not set; using existing $(VmaBridgeNativeDll)." />
-    <Error Condition="'$(VmaBridgeMsBuildPath)' != '' and '$(VULKAN_SDK)' == '' and !Exists('$(VmaBridgeNativeDll)')" Text="VULKAN_SDK must be set to build VulkanMemoryAllocatorBridge.vcxproj, and $(VmaBridgeNativeDll) is missing." />
-
-    <Exec Condition="'$(VmaBridgeMsBuildPath)' != '' and '$(VULKAN_SDK)' != ''" Command="&quot;$(VmaBridgeMsBuildPath)&quot; &quot;$(VmaBridgeProject)&quot; /m /nologo /p:Configuration=$(Configuration);Platform=x64" />
-    <WriteLinesToFile File="$(VmaBridgeBuildStampFile)" Lines="$(VmaBridgeCurrentBuildState)" Overwrite="true" />
+  <Target Name="ForceFreetype64Publish" AfterTargets="Publish" Condition="Exists('$(Freetype64Source)') and '$(PublishDir)' != ''">
+    <Copy SourceFiles="$(Freetype64Source)" DestinationFiles="$(PublishDir)freetype6.dll" SkipUnchangedFiles="false" />
   </Target>
 
-  <Target Name="ValidateExistingVulkanMemoryAllocatorBridge"
-          BeforeTargets="PrepareForBuild"
-          Condition="'$(XREngineUseExistingNativeBridges)' == 'true' and !Exists('$(VmaBridgeNativeDll)')">
-    <Error Text="Isolated editor builds reuse the repository-managed VulkanMemoryAllocatorBridge native binary, but $(VmaBridgeNativeDll) is missing. Build the native bridge once before starting an isolated editor session." />
+  <Target Name="EnsureHlsReferenceFfmpeg" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT'">
+    <PropertyGroup>
+      <HlsReferenceFfmpegDir>$(MSBuildProjectDirectory)\..\Build\Dependencies\FFmpeg\HlsReference\win-x64</HlsReferenceFfmpegDir>
+      <FfmpegSeedDir>$(MSBuildProjectDirectory)\..\Build\Dependencies\FFmpeg\Seed\win-x64</FfmpegSeedDir>
+    </PropertyGroup>
+
+    <ItemGroup Condition="Exists('$(FfmpegSeedDir)') and !Exists('$(HlsReferenceFfmpegDir)\avformat-62.dll') and !Exists('$(HlsReferenceFfmpegDir)\avformat-61.dll')">
+      <FfmpegSeedDll Include="$(FfmpegSeedDir)\*.dll" />
+    </ItemGroup>
+
+    <MakeDir Directories="$(HlsReferenceFfmpegDir)" Condition="'@(FfmpegSeedDll)' != ''" />
+    <Copy SourceFiles="@(FfmpegSeedDll)" DestinationFolder="$(HlsReferenceFfmpegDir)" SkipUnchangedFiles="true" Condition="'@(FfmpegSeedDll)' != ''" />
+    <Message Text="Seeded HLS FFmpeg runtime from Build/Dependencies FFmpeg seed into $(HlsReferenceFfmpegDir)." Importance="High" Condition="'@(FfmpegSeedDll)' != ''" />
   </Target>
 
 </Project>

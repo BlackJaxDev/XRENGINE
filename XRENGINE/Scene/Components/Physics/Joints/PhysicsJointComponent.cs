@@ -486,7 +486,7 @@ namespace XREngine.Components.Physics
         /// </summary>
         private void RenderJointGizmos()
         {
-            if (!_drawGizmos || !IsActiveInHierarchy || Engine.Rendering.State.IsShadowPass)
+            if (!_drawGizmos || !IsActiveInHierarchy || RuntimeEngine.Rendering.State.IsShadowPass)
                 return;
 
             Matrix4x4 worldA = Transform.WorldMatrix;
@@ -504,11 +504,11 @@ namespace XREngine.Components.Physics
             }
 
             // Draw anchor points
-            Engine.Rendering.Debug.RenderSphere(anchorWorldA, 0.025f, false, ColorF4.Cyan);
-            Engine.Rendering.Debug.RenderSphere(anchorWorldB, 0.025f, false, ColorF4.Magenta);
+            RuntimeEngine.Rendering.Debug.RenderSphere(anchorWorldA, 0.025f, false, ColorF4.Cyan);
+            RuntimeEngine.Rendering.Debug.RenderSphere(anchorWorldB, 0.025f, false, ColorF4.Magenta);
 
             // Draw connecting line between anchors
-            Engine.Rendering.Debug.RenderLine(anchorWorldA, anchorWorldB, NativeJoint is null ? ColorF4.Red : ColorF4.Green);
+            RuntimeEngine.Rendering.Debug.RenderLine(anchorWorldA, anchorWorldB, NativeJoint is null ? ColorF4.Red : ColorF4.Green);
 
             // Draw local axes at anchor A
             DrawAnchorAxes(anchorWorldA, worldA, _anchorRotation, 0.1f);
@@ -529,9 +529,9 @@ namespace XREngine.Components.Physics
             Vector3 up = Vector3.Normalize(new Vector3(combinedRot.M21, combinedRot.M22, combinedRot.M23));
             Vector3 forward = Vector3.Normalize(new Vector3(combinedRot.M31, combinedRot.M32, combinedRot.M33));
 
-            Engine.Rendering.Debug.RenderLine(worldPos, worldPos + right * length, ColorF4.Red);
-            Engine.Rendering.Debug.RenderLine(worldPos, worldPos + up * length, ColorF4.Green);
-            Engine.Rendering.Debug.RenderLine(worldPos, worldPos + forward * length, ColorF4.Blue);
+            RuntimeEngine.Rendering.Debug.RenderLine(worldPos, worldPos + right * length, ColorF4.Red);
+            RuntimeEngine.Rendering.Debug.RenderLine(worldPos, worldPos + up * length, ColorF4.Green);
+            RuntimeEngine.Rendering.Debug.RenderLine(worldPos, worldPos + forward * length, ColorF4.Blue);
         }
 
         /// <summary>

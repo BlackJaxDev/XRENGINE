@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Scene.Transforms;
 
@@ -32,7 +32,7 @@ namespace XREngine.Components
             }
 
             public override void Render(TransformBase transform)
-                => Engine.Rendering.Debug.RenderSphere(
+                => RuntimeEngine.Rendering.Debug.RenderSphere(
                     transform.TransformPoint(LocalOffset, true),
                     Radius,
                     Solid,

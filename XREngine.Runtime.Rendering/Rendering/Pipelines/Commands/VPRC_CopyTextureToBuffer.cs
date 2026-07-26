@@ -1,5 +1,4 @@
 using System;
-using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -56,20 +55,19 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return bytes.Length > 0;
             }
 
-            if (AbstractRenderer.Current is OpenGLRenderer renderer)
+            if (AbstractRenderer.Current is IRuntimeRendererHost renderer &&
+                renderer.TryGetBackendCapability<IRenderCaptureBackendCapability>(out var capture) &&
+                capture is not null)
             {
-                IGLTexture? apiTexture = null;
-                foreach (IRenderAPIObject wrapper in texture.APIWrappers)
-                {
-                    if (wrapper is IGLTexture glTexture)
-                    {
-                        apiTexture = glTexture;
-                        break;
-                    }
-                }
-
-                if (apiTexture is not null &&
-                    renderer.TryCaptureTextureBytes(apiTexture.BindingId, SourceMipLevel, SourceLayerIndex, out bytes, out _, out _, out _, out _))
+                if (capture.TryCaptureTextureBytes(
+                    texture,
+                    SourceMipLevel,
+                    SourceLayerIndex,
+                    out bytes,
+                    out _,
+                    out _,
+                    out _,
+                    out _))
                 {
                     return true;
                 }

@@ -1,7 +1,14 @@
+using System.Collections.Concurrent;
+
 namespace XREngine.Rendering.RenderGraph;
 
 public static class RenderGraphResourceNames
 {
+    private static readonly ConcurrentDictionary<string, string> FboColorNames = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, string> FboDepthNames = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, string> FboStencilNames = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, string> TextureNames = new(StringComparer.Ordinal);
+
     /// <summary>
     /// The name of the output render target.
     /// </summary>
@@ -13,7 +20,7 @@ public static class RenderGraphResourceNames
     /// <param name="fboName">The name of the framebuffer object.</param>
     /// <returns>The render graph resource name for the color attachment.</returns>
     public static string MakeFboColor(string fboName)
-        => $"fbo::{fboName}::color";
+        => FboColorNames.GetOrAdd(fboName, static name => $"fbo::{name}::color");
 
     /// <summary>
     /// The name of the output depth buffer.
@@ -21,7 +28,7 @@ public static class RenderGraphResourceNames
     /// <param name="fboName">The name of the framebuffer object.</param>
     /// <returns>The render graph resource name for the depth attachment.</returns>
     public static string MakeFboDepth(string fboName)
-        => $"fbo::{fboName}::depth";
+        => FboDepthNames.GetOrAdd(fboName, static name => $"fbo::{name}::depth");
 
     /// <summary>
     /// The name of the output stencil buffer.
@@ -29,7 +36,7 @@ public static class RenderGraphResourceNames
     /// <param name="fboName">The name of the framebuffer object.</param>
     /// <returns>The render graph resource name for the stencil attachment.</returns>
     public static string MakeFboStencil(string fboName)
-        => $"fbo::{fboName}::stencil";
+        => FboStencilNames.GetOrAdd(fboName, static name => $"fbo::{name}::stencil");
 
     /// <summary>
     /// The name of the output texture.
@@ -37,5 +44,5 @@ public static class RenderGraphResourceNames
     /// <param name="textureName">The name of the texture.</param>
     /// <returns>The render graph resource name for the texture.</returns>
     public static string MakeTexture(string textureName)
-        => $"tex::{textureName}";
+        => TextureNames.GetOrAdd(textureName, static name => $"tex::{name}");
 }

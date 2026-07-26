@@ -83,7 +83,7 @@ namespace XREngine.Scene
 
         private static void RenderSpatialTreeNode((OctreeNodeBase node, bool intersects) data)
         {
-            var host = RuntimeRenderingHostServices.Current;
+            IRuntimeRenderDebugDrawingServices host = RuntimeRenderingHostServices.DebugDrawing;
             var color = data.intersects
                 ? host.OctreeIntersectedBoundsColor
                 : host.OctreeContainedBoundsColor;
@@ -135,29 +135,6 @@ namespace XREngine.Scene
             bool modelDiagActive = ModelRenderDiagnostics.HasActiveTrace;
             int commandsBefore = modelDiagActive ? commands.GetUpdatingCommandCount() : 0;
 
-            bool IntersectionTest(RenderInfo3D item, IVolume? cullingVolume, bool containsOnly)
-            {
-                bool allowed = item.AllowRender(cullingVolume, commands, camera, containsOnly, collectMirrors);
-                if (RenderDiagnosticsFlags.SkinCullRejectDiag)
-                {
-                    item.DiagIntersectGen = _collectGen;
-                    item.DiagIntersectResult = allowed;
-                }
-                if (!allowed && modelDiagActive)
-                    ModelRenderDiagnostics.LogRejected(item, cullingVolume, commands, camera, containsOnly, collectMirrors);
-                return allowed;
-            }
-
-            void AddRenderCommands(RenderInfo3D renderable)
-            {
-                visibleRenderables++;
-                if (RenderDiagnosticsFlags.SkinCullRejectDiag)
-                    renderable.DiagCollectedGen = _collectGen;
-                if (modelDiagActive)
-                    ModelRenderDiagnostics.LogVisibilityAccepted(renderable, commands, camera, collectMirrors);
-                renderable.CollectCommands(commands, camera);
-            }
-
             if (IsGpuCulling)
             {
                 using var gpuSample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItems.Gpu", ProfilerScopeKind.AlwaysOnHotPathLoop);
@@ -173,12 +150,27 @@ namespace XREngine.Scene
                         ? "VisualScene3D.CollectRenderedItems.CpuBvh"
                         : "VisualScene3D.CollectRenderedItems.Octree",
                     ProfilerScopeKind.AlwaysOnHotPathLoop);
-                cpuTree.CollectVisible(collectionVolume, false, AddRenderCommands, IntersectionTest);
+                CollectionContextStack contextStack = t_collectionContextStack ??= new CollectionContextStack();
+                contextStack.Push(this, commands, camera, collectMirrors, modelDiagActive);
+                try
+                {
+                    cpuTree.CollectVisible(
+                        collectionVolume,
+                        false,
+                        CollectRenderCommandsCallback,
+                        IntersectionTestCallback);
+                    visibleRenderables = contextStack.Current.VisibleRenderables;
+                }
+                finally
+                {
+                    contextStack.Pop();
+                }
+
                 long collectTicks = System.Diagnostics.Stopwatch.GetTimestamp() - collectStart;
                 int emittedCommands = Math.Max(0, commands.GetUpdatingCommandCount() - cpuCommandsBefore);
                 RuntimeEngine.Rendering.Stats.Octree.RecordOctreeCollect(visibleRenderables, emittedCommands);
                 RuntimeEngine.Rendering.Stats.Octree.RecordCpuSpatialTreeStats(
-                    _cpuSceneCullingStructureActive.ToString(),
+                    GetCpuSceneCullingStructureName(_cpuSceneCullingStructureActive),
                     cpuTree.GetOccupancyStats(),
                     collectTicks);
             }
@@ -266,13 +258,13 @@ namespace XREngine.Scene
             base.GlobalPreRender();
             BvhRaycasts.ProcessDispatches();
             
-            RuntimeRenderingHostServices.Current.ProcessGpuPhysicsChainDispatches();
+            RuntimeRenderingHostServices.DebugDrawing.ProcessGpuPhysicsChainDispatches();
         }
 
         public override void GlobalPostRender()
         {
             base.GlobalPostRender();
-            RuntimeRenderingHostServices.Current.ProcessGpuPhysicsChainCompletions();
+            RuntimeRenderingHostServices.DebugDrawing.ProcessGpuPhysicsChainCompletions();
             BvhRaycasts.ProcessCompletions();
         }
 

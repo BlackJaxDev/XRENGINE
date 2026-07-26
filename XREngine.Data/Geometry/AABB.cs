@@ -267,6 +267,25 @@ namespace XREngine.Data.Geometry
             => GetCorners(Min, Max, out TBL, out TBR, out TFL, out TFR, out BBL, out BBR, out BFL, out BFR);
 
         /// <summary>
+        /// Writes all eight corners into caller-owned storage.
+        /// </summary>
+        public readonly void GetCorners(Span<Vector3> corners)
+        {
+            if (corners.Length < 8)
+                throw new ArgumentException("At least eight corner slots are required.", nameof(corners));
+
+            GetCorners(
+                out corners[0],
+                out corners[1],
+                out corners[2],
+                out corners[3],
+                out corners[4],
+                out corners[5],
+                out corners[6],
+                out corners[7]);
+        }
+
+        /// <summary>
         /// Returns the corners of a box with the given minimum and maximum corner coordinates.
         /// Naming system (back, front, etc) is relative to a camera looking in the -Z direction (forward).
         /// [T = top, B = bottom]

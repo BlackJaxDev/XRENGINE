@@ -190,7 +190,7 @@ public unsafe partial class OpenXRAPI
 
     private bool ShouldRequestOpenXrQuadViews()
     {
-        IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+        IRuntimeRenderPresentationServices host = RuntimeRenderingHostServices.Presentation;
         return host.RvcQuadViewEnabled ||
             (host.RvcPipelineMode != ERvcPipelineMode.Off && host.RvcQuadViewEnabled);
     }
@@ -477,11 +477,6 @@ public unsafe partial class OpenXRAPI
         => IsLeftEyeLikeOpenXrView(viewIndex)
             ? _openXrLeftEyeCamera
             : _openXrRightEyeCamera;
-
-    private XRTexture2D? GetOpenXrPreviewTexture(uint viewIndex)
-        => IsLeftEyeLikeOpenXrView(viewIndex)
-            ? _previewLeftEyeTexture
-            : _previewRightEyeTexture;
 
     private bool TryGetOpenXrViewConfigurationViewCount(
         ViewConfigurationType viewConfigurationType,

@@ -155,14 +155,14 @@ namespace XREngine.Components
         private bool _screenshotRequested = false;
         private void PostRender()
         {
-            if (!Engine.Rendering.State.IsStereoPass || !_screenshotRequested)
+            if (!RuntimeEngine.Rendering.State.IsStereoPass || !_screenshotRequested)
                 return;
 
             using var prof = Engine.Profiler.Start("VRPlayerInputSet.PostRender.Screenshot");
 
             _screenshotRequested = false;
 
-            var pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+            var pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
             if (pipeline is null)
                 return;
 

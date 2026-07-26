@@ -218,6 +218,7 @@ internal static partial class ShaderSourceResolver
 
         RegisteredSnippets[snippetName] = snippetSource;
         Interlocked.Increment(ref _registeredSnippetVersion);
+        ShaderSourceDependencyIndex.InvalidateAll($"registered shader snippet '{snippetName}' changed");
     }
 
     internal static bool UnregisterSnippet(string snippetName)
@@ -226,7 +227,10 @@ internal static partial class ShaderSourceResolver
 
         bool removed = RegisteredSnippets.TryRemove(snippetName, out _);
         if (removed)
+        {
             Interlocked.Increment(ref _registeredSnippetVersion);
+            ShaderSourceDependencyIndex.InvalidateAll($"registered shader snippet '{snippetName}' was removed");
+        }
 
         return removed;
     }

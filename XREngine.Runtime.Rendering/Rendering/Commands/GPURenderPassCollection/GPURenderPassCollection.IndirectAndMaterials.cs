@@ -14,7 +14,6 @@ using XREngine.Rendering;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Materials;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 using static XREngine.Rendering.GpuDispatchLogger;
@@ -37,13 +36,6 @@ namespace XREngine.Rendering.Commands
         private readonly HashSet<uint> _lastMaterialTableIds = [];
         private int _materialResidencyLogBudget = 12;
 
-        private enum EMaterialTextureReferenceBuildMode
-        {
-            None = 0,
-            OpenGLBindlessHandles,
-            VulkanDescriptorIndices,
-        }
-        
         /// <summary>
         /// When true, sorts commands by material ID on CPU to create contiguous batches.
         /// This reduces batch count at the cost of CPU overhead for sorting.
@@ -616,11 +608,11 @@ namespace XREngine.Rendering.Commands
 
             try
             {
-                if (AbstractRenderer.Current is VulkanRenderer vulkanRenderer)
+                if (AbstractRenderer.Current is IBufferDiagnosticReadbackBackendCapability readbackCapability)
                 {
                     uint byteOffset = checked(index * sizeof(uint));
                     Span<byte> bytes = stackalloc byte[sizeof(uint)];
-                    if (!vulkanRenderer.TryReadBufferBytesForDiagnostics(buffer, byteOffset, bytes, out reason))
+                    if (!readbackCapability.TryReadBufferBytes(buffer, byteOffset, bytes, out reason))
                         return false;
 
                     value = BitConverter.ToUInt32(bytes);
@@ -1695,19 +1687,20 @@ namespace XREngine.Rendering.Commands
 
             bool bindlessMaterialTableRequested =
                 ZeroReadbackMaterialDrawPath == EZeroReadbackMaterialDrawPath.BindlessMaterialTable;
-            VulkanRenderer? vulkanRenderer = AbstractRenderer.Current as VulkanRenderer;
-            EMaterialTextureReferenceBuildMode textureReferenceMode = EMaterialTextureReferenceBuildMode.None;
+            IMaterialTableBackendCapability? materialCapability =
+                AbstractRenderer.Current as IMaterialTableBackendCapability;
+            EMaterialTableTextureReferenceMode textureReferenceMode =
+                EMaterialTableTextureReferenceMode.None;
             if (bindlessMaterialTableRequested &&
-                AbstractRenderer.Current is OpenGLRenderer glRenderer &&
-                glRenderer.SupportsBindlessTextureHandles)
+                materialCapability?.SupportsBindlessTextureHandles == true)
             {
-                textureReferenceMode = EMaterialTextureReferenceBuildMode.OpenGLBindlessHandles;
+                textureReferenceMode = EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable;
             }
-            else if (bindlessMaterialTableRequested && vulkanRenderer is not null)
+            else if (bindlessMaterialTableRequested && materialCapability is not null)
             {
-                if (vulkanRenderer.TryEnsureGlobalMaterialTextureDescriptorTable(out string reason))
+                if (materialCapability.TryEnsureMaterialTextureTable(out string reason))
                 {
-                    textureReferenceMode = EMaterialTextureReferenceBuildMode.VulkanDescriptorIndices;
+                    textureReferenceMode = EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable;
                 }
                 else
                 {
@@ -1734,7 +1727,7 @@ namespace XREngine.Rendering.Commands
                 GPUMaterialEntry entry = BuildMaterialEntry(
                     effectiveMaterial,
                     textureReferenceMode,
-                    vulkanRenderer,
+                    materialCapability,
                     out GPUMaterialTextureReferences textureReferences,
                     out bool resident);
                 _materialTable.AddOrUpdate(materialId, entry, textureReferences);
@@ -1743,13 +1736,13 @@ namespace XREngine.Rendering.Commands
 
             _materialTable.TrimTrailingUnused(128u);
             _materialTable.PushDirtyRanges();
-            if (textureReferenceMode == EMaterialTextureReferenceBuildMode.VulkanDescriptorIndices)
-                vulkanRenderer?.FlushGlobalMaterialTextureDescriptorUpdates();
+            if (textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable)
+                materialCapability?.FlushMaterialTextureTableUpdates();
 
-            if (AbstractRenderer.Current is OpenGLRenderer openGlRenderer)
+            if (materialCapability is not null)
             {
                 while (_materialTable.TryConsumeRetiredHandle(out GPUMaterialRetiredHandle retired))
-                    openGlRenderer.ReleaseResidentBindlessTextureHandle(retired.Handle);
+                    materialCapability.ReleaseMaterialTextureReference(retired);
             }
 
             _lastMaterialTableIds.Clear();
@@ -1782,8 +1775,8 @@ namespace XREngine.Rendering.Commands
 
         private static GPUMaterialEntry BuildMaterialEntry(
             XRMaterial? material,
-            EMaterialTextureReferenceBuildMode textureReferenceMode,
-            VulkanRenderer? vulkanRenderer,
+            EMaterialTableTextureReferenceMode textureReferenceMode,
+            IMaterialTableBackendCapability? materialCapability,
             out GPUMaterialTextureReferences textureReferences,
             out bool resident)
         {
@@ -1804,21 +1797,21 @@ namespace XREngine.Rendering.Commands
             if (albedo is not null)
             {
                 flags |= 1u << 0;
-                resident &= TryResolveMaterialTexture(material, albedo, "Albedo", textureReferenceMode, vulkanRenderer, out GPUMaterialTextureReference reference);
+                resident &= TryResolveMaterialTexture(material, albedo, "Albedo", textureReferenceMode, materialCapability, out GPUMaterialTextureReference reference);
                 textureReferences = textureReferences with { Albedo = reference };
             }
 
             if (normal is not null)
             {
                 flags |= 1u << 1;
-                resident &= TryResolveMaterialTexture(material, normal, "Normal", textureReferenceMode, vulkanRenderer, out GPUMaterialTextureReference reference);
+                resident &= TryResolveMaterialTexture(material, normal, "Normal", textureReferenceMode, materialCapability, out GPUMaterialTextureReference reference);
                 textureReferences = textureReferences with { Normal = reference };
             }
 
             if (rm is not null)
             {
                 flags |= 1u << 2;
-                resident &= TryResolveMaterialTexture(material, rm, "RM", textureReferenceMode, vulkanRenderer, out GPUMaterialTextureReference reference);
+                resident &= TryResolveMaterialTexture(material, rm, "RM", textureReferenceMode, materialCapability, out GPUMaterialTextureReference reference);
                 textureReferences = textureReferences with { RM = reference };
             }
 
@@ -1868,33 +1861,22 @@ namespace XREngine.Rendering.Commands
             XRMaterial material,
             XRTexture texture,
             string semantic,
-            EMaterialTextureReferenceBuildMode textureReferenceMode,
-            VulkanRenderer? vulkanRenderer,
+            EMaterialTableTextureReferenceMode textureReferenceMode,
+            IMaterialTableBackendCapability? materialCapability,
             out GPUMaterialTextureReference reference)
         {
             reference = GPUMaterialTextureReference.None;
             if (!IsTextureArrayAllowedForMaterialTable(material, texture))
                 return false;
 
-            if (textureReferenceMode == EMaterialTextureReferenceBuildMode.OpenGLBindlessHandles)
+            if (textureReferenceMode is
+                EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable or
+                EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable)
             {
-                if (!TryResolveOpenGLBindlessTextureHandle(texture, out ulong handle))
-                    return false;
-
-                reference = GPUMaterialTextureReference.FromOpenGLBindlessHandle(handle);
-                return true;
-            }
-
-            if (textureReferenceMode == EMaterialTextureReferenceBuildMode.VulkanDescriptorIndices)
-            {
-                if (vulkanRenderer is null)
-                    return false;
-
-                if (!vulkanRenderer.TryGetOrCreateMaterialTextureDescriptorIndex(texture, semantic, out uint descriptorIndex, out _))
-                    return false;
-
-                reference = GPUMaterialTextureReference.FromVulkanDescriptorIndex(descriptorIndex);
-                return true;
+                return materialCapability?.TryResolveMaterialTextureReference(
+                    texture,
+                    semantic,
+                    out reference) == true;
             }
 
             return IsTextureResident(texture);
@@ -1911,15 +1893,6 @@ namespace XREngine.Rendering.Commands
                 return true;
 
             return material.RenderOptions?.TextureArrayPolicy == EMaterialTextureArrayPolicy.HomogeneousClassOnly;
-        }
-
-        private static bool TryResolveOpenGLBindlessTextureHandle(XRTexture texture, out ulong handle)
-        {
-            handle = 0ul;
-            if (AbstractRenderer.Current is not OpenGLRenderer renderer)
-                return false;
-
-            return renderer.TryGetResidentBindlessTextureHandle(texture, out handle);
         }
 
         private static bool IsTextureResident(XRTexture texture)
@@ -2302,7 +2275,7 @@ namespace XREngine.Rendering.Commands
         private void QueueAsyncGpuTriangleStatsReadback()
         {
             bool captureDiagnostics = ShouldCaptureDiagnosticReadbacksForPass() ||
-                (AbstractRenderer.Current is VulkanRenderer && VulkanDelayedCounterDiagnosticsEnabled);
+                (AbstractRenderer.Current?.BackendId == RendererBackendId.Vulkan && VulkanDelayedCounterDiagnosticsEnabled);
             if (!captureDiagnostics)
                 return;
 
@@ -2315,7 +2288,7 @@ namespace XREngine.Rendering.Commands
                     publishTriangles: true);
             }
 
-            if (renderer is not VulkanRenderer || !VulkanDelayedCounterDiagnosticsEnabled)
+            if (renderer?.BackendId != RendererBackendId.Vulkan || !VulkanDelayedCounterDiagnosticsEnabled)
                 return;
 
             if (_culledCountBuffer is not null)

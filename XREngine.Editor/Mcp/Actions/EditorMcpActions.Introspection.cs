@@ -309,17 +309,17 @@ namespace XREngine.Editor.Mcp
         [Description("Get current rendering pipeline and camera state.")]
         public static Task<McpToolResponse> GetRenderStateAsync(McpToolContext context)
         {
-            var pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
-            var renderState = Engine.Rendering.State.RenderingPipelineState;
-            var camera = Engine.Rendering.State.RenderingCamera;
+            var pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
+            var camera = RuntimeEngine.Rendering.State.RenderingCamera;
             var cameraNode = camera?.Transform?.SceneNode;
             var cameraTransform = camera?.Transform;
-            var viewport = Engine.Rendering.State.RenderingViewport;
+            var viewport = RuntimeEngine.Rendering.State.RenderingViewport;
             var stateViewport = renderState?.WindowViewport;
             var activeViewport = viewport
                 ?? stateViewport
                 ?? pipeline?.LastWindowViewport
-                ?? Engine.EnumerateActiveViewports().FirstOrDefault();
+                ?? RuntimeEngine.EnumerateActiveViewports().FirstOrDefault();
             var activeCamera = camera
                 ?? renderState?.SceneCamera
                 ?? activeViewport?.ActiveCamera;
@@ -333,23 +333,23 @@ namespace XREngine.Editor.Mcp
             var pawnCameraTransform = pawnCamera?.Transform;
             var pawnNode = mainPawn?.SceneNode;
             var pawnTransform = pawnNode?.Transform;
-            var renderArea = Engine.Rendering.State.RenderArea;
+            var renderArea = RuntimeEngine.Rendering.State.RenderArea;
             var activeViewportCommands = activeViewport?.RenderPipelineInstance.MeshRenderCommands;
             var renderingViewportCommands = viewport?.RenderPipelineInstance.MeshRenderCommands;
-            var activeViewports = Engine
-                .EnumerateActiveViewports(Engine.EViewportEnumerationMode.IncludeVrEyeViewports)
+            var activeViewports = RuntimeEngine
+                .EnumerateActiveViewports(RuntimeEngine.EViewportEnumerationMode.IncludeVrEyeViewports)
                 .Select(BuildViewportRenderSummary)
                 .ToArray();
 
             var data = new
             {
-                renderFrameId = Engine.Rendering.State.RenderFrameId,
+                renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId,
                 renderArea = ToMcpRectangle(renderArea),
-                isShadowPass = Engine.Rendering.State.IsShadowPass,
-                isStereoPass = Engine.Rendering.State.IsStereoPass,
-                isMirrorPass = Engine.Rendering.State.IsMirrorPass,
-                renderingWorldId = Engine.Rendering.State.RenderingWorld is XRObjectBase renderingWorld ? (Guid?)renderingWorld.ID : null,
-                renderingSceneType = Engine.Rendering.State.RenderingScene?.GetType().FullName,
+                isShadowPass = RuntimeEngine.Rendering.State.IsShadowPass,
+                isStereoPass = RuntimeEngine.Rendering.State.IsStereoPass,
+                isMirrorPass = RuntimeEngine.Rendering.State.IsMirrorPass,
+                renderingWorldId = RuntimeEngine.Rendering.State.RenderingWorld is XRObjectBase renderingWorld ? (Guid?)renderingWorld.ID : null,
+                renderingSceneType = RuntimeEngine.Rendering.State.RenderingScene?.GetType().FullName,
                 renderingViewportIndex = viewport?.Index,
                 renderingViewportSize = viewport is null ? null : new { width = viewport.Width, height = viewport.Height },
                 renderingCameraType = camera?.GetType().FullName,
@@ -392,7 +392,7 @@ namespace XREngine.Editor.Mcp
                 pipelineDebugName = pipeline?.Pipeline?.DebugName,
                 pipelineType = pipeline?.Pipeline?.GetType().FullName,
                 pipelineDescriptor = pipeline?.DebugDescriptor,
-                renderGraphPassIndex = Engine.Rendering.State.CurrentRenderGraphPassIndex,
+                renderGraphPassIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
                 renderStateCameraType = renderState?.SceneCamera?.GetType().FullName,
                 renderStateViewportIndex = stateViewport?.Index,
                 renderStateViewportSize = stateViewport is null ? null : new { width = stateViewport.Width, height = stateViewport.Height },
@@ -423,9 +423,9 @@ namespace XREngine.Editor.Mcp
             return new
             {
                 index = viewport.Index,
-                isVrLeftEyeViewport = ReferenceEquals(viewport, Engine.VRState.LeftEyeViewport),
-                isVrRightEyeViewport = ReferenceEquals(viewport, Engine.VRState.RightEyeViewport),
-                isWindowViewport = Engine.Windows.Any(window => window.Viewports.Contains(viewport)),
+                isVrLeftEyeViewport = ReferenceEquals(viewport, RuntimeEngine.VRState.LeftEyeViewport),
+                isVrRightEyeViewport = ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport),
+                isWindowViewport = RuntimeEngine.Windows.Any(window => window.Viewports.Contains(viewport)),
                 width = viewport.Width,
                 height = viewport.Height,
                 internalWidth = viewport.InternalWidth,
@@ -541,7 +541,7 @@ namespace XREngine.Editor.Mcp
         [Description("Get engine/editor play mode and high-level state flags.")]
         public static Task<McpToolResponse> GetEngineStateAsync(McpToolContext context)
         {
-            var openXrSummary = Engine.VRState.OpenXRApi?.CreateSmokeSummary();
+            var openXrSummary = RuntimeEngine.VRState.OpenXRApi?.CreateSmokeSummary();
             var data = new
             {
                 isEditor = Engine.IsEditor,
@@ -554,11 +554,11 @@ namespace XREngine.Editor.Mcp
                 timePaused = Engine.Time.Timer.Paused,
                 vr = new
                 {
-                    isInVR = Engine.VRState.IsInVR,
-                    activeRuntime = Engine.VRState.ActiveRuntime.ToString(),
-                    isOpenVRActive = Engine.VRState.IsOpenVRActive,
-                    isOpenXRActive = Engine.VRState.IsOpenXRActive,
-                    openXrSessionRunning = Engine.VRState.OpenXRApi?.IsSessionRunning ?? false,
+                    isInVR = RuntimeEngine.VRState.IsInVR,
+                    activeRuntime = RuntimeEngine.VRState.ActiveRuntime.ToString(),
+                    isOpenVRActive = RuntimeEngine.VRState.IsOpenVRActive,
+                    isOpenXRActive = RuntimeEngine.VRState.IsOpenXRActive,
+                    openXrSessionRunning = RuntimeEngine.VRState.OpenXRApi?.IsSessionRunning ?? false,
                     openXrRuntimeState = openXrSummary?.RuntimeState,
                     openXrSessionState = openXrSummary?.SessionState,
                     openXr = openXrSummary
@@ -815,12 +815,12 @@ namespace XREngine.Editor.Mcp
         {
             var data = new
             {
-                isNvidia = Engine.Rendering.State.IsNVIDIA,
-                isIntel = Engine.Rendering.State.IsIntel,
-                isVulkan = Engine.Rendering.State.IsVulkan,
-                hasNvRayTracing = Engine.Rendering.State.HasNvRayTracing,
-                hasVulkanRayTracing = Engine.Rendering.State.HasVulkanRayTracing,
-                hasOvrMultiView = Engine.Rendering.State.HasOvrMultiViewExtension,
+                isNvidia = RuntimeEngine.Rendering.State.IsNVIDIA,
+                isIntel = RuntimeEngine.Rendering.State.IsIntel,
+                isVulkan = RuntimeEngine.Rendering.State.IsVulkan,
+                hasNvRayTracing = RuntimeEngine.Rendering.State.HasNvRayTracing,
+                hasVulkanRayTracing = RuntimeEngine.Rendering.State.HasVulkanRayTracing,
+                hasOvrMultiView = RuntimeEngine.Rendering.State.HasOvrMultiViewExtension,
                 nvidiaDlss = new
                 {
                     runtimeDllsAvailable = NvidiaDlssManager.RequiredRuntimeDllsAvailable,
@@ -845,7 +845,7 @@ namespace XREngine.Editor.Mcp
                     effectiveFrameGenerationRequested = Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration
                         && Engine.EffectiveSettings.NvidiaDlssFrameGenerationMode != ENvidiaDlssFrameGenerationMode.Off
                 },
-                openGlExtensions = Engine.Rendering.State.OpenGLExtensions
+                openGlExtensions = RuntimeEngine.Rendering.State.OpenGLExtensions
             };
 
             return Task.FromResult(new McpToolResponse("Retrieved render capabilities.", data));

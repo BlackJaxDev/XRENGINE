@@ -138,10 +138,10 @@ namespace XREngine.Components.Physics
         {
             // Draw min/max distance spheres centered on anchor A
             if (_enableMinDistance && _minDistance > 0f)
-                Engine.Rendering.Debug.RenderSphere(anchorWorldA, _minDistance, false, new ColorF4(1f, 1f, 0f, 0.3f));
+                RuntimeEngine.Rendering.Debug.RenderSphere(anchorWorldA, _minDistance, false, new ColorF4(1f, 1f, 0f, 0.3f));
 
             if (_enableMaxDistance && _maxDistance < 1000f)
-                Engine.Rendering.Debug.RenderSphere(anchorWorldA, _maxDistance, false, new ColorF4(1f, 0.5f, 0f, 0.3f));
+                RuntimeEngine.Rendering.Debug.RenderSphere(anchorWorldA, _maxDistance, false, new ColorF4(1f, 0.5f, 0f, 0.3f));
         }
     }
 }

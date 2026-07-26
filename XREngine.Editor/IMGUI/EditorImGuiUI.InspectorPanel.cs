@@ -653,7 +653,7 @@ public static partial class EditorImGuiUI
 
             if (target is XRAsset asset)
             {
-                if (asset is Engine.Rendering.EngineSettings engineSettings)
+                if (asset is RuntimeEngine.Rendering.EngineSettings engineSettings)
                     DrawEngineDefaultsInspectorNote(engineSettings);
 
                 DrawThirdPartyImportSettings(asset, visited);
@@ -2370,7 +2370,7 @@ public static partial class EditorImGuiUI
             mainPlayer.ControlledPawnComponent = null;
 
             // Ensure player has a valid viewport
-            var window = Engine.Windows.FirstOrDefault();
+            var window = RuntimeEngine.Windows.FirstOrDefault();
             if (window is not null)
             {
                 var ensuredViewport = window.EnsureControllerRegistered(mainPlayer, autoSizeAllViewports: false);

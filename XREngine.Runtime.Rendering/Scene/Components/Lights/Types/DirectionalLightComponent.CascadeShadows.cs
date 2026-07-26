@@ -157,6 +157,9 @@ namespace XREngine.Components.Lights
             public XRTexture2DArray? LegacyRenderedReceiverTexture;
         }
 
+        [ThreadStatic]
+        private static ReusableBoxVolume[]? t_cascadeCullVolumeScratch;
+
         /// <summary>
         /// Published world-space bounds for one directional cascade.
         /// </summary>
@@ -363,7 +366,7 @@ namespace XREngine.Components.Lights
         {
             if (_effectiveCascadeShadowBackend == DirectionalCascadeShadowBackend.AtlasPage &&
                 _effectiveCascadeShadowRenderMode == EDirectionalCascadeShadowRenderMode.Sequential &&
-                RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+                RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
             {
                 return "SequentialVulkanCascadeAtlas";
             }
@@ -496,7 +499,7 @@ namespace XREngine.Components.Lights
                 : state.ShadowMapTexture;
 
         private bool ShouldUseVulkanAtlasCascadeTargets(int cascadeCount)
-            => RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan &&
+            => RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan &&
                CanUseDirectionalCascadeShadowAtlasForCurrentBackend(cascadeCount);
 
         private static bool CanRenderDirectionalCascadesForCurrentBackend()
@@ -942,7 +945,7 @@ namespace XREngine.Components.Lights
                 return Math.Min(GetCascadeSourceState(source).Slices.Count, Math.Min(viewports.Length, frameBuffers.Length));
         }
 
-        private Box? GetPublishedCascadeCullVolume(ShadowRequestSource source, int index)
+        private ReusableBoxVolume? GetPublishedCascadeCullVolume(ShadowRequestSource source, int index)
         {
             lock (_cascadeDataLock)
             {
@@ -954,11 +957,14 @@ namespace XREngine.Components.Lights
                 Matrix4x4 transform =
                     Matrix4x4.CreateFromQuaternion(cascade.Orientation) *
                     Matrix4x4.CreateTranslation(cascade.Center);
-                return new Box(Vector3.Zero, cascade.HalfExtents * 2.0f, transform);
+                ReusableBoxVolume volume = GetCascadeCullVolumeScratch(index);
+                Box box = new(Vector3.Zero, cascade.HalfExtents * 2.0f, transform);
+                volume.Set(box);
+                return volume;
             }
         }
 
-        private Box? GetPublishedCascadeUnionCullVolume(ShadowRequestSource source, int cascadeCount)
+        private ReusableBoxVolume? GetPublishedCascadeUnionCullVolume(ShadowRequestSource source, int cascadeCount)
         {
             lock (_cascadeDataLock)
             {
@@ -975,8 +981,25 @@ namespace XREngine.Components.Lights
                 if (max.X < min.X || max.Y < min.Y || max.Z < min.Z)
                     return null;
 
-                return Box.FromMinMax(min, max);
+                ReusableBoxVolume volume = GetCascadeCullVolumeScratch(MaxCascadeRenderCount);
+                Box box = Box.FromMinMax(min, max);
+                volume.Set(box);
+                return volume;
             }
+        }
+
+        private static ReusableBoxVolume GetCascadeCullVolumeScratch(int index)
+        {
+            ReusableBoxVolume[] volumes = t_cascadeCullVolumeScratch ??= CreateCascadeCullVolumeScratch();
+            return volumes[index];
+        }
+
+        private static ReusableBoxVolume[] CreateCascadeCullVolumeScratch()
+        {
+            ReusableBoxVolume[] volumes = new ReusableBoxVolume[MaxCascadeRenderCount + 1];
+            for (int i = 0; i < volumes.Length; i++)
+                volumes[i] = new ReusableBoxVolume();
+            return volumes;
         }
 
         private static void IncludeCascadeAabbCorners(CascadedShadowAabb cascade, ref Vector3 min, ref Vector3 max)
@@ -3550,7 +3573,7 @@ namespace XREngine.Components.Lights
             if (!UsesDirectionalShadowAtlasForCurrentEncoding)
                 return false;
 
-            if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+            if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
             {
                 // Keep the known Monado OpenXR Vulkan path protected, but let
                 // SteamVR and ordinary Vulkan sessions exercise the atlas toggle.
@@ -3628,7 +3651,7 @@ namespace XREngine.Components.Lights
 
         private bool SupportsDirectionalCascadeAtlasGroupedRendering(int cascadeCount)
         {
-            if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+            if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
             {
                 // The grouped atlas path hang was observed with the Monado OpenXR
                 // Vulkan runtime. SteamVR and ordinary Vulkan sessions should use

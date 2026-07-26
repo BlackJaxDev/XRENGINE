@@ -14,24 +14,33 @@ internal static class ProfilerDiagnosticDumps
 
     public static DumpResult DumpCpuFrameTimingHistory()
     {
-        bool enabledByDump = EnsureCpuFrameSnapshotAvailable(
-            out Engine.CodeProfiler.ProfilerFrameSnapshot? snapshot,
-            out Dictionary<int, float[]> history);
-        if (snapshot is null)
+        bool enabledByDump = false;
+        try
         {
-            const string error = "No CPU profiler frame snapshot has been captured yet.";
-            return new DumpResult(false, error, [], error);
+            enabledByDump = EnsureCpuFrameSnapshotAvailable(
+                out Engine.CodeProfiler.ProfilerFrameSnapshot? snapshot,
+                out Dictionary<int, float[]> history);
+            if (snapshot is null)
+            {
+                const string error = "No CPU profiler frame snapshot has been captured yet.";
+                return new DumpResult(false, error, [], error);
+            }
+
+            DateTimeOffset timestamp = DateTimeOffset.Now;
+            string fileName = BuildCpuFrameDumpFileName(timestamp);
+            string content = BuildCpuFrameDumpContent(snapshot, history, timestamp, fileName);
+
+            Debug.WriteAuxiliaryLog(fileName, content);
+            string message = enabledByDump
+                ? $"CPU frame logging was temporarily enabled and frame dump written: {fileName}"
+                : $"CPU frame dump written: {fileName}";
+            return new DumpResult(true, message, [fileName]);
         }
-
-        DateTimeOffset timestamp = DateTimeOffset.Now;
-        string fileName = BuildCpuFrameDumpFileName(timestamp);
-        string content = BuildCpuFrameDumpContent(snapshot, history, timestamp, fileName);
-
-        Debug.WriteAuxiliaryLog(fileName, content);
-        string message = enabledByDump
-            ? $"CPU frame logging was enabled and frame dump written: {fileName}"
-            : $"CPU frame dump written: {fileName}";
-        return new DumpResult(true, message, [fileName]);
+        finally
+        {
+            if (enabledByDump)
+                Engine.Profiler.EnableFrameLogging = false;
+        }
     }
 
     public static DumpResult DumpGpuRenderPipelineTimingHistory(string? pipelineName)
@@ -39,7 +48,7 @@ internal static class ProfilerDiagnosticDumps
         if (!string.IsNullOrWhiteSpace(pipelineName))
         {
             string trimmed = pipelineName.Trim();
-            if (Engine.Rendering.Stats.GpuPipelineProfiler.TryDumpGpuRenderPipelineTimingHistory(trimmed, out string fileName, out string? error))
+            if (RuntimeEngine.Rendering.Stats.GpuPipelineProfiler.TryDumpGpuRenderPipelineTimingHistory(trimmed, out string fileName, out string? error))
                 return new DumpResult(true, $"GPU timing dump written: {fileName}", [fileName]);
 
             string message = string.IsNullOrWhiteSpace(error)
@@ -53,7 +62,7 @@ internal static class ProfilerDiagnosticDumps
 
     public static DumpResult DumpAllGpuRenderPipelineTimingHistories()
     {
-        if (Engine.Rendering.Stats.GpuPipelineProfiler.TryDumpAllGpuRenderPipelineTimingHistories(out string[] fileNames, out string? error))
+        if (RuntimeEngine.Rendering.Stats.GpuPipelineProfiler.TryDumpAllGpuRenderPipelineTimingHistories(out string[] fileNames, out string? error))
         {
             string message = fileNames.Length == 1
                 ? $"GPU timing dump written: {fileNames[0]}"
@@ -69,7 +78,7 @@ internal static class ProfilerDiagnosticDumps
 
     public static string[] GetAvailableGpuRenderPipelineNames()
     {
-        GpuPipelineTimingNodeData[] roots = Engine.Rendering.Stats.GpuPipelineProfiler.GetGpuRenderPipelineTimingRoots();
+        GpuPipelineTimingNodeData[] roots = RuntimeEngine.Rendering.Stats.GpuPipelineProfiler.GetGpuRenderPipelineTimingRoots();
         if (roots.Length == 0)
             return [];
 

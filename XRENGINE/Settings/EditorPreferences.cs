@@ -73,6 +73,11 @@ namespace XREngine
         private bool _mcpServerIncludeStatusInPing = true;
         private McpPermissionPolicy _mcpPermissionPolicy = McpPermissionPolicy.AllowReadOnly;
         private McpDispatchMode _mcpDispatchMode = McpDispatchMode.Direct;
+        private bool _rendererAutomaticShaderReload = true;
+        private bool _rendererAutomaticBackendReload = false;
+        private int _rendererBackendReloadDebounceMs = 750;
+        private int _rendererBackendFirstFrameTimeoutMs = 15000;
+        private int _rendererBackendRetainedGenerations = 3;
 
         // MCP Assistant (in-editor AI chat window) settings
         private int _mcpAssistantProviderIndex = 0;
@@ -141,6 +146,56 @@ namespace XREngine
         [MemoryPackIgnore]
         public EditorDiagnosticsPreferences Diagnostics
             => _diagnostics ??= new EditorDiagnosticsPreferences(Debug);
+
+        [Category("Renderer Development")]
+        [DisplayName("Automatic Shader Reload")]
+        [Description("Reload loaded shaders when their source or a transitive include changes.")]
+        [DefaultValue(true)]
+        public bool RendererAutomaticShaderReload
+        {
+            get => _rendererAutomaticShaderReload;
+            set => SetField(ref _rendererAutomaticShaderReload, value);
+        }
+
+        [Category("Renderer Development")]
+        [DisplayName("Automatic Backend Build And Reload")]
+        [Description("Opt-in: rebuild and transactionally replace the selected rendering backend after backend C# source changes.")]
+        [DefaultValue(false)]
+        public bool RendererAutomaticBackendReload
+        {
+            get => _rendererAutomaticBackendReload;
+            set => SetField(ref _rendererAutomaticBackendReload, value);
+        }
+
+        [Category("Renderer Development")]
+        [DisplayName("Backend Reload Debounce (ms)")]
+        [Description("Quiet period after a backend source save before starting its isolated build.")]
+        [DefaultValue(750)]
+        public int RendererBackendReloadDebounceMs
+        {
+            get => _rendererBackendReloadDebounceMs;
+            set => SetField(ref _rendererBackendReloadDebounceMs, Math.Clamp(value, 100, 10000));
+        }
+
+        [Category("Renderer Development")]
+        [DisplayName("First Frame Timeout (ms)")]
+        [Description("Maximum time a replacement renderer has to initialize and present its first valid frame before rollback.")]
+        [DefaultValue(15000)]
+        public int RendererBackendFirstFrameTimeoutMs
+        {
+            get => _rendererBackendFirstFrameTimeoutMs;
+            set => SetField(ref _rendererBackendFirstFrameTimeoutMs, Math.Clamp(value, 1000, 120000));
+        }
+
+        [Category("Renderer Development")]
+        [DisplayName("Retained Backend Generations")]
+        [Description("Number of immutable backend generations retained for retry and rollback.")]
+        [DefaultValue(3)]
+        public int RendererBackendRetainedGenerations
+        {
+            get => _rendererBackendRetainedGenerations;
+            set => SetField(ref _rendererBackendRetainedGenerations, Math.Clamp(value, 2, 16));
+        }
 
         /// <summary>
         /// Controls how the main world viewport is presented when Dear ImGui is active.
@@ -245,7 +300,7 @@ namespace XREngine
 
         [Category("Play Mode")]
         [DisplayName("Confirm Before Exiting Play Mode")]
-        [Description("When enabled, editor-triggered requests to exit play mode show a confirmation dialog before the transition starts.")]
+        [Description("When enabled, editor UI requests to exit play mode show a confirmation dialog before the transition starts. The global Shift+F5 force-stop shortcut always exits without prompting.")]
         public bool ConfirmBeforeExitingPlayMode
         {
             get => _confirmBeforeExitingPlayMode;
@@ -1336,7 +1391,8 @@ namespace XREngine
     /// <summary>
     /// Controls how the physics/instanced debug visualizer populates its buffers each frame.
     /// </summary>
-    public enum EDebugVisualizerPopulationMode
+    [Obsolete("Use EDebugVisualizerPopulationMode from XREngine.Runtime.Rendering.")]
+    internal enum LegacyDebugVisualizerPopulationMode
     {
         /// <summary>
         /// Legacy path: Task.Run wrapping Parallel.For per primitive type + Task.WaitAll.
@@ -1445,7 +1501,7 @@ namespace XREngine
         private bool _enableZeroReadbackMaterialScatter = false;
         private EZeroReadbackMaterialDrawPath _zeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.FullBucketScan;
         private bool _enableProfilerFrameLogging = true;
-        private bool _enableProfilerComponentTiming = true;
+        private bool _enableProfilerComponentTiming = false;
         private bool _enableRenderStatisticsTracking = true;
         private bool _enableGpuRenderPipelineProfiling = false;
         private bool _enableMainThreadInvokeDiagnostics = false;
@@ -1766,7 +1822,7 @@ namespace XREngine
 
         [Category("Debug")]
         [DisplayName("Debug Point Size")]
-        [Description("Camera-relative size for Engine.Rendering.Debug point primitives.")]
+        [Description("Camera-relative size for RuntimeEngine.Rendering.Debug point primitives.")]
         public float DebugPointSize
         {
             get => _debugPointSize;
@@ -1775,7 +1831,7 @@ namespace XREngine
 
         [Category("Debug")]
         [DisplayName("Debug Line Width")]
-        [Description("Screen-relative width for Engine.Rendering.Debug line primitives.")]
+        [Description("Screen-relative width for RuntimeEngine.Rendering.Debug line primitives.")]
         public float DebugLineWidth
         {
             get => _debugLineWidth;
@@ -2594,8 +2650,8 @@ namespace XREngine
 
         [Category("Profiling")]
         [DisplayName("Enable Profiler Component Timing")]
-        [Description("When enabled, the profiler records per-component tick timings for the Profiler panel's Components view. Disable to remove that tracking overhead while leaving frame logging unchanged.")]
-        [DefaultValue(true)]
+        [Description("When enabled, the profiler records per-component tick timings for the Profiler panel's Components view. This detailed diagnostic is off by default because it allocates per-frame tracking state.")]
+        [DefaultValue(false)]
         public bool EnableProfilerComponentTiming
         {
             get
@@ -2635,10 +2691,10 @@ namespace XREngine
             {
 #if XRE_PUBLISHED
                 if (SetField(ref _enableRenderStatisticsTracking, false))
-                    Engine.Rendering.Stats.EnableTracking = false;
+                    RuntimeEngine.Rendering.Stats.EnableTracking = false;
 #else
                 if (SetField(ref _enableRenderStatisticsTracking, value))
-                    Engine.Rendering.Stats.EnableTracking = value;
+                    RuntimeEngine.Rendering.Stats.EnableTracking = value;
 #endif
             }
         }
@@ -3171,13 +3227,13 @@ namespace XREngine
 #if XRE_PUBLISHED
             Engine.Profiler.EnableFrameLogging = false;
             Engine.Profiler.EnableComponentTiming = false;
-            Engine.Rendering.Stats.EnableTracking = false;
+            RuntimeEngine.Rendering.Stats.EnableTracking = false;
             XREngine.Rendering.UI.UILayoutSystem.EnableDebugLogging = false;
             UdpProfilerSender.Stop();
 #else
             Engine.Profiler.EnableFrameLogging = EnableProfilerFrameLogging;
             Engine.Profiler.EnableComponentTiming = EnableProfilerComponentTiming;
-            Engine.Rendering.Stats.EnableTracking = EnableRenderStatisticsTracking;
+            RuntimeEngine.Rendering.Stats.EnableTracking = EnableRenderStatisticsTracking;
             XREngine.Rendering.UI.UILayoutSystem.EnableDebugLogging = EnableUILayoutDebugLogging;
 
             if (EnableProfilerUdpSending)

@@ -209,7 +209,7 @@ public sealed class MeshSubmissionStrategyResolverTests
         bool supportsIndirectCountMeshTaskDispatch = false,
         bool supportsMeshletDispatch = false)
     {
-        var inputs = new Engine.Rendering.MeshSubmissionStrategyResolverInputs(
+        var inputs = new RuntimeEngine.Rendering.MeshSubmissionStrategyResolverInputs(
             RequestedGpuDispatch: requestedGpuDispatch,
             ForcedStrategy: forcedStrategy,
             EnableGpuIndirectDebugLogging: enableGpuIndirectDebugLogging,
@@ -227,6 +227,6 @@ public sealed class MeshSubmissionStrategyResolverTests
             SupportsIndirectCountMeshTaskDispatch: supportsIndirectCountMeshTaskDispatch,
             SupportsMeshletDispatch: supportsMeshletDispatch);
 
-        return Engine.Rendering.ResolveMeshSubmissionStrategy(inputs);
+        return RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(inputs);
     }
 }

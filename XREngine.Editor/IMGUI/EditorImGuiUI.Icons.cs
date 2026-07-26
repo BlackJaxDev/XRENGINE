@@ -20,8 +20,10 @@ public static partial class EditorImGuiUI
     private const int ToolbarIconCpuRasterizationsPerFrame = 1;
     private const int ToolbarIconGpuUploadsPerFrame = 1;
 
-    private static readonly Dictionary<string, XRTexture2D> _iconCache = new();
-    private static readonly HashSet<string> _uploadedOpenGLIconCache = [];
+    private readonly record struct IconCacheKey(string Name, int Size);
+
+    private static readonly Dictionary<IconCacheKey, XRTexture2D> _iconCache = new();
+    private static readonly HashSet<IconCacheKey> _uploadedOpenGLIconCache = [];
     private static readonly object _iconCacheLock = new();
 
     private static int _toolbarIconFrameIndex;
@@ -41,7 +43,7 @@ public static partial class EditorImGuiUI
     /// </summary>
     private static XRTexture2D? GetIcon(string iconName, int size = DefaultIconSize)
     {
-        string cacheKey = BuildIconCacheKey(iconName, size);
+        IconCacheKey cacheKey = new(iconName, size);
         
         lock (_iconCacheLock)
         {
@@ -169,63 +171,31 @@ public static partial class EditorImGuiUI
         if (_toolbarIconFrameIndex < ToolbarIconWarmupFrames)
             return false;
 
-        string cacheKey = BuildIconCacheKey(iconName, DefaultIconSize);
+        IconCacheKey cacheKey = new(iconName, DefaultIconSize);
         var texture = GetIcon(iconName);
         if (texture is null) return false;
 
-        if (AbstractRenderer.Current is OpenGLRenderer glRenderer)
+        bool uploadNow = false;
+        lock (_iconCacheLock)
         {
-            var apiTexture = EditorRenderThread.Invoke(
-                () => glRenderer.GenericToAPI<GLTexture2D>(texture),
-                "EditorIcons.ResolveOpenGLIconTexture",
-                RenderThreadJobKind.TextureUpload);
-            if (apiTexture is null)
-                return false;
-
-            bool uploadNow = false;
-            lock (_iconCacheLock)
+            if (!_uploadedOpenGLIconCache.Contains(cacheKey))
             {
-                if (!_uploadedOpenGLIconCache.Contains(cacheKey))
-                {
-                    if (_toolbarIconGpuUploadsThisFrame >= ToolbarIconGpuUploadsPerFrame)
-                        return false;
+                if (_toolbarIconGpuUploadsThisFrame >= ToolbarIconGpuUploadsPerFrame)
+                    return false;
 
-                    _toolbarIconGpuUploadsThisFrame++;
-                    uploadNow = true;
-                }
+                _toolbarIconGpuUploadsThisFrame++;
+                _uploadedOpenGLIconCache.Add(cacheKey);
+                uploadNow = true;
             }
-
-            if (uploadNow)
-            {
-                apiTexture.Generate();
-                apiTexture.PushData();
-                lock (_iconCacheLock)
-                    _uploadedOpenGLIconCache.Add(cacheKey);
-            }
-
-            if (!apiTexture.TryGetBindingId(out uint bindingId) || bindingId == OpenGLRenderer.GLObjectBase.InvalidBindingId)
-                return false;
-
-            handle = (nint)bindingId;
-            return true;
         }
 
-        if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
-        {
-            IntPtr textureId = EditorRenderThread.Invoke(
-                () => vkRenderer.RegisterImGuiTexture(texture),
-                "EditorIcons.RegisterVulkanIconTexture",
-                RenderThreadJobKind.TextureUpload);
-            if (textureId == IntPtr.Zero)
-                return false;
-
-            handle = (nint)textureId;
-            return true;
-        }
-
-        return false;
+        var options = new RenderTexturePreviewOptions(UploadIfNeeded: uploadNow);
+        return EditorTexturePreviewService.TryGetHandle(
+            texture,
+            in options,
+            out handle,
+            out _,
+            out _);
     }
 
-    private static string BuildIconCacheKey(string iconName, int size)
-        => $"{iconName}_{size}";
 }

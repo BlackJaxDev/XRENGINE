@@ -303,6 +303,16 @@ namespace XREngine.Rendering
         private uint _cachedProjectionVersion;
         private RuntimeGraphicsApiKind _cachedProjectionBackend = RuntimeGraphicsApiKind.Unknown;
         private ERenderClipDepthRange _cachedProjectionClipDepthRange = (ERenderClipDepthRange)(-1);
+        private PreparedFrustum? _preparedWorldFrustum;
+        private Matrix4x4 _preparedWorldFrustumProjection;
+        private Matrix4x4 _preparedWorldFrustumTransform;
+        private bool _preparedWorldFrustumValid;
+        private Frustum? _worldFrustum;
+        private Matrix4x4 _worldFrustumProjection;
+        private Matrix4x4 _worldFrustumTransform;
+        private bool _worldFrustumValid;
+        private static readonly Action<object?> PopProjectionJitterAction =
+            static state => ((XRCamera)state!).PopProjectionJitter();
 
         /// <summary>
         /// Optional oblique near clipping plane in world space.
@@ -502,7 +512,7 @@ namespace XREngine.Rendering
 
         private RenderPipeline? ResolveRenderContextPostProcessPipeline()
         {
-            IRuntimeRenderPipelineFrameContext? currentPipeline = RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext;
+            IRuntimeRenderPipelineFrameContext? currentPipeline = RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext;
             IRuntimeRenderCommandExecutionState? renderState = currentPipeline?.RenderState;
             bool isActiveRenderCamera = ReferenceEquals(renderState?.SceneCamera, this)
                 || ReferenceEquals(renderState?.RenderingCamera, this)
@@ -699,7 +709,7 @@ namespace XREngine.Rendering
 
             InvalidateProjectionMatrices();
 
-            return StateObject.New(PopProjectionJitter);
+            return StateObject.New(PopProjectionJitterAction, this);
         }
 
         /// <summary>
@@ -743,7 +753,7 @@ namespace XREngine.Rendering
             XRCameraParameters parameters = Parameters;
             uint projectionVersion = parameters.ProjectionVersion;
             bool parametersChanged = !ReferenceEquals(_cachedProjectionParameters, parameters) || _cachedProjectionVersion != projectionVersion;
-            RuntimeGraphicsApiKind projectionBackend = RuntimeRenderingHostServices.Current.CurrentRenderBackend;
+            RuntimeGraphicsApiKind projectionBackend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
             ERenderClipDepthRange clipDepthRange = RuntimeEngine.Rendering.ResolveEffectiveClipDepthRange(projectionBackend);
             bool clipPolicyChanged = _cachedProjectionBackend != projectionBackend || _cachedProjectionClipDepthRange != clipDepthRange;
             if (!_projectionMatricesDirty && !parametersChanged && !clipPolicyChanged)
@@ -1102,7 +1112,50 @@ namespace XREngine.Rendering
         /// </summary>
         /// <returns></returns>
         public Frustum WorldFrustum()
-            => UntransformedFrustum().TransformedBy(Transform.RenderMatrix);
+        {
+            Matrix4x4 projection = ProjectionMatrixUnjittered;
+            Matrix4x4 renderTransform = Transform.RenderMatrix;
+            if (_worldFrustumValid &&
+                _worldFrustumProjection.Equals(projection) &&
+                _worldFrustumTransform.Equals(renderTransform))
+            {
+                return _worldFrustum!.Value;
+            }
+
+            Frustum worldFrustum = _worldFrustum ?? new Frustum();
+            Frustum untransformed = UntransformedFrustum();
+            worldFrustum.UpdateTransformed(untransformed, renderTransform);
+            _worldFrustum = worldFrustum;
+            _worldFrustumProjection = projection;
+            _worldFrustumTransform = renderTransform;
+            _worldFrustumValid = true;
+            return worldFrustum;
+        }
+
+        /// <summary>
+        /// Returns a reusable world-space frustum prepared for repeated intersection tests.
+        /// Its backing arrays are refreshed only when the camera projection or render
+        /// transform changes.
+        /// </summary>
+        public PreparedFrustum PreparedWorldFrustum()
+        {
+            Matrix4x4 projection = ProjectionMatrixUnjittered;
+            Matrix4x4 renderTransform = Transform.RenderMatrix;
+            PreparedFrustum prepared = _preparedWorldFrustum ??= new PreparedFrustum();
+            if (_preparedWorldFrustumValid &&
+                _preparedWorldFrustumProjection.Equals(projection) &&
+                _preparedWorldFrustumTransform.Equals(renderTransform))
+            {
+                return prepared;
+            }
+
+            Frustum untransformed = UntransformedFrustum();
+            prepared.UpdateTransformed(untransformed, renderTransform);
+            _preparedWorldFrustumProjection = projection;
+            _preparedWorldFrustumTransform = renderTransform;
+            _preparedWorldFrustumValid = true;
+            return prepared;
+        }
 
         /// <summary>
         /// The projection frustum of this camera with no transformation applied.
@@ -1616,13 +1669,24 @@ namespace XREngine.Rendering
         /// </summary>
         public RenderPipeline RenderPipeline
         {
-            get => _renderPipeline ?? SetFieldReturn(ref _renderPipeline, CreateDefaultRenderPipeline())!;
+            // Serialization and editor inspection may traverse cameras before an
+            // application rendering host exists. Keep this getter side-effect free;
+            // render entry points use GetOrCreateRenderPipeline so required factory
+            // installation still fails fast when rendering actually starts.
+            get => _renderPipeline
+                ?? (RuntimeRenderingHostServices.HasConcreteHost
+                    ? SetFieldReturn(ref _renderPipeline, CreateDefaultRenderPipeline())!
+                    : null!);
             set => SetField(ref _renderPipeline, value);
         }
 
+        public RenderPipeline GetOrCreateRenderPipeline()
+            => _renderPipeline ?? SetFieldReturn(ref _renderPipeline, CreateDefaultRenderPipeline())!;
+
         private static RenderPipeline CreateDefaultRenderPipeline()
-            => RuntimeRenderingHostServices.Current.CreateDefaultRenderPipeline() as RenderPipeline
-                ?? throw new InvalidOperationException("RuntimeRenderingHostServices.Current did not provide a default render pipeline.");
+            => RuntimeRenderingHostServices.Factories.CreateDefaultRenderPipeline() as RenderPipeline
+                ?? throw new InvalidOperationException(
+                    "The installed renderer factory capability did not provide a default render pipeline.");
 
         /// <summary>
         /// Sets all camera-related shader uniforms for rendering.
@@ -1640,7 +1704,7 @@ namespace XREngine.Rendering
             Matrix4x4 inverseProjMtx = InverseProjectionMatrix;
             Matrix4x4 viewProjMtx = ViewProjectionMatrix;
 
-            bool stereoPass = RuntimeRenderingHostServices.Current.IsStereoPass;
+            bool stereoPass = RuntimeRenderingHostServices.FrameTiming.IsStereoPass;
             if (stereoPass)
             {
                 if (stereoLeftEye)
@@ -1682,7 +1746,7 @@ namespace XREngine.Rendering
             program.Uniform(EEngineUniform.ClipDepthRange.ToStringFast(), (int)RuntimeEngine.Rendering.EffectiveClipDepthRange);
             program.Uniform(
                 EEngineUniform.FramebufferTextureYDirection.ToStringFast(),
-                (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeRenderingHostServices.Current.CurrentRenderBackend));
+                (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend));
 
             Parameters.SetUniforms(program);
         }

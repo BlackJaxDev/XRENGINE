@@ -13,7 +13,7 @@ namespace XREngine.Data.Core
         public T PreviousValue { get; } = prev;
         public T NewValue { get; } = newValue;
         string? IXRPropertyChangedEventArgs.PropertyName { get; } = propertyName;
-        object? IXRPropertyChangedEventArgs.PreviousValue { get; } = prev;
-        object? IXRPropertyChangedEventArgs.NewValue { get; } = newValue;
+        object? IXRPropertyChangedEventArgs.PreviousValue => PreviousValue;
+        object? IXRPropertyChangedEventArgs.NewValue => NewValue;
     }
 }

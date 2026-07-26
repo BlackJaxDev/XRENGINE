@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
@@ -42,7 +42,7 @@ namespace XREngine.Components
             }
 
             public override void Render(TransformBase transform)
-                => Engine.Rendering.Debug.RenderCircle(
+                => RuntimeEngine.Rendering.Debug.RenderCircle(
                     transform.TransformPoint(LocalOffset, true),
                     XRMath.RotationBetweenVectors(Globals.Up, transform.TransformDirection(LocalNormal, true)),
                     Radius,

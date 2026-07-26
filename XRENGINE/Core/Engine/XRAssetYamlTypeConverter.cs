@@ -841,50 +841,6 @@ namespace XREngine
         }
     }
 
-    public class DepthTrackingEventEmitter(IEventEmitter nextEmitter) : ChainedEventEmitter(nextEmitter)
-    {
-        // Thread-static variable to track the depth
-        [ThreadStatic]
-        private static int _depth;
-
-        public override void Emit(AliasEventInfo eventInfo, IEmitter emitter)
-        {
-            base.Emit(eventInfo, emitter);
-        }
-
-        public override void Emit(ScalarEventInfo eventInfo, IEmitter emitter)
-        {
-            base.Emit(eventInfo, emitter);
-        }
-
-        public override void Emit(MappingStartEventInfo eventInfo, IEmitter emitter)
-        {
-            _depth++;
-            base.Emit(eventInfo, emitter);
-        }
-
-        public override void Emit(MappingEndEventInfo eventInfo, IEmitter emitter)
-        {
-            base.Emit(eventInfo, emitter);
-            _depth--;
-        }
-
-        public override void Emit(SequenceStartEventInfo eventInfo, IEmitter emitter)
-        {
-            _depth++;
-            base.Emit(eventInfo, emitter);
-        }
-
-        public override void Emit(SequenceEndEventInfo eventInfo, IEmitter emitter)
-        {
-            base.Emit(eventInfo, emitter);
-            _depth--;
-        }
-
-        // Property to access the current depth
-        public static int CurrentDepth => _depth;
-    }
-
     public class XRAssetYamlConverter : IYamlTypeConverter
     {
         [ThreadStatic]
@@ -931,54 +887,6 @@ namespace XREngine
 
         private static void WriteReference(IEmitter emitter, XRAsset asset)
             => TryWriteAsReference.WriteReference(emitter, asset);
-    }
-
-    /// <summary>
-    /// Shared reference-emission gate used by <see cref="XRAssetYamlConverter"/> and type-specific
-    /// asset converters (e.g. <c>XRTexture2DYamlTypeConverter</c>, <c>XRMeshYamlTypeConverter</c>,
-    /// <c>AnimationClipYamlTypeConverter</c>) so an externalized asset always emits a compact
-    /// <c>{ID: &lt;guid&gt;}</c> reference instead of its inline body.
-    /// </summary>
-    public static class TryWriteAsReference
-    {
-        public static bool ShouldWriteReference(XRAsset asset)
-        {
-            // CurrentDepth is 0 before the first MappingStart, so depth 0 means root object.
-            if (DepthTrackingEventEmitter.CurrentDepth < 1)
-                return false;
-
-            // Embedded assets (SourceAsset != self) must serialize inline.
-            if (!ReferenceEquals(asset.SourceAsset, asset))
-                return false;
-
-            if (string.IsNullOrWhiteSpace(asset.FilePath))
-                return false;
-
-            // A compact {ID} reference must be resolvable in a later process. Native .asset
-            // files carry their own ID into metadata; generated auxiliaries such as font atlas
-            // PNGs do not, even though they exist on disk during cache serialization.
-            if (!string.Equals(Path.GetExtension(asset.FilePath), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
-                return false;
-
-            return File.Exists(asset.FilePath);
-        }
-
-        public static void WriteReference(IEmitter emitter, XRAsset asset)
-        {
-            emitter.Emit(new MappingStart(null, null, false, MappingStyle.Block));
-            emitter.Emit(new Scalar("ID"));
-            emitter.Emit(new Scalar(asset.ID.ToString()));
-            emitter.Emit(new MappingEnd());
-        }
-
-        public static bool TryEmitReference(IEmitter emitter, XRAsset? asset)
-        {
-            if (asset is null || !ShouldWriteReference(asset))
-                return false;
-
-            WriteReference(emitter, asset);
-            return true;
-        }
     }
 
     public sealed class DelegateSkippingTypeInspector(ITypeInspector inner) : ITypeInspector

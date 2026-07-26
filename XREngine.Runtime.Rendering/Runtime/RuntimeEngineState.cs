@@ -4,9 +4,11 @@ namespace XREngine;
 
 internal sealed class RuntimeEngineState
 {
+    public IPawnController? MainPlayer => GetLocalPlayer(ELocalPlayerIndex.One);
+
     public IPawnController GetOrCreateLocalPlayer(ELocalPlayerIndex playerIndex)
         => GetLocalPlayer(playerIndex) ?? new NullPawnController(playerIndex);
 
     public IPawnController? GetLocalPlayer(ELocalPlayerIndex playerIndex)
-        => RuntimeRenderingHostServices.Current.EnumerateLocalPlayers().FirstOrDefault(player => player.LocalPlayerIndex == playerIndex);
+        => RuntimeRenderingHostServices.Factories.EnumerateLocalPlayers().FirstOrDefault(player => player.LocalPlayerIndex == playerIndex);
 }

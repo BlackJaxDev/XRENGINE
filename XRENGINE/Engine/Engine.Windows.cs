@@ -21,10 +21,10 @@ namespace XREngine
             bool splitWindowPumpStarted = WindowPumpHost.TryStartForStartupWindows(windows);
             if (splitWindowPumpStarted)
             {
-                SetRenderThreadId(0);
+                RuntimeEngine.AssignRenderThread(0);
                 Debug.Rendering(
                     "[RenderThreadHost] Dedicated render thread assignment is pending. WindowThreadId={0}.",
-                    WindowThreadId);
+                    RuntimeEngine.WindowThreadId);
             }
 
             foreach (var windowSettings in windows)
@@ -44,7 +44,7 @@ namespace XREngine
         /// </remarks>
         public static XRWindow CreateWindow(GameWindowStartupSettings windowSettings)
         {
-            bool preferHdrOutput = windowSettings.OutputHDR ?? Rendering.Settings.OutputHDR;
+            bool preferHdrOutput = windowSettings.OutputHDR ?? RuntimeEngine.Rendering.Settings.OutputHDR;
             EInteractiveWindowResizeStrategy interactiveResizeStrategy = ResolveInteractiveResizeStrategy(windowSettings);
             bool useNativeTitleBar = windowSettings.UseNativeTitleBar &&
                 interactiveResizeStrategy != EInteractiveWindowResizeStrategy.EngineBorderlessResize;
@@ -62,8 +62,8 @@ namespace XREngine
                 windowSettings.TargetWorld?.Name ?? "<null>",
                 interactiveResizeStrategy,
                 Environment.CurrentManagedThreadId,
-                WindowThreadId,
-                RenderThreadId);
+                RuntimeEngine.WindowThreadId,
+                RuntimeEngine.RenderThreadId);
 
             bool createOnWindowPumpHost = WindowPumpHost.ShouldCreateWindowOnHost(windowSettings);
             RenderBackendFallbackPolicy fallbackPolicy = EffectiveSettings.RenderBackendFallbackPolicy;
@@ -145,7 +145,7 @@ namespace XREngine
             window.PreferHDROutput = preferHdrOutput;
             CreateViewports(windowSettings.LocalPlayers, window);
             window.UpdateViewportSizes();
-            _windows.Add(window);
+            RuntimeEngine.RegisterWindow(window);
             window.ApplyVSyncMode(EffectiveSettings.VSync);
 
             Vector2D<int> framebufferSize = window.EffectiveFramebufferSize;
@@ -160,7 +160,7 @@ namespace XREngine
                 window.NativeWindowThreadId,
                 window.RenderOwnerThreadId);
 
-            Rendering.ApplyRenderPipelinePreference();
+            EngineRenderingSettingsApplication.ApplyRenderPipelinePreference();
             window.SetWorld(windowSettings.TargetWorld is null ? null : XRWorldInstance.GetOrInitWorld(windowSettings.TargetWorld));
 
             Debug.Rendering(
@@ -172,16 +172,16 @@ namespace XREngine
 
         private static void WaitForStartupWindowAttachment(TimeSpan timeout)
         {
-            if (_windows.Count == 0)
+            if (RuntimeEngine.Windows.Count == 0)
                 return;
 
             long start = System.Diagnostics.Stopwatch.GetTimestamp();
             while (true)
             {
                 bool allReady = true;
-                for (int i = 0; i < _windows.Count; i++)
+                for (int i = 0; i < RuntimeEngine.Windows.Count; i++)
                 {
-                    if (_windows[i].IsStartupAttachmentComplete)
+                    if (RuntimeEngine.Windows[i].IsStartupAttachmentComplete)
                         continue;
 
                     allReady = false;
@@ -192,7 +192,7 @@ namespace XREngine
                 {
                     Debug.Rendering(
                         "[StartupWindow] Startup attachment barrier satisfied. windows={0} elapsedMs={1:F2}.",
-                        _windows.Count,
+                        RuntimeEngine.Windows.Count,
                         System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds);
                     return;
                 }
@@ -201,7 +201,7 @@ namespace XREngine
                 {
                     Debug.RenderingWarning(
                         "[StartupWindow] Startup attachment barrier timed out. windows={0} elapsedMs={1:F2}. Continuing with diagnostics.",
-                        _windows.Count,
+                        RuntimeEngine.Windows.Count,
                         System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds);
                     return;
                 }
@@ -220,8 +220,8 @@ namespace XREngine
                 Interlocked.Exchange(ref _abandonProcessExitCleanup, 1);
 
             WindowPumpHost.UnregisterWindow(window);
-            _windows.Remove(window);
-            if (_windows.Count != 0)
+            RuntimeEngine.UnregisterWindow(window);
+            if (RuntimeEngine.Windows.Count != 0)
                 return;
 
             if (Interlocked.CompareExchange(ref _suppressedCleanupRequests, 0, 0) > 0)
@@ -238,7 +238,7 @@ namespace XREngine
         /// </summary>
         internal static bool QuiesceForWindowRendererTeardown(XRWindow window)
         {
-            bool isFinalWindow = _windows.Count == 1 && ReferenceEquals(_windows[0], window);
+            bool isFinalWindow = RuntimeEngine.Windows.Count == 1 && ReferenceEquals(RuntimeEngine.Windows[0], window);
             bool cleanupSuppressed = Volatile.Read(ref _suppressedCleanupRequests) > 0;
             if (!isFinalWindow || cleanupSuppressed)
                 return true;
@@ -412,17 +412,17 @@ namespace XREngine
             return EInteractiveWindowResizeStrategy.Default;
         }
 
-        private static void ApplyInteractiveResizeStrategySettings()
+        internal static void ApplyInteractiveResizeStrategySettings()
         {
             EInteractiveWindowResizeStrategy strategy = ResolveInteractiveResizeStrategy();
-            foreach (var window in _windows)
+            foreach (var window in RuntimeEngine.Windows)
                 window?.SetInteractiveResizeStrategy(strategy);
         }
 
         private static void ApplyWindowVSyncSettings()
         {
             EVSyncMode vSync = EffectiveSettings.VSync;
-            foreach (var window in _windows)
+            foreach (var window in RuntimeEngine.Windows)
                 window?.ApplyVSyncMode(vSync);
         }
 
@@ -438,7 +438,7 @@ namespace XREngine
             bool anyWindowFocused = isFocused;
             if (!anyWindowFocused)
             {
-                foreach (var w in _windows)
+                foreach (var w in RuntimeEngine.Windows)
                 {
                     if (w == null || w.Window == null)
                         continue; // Skip if the window is null or has been disposed
@@ -479,7 +479,7 @@ namespace XREngine
             }
 
             // Set target FPS to unfocused value (VR headsets manage this independently)
-            if (EffectiveSettings.UnfocusedTargetFramesPerSecond is not null && !VRState.IsInVR)
+            if (EffectiveSettings.UnfocusedTargetFramesPerSecond is not null && !RuntimeEngine.VRState.IsInVR)
             {
                 float targetRenderFrequency = Time.ResolveRenderFrequency(false, EffectiveSettings.VSync);
                 Time.Timer.TargetRenderFrequency = targetRenderFrequency;
@@ -510,7 +510,7 @@ namespace XREngine
             }
 
             // Restore target FPS to focused value (VR headsets manage this independently)
-            if (EffectiveSettings.UnfocusedTargetFramesPerSecond is not null && !VRState.IsInVR)
+            if (EffectiveSettings.UnfocusedTargetFramesPerSecond is not null && !RuntimeEngine.VRState.IsInVR)
             {
                 float targetRenderFrequency = Time.ResolveRenderFrequency(true, EffectiveSettings.VSync);
                 Time.Timer.TargetRenderFrequency = targetRenderFrequency;

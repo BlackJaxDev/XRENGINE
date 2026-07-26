@@ -25,10 +25,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
     <ProjectReference Include="..\XREngine.Input\XREngine.Input.csproj" />
@@ -40,6 +36,10 @@
     <Reference Include="OpenVR.NET">
       <HintPath>..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll</HintPath>
     </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" />
   </ItemGroup>
 
 </Project>

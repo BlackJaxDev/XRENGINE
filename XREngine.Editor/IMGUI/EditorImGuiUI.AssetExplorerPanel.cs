@@ -3319,22 +3319,13 @@ public static partial class EditorImGuiUI
             if (!Engine.IsRenderThread)
                 return false;
 
-            OpenGLRenderer? renderer = TryGetOpenGLRenderer();
-            if (renderer is null)
+            if (!EditorTexturePreviewService.TryGetHandle(
+                    texture,
+                    out handle,
+                    out _,
+                    out _))
                 return false;
 
-            var apiTexture = EditorRenderThread.Invoke(
-                () => renderer.GenericToAPI<GLTexture2D>(texture),
-                "AssetExplorer.ResolveOpenGLPreviewTexture",
-                RenderThreadJobKind.TextureUpload);
-            if (apiTexture is null)
-                return false;
-
-            uint binding = apiTexture.BindingId;
-            if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
-                return false;
-
-            handle = (nint)binding;
             Vector2 pixelSize = new(texture.Width, texture.Height);
             displaySize = GetPreviewSizeForEdge(pixelSize, maxEdge);
             return true;
@@ -3354,18 +3345,6 @@ public static partial class EditorImGuiUI
 
             float scale = maxEdge / largest;
             return new Vector2(width * scale, height * scale);
-        }
-
-        private static OpenGLRenderer? TryGetOpenGLRenderer()
-        {
-            if (AbstractRenderer.Current is OpenGLRenderer current)
-                return current;
-
-            foreach (var window in Engine.Windows)
-                if (window.Renderer is OpenGLRenderer renderer)
-                    return renderer;
-
-            return null;
         }
 
         private static IEnumerable<AssetExplorerContextAction> GetAssetExplorerActions(string path)

@@ -2,7 +2,6 @@ using System;
 using System.Threading;
 using XREngine;
 using XREngine.Rendering;
-using XREngine.Rendering.Vulkan;
 using Debug = XREngine.Debug;
 
 namespace XREngine.Rendering.API.Rendering.OpenXR;
@@ -129,7 +128,7 @@ public unsafe partial class OpenXRAPI
     {
         int index = (int)Math.Min(viewIndex, (uint)_viewConfigViews.Length - 1u);
         var viewConfig = _viewConfigViews[index];
-        IRuntimeRenderingHostServices settings = RuntimeRenderingHostServices.Current;
+        IRuntimeRenderPresentationServices settings = RuntimeRenderingHostServices.Presentation;
         return ResolveOpenXrEyeSwapchainExtentForSettings(
             settings.OpenXrEyeResolutionPreset,
             settings.OpenXrEyeResolutionScale,
@@ -216,7 +215,7 @@ public unsafe partial class OpenXRAPI
         bool scheduled = false;
         try
         {
-            RuntimeRenderingHostServices.Current.InvokeRenderThreadTask(
+            RuntimeRenderingHostServices.Scheduling.InvokeRenderThreadTask(
                 () =>
                 {
                     try
@@ -257,12 +256,15 @@ public unsafe partial class OpenXRAPI
         Volatile.Write(ref _frameSkipRender, 0);
         _sessionBegun = false;
 
-        if (Window?.Renderer is VulkanRenderer vulkanRenderer)
-            vulkanRenderer.ResetOpenXrRenderingResourcesForRuntimeRecreate(reason);
+        if (Window?.Renderer is AbstractRenderer renderer &&
+            TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding))
+        {
+            binding.ResetRenderingResourcesForRuntimeRecreate(renderer, reason);
+        }
 
         TearDownSessionResourcesWithCurrentContext(destroyInstance: true);
         string serviceReason = $"OpenXR eye resolution change: {reason}";
-        if (!RuntimeRenderingHostServices.Current.TryEnsureOpenXrRuntimeService(serviceReason))
+        if (!RuntimeRenderingHostServices.Presentation.TryEnsureOpenXrRuntimeService(serviceReason))
         {
             throw new InvalidOperationException(
                 $"OpenXR runtime service did not accept the requested eye-resolution change. Reason={reason}");
@@ -296,7 +298,7 @@ public unsafe partial class OpenXRAPI
 
     private OpenXrEyeResolutionSettingsSnapshot CaptureCurrentOpenXrEyeResolutionSettings()
     {
-        IRuntimeRenderingHostServices settings = RuntimeRenderingHostServices.Current;
+        IRuntimeRenderPresentationServices settings = RuntimeRenderingHostServices.Presentation;
         return new(
             settings.OpenXrEyeResolutionPreset,
             NormalizeOpenXrEyeResolutionScale(settings.OpenXrEyeResolutionScale),

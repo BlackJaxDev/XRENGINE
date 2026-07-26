@@ -114,14 +114,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         private int ResolvePassIndex(string passName)
-        {
-            var metadata = ParentPipeline?.PassMetadata;
-            if (metadata is null)
-                return int.MinValue;
-
-            var match = metadata.FirstOrDefault(m => string.Equals(m.Name, passName, StringComparison.OrdinalIgnoreCase));
-            return match?.PassIndex ?? int.MinValue;
-        }
+            => ParentPipeline?.TryGetRenderPassIndex(passName, out int passIndex) == true
+                ? passIndex
+                : int.MinValue;
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)
         {

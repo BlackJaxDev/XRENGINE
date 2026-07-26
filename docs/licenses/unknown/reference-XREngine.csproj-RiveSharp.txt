@@ -1,6 +1,0 @@
-﻿License text not detected for assembly reference.
-
-Project: XREngine.csproj
-Reference: RiveSharp
-HintPath: $(RiveSharpManagedDll)
-

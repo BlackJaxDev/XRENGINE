@@ -72,6 +72,7 @@ namespace XREngine.Rendering
         protected Matrix4x4? _inverseProjectionMatrix;
         protected Frustum? _untransformedFrustum;
         private readonly object _projectionLock = new();
+        private bool _untransformedFrustumInvalidated = true;
         private uint _projectionVersion;
 
         /// <summary>
@@ -109,7 +110,7 @@ namespace XREngine.Rendering
             {
                 _projectionMatrix = null;
                 _inverseProjectionMatrix = null;
-                _untransformedFrustum = null;
+                _untransformedFrustumInvalidated = true;
                 unchecked
                 {
                     _projectionVersion++;
@@ -135,8 +136,16 @@ namespace XREngine.Rendering
                 changed = true;
             }
 
-            if (_untransformedFrustum is null || changed)
-                _untransformedFrustum = CalculateUntransformedFrustum(_inverseProjectionMatrix ?? Matrix4x4.Identity);
+            if (_untransformedFrustum is null)
+                _untransformedFrustum = new Frustum();
+
+            if (_untransformedFrustumInvalidated || changed)
+            {
+                Frustum frustum = _untransformedFrustum.Value;
+                UpdateUntransformedFrustum(ref frustum, _inverseProjectionMatrix ?? Matrix4x4.Identity);
+                _untransformedFrustum = frustum;
+                _untransformedFrustumInvalidated = false;
+            }
 
             return changed;
         }
@@ -191,7 +200,9 @@ namespace XREngine.Rendering
 
             return frustum;
         }
-        protected abstract Frustum CalculateUntransformedFrustum(Matrix4x4 inverseProjectionMatrix);
+        protected abstract void UpdateUntransformedFrustum(
+            ref Frustum frustum,
+            Matrix4x4 inverseProjectionMatrix);
 
         public virtual void SetUniforms(XRRenderProgram program)
         {

@@ -9,10 +9,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            ActivePipelineInstance.RenderState.PushProgramBindings(new XRRenderPipelineInstance.RenderingState.ScopedProgramBindings
-            {
-                ApplyUniforms = ApplyUniforms
-            });
+            ActivePipelineInstance.RenderState.PushProgramBindingsState(
+                new XRRenderPipelineInstance.RenderingState.ScopedProgramBindings(ApplyUniforms));
         }
     }
 }

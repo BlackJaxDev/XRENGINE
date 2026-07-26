@@ -232,6 +232,55 @@ XRWindow.RenderFrame()
 
 `GlobalPreRender` and `GlobalPostRender` are render-thread hooks around actual viewport rendering. In 3D they are also where GPU BVH raycast dispatch/completion hooks run.
 
+### Vulkan desktop frame completion
+
+For Vulkan, `Renderer.RenderWindow(delta)` enters a short
+`WindowRenderCallback` coordinator after viewport and pipeline code has emitted
+the frame operations. The coordinator owns only sequencing and the outer
+failure boundary; responsibility-specific partials implement:
+
+```text
+enter immutable attempt identity
+  -> preflight surface, resize, and resource-generation policy
+  -> wait for the captured desktop frame slot and drain its retired resources
+  -> acquire a swapchain image
+  -> prepare the acquired image
+  -> record scene and volatile overlay command buffers
+  -> submit
+  -> present or run the required acquire/present recovery
+  -> publish timing/ownership telemetry
+  -> finalize and release the active-attempt publication
+```
+
+`DesktopFrameAttempt` is stack-only. It carries the immutable frame number,
+captured desktop slot, phase, acquire/upload ownership, recovery action,
+command-buffer state, and phase timings. Phase and ownership transitions are
+checked by `VulkanDesktopFramePolicy`; finalization rejects an unresolved
+acquired image or upload batch. If a phase throws, recovery first settles any
+acquire that Vulkan has already granted. Telemetry finalization runs from the
+outer `finally`, and a telemetry failure does not replace the primary frame
+failure.
+
+Desktop activity is published as one coherent atomic snapshot containing
+`IsActive`, `FrameNumber`, and `FrameSlot`. Reentrant desktop callbacks are
+rejected without incrementing the accepted-attempt counter, and a publication
+token prevents a stale exit from clearing a newer attempt. OpenXR and
+device-loss diagnostics consume this snapshot rather than reading unrelated
+mutable fields. Desktop attempt entry/exit and OpenXR's complete retirement
+check-and-drain interval also share `_desktopFrameRetirementGate`. The gate
+prevents a desktop attempt from entering between OpenXR's drainability check
+and destruction; an already-active desktop slot remains excluded by the
+snapshot.
+
+The `XRWindow` circuit breaker is outside the backend coordinator. Viewport
+pipeline exceptions are isolated so Vulkan can still acquire, submit, and
+present a known frame. An exception that escapes the complete window callback
+temporarily suppresses later callbacks with a 100 ms-per-consecutive-failure
+backoff capped at five seconds. Vulkan device loss is different: it marks the
+logical device terminal, clears completion points that can no longer signal,
+and asks `XRWindow` to recreate the renderer on the existing window rather than
+continuing through ordinary circuit-breaker retries.
+
 ## Ownership by Layer
 
 The frame is easiest to reason about if you separate ownership by layer:

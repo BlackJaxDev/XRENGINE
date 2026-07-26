@@ -50,6 +50,17 @@ namespace XREngine.Rendering
     /// </summary>
     public abstract unsafe class AbstractRenderer : XRBase, IRenderApiWrapperOwner, IRuntimeRendererHost, IRenderResourceGenerationBackend//, IDisposable
     {
+        /// <inheritdoc />
+        public virtual RendererBackendId BackendId => default;
+        public long BackendGeneration { get; internal set; }
+        private int _acceptsBackendWork = 1;
+
+        /// <summary>
+        /// False after quiescing starts. Retired generations may destroy their existing
+        /// objects but may not create or publish new backend work.
+        /// </summary>
+        public bool AcceptsBackendWork => Volatile.Read(ref _acceptsBackendWork) != 0;
+
         #region Constants / Statics
         /// <summary>
         /// If true, this renderer is currently being used to render a window.
@@ -97,6 +108,13 @@ namespace XREngine.Rendering
 
             public void Dispose()
             {
+                if (_previousThreadCurrent is { AcceptsBackendWork: false })
+                {
+                    _threadCurrent = _globalCurrent;
+                    _hasThreadCurrentOverride = _globalCurrent is not null;
+                    return;
+                }
+
                 _threadCurrent = _previousThreadCurrent;
                 _hasThreadCurrentOverride = _previousHasThreadCurrentOverride;
             }
@@ -313,12 +331,12 @@ namespace XREngine.Rendering
         private static void RecordImGuiFrameOutput(XRCamera? camera, ulong frameId, long elapsedTicks)
         {
             double cpuMs = elapsedTicks <= 0L ? 0.0 : elapsedTicks * 1000.0 / Stopwatch.Frequency;
-            IRuntimeRenderingHostServices services = RuntimeRenderingHostServices.Current;
-            EVrOutputViewKind viewKind = ResolveImGuiOverlayViewKind(camera, services);
+            IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
+            EVrOutputViewKind viewKind = ResolveImGuiOverlayViewKind(camera, presentation);
             bool desktopFacing = viewKind is EVrOutputViewKind.DesktopEditor or EVrOutputViewKind.CyclopeanDesktop;
             bool mirror = desktopFacing &&
-                services.IsInVR &&
-                services.VrMirrorMode is EVrMirrorMode.BlitSubmittedEye or EVrMirrorMode.CyclopeanReconstruct;
+                presentation.IsInVR &&
+                presentation.VrMirrorMode is EVrMirrorMode.BlitSubmittedEye or EVrMirrorMode.CyclopeanReconstruct;
             var pacing = FrameOutputPacingDecision.Due(viewKind, EFrameOutputKind.ImGuiOverlay, frameId);
             var telemetry = new FrameOutputTelemetry(
                 EFrameOutputKind.ImGuiOverlay,
@@ -333,24 +351,26 @@ namespace XREngine.Rendering
                 mirror,
                 false,
                 viewKind is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye ||
-                    (viewKind == EVrOutputViewKind.CyclopeanDesktop && services.VrMirrorMode != EVrMirrorMode.FullIndependentRender),
+                    (viewKind == EVrOutputViewKind.CyclopeanDesktop && presentation.VrMirrorMode != EVrMirrorMode.FullIndependentRender),
                 0,
                 0,
                 0,
                 0,
                 cpuMs,
                 0.0);
-            services.RecordRenderFrameOutput(telemetry);
+            presentation.RecordRenderFrameOutput(telemetry);
         }
 
-        private static EVrOutputViewKind ResolveImGuiOverlayViewKind(XRCamera? camera, IRuntimeRenderingHostServices services)
+        private static EVrOutputViewKind ResolveImGuiOverlayViewKind(
+            XRCamera? camera,
+            IRuntimeRenderPresentationServices presentation)
         {
             if (camera?.StereoEyeLeft == true)
                 return EVrOutputViewKind.LeftEye;
             if (camera?.StereoEyeLeft == false)
                 return EVrOutputViewKind.RightEye;
 
-            return services.IsInVR && services.VrMirrorMode != EVrMirrorMode.FullIndependentRender
+            return presentation.IsInVR && presentation.VrMirrorMode != EVrMirrorMode.FullIndependentRender
                 ? EVrOutputViewKind.CyclopeanDesktop
                 : EVrOutputViewKind.DesktopEditor;
         }
@@ -450,7 +470,7 @@ namespace XREngine.Rendering
             if (!SupportsImGui)
                 return false;
 
-            if (RuntimeRenderingHostServices.Current.IsShadowPass)
+            if (RuntimeRenderingHostServices.FrameTiming.IsShadowPass)
                 return false;
 
             if (!ShouldRenderImGui(viewport))
@@ -460,7 +480,7 @@ namespace XREngine.Rendering
             if (backend is null)
                 return false;
 
-            long timestampTicks = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+            long timestampTicks = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
             bool allowResizeFrame =
                 viewport?.Window?.IsInteractiveResizeInProgress == true ||
                 XRWindow.IsInteractiveResizeInProgress;
@@ -490,7 +510,7 @@ namespace XREngine.Rendering
                         RecordImGuiCpuPhase(profilingActive, frameId, "ImGui.ConfigureDisplay", phaseStart);
 
                         phaseStart = BeginImGuiCpuPhase(profilingActive);
-                        backend.Update((float)RuntimeRenderingHostServices.Current.RenderDeltaSeconds);
+                        backend.Update((float)RuntimeRenderingHostServices.FrameTiming.RenderDeltaSeconds);
                         RecordImGuiCpuPhase(profilingActive, frameId, "ImGui.Backend.Update", phaseStart);
                         frameStarted = true;
 
@@ -571,6 +591,28 @@ namespace XREngine.Rendering
             AbstractRenderAPIObject? obj;
             using (_roCacheLock.EnterScope())
             {
+                if (_renderObjectCache.TryGetValue(renderObject, out obj))
+                {
+                    if (generateNow && !obj.IsGenerated)
+                    {
+                        if (!AcceptsBackendWork)
+                        {
+                            throw new InvalidOperationException(
+                                $"Renderer '{GetType().Name}' generation {BackendGeneration} is retired and cannot generate API wrappers.");
+                        }
+
+                        obj.Generate();
+                    }
+
+                    return obj;
+                }
+
+                if (!AcceptsBackendWork)
+                {
+                    throw new InvalidOperationException(
+                        $"Renderer '{GetType().Name}' generation {BackendGeneration} is retired and cannot create API wrappers.");
+                }
+
                 obj = _renderObjectCache.GetOrAdd(
                     renderObject,
                     static (key, renderer) => renderer.CreateAPIRenderObject(key),
@@ -616,27 +658,40 @@ namespace XREngine.Rendering
                     return;
 
                 cachedObjects = [.. _renderObjectCache];
-                _renderObjectCache.Clear();
             }
 
+            List<Exception>? failures = null;
             foreach (var pair in cachedObjects)
             {
                 try
                 {
-                    pair.Key.RemoveWrapper(pair.Value);
+                    pair.Value.Retire();
+                    // Retirement is the deterministic terminal lifetime boundary for this
+                    // renderer generation. A later finalizer must not invoke virtual backend
+                    // code after the module has begun unloading.
+                    GC.SuppressFinalize(pair.Value);
                 }
-                catch
+                catch (Exception ex)
                 {
-                }
-
-                try
-                {
-                    pair.Value.Destroy();
-                }
-                catch
-                {
+                    (failures ??= []).Add(ex);
                 }
             }
+
+            using (_roCacheLock.EnterScope())
+                _renderObjectCache.Clear();
+
+            if (failures is not null)
+            {
+                throw new AggregateException(
+                    $"Failed to destroy {failures.Count} API wrapper operation(s) for renderer generation {BackendGeneration}.",
+                    failures);
+            }
+        }
+
+        internal void BeginBackendRetirement()
+        {
+            Interlocked.Exchange(ref _acceptsBackendWork, 0);
+            Active = false;
         }
 
         /// <summary>
@@ -667,13 +722,13 @@ namespace XREngine.Rendering
         #region Luminance / Exposure
 
         public bool CalcDotLuminance(XRTexture2D texture, out float dotLuminance, bool genMipmapsNow)
-            => CalcDotLuminance(texture, RuntimeRenderingHostServices.Current.DefaultLuminance, out dotLuminance, genMipmapsNow);
+            => CalcDotLuminance(texture, RuntimeRenderingHostServices.FrameTiming.DefaultLuminance, out dotLuminance, genMipmapsNow);
         public abstract bool CalcDotLuminance(XRTexture2D texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow);
         public float CalculateDotLuminance(XRTexture2D texture, bool generateMipmapsNow)
             => CalcDotLuminance(texture, out float dotLum, generateMipmapsNow) ? dotLum : 1.0f;
 
         public bool CalcDotLuminance(XRTexture2DArray texture, out float dotLuminance, bool genMipmapsNow)
-            => CalcDotLuminance(texture, RuntimeRenderingHostServices.Current.DefaultLuminance, out dotLuminance, genMipmapsNow);
+            => CalcDotLuminance(texture, RuntimeRenderingHostServices.FrameTiming.DefaultLuminance, out dotLuminance, genMipmapsNow);
         public abstract bool CalcDotLuminance(XRTexture2DArray texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow);
         public float CalculateDotLuminance(XRTexture2DArray texture, bool generateMipmapsNow)
             => CalcDotLuminance(texture, out float dotLum, generateMipmapsNow) ? dotLum : 1.0f;
@@ -708,11 +763,11 @@ namespace XREngine.Rendering
             => throw new NotSupportedException();
 
         public void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Action<bool, float> callback)
-            => CalcDotLuminanceFrontAsync(region, withTransparency, RuntimeRenderingHostServices.Current.DefaultLuminance, callback);
+            => CalcDotLuminanceFrontAsync(region, withTransparency, RuntimeRenderingHostServices.FrameTiming.DefaultLuminance, callback);
         public abstract void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback);
 
         public void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Action<bool, float> callback)
-            => CalcDotLuminanceFrontAsyncCompute(region, withTransparency, RuntimeRenderingHostServices.Current.DefaultLuminance, callback);
+            => CalcDotLuminanceFrontAsyncCompute(region, withTransparency, RuntimeRenderingHostServices.FrameTiming.DefaultLuminance, callback);
         public abstract void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback);
         #endregion
 
@@ -1391,6 +1446,18 @@ namespace XREngine.Rendering
             private set => _api = value;
         }
         protected abstract TAPI GetAPI();
+
+        /// <summary>
+        /// Releases the native API wrapper at the renderer teardown boundary instead of
+        /// retaining a collectible backend generation until finalization.
+        /// </summary>
+        protected void DisposeNativeApi()
+        {
+            TAPI? api = _api;
+            _api = null;
+            api?.Dispose();
+            GC.SuppressFinalize(this);
+        }
 
         //protected void VerifyExt<T>(string name, ref T? output) where T : NativeExtension<TAPI>
         //{

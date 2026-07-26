@@ -730,10 +730,10 @@ public class GpuRenderingBacklogTests
     [Test]
     public void VR_Vulkan_ParallelSecondaryCommands_NoRenderThreadBlock()
     {
-        string recording = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
-        string secondary = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
-        string workers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
-        string commandPools = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandPool.cs");
+        string recording = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string secondary = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
+        string workers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
+        string commandPools = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandPool.cs");
 
         secondary.ShouldContain("ExecuteSecondaryCommandBufferBatchParallel");
         secondary.ShouldContain("Task.Run");
@@ -745,13 +745,15 @@ public class GpuRenderingBacklogTests
     [Test]
     public void Vulkan_GpuPipelineProfilerToggle_DoesNotInstrumentMainRenderCommandBuffers()
     {
-        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs")
+        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs")
             .Replace("\r\n", "\n");
-        string frameTiming = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameTiming.cs")
+        string frameTiming = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameTiming.cs")
+            .Replace("\r\n", "\n");
+        string frameSlots = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.FrameSlots.cs")
             .Replace("\r\n", "\n");
         string gpuProfiler = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/RenderPipelineGpuProfiler.cs")
             .Replace("\r\n", "\n");
-        string engineStats = ReadWorkspaceFile("XREngine/Engine/Subclasses/Rendering/Engine.Rendering.Stats.cs")
+        string engineStats = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.cs")
             .Replace("\r\n", "\n");
         string engineSettings = ReadWorkspaceFile("XREngine/Engine/Engine.Settings.cs")
             .Replace("\r\n", "\n");
@@ -770,8 +772,20 @@ public class GpuRenderingBacklogTests
         frameTiming.ShouldContain("XREngineEnvironmentVariables.GpuTimestampDense");
         frameTiming.ShouldContain("if (!IsVulkanGpuProfilerCommandBufferInstrumentationEnabled)\n            return false;");
         frameTiming.ShouldContain("RecordBackendGpuTimingStatus(");
-        gpuProfiler.ShouldContain("public bool ShouldInstrumentCommandScopes\n        => IsProfilingActive && AbstractRenderer.Current is OpenGLRenderer;");
-        gpuProfiler.ShouldContain("VulkanRenderer.VulkanGpuProfilerCommandTimingStatusMessage");
+        frameTiming.ShouldContain("Api!.CmdResetQueryPool(commandBuffer, queryPool, 0, VulkanGpuProfilerQueryCount);");
+        frameTiming.ShouldContain("private void SampleVulkanGpuProfilerQueries(int frameSlot)");
+        frameTiming.ShouldContain("RecordBackendGpuTimingSample(");
+        int waitForCompletedImage = frameSlots.IndexOf("WaitForTimelineValue(", StringComparison.Ordinal);
+        int sampleCompletedImageQueries = frameSlots.IndexOf("SampleFrameTimingQueries(", StringComparison.Ordinal);
+        waitForCompletedImage.ShouldBeGreaterThanOrEqualTo(0);
+        sampleCompletedImageQueries.ShouldBeGreaterThan(waitForCompletedImage);
+        gpuProfiler.ShouldContain(
+            "UsesImmediateTimestampQueryObjects(AbstractRenderer.Current?.BackendId ?? default) &&\n" +
+            "           TryGetQueryCapability(out _);");
+        gpuProfiler.ShouldContain(
+            "internal static bool UsesImmediateTimestampQueryObjects(RendererBackendId backendId)\n" +
+            "        => backendId == RendererBackendId.OpenGL;");
+        gpuProfiler.ShouldContain("Vulkan command timings are collected by the backend profiler.");
         gpuProfiler.ShouldContain("if (!ShouldInstrumentCommandScopes)\n            return default;");
         gpuProfiler.ShouldContain("!ShouldInstrumentCommandScopes)\n            return false;");
         engineStats.ShouldContain("private static bool IsDebugOutputEnabled()");
@@ -802,26 +816,26 @@ public class GpuRenderingBacklogTests
     [Test]
     public void Vulkan_ImGuiOverlay_UsesExplicitSwapchainLayoutHandoff()
     {
-        string drawingCore = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs")
+        string recording = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recording.cs")
             .Replace("\r\n", "\n");
-        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs")
+        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs")
             .Replace("\r\n", "\n");
-        string commandBufferState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs")
+        string commandBufferVariant = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferCacheVariant.cs")
             .Replace("\r\n", "\n");
-        string commandBufferAllocation = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs")
+        string commandBufferAllocation = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs")
             .Replace("\r\n", "\n");
-        string imgui = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs")
+        string imgui = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs")
             .Replace("\r\n", "\n");
 
-        drawingCore.ShouldContain("TryConsumeRenderableImGuiOverlaySnapshot(out imguiOverlaySnapshot)");
-        drawingCore.ShouldContain("bool preserveSwapchainForImGuiOverlay = hasPendingImGuiOverlay && UseDynamicRenderingRenderTargets;");
-        drawingCore.ShouldContain("submitCommandBuffer = EnsureCommandBufferRecorded(");
-        drawingCore.ShouldContain("imageIndex,\n                        preserveSwapchainForImGuiOverlay,");
-        drawingCore.ShouldContain("out swapchainLayoutAfterScene,\n                        out sceneCommandBufferDirtyGeneration)");
-        drawingCore.ShouldContain("TryRecordImGuiOverlayCommandBuffer(\n                            imageIndex,\n                            imguiOverlaySnapshot,\n                            swapchainLayoutAfterScene,");
+        recording.ShouldContain("TryConsumeRenderableImGuiOverlaySnapshot(\n                            out imguiOverlaySnapshot)");
+        recording.ShouldContain("attempt.PreserveSwapchainForImGuiOverlay =\n                hasPendingImGuiOverlay &&\n                UseDynamicRenderingRenderTargets;");
+        recording.ShouldContain("attempt.SceneCommandBuffer =\n                        EnsureCommandBufferRecorded(");
+        recording.ShouldContain("attempt.ImageIndex,\n                            attempt.PreserveSwapchainForImGuiOverlay,");
+        recording.ShouldContain("out attempt.SwapchainLayoutAfterScene,\n                            out attempt.SceneCommandBufferDirtyGeneration)");
+        recording.ShouldContain("TryRecordImGuiOverlayCommandBuffer(\n                            attempt.ImageIndex,\n                            snapshot,\n                            attempt.SwapchainLayoutAfterScene,");
 
-        commandBufferState.ShouldContain("public bool PreserveSwapchainForOverlay { get; set; }");
-        commandBufferState.ShouldContain("public ImageLayout RecordedSwapchainFinalLayout { get; set; } = ImageLayout.PresentSrcKhr;");
+        commandBufferVariant.ShouldContain("public bool PreserveSwapchainForOverlay { get; set; }");
+        commandBufferVariant.ShouldContain("public ImageLayout RecordedSwapchainFinalLayout { get; set; } = ImageLayout.PresentSrcKhr;");
         commandBufferAllocation.ShouldContain("variant.PreserveSwapchainForOverlay == preserveSwapchainForOverlay");
         commandBuffers.ShouldContain("int expectedPresentTransitions = preserveSwapchainForOverlay || !transitionSwapchainToPresent ? 0 : 1;");
 
@@ -921,7 +935,7 @@ public class GpuRenderingBacklogTests
     [Test]
     public void VR_Mirror_Compose_NoExtraSceneTraversal_DefaultMode()
     {
-        var settings = new XREngine.Engine.Rendering.EngineSettings();
+        var settings = new XREngine.RuntimeEngine.Rendering.EngineSettings();
         settings.VrMirrorComposeFromEyeTextures.ShouldBeTrue();
 
         string windowSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");

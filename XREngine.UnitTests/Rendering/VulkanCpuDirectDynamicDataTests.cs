@@ -54,11 +54,11 @@ public sealed class VulkanCpuDirectDynamicDataTests
     public void CpuDirectDynamicDataUsesMappedFrameSlotsAndTracksChangedByteRanges()
     {
         string arena = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs");
         string uniforms = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
         string dynamicData = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VulkanCpuDirectDynamicData.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VulkanCpuDirectDynamicData.cs");
 
         arena.ShouldContain("TryCaptureCpuDirectDynamicData");
         arena.ShouldContain("TryReserveMeshFrameDataRange(");
@@ -71,7 +71,7 @@ public sealed class VulkanCpuDirectDynamicDataTests
     [Test]
     public void DebugLinesKeepPowerOfTwoClientCapacityAndUseSubrangeUploads()
     {
-        string debugLines = ReadWorkspaceFile("XRENGINE/Scene/Physics/Physx/InstancedDebugVisualizer.cs");
+        string debugLines = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Physics/DebugVisualization/InstancedDebugVisualizer.cs");
 
         debugLines.ShouldContain("_debugLinesBuffer.Resize(elementCount, true, true)");
         debugLines.ShouldContain("_debugLinesBuffer.PushSubData()");
@@ -122,7 +122,7 @@ public sealed class VulkanCpuDirectDynamicDataTests
         publishedGenerations.ShouldBe(2);
 
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
         source.ShouldContain("requiredByteSize > _bufferSize");
         source.ShouldNotContain("_bufferSize != Data.Length");
         source.ShouldContain("if (replacesExistingBacking)");

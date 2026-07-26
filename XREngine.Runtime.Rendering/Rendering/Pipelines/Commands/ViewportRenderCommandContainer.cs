@@ -390,12 +390,12 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// </summary>
         public void Execute()
         {
-            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("ViewportRenderCommandContainer.Execute");
+            using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope("ViewportRenderCommandContainer.Execute");
             var instance = ViewportRenderCommand.ActivePipelineInstance;
             if (instance is null || AbstractRenderer.Current?.IsDeviceLost == true)
                 return;
 
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("ViewportRenderCommandContainer.EnsureResourcesAllocated"))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("ViewportRenderCommandContainer.EnsureResourcesAllocated"))
                 EnsureResourcesAllocated(instance);
 
             for (int i = 0; i < _commands.Count; i++)
@@ -439,11 +439,11 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
         public void SwapBuffers()
         {
-            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("ViewportRenderCommandContainer.SwapBuffers");
+            using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope("ViewportRenderCommandContainer.SwapBuffers");
             for (int i = 0; i < _collectVisibleCommands.Count; i++)
             {
                 var command = _collectVisibleCommands[i];
-                using var commandSample = RuntimeRenderingHostServices.Current.StartProfileScope($"ViewportRenderCommandContainer.Swap.{command.GetType().Name}");
+                using var commandSample = RuntimeRenderingHostServices.Profiling.StartProfileScope($"ViewportRenderCommandContainer.Swap.{command.GetType().Name}");
                 command.SwapBuffers();
             }
         }
