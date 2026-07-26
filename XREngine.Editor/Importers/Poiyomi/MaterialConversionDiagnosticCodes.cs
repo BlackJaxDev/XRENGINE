@@ -19,4 +19,5 @@ public static class MaterialConversionDiagnosticCodes
     public const string RequestedUvChannelMissing = "POI0013";
     public const string EnumValueOutOfRange = "POI0014";
     public const string UnsupportedTextureAsset = "POI0012";
+    public const string PassPrewarmFailed = "POI0015";
 }

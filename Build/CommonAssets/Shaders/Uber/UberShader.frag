@@ -1520,6 +1520,28 @@ void main() {
     }
 #endif
 
+#if defined(XRENGINE_OUTLINE_PASS)
+    // Inverse-hull color output. This branch deliberately lives after the
+    // canonical alpha and dissolve coverage path, so the outline silhouette
+    // cannot drift from base/depth/shadow coverage.
+    vec4 outlineColor = _OutlineColor;
+    outlineColor.rgb = mix(
+        outlineColor.rgb,
+        outlineColor.rgb * fragData.baseColor,
+        saturate(_OutlineTextureTint));
+    outlineColor.rgb = mix(
+        outlineColor.rgb,
+        outlineColor.rgb * mesh.vertexColor.rgb,
+        saturate(_OutlineVertexColorTint));
+    outlineColor.rgb += outlineColor.rgb * _OutlineEmission;
+    outlineColor.a *= fragData.alpha;
+    if (outlineColor.a <= 0.0001)
+        discard;
+
+    XRENGINE_WriteForwardFragment(outlineColor);
+    return;
+#endif
+
     // Cheap outputs for non-color passes. Done *after* cutout/dissolve so
     // shadow maps and the depth/normal prepass respect those discards.
 #if defined(XRENGINE_POINT_SHADOW_CASTER_PASS)

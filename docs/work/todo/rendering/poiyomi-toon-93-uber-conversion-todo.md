@@ -394,82 +394,82 @@ Acceptance criteria:
 
 ## Phase 3 - Render-State And Multi-Pass Material Architecture
 
-- [ ] Design an uber material pass-set representation that shares one authored
+- [x] Design an uber material pass-set representation that shares one authored
   state while allowing pass-specific shaders and fixed-function state.
-- [ ] Represent source pass enable/disable state explicitly.
-- [ ] Map Poiyomi render presets individually:
-  - [ ] Opaque.
-  - [ ] Cutout.
-  - [ ] Fade.
-  - [ ] Transparent.
-  - [ ] TransClipping.
-  - [ ] Additive.
-  - [ ] Soft additive.
-  - [ ] Multiplicative.
-  - [ ] Multiplicative 2x.
-- [ ] Preserve render queue and queue offset/priority without assuming queue
+- [x] Represent source pass enable/disable state explicitly.
+- [x] Map Poiyomi render presets individually:
+  - [x] Opaque.
+  - [x] Cutout.
+  - [x] Fade.
+  - [x] Transparent.
+  - [x] TransClipping.
+  - [x] Additive.
+  - [x] Soft additive.
+  - [x] Multiplicative.
+  - [x] Multiplicative 2x.
+- [x] Preserve render queue and queue offset/priority without assuming queue
   alone identifies transparency.
-- [ ] Map source and destination RGB/alpha blend factors separately.
-- [ ] Map RGB and alpha blend operations.
-- [ ] Map ZWrite, ZTest, culling, color mask, polygon offset, alpha-to-coverage,
+- [x] Map source and destination RGB/alpha blend factors separately.
+- [x] Map RGB and alpha blend operations.
+- [x] Map ZWrite, ZTest, culling, color mask, polygon offset, alpha-to-coverage,
   and fog behavior.
-- [ ] Map front-face, back-face, and outline stencil reference, comparison,
+- [x] Map front-face, back-face, and outline stencil reference, comparison,
   masks, and operations.
-- [ ] Implement an EarlyZ/depth prepass when the selected preset requires it.
-- [ ] Determine whether Poiyomi's ForwardAdd pass maps to one Forward+ base
+- [x] Implement an EarlyZ/depth prepass when the selected preset requires it.
+- [x] Determine whether Poiyomi's ForwardAdd pass maps to one Forward+ base
   pass or needs a compatibility pass for authored additive-light behavior.
-- [ ] Ensure shadow casting observes alpha, dissolve, UV discard, vertex
+- [x] Ensure shadow casting observes alpha, dissolve, UV discard, vertex
   deformation, culling, and source shadow-pass enable state.
-- [ ] Ensure depth-normal, transform-ID, velocity, picking, and reflection
+- [x] Ensure depth-normal, transform-ID, velocity, picking, and reflection
   passes observe the same opacity and vertex-position rules as the color pass.
-- [ ] Implement an inverse-hull outline companion pass with independent render,
+- [x] Implement an inverse-hull outline companion pass with independent render,
   blend, depth, stencil, and cull state.
-- [ ] Define deterministic pass order for base, outline, transparent, depth,
+- [x] Define deterministic pass order for base, outline, transparent, depth,
   and shadow participation.
-- [ ] Prewarm all required pass variants as one material operation.
-- [ ] Make pass setup allocation-free during steady-state render submission.
+- [x] Prewarm all required pass variants as one material operation.
+- [x] Make pass setup allocation-free during steady-state render submission.
 
 Acceptance criteria:
 
-- [ ] Every Poiyomi render preset has a dedicated state-mapping test.
-- [ ] Base, depth, shadow, velocity, picking, and outline silhouettes agree for
+- [x] Every Poiyomi render preset has a dedicated state-mapping test.
+- [x] Base, depth, shadow, velocity, picking, and outline silhouettes agree for
   alpha, dissolve, discard, and vertex deformation.
 - [ ] Pass ordering and state are correct in OpenGL and Vulkan captures.
 
 ## Phase 4 - Uber Module And Binding Infrastructure
 
-- [ ] Audit every existing uber helper file and classify it as active, partial,
+- [x] Audit every existing uber helper file and classify it as active, partial,
   dormant, obsolete, or reusable.
-- [ ] Integrate useful dormant helpers through the canonical uber shader or
+- [x] Integrate useful dormant helpers through the canonical uber shader or
   replace them; remove obsolete duplicates only after their behavior is covered.
-- [ ] Split the shader manifest into focused include files if doing so improves
+- [x] Split the shader manifest into focused include files if doing so improves
   ownership without breaking annotation parsing or variant identity.
-- [ ] Define reusable slot schemas for decals, matcaps, emissions, and rims.
-- [ ] Generate repeated uniform/property declarations from one authoritative
+- [x] Define reusable slot schemas for decals, matcaps, emissions, and rims.
+- [x] Generate repeated uniform/property declarations from one authoritative
   slot contract or enforce equivalent consistency tests.
-- [ ] Keep slot counts and per-slot subfeatures statically specializeable.
-- [ ] Add dependency rules so enabling a subfeature brings in its required
+- [x] Keep slot counts and per-slot subfeatures statically specializeable.
+- [x] Add dependency rules so enabling a subfeature brings in its required
   parent data and nothing else.
-- [ ] Audit maximum sampled textures, image resources, uniform storage, push
+- [x] Audit maximum sampled textures, image resources, uniform storage, push
   constants, and descriptors for OpenGL and Vulkan.
-- [ ] Choose and document a binding ladder for high-slot materials:
-  - [ ] Direct samplers while within guaranteed backend limits.
-  - [ ] Texture arrays where dimensions/formats/sampler behavior are compatible.
-  - [ ] Engine material texture tables or bindless descriptors when available.
-  - [ ] Explicit conversion failure when faithful binding is impossible.
-- [ ] Add sampler-role-aware fallback resources.
-- [ ] Include pass identity and all position/opacity-affecting static values in
+- [x] Choose and document a binding ladder for high-slot materials:
+  - [x] Direct samplers while within guaranteed backend limits.
+  - [x] Texture arrays where dimensions/formats/sampler behavior are compatible.
+  - [x] Engine material texture tables or bindless descriptors when available.
+  - [x] Explicit conversion failure when faithful binding is impossible.
+- [x] Add sampler-role-aware fallback resources.
+- [x] Include pass identity and all position/opacity-affecting static values in
   variant and prewarm keys.
-- [ ] Add generated-source size, sampler count, feature count, and compile-time
+- [x] Add generated-source size, sampler count, feature count, and compile-time
   diagnostics to conversion/prewarm reports.
-- [ ] Ensure maximal supported variants compile without warnings.
+- [x] Ensure maximal supported variants compile without warnings.
 
 Acceptance criteria:
 
-- [ ] No declared feature is counted as supported unless its code is reachable
+- [x] No declared feature is counted as supported unless its code is reachable
   from an engine render pass.
-- [ ] Minimal materials do not retain unrelated feature code or samplers.
-- [ ] Maximal supported materials stay within documented backend limits or fail
+- [x] Minimal materials do not retain unrelated feature code or samplers.
+- [x] Maximal supported materials stay within documented backend limits or fail
   conversion with a precise reason.
 
 ## Phase 5 - Color, Normals, Alpha, UV, And Mask Parity
