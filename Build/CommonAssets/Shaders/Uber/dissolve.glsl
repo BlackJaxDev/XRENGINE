@@ -22,7 +22,9 @@
 // Dissolve type constants
 const int DISSOLVE_LINEAR = 0;
 const int DISSOLVE_SPHERICAL = 1;
-const int DISSOLVE_DIRECTIONAL = 2;
+const int DISSOLVE_POINT_TO_POINT = 2;
+const int DISSOLVE_CENTER_OUT = 3;
+const int DISSOLVE_UV_TILE = 4;
 
 // ============================================
 // Dissolve Noise Sampling
@@ -98,12 +100,26 @@ vec3 calculateDissolve(vec2 noiseBaseUV, vec2 detailBaseUV, vec2 maskBaseUV, vec
         float spherical = calculateSphericalDissolve(worldPos, _DissolveStartPoint, maxRadius, _DissolveProgress);
         dissolveValue = mix(spherical, spherical + (combinedNoise - 0.5) * 2.0, _DissolveNoiseStrength);
     }
-    else if (dissolveType == DISSOLVE_DIRECTIONAL) {
-        // World-space point-to-point dissolve.
-        float p2p = calculatePoint2PointDissolve(worldPos, _DissolveStartPoint, _DissolveEndPoint, _DissolveProgress);
+    else if (dissolveType == DISSOLVE_POINT_TO_POINT) {
+        vec3 coordinate = _DissolveCoordinateSpace == 0 ? localPos : worldPos;
+        float p2p = calculatePoint2PointDissolve(coordinate, _DissolveStartPoint, _DissolveEndPoint, _DissolveProgress);
         dissolveValue = mix(p2p, p2p + (combinedNoise - 0.5) * 2.0, _DissolveNoiseStrength);
     }
-    
+    else if (dissolveType == DISSOLVE_CENTER_OUT) {
+        vec3 coordinate = _DissolveCoordinateSpace == 0 ? localPos : worldPos;
+        float radius = max(length(_DissolveEndPoint - _DissolveStartPoint), 0.001);
+        float centerOut = length(coordinate - _DissolveStartPoint) / radius;
+        dissolveValue = mix(centerOut, centerOut + (combinedNoise - 0.5) * 2.0, _DissolveNoiseStrength);
+    }
+    else if (dissolveType == DISSOLVE_UV_TILE) {
+        vec2 grid = max(_DissolveTileGrid, vec2(1.0));
+        vec2 tile = floor(fract(noiseBaseUV) * grid);
+        float tileIndex = (tile.y * grid.x + tile.x) / max(grid.x * grid.y - 1.0, 1.0);
+        dissolveValue = mix(tileIndex, tileIndex + (combinedNoise - 0.5) * 2.0, _DissolveNoiseStrength);
+    }
+
+    if (_DissolveContinuous > 0.5)
+        dissolveValue = fract(dissolveValue + _DissolveProgress);
 
     dissolveValue *= dissolveMask;
     // Invert if needed
@@ -151,7 +167,7 @@ bool applyDissolve(vec2 noiseUV, vec2 detailUV, vec2 maskUV, vec2 edgeBaseUV, ve
         vec3 edgeGradient = texture(_DissolveEdgeGradient, gradientUV).rgb;
         vec2 edgeUV = edgeBaseUV * _DissolveEdgeTexture_ST.xy + _DissolveEdgeTexture_ST.zw + _DissolveEdgeTexturePan * u_Time;
         vec3 edgeTexture = texture(_DissolveEdgeTexture, edgeUV).rgb;
-        vec3 edgeColor = _DissolveEdgeColor.rgb * edgeGradient * edgeTexture;
+        vec3 edgeColor = hueShift(_DissolveEdgeColor.rgb, _DissolveHueShift) * edgeGradient * edgeTexture;
         color = mix(color, edgeColor, edgeFactor * _DissolveEdgeColor.a);
         
         // Add edge emission

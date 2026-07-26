@@ -3226,6 +3226,7 @@ namespace XREngine.Rendering
             if (!ReferenceEquals(vertexProgram, materialProgram))
                 renderState?.ApplyScopedProgramBindings(materialProgram);
 
+            Material?.OnSettingVertexUniforms(vertexProgram);
             vertexProgram.Uniform("blendshapeActiveCount", ActiveBlendshapeCount);
             vertexProgram.Uniform("blendshapeWeightThreshold", BlendshapeActiveWeightThreshold);
             if (!ReferenceEquals(vertexProgram, materialProgram))

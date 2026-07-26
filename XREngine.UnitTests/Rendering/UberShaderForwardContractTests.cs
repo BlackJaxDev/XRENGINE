@@ -369,6 +369,14 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
             "subsurface",
             "dissolve",
             "parallax",
+            "poiyomi-surface",
+            "poiyomi-masks-themes",
+            "poiyomi-lighting-parity",
+            "poiyomi-pbr-parity",
+            "poiyomi-matcap-rim-slots",
+            "poiyomi-decals",
+            "poiyomi-emission-slots",
+            "poiyomi-flipbook-array",
         })
         {
             material.SetUberFeatureEnabled(featureId, true);

@@ -138,6 +138,8 @@ public static class UnityTextureImportDocumentParser
             MipBias = settings is null ? 0.0f : UnityYamlReader.GetScalarFloat(settings, "mipBias") ?? 0.0f,
             Anisotropy = settings is null ? 1 : UnityYamlReader.GetScalarInt(settings, "aniso") ?? 1,
             RawShape = rawShape,
+            FlipbookRows = Math.Max(1, UnityYamlReader.GetScalarInt(mapping, "flipbookRows") ?? 1),
+            FlipbookColumns = Math.Max(1, UnityYamlReader.GetScalarInt(mapping, "flipbookColumns") ?? 1),
             Shape = Enum.IsDefined(typeof(UnityTextureShape), rawShape)
                 ? (UnityTextureShape)rawShape
                 : UnityTextureShape.Unknown,

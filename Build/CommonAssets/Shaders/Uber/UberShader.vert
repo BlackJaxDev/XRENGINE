@@ -64,6 +64,7 @@ layout(location = 22) out float FragViewIndex; // which eye (0/1) for stereo
 // Engine-wide uniform block: model/view/projection matrices, camera position,
 // lighting arrays, time, etc.
 #include "uniforms.glsl"
+#include "poiyomi_vertex_effects.glsl"
 
 // ============================================
 // Compute-skinning SSBO overrides
@@ -95,12 +96,9 @@ void main() {
     vec3 tan  = Tangent.xyz;
 #endif
     float tanSign = Tangent.w;
+    poiApplyVertexEffects(pos, norm, TexCoord0, Color0, u_CameraPosition, u_ModelMatrix, u_Time);
 
-#ifdef XRENGINE_OUTLINE_PASS
-    // The companion draw reuses the canonical vertex path so skinning,
-    // blendshape/deformation inputs, UVs, and stereo routing cannot drift.
-    pos += norm * (_OutlineWidth * 0.01);
-#endif
+    poiApplyOutlineLocal(pos, norm, Color0, u_ModelMatrix);
 
     // ---- Position: object -> world, object -> clip -------------------------
     vec4 worldPosition = u_ModelMatrix * vec4(pos, 1.0);
@@ -111,6 +109,7 @@ void main() {
     // combined matrix (instead of P*V*M here) lets the engine fold in any
     // per-camera jitter/offset without touching this shader.
     gl_Position = u_ModelViewProjectionMatrix * vec4(pos, 1.0);
+    poiApplyOutlineClip(gl_Position, norm, u_ModelViewProjectionMatrix);
 
     // ---- Normal / Tangent basis into world space ---------------------------
     // u_NormalMatrix (adjoint of model) correctly handles non-uniform scale

@@ -483,6 +483,28 @@ uniform float _OutlineDistanceFadeEnd;
 uniform float _OutlineTextureTint;
 //@property(name="_OutlineVertexColorTint", display="Vertex Tint", mode=static, range=[0,1])
 uniform float _OutlineVertexColorTint;
+//@property(name="_OutlineExpansionMode", display="Expansion", mode=static, enum="0:Basic|1:Rim|2:Directional|3:Drop Shadow")
+uniform int _OutlineExpansionMode;
+//@property(name="_OutlineSpace", display="Sizing Space", mode=static, enum="0:Object|1:World|2:Screen")
+uniform int _OutlineSpace;
+uniform vec3 _OutlinePersonaDirection;
+uniform vec3 _OutlineDropShadowOffset;
+//@property(name="_OutlineFixedSize", display="Fixed Screen Width", mode=animated, range=[0,1])
+uniform float _OutlineFixedSize;
+//@property(name="_OutlineUseVertexColors", display="Vertex Color Width", mode=animated, range=[0,1])
+uniform float _OutlineUseVertexColors;
+//@property(name="_OutlineZOffset", display="Depth Offset", mode=animated, range=[-1,1])
+uniform float _OutlineZOffset;
+uniform vec4 _OutlineTexture_ST;
+uniform vec2 _OutlineTexturePan;
+uniform int _OutlineTextureUV;
+uniform sampler2D _OutlineTexture;
+uniform vec4 _OutlineMask_ST;
+uniform vec2 _OutlineMaskPan;
+uniform int _OutlineMaskUV;
+uniform float _OutlineHueShift;
+uniform float _OutlineHueShiftSpeed;
+uniform float _OutlineShadowStrength;
 #endif
 
 // ============================================
@@ -583,7 +605,7 @@ uniform float _SSSAmbient;
 //@subcategory("Dissolve")
 //@feature(id="dissolve", name="Dissolve", default=off, cost=high)
 #ifndef XRENGINE_UBER_DISABLE_DISSOLVE
-//@property(name="_DissolveType", display="Dissolve Mode", mode=static, enum="0:Linear|1:Spherical|2:Directional")
+//@property(name="_DissolveType", display="Dissolve Mode", mode=static, enum="0:Linear|1:Spherical|2:Point to Point|3:Center Out|4:UV Tile")
 uniform float _DissolveType;
 //@property(name="_DissolveProgress", display="Progress", mode=animated, range=[0,1])
 uniform float _DissolveProgress;
@@ -620,6 +642,14 @@ uniform vec2 _DissolveMaskPan;
 uniform int _DissolveMaskUV;
 //@property(name="_DissolveMaskInvert", display="Invert Mask", mode=static, range=[0,1], toggle=true)
 uniform float _DissolveMaskInvert;
+//@property(name="_DissolveContinuous", display="Continuous", mode=animated, range=[0,1], toggle=true)
+uniform float _DissolveContinuous;
+//@property(name="_DissolveCoordinateSpace", display="Coordinate Space", mode=static, enum="0:Local|1:World|2:UV")
+uniform int _DissolveCoordinateSpace;
+//@property(name="_DissolveTileGrid", display="UV Tile Grid", mode=static, default="vec2(1.0)")
+uniform vec2 _DissolveTileGrid;
+//@property(name="_DissolveHueShift", display="Edge Hue Shift", mode=animated, range=[-1,1])
+uniform float _DissolveHueShift;
 //@property(name="_DissolveEdgeGradient", display="Edge Gradient", slot=texture)
 uniform sampler2D _DissolveEdgeGradient;
 uniform vec4 _DissolveEdgeGradient_ST;
@@ -658,5 +688,8 @@ uniform float _ParallaxOffset;
 //@property(name="_ParallaxMapChannel", display="Height Channel", mode=static, enum="0:R|1:G|2:B|3:A")
 uniform float _ParallaxMapChannel;
 #endif
+
+#include "poiyomi_phase5_7_uniforms.glsl"
+#include "poiyomi_phase8_10_uniforms.glsl"
 
 #endif // TOON_UNIFORMS_GLSL

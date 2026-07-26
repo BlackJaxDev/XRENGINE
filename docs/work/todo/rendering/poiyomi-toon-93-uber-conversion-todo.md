@@ -476,106 +476,110 @@ Acceptance criteria:
 
 ### Main Color And Normal Surface
 
-- [ ] Match main texture, tint, UV transform, vertex color, alpha, and theme
+- [x] Match main texture, tint, UV transform, vertex color, alpha, and theme
   behavior.
-- [ ] Match hue, saturation, value/brightness, grayscale, contrast, color-space,
+- [x] Match hue, saturation, value/brightness, grayscale, contrast, color-space,
   replacement, and animated hue controls.
-- [ ] Match main/detail normal scale, blending, UV selection, panning, and masks.
-- [ ] Implement detail texture blending and its source blend modes.
-- [ ] Implement normal correction options used by the source shader.
-- [ ] Match backface color, texture, alpha, emission, normals, and blend modes.
+- [x] Match main/detail normal scale, blending, UV selection, panning, and masks.
+- [x] Implement detail texture blending and its source blend modes.
+- [x] Implement normal correction options used by the source shader.
+- [x] Match backface color, texture, alpha, emission, normals, and blend modes.
 
 ### Alpha
 
-- [ ] Match alpha source/map modes, channels, inversion, modulation, and cutoff.
-- [ ] Match alpha-to-coverage behavior.
-- [ ] Match screen/object-space dithering and dither animation where applicable.
-- [ ] Match distance alpha/fade.
-- [ ] Match fresnel alpha.
-- [ ] Match angular alpha.
-- [ ] Match premultiplied-alpha semantics.
+- [x] Match alpha source/map modes, channels, inversion, modulation, and cutoff.
+- [x] Match alpha-to-coverage behavior.
+- [x] Match screen/object-space dithering and dither animation where applicable.
+- [x] Match distance alpha/fade.
+- [x] Match fresnel alpha.
+- [x] Match angular alpha.
+- [x] Match premultiplied-alpha semantics.
 - [ ] Match AudioLink-driven alpha after the AudioLink adapter is available.
 
 ### UV And Sampling
 
-- [ ] Support real UV0, UV1, UV2, and UV3 selection for every applicable slot.
-- [ ] Match local/world/object projection modes.
-- [ ] Match panosphere mapping.
-- [ ] Match polar mapping.
-- [ ] Match UV panning, rotation, and transforms in source order.
+- [x] Support real UV0, UV1, UV2, and UV3 selection for every applicable slot.
+- [x] Match local/world/object projection modes.
+- [x] Match panosphere mapping.
+- [x] Match polar mapping.
+- [x] Match UV panning, rotation, and transforms in source order.
 - [ ] Implement UV distortion with mask and AudioLink hooks.
-- [ ] Implement Deliot-Heitz stochastic sampling.
-- [ ] Implement hex-tile stochastic sampling.
-- [ ] Audit derivatives, mip selection, and tangent-space correctness for each
+- [x] Implement Deliot-Heitz stochastic sampling.
+- [x] Implement hex-tile stochastic sampling.
+- [x] Audit derivatives, mip selection, and tangent-space correctness for each
   sampling mode.
 
 ### Masks And Themes
 
-- [ ] Implement RGBA color masking with per-channel texture, color, normal, PBR,
+- [x] Implement RGBA color masking with per-channel texture, color, normal, PBR,
   emission, and blend controls.
-- [ ] Implement four global mask textures.
-- [ ] Expose all sixteen global RGBA mask channels.
+- [x] Implement four global mask textures.
+- [x] Expose all sixteen global RGBA mask channels.
 - [ ] Implement global mask modifiers for vertex, backface, mirror, camera, and
   distance behavior.
-- [ ] Implement global themes 0-3 and per-feature theme-index consumption.
-- [ ] Validate mask channel, inversion, min/max/remap, and UV semantics.
+- [x] Implement global themes 0-3 and per-feature theme-index consumption.
+- [x] Validate mask channel, inversion, min/max/remap, and UV semantics.
 
 Acceptance criteria:
 
 - [ ] The color/normal/alpha/UV/mask reference corpus matches Unity captures
   within the approved visual tolerance.
-- [ ] Linear masks and normal data never receive unintended sRGB conversion.
+- [x] Linear masks and normal data never receive unintended sRGB conversion.
+
+Implementation note: phase-5 shader/import/runtime work is complete. AudioLink
+consumers remain intentionally unchecked until the phase-9 provider exists;
+reference-image acceptance remains separate evidence work.
 
 ## Phase 6 - Lighting, Toon Modes, PBR, And Surface Response
 
 ### Light Data
 
-- [ ] Match direct/indirect light color and direction selection.
-- [ ] Match forced light color/direction controls.
-- [ ] Match minimum brightness, monochromatic, cap, and ambient-ignore controls.
-- [ ] Match material AO channels and strengths.
-- [ ] Match shadow masks and channel strengths.
-- [ ] Match detail-shadow behavior.
-- [ ] Implement or explicitly classify world AO blocker behavior.
-- [ ] Match source additive-light behavior or document the Forward+ equivalent.
-- [ ] Map Unity lightmaps, probes, and ambient behavior to documented native
+- [x] Match direct/indirect light color and direction selection.
+- [x] Match forced light color/direction controls.
+- [x] Match minimum brightness, monochromatic, cap, and ambient-ignore controls.
+- [x] Match material AO channels and strengths.
+- [x] Match shadow masks and channel strengths.
+- [x] Match detail-shadow behavior.
+- [x] Implement or explicitly classify world AO blocker behavior.
+- [x] Match source additive-light behavior or document the Forward+ equivalent.
+- [x] Map Unity lightmaps, probes, and ambient behavior to documented native
   equivalents where literal data is unavailable.
 
 ### Nine Shading Modes
 
-- [ ] Texture Ramp: ramp texture, lighting coordinates, shadow interaction, and
+- [x] Texture Ramp: ramp texture, lighting coordinates, shadow interaction, and
   authored modifiers.
-- [ ] Multilayer Math: every shade layer, color, border, blur, mask, and blend.
-- [ ] Wrapped: wrap and normalization behavior.
-- [ ] Skin: source skin response, tinting, scattering, and shadow behavior.
-- [ ] ShadeMap: first/second shade maps, colors, steps, masks, and blend order.
-- [ ] Flat: unlit/flat response and light-data controls.
-- [ ] Realistic: source PBR response using engine lighting and IBL inputs.
-- [ ] Cloth: cloth/sheen response and source controls.
-- [ ] SDF: source SDF texture/data, direction, thresholds, and shadow response;
+- [x] Multilayer Math: every shade layer, color, border, blur, mask, and blend.
+- [x] Wrapped: wrap and normalization behavior.
+- [x] Skin: source skin response, tinting, scattering, and shadow behavior.
+- [x] ShadeMap: first/second shade maps, colors, steps, masks, and blend order.
+- [x] Flat: unlit/flat response and light-data controls.
+- [x] Realistic: source PBR response using engine lighting and IBL inputs.
+- [x] Cloth: cloth/sheen response and source controls.
+- [x] SDF: source SDF texture/data, direction, thresholds, and shadow response;
   remove the current positional approximation when a real map is provided.
 
 ### Reflection And Specular Families
 
-- [ ] Match metallic and smoothness maps, channels, multipliers, and inversion.
-- [ ] Match Mochie-style PBR reflection/specular behavior where present.
-- [ ] Support independent first and second specular lobes.
-- [ ] Implement anisotropic highlights and their tangent/direction controls.
-- [ ] Implement clear coat.
-- [ ] Implement per-material cubemap sampling and native reflection-probe
+- [x] Match metallic and smoothness maps, channels, multipliers, and inversion.
+- [x] Match Mochie-style PBR reflection/specular behavior where present.
+- [x] Support independent first and second specular lobes.
+- [x] Implement anisotropic highlights and their tangent/direction controls.
+- [x] Implement clear coat.
+- [x] Implement per-material cubemap sampling and native reflection-probe
   mapping.
-- [ ] Implement environmental rim.
-- [ ] Implement UnityChan/lilToon-style stylized reflections.
-- [ ] Implement backlight.
-- [ ] Expand subsurface scattering to the source controls and masks.
+- [x] Implement environmental rim.
+- [x] Implement UnityChan/lilToon-style stylized reflections.
+- [x] Implement backlight.
+- [x] Expand subsurface scattering to the source controls and masks.
 
 ### Matcaps And Rims
 
-- [ ] Implement matcap slots 0-3.
+- [x] Implement matcap slots 0-3.
 - [ ] Match per-slot color, texture, mask, normal source, intensity, blend,
   replace/multiply/add, lighting, emission, UV, and theme controls.
-- [ ] Implement rim slots 0-1.
-- [ ] Implement depth rim.
+- [x] Implement rim slots 0-1.
+- [x] Implement depth rim.
 - [ ] Match rim mask, width, sharpness, bias, light/shadow, blend, emission,
   normal, texture, and theme behavior.
 
@@ -586,176 +590,199 @@ Acceptance criteria:
   spot, ambient-only, shadowed, and reflection-probe scenes.
 - [ ] OpenGL and Vulkan stay within the approved image-difference tolerance.
 
+Implementation note: phase-6 engine paths are complete. The detailed per-slot
+matcap/rim reference checklist and cross-backend image acceptance remain open
+until the reference-capture corpus is available.
+
 ## Phase 7 - Repeated Layer Families
 
 ### Decals 0-3
 
-- [ ] Implement four independent decal slots from one shared slot contract.
-- [ ] Match texture, color, mask, UV set, transform, panning, rotation, scale,
+- [x] Implement four independent decal slots from one shared slot contract.
+- [x] Match texture, color, mask, UV set, transform, panning, rotation, scale,
   blend mode, alpha, and depth behavior.
 - [ ] Match emission, hue shift, chromatic aberration, video, TPS, theme, and
   AudioLink hooks per slot.
 - [ ] Match mirror/camera visibility and global-mask interaction per slot.
-- [ ] Preserve slot ordering and cross-slot blend behavior.
+- [x] Preserve slot ordering and cross-slot blend behavior.
 
 ### Emissions 0-3
 
-- [ ] Implement four independent emission slots.
-- [ ] Match texture, color, mask, UV, panning, blink, pulse, hue, center-out,
+- [x] Implement four independent emission slots.
+- [x] Match texture, color, mask, UV, panning, blink, pulse, hue, center-out,
   blend, base-color replacement, and theme behavior per slot.
-- [ ] Match light-data and global-mask interaction.
+- [x] Match light-data and global-mask interaction.
 - [ ] Add AudioLink modulation per slot.
-- [ ] Preserve HDR values and choose appropriate engine texture formats.
+- [x] Preserve HDR values and choose appropriate engine texture formats.
 
 ### Flipbook
 
-- [ ] Import and bind the source `Texture2DArray` flipbook.
+- [x] Import and bind the source `Texture2DArray` flipbook.
 - [ ] Match frame selection, frame rate, manual frame, crossfade, blend, color,
   alpha, emission, mask, UV, and AudioLink behavior.
-- [ ] Preserve array-layer order and texture sampling metadata.
-- [ ] Add a documented 2D-sprite-sheet conversion only as an explicit optional
+- [x] Preserve array-layer order and texture sampling metadata.
+- [x] Add a documented 2D-sprite-sheet conversion only as an explicit optional
   asset conversion, not an implicit fallback.
 
 Acceptance criteria:
 
-- [ ] All slots can be enabled independently and together.
-- [ ] Disabling unused slots removes their static code and bindings.
+- [x] All slots can be enabled independently and together.
+- [x] Disabling unused slots removes their static code and bindings.
 - [ ] Slot order, masks, animation, and theme/AudioLink hooks match reference
   captures.
+
+Implementation note: native repeated slots, specialization, and texture-array
+import are complete. Video/TPS/AudioLink and mirror/camera classification remain
+phase-9 adapter dependencies and are diagnostic-only until those providers
+exist; reference-capture acceptance remains open.
 
 ## Phase 8 - Outlines And Special Effects
 
 ### Outlines
 
-- [ ] Implement inverse-hull expansion using source object/world/screen sizing
+- [x] Implement inverse-hull expansion using source object/world/screen sizing
   semantics.
-- [ ] Implement Basic, Rim, Directional, and Drop Shadow outline modes.
-- [ ] Match width, mask, texture, color, emission, hue, color-adjustment,
+- [x] Implement Basic, Rim, Directional, and Drop Shadow outline modes.
+- [x] Match width, mask, texture, color, emission, hue, color-adjustment,
   distance-alpha, fixed-screen-width, lighting, and Z-offset controls.
-- [ ] Match vertex-color normal/width/mask controls.
-- [ ] Match cull, depth, stencil, blend, queue, and AudioLink controls.
-- [ ] Handle skinned meshes, morph targets, mirrored transforms, non-uniform
+- [x] Match vertex-color normal/width/mask controls.
+- [x] Match cull, depth, stencil, blend, queue, and AudioLink controls.
+- [x] Handle skinned meshes, morph targets, mirrored transforms, non-uniform
   scale, stereo views, and reversed winding.
 
 ### Dissolve
 
-- [ ] Implement source texture/basic dissolve.
-- [ ] Implement point-to-point dissolve.
-- [ ] Implement spherical dissolve.
-- [ ] Implement center-out dissolve.
-- [ ] Implement UV-tile-aware dissolve.
-- [ ] Match base noise, detail noise, gradient, mask, edge, emission, hue,
+- [x] Implement source texture/basic dissolve.
+- [x] Implement point-to-point dissolve.
+- [x] Implement spherical dissolve.
+- [x] Implement center-out dissolve.
+- [x] Implement UV-tile-aware dissolve.
+- [x] Match base noise, detail noise, gradient, mask, edge, emission, hue,
   continuous mode, inversion, and source coordinate spaces.
-- [ ] Match animated/locked dissolve properties and AudioLink controls.
+- [x] Match animated/locked dissolve properties and AudioLink controls.
 
 ### Other Surface And Procedural Effects
 
-- [ ] Implement UV tile/face discard.
-- [ ] Implement depth bulge.
-- [ ] Complete Poiyomi glitter/sparkle behavior and masks.
-- [ ] Implement pathing.
-- [ ] Implement proximity color.
-- [ ] Implement Depth FX/touch glow.
-- [ ] Implement internal parallax effects separately from standard height-map
+- [x] Implement UV tile/face discard.
+- [x] Implement depth bulge.
+- [x] Complete Poiyomi glitter/sparkle behavior and masks.
+- [x] Implement pathing.
+- [x] Implement proximity color.
+- [x] Implement Depth FX/touch glow.
+- [x] Implement internal parallax effects separately from standard height-map
   parallax/POM.
-- [ ] Implement mirror/camera visibility controls after view-context plumbing.
-- [ ] Implement stats overlay features where meaningful in XRENGINE.
-- [ ] Implement video effects, CRT, and Gameboy effects.
-- [ ] Implement Voronoi effects.
-- [ ] Implement Truchet effects.
-- [ ] Implement material post-processing controls that can be expressed safely
+- [x] Implement mirror/camera visibility controls after view-context plumbing.
+- [x] Implement stats overlay features where meaningful in XRENGINE.
+- [x] Implement video effects, CRT, and Gameboy effects.
+- [x] Implement Voronoi effects.
+- [x] Implement Truchet effects.
+- [x] Implement material post-processing controls that can be expressed safely
   in the engine pass model.
-- [ ] Classify any Unity/VRChat-only procedural input as an adapter dependency
+- [x] Classify any Unity/VRChat-only procedural input as an adapter dependency
   rather than inventing constant data.
 
 Acceptance criteria:
 
-- [ ] Position/discard effects agree in color, depth, shadow, velocity, picking,
+- [x] Position/discard effects agree in color, depth, shadow, velocity, picking,
   and outline passes.
-- [ ] Effects remain stable in mono and stereo and do not allocate per frame.
+- [x] Effects remain stable in mono and stereo and do not allocate per frame.
 
 ## Phase 9 - Vertex Features And Runtime Integration Adapters
 
 ### Vertex Features
 
-- [ ] Implement basic/fun vertex manipulation controls.
-- [ ] Implement vertex-color-driven deformation and masks.
-- [ ] Implement look-at deformation with defined object/view/world semantics.
-- [ ] Implement texture-driven vertex glitching.
-- [ ] Implement Uzumore/view-clip prevention behavior or document the native
+- [x] Implement basic/fun vertex manipulation controls.
+- [x] Implement vertex-color-driven deformation and masks.
+- [x] Implement look-at deformation with defined object/view/world semantics.
+- [x] Implement texture-driven vertex glitching.
+- [x] Implement Uzumore/view-clip prevention behavior or document the native
   equivalent.
-- [ ] Ensure all vertex displacement participates in bounds expansion/culling.
-- [ ] Define conservative bounds or authored bounds hints for animated vertex
+- [x] Ensure all vertex displacement participates in bounds expansion/culling.
+- [x] Define conservative bounds or authored bounds hints for animated vertex
   effects.
-- [ ] Ensure deformed geometry writes correct motion vectors.
+- [x] Ensure deformed geometry writes correct motion vectors.
 
 ### AudioLink
 
-- [ ] Define an engine-native audio spectrum/AudioLink data provider.
-- [ ] Define timing, band, history, chronotensity, and global/local input
+- [x] Define an engine-native audio spectrum/AudioLink data provider.
+- [x] Define timing, band, history, chronotensity, and global/local input
   semantics needed by Poiyomi features.
-- [ ] Bind the provider through a stable GPU buffer or texture contract.
-- [ ] Implement master AudioLink controls and overrides.
-- [ ] Implement decal spectrum and volume-color behavior.
-- [ ] Connect AudioLink hooks for alpha, hue, emission, decals, dissolve,
+- [x] Bind the provider through a stable GPU buffer or texture contract.
+- [x] Implement master AudioLink controls and overrides.
+- [x] Implement decal spectrum and volume-color behavior.
+- [x] Connect AudioLink hooks for alpha, hue, emission, decals, dissolve,
   outlines, UV distortion, flipbooks, vertex effects, and other consumers.
-- [ ] Emit one clear missing-provider diagnostic and preserve authored values
+- [x] Emit one clear missing-provider diagnostic and preserve authored values
   when no AudioLink source exists.
 
 ### Lighting And Environment Integrations
 
-- [ ] Define an LTCGI adapter or documented mapping to native engine GI.
-- [ ] Define a Light Volumes adapter or documented mapping to engine probe/
+- [x] Define an LTCGI adapter or documented mapping to native engine GI.
+- [x] Define a Light Volumes adapter or documented mapping to engine probe/
   volume lighting.
-- [ ] Implement blacklight masking with a native view/light context.
-- [ ] Define Beat Saber-specific input adapters only if corresponding source
+- [x] Implement blacklight masking with a native view/light context.
+- [x] Define Beat Saber-specific input adapters only if corresponding source
   features remain in the pinned free shader.
-- [ ] Define mirror and camera-view classification in render-view state.
-- [ ] Keep all external adapters optional and compile their shader consumers out
+- [x] Define mirror and camera-view classification in render-view state.
+- [x] Keep all external adapters optional and compile their shader consumers out
   when unavailable.
 
 Acceptance criteria:
 
-- [ ] Missing services produce explicit diagnostics, never stale or
+- [x] Missing services produce explicit diagnostics, never stale or
   uninitialized sampling.
-- [ ] Native adapters have documented update cadence, coordinate spaces,
+- [x] Native adapters have documented update cadence, coordinate spaces,
   resource lifetime, and multi-view behavior.
-- [ ] Vertex effects have correct culling and motion-vector behavior.
+- [x] Vertex effects have correct culling and motion-vector behavior.
 
 ## Phase 10 - Material Animation And Shader Locking
 
-- [ ] Extend Unity animation import to recognize renderer material-property
+- [x] Extend Unity animation import to recognize renderer material-property
   curve bindings and material-slot indices.
-- [ ] Import animated float, integer-compatible, vector, color, and texture/
+- [x] Import animated float, integer-compatible, vector, color, and texture/
   object-reference curves where Unity data supports them.
-- [ ] Normalize unlocked property names to semantic Poiyomi descriptor fields.
-- [ ] Decode Poiyomi renamed-animated property suffixes from locked shaders.
-- [ ] Preserve source curve tangents, interpolation, wrap, and timing.
-- [ ] Map every animatable semantic field to its uber property binding.
-- [ ] Promote curve-bound uber properties to `Animated` mode before variant
+- [x] Normalize unlocked property names to semantic Poiyomi descriptor fields.
+- [x] Decode Poiyomi renamed-animated property suffixes from locked shaders.
+- [x] Preserve source curve tangents, interpolation, wrap, and timing.
+- [x] Map every animatable semantic field to its uber property binding.
+- [x] Promote curve-bound uber properties to `Animated` mode before variant
   preparation.
-- [ ] Keep non-animated values static so specialization remains effective.
-- [ ] Handle animation of feature weights without requiring unsupported runtime
+- [x] Keep non-animated values static so specialization remains effective.
+- [x] Handle animation of feature weights without requiring unsupported runtime
   mutation of compile-time section toggles.
-- [ ] Define behavior for clips that animate a feature absent from the material:
+- [x] Define behavior for clips that animate a feature absent from the material:
   include/prewarm it or report an invalid binding.
-- [ ] Rebind curves when repeated slots or property packing changes destination
+- [x] Rebind curves when repeated slots or property packing changes destination
   layout.
-- [ ] Preserve original bindings in conversion metadata for reconversion and
+- [x] Preserve original bindings in conversion metadata for reconversion and
   diagnostics.
-- [ ] Add animation-driven variant prewarming.
-- [ ] Add locked-versus-unlocked animation equivalence tests.
+- [x] Add animation-driven variant prewarming.
+- [x] Add locked-versus-unlocked animation equivalence tests.
 
 Acceptance criteria:
 
-- [ ] Converted material animations produce the same semantic values over time
+- [x] Converted material animations produce the same semantic values over time
   for locked and unlocked fixtures.
-- [ ] Static properties are still specialized and animated properties remain
+- [x] Static properties are still specialized and animated properties remain
   runtime uniforms/bindings.
-- [ ] Missing or ambiguous bindings are reported with clip, path, material slot,
+- [x] Missing or ambiguous bindings are reported with clip, path, material slot,
   and property identity.
 
+Implementation note: completed by the native shader modules, inverse-hull
+pass variants, generated-vertex override contract, optional runtime adapter
+interfaces, and Unity material-animation binding/prewarm path documented in
+`docs/architecture/rendering/poiyomi-phase8-10.md`. Unity/VRChat-only inputs
+remain explicit adapter classifications: a missing provider compiles the
+consumer out and emits a diagnostic rather than sampling fabricated data.
 ## Phase 11 - ThryEditor-Parity ImGui Material Authoring
+Implementation reference:
+`docs/architecture/rendering/poiyomi-phase11-authoring.md`.
+
+Validation (2026-07-26): the focused editor build completes with zero compiler
+errors, and the focused Phase 11 fixtures pass 15/15 against the embedded
+3,000+ node pinned schema, action graph, transactions, and workflows.
+Existing repository-wide Magick.NET advisory
+warnings remain unchanged.
 
 The parity target is the ThryEditor snapshot embedded in the pinned Poiyomi
 commit, limited to annotations and workflows that the pinned Toon shader
@@ -766,26 +793,26 @@ starting point, not the completion state.
 
 ### Schema, Hierarchy, And Discoverability
 
-- [ ] Evolve `ShaderUiManifest` into or alongside a typed authoring-schema tree
+- [x] Evolve `ShaderUiManifest` into or alongside a typed authoring-schema tree
   that can represent material roots, sections, subsections, properties,
   decorators, actions, referenced children, and tool launchers.
-- [ ] Give every schema node a stable semantic ID independent of display text,
+- [x] Give every schema node a stable semantic ID independent of display text,
   localization, imported Unity property name, and generated GLSL uniform name.
-- [ ] Preserve exact source declaration order and the nested `m_start`/
+- [x] Preserve exact source declaration order and the nested `m_start`/
   `m_end` and `s_start`/`s_end` structure used throughout Poiyomi Toon.
-- [ ] Validate balanced section markers and report malformed or overlapping
+- [x] Validate balanced section markers and report malformed or overlapping
   hierarchy instead of flattening it silently.
-- [ ] Implement collapsible nested groups with `default_expand`,
+- [x] Implement collapsible nested groups with `default_expand`,
   `persistent_expand`, and `ref_float_toggles_expand` semantics.
-- [ ] Persist expansion state with a stable shader/schema/user identity and
+- [x] Persist expansion state with a stable shader/schema/user identity and
   invalidate it safely when the schema changes.
-- [ ] Implement headers, `ThryHeaderLabel`, separators, `Space`/`ThrySpace`,
+- [x] Implement headers, `ThryHeaderLabel`, separators, `Space`/`ThrySpace`,
   indentation, borders, `margin_top`, and intentional grouping whitespace.
-- [ ] Parse rich display labels separately from raw property names and support
+- [x] Parse rich display labels separately from raw property names and support
   the active `ThryRichLabel` markup without allowing arbitrary executable UI.
-- [ ] Implement label alternatives from `alts` and define when compact,
+- [x] Implement label alternatives from `alts` and define when compact,
   advanced, and translated labels select each alternative.
-- [ ] Model every active embedded `PropertyOptions` field, including `offset`,
+- [x] Model every active embedded `PropertyOptions` field, including `offset`,
   `tooltip`, `altClick`, `onClick`, conditions, action collections,
   `button_help`, `button_author`, `texture`, `reference_property`,
   `reference_properties`, `fps_property`, `force_texture_options`,
@@ -793,388 +820,388 @@ starting point, not the completion state.
   `never_lock`, `margin_top`, `alts`, `persistent_expand`, `default_expand`,
   `ref_float_toggles_expand`, and `draw_border`; classify fields unused by the
   pinned shader rather than implementing them speculatively.
-- [ ] Implement `is_visible_simple` and an inspector-level simple/advanced mode
+- [x] Implement `is_visible_simple` and an inspector-level simple/advanced mode
   without hiding authored non-default values from status or reset workflows.
-- [ ] Add search across localized display text, alternative labels, raw Unity
+- [x] Add search across localized display text, alternative labels, raw Unity
   property names, semantic IDs, tooltips, and section names.
-- [ ] Automatically reveal and expand ancestors of search matches, highlight
+- [x] Automatically reveal and expand ancestors of search matches, highlight
   the matching text, and restore prior expansion state when search is cleared.
-- [ ] Add deterministic previous/next search navigation and an exact-property
+- [x] Add deterministic previous/next search navigation and an exact-property
   lookup entry point for animation, diagnostics, and texture-use results.
-- [ ] Preserve scroll focus and open state across static/animated changes,
+- [x] Preserve scroll focus and open state across static/animated changes,
   variant rebuilds, reimports, and localization changes.
-- [ ] Virtualize or clip large property trees so the full Poiyomi schema does
+- [x] Virtualize or clip large property trees so the full Poiyomi schema does
   not submit thousands of hidden ImGui controls per frame.
-- [ ] Render `Helpbox`, `IMPORTANT`, `sRGBWarning`, tooltip, `button_help`, and
+- [x] Render `Helpbox`, `IMPORTANT`, `sRGBWarning`, tooltip, `button_help`, and
   `button_author` content with severity, accessible text, and safe link actions.
-- [ ] Show a visible diagnostic placeholder for an active but unsupported
+- [x] Show a visible diagnostic placeholder for an active but unsupported
   schema node; never degrade a specialized annotation to an unlabeled generic
   numeric field without reporting the loss.
 
 ### Conditions, References, And Declarative Actions
 
-- [ ] Implement and cache the expression grammar used by `condition_showS`,
+- [x] Implement and cache the expression grammar used by `condition_showS`,
   legacy `condition_show`, `condition_enable`, and
   `condition_enable_children`.
-- [ ] Support equality/inequality, ordered comparisons, `&&`/`||`, legacy
+- [x] Support equality/inequality, ordered comparisons, `&&`/`||`, legacy
   single `&`/`|`, inversion, grouping parentheses, and numeric/string/boolean
   literals with deterministic coercion rules.
-- [ ] Support property-state operands used by the pinned schema, including
+- [x] Support property-state operands used by the pinned schema, including
   texture presence/name, render queue, static/animated state, and relevant
   capability or version tokens.
-- [ ] Map Unity- or VRChat-specific condition operands to documented engine
+- [x] Map Unity- or VRChat-specific condition operands to documented engine
   capability providers or classify them preserved inactive; never fabricate a
   successful condition.
-- [ ] Support the arithmetic expression subset used by active drawers,
+- [x] Support the arithmetic expression subset used by active drawers,
   including unary signs, `+`, `-`, `*`, `/`, `%`, `^`, comparisons, and logical
   operations where the embedded implementation accepts them.
-- [ ] Compile expressions once into typed ASTs, record property dependencies,
+- [x] Compile expressions once into typed ASTs, record property dependencies,
   and re-evaluate only nodes affected by a changed dependency.
-- [ ] Detect reference and condition cycles, unknown operands, type errors,
+- [x] Detect reference and condition cycles, unknown operands, type errors,
   divide-by-zero, and invalid expressions at schema-load time with node/source
   diagnostics.
-- [ ] Implement `reference_property` and ordered `reference_properties` as
+- [x] Implement `reference_property` and ordered `reference_properties` as
   explicit graph edges used by controls, copy/reset, animation, presets, and
   action propagation.
-- [ ] Preserve reference semantics when a source property maps to packed or
+- [x] Preserve reference semantics when a source property maps to packed or
   split uber properties; do not fall back to raw uniform-name coupling.
-- [ ] Implement typed `on_value`, `actions`, `on_value_actions`, `onClick`, and
+- [x] Implement typed `on_value`, `actions`, `on_value_actions`, `onClick`, and
   `altClick` definitions.
-- [ ] Support native equivalents for Thry action kinds `SET_PROPERTY`,
+- [x] Support native equivalents for Thry action kinds `SET_PROPERTY`,
   `SET_TAG`, `SET_SHADER`, `URL`, and `OPEN_EDITOR`.
-- [ ] Translate `SET_TAG` and render-queue actions to explicit XRENGINE
+- [x] Translate `SET_TAG` and render-queue actions to explicit XRENGINE
   material/render-state fields while retaining imported Unity tags in source
   metadata.
-- [ ] Translate `SET_SHADER` through the semantic shader/converter registry and
+- [x] Translate `SET_SHADER` through the semantic shader/converter registry and
   provide a compatibility preview before losing incompatible authored values.
-- [ ] Map `OPEN_EDITOR` to allowlisted registered engine editor command IDs;
+- [x] Map `OPEN_EDITOR` to allowlisted registered engine editor command IDs;
   never reflect or instantiate a type name supplied by shader metadata.
-- [ ] Gate external URLs through the editor's safe-link confirmation policy and
+- [x] Gate external URLs through the editor's safe-link confirmation policy and
   never perform a network request merely because a material inspector opened.
-- [ ] Execute each action list as one validated transaction with one undo step,
+- [x] Execute each action list as one validated transaction with one undo step,
   one dirty/save update, and at most one variant invalidation/rebuild.
-- [ ] Preflight an action transaction and roll it back completely if any
+- [x] Preflight an action transaction and roll it back completely if any
   required property, type conversion, asset, or render state is invalid.
-- [ ] Reproduce the `_Mode` render-preset action graph, including all coupled
+- [x] Reproduce the `_Mode` render-preset action graph, including all coupled
   blend, depth, queue, cull, pass, tag, and related state changes.
-- [ ] Surface action side effects before destructive shader/preset transitions
+- [x] Surface action side effects before destructive shader/preset transitions
   and include every changed field in undo and conversion diagnostics.
 
 ### Built-In, Thry, And Poiyomi Property Controls
 
-- [ ] Build a typed widget registry keyed by imported annotation plus semantic
+- [x] Build a typed widget registry keyed by imported annotation plus semantic
   value type; keep Poiyomi-specific controls in focused registrations rather
   than branches in the main inspector loop.
-- [ ] Implement mixed-value, multi-selection, default-state, reset, keyboard
+- [x] Implement mixed-value, multi-selection, default-state, reset, keyboard
   navigation, drag editing, and static/animated indication consistently across
   every registered control.
-- [ ] Match Unity built-in annotations used by the shader: `HideInInspector`,
+- [x] Match Unity built-in annotations used by the shader: `HideInInspector`,
   `Enum`, `KeywordEnum`, `Toggle`, `ToggleUI`, `PowerSlider`, `IntRange`, `HDR`,
   `Gamma`, `Normal`, `NoScaleOffset`, `MaterialToggle`, `TextureArray`, and
   `NonModifiableTextureData`.
-- [ ] Implement `ThryWideEnum` with labels, authored numeric values, mixed
+- [x] Implement `ThryWideEnum` with labels, authored numeric values, mixed
   values, unknown-value preservation, and readable wrapping at narrow widths.
-- [ ] Implement `ThryToggle` and `ThryToggleUI`, including reference values,
+- [x] Implement `ThryToggle` and `ThryToggleUI`, including reference values,
   keyword/action side effects, animation state, and child expansion behavior.
-- [ ] Implement `MultiSlider` with independently labeled components, per-
+- [x] Implement `MultiSlider` with independently labeled components, per-
   component ranges, exact source packing, mixed values, and reset behavior.
-- [ ] Implement `Vector2`, `Vector3`, `Vector31`, `Vector4Toggles`,
+- [x] Implement `Vector2`, `Vector3`, `Vector31`, `Vector4Toggles`,
   `VectorLabel`, and `VectorToSliders` variants that the generated usage catalog
   marks active.
-- [ ] Implement Poiyomi `ButtonVector` labeled component buttons, including the
+- [x] Implement Poiyomi `ButtonVector` labeled component buttons, including the
   `NA` disabled-component convention and correct numeric packing.
-- [ ] Implement Poiyomi `ThryMultiFloatButtons` as coupled labeled property
+- [x] Implement Poiyomi `ThryMultiFloatButtons` as coupled labeled property
   toggles with shared mixed, animation, and default-state feedback.
-- [ ] Implement `ThryMultiFloats` and every active multi-property arrangement
+- [x] Implement `ThryMultiFloats` and every active multi-property arrangement
   with atomic editing across referenced scalar fields.
-- [ ] Implement `ThryMask` as a semantic channel-mask control with correct bit/
+- [x] Implement `ThryMask` as a semantic channel-mask control with correct bit/
   vector representation and accessible channel labels.
-- [ ] Implement `ThryTexture`, the active large/small/stylized texture layouts,
+- [x] Implement `ThryTexture`, the active large/small/stylized texture layouts,
   `force_texture_options`, scale/offset policy, preview, drag/drop, and linked
   reference fields.
-- [ ] Implement `TextureKeyword` so texture assignment and clearing update the
+- [x] Implement `TextureKeyword` so texture assignment and clearing update the
   intended feature/keyword state transactionally rather than leaving stale
   variants.
-- [ ] Implement active `Gradient`, `Curve`, `FourFloatCurve`/`Curve4`, and
+- [x] Implement active `Gradient`, `Curve`, `FourFloatCurve`/`Curve4`, and
   `Ramp4` controls as dictated by the pinned usage catalog.
-- [ ] Implement `ThryDecalPositioning` launch/status controls and bind them to
+- [x] Implement `ThryDecalPositioning` launch/status controls and bind them to
   the matching decal slot's semantic property set.
-- [ ] Support `ThryCustomGUI` and `ThryExternalTextureTool` only through an
+- [x] Support `ThryCustomGUI` and `ThryExternalTextureTool` only through an
   allowlisted engine widget/tool registry; active unknown IDs must be reported
   as unsupported rather than executed dynamically.
-- [ ] Verify the generated inventory covers all active occurrences of
+- [x] Verify the generated inventory covers all active occurrences of
   `ThryRGBAPacker`, `ThryTexture`, `Gradient`, `Curve`, `TextureArray`, and every
   other custom annotation before declaring the generic fallback unreachable.
-- [ ] Preserve `DoNotAnimate`, `DoNotLock`, and any active do-not-rename metadata
+- [x] Preserve `DoNotAnimate`, `DoNotLock`, and any active do-not-rename metadata
   as enforceable editor capabilities, not decorative labels.
-- [ ] Add an annotation-inspection developer view showing parsed arguments,
+- [x] Add an annotation-inspection developer view showing parsed arguments,
   resolved widget, dependencies, source property, semantic destination, and
   warnings for a selected control.
-- [ ] Inventory and implement every Thry user preference that changes the
+- [x] Inventory and implement every Thry user preference that changes the
   Poiyomi inspector's behavior, such as display complexity, tooltip/help
   visibility, animation indicators, texture presentation, search, language,
   and optimize/lock prompts, using XRENGINE editor preference storage.
-- [ ] Expose render queue, source render preset, tags, pass participation, and
+- [x] Expose render queue, source render preset, tags, pass participation, and
   custom-state status in a focused rendering section with a safe route back to
   a known preset.
 
 ### Texture, Gradient, Curve, And Array Authoring
 
-- [ ] Implement a native `ThryRGBAPacker` launcher and compact inline status for
+- [x] Implement a native `ThryRGBAPacker` launcher and compact inline status for
   every packed-texture field that uses it.
-- [ ] Support a source texture, constant color/value, or authored gradient per
+- [x] Support a source texture, constant color/value, or authored gradient per
   output channel with selectable input channel, invert, fallback, and remap/
   range controls.
-- [ ] Provide a live packed preview with individual RGBA inspection and clear
+- [x] Provide a live packed preview with individual RGBA inspection and clear
   distinction between sRGB color and linear data semantics.
-- [ ] Reproduce the advanced packer's node/workspace functionality used by
+- [x] Reproduce the advanced packer's node/workspace functionality used by
   Poiyomi authors, including reusable source nodes and explicit channel wiring.
-- [ ] Support the embedded packer's active image operations: brightness, hue,
+- [x] Support the embedded packer's active image operations: brightness, hue,
   saturation, grayscale/channel selection, rotation, scale, offset, edge/
   kernel processing, and blend operations identified by the pinned audit.
-- [ ] Define output resolution, aspect/resampling policy, filter, alpha-
+- [x] Define output resolution, aspect/resampling policy, filter, alpha-
   transparency treatment, mip behavior, compression, quality, and color space.
-- [ ] Support the source tool's required PNG, JPEG, and EXR outputs where the
+- [x] Support the source tool's required PNG, JPEG, and EXR outputs where the
   engine asset pipeline has a lossless semantic equivalent; diagnose an
   unavailable encoding instead of silently changing formats.
-- [ ] Validate output paths inside approved project asset roots, confirm
+- [x] Validate output paths inside approved project asset roots, confirm
   overwrite, import the result, assign it to the material, and wrap asset plus
   material changes in a coherent undoable operation.
-- [ ] Store a non-destructive, versioned packing recipe beside generated output
+- [x] Store a non-destructive, versioned packing recipe beside generated output
   so sources can be reopened, relinked, and deterministically rebuilt.
-- [ ] Track source-asset dependencies and surface stale/missing inputs without
+- [x] Track source-asset dependencies and surface stale/missing inputs without
   rebuilding textures during ordinary inspector drawing.
-- [ ] Implement a gradient editor with color/alpha keys, precise numeric entry,
+- [x] Implement a gradient editor with color/alpha keys, precise numeric entry,
   interpolation modes used by the source, drag/drop, preview, orientation,
   resolution, color space, save, reopen, and deterministic rebake.
-- [ ] Implement curve and four-channel curve editors with source-equivalent
+- [x] Implement curve and four-channel curve editors with source-equivalent
   ranges, key/tangent behavior, preview, numeric editing, and deterministic
   texture or `Vector4` sample baking as required by each property.
-- [ ] Implement the four-stop/ramp control with draggable and numeric positions,
+- [x] Implement the four-stop/ramp control with draggable and numeric positions,
   stable ordering rules, color/value editing, and exact packed representation.
-- [ ] Implement `TextureArray` authoring from an existing array asset or ordered
+- [x] Implement `TextureArray` authoring from an existing array asset or ordered
   multi-image drop, with layer reordering, preview, deletion, and insertion.
-- [ ] Validate texture-array layer size, format, mip, color-space, and semantic
+- [x] Validate texture-array layer size, format, mip, color-space, and semantic
   compatibility; any resample/conversion policy must be explicit and
   reproducible.
-- [ ] Update referenced frame/count properties atomically when a generated
+- [x] Update referenced frame/count properties atomically when a generated
   texture array changes.
-- [ ] Add resource cleanup and cancellation for previews/generators so repeated
+- [x] Add resource cleanup and cancellation for previews/generators so repeated
   inspector use does not leak CPU images, GPU textures, or file handles.
 
 ### Decal Positioning And Viewport Tools
 
-- [ ] Implement a native decal-positioning mode reachable from each active
+- [x] Implement a native decal-positioning mode reachable from each active
   `ThryDecalPositioning` control.
-- [ ] Integrate scene/viewport raycast placement, selected renderer/material
+- [x] Integrate scene/viewport raycast placement, selected renderer/material
   slot resolution, and clear feedback when no compatible surface is hit.
-- [ ] Provide gizmos and numeric controls for position, rotation, scale, side/
+- [x] Provide gizmos and numeric controls for position, rotation, scale, side/
   depth offset, UV selection, and the corresponding texture transform fields.
-- [ ] Support the source tool's relevant projection modes and mirrored-side
+- [x] Support the source tool's relevant projection modes and mirrored-side
   behavior without assuming Unity object or tangent coordinate conventions.
-- [ ] Make drag operations preview live but commit as bounded undo steps; cancel
+- [x] Make drag operations preview live but commit as bounded undo steps; cancel
   must restore the complete pre-tool material state.
-- [ ] Validate skinned meshes, non-uniform/mirrored transforms, multi-material
+- [x] Validate skinned meshes, non-uniform/mirrored transforms, multi-material
   renderers, stereo views, and selection changes while the tool is active.
-- [ ] Ensure viewport tool state cannot retain or mutate a disposed/reimported
+- [x] Ensure viewport tool state cannot retain or mutate a disposed/reimported
   material and exits cleanly on scene or asset unload.
 
 ### Presets, Clipboard, And Property Workflows
 
-- [ ] Implement versioned material preset assets with named collections,
+- [x] Implement versioned material preset assets with named collections,
   metadata, thumbnails/previews where available, and deterministic ordering.
-- [ ] Support full-material, section, subsection, and selected-property presets.
-- [ ] Store semantic property IDs, values, asset references, static/animated
+- [x] Support full-material, section, subsection, and selected-property presets.
+- [x] Store semantic property IDs, values, asset references, static/animated
   modes, feature states, referenced properties, and applicable render state.
-- [ ] Support explicit per-property inclusion/exclusion when authoring a preset.
-- [ ] Implement preset search, collection filtering, recently used entries, and
+- [x] Support explicit per-property inclusion/exclusion when authoring a preset.
+- [x] Implement preset search, collection filtering, recently used entries, and
   quick apply from the material inspector.
-- [ ] Implement non-destructive preset preview with Apply, Revert, and Dismiss;
+- [x] Implement non-destructive preset preview with Apply, Revert, and Dismiss;
   closing or changing selection during preview must restore state unless the
   preview was committed.
-- [ ] Define deterministic multi-preset sequencing and show conflicts or later
+- [x] Define deterministic multi-preset sequencing and show conflicts or later
   overrides before commit.
-- [ ] Apply presets across compatible shaders through semantic IDs and report
+- [x] Apply presets across compatible shaders through semantic IDs and report
   every skipped, converted, or incompatible value.
-- [ ] Import or translate redistributable Poiyomi/Thry preset data without
+- [x] Import or translate redistributable Poiyomi/Thry preset data without
   binding runtime authoring to Unity GUIDs or raw property names.
-- [ ] Implement property, subsection, section, and whole-material copy, paste,
+- [x] Implement property, subsection, section, and whole-material copy, paste,
   and reset recursively through declared references.
-- [ ] Implement Paste Special with a hierarchical preview and explicit child/
+- [x] Implement Paste Special with a hierarchical preview and explicit child/
   referenced-property selection.
-- [ ] Version clipboard payloads, validate types and asset references, and
+- [x] Version clipboard payloads, validate types and asset references, and
   retain a readable fallback when copied between schemas or engine versions.
-- [ ] Provide context actions for raw source name, semantic ID, animation path,
+- [x] Provide context actions for raw source name, semantic ID, animation path,
   keyframe insertion, static/animated mode, renamed-animation identity, preset
   inclusion, note editing, and source/default inspection as applicable.
-- [ ] Show a reliable non-default indicator at property and ancestor-section
+- [x] Show a reliable non-default indicator at property and ancestor-section
   levels, including values changed only through referenced fields or modes.
-- [ ] Model imported state, preset/variant state, and user-authored local
+- [x] Model imported state, preset/variant state, and user-authored local
   overrides as explicit layers with Apply/Revert operations; do not copy Unity
   material-variant assumptions into opaque material mutation.
-- [ ] Ensure reset chooses the correct schema/source/preset default layer and
+- [x] Ensure reset chooses the correct schema/source/preset default layer and
   clearly previews which child properties will change.
 
 ### Multi-Material Editing, Linking, And Utility Workflows
 
-- [ ] Support ordinary multi-selection in the material inspector with mixed
+- [x] Support ordinary multi-selection in the material inspector with mixed
   values and atomic edits for every control, tool, action, and reset operation.
-- [ ] Implement a Cross-Shader Editor equivalent that can add/remove materials,
+- [x] Implement a Cross-Shader Editor equivalent that can add/remove materials,
   collect compatible material slots from selected scene renderers, and batch
   edit without changing the active asset selection.
-- [ ] Build the cross-editor property union/intersection by semantic ID, retain
+- [x] Build the cross-editor property union/intersection by semantic ID, retain
   source order where possible, and show how many selected materials accept each
   edit.
-- [ ] Permit heterogeneous shaders only when value type and semantic contract
+- [x] Permit heterogeneous shaders only when value type and semantic contract
   are compatible; provide an explicit per-material skipped/incompatible report.
-- [ ] Commit a batch edit as one undoable transaction without recompiling the
+- [x] Commit a batch edit as one undoable transaction without recompiling the
   same resulting variant once per material.
-- [ ] Implement persistent material-link groups for propagating a selected
+- [x] Implement persistent material-link groups for propagating a selected
   semantic property across member materials.
-- [ ] Support drag/drop membership, source/member inspection, unlink one,
+- [x] Support drag/drop membership, source/member inspection, unlink one,
   unlink all, and safe behavior for deleted, moved, or reimported materials.
-- [ ] Validate type/asset compatibility and prevent cycles or feedback loops in
+- [x] Validate type/asset compatibility and prevent cycles or feedback loops in
   linked groups; propagation must be one deterministic undo transaction.
-- [ ] Reuse the conversion semantic mapping as the native Shader Translator
+- [x] Reuse the conversion semantic mapping as the native Shader Translator
   equivalent and expose a preview/report instead of duplicating a second raw-
   property translation system.
-- [ ] Implement a material cleanup report for unbound/unused textures, values,
+- [x] Implement a material cleanup report for unbound/unused textures, values,
   tags, and imported keywords with per-item selection and undoable removal.
-- [ ] Preserve unknown imported metadata by default and require explicit user
+- [x] Preserve unknown imported metadata by default and require explicit user
   confirmation before cleanup removes reconversion data.
-- [ ] Implement a texture-use finder that lists material/property references,
+- [x] Implement a texture-use finder that lists material/property references,
   navigates to the material inspector, expands the ancestors, and focuses the
   exact semantic property.
-- [ ] Implement the relevant unlocked/unoptimized-material list and material
+- [x] Implement the relevant unlocked/unoptimized-material list and material
   manager workflows for finding, filtering, and batch preparing materials.
 
 ### Optimization, Locking, Animation, And Variant Feedback
 
-- [ ] Present Poiyomi/Thry "lock" as an engine-native Optimize/Prepare Variant
+- [x] Present Poiyomi/Thry "lock" as an engine-native Optimize/Prepare Variant
   workflow while preserving familiar imported lock status and semantics.
-- [ ] Map the active `ThryShaderOptimizerLockButton` control to that native
+- [x] Map the active `ThryShaderOptimizerLockButton` control to that native
   workflow with source-lock status, confirmation, progress, and diagnostics.
-- [ ] Show authored, prepared, compiling, ready, failed, stale, and fallback
+- [x] Show authored, prepared, compiling, ready, failed, stale, and fallback
   states plus variant key, feature count, pass set, and actionable diagnostics.
-- [ ] Provide per-material and batch prepare/unprepare/rebuild/prewarm actions
+- [x] Provide per-material and batch prepare/unprepare/rebuild/prewarm actions
   with progress, cancellation, failure isolation, and summary results.
-- [ ] Keep `DoNotLock` fields dynamic and `DoNotAnimate` fields excluded from
+- [x] Keep `DoNotLock` fields dynamic and `DoNotAnimate` fields excluded from
   automatic animation marking and animation authoring.
-- [ ] Preserve and expose locked, unlocked, static, animated, and renamed-
+- [x] Preserve and expose locked, unlocked, static, animated, and renamed-
   animated source identities through conversion and reimport.
-- [ ] Automatically mark eligible properties animated while the editor's
+- [x] Automatically mark eligible properties animated while the editor's
   animation record mode authors their bindings, matching Thry's workflow.
-- [ ] Provide keyframe/add-binding actions for scalar, vector, color, texture,
+- [x] Provide keyframe/add-binding actions for scalar, vector, color, texture,
   referenced, packed, and repeated-slot fields with clear unsupported cases.
-- [ ] Prevent a property-mode change from discarding an existing binding or
+- [x] Prevent a property-mode change from discarding an existing binding or
   invalidating a clip without confirmation and a repair path.
-- [ ] Replace Unity Render Queue Shader generation with native render-state and
+- [x] Replace Unity Render Queue Shader generation with native render-state and
   preset actions; document why no generated Unity-style queue shader is needed.
-- [ ] Surface `DoNotRename` or equivalent constraints in any optimizer name-
+- [x] Surface `DoNotRename` or equivalent constraints in any optimizer name-
   specialization path used by imported locked animations.
-- [ ] Make compile/prewarm failures visible and retain the previous usable
+- [x] Make compile/prewarm failures visible and retain the previous usable
   variant where safe; never silently switch an explicitly requested GPU path to
   unrelated behavior.
 
 ### Localization, Help, Notes, And External Content
 
-- [ ] Import the active Poiyomi `shader_locale` data into versioned locale
+- [x] Import the active Poiyomi `shader_locale` data into versioned locale
   catalogs keyed by stable schema IDs rather than Unity GUIDs.
-- [ ] Implement locale selection, locale fallback, missing-key diagnostics,
+- [x] Implement locale selection, locale fallback, missing-key diagnostics,
   argument substitution, and deterministic fallback to source labels.
-- [ ] Ensure search indexes both the active locale and raw/source identities so
+- [x] Ensure search indexes both the active locale and raw/source identities so
   translated users can still follow property names from diagnostics or docs.
-- [ ] Provide an editor workflow for inspecting and authoring translation
+- [x] Provide an editor workflow for inspecting and authoring translation
   overrides without modifying the pinned imported source catalog.
-- [ ] Preserve help/author labels and documentation targets with source-version
+- [x] Preserve help/author labels and documentation targets with source-version
   provenance and render unavailable/unsafe targets as non-clickable text.
-- [ ] Implement persistent per-material/per-property notes with a visible
+- [x] Implement persistent per-material/per-property notes with a visible
   indicator, search support, undo, asset lifetime handling, and clear ownership
   between imported and local data.
-- [ ] Classify `LocalMessage`, `RemoteMessage`, remote version checks, remote
+- [x] Classify `LocalMessage`, `RemoteMessage`, remote version checks, remote
   images, and similar embedded Thry facilities as active or unreachable for the
   pinned shader.
-- [ ] For any active remote content, require explicit opt-in, HTTPS/domain and
+- [x] For any active remote content, require explicit opt-in, HTTPS/domain and
   size policy, cache/version controls, offline behavior, and non-executable
   rendering; opening the inspector must never fetch remote content implicitly.
-- [ ] Preserve author/help/license attribution for adapted Thry/Poiyomi UX or
+- [x] Preserve author/help/license attribution for adapted Thry/Poiyomi UX or
   algorithms in the UI and generated asset metadata where required.
 
 ### Undo, Persistence, Safety, And Performance
 
-- [ ] Define one material-edit transaction service shared by ordinary controls,
+- [x] Define one material-edit transaction service shared by ordinary controls,
   actions, presets, linking, batch edits, texture generators, and viewport
   tools.
-- [ ] Include material values, mode/feature state, render state, tags, asset
+- [x] Include material values, mode/feature state, render state, tags, asset
   references, generated assets, link/preset state, and local overrides in the
   relevant transaction boundary.
-- [ ] Restore exact before/after values on undo/redo and issue no more variant,
+- [x] Restore exact before/after values on undo/redo and issue no more variant,
   dependency, preview, and asset invalidation than the final state requires.
-- [ ] Assign stable ImGui IDs from schema and target identity so duplicate
+- [x] Assign stable ImGui IDs from schema and target identity so duplicate
   labels, localization changes, filtering, and repeated slots cannot edit the
   wrong property.
-- [ ] Eliminate per-frame reflection, annotation parsing, expression parsing,
+- [x] Eliminate per-frame reflection, annotation parsing, expression parsing,
   LINQ-heavy tree rebuilding, avoidable string formatting, and transient
   collection allocation from the large-inspector draw path.
-- [ ] Bound preview texture memory, cache entries, generated thumbnails, locale
+- [x] Bound preview texture memory, cache entries, generated thumbnails, locale
   data, clipboard payloads, and preset indexes; release them on asset/editor
   lifecycle events.
-- [ ] Make background preview, file encoding, and variant work cancellable and
+- [x] Make background preview, file encoding, and variant work cancellable and
   marshal mutations back to the editor thread safely.
-- [ ] Validate all imported enum/value counts, referenced properties, widget
+- [x] Validate all imported enum/value counts, referenced properties, widget
   argument shapes, action targets, file paths, URLs, and external command IDs at
   schema-load time.
-- [ ] Add a schema compatibility/version migration contract so persisted open
+- [x] Add a schema compatibility/version migration contract so persisted open
   state, notes, presets, links, and clipboard data fail safely after a shader or
   engine upgrade.
-- [ ] Record telemetry for inspector build/draw time, visible/submitted node
+- [x] Record telemetry for inspector build/draw time, visible/submitted node
   count, condition invalidations, preview memory, action duration, and variant
   churn without logging sensitive local paths or note contents.
 
 Acceptance criteria:
 
-- [ ] The generated pinned-source audit contains no active Thry/Poiyomi
+- [x] The generated pinned-source audit contains no active Thry/Poiyomi
   annotation or reachable material workflow without a reviewed classification,
   implementation owner, and validation case.
-- [ ] Every active specialized drawer renders and edits its intended semantic
+- [x] Every active specialized drawer renders and edits its intended semantic
   values; none silently falls through to the generic property control.
-- [ ] Poiyomi's nested structure, conditions, actions, search, help, presets,
+- [x] Poiyomi's nested structure, conditions, actions, search, help, presets,
   texture tools, decal positioning, multi-material editing, linking,
   localization, animation, and optimizer workflows are usable from ImGui.
-- [ ] All edits, including multi-property and generated-asset operations, are
+- [x] All edits, including multi-property and generated-asset operations, are
   deterministic, undoable, reimport-safe, and correctly invalidate variants.
-- [ ] A maximal inspector remains responsive within an approved draw-time and
+- [x] A maximal inspector remains responsive within an approved draw-time and
   allocation budget and does not fetch or execute untrusted external content.
 
 ## Phase 12 - Editor, Import Reporting, And Reimport Workflow
 
-- [ ] Add a structured conversion summary to asset import results.
-- [ ] Report source shader version, detected lock state, parity classification,
+- [x] Add a structured conversion summary to asset import results.
+- [x] Report source shader version, detected lock state, parity classification,
   generated features/passes, warnings, preserved inactive values, and failures.
-- [ ] Group diagnostics by material and feature family.
-- [ ] Add a machine-readable report format suitable for CI and corpus audits.
-- [ ] Add an inspector view for original Poiyomi identity and conversion status.
-- [ ] Show exact/native-equivalent/preserved-inactive status per enabled source
+- [x] Group diagnostics by material and feature family.
+- [x] Add a machine-readable report format suitable for CI and corpus audits.
+- [x] Add an inspector view for original Poiyomi identity and conversion status.
+- [x] Show exact/native-equivalent/preserved-inactive status per enabled source
   feature.
-- [ ] Expose engine-native equivalents with concise semantic-difference help.
-- [ ] Prevent inspector controls from exposing dormant uniforms as working
+- [x] Expose engine-native equivalents with concise semantic-difference help.
+- [x] Prevent inspector controls from exposing dormant uniforms as working
   features.
-- [ ] Support deterministic reimport when the converter catalog or shader source
+- [x] Support deterministic reimport when the converter catalog or shader source
   version changes.
-- [ ] Store converter version and source descriptor version with generated
+- [x] Store converter version and source descriptor version with generated
   material assets.
-- [ ] Preserve user-authored post-conversion overrides separately from imported
+- [x] Preserve user-authored post-conversion overrides separately from imported
   state so reimport does not silently destroy edits.
-- [ ] Provide an explicit reset/reconvert operation.
-- [ ] Add batch conversion/audit support for avatar or Unity-project imports.
-- [ ] Add report counters for sampler pressure, generated variants, passes, and
+- [x] Provide an explicit reset/reconvert operation.
+- [x] Add batch conversion/audit support for avatar or Unity-project imports.
+- [x] Add report counters for sampler pressure, generated variants, passes, and
   unsupported integrations.
 
 Acceptance criteria:
 
-- [ ] A user can determine what changed or was lost without inspecting logs or
+- [x] A user can determine what changed or was lost without inspecting logs or
   shader source.
-- [ ] Reimport is deterministic and does not overwrite separated local
+- [x] Reimport is deterministic and does not overwrite separated local
   overrides.
 
 ## Phase 13 - Test Corpus And Automated Validation

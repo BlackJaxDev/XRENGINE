@@ -122,6 +122,23 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
 
     public void DrawInspector(EditorImGuiUI.InspectorTargetSet targets, HashSet<object> visitedObjects)
     {
+        if (targets.Targets.Count > 1)
+        {
+            bool materialsOnly = true;
+            foreach (object target in targets.Targets)
+            {
+                if (target is XRMaterial)
+                    continue;
+                materialsOnly = false;
+                break;
+            }
+
+            if (materialsOnly)
+            {
+                DrawMultiMaterialAuthoringInspector(targets.Targets);
+                return;
+            }
+        }
         if (targets.Targets.Count != 1 || targets.PrimaryTarget is not XRMaterial material)
         {
             EditorImGuiUI.DrawDefaultAssetInspector(targets, visitedObjects);
