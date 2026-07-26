@@ -147,6 +147,7 @@ namespace XREngine.Components.Scene.Mesh
             // callback after deferred, opaque-forward, and masked-forward mesh passes.
             _renderBoundsCommand = new RenderCommandMethod3D((int)EDefaultRenderPass.OnTopForward, DoRenderBounds);
             RenderInfo = RenderInfo3D.New(component, _rc = new RenderCommandMesh3D(0));
+            RenderInfo.RenderCommands.Add(_materialOutlineCommand);
             RenderInfo.OwnerRenderableMesh = this;
             if (RenderBounds)
                 RenderInfo.RenderCommands.Add(_renderBoundsCommand);
@@ -207,7 +208,9 @@ namespace XREngine.Components.Scene.Mesh
         private void PublishRenderCommandCullingVolume()
         {
             Box? worldBox = ((IOctreeItem)RenderInfo).WorldCullingVolume;
-            _rc.WorldCullingVolumeOverride = worldBox?.GetAABB(transformed: true);
+            AABB? worldBounds = worldBox?.GetAABB(transformed: true);
+            _rc.WorldCullingVolumeOverride = worldBounds;
+            _materialOutlineCommand.WorldCullingVolumeOverride = worldBounds;
         }
 
         internal RenderableLOD[] GetLodSnapshot()
@@ -290,6 +293,7 @@ namespace XREngine.Components.Scene.Mesh
                 _rc.RenderPass = mat.RenderPass;
             }
 
+            SyncMaterialPassCommands(rend, mat, passes.IsShadowPass);
             ApplyHighlightRenderOptionsOverride(mat);
             ModelRenderDiagnostics.LogCommandCollect(this, _rc, passes, camera, distance);
             ProcessPendingGpuMeshBvhRefresh();
@@ -475,6 +479,10 @@ namespace XREngine.Components.Scene.Mesh
                 _rc.MaterialOverride = null;
                 _rc.RenderOptionsOverride = null;
                 _rc.ForceCpuRendering = false;
+                _materialOutlineCommand.Enabled = false;
+                _materialOutlineCommand.Mesh = null;
+                _materialOutlineCommand.MaterialOverride = null;
+                _materialOutlineCommand.RenderOptionsOverride = null;
                 _highlightRenderOptionsOverride = null;
                 _highlightSourceMaterial = null;
                 _highlightStencilBits = 0;

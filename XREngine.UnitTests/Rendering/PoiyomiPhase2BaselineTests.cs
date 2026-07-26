@@ -9,26 +9,34 @@ using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Shaders.Generator;
 using XREngine.Rendering.Vulkan;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Scene.Importers;
 using XREngine.Scene.Importers.Poiyomi;
 
 namespace XREngine.UnitTests.Rendering;
 
 [TestFixture]
+[NonParallelizable]
 public sealed class PoiyomiPhase2BaselineTests
 {
     private IRuntimeShaderServices? _previousServices;
+    private IRuntimeRenderingHostServices? _previousRenderingServices;
 
     [SetUp]
     public void SetUp()
     {
         _previousServices = RuntimeShaderServices.Current;
+        _previousRenderingServices = RuntimeRenderingHostServices.Current;
         RuntimeShaderServices.Current = new FileBackedRuntimeShaderServices();
+        RuntimeRenderingHostServices.Current = RuntimeRenderingBootstrap.CreateEngineHostServices();
     }
 
     [TearDown]
     public void TearDown()
-        => RuntimeShaderServices.Current = _previousServices;
+    {
+        RuntimeShaderServices.Current = _previousServices;
+        RuntimeRenderingHostServices.Current = _previousRenderingServices!;
+    }
 
     [Test]
     public void Importer_MapsIndependentPhase2SamplerFamiliesAndPackedChannels()
@@ -231,8 +239,8 @@ public sealed class PoiyomiPhase2BaselineTests
 
     [TestCase(0, ETransparencyMode.Opaque)]
     [TestCase(1, ETransparencyMode.Masked)]
-    [TestCase(2, ETransparencyMode.WeightedBlendedOit)]
-    [TestCase(3, ETransparencyMode.WeightedBlendedOit)]
+    [TestCase(2, ETransparencyMode.AlphaBlend)]
+    [TestCase(3, ETransparencyMode.PremultipliedAlpha)]
     public void Importer_MapsBaselineTransparencyFixtures(int sourceMode, ETransparencyMode expected)
     {
         (string projectRoot, string materialPath) = CreateProject($"phase2-mode-{sourceMode}");

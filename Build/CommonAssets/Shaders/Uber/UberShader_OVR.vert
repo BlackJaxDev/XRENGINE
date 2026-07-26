@@ -91,6 +91,12 @@ void main() {
 #endif
 	float tanSign = Tangent.w;
 
+#ifdef XRENGINE_OUTLINE_PASS
+	// The companion draw reuses the canonical vertex path so skinning,
+	// blendshape/deformation inputs, UVs, and stereo routing cannot drift.
+	pos += norm * (_OutlineWidth * 0.01);
+#endif
+
 	// Object -> world. World-space data is shared between both eyes so we
 	// only have to do this once per vertex-invocation even though each eye
 	// runs main() independently.

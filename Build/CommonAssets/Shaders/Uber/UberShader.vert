@@ -96,6 +96,12 @@ void main() {
 #endif
     float tanSign = Tangent.w;
 
+#ifdef XRENGINE_OUTLINE_PASS
+    // The companion draw reuses the canonical vertex path so skinning,
+    // blendshape/deformation inputs, UVs, and stereo routing cannot drift.
+    pos += norm * (_OutlineWidth * 0.01);
+#endif
+
     // ---- Position: object -> world, object -> clip -------------------------
     vec4 worldPosition = u_ModelMatrix * vec4(pos, 1.0);
     FragPos = worldPosition.xyz;

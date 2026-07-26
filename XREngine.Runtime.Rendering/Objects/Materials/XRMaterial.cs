@@ -47,6 +47,10 @@ namespace XREngine.Rendering
         [YamlIgnore]
         private bool _shadowCasterVariantResolved;
         [YamlIgnore]
+        private XRMaterial? _outlinePassVariant;
+        [YamlIgnore]
+        private bool _outlinePassVariantResolved;
+        [YamlIgnore]
         private XRMaterial? _pointShadowCasterVariant;
         [YamlIgnore]
         private bool _pointShadowCasterVariantResolved;
@@ -100,6 +104,7 @@ namespace XREngine.Rendering
         private long _shaderStateRevision = 1;
 
         private int _opaqueRenderPass = (int)EDefaultRenderPass.OpaqueForward;
+        private MaterialPassSet _passSet = MaterialPassSet.Empty;
 
         [Browsable(false)]
         [YamlIgnore]
@@ -202,6 +207,16 @@ namespace XREngine.Rendering
         {
             get => _uberAuthoredState;
             set => SetField(ref _uberAuthoredState, value ?? UberMaterialAuthoredState.Empty);
+        }
+
+        /// <summary>
+        /// Pass-specific shader and fixed-function state that shares this
+        /// material's authored parameters, textures, and uber feature state.
+        /// </summary>
+        public MaterialPassSet PassSet
+        {
+            get => _passSet;
+            set => SetField(ref _passSet, value ?? MaterialPassSet.Empty);
         }
 
         [Browsable(false)]
@@ -525,6 +540,7 @@ namespace XREngine.Rendering
         {
             InvalidateDepthNormalPrePassVariant();
             InvalidateShadowCasterVariant();
+            InvalidateOutlinePassVariant();
 
             switch (propName)
             {
@@ -577,6 +593,24 @@ namespace XREngine.Rendering
                 _shadowCasterVariant = ShadowCasterVariantFactory.CreateMaterialVariant(this);
                 _shadowCasterVariantResolved = true;
                 return _shadowCasterVariant;
+            }
+        }
+
+        /// <summary>
+        /// Lazily created inverse-hull companion material for an enabled
+        /// <see cref="EMaterialPassIdentity.Outline"/> pass.
+        /// </summary>
+        [YamlIgnore]
+        public XRMaterial? OutlinePassVariant
+        {
+            get
+            {
+                if (_outlinePassVariantResolved)
+                    return _outlinePassVariant;
+
+                _outlinePassVariant = OutlinePassVariantFactory.CreateMaterialVariant(this);
+                _outlinePassVariantResolved = true;
+                return _outlinePassVariant;
             }
         }
 
@@ -717,6 +751,13 @@ namespace XREngine.Rendering
             _depthNormalPrePassVariantResolved = false;
         }
 
+        public void InvalidateOutlinePassVariant()
+        {
+            _outlinePassVariant?.Destroy();
+            _outlinePassVariant = null;
+            _outlinePassVariantResolved = false;
+        }
+
         public void InvalidateShadowCasterVariant()
         {
             _shadowCasterVariant?.Destroy();
@@ -809,6 +850,7 @@ namespace XREngine.Rendering
         {
             InvalidateDepthNormalPrePassVariant();
             InvalidateShadowCasterVariant();
+            InvalidateOutlinePassVariant();
             BumpShaderStateRevision();
 
             _fragmentShaders.Clear();

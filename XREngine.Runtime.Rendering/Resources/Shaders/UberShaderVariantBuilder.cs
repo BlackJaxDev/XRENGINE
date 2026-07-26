@@ -206,7 +206,7 @@ internal static partial class UberShaderVariantBuilder
                 enabledFeatures.Add(feature.Id);
         }
 
-        enabledFeatures.Sort(StringComparer.Ordinal);
+        enabledFeatures = UberFeatureDependencyResolver.Resolve(manifest, enabledFeatures);
         HashSet<string> enabledFeatureSet = new(enabledFeatures, StringComparer.Ordinal);
 
         List<string> animatedProperties = [];

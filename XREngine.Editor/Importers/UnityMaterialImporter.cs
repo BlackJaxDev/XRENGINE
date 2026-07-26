@@ -99,20 +99,30 @@ public static class UnityMaterialImporter
         {
             string shaderFamily = isLilToon ? "lilToon" : "Poiyomi";
             warnings.Add($"{shaderFamily} material conversion failed for '{document.Name}'. Falling back to generic Unity material import. {ex.Message}");
-            XRMaterial material = ConvertGenericUnityMaterial(document, resolver, warnings);
-            material.OriginalPath = normalizedPath;
-            return new UnityMaterialImportResult
+            try
             {
-                Material = material,
-                IsPoiyomiToon = isPoiyomiToon,
-                IsLilToon = isLilToon,
-                ShaderPath = shaderPath,
-                SourceDocument = document,
-                ShaderAsset = shaderAsset,
-                PoiyomiDescriptor = poiyomiDescriptor,
-                Warnings = [.. warnings],
-                Diagnostics = [.. diagnostics],
-            };
+                XRMaterial material = ConvertGenericUnityMaterial(document, resolver, warnings);
+                material.OriginalPath = normalizedPath;
+                return new UnityMaterialImportResult
+                {
+                    Material = material,
+                    IsPoiyomiToon = isPoiyomiToon,
+                    IsLilToon = isLilToon,
+                    ShaderPath = shaderPath,
+                    SourceDocument = document,
+                    ShaderAsset = shaderAsset,
+                    PoiyomiDescriptor = poiyomiDescriptor,
+                    Warnings = [.. warnings],
+                    Diagnostics = [.. diagnostics],
+                };
+            }
+            catch (Exception fallbackException)
+            {
+                throw new AggregateException(
+                    $"{shaderFamily} conversion and generic fallback both failed for '{document.Name}'.",
+                    ex,
+                    fallbackException);
+            }
         }
     }
 
@@ -242,7 +252,17 @@ public static class UnityMaterialImporter
         ApplyPoiyomiRenderState(material, document, diagnostics);
         PoiyomiSourceDocuments.Remove(material);
         PoiyomiSourceDocuments.Add(material, document);
-        material.PrepareUberVariantImmediately();
+        try
+        {
+            _ = material.PrewarmUberPassSetImmediately();
+        }
+        catch (Exception ex)
+        {
+            diagnostics.Add(new MaterialConversionDiagnostic(
+                MaterialConversionDiagnosticCodes.PassPrewarmFailed,
+                MaterialConversionDiagnosticSeverity.Warning,
+                $"The material was converted, but one or more pass variants could not be prewarmed: {ex.GetBaseException().Message}"));
+        }
         return material;
     }
 
@@ -990,13 +1010,28 @@ public static class UnityMaterialImporter
         UnityMaterialDocument document,
         ICollection<MaterialConversionDiagnostic> diagnostics)
     {
-        material.RenderOptions.CullMode = PoiyomiEnumMapper.CullMode(document, material.RenderOptions.CullMode, diagnostics);
-
-        float cutoff = document.TryGetFloat("_Cutoff", out float authoredCutoff)
+        PoiyomiRenderStateConversion conversion = PoiyomiRenderStateConverter.Convert(document, diagnostics);
+        material.PassSet = conversion.PassSet;
+        material.AlphaCutoff = document.TryGetFloat("_Cutoff", out float authoredCutoff)
             ? Math.Clamp(authoredCutoff, 0.0f, 1.0f)
-            : material.AlphaCutoff;
-        material.AlphaCutoff = cutoff;
-        material.TransparencyMode = PoiyomiEnumMapper.TransparencyMode(document, diagnostics);
+            : conversion.Preset switch
+            {
+                PoiyomiRenderPreset.Cutout => 0.5f,
+                PoiyomiRenderPreset.TransClipping => 0.01f,
+                PoiyomiRenderPreset.Fade => 0.002f,
+                _ => 0.0f,
+            };
+
+        // Synchronize opacity uniforms/shader family before restoring the
+        // source-authored fixed-function state verbatim.
+        material.TransparencyMode = conversion.TransparencyMode;
+        if (conversion.PassSet.TryGetPass(EMaterialPassIdentity.Base, out MaterialPassDefinition basePass))
+        {
+            material.RenderOptions = basePass.RenderOptions;
+            material.RenderPass = basePass.RenderPass;
+        }
+
+        material.TransparentSortPriority = conversion.PassSet.QueuePriority;
     }
 
     private static void ApplyLilToonRenderState(XRMaterial material, UnityMaterialDocument document, string? shaderPath)
