@@ -117,6 +117,8 @@ GPU frame-cost baselines are intentionally captured outside the unit-test harnes
 
 ## Related Documentation
 
+- [Poiyomi Toon Material Conversion](poiyomi-toon-material-conversion.md)
+- [Maintaining Poiyomi Toon Support](poiyomi-toon-maintenance.md)
 - [Uber Shader Varianting](../../architecture/rendering/uber-shader-varianting.md)
 - [Uber Shader UI Annotations](../../architecture/rendering/uber-shader-ui-annotations.md)
 - [ImGui Shader Editor](../../user-guide/editor/shader-editor.md)

@@ -1,0 +1,10 @@
+CC0 1.0 Universal
+
+To the extent possible under law, the XRENGINE contributors have waived all
+copyright and related or neighboring rights to the synthetic Poiyomi test
+fixtures in this directory.
+
+The fixtures are original test data. They do not copy Poiyomi example avatars,
+materials, textures, icons, or other artwork.
+
+SPDX-License-Identifier: CC0-1.0

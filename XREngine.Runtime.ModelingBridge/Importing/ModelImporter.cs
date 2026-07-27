@@ -801,7 +801,24 @@ namespace XREngine
                     LogImportWarning($"Failed to assign filler texture for '{key.path}'. {ex.Message}");
                 }
 
-                XRTexture2D.RegisterImportedTextureStreamingPlaceholder(key.path, tex);
+                _ = XRTexture2D.ScheduleImportedTexturePreviewJob(
+                    key.path,
+                    tex,
+                    onFinished: loaded =>
+                    {
+                        loaded.SamplerName = key.samplerName;
+                        loaded.MagFilter = ETexMagFilter.Linear;
+                        loaded.MinFilter = ETexMinFilter.Linear;
+                        loaded.UWrap = ETexWrapMode.Repeat;
+                        loaded.VWrap = ETexWrapMode.Repeat;
+                        loaded.AlphaAsTransparency = true;
+                        loaded.AutoGenerateMipmaps = false;
+                        loaded.Resizable = false;
+                    },
+                    onError: ex => LogImportException(
+                        ex,
+                        $"[UberTexture] Preview load failed for '{key.path}' ({key.samplerName})."),
+                    priority: JobPriority.Low);
 
                 return tex;
             });

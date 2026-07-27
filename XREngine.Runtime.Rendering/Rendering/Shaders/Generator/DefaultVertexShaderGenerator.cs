@@ -182,6 +182,7 @@ namespace XREngine.Rendering.Shaders.Generator
         private void AddUniforms()
         {
             UniformNames.Add(EEngineUniform.ModelMatrix.ToStringFast(), (EShaderVarType._mat4, false));
+            UniformNames.Add(EEngineUniform.EngineTime.ToStringFast(), (EShaderVarType._float, false));
 
             if (Mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning && !UseComputeSkinning)
             {
@@ -1139,8 +1140,7 @@ namespace XREngine.Rendering.Shaders.Generator
 
                 AssignFragPosOut(localInputPosName);
                 Assign_GL_Position(finalPosName);
-                WritePoiyomiVertexEffectUniforms();
-            if (UseDirectionalCascadeInstancedLayering)
+                if (UseDirectionalCascadeInstancedLayering)
                     AssignDirectionalCascadeLayeredPosition(localInputPosName);
                 if (UsePointLightInstancedLayering)
                     AssignPointLightLayeredPosition(localInputPosName);

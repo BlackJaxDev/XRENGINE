@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Globalization;
@@ -134,6 +134,7 @@ internal static class VulkanShaderCompiler
 
         ShadercApi.CompileOptionsSetSourceLanguage(options, SourceLanguage.Glsl);
         ShadercApi.CompileOptionsSetOptimizationLevel(options, OptimizationLevel.Performance);
+        ShadercApi.CompileOptionsSetWarningsAsErrors(options);
 
         byte[] sourceBytes = Encoding.UTF8.GetBytes(prepared.RewrittenSource);
         byte[] nameBytes = GetNullTerminatedUtf8(shader.Name ?? $"Shader_{shader.GetHashCode():X8}");

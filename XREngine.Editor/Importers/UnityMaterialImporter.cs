@@ -276,8 +276,8 @@ public static partial class UnityMaterialImporter
             diagnostics,
             warnings);
 
-        ApplyPoiyomiPhase57(material, document, resolver, diagnostics, warnings);
-        ApplyPoiyomiPhase810(material, document, resolver, diagnostics, warnings);
+        ApplyPoiyomiSurfaceFeatures(material, document, resolver, diagnostics, warnings);
+        ApplyPoiyomiEffectsAndIntegrations(material, document, resolver, diagnostics, warnings);
         ApplyPoiyomiRenderState(material, document, diagnostics);
         PoiyomiSourceDocuments.Remove(material);
         PoiyomiSourceDocuments.Add(material, document);
@@ -877,9 +877,9 @@ public static partial class UnityMaterialImporter
         ICollection<MaterialConversionDiagnostic> diagnostics,
         ICollection<string> warnings)
     {
-        // Phases 8-10 own outlines and provider-backed integrations. Keep this
-        // method for source features that still require an intentional native
-        // classification instead of reporting already-supported behavior.
+        // Dedicated effect and provider modules own outlines and integrations.
+        // Keep this method for source features that still require an intentional
+        // native classification instead of reporting supported behavior.
         _ = outlineMaskSource;
     }
 

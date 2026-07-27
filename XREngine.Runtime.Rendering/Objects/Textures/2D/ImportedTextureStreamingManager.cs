@@ -470,10 +470,12 @@ internal sealed class ImportedTextureStreamingManager
         if (backend == RuntimeGraphicsApiKind.Vulkan)
             return _vulkanDenseBackend;
 
-        return backend == RuntimeGraphicsApiKind.OpenGL
-            && RuntimeRenderingHostServices.Assets.GetSparseTextureStreamingSupport(format).IsAvailable
-                ? _sparseBackend
-                : _tieredBackend;
+        // The source dimensions are not known until preview decoding completes. Publish the
+        // first OpenGL preview through dense storage so an existing filler allocation is
+        // replaced atomically and immediately sampleable. Once dimensions are known,
+        // SchedulePreviewJob promotes record.Backend through ResolveBackendForTexture, so
+        // later residency changes can still use sparse pages when the source is eligible.
+        return _tieredBackend;
     }
 
     private ITextureResidencyBackend ResolveBackendForTexture(uint sourceWidth, uint sourceHeight, ESizedInternalFormat format)

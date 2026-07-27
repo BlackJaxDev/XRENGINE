@@ -32,7 +32,7 @@ public static partial class EditorUnitTests
         private static readonly Vector3 CameraVRPickupInitialPosition = new(0.0f, 1.7f, 4.5f);
         private static readonly Vector3 CameraVRPickupInitialLookAt = new(0.0f, 1.4f, 0.0f);
 
-        public static SceneNode? CreatePlayerPawn(bool setUI, bool isServer, SceneNode rootNode)
+        public static SceneNode? CreatePlayerPawn(bool setUI, bool isServer, SceneNode rootNode, Vector3? initialCameraPosition = null, Vector3? initialCameraLookAt = null)
         {
             SceneNode? characterPawnModelParentNode = null;
             if (Toggles.VRPawn)
@@ -56,11 +56,42 @@ public static partial class EditorUnitTests
             {
                 SceneNode cameraNode = CreateCamera(rootNode, out var camComp, null);
                 var pawn = CreateDesktopCamera(cameraNode, isServer, true, true);
+                ApplyInitialCameraPose(cameraNode, pawn, initialCameraPosition, initialCameraLookAt);
                 if (setUI)
                     UserInterface.CreateEditorUI(rootNode, camComp!, pawn);
             }
 
             return characterPawnModelParentNode;
+        }
+
+        private static void ApplyInitialCameraPose(
+            SceneNode cameraNode,
+            PawnComponent? cameraPawn,
+            Vector3? initialPosition,
+            Vector3? initialLookAt)
+        {
+            if (!initialPosition.HasValue)
+                return;
+
+            Vector3 position = initialPosition.Value;
+            Quaternion rotation = Quaternion.Identity;
+            if (initialLookAt.HasValue)
+            {
+                Vector3 direction = initialLookAt.Value - position;
+                if (direction.LengthSquared() > XRMath.Epsilon)
+                {
+                    direction = Vector3.Normalize(direction);
+                    Vector3 up = MathF.Abs(Vector3.Dot(direction, Globals.Up)) > 0.999f
+                        ? Globals.Right
+                        : Globals.Up;
+                    rotation = Quaternion.CreateFromRotationMatrix(Matrix4x4.CreateWorld(position, direction, up));
+                }
+            }
+
+            if (cameraPawn is EditorFlyingCameraPawnComponent editorCamera)
+                editorCamera.FocusOnView(position, rotation, 0.0f);
+            else
+                cameraNode.GetTransformAs<Transform>(false)!.SetWorldTranslationRotation(position, rotation);
         }
 
         private static void CreateVrDesktopEditorCamera(SceneNode rootNode, bool setUI, bool isServer)

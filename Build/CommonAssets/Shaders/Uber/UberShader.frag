@@ -336,8 +336,8 @@ vec2 getUV(int uvIndex, ToonMesh mesh) {
     }
 }
 
-#include "poiyomi_phase5_7.glsl"
-#include "poiyomi_phase8_10.glsl"
+#include "poiyomi_surface_features.glsl"
+#include "poiyomi_effect_features.glsl"
 
 // ============================================
 // Normal Mapping
@@ -1515,7 +1515,7 @@ void main() {
     XRENGINE_BeginForwardFragmentOutput();
 #endif
 
-    if (poiApplyPhase8Coverage(mesh))
+    if (poiApplyCoverageEffects(mesh))
         discard;
     poiApplyInternalParallax(mesh);
 
@@ -1567,7 +1567,7 @@ void main() {
 
     fragData.baseColor = baseColor.rgb;
     poiApplyDecals(fragData, mesh);
-    poiApplyPhase8Surface(mesh, fragData.baseColor, fragData.emission, fragData.alpha);
+    poiApplySurfaceEffects(mesh, fragData.baseColor, fragData.emission, fragData.alpha);
 
     // Alpha-test after decals so decal alpha affects base, depth, and shadow
     // coverage identically.
@@ -1657,6 +1657,14 @@ void main() {
     }
 #endif
     
+    // PBR and stylized feature overlays share this surface/light context even
+    // when a pass disables direct forward lighting. Keep it defined for those
+    // unlit variants and initialize a neutral light below.
+    PBRData surfacePbr = buildSurfacePbrData(mesh, fragData.baseColor);
+    fragData.baseColor = poiApplyColorMask(fragData.baseColor, mesh, fragData.emission, surfacePbr);
+    surfacePbr.F0 = mix(vec3(0.04), fragData.baseColor, surfacePbr.metallic);
+    surfacePbr.diffuseColor = fragData.baseColor * (1.0 - surfacePbr.metallic);
+
     // Occlusion = screen-space SSAO * material-baked AO.
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_LIGHTING
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_AMBIENT_OCCLUSION
@@ -1670,12 +1678,16 @@ void main() {
     float materialAmbientOcclusion = 1.0;
 #endif
     float combinedAmbientOcclusion = saturate(screenAmbientOcclusion * materialAmbientOcclusion);
-    PBRData surfacePbr = buildSurfacePbrData(mesh, fragData.baseColor);
-    fragData.baseColor = poiApplyColorMask(fragData.baseColor, mesh, fragData.emission, surfacePbr);
-    surfacePbr.F0 = mix(vec3(0.04), fragData.baseColor, surfacePbr.metallic);
-    surfacePbr.diffuseColor = fragData.baseColor * (1.0 - surfacePbr.metallic);
     vec3 ambientLighting = calculateForwardAmbientLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, combinedAmbientOcclusion);
     ToonLight light = calculateLighting(mesh, mesh.worldNormal, ambientLighting);
+#else
+    ToonLight light = createToonLight(
+        mesh,
+        mesh.worldNormal,
+        vec3(0.0, 1.0, 0.0),
+        vec3(0.0),
+        1.0,
+        vec3(0.0));
 #endif
 
     // ---- 7. Feature overlays (back face, SSS, matcap, rim, etc.) ----------
@@ -1813,7 +1825,7 @@ void main() {
     // Final composite: emission is always added on top of lit color so it
     // remains bright through tonemap and bloom.
     fragData.finalColor += fragData.emission;
-    fragData.finalColor = poiApplyPhase8Post(mesh, fragData.finalColor);
+    fragData.finalColor = poiApplyPostEffects(mesh, fragData.finalColor);
 
     // ---- 8. Final write -----------------------------------------------------
     vec4 shadedColor = vec4(fragData.finalColor, fragData.alpha);

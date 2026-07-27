@@ -454,7 +454,7 @@ namespace XREngine.Animation.Importers
                     nodePath,
                     c.Attribute,
                     c.ClassId,
-                    out UnityMaterialAnimationBinding? materialBinding))
+                    out UnityMaterialAnimationBinding materialBinding))
                 {
                     var anim = BuildFloatAnim(c, length, looped, sampleRate, valueScale: 1.0f, startTime);
                     builder.AddMaterialFloatAnimation(materialBinding, anim);
@@ -1096,9 +1096,9 @@ namespace XREngine.Animation.Importers
             string nodePath,
             string attribute,
             int? classId,
-            out UnityMaterialAnimationBinding? binding)
+            out UnityMaterialAnimationBinding binding)
         {
-            binding = null;
+            binding = null!;
             Match match = Regex.Match(
                 attribute,
                 @"^(?:(?:m_)?materials?\.Array\.data\[(?<slot>\d+)\]|material(?:\[(?<slot2>\d+)\])?)\.(?<property>_[A-Za-z0-9_]+?)(?:\.(?<component>[rgbaxyzw]))?$",
@@ -1159,7 +1159,7 @@ namespace XREngine.Animation.Importers
                 string attribute = GetScalarString(item, "attribute") ?? string.Empty;
                 string nodePath = NormalizePath(GetScalarString(item, "path"));
                 int? classId = GetScalarInt(item, "classID");
-                if (!TryParseMaterialBinding(nodePath, attribute, classId, out UnityMaterialAnimationBinding? parsed))
+                if (!TryParseMaterialBinding(nodePath, attribute, classId, out UnityMaterialAnimationBinding parsed))
                     continue;
 
                 UnityMaterialAnimationValueKind kind =

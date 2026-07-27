@@ -17,7 +17,7 @@ Material:
     _RimWidthAnimated: 2
   m_DisabledShaderPasses:
   - ShadowCaster
-  phase1UnknownRoot: modern-value
+  legacyUnknownRoot: modern-value
   m_SavedProperties:
     serializedVersion: 3
     m_TexEnvs:
@@ -33,5 +33,5 @@ Material:
     - _Color: {r: 0.8, g: 0.7, b: 0.6, a: 0.5}
     m_Strings:
     - _GeneratedShaderSource: Assets/Generated/Locked.shader
-    phase1UnknownSaved:
+    legacyUnknownSaved:
       arbitrary: 17
