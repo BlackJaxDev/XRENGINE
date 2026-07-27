@@ -358,10 +358,25 @@ public unsafe partial class VulkanRenderer
             return Result.ErrorDeviceLost;
         }
 
-        diagnosticContext = CompleteSubmissionDiagnosticContext(queue, ref submitInfo, fence, diagnosticContext, caller);
+        using (VulkanCpuStageScope preparationStage = new(EVulkanCpuStage.SubmissionPreparation))
+        {
+            using VulkanCpuStageScope diagnosticsStage = new(EVulkanCpuStage.SubmissionDiagnostics);
+            diagnosticContext = CompleteSubmissionDiagnosticContext(
+                queue, ref submitInfo, fence, diagnosticContext, caller);
+        }
+
         RecordLastVulkanSubmissionDiagnosticContext(diagnosticContext);
 
-        if (!ValidateOrderedCommandBufferImageStateContracts(ref submitInfo, out string imageStateFailure))
+        bool imageStateValid;
+        string imageStateFailure;
+        using (VulkanCpuStageScope preparationStage = new(EVulkanCpuStage.SubmissionPreparation))
+        {
+            using VulkanCpuStageScope imageStateStage =
+                new(EVulkanCpuStage.SubmissionImageStateValidation);
+            imageStateValid = ValidateOrderedCommandBufferImageStateContracts(ref submitInfo, out imageStateFailure);
+        }
+
+        if (!imageStateValid)
         {
             RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
                 new FrameOutputWorkTelemetry(SubmissionRejections: 1));
@@ -379,11 +394,20 @@ public unsafe partial class VulkanRenderer
             return Result.ErrorValidationFailedExt;
         }
 
-        if (!ValidateVulkanSubmissionResourceLifetimes(
+        bool resourceLifetimesValid;
+        string lifetimeFailure;
+        using (VulkanCpuStageScope preparationStage = new(EVulkanCpuStage.SubmissionPreparation))
+        {
+            using VulkanCpuStageScope resourceLifetimeStage =
+                new(EVulkanCpuStage.SubmissionResourceLifetimeValidation);
+            resourceLifetimesValid = ValidateVulkanSubmissionResourceLifetimes(
                 ref submitInfo,
                 in diagnosticContext,
-                out string lifetimeFailure,
-                out injectedFailureStage))
+                out lifetimeFailure,
+                out injectedFailureStage);
+        }
+
+        if (!resourceLifetimesValid)
         {
             if (injectedFailureStage != EOpenXrStrictSpsFaultInjectionStage.None)
             {
@@ -431,19 +455,25 @@ public unsafe partial class VulkanRenderer
             }
 
             queueDispatchAttempted = true;
-            result = UsesSynchronization2
-                ? SubmitToQueueSync2(queue, ref submitInfo, fence)
-                : Api!.QueueSubmit(queue, 1, ref submitInfo, fence);
+            using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.QueueSubmit))
+            {
+                result = UsesSynchronization2
+                    ? SubmitToQueueSync2(queue, ref submitInfo, fence)
+                    : Api!.QueueSubmit(queue, 1, ref submitInfo, fence);
+            }
 
             RecordVulkanQueueOperation("submit", queue, result, diagnosticContext.SubmissionSerial, caller);
             if (result == Result.Success)
             {
                 ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: true);
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanQueueSubmit();
-                VulkanLifetimeSubmission lifetimeSubmission =
-                    RecordSuccessfulVulkanSubmissionLifetime(queue, ref submitInfo, fence, diagnosticContext);
-                PublishRecordedImageLayouts(ref submitInfo, lifetimeSubmission);
-                AdvanceCompletedImageLayouts();
+                using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.SubmissionPublication))
+                {
+                    VulkanLifetimeSubmission lifetimeSubmission =
+                        RecordSuccessfulVulkanSubmissionLifetime(queue, ref submitInfo, fence, diagnosticContext);
+                    PublishRecordedImageLayouts(ref submitInfo, lifetimeSubmission);
+                    AdvanceCompletedImageLayouts();
+                }
             }
             else if (result == Result.ErrorDeviceLost)
             {
@@ -460,6 +490,7 @@ public unsafe partial class VulkanRenderer
         }
         finally
         {
+            using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.SubmissionPublication);
             ReleaseVulkanSubmissionResourceLifetimePins(ref submitInfo);
         }
 

@@ -609,6 +609,8 @@ public sealed class VulkanP1ValidationTests
             "XREngine.Runtime.Rendering/Rendering/PostProcessing/CameraPostProcessStateCollection.cs");
         string defaultPipeline = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
+        postProcessState.ShouldContain("Volatile.Read(ref _publishedPipelines)");
+        postProcessState.ShouldContain("PublishPipelinesNoLock()");
         string planner = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
         string dataBuffer = ReadWorkspaceFile(

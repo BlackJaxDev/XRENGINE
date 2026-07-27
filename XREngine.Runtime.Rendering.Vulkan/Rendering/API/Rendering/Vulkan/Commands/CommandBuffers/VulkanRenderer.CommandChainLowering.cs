@@ -257,7 +257,8 @@ public unsafe partial class VulkanRenderer
         ulong volatileSignature,
         ulong resourcePlanRevision,
         bool allowExternalSwapchainTarget,
-        out CommandChainLoweringStats stats)
+        out CommandChainLoweringStats stats,
+        ulong? preparedFastScheduleSignature = null)
     {
         stats = default;
         // Generic external targets do not have the cache/lifetime contract required
@@ -335,7 +336,17 @@ public unsafe partial class VulkanRenderer
         }
 
         using CommandChainResourcePlanReadScope resourcePlanReadScope = BeginCommandChainResourcePlanReadScope(resourcePlanRevision);
-        ulong fastScheduleSignature = ComputeCommandChainFastScheduleSignature(imageIndex, staticOps, volatileOps, resourcePlanRevision);
+        ulong fastScheduleSignature = preparedFastScheduleSignature ?? 0UL;
+        if (!preparedFastScheduleSignature.HasValue)
+        {
+            using VulkanCpuStageScope cpuStage =
+                new(EVulkanCpuStage.CommandChainFastSignature);
+            fastScheduleSignature = ComputeCommandChainFastScheduleSignature(
+                imageIndex,
+                staticOps,
+                volatileOps,
+                resourcePlanRevision);
+        }
         if (TryGetCachedCommandChainSchedule(
                 imageIndex,
                 fastScheduleSignature,
@@ -364,12 +375,17 @@ public unsafe partial class VulkanRenderer
         packets.Clear();
         packets.EnsureCapacity(Math.Max(staticOps.Length + volatileOps.Length, 1));
         _commandChainPacketPoolCursor = 0;
-        BuildCommandChainRenderPackets(
-            staticOps,
-            volatileOps,
-            resourcePlanRevision,
-            excludeStaticQueryBrackets,
-            packets);
+        using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.CommandChainPacketLowering))
+        {
+            BuildCommandChainRenderPackets(
+                staticOps,
+                volatileOps,
+                resourcePlanRevision,
+                excludeStaticQueryBrackets,
+                packets);
+        }
+        using VulkanCpuStageScope scheduleEvaluationStage =
+            new(EVulkanCpuStage.CommandChainScheduleEvaluation);
 
         if (packets.Count > MaxCommandChainsPerSchedule)
         {
@@ -936,11 +952,18 @@ public unsafe partial class VulkanRenderer
 
             if (queryBracketDepth == 0)
             {
-                int consumed = TryLowerCompatibleMeshPacket(ops, i, dynamicOverlay: false, resourcePlanRevision, packets);
+                int consumed = TryLowerCompatibleMeshPacket(
+                    ops,
+                    i,
+                    dynamicOverlay: false,
+                    resourcePlanRevision,
+                    packets,
+                    out DrawPacket preparedMeshDraw);
                 if (consumed > 0)
                     i += consumed - 1;
                 else if (IsSchedulableCommandChainFrameOp(ops[i], dynamicOverlay: false))
-                    packets.Add(CreateRenderPacket(ops[i], i, dynamicOverlay: false, resourcePlanRevision));
+                    packets.Add(CreateRenderPacket(
+                        ops[i], i, dynamicOverlay: false, resourcePlanRevision, preparedMeshDraw));
             }
         }
 
@@ -962,11 +985,18 @@ public unsafe partial class VulkanRenderer
     {
         for (int i = 0; i < ops.Length; i++)
         {
-            int consumed = TryLowerCompatibleMeshPacket(ops, i, dynamicOverlay, resourcePlanRevision, packets);
+            int consumed = TryLowerCompatibleMeshPacket(
+                ops,
+                i,
+                dynamicOverlay,
+                resourcePlanRevision,
+                packets,
+                out DrawPacket preparedMeshDraw);
             if (consumed > 0)
                 i += consumed - 1;
             else if (IsSchedulableCommandChainFrameOp(ops[i], dynamicOverlay))
-                packets.Add(CreateRenderPacket(ops[i], i, dynamicOverlay, resourcePlanRevision));
+                packets.Add(CreateRenderPacket(
+                    ops[i], i, dynamicOverlay, resourcePlanRevision, preparedMeshDraw));
         }
     }
 
@@ -975,13 +1005,17 @@ public unsafe partial class VulkanRenderer
         int startIndex,
         bool dynamicOverlay,
         ulong resourcePlanRevision,
-        List<RenderPacket> packets)
+        List<RenderPacket> packets,
+        out DrawPacket preparedMeshDraw)
     {
+        preparedMeshDraw = default;
         if (!IsSchedulableCommandChainFrameOp(ops[startIndex], dynamicOverlay) ||
             ops[startIndex] is not MeshDrawOp first)
             return 0;
 
         DrawPacket firstDraw = CreateDrawPacket(startIndex, first);
+        preparedMeshDraw = firstDraw;
+        _commandChainDrawPacketScratch[0] = firstDraw;
         RenderViewKey viewKey = BuildRenderViewKey(first, dynamicOverlay: false);
         int targetIdentity = ResolveCommandChainTargetIdentity(first);
         DescriptorBindingSnapshot firstDescriptorSnapshot = CreateDescriptorSnapshot(first);
@@ -996,8 +1030,10 @@ public unsafe partial class VulkanRenderer
                    targetIdentity,
                    firstDescriptorSnapshot,
                    next,
-                   startIndex + runCount))
+                   startIndex + runCount,
+                   out DrawPacket candidateDraw))
         {
+            _commandChainDrawPacketScratch[runCount] = candidateDraw;
             runCount++;
         }
 
@@ -1015,8 +1051,7 @@ public unsafe partial class VulkanRenderer
         for (int i = 0; i < runCount; i++)
         {
             MeshDrawOp drawOp = (MeshDrawOp)ops[startIndex + i];
-            DrawPacket draw = CreateDrawPacket(startIndex + i, drawOp);
-            draws[i] = draw;
+            DrawPacket draw = draws[i];
             structuralHash.Add(draw.StructuralSignature);
             frameDataHash.Add(draw.FrameDataSignature);
             pipelineGenerationHash.Add(ResolvePipelineGeneration(drawOp));
@@ -1076,8 +1111,10 @@ public unsafe partial class VulkanRenderer
         int targetIdentity,
         DescriptorBindingSnapshot descriptorSnapshot,
         MeshDrawOp candidate,
-        int candidateIndex)
+        int candidateIndex,
+        out DrawPacket candidateDraw)
     {
+        candidateDraw = default;
         if (!IsSchedulableCommandChainFrameOp(candidate, dynamicOverlay: false) ||
             candidate.PassIndex != first.PassIndex ||
             ResolveCommandChainTargetIdentity(candidate) != targetIdentity ||
@@ -1086,7 +1123,7 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        DrawPacket candidateDraw = CreateDrawPacket(candidateIndex, candidate);
+        candidateDraw = CreateDrawPacket(candidateIndex, candidate);
         if (candidateDraw.Transparent != firstDraw.Transparent)
             return false;
 
@@ -1109,13 +1146,18 @@ public unsafe partial class VulkanRenderer
         return BuildFrameOpPlannerStateKey(candidate.Context) == BuildFrameOpPlannerStateKey(first.Context);
     }
 
-    private RenderPacket CreateRenderPacket(FrameOp op, int opIndex, bool dynamicOverlay, ulong resourcePlanRevision)
+    private RenderPacket CreateRenderPacket(
+        FrameOp op,
+        int opIndex,
+        bool dynamicOverlay,
+        ulong resourcePlanRevision,
+        DrawPacket preparedMeshDraw)
     {
         RenderViewKey viewKey = BuildRenderViewKey(op, dynamicOverlay);
         RenderPacketVolatility volatility = ClassifyRenderPacketVolatility(op, dynamicOverlay);
         DrawPacket firstDraw = op switch
         {
-            MeshDrawOp draw => CreateDrawPacket(opIndex, draw),
+            MeshDrawOp => preparedMeshDraw,
             IndirectDrawOp indirect => CreateIndirectDrawPacket(opIndex, indirect),
             MeshTaskDispatchIndirectCountOp meshTask => CreateMeshTaskDrawPacket(opIndex, meshTask),
             _ => default
@@ -1126,8 +1168,14 @@ public unsafe partial class VulkanRenderer
             : default;
         int dispatchCount = op is ComputeDispatchOp ? 1 : 0;
 
-        ulong structuralSignature = ComputeFrameOpStructuralSignature(op, opIndex, volatility);
-        ulong frameDataSignature = ComputeFrameOpFrameDataSignature(op, opIndex);
+        bool usePreparedMeshSignatures =
+            op is MeshDrawOp && volatility == RenderPacketVolatility.FrameDataOnly;
+        ulong structuralSignature = usePreparedMeshSignatures
+            ? firstDraw.StructuralSignature
+            : ComputeFrameOpStructuralSignature(op, opIndex, volatility);
+        ulong frameDataSignature = op is MeshDrawOp
+            ? firstDraw.FrameDataSignature
+            : ComputeFrameOpFrameDataSignature(op, opIndex);
         int targetIdentity = ResolveCommandChainTargetIdentity(op);
         string targetName = ResolveCommandChainTargetName(op);
         DescriptorBindingSnapshot descriptorSnapshot = CreateDescriptorSnapshot(op);
@@ -1797,7 +1845,6 @@ public unsafe partial class VulkanRenderer
         ulong recordedScheduleSignature,
         ulong recordedGroupSignature,
         int recordedGroupCount,
-        ulong recordedResourcePlanRevision,
         bool recordedProfilerActive,
         int recordedProfilerFrameSlot,
         bool currentProfilerActive,
@@ -1808,7 +1855,6 @@ public unsafe partial class VulkanRenderer
             recordedGroupSignature,
             recordedGroupCount,
             ComputePrimaryCommandBufferGroupSignature(schedule),
-            recordedResourcePlanRevision,
             recordedProfilerActive,
             recordedProfilerFrameSlot,
             currentProfilerActive,
@@ -1820,7 +1866,6 @@ public unsafe partial class VulkanRenderer
         ulong recordedGroupSignature,
         int recordedGroupCount,
         ulong currentGroupSignature,
-        ulong recordedResourcePlanRevision,
         bool recordedProfilerActive,
         int recordedProfilerFrameSlot,
         bool currentProfilerActive,
@@ -1834,8 +1879,6 @@ public unsafe partial class VulkanRenderer
         {
             reason |= PrimaryCommandBufferDirtyReason.GroupStructure;
         }
-        if (recordedResourcePlanRevision != schedule.ResourcePlanRevision)
-            reason |= PrimaryCommandBufferDirtyReason.ResourcePlan;
         if (recordedProfilerActive != currentProfilerActive ||
             (currentProfilerActive && recordedProfilerFrameSlot != currentProfilerFrameSlot))
         {
@@ -1879,6 +1922,92 @@ public unsafe partial class VulkanRenderer
         return hash.ToHash();
     }
 
+    internal static bool UsesOnlySecondaryCommandBufferGroups(CommandChainSchedule schedule)
+    {
+        ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
+        if (groups.Length == 0)
+            return false;
+
+        for (int i = 0; i < groups.Length; i++)
+            if (!groups[i].SupportsSecondaryCommandBuffers)
+                return false;
+
+        return true;
+    }
+
+    internal static ulong ComputeCommandChainPrimarySkeletonSignature(FrameOp[] ops)
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add(0x5052494D534B454CUL);
+
+        int queryBracketDepth = 0;
+        int inlineOpIndex = 0;
+        int secondaryRunCount = 0;
+        bool inSecondaryRun = false;
+        int currentPassIndex = 0;
+        int currentTargetIdentity = 0;
+        RenderViewKey currentViewKey = default;
+
+        for (int opIndex = 0; opIndex < ops.Length; opIndex++)
+        {
+            FrameOp op = ops[opIndex];
+            bool isQuery = op is QueryOp;
+            bool schedulable =
+                !isQuery &&
+                queryBracketDepth == 0 &&
+                IsSchedulableCommandChainFrameOp(op, dynamicOverlay: false);
+
+            if (schedulable)
+            {
+                int passIndex = op.PassIndex;
+                int targetIdentity = ResolveCommandChainTargetIdentity(op);
+                RenderViewKey viewKey = BuildRenderViewKey(op, dynamicOverlay: false);
+                if (!inSecondaryRun ||
+                    passIndex != currentPassIndex ||
+                    targetIdentity != currentTargetIdentity ||
+                    viewKey != currentViewKey)
+                {
+                    hash.Add(0x5345434F4E444152UL);
+                    hash.Add(passIndex);
+                    hash.Add(targetIdentity);
+                    hash.Add(viewKey.PipelineIdentity);
+                    hash.Add(viewKey.ViewportIdentity);
+                    hash.Add(viewKey.ViewIndex);
+                    hash.Add((int)viewKey.Kind);
+                    hash.Add(viewKey.LightIdentity);
+                    hash.Add(viewKey.CascadeIndex);
+                    secondaryRunCount++;
+                    currentPassIndex = passIndex;
+                    currentTargetIdentity = targetIdentity;
+                    currentViewKey = viewKey;
+                }
+
+                inSecondaryRun = true;
+            }
+            else
+            {
+                inSecondaryRun = false;
+                RenderPacketVolatility volatility = ClassifyRenderPacketVolatility(op, dynamicOverlay: false);
+                hash.Add(0x494E4C494E454F50UL);
+                hash.Add(ComputeFrameOpStructuralSignature(op, inlineOpIndex, volatility));
+                hash.Add(ResolvePipelineGeneration(op));
+                inlineOpIndex++;
+            }
+
+            if (op is QueryOp queryOp)
+            {
+                if (queryOp.Operation == ERenderQueryOperation.Begin)
+                    queryBracketDepth++;
+                else if (queryOp.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
+                    queryBracketDepth--;
+            }
+        }
+
+        hash.Add(secondaryRunCount);
+        hash.Add(inlineOpIndex);
+        return hash.ToHash();
+    }
+
     internal static ulong ComputePrimaryCommandBufferGroupSignature(CommandChainSchedule schedule)
         => ComputePrimaryCommandBufferGroupSignature(schedule, null);
 
@@ -1894,7 +2023,11 @@ public unsafe partial class VulkanRenderer
             RenderPassChainGroup group = groups[i];
             hash.Add(group.PassIndex);
             hash.Add(group.TargetIdentity);
-            hash.Add(group.StructuralSignature);
+            // Draw membership is recorded into secondary command buffers. A group that
+            // cannot use a secondary remains inline and therefore retains its packet
+            // structure as part of the primary identity.
+            if (!group.SupportsSecondaryCommandBuffers)
+                hash.Add(group.StructuralSignature);
             hash.Add(group.SupportsSecondaryCommandBuffers);
             hash.Add(group.DynamicOverlay);
             ReadOnlySpan<CommandChainKey> keys = group.ChainKeys.Span;
@@ -2850,6 +2983,9 @@ public unsafe partial class VulkanRenderer
 
     private static ulong ComputeDispatchSnapshotDescriptorSetSignature(ComputeDispatchSnapshot snapshot)
     {
+        if (snapshot.HasPublishedBindingLayoutSignatures)
+            return snapshot.DescriptorSetLayoutSignature;
+
         FrameOpSignatureHasher hash = new();
         hash.Add(1);
         hash.Add(HashUniformBindingLayout(snapshot.Uniforms));

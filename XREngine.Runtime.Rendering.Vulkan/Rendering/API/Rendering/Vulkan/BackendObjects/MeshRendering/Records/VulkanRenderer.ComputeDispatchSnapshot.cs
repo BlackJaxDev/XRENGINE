@@ -23,6 +23,14 @@ public unsafe partial class VulkanRenderer
         {
         }
 
+        internal bool HasPublishedBindingLayoutSignatures { get; private set; }
+        internal ulong UniformBindingLayoutSignature { get; private set; }
+        internal ulong SamplerUnitBindingLayoutSignature { get; private set; }
+        internal ulong SamplerNameBindingLayoutSignature { get; private set; }
+        internal ulong ImageBindingLayoutSignature { get; private set; }
+        internal ulong BufferBindingLayoutSignature { get; private set; }
+        internal ulong DescriptorSetLayoutSignature { get; private set; }
+
         public ComputeDispatchSnapshot(
             Dictionary<string, ProgramUniformValue> uniforms,
             Dictionary<uint, XRTexture> samplers,
@@ -54,13 +62,54 @@ public unsafe partial class VulkanRenderer
             Dictionary<string, XRTexture> samplersByName,
             Dictionary<uint, ProgramImageBinding> images)
         {
-            Copy(uniforms, Uniforms);
+            HasPublishedBindingLayoutSignatures = false;
+            UniformBindingLayoutSignature = CopyUniformsAndComputeLayoutSignature(uniforms, Uniforms);
             Copy(samplers, Samplers);
             Copy(samplerNamesByUnit, SamplerNamesByUnit);
             Copy(samplersByName, SamplersByName);
             Copy(images, Images);
             Buffers.Clear();
             BuffersByName.Clear();
+            SamplerUnitBindingLayoutSignature = 0;
+            SamplerNameBindingLayoutSignature = 0;
+            ImageBindingLayoutSignature = 0;
+            BufferBindingLayoutSignature = 0;
+            DescriptorSetLayoutSignature = 0;
+        }
+
+        /// <summary>
+        /// Resolves a sampler from this captured binding set without consulting the
+        /// program's mutable binding dictionaries.
+        /// </summary>
+        internal bool TryGetSamplerTexture(string samplerName, out XRTexture? texture)
+        {
+            texture = null;
+            return !string.IsNullOrEmpty(samplerName) &&
+                SamplersByName.TryGetValue(samplerName, out texture);
+        }
+
+        /// <summary>
+        /// Publishes immutable descriptor-layout fingerprints after all captured
+        /// buffer handles have been resolved. Uniform layout hashing is folded
+        /// into the copy above so command-buffer signature validation does not
+        /// rescan every uniform name and type later in the same frame.
+        /// </summary>
+        internal void PublishBindingLayoutSignatures()
+        {
+            SamplerUnitBindingLayoutSignature = HashSamplerUnitBindingLayout(Samplers, SamplerNamesByUnit);
+            SamplerNameBindingLayoutSignature = HashSamplerNameBindingLayout(SamplersByName);
+            ImageBindingLayoutSignature = HashImageBindingLayout(Images);
+            BufferBindingLayoutSignature = HashBufferBindingLayout(Buffers);
+
+            FrameOpSignatureHasher hash = new();
+            hash.Add(1);
+            hash.Add(UniformBindingLayoutSignature);
+            hash.Add(SamplerUnitBindingLayoutSignature);
+            hash.Add(SamplerNameBindingLayoutSignature);
+            hash.Add(ImageBindingLayoutSignature);
+            hash.Add(BufferBindingLayoutSignature);
+            DescriptorSetLayoutSignature = hash.ToHash();
+            HasPublishedBindingLayoutSignatures = true;
         }
 
         private static void Copy<TKey, TValue>(
@@ -72,6 +121,29 @@ public unsafe partial class VulkanRenderer
             destination.EnsureCapacity(source.Count);
             foreach (KeyValuePair<TKey, TValue> pair in source)
                 destination[pair.Key] = pair.Value;
+        }
+
+        private static ulong CopyUniformsAndComputeLayoutSignature(
+            Dictionary<string, ProgramUniformValue> source,
+            Dictionary<string, ProgramUniformValue> destination)
+        {
+            destination.Clear();
+            destination.EnsureCapacity(source.Count);
+
+            ulong xor = 0;
+            ulong sum = 0;
+            foreach (KeyValuePair<string, ProgramUniformValue> pair in source)
+            {
+                destination[pair.Key] = pair.Value;
+
+                FrameOpSignatureHasher item = new();
+                item.Add(pair.Key);
+                item.Add((int)pair.Value.Type);
+                item.Add(pair.Value.IsArray);
+                AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
+            }
+
+            return FinishUnorderedHash(source.Count, xor, sum);
         }
 
         private static Dictionary<uint, VulkanComputeBufferBinding> BuildBindings(Dictionary<uint, XRDataBuffer> buffers)

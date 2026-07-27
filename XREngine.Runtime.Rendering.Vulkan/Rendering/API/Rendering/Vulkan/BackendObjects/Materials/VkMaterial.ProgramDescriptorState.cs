@@ -16,6 +16,12 @@ namespace XREngine.Rendering.Vulkan
                 /// <summary>The render program this state was created for.</summary>
                 public required VkRenderProgram Program { get; init; }
 
+                /// <summary>
+                /// Link generation that produced <see cref="Bindings"/> and the descriptor layouts.
+                /// A stable generation proves the immutable schema is unchanged without re-hashing it.
+                /// </summary>
+                public required ulong ProgramLinkGeneration { get; init; }
+
                 /// <summary>Snapshot of the program's descriptor binding metadata at creation time.</summary>
                 public required DescriptorBindingInfo[] Bindings { get; init; }
 
@@ -65,6 +71,12 @@ namespace XREngine.Rendering.Vulkan
 				/// rewritten only after that frame slot has completed and becomes current.
 				/// </summary>
 				public required ulong[] SlotResourceFingerprints { get; init; }
+
+                /// <summary>
+                /// Material parameter generation last serialized into each frame-slot UBO.
+                /// Unchanged material values do not need another map/clear/write/unmap cycle.
+                /// </summary>
+                public required long[] SlotUniformValueGenerations { get; init; }
 
                 /// <summary>The Vulkan descriptor pool from which all sets in this state were allocated.</summary>
                 public DescriptorPool DescriptorPool;

@@ -436,7 +436,7 @@ public unsafe partial class VulkanRenderer
 		private bool TryWriteAutoUniformMember(Span<byte> data, AutoUniformMember member, XRMaterial material, in PendingMeshDraw draw)
 		{
 			if (member.StructMembers is { Count: > 0 })
-				return TryWriteStructUniformValue(data, member, member.Name, member.Offset);
+				return TryWriteStructUniformValue(data, member, member.Name, member.Offset, draw.ProgramBindingSnapshot);
 
 			bool wrote;
 			if (TryWriteTemporalViewProjectionUniform(data, member, draw, out wrote))
@@ -450,7 +450,11 @@ public unsafe partial class VulkanRenderer
 				return wrote;
 			}
 
-			if (_program is not null && _program.TryGetUniformValue(member.Name, out ProgramUniformValue programValue))
+			if (_program is not null &&
+				_program.TryGetUniformValue(
+					draw.ProgramBindingSnapshot,
+					member.Name,
+					out ProgramUniformValue programValue))
 			{
 				wrote = TryWriteProgramUniformValue(data, member, programValue);
 				if (MaterialBindingDiagnosticsEnabled)
@@ -458,7 +462,12 @@ public unsafe partial class VulkanRenderer
 				return wrote;
 			}
 
-			if (member.IsArray && TryWriteIndexedProgramUniformArray(data, member, member.Name))
+			if (member.IsArray &&
+				TryWriteIndexedProgramUniformArray(
+					data,
+					member,
+					member.Name,
+					draw.ProgramBindingSnapshot))
 				return true;
 
 			ShaderVar? parameter = material.Parameter<ShaderVar>(member.Name);
@@ -688,7 +697,12 @@ public unsafe partial class VulkanRenderer
 			   $"{matrix.M31:G4},{matrix.M32:G4},{matrix.M33:G4},{matrix.M34:G4};" +
 			   $"{matrix.M41:G4},{matrix.M42:G4},{matrix.M43:G4},{matrix.M44:G4}]";
 
-		private bool TryWriteStructUniformValue(Span<byte> data, AutoUniformMember member, string uniformPrefix, uint baseOffset)
+		private bool TryWriteStructUniformValue(
+			Span<byte> data,
+			AutoUniformMember member,
+			string uniformPrefix,
+			uint baseOffset,
+			ComputeDispatchSnapshot? snapshot)
 		{
 			if (member.StructMembers is not { Count: > 0 } fields)
 				return false;
@@ -706,19 +720,20 @@ public unsafe partial class VulkanRenderer
 				if (field.StructMembers is { Count: > 0 })
 				{
 					if (field.IsArray)
-						wroteAny |= TryWriteStructUniformArray(data, absoluteField, fieldName);
+						wroteAny |= TryWriteStructUniformArray(data, absoluteField, fieldName, snapshot);
 					else
-						wroteAny |= TryWriteStructUniformValue(data, absoluteField, fieldName, fieldOffset);
+						wroteAny |= TryWriteStructUniformValue(data, absoluteField, fieldName, fieldOffset, snapshot);
 					continue;
 				}
 
 				if (field.IsArray)
 				{
-					wroteAny |= TryWriteProgramUniformArray(data, absoluteField, fieldName);
+					wroteAny |= TryWriteProgramUniformArray(data, absoluteField, fieldName, snapshot);
 					continue;
 				}
 
-				if (_program is not null && _program.TryGetUniformValue(fieldName, out ProgramUniformValue fieldValue))
+				if (_program is not null &&
+					_program.TryGetUniformValue(snapshot, fieldName, out ProgramUniformValue fieldValue))
 				{
 					wroteAny |= TryWriteProgramUniformValue(data, absoluteField, fieldValue);
 					continue;
@@ -731,7 +746,11 @@ public unsafe partial class VulkanRenderer
 			return wroteAny;
 		}
 
-		private bool TryWriteStructUniformArray(Span<byte> data, AutoUniformMember member, string uniformPrefix)
+		private bool TryWriteStructUniformArray(
+			Span<byte> data,
+			AutoUniformMember member,
+			string uniformPrefix,
+			ComputeDispatchSnapshot? snapshot)
 		{
 			if (!member.IsArray || member.ArrayStride == 0 || member.ArrayLength == 0)
 				return false;
@@ -744,18 +763,26 @@ public unsafe partial class VulkanRenderer
 				string elementName = IndexedUniformNames.GetOrAdd(
 					(uniformPrefix, i),
 					static key => $"{key.Prefix}[{key.Index}]");
-				wroteAny |= TryWriteStructUniformValue(data, element, elementName, elementOffset);
+				wroteAny |= TryWriteStructUniformValue(data, element, elementName, elementOffset, snapshot);
 			}
 
 			return wroteAny;
 		}
 
-        private bool TryWriteProgramUniformArray(Span<byte> data, AutoUniformMember member, string uniformName)
-			=> _program is not null && _program.TryGetUniformValue(uniformName, out ProgramUniformValue programValue)
+        private bool TryWriteProgramUniformArray(
+			Span<byte> data,
+			AutoUniformMember member,
+			string uniformName,
+			ComputeDispatchSnapshot? snapshot)
+			=> _program is not null && _program.TryGetUniformValue(snapshot, uniformName, out ProgramUniformValue programValue)
                 ? TryWriteProgramUniformValue(data, member, programValue)
-                : TryWriteIndexedProgramUniformArray(data, member, uniformName);
+                : TryWriteIndexedProgramUniformArray(data, member, uniformName, snapshot);
 
-        private bool TryWriteIndexedProgramUniformArray(Span<byte> data, AutoUniformMember member, string uniformName)
+        private bool TryWriteIndexedProgramUniformArray(
+			Span<byte> data,
+			AutoUniformMember member,
+			string uniformName,
+			ComputeDispatchSnapshot? snapshot)
 		{
 			if (_program is null || !member.IsArray || member.ArrayStride == 0 || member.ArrayLength == 0)
 				return false;
@@ -766,7 +793,7 @@ public unsafe partial class VulkanRenderer
 				string elementName = IndexedUniformNames.GetOrAdd(
 					(uniformName, i),
 					static key => $"{key.Prefix}[{key.Index}]");
-				if (!_program.TryGetUniformValue(elementName, out ProgramUniformValue elementValue) || elementValue.IsArray)
+				if (!_program.TryGetUniformValue(snapshot, elementName, out ProgramUniformValue elementValue) || elementValue.IsArray)
 					continue;
 
 				uint elementOffset = member.Offset + i * member.ArrayStride;
@@ -1104,9 +1131,6 @@ public unsafe partial class VulkanRenderer
 			XRCamera? camera = draw.Camera;
 			bool stereoPass = draw.IsStereoPass;
 
-			Matrix4x4 inverseModel = Matrix4x4.Identity;
-			Matrix4x4.Invert(draw.ModelMatrix, out inverseModel);
-
 			// Camera matrices/vectors come from the draw snapshot captured at enqueue time.
 			// Reading live camera state here can be stale because the pipeline camera stack
 			// has already been popped.
@@ -1121,19 +1145,23 @@ public unsafe partial class VulkanRenderer
 			switch (normalized)
 			{
 				case nameof(EEngineUniform.UpdateDelta):
-					value = RuntimeEngine.Time.Timer.Update.Delta;
+					Renderer.EnsureMaterialUniformFrameTime();
+					value = Renderer._materialUniformUpdateDeltaLive;
 					type = EShaderVarType._float;
 					return true;
 				case nameof(EEngineUniform.RenderTime):
-					value = this.Renderer._materialUniformSecondsLive;
+					Renderer.EnsureMaterialUniformFrameTime();
+					value = Renderer._materialUniformSecondsLive;
 					type = EShaderVarType._float;
 					return true;
 				case nameof(EEngineUniform.EngineTime):
-					value = RuntimeEngine.ElapsedTime;
+					Renderer.EnsureMaterialUniformFrameTime();
+					value = Renderer._materialUniformSecondsLive;
 					type = EShaderVarType._float;
 					return true;
 				case nameof(EEngineUniform.DeltaTime):
-					value = RuntimeEngine.Time.Timer.Render.Delta;
+					Renderer.EnsureMaterialUniformFrameTime();
+					value = Renderer._materialUniformDeltaSecondsLive;
 					type = EShaderVarType._float;
 					return true;
 				case TransformIdUniformName:
@@ -1177,6 +1205,7 @@ public unsafe partial class VulkanRenderer
 					type = EShaderVarType._mat4;
 					return true;
 				case nameof(EEngineUniform.RootInvModelMatrix):
+					Matrix4x4.Invert(draw.ModelMatrix, out Matrix4x4 inverseModel);
 					value = inverseModel;
 					type = EShaderVarType._mat4;
 					return true;
@@ -1717,9 +1746,6 @@ public unsafe partial class VulkanRenderer
 			XRCamera? camera = draw.Camera;
 			bool stereoPass = draw.IsStereoPass;
 
-			Matrix4x4 inverseModel = Matrix4x4.Identity;
-			Matrix4x4.Invert(draw.ModelMatrix, out inverseModel);
-
 			// Camera matrices/vectors come from the draw snapshot captured at enqueue time.
 			// Reading live camera state here can be stale because the pipeline camera stack
 			// has already been popped.
@@ -1734,13 +1760,17 @@ public unsafe partial class VulkanRenderer
 			switch (normalized)
 			{
 				case nameof(EEngineUniform.UpdateDelta):
-					return UploadUniform(buffer, RuntimeEngine.Time.Timer.Update.Delta);
+					Renderer.EnsureMaterialUniformFrameTime();
+					return UploadUniform(buffer, Renderer._materialUniformUpdateDeltaLive);
 				case nameof(EEngineUniform.RenderTime):
-					return UploadUniform(buffer, this.Renderer._materialUniformSecondsLive);
+					Renderer.EnsureMaterialUniformFrameTime();
+					return UploadUniform(buffer, Renderer._materialUniformSecondsLive);
 				case nameof(EEngineUniform.EngineTime):
-					return UploadUniform(buffer, RuntimeEngine.ElapsedTime);
+					Renderer.EnsureMaterialUniformFrameTime();
+					return UploadUniform(buffer, Renderer._materialUniformSecondsLive);
 				case nameof(EEngineUniform.DeltaTime):
-					return UploadUniform(buffer, RuntimeEngine.Time.Timer.Render.Delta);
+					Renderer.EnsureMaterialUniformFrameTime();
+					return UploadUniform(buffer, Renderer._materialUniformDeltaSecondsLive);
 				case TransformIdUniformName:
 					return UploadUniform(buffer, draw.TransformId);
 				case SkinPaletteBaseUniformName:
@@ -1766,6 +1796,7 @@ public unsafe partial class VulkanRenderer
 				case nameof(EEngineUniform.PrevModelMatrix):
 					return UploadUniform(buffer, draw.PreviousModelMatrix);
 				case nameof(EEngineUniform.RootInvModelMatrix):
+					Matrix4x4.Invert(draw.ModelMatrix, out Matrix4x4 inverseModel);
 					return UploadUniform(buffer, inverseModel);
 				case nameof(EEngineUniform.ViewMatrix):
 				case nameof(EEngineUniform.LeftEyeViewMatrix):

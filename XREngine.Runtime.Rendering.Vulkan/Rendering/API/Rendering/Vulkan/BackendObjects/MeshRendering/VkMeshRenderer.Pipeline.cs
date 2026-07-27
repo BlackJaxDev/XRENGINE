@@ -684,9 +684,7 @@ public unsafe partial class VulkanRenderer
 
 			ulong programPipelineHash = _program!.ComputeGraphicsPipelineFingerprint();
 			ulong vertexLayoutHash = ComputeVertexLayoutHash();
-			ulong descriptorLayoutHash = ComputeDescriptorSchemaFingerprint(
-				_program.DescriptorBindings,
-				_program.DescriptorSetLayouts.Count);
+			ulong descriptorLayoutHash = _program.DescriptorSchemaFingerprint;
 			ulong passMetadataHash = ComputePassMetadataHash(passMetadata, passIndex);
 			ulong featureProfileHash = ComputeFeatureProfileHash();
 			bool useNativeNegativeOneToOneDepth = RuntimeEngine.Rendering.ShouldUseNativeVulkanDepthClipControl;

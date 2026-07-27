@@ -1,5 +1,3 @@
-using System.Collections.ObjectModel;
-
 namespace XREngine.Rendering.RenderGraph;
 
 /// <summary>
@@ -8,13 +6,19 @@ namespace XREngine.Rendering.RenderGraph;
 public sealed class RenderPassMetadataCollection
 {
     private readonly Dictionary<int, RenderPassMetadata> _passes = new();
+    private readonly RenderPassMetadataRevisionSource _revisionSource = new();
     private int _nextDeclarationOrder;
 
     public RenderPassBuilder ForPass(int passIndex, string? name = null, ERenderGraphPassStage stage = ERenderGraphPassStage.Graphics)
     {
         if (!_passes.TryGetValue(passIndex, out RenderPassMetadata? metadata))
         {
-            metadata = new RenderPassMetadata(passIndex, name ?? $"Pass{passIndex}", stage, _nextDeclarationOrder++);
+            metadata = new RenderPassMetadata(
+                passIndex,
+                name ?? $"Pass{passIndex}",
+                stage,
+                _nextDeclarationOrder++,
+                _revisionSource);
             _passes.Add(passIndex, metadata);
         }
         else
@@ -38,5 +42,5 @@ public sealed class RenderPassMetadataCollection
     }
 
     public IReadOnlyCollection<RenderPassMetadata> Build()
-        => new ReadOnlyCollection<RenderPassMetadata>(_passes.Values.OrderBy(p => p.PassIndex).ToList());
+        => new RenderPassMetadataSnapshot(_passes.Values.OrderBy(p => p.PassIndex).ToArray(), _revisionSource);
 }

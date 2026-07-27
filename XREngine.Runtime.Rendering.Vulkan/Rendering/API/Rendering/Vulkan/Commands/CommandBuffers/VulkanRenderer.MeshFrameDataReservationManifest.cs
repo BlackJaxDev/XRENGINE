@@ -35,69 +35,22 @@ public unsafe partial class VulkanRenderer
         private long _publicationCount;
         private long _lateRegistrationCount;
         private bool _isSealed;
+        private int _publishedRendererCount;
+        private int _publishedFamilyCount;
 
-        public ulong FrameId
-        {
-            get
-            {
-                lock (_sync)
-                    return _frameId;
-            }
-        }
+        public ulong FrameId => Volatile.Read(ref _frameId);
 
-        public ulong Generation
-        {
-            get
-            {
-                lock (_sync)
-                    return _generation;
-            }
-        }
+        public ulong Generation => Volatile.Read(ref _generation);
 
-        public bool IsSealed
-        {
-            get
-            {
-                lock (_sync)
-                    return _isSealed;
-            }
-        }
+        public bool IsSealed => Volatile.Read(ref _isSealed);
 
-        public int PublishedRendererCount
-        {
-            get
-            {
-                lock (_sync)
-                    return _publishedDrawSlots.Count;
-            }
-        }
+        public int PublishedRendererCount => Volatile.Read(ref _publishedRendererCount);
 
-        public int PublishedFamilyCount
-        {
-            get
-            {
-                lock (_sync)
-                    return _publishedRendererFamilies.Count;
-            }
-        }
+        public int PublishedFamilyCount => Volatile.Read(ref _publishedFamilyCount);
 
-        public long PublicationCount
-        {
-            get
-            {
-                lock (_sync)
-                    return _publicationCount;
-            }
-        }
+        public long PublicationCount => Volatile.Read(ref _publicationCount);
 
-        public long LateRegistrationCount
-        {
-            get
-            {
-                lock (_sync)
-                    return _lateRegistrationCount;
-            }
-        }
+        public long LateRegistrationCount => Volatile.Read(ref _lateRegistrationCount);
 
         public bool TryRegister(
             ulong frameId,
@@ -220,6 +173,7 @@ public unsafe partial class VulkanRenderer
 
                 if (sealAfterRegister)
                     _isSealed = true;
+                PublishCountsNoLock();
 
                 generation = _generation;
                 reason = string.Empty;
@@ -250,6 +204,7 @@ public unsafe partial class VulkanRenderer
                 }
                 foreach (VulkanMeshFrameDataRendererFamilyKey key in removed)
                     _pendingRendererFamilyDrawSlots.Remove(key);
+                PublishCountsNoLock();
             }
         }
 
@@ -265,7 +220,14 @@ public unsafe partial class VulkanRenderer
                 _publicationCount = 0;
                 _lateRegistrationCount = 0;
                 _isSealed = false;
+                PublishCountsNoLock();
             }
+        }
+
+        private void PublishCountsNoLock()
+        {
+            Volatile.Write(ref _publishedRendererCount, _publishedDrawSlots.Count);
+            Volatile.Write(ref _publishedFamilyCount, _publishedRendererFamilies.Count);
         }
 
         private bool BeginFrame(ulong frameId)

@@ -2,6 +2,7 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine.Data.Core;
 using XREngine.Rendering;
+using XREngine.Rendering.Models.Materials.Textures;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine.UnitTests.Rendering;
@@ -111,6 +112,102 @@ public sealed class VulkanStablePacketAndDescriptorTests
     }
 
     [Test]
+    public void BindingSnapshot_NamedSamplerLookupUsesCapturedDictionary()
+    {
+        VulkanRenderer.ComputeDispatchSnapshot snapshot = new();
+        XRTexture2D texture = new();
+        snapshot.SamplersByName["LightingTexture"] = texture;
+
+        snapshot.TryGetSamplerTexture("LightingTexture", out XRTexture? resolved).ShouldBeTrue();
+        resolved.ShouldBeSameAs(texture);
+
+        snapshot.TryGetSamplerTexture("MissingTexture", out resolved).ShouldBeFalse();
+        resolved.ShouldBeNull();
+        snapshot.TryGetSamplerTexture(string.Empty, out resolved).ShouldBeFalse();
+        resolved.ShouldBeNull();
+    }
+
+    [Test]
+    public void FrameOpSignatureHasher_ReusesStableStringSignatureWithoutAllocating()
+    {
+        string value = string.Concat("Prepared", "Program", "Identity");
+        VulkanRenderer.FrameOpSignatureHasher warm = new();
+        warm.Add(value);
+        ulong expected = warm.ToHash();
+
+        ulong actual = 0;
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int iteration = 0; iteration < 1_000; iteration++)
+        {
+            VulkanRenderer.FrameOpSignatureHasher hash = new();
+            hash.Add(value);
+            actual = hash.ToHash();
+        }
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        actual.ShouldBe(expected);
+        allocated.ShouldBe(0);
+        string equivalentValue = new(value.ToCharArray());
+        VulkanRenderer.FrameOpSignatureHasher equivalent = new();
+        equivalent.Add(equivalentValue);
+        equivalent.ToHash().ShouldBe(expected);
+    }
+
+    [Test]
+    public void ProgramBindingCapture_IsAtomicAcrossUniformCallbacks()
+    {
+        string program = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+        string capture = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.BindingCapture.cs");
+        string meshRenderer = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
+        program.ShouldContain("internal BindingUpdateScope BeginBindingUpdate()");
+        program.ShouldContain("TryResolveBindingWriteState(out BindingCaptureState? capture)");
+        program.ShouldContain("TryGetActiveBindingCaptureState(out BindingCaptureState capture)");
+        program.ShouldContain("private void ClearBindingsNoLock()");
+        program.ShouldContain("private ComputeDispatchSnapshot CaptureComputeSnapshotNoLock()");
+        program.ShouldContain("private bool HasBoundDescriptorResourcesNoLock()");
+        program.ShouldContain("private void SetSamplerNoLock(");
+        capture.ShouldContain("[ThreadStatic]");
+        capture.ShouldContain("ReferenceEquals(state.Owner, this)");
+        capture.ShouldContain("private sealed class BindingCaptureState");
+        capture.ShouldContain("internal ComputeDispatchSnapshot? RentFrameSnapshot()");
+        capture.ShouldNotContain("Monitor.Enter");
+        meshRenderer.ShouldContain("using VkRenderProgram.BindingUpdateScope bindingUpdate = program.BeginBindingUpdate();");
+    }
+
+    [Test]
+    public void ReusableFrameDataRefresh_UsesPrivateBindingCaptureForSnapshotlessDraw()
+    {
+        string drawing = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
+
+        AssertOrdered(
+            drawing,
+            "draw.ProgramBindingSnapshot is null",
+            "using VkRenderProgram.BindingUpdateScope bindingUpdate = activeProgram.BeginBindingUpdate();",
+            "TryRefreshReusableCommandBufferFrameDataBindingsNoLock(",
+            "NotifyDrawUniforms(material, programData, draw)",
+            "UpdateAutoUniformBuffersForDraw(frameIndex, drawUniformSlot, material, draw)");
+    }
+
+    [Test]
+    public void StableDeformationBuffers_BypassBufferStateLock()
+    {
+        string buffers = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Buffers.cs");
+        int methodStart = buffers.IndexOf("private void EnsureRuntimeDeformationBuffersCurrent()", StringComparison.Ordinal);
+        int methodEnd = buffers.IndexOf("/// <summary>", methodStart, StringComparison.Ordinal);
+        methodStart.ShouldBeGreaterThanOrEqualTo(0);
+        methodEnd.ShouldBeGreaterThan(methodStart);
+        string method = buffers[methodStart..methodEnd];
+        method.ShouldContain("if (!RuntimeDeformationBufferReferencesChanged())");
+        method.IndexOf("if (!RuntimeDeformationBufferReferencesChanged())", StringComparison.Ordinal)
+            .ShouldBeLessThan(method.IndexOf("lock (_bufferStateSync)", StringComparison.Ordinal));
+    }
+
+    [Test]
     public void BindingSnapshots_AreFramePooledAndOutOfFrameCapturesKeepOwnership()
     {
         string program = ReadWorkspaceFile(
@@ -137,20 +234,23 @@ public sealed class VulkanStablePacketAndDescriptorTests
     [Test]
     public void MeshDrawOp_ResetReusesTheLargeCapturedDrawStorageWithoutAllocating()
     {
-        VulkanRenderer.PendingMeshDraw draw = default;
+        VulkanRenderer.PendingMeshDraw firstDraw = default(VulkanRenderer.PendingMeshDraw) with { Instances = 1u };
+        VulkanRenderer.PendingMeshDraw secondDraw = default(VulkanRenderer.PendingMeshDraw) with { Instances = 2u };
         VulkanRenderer.FrameOpContext context = default;
-        VulkanRenderer.MeshDrawOp op = new(1, null, draw, context);
+        VulkanRenderer.MeshDrawOp op = new(1, null, firstDraw, context);
+        ref readonly VulkanRenderer.PendingMeshDraw drawRef = ref op.DrawRef;
 
-        op.Reset(2, null, draw, context, preserveSubmissionOrder: true);
+        op.Reset(2, null, secondDraw, context, preserveSubmissionOrder: true);
 
         long before = GC.GetAllocatedBytesForCurrentThread();
         for (int iteration = 0; iteration < 1_000; iteration++)
-            op.Reset(3, null, draw, context, preserveSubmissionOrder: false);
+            op.Reset(3, null, secondDraw, context, preserveSubmissionOrder: false);
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
 
         allocated.ShouldBe(0);
         op.PassIndex.ShouldBe(3);
         op.PreserveSubmissionOrder.ShouldBeFalse();
+        drawRef.Instances.ShouldBe(2u);
     }
 
     [Test]
@@ -223,7 +323,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
 
         material.ShouldContain("private sealed class DescriptorUpdateScratch");
         material.ShouldContain("Span<WriteDescriptorSet> writeSpan = CollectionsMarshal.AsSpan(writes);");
-        material.ShouldContain("ReturnDescriptorUpdateScratch();");
+        material.ShouldContain("ReturnDescriptorUpdateScratch(scratch);");
         material.ShouldNotContain("WriteDescriptorSet[] writeArray =");
         material.ShouldContain("static (renderProgram, samplerName) =>");
         planner.ShouldContain("PooledExternalResourcePlannerReadbackScope.Rent(this, context)");
@@ -785,6 +885,21 @@ public sealed class VulkanStablePacketAndDescriptorTests
     }
 
     [Test]
+    public void DescriptorSubmissionDependencyRefresh_UsesPersistentLookupInsteadOfQuadraticScan()
+    {
+        string lifetime = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+
+        lifetime.ShouldContain(
+            "Dictionary<VulkanResourceLifetimeKey, ulong> _vulkanSubmissionDependencyGenerationsScratch");
+        lifetime.ShouldContain("touchedGenerations.Clear();");
+        lifetime.ShouldContain(
+            "touchedGenerations.TryGetValue(key, out ulong trackedGeneration)");
+        lifetime.ShouldNotContain("for (int i = 0; i < touched.Count; i++)");
+        lifetime.ShouldNotContain("new Dictionary<VulkanResourceLifetimeKey, ulong>(touched.Count)");
+    }
+
+    [Test]
     public void DefaultPipelineCameraMotionHotPaths_ReuseSchedulesCollectionsAndDiagnosticStorage()
     {
         string lowering = ReadWorkspaceFile(
@@ -914,6 +1029,19 @@ public sealed class VulkanStablePacketAndDescriptorTests
         profilerDumps.ShouldContain("Engine.Profiler.EnableFrameLogging = false;");
         eventBase.ShouldContain("private Dictionary<(string Prefix, TListener Listener, int Index), string>? _listenerProfilingNames;");
         eventBase.ShouldContain("_listenerProfilingNames ??= [];");
+    }
+
+    private static void AssertOrdered(string source, params string[] markers)
+    {
+        int previous = -1;
+        foreach (string marker in markers)
+        {
+            int index = source.IndexOf(marker, previous + 1, StringComparison.Ordinal);
+            index.ShouldBeGreaterThan(
+                previous,
+                $"Expected '{marker}' after the previous binding-refresh stage.");
+            previous = index;
+        }
     }
 
     private static string ReadWorkspaceFile(string relativePath)

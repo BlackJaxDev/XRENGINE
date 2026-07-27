@@ -42,18 +42,18 @@ namespace XREngine.Core
         /// </summary>
         private readonly Func<T> _generator;
         private int _capacity = int.MaxValue;
+        private int _retainedCount;
 
         /// <summary>
         /// The maximum number of objects that can be stored in the pool.
         /// </summary>
         public int Capacity
         {
-            get => _capacity;
+            get => Volatile.Read(ref _capacity);
             set
             {
-                _capacity = value;
-                if (_objects.Count > _capacity)
-                    Destroy(_objects.Count - _capacity);
+                Volatile.Write(ref _capacity, value);
+                TrimExcess();
             }
         }
 
@@ -85,7 +85,10 @@ namespace XREngine.Core
             _generator = generator ?? throw new ArgumentNullException(nameof(generator));
             int loopCount = Math.Min(initialCount, capacity);
             for (int i = 0; i < loopCount; ++i)
+            {
                 _objects.Add(_generator());
+                ++_retainedCount;
+            }
         }
 
         /// <summary>
@@ -99,6 +102,8 @@ namespace XREngine.Core
         {
             if (!_objects.TryTake(out T? item))
                 item = _generator();
+            else
+                Interlocked.Decrement(ref _retainedCount);
             
             item.OnPoolableReset();
             return item;
@@ -113,10 +118,24 @@ namespace XREngine.Core
         {
             item.OnPoolableReleased();
 
-            if (_objects.Count < _capacity)
-                _objects.Add(item);
-            else
-                item.OnPoolableDestroyed();
+            while (true)
+            {
+                int retainedCount = Volatile.Read(ref _retainedCount);
+                if (retainedCount >= Volatile.Read(ref _capacity))
+                {
+                    item.OnPoolableDestroyed();
+                    return;
+                }
+
+                if (Interlocked.CompareExchange(
+                        ref _retainedCount,
+                        retainedCount + 1,
+                        retainedCount) == retainedCount)
+                    break;
+            }
+
+            _objects.Add(item);
+            TrimExcess();
         }
 
         /// <summary>
@@ -125,9 +144,30 @@ namespace XREngine.Core
         /// <param name="count">The number of objects to destroy.</param>
         public void Destroy(int count)
         {
-            for (int i = 0; i < count && !_objects.IsEmpty; ++i)
-                if (_objects.TryTake(out T? item))
-                    item.OnPoolableDestroyed();
+            for (int i = 0; i < count; ++i)
+            {
+                if (!_objects.TryTake(out T? item))
+                    return;
+
+                Interlocked.Decrement(ref _retainedCount);
+                item.OnPoolableDestroyed();
+            }
+        }
+
+        /// <summary>
+        /// Removes retained objects above the current capacity without using
+        /// <see cref="ConcurrentBag{T}.Count"/>, which synchronizes every local bag.
+        /// </summary>
+        private void TrimExcess()
+        {
+            while (Volatile.Read(ref _retainedCount) > Volatile.Read(ref _capacity))
+            {
+                if (!_objects.TryTake(out T? item))
+                    return;
+
+                Interlocked.Decrement(ref _retainedCount);
+                item.OnPoolableDestroyed();
+            }
         }
     }
 }

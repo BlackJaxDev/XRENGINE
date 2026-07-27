@@ -17,12 +17,29 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
 
         string selectPlan = ExtractRegion(
             source,
-            "private ShadowAtlasRenderPlan SelectRenderPlanForExecution()",
+            "private ShadowAtlasRenderPlan SelectRenderPlanForExecution(int renderPlanIndex)",
             "private static int GetPlanEntryTileCost");
-        selectPlan.ShouldContain("ShadowAtlasRenderPlan plan = PublishedRenderPlan;");
+        selectPlan.ShouldContain("ShadowAtlasRenderPlan plan = _renderPlans[renderPlanIndex];");
         selectPlan.ShouldContain("LogRenderPlanExecutionSource(plan);");
         selectPlan.ShouldContain("return plan;");
         selectPlan.ShouldNotContain("Environment.CurrentManagedThreadId == _planningThreadId");
+
+        source.ShouldContain("private readonly object[] _renderPlanLocks = [new(), new()];");
+        source.ShouldNotContain("_renderPlanSync");
+        string buildPlan = ExtractRegion(
+            source,
+            "private void BuildRenderPlan()",
+            "private ulong AllocateRenderPlanId()");
+        buildPlan.ShouldContain("int pendingRenderPlanIndex = GetPendingRenderPlanIndex();");
+        buildPlan.ShouldContain("lock (_renderPlanLocks[pendingRenderPlanIndex])");
+
+        string renderPlan = ExtractRegion(
+            source,
+            "public int RenderScheduledTiles(bool collectVisibleNow = false)",
+            "private void LogDirectionalCascadeGroupBudgetDeferral(");
+        renderPlan.ShouldContain("int renderPlanIndex = Volatile.Read(ref _publishedRenderPlanIndex);");
+        renderPlan.ShouldContain("lock (_renderPlanLocks[renderPlanIndex])");
+        renderPlan.ShouldContain("SelectRenderPlanForExecution(renderPlanIndex)");
 
         ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasRenderPlan.cs")
             .ShouldContain("public ulong PlanId");

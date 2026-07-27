@@ -61,6 +61,8 @@ public sealed class VulkanDescriptorLifetimePressureTests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Structs/VkMeshRenderer.DescriptorAllocationKey.cs");
         string descriptors = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
+        string program = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
         string slabs = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.MeshDescriptorPoolSlabs.cs");
         string sharedAllocations = ReadWorkspaceFile(
@@ -72,7 +74,10 @@ public sealed class VulkanDescriptorLifetimePressureTests
         key.ShouldNotContain("ProgramBindingId");
         key.ShouldContain("BindingIdentityFingerprint");
         key.ShouldContain("ImmutableResourceFingerprint");
-        descriptors.ShouldContain("ComputeDescriptorLayoutFingerprint");
+        descriptors.ShouldContain("_program.DescriptorLayoutFingerprint");
+        descriptors.ShouldContain("_program.DescriptorSchemaFingerprint");
+        program.ShouldContain("_descriptorLayoutFingerprint = ComputeDescriptorLayoutFingerprint(_descriptorSetLayouts);");
+        program.ShouldContain("_descriptorSchemaFingerprint = ComputeDescriptorSchemaFingerprint(");
         descriptors.ShouldContain("ResolveMeshDescriptorViewFamilyIdentity");
         descriptors.ShouldContain("allocation.ViewFamilyIdentity != viewFamilyIdentity");
         descriptors.ShouldContain("candidate.ViewFamilyIdentity != viewFamilyIdentity");

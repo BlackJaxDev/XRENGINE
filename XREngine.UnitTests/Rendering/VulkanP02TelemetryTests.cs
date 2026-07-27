@@ -34,6 +34,8 @@ public sealed class VulkanP02TelemetryTests
         string stageSource = ReadWorkspaceFile("XREngine.Data/Rendering/VulkanTelemetryEnums.cs");
         string recordingSource = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string submissionSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
         string statsSource = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.cs");
         string captureSource = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfileCapture.cs");
@@ -42,6 +44,11 @@ public sealed class VulkanP02TelemetryTests
         {
             "FrameOpPreparation", "ResourcePlanning", "FrameDataRefresh", "PacketConstruction",
             "PrimaryRecording", "SecondaryRecording", "DescriptorPublication", "Submission",
+            "FrameDataManifest", "DependencySnapshot", "ImageLayoutSnapshot", "CommandBufferReuse",
+            "SubmissionPreparation", "SubmissionDiagnostics", "SubmissionImageStateValidation",
+            "SubmissionResourceLifetimeValidation", "QueueSubmit", "SubmissionPublication",
+            "CommandChainFastSignature", "CommandChainPacketLowering", "CommandChainScheduleEvaluation",
+            "PrimaryFrameDataManifest", "PrimaryPrewarm", "PrimaryCommandEncoding",
         })
             stageSource.ShouldContain(stage);
 
@@ -49,8 +56,55 @@ public sealed class VulkanP02TelemetryTests
         recordingSource.ShouldContain("EVulkanCpuStage.ResourcePlanning");
         recordingSource.ShouldContain("EVulkanCpuStage.PacketConstruction");
         recordingSource.ShouldContain("EVulkanCpuStage.PrimaryRecording");
+        recordingSource.ShouldContain("EVulkanCpuStage.FrameDataManifest");
+        recordingSource.ShouldContain("EVulkanCpuStage.DependencySnapshot");
+        recordingSource.ShouldContain("EVulkanCpuStage.ImageLayoutSnapshot");
+        recordingSource.ShouldContain("EVulkanCpuStage.CommandBufferReuse");
+        submissionSource.ShouldContain("EVulkanCpuStage.SubmissionPreparation");
+        submissionSource.ShouldContain("EVulkanCpuStage.SubmissionDiagnostics");
+        submissionSource.ShouldContain("EVulkanCpuStage.SubmissionImageStateValidation");
+        submissionSource.ShouldContain("EVulkanCpuStage.SubmissionResourceLifetimeValidation");
+        submissionSource.ShouldContain("EVulkanCpuStage.QueueSubmit");
+        submissionSource.ShouldContain("EVulkanCpuStage.SubmissionPublication");
+        recordingSource.ShouldContain("EVulkanCpuStage.CommandChainFastSignature");
+        recordingSource.ShouldContain("EVulkanCpuStage.CommandChainPacketLowering");
+        recordingSource.ShouldContain("EVulkanCpuStage.CommandChainScheduleEvaluation");
+        recordingSource.ShouldContain("EVulkanCpuStage.PrimaryFrameDataManifest");
+        recordingSource.ShouldContain("EVulkanCpuStage.PrimaryPrewarm");
+        recordingSource.ShouldContain("EVulkanCpuStage.PrimaryCommandEncoding");
         statsSource.ShouldContain("VulkanCpuStageAllocationHighWaterBytes");
         captureSource.ShouldContain("vulkan_cpu_{name}_allocation_high_water_bytes");
+    }
+
+    [Test]
+    public void PrimaryReuseMiss_ReusesPreparedCommandChainFastSignatureDuringLowering()
+    {
+        string recordingSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string loweringSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+
+        recordingSource.ShouldContain(
+            "out preparedCommandChainFastScheduleSignature");
+        recordingSource.ShouldContain(
+            "hasPreparedCommandChainFastScheduleSignature");
+        loweringSource.ShouldContain(
+            "ulong? preparedFastScheduleSignature = null");
+        loweringSource.ShouldContain(
+            "if (!preparedFastScheduleSignature.HasValue)");
+    }
+
+    [Test]
+    public void PacketLowering_ReusesPreparedMeshDrawPackets()
+    {
+        string loweringSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+
+        loweringSource.ShouldContain("_commandChainDrawPacketScratch[0] = firstDraw;");
+        loweringSource.ShouldContain("_commandChainDrawPacketScratch[runCount] = candidateDraw;");
+        loweringSource.ShouldContain("DrawPacket draw = draws[i];");
+        loweringSource.ShouldContain("MeshDrawOp => preparedMeshDraw");
+        loweringSource.ShouldContain("? firstDraw.StructuralSignature");
     }
 
     [Test]

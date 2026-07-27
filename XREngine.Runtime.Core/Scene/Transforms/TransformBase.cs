@@ -632,28 +632,66 @@ namespace XREngine.Scene.Transforms
         private Matrix4x4 _renderMatrix = Matrix4x4.Identity;
         private Matrix4x4 _inverseRenderMatrix = Matrix4x4.Identity;
         private readonly object _renderMatrixLock = new();
+        private int _renderMatrixVersion;
         private bool _renderSnapshotEnabled;
         private SpaceSnapshot _renderSnapshot;
 
         /// <summary>
         /// This transform's render matrix.
-        /// Thread-safe via locking for atomic access.
+        /// Readers use a sequence lock so visibility collection never contends with
+        /// swap-buffer publication while still rejecting torn matrix copies.
         /// </summary>
         [Browsable(false)]
         [YamlIgnore]
-        public Matrix4x4 RenderMatrix
+        public Matrix4x4 RenderMatrix => ReadPublishedRenderMatrix();
+
+        private Matrix4x4 ReadPublishedRenderMatrix()
         {
-            get { lock (_renderMatrixLock) return _renderMatrix; }
-            internal set { lock (_renderMatrixLock) _renderMatrix = value; }
+            SpinWait spinWait = default;
+            while (true)
+            {
+                int version = Volatile.Read(ref _renderMatrixVersion);
+                if ((version & 1) != 0)
+                {
+                    spinWait.SpinOnce();
+                    continue;
+                }
+
+                Matrix4x4 matrix = _renderMatrix;
+                if (version == Volatile.Read(ref _renderMatrixVersion))
+                    return matrix;
+
+                spinWait.SpinOnce();
+            }
         }
 
         /// <summary>
         /// This transform's inverse render matrix.
-        /// Always computed (render hot-path).
+        /// Always computed and atomically published with <see cref="RenderMatrix"/>.
         /// </summary>
         [Browsable(false)]
         [YamlIgnore]
-        public Matrix4x4 InverseRenderMatrix { get { lock (_renderMatrixLock) return _inverseRenderMatrix; } }
+        public Matrix4x4 InverseRenderMatrix => ReadPublishedInverseRenderMatrix();
+
+        private Matrix4x4 ReadPublishedInverseRenderMatrix()
+        {
+            SpinWait spinWait = default;
+            while (true)
+            {
+                int version = Volatile.Read(ref _renderMatrixVersion);
+                if ((version & 1) != 0)
+                {
+                    spinWait.SpinOnce();
+                    continue;
+                }
+
+                Matrix4x4 matrix = _inverseRenderMatrix;
+                if (version == Volatile.Read(ref _renderMatrixVersion))
+                    return matrix;
+
+                spinWait.SpinOnce();
+            }
+        }
 
         #endregion
 
@@ -1124,8 +1162,7 @@ namespace XREngine.Scene.Transforms
 
         public Task SetRenderMatrix(Matrix4x4 matrix, bool recalcAllChildRenderMatrices = true)
         {
-            RenderMatrix = matrix;
-            UpdateRenderCache(matrix);
+            PublishRenderState(matrix);
             OnRenderMatrixChanged();
 
             if (recalcAllChildRenderMatrices)
@@ -1134,14 +1171,24 @@ namespace XREngine.Scene.Transforms
                 return Task.CompletedTask;
         }
 
-        private void UpdateRenderCache(Matrix4x4 matrix)
+        private void PublishRenderState(Matrix4x4 matrix)
         {
             Matrix4x4 inverseRenderMatrix = Matrix4x4.Invert(matrix, out var inv) ? inv : Matrix4x4.Identity;
             lock (_renderMatrixLock)
             {
-                _inverseRenderMatrix = inverseRenderMatrix;
-                if (_renderSnapshotEnabled)
-                    _renderSnapshot = ComputeSpaceSnapshot(matrix);
+                int writeVersion = Interlocked.Increment(ref _renderMatrixVersion);
+                try
+                {
+                    _renderMatrix = matrix;
+                    _inverseRenderMatrix = inverseRenderMatrix;
+                    if (_renderSnapshotEnabled)
+                        _renderSnapshot = ComputeSpaceSnapshot(matrix);
+                }
+                finally
+                {
+                    // Publish an even version only after the complete matrix pair is visible.
+                    Volatile.Write(ref _renderMatrixVersion, unchecked(writeVersion + 1));
+                }
             }
         }
 

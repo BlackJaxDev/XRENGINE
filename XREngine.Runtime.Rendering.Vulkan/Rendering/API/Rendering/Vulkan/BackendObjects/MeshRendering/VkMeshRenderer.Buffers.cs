@@ -6,6 +6,8 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 using System;
+using System.Collections.Generic;
+using System.Threading;
 
 using Silk.NET.Vulkan;
 
@@ -64,6 +66,8 @@ public unsafe partial class VulkanRenderer
 					_vertexInputStateDirty = true;
 					Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
 				}
+
+				PublishBufferReadinessSnapshot();
 			}
 		}
 
@@ -279,6 +283,9 @@ public unsafe partial class VulkanRenderer
 
 		private void EnsureRuntimeDeformationBuffersCurrent()
 		{
+			if (!RuntimeDeformationBufferReferencesChanged())
+				return;
+
 			lock (_bufferStateSync)
 			{
 				if (RuntimeDeformationBufferReferencesChanged())
@@ -356,6 +363,7 @@ public unsafe partial class VulkanRenderer
 
 				_buffersDirty = false;
 				_vertexInputStateDirty = true;
+				PublishBufferReadinessSnapshot();
 			}
 		}
 
@@ -384,6 +392,93 @@ public unsafe partial class VulkanRenderer
 			_lineIndexSize = IndexSize.FourBytes;
 			_pointIndexSize = IndexSize.FourBytes;
 			_triangleIndexBufferExternallyProvided = false;
+		}
+
+		/// <summary>
+		/// Publishes immutable buffer membership after structural state changes.
+		/// Buffer readiness itself remains live, so a buffer becoming pending is
+		/// observed without rebuilding this snapshot.
+		/// </summary>
+		private void PublishBufferReadinessSnapshot()
+		{
+			int indexBufferCount = _indexBuffersSkippedForShaderGeneratedVertices
+				? 0
+				: (_triangleIndexBuffer is null ? 0 : 1)
+				  + (_lineIndexBuffer is null ? 0 : 1)
+				  + (_pointIndexBuffer is null ? 0 : 1);
+			int requiredBufferCount = _bufferCache.Count + indexBufferCount;
+			int shaderGeneratedBufferCount = indexBufferCount;
+			foreach (VkDataBuffer buffer in _bufferCache.Values)
+				if (buffer.Data.Target != EBufferTarget.ArrayBuffer)
+					shaderGeneratedBufferCount++;
+
+			KeyValuePair<string, VkDataBuffer>[] requiredBuffers =
+				new KeyValuePair<string, VkDataBuffer>[requiredBufferCount];
+			KeyValuePair<string, VkDataBuffer>[] shaderGeneratedRequiredBuffers =
+				new KeyValuePair<string, VkDataBuffer>[shaderGeneratedBufferCount];
+			int requiredIndex = 0;
+			int shaderGeneratedIndex = 0;
+			foreach (KeyValuePair<string, VkDataBuffer> pair in _bufferCache)
+			{
+				requiredBuffers[requiredIndex++] = pair;
+				if (pair.Value.Data.Target != EBufferTarget.ArrayBuffer)
+					shaderGeneratedRequiredBuffers[shaderGeneratedIndex++] = pair;
+			}
+
+			if (!_indexBuffersSkippedForShaderGeneratedVertices)
+			{
+				AppendIndexBuffer("Triangles", _triangleIndexBuffer);
+				AppendIndexBuffer("Lines", _lineIndexBuffer);
+				AppendIndexBuffer("Points", _pointIndexBuffer);
+			}
+
+			string missingExpectedIndexBufferDetail = ResolveMissingExpectedIndexBufferDetail();
+			uint triangleIndexCount = _triangleIndexBuffer?.Data.ElementCount ?? 0u;
+			uint lineIndexCount = _lineIndexBuffer?.Data.ElementCount ?? 0u;
+			uint pointIndexCount = _pointIndexBuffer?.Data.ElementCount ?? 0u;
+			XRMesh? mesh = Mesh;
+			uint fallbackVertexCount = mesh is null
+				? 0u
+				: (uint)Math.Max(mesh.VertexCount, 0);
+			bool fallbackIsTriangleClass = mesh is not null &&
+				mesh.Type is not (EPrimitiveType.Points or EPrimitiveType.Lines or EPrimitiveType.LineStrip);
+			Volatile.Write(
+				ref _bufferReadinessSnapshot,
+				new BufferReadinessSnapshot(
+					requiredBuffers,
+					shaderGeneratedRequiredBuffers,
+					missingExpectedIndexBufferDetail,
+					triangleIndexCount,
+					lineIndexCount,
+					pointIndexCount,
+					fallbackVertexCount,
+					fallbackIsTriangleClass));
+			return;
+
+			void AppendIndexBuffer(string name, VkDataBuffer? buffer)
+			{
+				if (buffer is null)
+					return;
+
+				KeyValuePair<string, VkDataBuffer> pair = new(name, buffer);
+				requiredBuffers[requiredIndex++] = pair;
+				shaderGeneratedRequiredBuffers[shaderGeneratedIndex++] = pair;
+			}
+		}
+
+		private string ResolveMissingExpectedIndexBufferDetail()
+		{
+			if (_indexBuffersSkippedForShaderGeneratedVertices || Mesh is not { } mesh)
+				return string.Empty;
+
+			if (mesh.HasIndexData(EPrimitiveType.Triangles) && _triangleIndexBuffer is null)
+				return "indexBuffer='Triangles' pending async build for indexed mesh";
+			if (mesh.HasIndexData(EPrimitiveType.Lines) && _lineIndexBuffer is null)
+				return "indexBuffer='Lines' pending async build for indexed mesh";
+			if (mesh.HasIndexData(EPrimitiveType.Points) && _pointIndexBuffer is null)
+				return "indexBuffer='Points' pending async build for indexed mesh";
+
+			return string.Empty;
 		}
 
 		private void OnAsyncIndexBufferReady(XRDataBuffer buffer, IndexSize elementSize)
@@ -424,6 +519,7 @@ public unsafe partial class VulkanRenderer
 				if (changed)
 					_vertexInputStateDirty = true;
 				_triangleIndexBuffer?.TryEnsureReadyForRendering(Renderer.AllowSynchronousResourceUploads);
+				PublishBufferReadinessSnapshot();
 				return changed;
 			}
 		}

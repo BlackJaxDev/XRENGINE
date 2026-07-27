@@ -666,22 +666,23 @@ public unsafe partial class VulkanRenderer
                     hash.Add(clear.Rect.Extent.Height);
                     break;
                 case MeshDrawOp meshDraw:
-                    hash.Add(meshDraw.Draw.Renderer?.GetHashCode() ?? 0);
-                    hash.Add(meshDraw.Draw.Viewport.X);
-                    hash.Add(meshDraw.Draw.Viewport.Y);
-                    hash.Add(meshDraw.Draw.Viewport.Width);
-                    hash.Add(meshDraw.Draw.Viewport.Height);
-                    hash.Add(meshDraw.Draw.Scissor.Offset.X);
-                    hash.Add(meshDraw.Draw.Scissor.Offset.Y);
-                    hash.Add(meshDraw.Draw.Scissor.Extent.Width);
-                    hash.Add(meshDraw.Draw.Scissor.Extent.Height);
-                    hash.Add(meshDraw.Draw.ViewportScissorCount);
-                    if (meshDraw.Draw.ViewportScissorCount > 1 &&
-                        meshDraw.Draw.IndexedViewports is { } indexedViewports &&
-                        meshDraw.Draw.IndexedScissors is { } indexedScissors)
+                    ref readonly PendingMeshDraw draw = ref meshDraw.DrawRef;
+                    hash.Add(draw.Renderer?.GetHashCode() ?? 0);
+                    hash.Add(draw.Viewport.X);
+                    hash.Add(draw.Viewport.Y);
+                    hash.Add(draw.Viewport.Width);
+                    hash.Add(draw.Viewport.Height);
+                    hash.Add(draw.Scissor.Offset.X);
+                    hash.Add(draw.Scissor.Offset.Y);
+                    hash.Add(draw.Scissor.Extent.Width);
+                    hash.Add(draw.Scissor.Extent.Height);
+                    hash.Add(draw.ViewportScissorCount);
+                    if (draw.ViewportScissorCount > 1 &&
+                        draw.IndexedViewports is { } indexedViewports &&
+                        draw.IndexedScissors is { } indexedScissors)
                     {
                         int indexedCount = (int)Math.Min(
-                            meshDraw.Draw.ViewportScissorCount,
+                            draw.ViewportScissorCount,
                             (uint)Math.Min(indexedViewports.Length, indexedScissors.Length));
                         for (int indexedIndex = 0; indexedIndex < indexedCount; indexedIndex++)
                         {
@@ -699,29 +700,29 @@ public unsafe partial class VulkanRenderer
                             hash.Add(indexedScissor.Extent.Height);
                         }
                     }
-                    hash.Add(meshDraw.Draw.DepthTestEnabled);
-                    hash.Add(meshDraw.Draw.DepthWriteEnabled);
-                    hash.Add((int)meshDraw.Draw.DepthCompareOp);
-                    hash.Add(meshDraw.Draw.StencilTestEnabled);
-                    hash.Add(meshDraw.Draw.StencilWriteMask);
-                    hash.Add((int)meshDraw.Draw.ColorWriteMask);
-                    hash.Add((int)meshDraw.Draw.CullMode);
-                    hash.Add((int)meshDraw.Draw.FrontFace);
-                    hash.Add(meshDraw.Draw.BlendEnabled);
-                    hash.Add((int)meshDraw.Draw.ColorBlendOp);
-                    hash.Add((int)meshDraw.Draw.AlphaBlendOp);
-                    hash.Add((int)meshDraw.Draw.SrcColorBlendFactor);
-                    hash.Add((int)meshDraw.Draw.DstColorBlendFactor);
-                    hash.Add((int)meshDraw.Draw.SrcAlphaBlendFactor);
-                    hash.Add((int)meshDraw.Draw.DstAlphaBlendFactor);
-                    hash.Add(meshDraw.Draw.MaterialOverride?.GetHashCode() ?? 0);
-                    hash.Add(meshDraw.Draw.Instances);
-                    hash.Add((int)meshDraw.Draw.BillboardMode);
-                    hash.Add(meshDraw.Draw.IsStereoPass);
-                    hash.Add(meshDraw.Draw.UseUnjitteredProjection);
-                    hash.Add(meshDraw.Draw.PreparedProgramIdentity);
-                    hash.Add(meshDraw.Draw.PreparedProgram?.BindingId ?? 0u);
-                    HashProgramBindingLayoutSnapshot(ref hash, meshDraw.Draw.ProgramBindingSnapshot);
+                    hash.Add(draw.DepthTestEnabled);
+                    hash.Add(draw.DepthWriteEnabled);
+                    hash.Add((int)draw.DepthCompareOp);
+                    hash.Add(draw.StencilTestEnabled);
+                    hash.Add(draw.StencilWriteMask);
+                    hash.Add((int)draw.ColorWriteMask);
+                    hash.Add((int)draw.CullMode);
+                    hash.Add((int)draw.FrontFace);
+                    hash.Add(draw.BlendEnabled);
+                    hash.Add((int)draw.ColorBlendOp);
+                    hash.Add((int)draw.AlphaBlendOp);
+                    hash.Add((int)draw.SrcColorBlendFactor);
+                    hash.Add((int)draw.DstColorBlendFactor);
+                    hash.Add((int)draw.SrcAlphaBlendFactor);
+                    hash.Add((int)draw.DstAlphaBlendFactor);
+                    hash.Add(draw.MaterialOverride?.GetHashCode() ?? 0);
+                    hash.Add(draw.Instances);
+                    hash.Add((int)draw.BillboardMode);
+                    hash.Add(draw.IsStereoPass);
+                    hash.Add(draw.UseUnjitteredProjection);
+                    hash.Add(draw.PreparedProgramIdentity);
+                    hash.Add(draw.PreparedProgram?.BindingId ?? 0u);
+                    HashProgramBindingLayoutSnapshot(ref hash, draw.ProgramBindingSnapshot);
                     break;
                 case QueryOp query:
                     hash.Add(query.Query.GetHashCode());
@@ -915,7 +916,7 @@ public unsafe partial class VulkanRenderer
         }
 
         hash.Add(1);
-        hash.Add(HashUniformBindingLayout(snapshot.Uniforms));
+        hash.Add(GetUniformBindingLayoutSignature(snapshot));
         hash.Add(HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline, includeMutableFrameSourceDescriptors));
         hash.Add(HashSamplerNameBindings(snapshot.SamplersByName, pipeline, includeMutableFrameSourceDescriptors));
         hash.Add(HashImageBindings(snapshot.Images));
@@ -931,12 +932,27 @@ public unsafe partial class VulkanRenderer
         }
 
         hash.Add(1);
+        if (snapshot.HasPublishedBindingLayoutSignatures)
+        {
+            hash.Add(snapshot.UniformBindingLayoutSignature);
+            hash.Add(snapshot.SamplerUnitBindingLayoutSignature);
+            hash.Add(snapshot.SamplerNameBindingLayoutSignature);
+            hash.Add(snapshot.ImageBindingLayoutSignature);
+            hash.Add(snapshot.BufferBindingLayoutSignature);
+            return;
+        }
+
         hash.Add(HashUniformBindingLayout(snapshot.Uniforms));
         hash.Add(HashSamplerUnitBindingLayout(snapshot.Samplers, snapshot.SamplerNamesByUnit));
         hash.Add(HashSamplerNameBindingLayout(snapshot.SamplersByName));
         hash.Add(HashImageBindingLayout(snapshot.Images));
         hash.Add(HashBufferBindingLayout(snapshot.Buffers));
     }
+
+    private static ulong GetUniformBindingLayoutSignature(ComputeDispatchSnapshot snapshot)
+        => snapshot.HasPublishedBindingLayoutSignatures
+            ? snapshot.UniformBindingLayoutSignature
+            : HashUniformBindingLayout(snapshot.Uniforms);
 
     private static ulong HashUniformBindingLayout(Dictionary<string, ProgramUniformValue> uniforms)
     {
@@ -1265,6 +1281,7 @@ public unsafe partial class VulkanRenderer
         private readonly object _bufferStateSync = new();
         private readonly Dictionary<string, VkDataBuffer> _bufferCache = new(StringComparer.Ordinal);
         private readonly Dictionary<string, BufferStructuralIdentity> _bufferStructuralIdentities = new(StringComparer.Ordinal);
+        private BufferReadinessSnapshot _bufferReadinessSnapshot = BufferReadinessSnapshot.Empty;
         private XRMesh.BufferCollection? _subscribedRendererBuffers;
         private XRMesh.BufferCollection? _subscribedMeshBuffers;
         private bool _cachedHasValidPrecombinedBlendshapeDeltas;
@@ -1288,54 +1305,39 @@ public unsafe partial class VulkanRenderer
 
         internal VulkanFrameDrawStats EstimateFrameDrawStats(in PendingMeshDraw draw)
         {
-            lock (_bufferStateSync)
+            BufferReadinessSnapshot snapshot = System.Threading.Volatile.Read(ref _bufferReadinessSnapshot);
+            bool skipLinePointDraws = MeshRenderMaterialResolver.RequiresTriangleOnlyDrawsForCurrentPass();
+            uint instances = draw.Instances;
+            int drawCalls = 0;
+            int trianglesRendered = 0;
+
+            uint triangleIndexCount = snapshot.TriangleIndexCount;
+            if (triangleIndexCount > 0u)
             {
-                bool skipLinePointDraws = MeshRenderMaterialResolver.RequiresTriangleOnlyDrawsForCurrentPass();
-                uint instances = draw.Instances;
-                int drawCalls = 0;
-                int trianglesRendered = 0;
-
-                uint triangleIndexCount = _triangleIndexBuffer?.Data.ElementCount ?? 0u;
-                if (triangleIndexCount > 0u)
-                {
-                    drawCalls++;
-                    trianglesRendered = AddSaturated(
-                        trianglesRendered,
-                        EstimateTriangleCount(triangleIndexCount, instances));
-                }
-
-                if (!skipLinePointDraws)
-                {
-                    if ((_lineIndexBuffer?.Data.ElementCount ?? 0u) > 0u)
-                        drawCalls++;
-                    if ((_pointIndexBuffer?.Data.ElementCount ?? 0u) > 0u)
-                        drawCalls++;
-                }
-
-                if (drawCalls == 0 && Mesh is not null)
-                {
-                    uint vertexCount = (uint)Math.Max(Mesh.VertexCount, 0);
-                    PrimitiveTopology fallbackTopology = Mesh.Type switch
-                    {
-                        EPrimitiveType.Points => PrimitiveTopology.PointList,
-                        EPrimitiveType.Lines => PrimitiveTopology.LineList,
-                        EPrimitiveType.LineStrip => PrimitiveTopology.LineStrip,
-                        EPrimitiveType.TriangleStrip => PrimitiveTopology.TriangleStrip,
-                        EPrimitiveType.TriangleFan => PrimitiveTopology.TriangleFan,
-                        EPrimitiveType.Patches => PrimitiveTopology.PatchList,
-                        _ => PrimitiveTopology.TriangleList,
-                    };
-
-                    if (vertexCount > 0u && (!skipLinePointDraws || IsTriangleClassTopology(fallbackTopology)))
-                    {
-                        drawCalls = 1;
-                        if (IsTriangleClassTopology(fallbackTopology))
-                            trianglesRendered = EstimateTriangleCount(vertexCount, instances);
-                    }
-                }
-
-                return new VulkanFrameDrawStats(drawCalls, MultiDrawCalls: 0, trianglesRendered);
+                drawCalls++;
+                trianglesRendered = AddSaturated(
+                    trianglesRendered,
+                    EstimateTriangleCount(triangleIndexCount, instances));
             }
+
+            if (!skipLinePointDraws)
+            {
+                if (snapshot.LineIndexCount > 0u)
+                    drawCalls++;
+                if (snapshot.PointIndexCount > 0u)
+                    drawCalls++;
+            }
+
+            if (drawCalls == 0 &&
+                snapshot.FallbackVertexCount > 0u &&
+                (!skipLinePointDraws || snapshot.FallbackIsTriangleClass))
+            {
+                drawCalls = 1;
+                if (snapshot.FallbackIsTriangleClass)
+                    trianglesRendered = EstimateTriangleCount(snapshot.FallbackVertexCount, instances);
+            }
+
+            return new VulkanFrameDrawStats(drawCalls, MultiDrawCalls: 0, trianglesRendered);
         }
 
         private static int EstimateTriangleCount(uint vertexOrIndexCount, uint instances)
@@ -1460,6 +1462,7 @@ public unsafe partial class VulkanRenderer
                 _lineIndexBuffer = null;
                 _pointIndexBuffer = null;
                 _indexBuffersSkippedForShaderGeneratedVertices = false;
+                PublishBufferReadinessSnapshot();
             }
         }
 
@@ -1534,9 +1537,14 @@ public unsafe partial class VulkanRenderer
                 _lastPrepareDetail = "Geometry layout changed.";
 
                 if (collectBuffers)
+                {
                     CollectBuffers();
+                }
                 else
+                {
+                    PublishBufferReadinessSnapshot();
                     Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
+                }
             }
         }
 
@@ -2160,6 +2168,7 @@ public unsafe partial class VulkanRenderer
                 return null;
 
             VulkanFixedFunctionStateSnapshot stateSnapshot = Renderer.CaptureFixedFunctionState();
+            using VkRenderProgram.BindingUpdateScope bindingUpdate = program.BeginBindingUpdate();
             try
             {
                 program.ClearBindings();

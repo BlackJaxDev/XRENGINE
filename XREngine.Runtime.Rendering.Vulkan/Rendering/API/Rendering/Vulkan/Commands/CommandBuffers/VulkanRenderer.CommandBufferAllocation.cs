@@ -266,6 +266,7 @@ namespace XREngine.Rendering.Vulkan
             evicted.RecordedImageLayoutEndState = null;
             evicted.CommandChainScheduleSignature = ulong.MaxValue;
             evicted.CommandChainPrimaryGroupSignature = ulong.MaxValue;
+            evicted.CommandChainPrimarySkeletonSignature = ulong.MaxValue;
             evicted.CommandChainPrimaryGroupCount = -1;
             evicted.PlannerRevision = ulong.MaxValue;
             evicted.GpuProfilerActive = false;

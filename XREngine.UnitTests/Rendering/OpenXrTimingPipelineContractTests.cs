@@ -751,7 +751,7 @@ public sealed class OpenXrTimingPipelineContractTests
             "internal bool CanReuseRecordedDescriptorSets(\n\t\t\tXRMaterial material",
             "private string BuildDescriptorAllocationMissReason");
 
-        canReuse.ShouldContain("ulong schemaFingerprint = ComputeDescriptorSchemaFingerprint(bindings, setCount);");
+        canReuse.ShouldContain("ulong schemaFingerprint = _program.DescriptorSchemaFingerprint;");
         canReuse.ShouldContain("ulong resourceFingerprint = ComputeDescriptorResourceFingerprint(");
         canReuse.ShouldContain("drawUniformSlot,");
         canReuse.ShouldContain("usesSharedMaterialTier);");
@@ -793,7 +793,9 @@ public sealed class OpenXrTimingPipelineContractTests
         descriptors.ShouldContain("ComputeDescriptorImageInfoSignature(binding.DescriptorType, imageInfos)");
         descriptors.ShouldContain("BindingResolvesPipelineResourceTexture(binding)");
         descriptors.ShouldContain("SnapshotHasFrameSourceSampler(snapshot, pipeline)");
-        descriptors.ShouldContain("DescriptorBindingsHaveFrameSourceSampler(material, _program.DescriptorBindings)");
+        descriptors.ShouldContain("DescriptorBindingsHaveFrameSourceSampler(material, _program.DescriptorBindings, snapshot)");
+        descriptors.ShouldContain("IsFrameSourceSamplerBinding(material, binding, snapshot)");
+        descriptors.ShouldContain("capturedSnapshot.TryGetSamplerTexture");
 
         string meshRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
         string samplerUnitHashing = SliceMethod(
@@ -810,7 +812,8 @@ public sealed class OpenXrTimingPipelineContractTests
         meshRenderer.ShouldContain("string.Equals(name, \"SourceTexture0\", StringComparison.Ordinal)");
         meshRenderer.ShouldContain("string.Equals(name, \"SourceTexture1\", StringComparison.Ordinal)");
         meshRenderer.ShouldContain("pipeline.TryGetTexture(name, out XRTexture? texture)");
-        meshRenderer.ShouldContain("HashProgramBindingLayoutSnapshot(ref hash, meshDraw.Draw.ProgramBindingSnapshot);");
+        meshRenderer.ShouldContain("ref readonly PendingMeshDraw draw = ref meshDraw.DrawRef;");
+        meshRenderer.ShouldContain("HashProgramBindingLayoutSnapshot(ref hash, draw.ProgramBindingSnapshot);");
         meshRenderer.ShouldContain("HashProgramBindingLayoutSnapshot(ref hash, compute.Snapshot);");
         meshRenderer.ShouldContain("HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline, includeMutableFrameSourceDescriptors)");
         samplerUnitHashing.ShouldContain("samplerNamesByUnit.TryGetValue(pair.Key");
@@ -859,6 +862,34 @@ public sealed class OpenXrTimingPipelineContractTests
         programSamplerFingerprint.ShouldContain("source.DescriptorGeneration");
         programSamplerFingerprint.ShouldContain("source.DescriptorImage.Handle");
         programSamplerFingerprint.ShouldContain("source.DescriptorView.Handle");
+    }
+
+    [Test]
+    public void VulkanReusableMaterialDescriptors_SkipFingerprintOnlyForCleanPublishedSlots()
+    {
+        string material = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Materials/VkMaterial.cs");
+        string validatedReuse = SliceMethod(
+            material,
+            "internal bool TryGetValidatedReusableMaterialDescriptorSet",
+            "internal static bool DescriptorSlotRequiresPublication");
+
+        validatedReuse.ShouldContain("_materialDirty");
+        validatedReuse.ShouldContain("state.Dirty");
+        validatedReuse.ShouldContain("state.ProgramLinkGeneration != program.LinkGeneration");
+        validatedReuse.ShouldContain("state.SlotUniformValueGenerations[resolvedFrame] != Volatile.Read(ref _parameterValueGeneration)");
+        validatedReuse.ShouldContain("state.SlotResourceFingerprints[resolvedFrame] != state.ResourceFingerprint");
+
+        string descriptors = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
+        string sharedRefresh = SliceMethod(
+            descriptors,
+            "private bool TryRefreshSharedMaterialDescriptorSetForReusableFrame",
+            "internal int GetRecordedDescriptorSetCount");
+
+        sharedRefresh.ShouldContain("capturedResourcesValidated");
+        sharedRefresh.ShouldContain("TryGetValidatedReusableMaterialDescriptorSet");
+        sharedRefresh.ShouldContain("TryGetMaterialDescriptorSet");
     }
 
     [Test]

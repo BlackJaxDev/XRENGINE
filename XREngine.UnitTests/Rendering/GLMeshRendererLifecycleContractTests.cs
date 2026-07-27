@@ -224,6 +224,26 @@ public sealed class GLMeshRendererLifecycleContractTests
     }
 
     [Test]
+    public void XRMeshRenderer_MonoVersionPathSkipsStereoMaterialShaderScans()
+    {
+        string source = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/XRMeshRenderer.cs").Replace("\r\n", "\n");
+        int monoFastPath = source.IndexOf(
+            "if (!stereoPass)\n                return useMeshDeform",
+            StringComparison.Ordinal);
+        int nvShaderScan = source.IndexOf(
+            "bool hasNvMaterialVertexShader = MaterialHasMatchingVertexShader",
+            StringComparison.Ordinal);
+        int multiviewShaderScan = source.IndexOf(
+            "bool hasMultiViewMaterialVertexShader = MaterialHasMatchingVertexShader",
+            StringComparison.Ordinal);
+
+        monoFastPath.ShouldBeGreaterThanOrEqualTo(0);
+        nvShaderScan.ShouldBeGreaterThan(monoFastPath);
+        multiviewShaderScan.ShouldBeGreaterThan(monoFastPath);
+    }
+
+    [Test]
     public void XRMaterial_DisposesSeparableProgramWhenShaderPipelinesAreDisabled()
     {
         string materialSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Materials/XRMaterial.cs");

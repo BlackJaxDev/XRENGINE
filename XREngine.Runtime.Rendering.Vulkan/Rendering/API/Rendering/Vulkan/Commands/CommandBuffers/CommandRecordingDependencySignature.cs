@@ -32,38 +32,70 @@ internal readonly record struct CommandRecordingDependencySignature(
     ulong VolatileSuffixGeneration)
 {
     public CommandRecordingDependencyMismatch Compare(in CommandRecordingDependencySignature current)
+        => Compare(
+            current,
+            commandChainPrimaryTopologyValidatedSeparately: false,
+            secondaryDrawBindingsOwnedElsewhere: false);
+
+    public CommandRecordingDependencyMismatch CompareCommandChainPrimary(
+        in CommandRecordingDependencySignature current,
+        bool secondaryDrawBindingsOwnedElsewhere)
+        => Compare(current, commandChainPrimaryTopologyValidatedSeparately: true, secondaryDrawBindingsOwnedElsewhere);
+
+    private CommandRecordingDependencyMismatch Compare(
+        in CommandRecordingDependencySignature current,
+        bool commandChainPrimaryTopologyValidatedSeparately,
+        bool secondaryDrawBindingsOwnedElsewhere)
     {
-        if (OutputPassAttachment != current.OutputPassAttachment)
+        if (!commandChainPrimaryTopologyValidatedSeparately &&
+            OutputPassAttachment != current.OutputPassAttachment)
             return Structural(CommandRecordingDependencyField.OutputPassAttachment);
-        if (RenderArea != current.RenderArea)
+        if (!commandChainPrimaryTopologyValidatedSeparately &&
+            RenderArea != current.RenderArea)
             return Structural(CommandRecordingDependencyField.RenderArea);
-        if (ViewMask != current.ViewMask)
+        if (!commandChainPrimaryTopologyValidatedSeparately &&
+            ViewMask != current.ViewMask)
             return Structural(CommandRecordingDependencyField.ViewMask);
         if (QueueFamily != current.QueueFamily)
             return Structural(CommandRecordingDependencyField.QueueFamily);
-        if (DynamicRenderingInheritance != current.DynamicRenderingInheritance)
+        if (!commandChainPrimaryTopologyValidatedSeparately &&
+            DynamicRenderingInheritance != current.DynamicRenderingInheritance)
             return Structural(CommandRecordingDependencyField.DynamicRenderingInheritance);
-        if (PipelineGeneration != current.PipelineGeneration)
+        if (!commandChainPrimaryTopologyValidatedSeparately &&
+            PipelineGeneration != current.PipelineGeneration)
             return Structural(CommandRecordingDependencyField.PipelineGeneration);
-        if (PipelineLayoutGeneration != current.PipelineLayoutGeneration)
+        if (!secondaryDrawBindingsOwnedElsewhere &&
+            PipelineLayoutGeneration != current.PipelineLayoutGeneration)
             return Structural(CommandRecordingDependencyField.PipelineLayoutGeneration);
-        if (MeshBindingIdentity != current.MeshBindingIdentity)
+        if (!secondaryDrawBindingsOwnedElsewhere &&
+            MeshBindingIdentity != current.MeshBindingIdentity)
             return Binding(CommandRecordingDependencyField.MeshBindingIdentity);
-        if (IndexBufferBindingIdentity != current.IndexBufferBindingIdentity)
+        if (!secondaryDrawBindingsOwnedElsewhere &&
+            IndexBufferBindingIdentity != current.IndexBufferBindingIdentity)
             return Binding(CommandRecordingDependencyField.IndexBufferBindingIdentity);
-        if (VertexBufferBindingIdentity != current.VertexBufferBindingIdentity)
+        if (!secondaryDrawBindingsOwnedElsewhere &&
+            VertexBufferBindingIdentity != current.VertexBufferBindingIdentity)
             return Binding(CommandRecordingDependencyField.VertexBufferBindingIdentity);
         if (BufferAllocationGeneration != current.BufferAllocationGeneration)
             return Binding(CommandRecordingDependencyField.BufferAllocationGeneration);
-        if (ImageAllocationGeneration != current.ImageAllocationGeneration)
+        // Command-chain group/resource-plan signatures own the image, framebuffer,
+        // sampler, descriptor-layout, and descriptor-set identities for every pass.
+        // The aggregate primary snapshot contains only the first visible pass, so
+        // comparing these fallback-context fields would invalidate unrelated groups.
+        if (!commandChainPrimaryTopologyValidatedSeparately &&
+            ImageAllocationGeneration != current.ImageAllocationGeneration)
             return Binding(CommandRecordingDependencyField.ImageAllocationGeneration);
-        if (ImageViewGeneration != current.ImageViewGeneration)
+        if (!commandChainPrimaryTopologyValidatedSeparately &&
+            ImageViewGeneration != current.ImageViewGeneration)
             return Binding(CommandRecordingDependencyField.ImageViewGeneration);
-        if (SamplerAllocationGeneration != current.SamplerAllocationGeneration)
+        if (!commandChainPrimaryTopologyValidatedSeparately &&
+            SamplerAllocationGeneration != current.SamplerAllocationGeneration)
             return Binding(CommandRecordingDependencyField.SamplerAllocationGeneration);
-        if (DescriptorLayoutGeneration != current.DescriptorLayoutGeneration)
+        if (!commandChainPrimaryTopologyValidatedSeparately &&
+            DescriptorLayoutGeneration != current.DescriptorLayoutGeneration)
             return Binding(CommandRecordingDependencyField.DescriptorLayoutGeneration);
-        if (DescriptorSetGeneration != current.DescriptorSetGeneration)
+        if (!commandChainPrimaryTopologyValidatedSeparately &&
+            DescriptorSetGeneration != current.DescriptorSetGeneration)
             return Binding(CommandRecordingDependencyField.DescriptorSetGeneration);
         if (ResourcePlanGeneration != current.ResourcePlanGeneration)
             return Binding(CommandRecordingDependencyField.ResourcePlanGeneration);

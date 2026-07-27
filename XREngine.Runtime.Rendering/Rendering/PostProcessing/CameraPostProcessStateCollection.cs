@@ -5,6 +5,7 @@ using System.Linq;
 using System.Numerics;
 using System.Reflection;
 using System.Runtime.Serialization;
+using System.Threading;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using YamlDotNet.Serialization;
@@ -20,20 +21,28 @@ public sealed class CameraPostProcessStateCollection
 {
     private readonly object _pipelinesSync = new();
     private Dictionary<Guid, PipelinePostProcessState> _pipelines = new();
+    [NonSerialized]
+    private Dictionary<Guid, PipelinePostProcessState> _publishedPipelines = new();
 
-    public IReadOnlyDictionary<Guid, PipelinePostProcessState> Pipelines => _pipelines;
+    public IReadOnlyDictionary<Guid, PipelinePostProcessState> Pipelines
+        => Volatile.Read(ref _publishedPipelines);
 
     public PipelinePostProcessState GetOrCreateState(RenderPipeline pipeline)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
 
+        Dictionary<Guid, PipelinePostProcessState> published = Volatile.Read(ref _publishedPipelines);
+        if (published.TryGetValue(pipeline.ID, out PipelinePostProcessState? publishedState))
+            return publishedState;
+
         lock (_pipelinesSync)
         {
-            if (!_pipelines.TryGetValue(pipeline.ID, out var state))
+            if (!_pipelines.TryGetValue(pipeline.ID, out PipelinePostProcessState? state))
             {
                 state = new PipelinePostProcessState();
                 _pipelines[pipeline.ID] = state;
                 state.BindToPipeline(pipeline);
+                PublishPipelinesNoLock();
                 return state;
             }
 
@@ -41,22 +50,28 @@ public sealed class CameraPostProcessStateCollection
             if (state.PipelineId != pipeline.ID)
                 state.BindToPipeline(pipeline);
 
+            PublishPipelinesNoLock();
             return state;
         }
     }
 
     public bool TryGetState(Guid pipelineId, out PipelinePostProcessState? state)
-    {
-        lock (_pipelinesSync)
-            return _pipelines.TryGetValue(pipelineId, out state);
-    }
+        => Volatile.Read(ref _publishedPipelines).TryGetValue(pipelineId, out state);
 
     public void SetState(Guid pipelineId, PipelinePostProcessState replacement)
     {
         ArgumentNullException.ThrowIfNull(replacement);
         lock (_pipelinesSync)
+        {
             _pipelines[pipelineId] = replacement;
+            PublishPipelinesNoLock();
+        }
     }
+
+    private void PublishPipelinesNoLock()
+        => Volatile.Write(
+            ref _publishedPipelines,
+            new Dictionary<Guid, PipelinePostProcessState>(_pipelines));
 
     [OnDeserialized]
     private void OnDeserialized(StreamingContext context)
@@ -66,10 +81,12 @@ public sealed class CameraPostProcessStateCollection
             if (_pipelines is null)
             {
                 _pipelines = new();
+                _publishedPipelines = new();
                 return;
             }
 
             _pipelines = new Dictionary<Guid, PipelinePostProcessState>(_pipelines);
+            PublishPipelinesNoLock();
         }
     }
 }

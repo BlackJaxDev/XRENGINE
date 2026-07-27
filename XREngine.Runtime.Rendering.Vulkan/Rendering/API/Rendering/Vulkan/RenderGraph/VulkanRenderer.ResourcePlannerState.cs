@@ -1613,6 +1613,10 @@ public unsafe partial class VulkanRenderer
             return compare;
         });
 
+        // This value keys recorded command-chain work, so describe the active
+        // planner/allocation states rather than their input-cache keys. Registry
+        // and resource generations can change for descriptor/data publication
+        // without replacing a physical plan or its barrier topology.
         hash.Add(keys.Count);
 
         for (int i = 0; i < keys.Count; i++)
@@ -1627,9 +1631,6 @@ public unsafe partial class VulkanRenderer
             hash.Add(key.InternalHeight);
             hash.Add(key.OutputFrameBufferIdentity);
             hash.Add(key.OutputTargetIdentity);
-            hash.Add(key.ResourceRegistrySignature);
-            hash.Add(key.PassMetadataSignature);
-            hash.Add(key.ResourceGeneration);
             hash.Add(key.SubmissionQueueFamily);
 
             if (!switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState state))
@@ -1638,6 +1639,7 @@ public unsafe partial class VulkanRenderer
                 continue;
             }
 
+            hash.Add(state.AllocatorOwnershipId);
             hash.Add(state.ResourcePlannerRevision);
             hash.Add(state.ResourcePlannerSignature);
             hash.Add(state.ResourceAllocationSignature);
@@ -4445,20 +4447,32 @@ public unsafe partial class VulkanRenderer
             return 0;
 
         int revisionStamp = ComputePassMetadataRevisionStamp(passMetadata);
-        if (PassMetadataSignatureCache.Count >= MaxPassMetadataSignatureCacheEntries)
-            PassMetadataSignatureCache.Clear();
+        if (!PassMetadataSignatureCache.TryGetValue(
+                passMetadata,
+                out RenderPassMetadataSignatureCacheEntry? cacheEntry))
+        {
+            // Count acquires every ConcurrentDictionary partition lock. Keep that
+            // maintenance work off the steady hit path, where this method runs once
+            // for every captured draw context.
+            if (PassMetadataSignatureCache.Count >= MaxPassMetadataSignatureCacheEntries)
+                PassMetadataSignatureCache.Clear();
 
-        RenderPassMetadataSignatureCacheEntry cacheEntry = PassMetadataSignatureCache.GetOrAdd(
-            passMetadata,
-            static _ => new RenderPassMetadataSignatureCacheEntry());
+            cacheEntry = PassMetadataSignatureCache.GetOrAdd(
+                passMetadata,
+                static _ => new RenderPassMetadataSignatureCacheEntry());
+        }
+
+        if (cacheEntry.RevisionStamp == revisionStamp)
+            return cacheEntry.Signature;
+
         lock (cacheEntry)
         {
             if (cacheEntry.RevisionStamp == revisionStamp)
                 return cacheEntry.Signature;
 
             int signature = ComputePassMetadataSignatureUncached(passMetadata);
-            cacheEntry.RevisionStamp = revisionStamp;
             cacheEntry.Signature = signature;
+            cacheEntry.RevisionStamp = revisionStamp;
             return signature;
         }
     }
@@ -4512,6 +4526,9 @@ public unsafe partial class VulkanRenderer
     {
         if (passMetadata is null || passMetadata.Count == 0)
             return 0;
+
+        if (passMetadata is RenderPassMetadataSnapshot snapshot)
+            return snapshot.RevisionStamp;
 
         HashCode hash = new();
         hash.Add(passMetadata.Count);

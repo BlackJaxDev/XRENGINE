@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Silk.NET.Vulkan;
 using XREngine;
 using XREngine.Data.Colors;
@@ -97,6 +98,12 @@ namespace XREngine.Rendering.Vulkan
             /// signaling that descriptor writes must be re-issued on the next bind.
             /// </summary>
             private bool _materialDirty = true;
+
+            /// <summary>
+            /// Advances only when a material uniform value changes. Per-frame UBO slots
+            /// retain the last serialized generation so static materials avoid redundant maps.
+            /// </summary>
+            private long _parameterValueGeneration = 1;
 
             #endregion
 
@@ -242,6 +249,51 @@ namespace XREngine.Rendering.Vulkan
 				}
 			}
 
+            /// <summary>
+            /// Returns the already-published material descriptor set without re-hashing
+            /// its resources. Callers may use this only after command-chain validation has
+            /// proven the captured descriptor resources are unchanged.
+            /// </summary>
+            internal bool TryGetValidatedReusableMaterialDescriptorSet(
+                VkRenderProgram program,
+                int frameIndex,
+                out DescriptorSet descriptorSet)
+            {
+                descriptorSet = default;
+                lock (_stateSync)
+                {
+                    if (_materialDirty ||
+                        program is null ||
+                        Renderer.DescriptorFrameSlotFrameCount <= 0 ||
+                        !_programStates.TryGetValue(program.BindingId, out ProgramDescriptorState? state) ||
+                        state.Dirty ||
+                        !ReferenceEquals(state.Program, program) ||
+                        state.ProgramLinkGeneration != program.LinkGeneration ||
+                        state.FrameCount != Renderer.DescriptorFrameSlotFrameCount ||
+                        state.SetCount != program.DescriptorSetLayouts.Count)
+                    {
+                        return false;
+                    }
+
+                    int resolvedFrame = Math.Clamp(frameIndex, 0, state.FrameCount - 1);
+                    if ((uint)resolvedFrame >= (uint)state.SlotUniformValueGenerations.Length ||
+                        state.SlotUniformValueGenerations[resolvedFrame] != Volatile.Read(ref _parameterValueGeneration) ||
+                        (uint)resolvedFrame >= (uint)state.SlotResourceFingerprints.Length ||
+                        state.SlotResourceFingerprints[resolvedFrame] != state.ResourceFingerprint ||
+                        (uint)resolvedFrame >= (uint)state.DescriptorSets.Length)
+                    {
+                        return false;
+                    }
+
+                    DescriptorSet[] frameSets = state.DescriptorSets[resolvedFrame];
+                    if ((uint)frameSets.Length <= DescriptorSetMaterial)
+                        return false;
+
+                    descriptorSet = frameSets[DescriptorSetMaterial];
+                    return descriptorSet.Handle != 0 || Renderer.IsDescriptorHeapDrawBindingActive;
+                }
+            }
+
 			internal static bool DescriptorSlotRequiresPublication(
 				ReadOnlySpan<ulong> slotResourceFingerprints,
 				int frameSlot,
@@ -310,8 +362,7 @@ namespace XREngine.Rendering.Vulkan
         /// changes must not rewrite descriptor sets while a command buffer is recording.
         /// </summary>
         private void OnParameterValueChanged(ShaderVar _)
-        {
-        }
+            => Interlocked.Increment(ref _parameterValueGeneration);
 
             #endregion
 
@@ -375,11 +426,11 @@ namespace XREngine.Rendering.Vulkan
 
                     int frameCount = Renderer.DescriptorFrameSlotFrameCount;
                     int setCount = program.DescriptorSetLayouts.Count;
-                    ulong fingerprint = ComputeMaterialSchemaFingerprint(program.DescriptorBindings, frameCount, setCount);
                     uint key = program.BindingId;
 
                     if (_programStates.TryGetValue(key, out ProgramDescriptorState? existing) &&
-                        existing.SchemaFingerprint == fingerprint &&
+                        ReferenceEquals(existing.Program, program) &&
+                        existing.ProgramLinkGeneration == program.LinkGeneration &&
                         existing.FrameCount == frameCount &&
                         existing.SetCount == setCount)
                     {
@@ -523,9 +574,12 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
+                long[] slotUniformValueGenerations = new long[frameCount];
+                Array.Fill(slotUniformValueGenerations, long.MinValue);
                 state = new ProgramDescriptorState
                 {
                     Program = program,
+                    ProgramLinkGeneration = program.LinkGeneration,
                     Bindings = bindings,
                     DescriptorSets = descriptorSets,
                     DescriptorHeapPushData = descriptorHeapPushData,
@@ -535,6 +589,7 @@ namespace XREngine.Rendering.Vulkan
                     SetCount = setCount,
 					SchemaFingerprint = ComputeMaterialSchemaFingerprint(bindings, frameCount, setCount),
 					SlotResourceFingerprints = new ulong[frameCount],
+                    SlotUniformValueGenerations = slotUniformValueGenerations,
                     DescriptorPool = descriptorPool,
                     Dirty = true,
                 };
@@ -1128,6 +1183,13 @@ namespace XREngine.Rendering.Vulkan
             /// <returns><c>true</c> if every uniform buffer was successfully mapped and written.</returns>
             private bool UpdateUniformBuffers(ProgramDescriptorState state, int frameIndex)
             {
+                if ((uint)frameIndex >= (uint)state.SlotUniformValueGenerations.Length)
+                    return false;
+
+                long parameterValueGeneration = Volatile.Read(ref _parameterValueGeneration);
+                if (state.SlotUniformValueGenerations[frameIndex] == parameterValueGeneration)
+                    return true;
+
                 foreach (UniformBindingResource resource in state.UniformBindings.Values)
                 {
                     if (frameIndex < 0 || frameIndex >= resource.Buffers.Length)
@@ -1163,6 +1225,7 @@ namespace XREngine.Rendering.Vulkan
                     }
                 }
 
+                state.SlotUniformValueGenerations[frameIndex] = parameterValueGeneration;
                 return true;
             }
 

@@ -318,16 +318,49 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
         string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
         string descriptorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
         string preparationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Preparation.cs");
+        string snapshotSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Classes/VkMeshRenderer.BufferReadinessSnapshot.cs");
 
         mainSource.ShouldContain("private readonly object _bufferStateSync = new();");
         AssertMethodLocksBefore(mainSource, "private void InvalidateGeometryLayout", "_triangleIndexBuffer = null;");
         AssertMethodLocksBefore(bufferSource, "private void CollectBuffers", "_bufferCache.Clear();");
         AssertMethodLocksBefore(bufferSource, "private void EnsureBuffers", "foreach (var buffer in _bufferCache.Values)");
-        AssertMethodLocksBefore(preparationSource, "private bool AreCachedBuffersReadyForRendering", "foreach (var pair in _bufferCache)");
+        bufferSource.ShouldContain("PublishBufferReadinessSnapshot();");
+        preparationSource.ShouldContain("BufferReadinessSnapshot snapshot = Volatile.Read(ref _bufferReadinessSnapshot);");
+        preparationSource.ShouldContain("for (int i = 0; i < buffers.Length; i++)");
+        int readinessStart = preparationSource.IndexOf(
+            "private bool AreCachedBuffersReadyForRendering",
+            StringComparison.Ordinal);
+        int readinessEnd = preparationSource.IndexOf("private bool SetPrepareResult", readinessStart, StringComparison.Ordinal);
+        readinessStart.ShouldBeGreaterThanOrEqualTo(0);
+        readinessEnd.ShouldBeGreaterThan(readinessStart);
+        preparationSource[readinessStart..readinessEnd].ShouldNotContain("lock (_bufferStateSync)");
+        int drawStatsStart = mainSource.IndexOf("internal VulkanFrameDrawStats EstimateFrameDrawStats", StringComparison.Ordinal);
+        int drawStatsEnd = mainSource.IndexOf("private static int EstimateTriangleCount", drawStatsStart, StringComparison.Ordinal);
+        drawStatsStart.ShouldBeGreaterThanOrEqualTo(0);
+        drawStatsEnd.ShouldBeGreaterThan(drawStatsStart);
+        string drawStats = mainSource[drawStatsStart..drawStatsEnd];
+        drawStats.ShouldContain("Volatile.Read(ref _bufferReadinessSnapshot)");
+        drawStats.ShouldContain("snapshot.TriangleIndexCount");
+        drawStats.ShouldContain("snapshot.FallbackVertexCount");
+        drawStats.ShouldNotContain("lock (_bufferStateSync)");
+        snapshotSource.ShouldContain("public uint TriangleIndexCount { get; }");
+        snapshotSource.ShouldContain("public uint FallbackVertexCount { get; }");
         AssertMethodLocksBefore(pipelineSource, "private void BuildVertexInputState", "foreach (var pair in _bufferCache)");
         AssertMethodLocksBefore(drawingSource, "private bool TryRentVertexBufferSnapshot", "_vertexBuffersByBinding.TryGetValue");
         AssertMethodLocksBefore(descriptorSource, "private ulong ComputeCachedBufferResourceFingerprintCore", "foreach (KeyValuePair<string, VkDataBuffer> pair in _bufferCache)");
         AssertMethodLocksBefore(descriptorSource, "private bool TryResolveCachedBufferByName", "_bufferCache.TryGetValue");
+    }
+
+    [Test]
+    public void RenderableMesh_SingleLodUpdateAvoidsPerFrameLock()
+    {
+        string source = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Scene/Components/Mesh/RenderableMesh.cs");
+
+        source.ShouldContain("Volatile.Write(ref _lodCount, LODs.Count);");
+        source.ShouldContain("if (Volatile.Read(ref _lodCount) <= 1)");
+        source.ShouldContain("Volatile.Write(ref _lodCount, 0);");
     }
 
     [Test]

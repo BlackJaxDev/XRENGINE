@@ -13,16 +13,17 @@ internal sealed class ImportedTextureStreamingRecord(XRTexture2D texture)
     public readonly object Sync = new();
 
     /// <summary>
-    /// Guards the per-frame visibility / material-binding observation fields
+    /// Sequence-lock version for the per-frame visibility / material-binding fields
     /// (<see cref="LastVisibleFrameId"/>, <see cref="MinVisibleDistance"/>,
     /// <see cref="MaxProjectedPixelSpan"/>, <see cref="MaxScreenCoverage"/>,
     /// <see cref="UvDensityHint"/>, <see cref="VisiblePageSelection"/>,
     /// <see cref="LastBoundFrameId"/>, <see cref="LastBoundMaterialTextureCount"/>).
-    /// Kept independent from <see cref="Sync"/> so per-frame CollectVisible /
-    /// material-binding observations never block on (or get dropped because of)
-    /// transition / import work that holds <see cref="Sync"/>.
+    /// Odd values denote an active writer; even values denote a stable snapshot.
+    /// Writers acquire the odd version with compare-exchange and readers retry if the
+    /// version changes, keeping this hot path independent from transition work under
+    /// <see cref="Sync"/> and from kernel-backed monitor waits.
     /// </summary>
-    public readonly object VisibilityLock = new();
+    public int VisibilityVersion;
 
     public readonly WeakReference<XRTexture2D> Texture = new(texture);
     public string? FilePath = texture.FilePath;

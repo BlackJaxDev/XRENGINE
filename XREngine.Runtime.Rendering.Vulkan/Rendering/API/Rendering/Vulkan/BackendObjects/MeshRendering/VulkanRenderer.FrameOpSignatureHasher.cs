@@ -1,11 +1,16 @@
+using System.Collections.Concurrent;
+
 namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
     internal struct FrameOpSignatureHasher
     {
+        private const int MaxCachedStringSignatures = 4096;
         private const ulong OffsetBasis = 14695981039346656037UL;
         private const ulong Prime = 1099511628211UL;
+        private static readonly ConcurrentDictionary<string, ulong> StringSignatures =
+            new(ReferenceEqualityComparer.Instance);
         private ulong _value;
 
         public FrameOpSignatureHasher()
@@ -28,11 +33,32 @@ public unsafe partial class VulkanRenderer
             }
 
             Add(value.Length);
-            for (int i = 0; i < value.Length; i++)
-                Add(value[i]);
+            Add(GetStableStringSignature(value));
         }
 
         public ulong ToHash() => _value;
+
+        private static ulong GetStableStringSignature(string value)
+        {
+            if (StringSignatures.TryGetValue(value, out ulong signature))
+                return signature;
+
+            signature = ComputeStableStringSignature(value);
+            if (StringSignatures.Count >= MaxCachedStringSignatures)
+                StringSignatures.Clear();
+
+            return StringSignatures.GetOrAdd(value, signature);
+        }
+
+        private static ulong ComputeStableStringSignature(string value)
+        {
+            FrameOpSignatureHasher hash = new();
+            hash.Add(value.Length);
+            for (int i = 0; i < value.Length; i++)
+                hash.Add((uint)value[i]);
+
+            return hash.ToHash();
+        }
 
         private void Mix(ulong value)
         {

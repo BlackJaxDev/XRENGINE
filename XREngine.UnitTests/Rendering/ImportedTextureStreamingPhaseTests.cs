@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using NUnit.Framework;
 using Shouldly;
 using XREngine;
@@ -619,6 +620,133 @@ public sealed class ImportedTextureStreamingPhaseTests
         snapshot.MaxScreenCoverage.ShouldBe(0.25f);
         snapshot.UvDensityHint.ShouldBe(1.5f);
         snapshot.VisiblePageSelection.IsPartial.ShouldBeTrue();
+    }
+
+    [Test]
+    public void TextureStreamingRegistry_SnapshotsDoNotObserveTornConcurrentUsage()
+    {
+        TextureStreamingRegistry registry = new();
+        XRTexture2D texture = new()
+        {
+            Name = "ConcurrentRegistryTexture",
+            FilePath = Path.Combine(Path.GetTempPath(), "concurrent-registry-texture.png"),
+        };
+        GLTieredTextureResidencyBackend backend = new();
+        ImportedTextureStreamingRecord record = registry.GetOrCreateRecord(
+            texture,
+            texture.FilePath,
+            _ => backend);
+        lock (record.Sync)
+        {
+            record.SourceWidth = 1024u;
+            record.SourceHeight = 1024u;
+            record.ResidentMaxDimension = 64u;
+            record.PreviewReady = true;
+        }
+
+        XRMaterial material = new([texture]);
+        registry.RecordUsage(material, CreateUsage(1), frameId: 1);
+        int writerComplete = 0;
+
+        Task writer = Task.Run(() =>
+        {
+            try
+            {
+                for (int frame = 2; frame <= 4_000; frame++)
+                    registry.RecordUsage(material, CreateUsage(frame), frame);
+            }
+            finally
+            {
+                Volatile.Write(ref writerComplete, 1);
+            }
+        });
+
+        Task reader = Task.Run(() =>
+        {
+            List<ImportedTextureStreamingSnapshot> snapshots = new(1);
+            do
+            {
+                registry.CollectSnapshots((_, _, _) => backend, snapshots);
+                snapshots.Count.ShouldBe(1);
+                ImportedTextureStreamingSnapshot snapshot = snapshots[0];
+                snapshot.MaxProjectedPixelSpan.ShouldBe(snapshot.MinVisibleDistance * 2.0f);
+                snapshot.MaxScreenCoverage.ShouldBe(0.25f);
+                snapshot.UvDensityHint.ShouldBe(1.5f);
+            }
+            while (Volatile.Read(ref writerComplete) == 0);
+        });
+
+        Task.WaitAll(writer, reader);
+
+        static ImportedTextureStreamingUsage CreateUsage(int frame)
+            => new(
+                DistanceFromCamera: frame,
+                ProjectedPixelSpan: frame * 2.0f,
+                ScreenCoverage: 0.25f,
+                UvDensityHint: 1.5f,
+                PageSelection: SparseTextureStreamingPageSelection.Partial(0.1f, 0.2f, 0.6f, 0.8f));
+    }
+
+    [Test]
+    public void TextureStreamingRegistry_ConcurrentWritersMergeSameFrameUsage()
+    {
+        TextureStreamingRegistry registry = new();
+        XRTexture2D texture = new()
+        {
+            Name = "MultiWriterRegistryTexture",
+            FilePath = Path.Combine(Path.GetTempPath(), "multi-writer-registry-texture.png"),
+        };
+        GLTieredTextureResidencyBackend backend = new();
+        ImportedTextureStreamingRecord record = registry.GetOrCreateRecord(
+            texture,
+            texture.FilePath,
+            _ => backend);
+        lock (record.Sync)
+        {
+            record.SourceWidth = 1024u;
+            record.SourceHeight = 1024u;
+            record.ResidentMaxDimension = 64u;
+            record.PreviewReady = true;
+        }
+
+        XRMaterial material = new([texture]);
+        ImportedTextureStreamingUsage nearUsage = new(
+            DistanceFromCamera: 5.0f,
+            ProjectedPixelSpan: 400.0f,
+            ScreenCoverage: 0.25f,
+            UvDensityHint: 1.5f,
+            PageSelection: SparseTextureStreamingPageSelection.Partial(0.0f, 0.0f, 0.5f, 0.5f));
+        ImportedTextureStreamingUsage largeUsage = new(
+            DistanceFromCamera: 25.0f,
+            ProjectedPixelSpan: 1_200.0f,
+            ScreenCoverage: 0.75f,
+            UvDensityHint: 3.0f,
+            PageSelection: SparseTextureStreamingPageSelection.Partial(0.5f, 0.5f, 1.0f, 1.0f));
+        using Barrier start = new(3);
+
+        Task nearWriter = Task.Run(() =>
+        {
+            start.SignalAndWait();
+            for (int i = 0; i < 4_000; i++)
+                registry.RecordUsage(material, nearUsage, frameId: 42L);
+        });
+        Task largeWriter = Task.Run(() =>
+        {
+            start.SignalAndWait();
+            for (int i = 0; i < 4_000; i++)
+                registry.RecordUsage(material, largeUsage, frameId: 42L);
+        });
+
+        start.SignalAndWait();
+        Task.WaitAll([nearWriter, largeWriter], TimeSpan.FromSeconds(10)).ShouldBeTrue();
+
+        List<ImportedTextureStreamingSnapshot> snapshots = registry.CollectSnapshots(
+            (_, _, _) => backend);
+        snapshots.Count.ShouldBe(1);
+        snapshots[0].MinVisibleDistance.ShouldBe(5.0f);
+        snapshots[0].MaxProjectedPixelSpan.ShouldBe(1_200.0f);
+        snapshots[0].MaxScreenCoverage.ShouldBe(0.75f);
+        snapshots[0].UvDensityHint.ShouldBe(2.0f);
     }
 
     [Test]

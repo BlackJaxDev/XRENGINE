@@ -1,6 +1,8 @@
 using NUnit.Framework;
 using Shouldly;
 using System.Numerics;
+using System.Threading;
+using System.Threading.Tasks;
 using XREngine.Animation;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Components.Scene;
@@ -304,6 +306,52 @@ public sealed class TransformAccessorFastPathTests
 
         trsMatrix.ShouldNotBe(transform.LocalMatrix);
         MatrixShouldBeClose(transform.LocalMatrix, CreateExpectedLocalMatrix(transform.Scale, transform.Translation, transform.Rotation, ETransformOrder.SRT));
+    }
+
+    [Test]
+    public void RenderMatrixPublication_DoesNotExposeTornMatricesToConcurrentReaders()
+    {
+        Transform transform = new();
+        int writerComplete = 0;
+
+        Task writer = Task.Run(() =>
+        {
+            try
+            {
+                for (int value = 1; value <= 20_000; value++)
+                {
+                    Matrix4x4 matrix = Matrix4x4.CreateTranslation(value, -value, value * 2.0f);
+                    transform.SetRenderMatrix(matrix, recalcAllChildRenderMatrices: false).GetAwaiter().GetResult();
+                }
+            }
+            finally
+            {
+                Volatile.Write(ref writerComplete, 1);
+            }
+        });
+
+        Task reader = Task.Run(() =>
+        {
+            SpinWait spinWait = default;
+            do
+            {
+                AssertConsistentTranslation(transform.RenderMatrix);
+                AssertConsistentTranslation(transform.InverseRenderMatrix);
+                spinWait.SpinOnce();
+            }
+            while (Volatile.Read(ref writerComplete) == 0);
+
+            AssertConsistentTranslation(transform.RenderMatrix);
+            AssertConsistentTranslation(transform.InverseRenderMatrix);
+        });
+
+        Task.WaitAll(writer, reader);
+
+        static void AssertConsistentTranslation(Matrix4x4 matrix)
+        {
+            matrix.M42.ShouldBe(-matrix.M41);
+            matrix.M43.ShouldBe(matrix.M41 * 2.0f);
+        }
     }
 
     private static Matrix4x4 CreateExpectedLocalMatrix(Vector3 scale, Vector3 translation, Quaternion rotation, ETransformOrder order)
