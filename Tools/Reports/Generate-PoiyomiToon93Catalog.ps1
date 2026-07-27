@@ -3,9 +3,13 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$PoiyomiRoot,
 
-    [string]$OutputPath = "XRENGINE/Scene/Importers/Poiyomi/Catalogs/poiyomi-toon-9.3.64.json",
+    [string]$OutputPath = "XREngine.Editor/Importers/Poiyomi/Catalogs/poiyomi-toon-9.3.64.json",
 
-    [string]$ImporterPath = "XRENGINE/Scene/Importers/UnityMaterialImporter.cs"
+    [string[]]$ImporterPath = @(
+        "XREngine.Editor/Importers/UnityMaterialImporter.cs",
+        "XREngine.Editor/Importers/UnityMaterialImporter.PoiyomiSurfaceFeatures.cs",
+        "XREngine.Editor/Importers/UnityMaterialImporter.PoiyomiEffectsAndIntegrations.cs"
+    )
 )
 
 $ErrorActionPreference = "Stop"
@@ -513,7 +517,11 @@ foreach ($match in [regex]::Matches($shaderBodyWithoutProperties, '\b[A-Za-z_][A
     }
 }
 
-$importerText = if (Test-Path -LiteralPath $ImporterPath) { [IO.File]::ReadAllText((Resolve-Path -LiteralPath $ImporterPath)) } else { "" }
+$importerText = ($ImporterPath | ForEach-Object {
+    if (Test-Path -LiteralPath $_ -PathType Leaf) {
+        [IO.File]::ReadAllText((Resolve-Path -LiteralPath $_))
+    }
+}) -join "`n"
 $mappedProperties = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($match in [regex]::Matches($importerText, '"(?<name>_[A-Za-z_][A-Za-z0-9_]*)"')) {
     [void]$mappedProperties.Add($match.Groups['name'].Value)
@@ -709,6 +717,11 @@ $diagnosticCodes = @(
     [ordered]@{ code = "POI0008"; severity = "warning"; meaning = "Source render state has no exact XRENGINE representation." }
     [ordered]@{ code = "POI0009"; severity = "warning"; meaning = "Source animation binding could not be mapped deterministically." }
     [ordered]@{ code = "POI0010"; severity = "info"; meaning = "Native equivalent differs intentionally from Unity, VRChat, or ThryEditor behavior." }
+    [ordered]@{ code = "POI0011"; severity = "warning"; meaning = "A referenced source asset could not be resolved." }
+    [ordered]@{ code = "POI0012"; severity = "warning"; meaning = "A referenced texture asset cannot be represented by the requested texture role." }
+    [ordered]@{ code = "POI0013"; severity = "warning"; meaning = "The source material requests a UV channel the imported mesh does not provide." }
+    [ordered]@{ code = "POI0014"; severity = "warning"; meaning = "A source enum value is outside the pinned version's valid range." }
+    [ordered]@{ code = "POI0015"; severity = "warning"; meaning = "A required material-pass variant could not be prepared." }
 )
 
 $catalog = [ordered]@{
@@ -772,7 +785,7 @@ $catalog = [ordered]@{
     actionTypes = $actionTypeCoverage
     workflows = @(Get-WorkflowInventory -ThrySourceFiles $thrySourceFiles -ThryRoot $thryRoot)
     fixturePolicy = [ordered]@{
-        repositoryFixtures = "Only original XRENGINE-authored minimal Unity YAML fixtures are checked in during Phase 0."
+        repositoryFixtures = "Only original XRENGINE-authored Unity YAML and CC0 parity fixtures are checked in."
         upstreamShader = "Not redistributed; generator consumes a user-provided checkout at the pinned commit."
         upstreamLicenses = @(
             [ordered]@{ component = "Poiyomi Toon Shader"; license = "MIT"; copyright = "Copyright (c) 2023 Poiyomi Inc." }

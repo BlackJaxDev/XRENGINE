@@ -3,7 +3,8 @@ using System.Numerics;
 namespace XREngine.Scene.Importers.Poiyomi;
 
 /// <summary>
-/// Source-independent, versioned Poiyomi material semantics used by later converter phases.
+/// Source-independent, versioned Poiyomi material semantics shared by conversion,
+/// reporting, reimport, animation, and authoring workflows.
 /// </summary>
 public sealed record PoiyomiMaterialDescriptor
 {

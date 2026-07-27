@@ -13,7 +13,7 @@ Material:
   disabledShaderPasses:
   - Always
   - PREPASS
-  phase1UnknownRoot:
+  legacyUnknownRoot:
     preserved: true
   m_SavedProperties:
     serializedVersion: 2
@@ -26,5 +26,5 @@ Material:
     - _Cutoff: 0.42
     m_Colors:
     - _Color: {r: 0.1, g: 0.2, b: 0.3, a: 0.4}
-    phase1UnknownSaved:
+    legacyUnknownSaved:
     - key: value

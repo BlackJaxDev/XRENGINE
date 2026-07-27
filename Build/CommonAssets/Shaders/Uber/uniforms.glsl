@@ -689,7 +689,7 @@ uniform float _ParallaxOffset;
 uniform float _ParallaxMapChannel;
 #endif
 
-#include "poiyomi_phase5_7_uniforms.glsl"
-#include "poiyomi_phase8_10_uniforms.glsl"
+#include "poiyomi_surface_uniforms.glsl"
+#include "poiyomi_effect_uniforms.glsl"
 
 #endif // TOON_UNIFORMS_GLSL

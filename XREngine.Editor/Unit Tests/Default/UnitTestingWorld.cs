@@ -246,7 +246,12 @@ public static partial class EditorUnitTests
         var rootNode = new SceneNode("Root Node");
         scene.RootNodes.Add(rootNode);
 
-        Pawns.CreatePlayerPawn(setUI, isServer, rootNode);
+        Pawns.CreatePlayerPawn(
+            setUI,
+            isServer,
+            rootNode,
+            new Vector3(0.0f, 2.0f, 0.0f),
+            new Vector3(0.0f, 1.25f, -6.0f));
         DirectionalLightComponent? sunDirectionalLight = null;
         DirectionalLightComponent? moonDirectionalLight = null;
 

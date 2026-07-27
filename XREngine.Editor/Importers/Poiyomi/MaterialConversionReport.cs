@@ -136,8 +136,11 @@ public sealed class MaterialConversionReportRegistry
 public static class MaterialConversionReportBuilder
 {
     public const string ConverterId = "xrengine.poiyomi-toon";
-    public const string ConverterVersion = "12.0.0";
+    public const string ConverterVersion = "1.0.0";
     public const int SourceDescriptorVersion = 1;
+
+    private static readonly Lazy<IReadOnlySet<string>> PreservedRuntimeProperties =
+        new(LoadPreservedRuntimeProperties, LazyThreadSafetyMode.ExecutionAndPublication);
 
     private static readonly HashSet<string> ExactFeatures = new(StringComparer.Ordinal)
     {
@@ -191,6 +194,10 @@ public static class MaterialConversionReportBuilder
         ShaderUiManifest manifest = material.TryGetUberMaterialState(out _, out ShaderUiManifest resolved)
             ? resolved
             : ShaderUiManifest.Empty;
+        MaterialConversionDiagnostic[] effectiveDiagnostics = BuildEffectiveDiagnostics(
+            descriptor,
+            manifest,
+            diagnostics);
         List<MaterialFeatureConversionStatus> features = [];
         foreach (UberMaterialFeatureState feature in material.UberAuthoredState.Features
                      .Where(static feature => feature.Enabled)
@@ -213,7 +220,7 @@ public static class MaterialConversionReportBuilder
                 []));
         }
 
-        foreach (MaterialConversionDiagnostic diagnostic in diagnostics
+        foreach (MaterialConversionDiagnostic diagnostic in effectiveDiagnostics
                      .Where(static diagnostic => diagnostic.Code == MaterialConversionDiagnosticCodes.IntegrationUnavailable)
                      .OrderBy(static diagnostic => diagnostic.SourceProperty, StringComparer.Ordinal))
         {
@@ -242,7 +249,7 @@ public static class MaterialConversionReportBuilder
 
         IReadOnlyList<MaterialPreservedValue> preserved =
             descriptor is null ? [] : CollectPreservedValues(descriptor, manifest);
-        MaterialConversionDiagnosticGroup[] groups = diagnostics
+        MaterialConversionDiagnosticGroup[] groups = effectiveDiagnostics
             .GroupBy(diagnostic => ResolveDiagnosticFamily(diagnostic.SourceProperty))
             .OrderBy(static group => group.Key, StringComparer.Ordinal)
             .Select(group => new MaterialConversionDiagnosticGroup(
@@ -263,7 +270,7 @@ public static class MaterialConversionReportBuilder
             .Select(static pass => pass.Identity.ToString())
             .OrderBy(static value => value, StringComparer.Ordinal)
             .ToArray();
-        string[] failures = diagnostics
+        string[] failures = effectiveDiagnostics
             .Where(static diagnostic => diagnostic.Severity == MaterialConversionDiagnosticSeverity.Error)
             .Select(static diagnostic => diagnostic.ToString())
             .OrderBy(static value => value, StringComparer.Ordinal)
@@ -338,6 +345,61 @@ public static class MaterialConversionReportBuilder
                 "No direct active uber manifest binding; retained in the versioned source descriptor."));
         }
         return values;
+    }
+
+    private static MaterialConversionDiagnostic[] BuildEffectiveDiagnostics(
+        PoiyomiMaterialDescriptor? descriptor,
+        ShaderUiManifest manifest,
+        IReadOnlyList<MaterialConversionDiagnostic> diagnostics)
+    {
+        if (descriptor is null)
+            return [.. diagnostics];
+
+        string[] preserved = descriptor.PropertyBindings.Values
+            .Select(static binding => binding.SemanticName)
+            .Where(name => PreservedRuntimeProperties.Value.Contains(name) &&
+                           !manifest.PropertyLookup.ContainsKey(name))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
+        if (preserved.Length == 0 || diagnostics.Any(static diagnostic =>
+                diagnostic.Code == MaterialConversionDiagnosticCodes.RuntimeMappingMissing))
+            return [.. diagnostics];
+
+        const int previewLimit = 8;
+        string preview = string.Join(", ", preserved.Take(previewLimit));
+        if (preserved.Length > previewLimit)
+            preview += $", and {preserved.Length - previewLimit} more";
+
+        return
+        [
+            .. diagnostics,
+            new MaterialConversionDiagnostic(
+                MaterialConversionDiagnosticCodes.RuntimeMappingMissing,
+                MaterialConversionDiagnosticSeverity.Warning,
+                $"{preserved.Length} runtime-visible source properties have no active semantic mapping. " +
+                $"Their exact values remain in the versioned descriptor: {preview}.",
+                preserved[0]),
+        ];
+    }
+
+    private static IReadOnlySet<string> LoadPreservedRuntimeProperties()
+    {
+        using Stream stream = PoiyomiToon93Catalog.OpenCatalog();
+        using JsonDocument document = JsonDocument.Parse(stream);
+        HashSet<string> names = new(StringComparer.Ordinal);
+        foreach (JsonElement property in document.RootElement.GetProperty("properties").EnumerateArray())
+        {
+            string classification = property.GetProperty("classification").GetString() ?? string.Empty;
+            string parity = property.GetProperty("initialParity").GetString() ?? string.Empty;
+            if (parity != "missing" || classification is not ("runtime" or "renderState" or "animationLocking"))
+                continue;
+
+            string? name = property.GetProperty("name").GetString();
+            if (!string.IsNullOrWhiteSpace(name))
+                names.Add(name);
+        }
+        return names;
     }
 
     private static bool TrySerializeDescriptorValue(

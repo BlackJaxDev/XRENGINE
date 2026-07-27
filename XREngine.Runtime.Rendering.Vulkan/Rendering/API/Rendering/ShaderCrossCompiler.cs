@@ -36,6 +36,7 @@ public static class ShaderCrossCompiler
 
         ShadercApi.CompileOptionsSetSourceLanguage(options, sourceLanguage == ShaderSourceLanguage.Hlsl ? SourceLanguage.Hlsl : SourceLanguage.Glsl);
         ShadercApi.CompileOptionsSetOptimizationLevel(options, OptimizationLevel.Performance);
+            ShadercApi.CompileOptionsSetWarningsAsErrors(options);
 
         byte[] sourceBytes = Encoding.UTF8.GetBytes(source);
         byte[] nameBytes = GetNullTerminatedUtf8(name ?? "Shader");

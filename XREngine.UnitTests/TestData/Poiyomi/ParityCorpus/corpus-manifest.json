@@ -1,0 +1,186 @@
+{
+  "formatVersion": 1,
+  "poiyomiVersion": "9.3.64",
+  "poiyomiCommit": "c5aaeeb3a67782b7e8a26e184d5e0a1970792294",
+  "unityVersion": "2022.3.22f1",
+  "license": "CC0-1.0",
+  "licenseFile": "../LICENSE.txt",
+  "materials": [
+    {
+      "id": "unlocked-baseline",
+      "locked": false,
+      "renderPreset": "Opaque",
+      "features": ["surface", "lighting", "poiyomi-surface"],
+      "sourceValues": {"_Mode": 0, "_Color": [0.8, 0.7, 0.6, 1.0]}
+    },
+    {
+      "id": "locked-baseline",
+      "locked": true,
+      "renderPreset": "Opaque",
+      "features": ["surface", "lighting", "poiyomi-surface"],
+      "sourceValues": {"_ShaderOptimizerEnabled": 1, "_Mode": 0}
+    },
+    {
+      "id": "surface-maps",
+      "locked": false,
+      "renderPreset": "Opaque",
+      "features": ["surface", "normal-map", "alpha-masks", "color-adjustments"],
+      "sourceValues": {"_BumpScale": 0.75, "_MainAlphaMaskMode": 2}
+    },
+    {
+      "id": "stylized-lighting",
+      "locked": false,
+      "renderPreset": "Opaque",
+      "features": ["stylized-shading", "material-ao", "shadow-masks"],
+      "sourceValues": {"_ShadingEnabled": 1, "_LightingMode": 2}
+    },
+    {
+      "id": "pbr-reflections",
+      "locked": false,
+      "renderPreset": "Opaque",
+      "features": ["advanced-specular", "poiyomi-pbr-parity"],
+      "sourceValues": {"_EnableSpecular": 1, "_Metallic": 0.7, "_Smoothness": 0.4}
+    },
+    {
+      "id": "emission-slots",
+      "locked": false,
+      "renderPreset": "Additive",
+      "features": ["emission", "poiyomi-emission-slots", "poiyomi-audiolink"],
+      "sourceValues": {"_EnableEmission": 1, "_EmissionStrength": 3.0}
+    },
+    {
+      "id": "matcap-rim",
+      "locked": false,
+      "renderPreset": "Opaque",
+      "features": ["matcap", "rim-lighting", "poiyomi-matcap-rim-slots"],
+      "sourceValues": {"_MatcapEnable": 1, "_EnableRimLighting": 1}
+    },
+    {
+      "id": "decals-detail",
+      "locked": false,
+      "renderPreset": "Cutout",
+      "features": ["detail-textures", "poiyomi-decals"],
+      "sourceValues": {"_DecalEnabled": 1, "_Cutoff": 0.42}
+    },
+    {
+      "id": "outline-backface",
+      "locked": false,
+      "renderPreset": "OpaqueOutline",
+      "features": ["outline", "backface"],
+      "sourceValues": {"_OutlineEnabled": 1, "_OutlineWidth": 0.01}
+    },
+    {
+      "id": "special-effects",
+      "locked": false,
+      "renderPreset": "Transparent",
+      "features": ["glitter", "dissolve", "parallax", "poiyomi-special-effects"],
+      "sourceValues": {"_GlitterEnable": 1, "_EnableDissolve": 1}
+    },
+    {
+      "id": "flipbook-substance",
+      "locked": false,
+      "renderPreset": "TransparentPremultiplied",
+      "features": ["flipbook", "subsurface", "poiyomi-flipbook-array"],
+      "sourceValues": {"_EnableFlipbook": 1, "_SubsurfaceScattering": 1}
+    },
+    {
+      "id": "vertex-runtime",
+      "locked": false,
+      "renderPreset": "Multiplicative",
+      "features": ["poiyomi-vertex-effects", "poiyomi-view-context", "poiyomi-environment-adapters"],
+      "sourceValues": {"_PoiVertexEffectsEnabled": 1, "_LTCGI": 1}
+    },
+    {
+      "id": "maximal-practical-a",
+      "locked": false,
+      "renderPreset": "CutoutOutline",
+      "features": ["surface", "normal-map", "stylized-shading", "advanced-specular", "emission", "matcap", "rim-lighting", "detail-textures", "outline", "glitter", "dissolve", "parallax", "poiyomi-decals", "poiyomi-vertex-effects"],
+      "sourceValues": {"_Mode": 1, "_Cutoff": 0.5, "_EnableEmission": 1, "_OutlineEnabled": 1}
+    },
+    {
+      "id": "maximal-practical-b",
+      "locked": true,
+      "renderPreset": "TransparentAdditive",
+      "features": ["surface", "color-adjustments", "material-ao", "shadow-masks", "poiyomi-masks-themes", "poiyomi-lighting-parity", "poiyomi-emission-slots", "poiyomi-matcap-rim-slots", "flipbook", "subsurface", "poiyomi-special-effects", "poiyomi-audiolink", "poiyomi-environment-adapters", "poiyomi-view-context"],
+      "sourceValues": {"_ShaderOptimizerEnabled": 1, "_Mode": 3, "_EnableEmission": 1}
+    }
+  ],
+  "renderPresets": ["Opaque", "Cutout", "Transparent", "TransparentPremultiplied", "Additive", "Multiplicative", "OpaqueOutline", "CutoutOutline", "TransparentAdditive"],
+  "meshes": [
+    {"id": "attribute-grid", "attributes": ["UV0", "UV1", "UV2", "UV3", "Color", "Tangent"]},
+    {"id": "skinned-morph", "attributes": ["UV0", "UV1", "Color", "Tangent", "Skinning", "MorphTargets"]},
+    {"id": "mirrored-nonuniform", "attributes": ["UV0", "Tangent", "MirroredTransform", "NonUniformScale"]}
+  ],
+  "textures": [
+    {"id": "color-srgb", "kind": "2D", "colorSpace": "sRGB", "role": "Color", "format": "RGBA8"},
+    {"id": "normal-linear", "kind": "2D", "colorSpace": "Linear", "role": "Normal", "format": "RGBA8"},
+    {"id": "mask-linear", "kind": "2D", "colorSpace": "Linear", "role": "Mask", "format": "R8"},
+    {"id": "packed-linear", "kind": "2D", "colorSpace": "Linear", "role": "PackedData", "format": "RGBA8"},
+    {"id": "environment-cube", "kind": "Cube", "colorSpace": "sRGB", "role": "Environment", "format": "RGBA16F"},
+    {"id": "flipbook-array", "kind": "2DArray", "colorSpace": "sRGB", "role": "Animation", "format": "RGBA8"}
+  ],
+  "animations": [
+    {"id": "scalar", "valueKind": "Float", "source": "_EmissionStrength", "target": "_EmissionStrength"},
+    {"id": "vector", "valueKind": "Vector", "source": "_MainTex_ST", "target": "_MainTex_ST"},
+    {"id": "color", "valueKind": "Color", "source": "_Color", "target": "_Color"},
+    {"id": "texture", "valueKind": "Texture", "source": "_MainTex", "target": "_MainTex"},
+    {"id": "repeated-slot", "valueKind": "Float", "source": "_EmissionStrength1", "target": "_PoiEmissionStrength1"},
+    {"id": "renamed-locked", "valueKind": "Float", "source": "PROP_8f31d8", "target": "_RimWidth"}
+  ],
+  "schemaFixture": {
+    "formatVersion": 1,
+    "activeKinds": ["builtIn", "thry", "poiyomi"],
+    "activeAnnotations": ["[HDR]", "[Toggle]", "[Enum(A,B)]", "ThryRGBAPacker", "ThryDecalPositioning", "ThryShaderOptimizerLockButton", "condition_show", "on_value_actions"],
+    "inactiveLookalikes": ["// [Toggle] _Commented", "/* ThryRGBAPacker */", "#if 0 ThryDecalPositioning #endif", "Malformed(condition_show"]
+  },
+  "authoringFixtures": [
+    {"kind": "locale", "version": 2},
+    {"kind": "preset", "version": 2},
+    {"kind": "clipboard", "version": 2},
+    {"kind": "packing-recipe", "version": 1},
+    {"kind": "texture-array", "version": 1},
+    {"kind": "material-link", "version": 1},
+    {"kind": "cross-shader", "version": 1},
+    {"kind": "user-override", "version": 1}
+  ],
+  "multiMaterialFixtures": [
+    {"id": "compatible", "relationship": "Compatible"},
+    {"id": "mixed", "relationship": "MixedValues"},
+    {"id": "missing", "relationship": "MissingSemantic"},
+    {"id": "packed-split", "relationship": "PackedSplitEquivalent"},
+    {"id": "incompatible", "relationship": "IntentionallyIncompatible"}
+  ],
+  "visualValidation": {
+    "cameraPositions": [[0.0, 2.0, 0.0], [4.0, 2.0, -1.0], [-4.0, 3.0, -1.0]],
+    "lightDirection": [0.35, -0.82, -0.45],
+    "lightLux": 1200.0,
+    "exposure": 0.0,
+    "colorSpace": "Linear",
+    "unityReference": {
+      "shaderName": ".poiyomi/Poiyomi Toon",
+      "captureWidth": 640,
+      "captureHeight": 360,
+      "cameraLookAt": [0.0, 1.25, -6.0],
+      "quality": {"antiAliasing": 1, "shadows": "All", "shadowResolution": "High"}
+    },
+    "thresholds": {
+      "exact": {"meanAbsoluteError": 0.01, "maxAbsoluteError": 0.05},
+      "nativeEquivalent": {"meanAbsoluteError": 0.04, "maxAbsoluteError": 0.15}
+    },
+    "outputs": ["Opaque", "Cutout", "Transparent", "Additive", "Multiplicative", "Outline", "Shadow", "DepthNormal", "MotionVectors", "Composite"]
+  },
+  "performanceBudgets": {
+    "singleMaterialImportMs": 5000,
+    "avatarCorpusImportMs": 30000,
+    "variantGenerationMs": 2000,
+    "shaderCompilationMs": 10000,
+    "schemaLoadMs": 1000,
+    "firstInspectorOpenMs": 100,
+    "steadyInspectorDrawMs": 16,
+    "conditionInvalidationMicroseconds": 1000,
+    "steadyBindingAllocatedBytes": 0,
+    "steadySubmissionAllocatedBytes": 0,
+    "maxSamplerPressure": 32,
+    "maxPreviewMemoryMiB": 256
+  }
+}

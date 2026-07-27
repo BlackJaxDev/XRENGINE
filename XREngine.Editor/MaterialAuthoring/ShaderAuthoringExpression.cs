@@ -262,7 +262,9 @@ public sealed class ShaderAuthoringExpression
             switch (token.Kind)
             {
                 case TokenKind.Number:
-                    return new LiteralNode(new(double.Parse(token.Text, NumberStyles.Float, CultureInfo.InvariantCulture)));
+                    if (!double.TryParse(token.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double number))
+                        throw new ExpressionParseException($"Invalid numeric literal '{token.Text}'.");
+                    return new LiteralNode(new(number));
                 case TokenKind.String:
                     return new LiteralNode(new(token.Text));
                 case TokenKind.True:

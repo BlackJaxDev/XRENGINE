@@ -16,9 +16,9 @@ public sealed record MaterialSerializedParameter(string Kind, string Json)
             ShaderInt value => new("int", JsonSerializer.Serialize(value.Value)),
             ShaderUInt value => new("uint", JsonSerializer.Serialize(value.Value)),
             ShaderBool value => new("bool", JsonSerializer.Serialize(value.Value)),
-            ShaderVector2 value => new("vector2", JsonSerializer.Serialize(value.Value)),
-            ShaderVector3 value => new("vector3", JsonSerializer.Serialize(value.Value)),
-            ShaderVector4 value => new("vector4", JsonSerializer.Serialize(value.Value)),
+            ShaderVector2 value => new("vector2", JsonSerializer.Serialize(new[] { value.Value.X, value.Value.Y })),
+            ShaderVector3 value => new("vector3", JsonSerializer.Serialize(new[] { value.Value.X, value.Value.Y, value.Value.Z })),
+            ShaderVector4 value => new("vector4", JsonSerializer.Serialize(new[] { value.Value.X, value.Value.Y, value.Value.Z, value.Value.W })),
             _ => null,
         };
 
@@ -41,13 +41,13 @@ public sealed record MaterialSerializedParameter(string Kind, string Json)
                     value.Value = JsonSerializer.Deserialize<bool>(Json);
                     return true;
                 case ("vector2", ShaderVector2 value):
-                    value.Value = JsonSerializer.Deserialize<Vector2>(Json);
+                    value.Value = DeserializeVector2(Json);
                     return true;
                 case ("vector3", ShaderVector3 value):
-                    value.Value = JsonSerializer.Deserialize<Vector3>(Json);
+                    value.Value = DeserializeVector3(Json);
                     return true;
                 case ("vector4", ShaderVector4 value):
-                    value.Value = JsonSerializer.Deserialize<Vector4>(Json);
+                    value.Value = DeserializeVector4(Json);
                     return true;
                 default:
                     return false;
@@ -57,6 +57,24 @@ public sealed record MaterialSerializedParameter(string Kind, string Json)
         {
             return false;
         }
+    }
+
+    private static Vector2 DeserializeVector2(string json)
+    {
+        float[] values = JsonSerializer.Deserialize<float[]>(json) ?? throw new JsonException();
+        return values.Length == 2 ? new(values[0], values[1]) : throw new JsonException();
+    }
+
+    private static Vector3 DeserializeVector3(string json)
+    {
+        float[] values = JsonSerializer.Deserialize<float[]>(json) ?? throw new JsonException();
+        return values.Length == 3 ? new(values[0], values[1], values[2]) : throw new JsonException();
+    }
+
+    private static Vector4 DeserializeVector4(string json)
+    {
+        float[] values = JsonSerializer.Deserialize<float[]>(json) ?? throw new JsonException();
+        return values.Length == 4 ? new(values[0], values[1], values[2], values[3]) : throw new JsonException();
     }
 }
 
