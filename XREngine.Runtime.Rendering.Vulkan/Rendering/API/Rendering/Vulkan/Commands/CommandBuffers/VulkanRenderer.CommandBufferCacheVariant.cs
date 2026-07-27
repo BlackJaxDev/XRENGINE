@@ -41,6 +41,7 @@ namespace XREngine.Rendering.Vulkan
             public VulkanImageLayoutStateSnapshot? RecordedImageLayoutEndState { get; set; }
             public ulong CommandChainScheduleSignature { get; set; } = ulong.MaxValue;
             public ulong CommandChainPrimaryGroupSignature { get; set; } = ulong.MaxValue;
+            public ulong CommandChainPrimarySkeletonSignature { get; set; } = ulong.MaxValue;
             public int CommandChainPrimaryGroupCount { get; set; } = -1;
             public ulong PlannerRevision { get; set; } = ulong.MaxValue;
             public bool GpuProfilerActive { get; set; }

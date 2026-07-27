@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Threading;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
@@ -301,63 +303,29 @@ public unsafe partial class VulkanRenderer
 
 		private bool AreCachedBuffersReadyForRendering(out string detail, bool skipVertexAttributeBuffers = false)
 		{
-			lock (_bufferStateSync)
+			BufferReadinessSnapshot snapshot = Volatile.Read(ref _bufferReadinessSnapshot);
+			if (!string.IsNullOrEmpty(snapshot.MissingExpectedIndexBufferDetail))
 			{
-				foreach (var pair in _bufferCache)
-				{
-					VkDataBuffer buffer = pair.Value;
-					if (skipVertexAttributeBuffers && buffer.Data.Target == EBufferTarget.ArrayBuffer)
-						continue;
-
-					if (!buffer.IsReadyForRendering)
-					{
-						detail = $"buffer='{pair.Key}' target={buffer.Data.Target} generated={buffer.IsGenerated} length={buffer.Data.Length} allocated={buffer.AllocatedByteSize}";
-						return false;
-					}
-				}
-
-				if (!_indexBuffersSkippedForShaderGeneratedVertices &&
-					!IsExpectedIndexBufferReady(EPrimitiveType.Triangles, _triangleIndexBuffer, "Triangles", out detail))
-					return false;
-				if (!_indexBuffersSkippedForShaderGeneratedVertices &&
-					!IsExpectedIndexBufferReady(EPrimitiveType.Lines, _lineIndexBuffer, "Lines", out detail))
-					return false;
-				if (!_indexBuffersSkippedForShaderGeneratedVertices &&
-					!IsExpectedIndexBufferReady(EPrimitiveType.Points, _pointIndexBuffer, "Points", out detail))
-					return false;
-
-				detail = string.Empty;
-				return true;
-			}
-		}
-
-		private bool IsExpectedIndexBufferReady(EPrimitiveType type, VkDataBuffer? buffer, string primitiveName, out string detail)
-		{
-			if (Mesh?.HasIndexData(type) == true && buffer is null)
-			{
-				detail = $"indexBuffer='{primitiveName}' pending async build for indexed mesh";
+				detail = snapshot.MissingExpectedIndexBufferDetail;
 				return false;
 			}
 
-			return IsIndexBufferReady(buffer, primitiveName, out detail);
-		}
-
-		private static bool IsIndexBufferReady(VkDataBuffer? buffer, string primitiveName, out string detail)
-		{
-			if (buffer is null)
+			KeyValuePair<string, VkDataBuffer>[] buffers = skipVertexAttributeBuffers
+				? snapshot.ShaderGeneratedRequiredBuffers
+				: snapshot.RequiredBuffers;
+			for (int i = 0; i < buffers.Length; i++)
 			{
-				detail = string.Empty;
-				return true;
+				KeyValuePair<string, VkDataBuffer> pair = buffers[i];
+				VkDataBuffer buffer = pair.Value;
+				if (!buffer.IsReadyForRendering)
+				{
+					detail = $"buffer='{pair.Key}' target={buffer.Data.Target} generated={buffer.IsGenerated} length={buffer.Data.Length} allocated={buffer.AllocatedByteSize}";
+					return false;
+				}
 			}
 
-			if (buffer.IsReadyForRendering)
-			{
-				detail = string.Empty;
-				return true;
-			}
-
-			detail = $"indexBuffer='{primitiveName}' generated={buffer.IsGenerated} length={buffer.Data.Length} allocated={buffer.AllocatedByteSize}";
-			return false;
+			detail = string.Empty;
+			return true;
 		}
 
 		private bool SetPrepareResult(bool ready, string result, string detail, out string reason)

@@ -366,8 +366,10 @@ public sealed class RenderPipelineResourceLifecycleTests
     {
         RenderPassMetadataCollection collection = new();
         RenderPassBuilder passBuilder = collection.ForPass(3, "Main", ERenderGraphPassStage.Graphics);
-        RenderPassMetadata pass = collection.Build().Single();
+        RenderPassMetadataSnapshot snapshot = collection.Build().ShouldBeOfType<RenderPassMetadataSnapshot>();
+        RenderPassMetadata pass = snapshot.Single();
 
+        int initialSnapshotRevision = snapshot.RevisionStamp;
         int initialRevision = pass.Revision;
         var initialDependencies = pass.ExplicitDependencies;
         var initialSchemas = pass.DescriptorSchemas;
@@ -384,6 +386,7 @@ public sealed class RenderPipelineResourceLifecycleTests
         passBuilder.DependsOn(1);
         pass.Revision.ShouldBeGreaterThan(initialRevision);
         pass.ExplicitDependencies.ShouldNotBeSameAs(initialDependencies);
+        snapshot.RevisionStamp.ShouldNotBe(initialSnapshotRevision);
         pass.ExplicitDependencies.ShouldBe([1]);
 
         int dependencyRevision = pass.Revision;

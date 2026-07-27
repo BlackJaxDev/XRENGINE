@@ -1,3 +1,4 @@
+using System.Threading;
 using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Rendering;
@@ -15,7 +16,7 @@ namespace XREngine
         public static class PlayMode
         {
             // Default to edit mode so the editor starts in a non-simulating state.
-            private static EPlayModeState _state = EPlayModeState.Edit;
+            private static int _state = (int)EPlayModeState.Edit;
             private static PlayModeConfiguration _configuration = new();
             private static WorldStateSnapshot? _editModeSnapshot;
             private static readonly object _stateLock = new();
@@ -32,20 +33,17 @@ namespace XREngine
             /// </summary>
             public static EPlayModeState State
             {
-                get
-                {
-                    lock (_stateLock)
-                        return _state;
-                }
+                get => (EPlayModeState)Volatile.Read(ref _state);
                 private set
                 {
                     EPlayModeState oldState;
                     lock (_stateLock)
                     {
-                        if (_state == value)
+                        EPlayModeState current = (EPlayModeState)_state;
+                        if (current == value)
                             return;
-                        oldState = _state;
-                        _state = value;
+                        oldState = current;
+                        Volatile.Write(ref _state, (int)value);
                     }
                     Debug.Out($"PlayMode state changed: {oldState} -> {value}");
                     StateChanged?.Invoke(value);
@@ -65,8 +63,8 @@ namespace XREngine
             /// <summary>
             /// Whether the engine is currently transitioning between modes.
             /// </summary>
-            public static bool IsTransitioning => State == EPlayModeState.EnteringPlay
-                                                || State == EPlayModeState.ExitingPlay;
+            public static bool IsTransitioning
+                => State is EPlayModeState.EnteringPlay or EPlayModeState.ExitingPlay;
 
             /// <summary>
             /// Whether the game is paused (in play mode but not simulating).

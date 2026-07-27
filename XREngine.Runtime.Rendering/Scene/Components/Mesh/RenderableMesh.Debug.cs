@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Threading;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -85,13 +86,26 @@ namespace XREngine.Components.Scene.Mesh
                 if (nextBits == _highlightStencilBits)
                     return;
 
-                _highlightStencilBits = nextBits;
+                Volatile.Write(ref _highlightStencilBits, nextBits);
                 ApplyHighlightRenderOptionsOverride_NoLock(CurrentLODRenderer?.Material);
             }
         }
 
         private void ApplyHighlightRenderOptionsOverride(XRMaterial? sourceMaterial)
         {
+            if (Volatile.Read(ref _highlightStencilBits) == 0)
+            {
+                _rc.MaterialOverride = null;
+                _rc.RenderOptionsOverride = null;
+                _rc.ForceCpuRendering = false;
+
+                // Enabling can race this common zero-bit path. Recheck after clearing:
+                // either the setter has already published the bit and we apply it below,
+                // or it will apply the override itself after this method returns.
+                if (Volatile.Read(ref _highlightStencilBits) == 0)
+                    return;
+            }
+
             lock (_highlightStateLock)
                 ApplyHighlightRenderOptionsOverride_NoLock(sourceMaterial);
         }

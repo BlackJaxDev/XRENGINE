@@ -4,7 +4,15 @@ public unsafe partial class VulkanRenderer
 {
     internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingMeshDraw Draw, FrameOpContext Context) : FrameOp(PassIndex, Target, Context)
     {
-        public PendingMeshDraw Draw { get; private set; } = Draw;
+        private PendingMeshDraw _draw = Draw;
+
+        public PendingMeshDraw Draw
+        {
+            get => _draw;
+            private set => _draw = value;
+        }
+
+        internal ref readonly PendingMeshDraw DrawRef => ref _draw;
 
         /// <summary>
         /// True when this draw was enqueued inside an occlusion QueryOp Begin/End bracket

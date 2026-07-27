@@ -73,6 +73,8 @@ public unsafe partial class VulkanRenderer
         private readonly Dictionary<XRShader, VkShader> _shaderCache = new();
         private readonly Dictionary<EProgramStageMask, VkShader> _stageLookup = new();
         private DescriptorSetLayout[] _descriptorSetLayouts = Array.Empty<DescriptorSetLayout>();
+        private ulong _descriptorLayoutFingerprint;
+        private ulong _descriptorSchemaFingerprint;
         private PipelineLayout _pipelineLayout;
         private readonly List<DescriptorBindingInfo> _programDescriptorBindings = new();
         private readonly Dictionary<string, AutoUniformBlockInfo> _autoUniformBlocks = new(StringComparer.Ordinal);
@@ -85,6 +87,7 @@ public unsafe partial class VulkanRenderer
         private readonly Dictionary<string, XRTexture> _samplersByName = new(StringComparer.Ordinal);
         private readonly Dictionary<uint, ProgramImageBinding> _imagesByUnit = new();
         private readonly Dictionary<uint, XRDataBuffer> _buffersByBinding = new();
+        private ComputeDispatchSnapshot? _appliedBindingSnapshot;
         private readonly List<ComputeDispatchSnapshot> _frameBindingSnapshotPool = [];
         private ulong _frameBindingSnapshotPoolFrame;
         private int _frameBindingSnapshotPoolCursor;
@@ -119,6 +122,8 @@ public unsafe partial class VulkanRenderer
         public PipelineLayout PipelineLayout => _pipelineLayout;
         internal ulong LinkGeneration => unchecked((ulong)Volatile.Read(ref _linkGeneration));
         internal DescriptorHeapProgramLayout? DescriptorHeapLayout => _descriptorHeapLayout;
+        internal ulong DescriptorLayoutFingerprint => _descriptorLayoutFingerprint;
+        internal ulong DescriptorSchemaFingerprint => _descriptorSchemaFingerprint;
         public IReadOnlyList<DescriptorSetLayout> DescriptorSetLayouts => _descriptorSetLayouts;
         public IReadOnlyList<DescriptorBindingInfo> DescriptorBindings => _programDescriptorBindings;
         public IReadOnlyDictionary<string, AutoUniformBlockInfo> AutoUniformBlocks => _autoUniformBlocks;
@@ -384,17 +389,55 @@ public unsafe partial class VulkanRenderer
                 Link();
         }
 
+        /// <summary>
+        /// Opens a private per-thread writer for one immutable material-binding
+        /// snapshot. Shared immediate bindings continue to use <see cref="_bindingLock"/>.
+        /// </summary>
+        internal BindingUpdateScope BeginBindingUpdate()
+            => new(this);
+
+        internal readonly ref struct BindingUpdateScope
+        {
+            private readonly VkRenderProgram _owner;
+            private readonly BindingCaptureState _state;
+
+            internal BindingUpdateScope(VkRenderProgram owner)
+            {
+                _owner = owner;
+                _state = owner.PushBindingCapture();
+            }
+
+            public void Dispose()
+                => _owner.PopBindingCapture(_state);
+        }
+
         internal void ClearBindings()
         {
-            lock (_bindingLock)
+            if (TryGetActiveBindingCaptureState(out BindingCaptureState capture))
             {
-                _uniformValues.Clear();
-                _samplersByUnit.Clear();
-                _samplerNamesByUnit.Clear();
-                _samplersByName.Clear();
-                _imagesByUnit.Clear();
-                _buffersByBinding.Clear();
+                capture.Clear();
+                return;
             }
+
+            if (Monitor.IsEntered(_bindingLock))
+            {
+                ClearBindingsNoLock();
+                return;
+            }
+
+            lock (_bindingLock)
+                ClearBindingsNoLock();
+        }
+
+        private void ClearBindingsNoLock()
+        {
+            _appliedBindingSnapshot = null;
+            _uniformValues.Clear();
+            _samplersByUnit.Clear();
+            _samplerNamesByUnit.Clear();
+            _samplersByName.Clear();
+            _imagesByUnit.Clear();
+            _buffersByBinding.Clear();
         }
 
         private void SetUniformValue(string name, EShaderVarType type, object value, bool isArray = false)
@@ -405,15 +448,59 @@ public unsafe partial class VulkanRenderer
             if (string.IsNullOrWhiteSpace(name))
                 return;
 
-            lock (_bindingLock)
+            if (!TryResolveBindingWriteState(out BindingCaptureState? capture))
+                return;
+
+            if (capture is not null)
+            {
+                capture.Uniforms[name] = value;
+                return;
+            }
+
+            if (Monitor.IsEntered(_bindingLock))
+            {
+                DetachAppliedBindingSnapshotNoLock();
                 _uniformValues[name] = value;
+                return;
+            }
+
+            lock (_bindingLock)
+            {
+                DetachAppliedBindingSnapshotNoLock();
+                _uniformValues[name] = value;
+            }
         }
 
         internal bool TryGetUniformValue(string name, out ProgramUniformValue value)
         {
+            if (TryGetActiveBindingCaptureState(out BindingCaptureState capture))
+                return TryGetUniformValueNoLock(capture.Uniforms, name, out value);
+
             lock (_bindingLock)
-            {
-                if (_uniformValues.TryGetValue(name, out value))
+                return TryGetUniformValueNoLock(
+                    _appliedBindingSnapshot?.Uniforms ?? _uniformValues,
+                    name,
+                    out value);
+        }
+
+        /// <summary>
+        /// Reads an immutable draw snapshot directly when one is available, avoiding
+        /// replay into shared mutable program dictionaries on command-buffer reuse.
+        /// </summary>
+        internal bool TryGetUniformValue(
+            ComputeDispatchSnapshot? snapshot,
+            string name,
+            out ProgramUniformValue value)
+            => snapshot is not null
+                ? TryGetUniformValueNoLock(snapshot.Uniforms, name, out value)
+                : TryGetUniformValue(name, out value);
+
+        private static bool TryGetUniformValueNoLock(
+            Dictionary<string, ProgramUniformValue> uniforms,
+            string name,
+            out ProgramUniformValue value)
+        {
+                if (uniforms.TryGetValue(name, out value))
                     return true;
 
                 // Keep parity with vertex suffix-based engine uniforms.
@@ -422,10 +509,10 @@ public unsafe partial class VulkanRenderer
                     string stripped = VertexBaseUniformNames.GetOrAdd(
                         name,
                         static uniformName => uniformName[..^4]);
-                    if (_uniformValues.TryGetValue(stripped, out value))
+                    if (uniforms.TryGetValue(stripped, out value))
                         return true;
                 }
-                else if (_uniformValues.TryGetValue(
+                else if (uniforms.TryGetValue(
                     VertexSuffixedUniformNames.GetOrAdd(
                         name,
                         static uniformName => string.Concat(uniformName, "_VTX")),
@@ -433,7 +520,6 @@ public unsafe partial class VulkanRenderer
                 {
                     return true;
                 }
-            }
 
             value = default;
             return false;
@@ -441,65 +527,117 @@ public unsafe partial class VulkanRenderer
 
         internal void ApplyBindingSnapshot(ComputeDispatchSnapshot snapshot)
         {
+            ArgumentNullException.ThrowIfNull(snapshot);
             lock (_bindingLock)
-            {
-                _uniformValues.Clear();
-                _samplersByUnit.Clear();
-                _samplerNamesByUnit.Clear();
-                _samplersByName.Clear();
-                _imagesByUnit.Clear();
-                _buffersByBinding.Clear();
+                _appliedBindingSnapshot = snapshot;
+        }
 
-                foreach (var pair in snapshot.Uniforms)
-                    _uniformValues[pair.Key] = pair.Value;
+        /// <summary>
+        /// Materializes an applied immutable snapshot only when a later callback mutates
+        /// program bindings. The steady reusable-draw path never pays this copy.
+        /// </summary>
+        private void DetachAppliedBindingSnapshotNoLock()
+        {
+            if (_appliedBindingSnapshot is not { } snapshot)
+                return;
 
-                foreach (var pair in snapshot.Samplers)
-                    _samplersByUnit[pair.Key] = pair.Value;
+            _uniformValues.Clear();
+            _samplersByUnit.Clear();
+            _samplerNamesByUnit.Clear();
+            _samplersByName.Clear();
+            _imagesByUnit.Clear();
+            _buffersByBinding.Clear();
 
-                foreach (var pair in snapshot.SamplerNamesByUnit)
-                    _samplerNamesByUnit[pair.Key] = pair.Value;
+            foreach (var pair in snapshot.Uniforms)
+                _uniformValues[pair.Key] = pair.Value;
 
-                foreach (var pair in snapshot.SamplersByName)
-                    _samplersByName[pair.Key] = pair.Value;
+            foreach (var pair in snapshot.Samplers)
+                _samplersByUnit[pair.Key] = pair.Value;
 
-                foreach (var pair in snapshot.Images)
-                    _imagesByUnit[pair.Key] = pair.Value;
+            foreach (var pair in snapshot.SamplerNamesByUnit)
+                _samplerNamesByUnit[pair.Key] = pair.Value;
 
-                foreach (var pair in snapshot.Buffers)
-                    _buffersByBinding[pair.Key] = pair.Value.Data;
-            }
+            foreach (var pair in snapshot.SamplersByName)
+                _samplersByName[pair.Key] = pair.Value;
+
+            foreach (var pair in snapshot.Images)
+                _imagesByUnit[pair.Key] = pair.Value;
+
+            foreach (var pair in snapshot.Buffers)
+                _buffersByBinding[pair.Key] = pair.Value.Data;
+
+            _appliedBindingSnapshot = null;
         }
 
         internal ComputeDispatchSnapshot CaptureComputeSnapshot()
         {
-            lock (_bindingLock)
+            if (TryGetActiveBindingCaptureState(out BindingCaptureState capture))
             {
-                ComputeDispatchSnapshot snapshot = RentFrameBindingSnapshot()
-                    ?? new ComputeDispatchSnapshot();
-                snapshot.Reset(
-                    _uniformValues,
-                    _samplersByUnit,
-                    _samplerNamesByUnit,
-                    _samplersByName,
-                    _imagesByUnit);
-                snapshot.Buffers.EnsureCapacity(_buffersByBinding.Count);
-                bool allowSynchronousUpload = Renderer.AllowSynchronousResourceUploads;
-                foreach (KeyValuePair<uint, XRDataBuffer> pair in _buffersByBinding)
-                {
-                    XRDataBuffer buffer = pair.Value;
-                    if (Renderer.GetOrCreateAPIRenderObject(buffer, generateNow: allowSynchronousUpload) is not VkDataBuffer vkBuffer ||
-                        !vkBuffer.TryCaptureComputeBufferSnapshot(allowSynchronousUpload, out VulkanComputeBufferBinding bufferBinding))
-                    {
-                        bufferBinding = new VulkanComputeBufferBinding(buffer, default, 0UL, 0);
-                    }
+                return CaptureComputeSnapshot(
+                    capture.Uniforms,
+                    capture.SamplersByUnit,
+                    capture.SamplerNamesByUnit,
+                    capture.SamplersByName,
+                    capture.ImagesByUnit,
+                    capture.BuffersByBinding,
+                    capture.RentFrameSnapshot());
+            }
 
-                    snapshot.Buffers[pair.Key] = bufferBinding;
-                    if (!string.IsNullOrWhiteSpace(buffer.AttributeName))
-                        snapshot.BuffersByName.TryAdd(buffer.AttributeName, bufferBinding);
+            if (Monitor.IsEntered(_bindingLock))
+                return CaptureComputeSnapshotNoLock();
+
+            lock (_bindingLock)
+                return CaptureComputeSnapshotNoLock();
+        }
+
+        private ComputeDispatchSnapshot CaptureComputeSnapshotNoLock()
+        {
+            DetachAppliedBindingSnapshotNoLock();
+            return CaptureComputeSnapshot(
+                _uniformValues,
+                _samplersByUnit,
+                _samplerNamesByUnit,
+                _samplersByName,
+                _imagesByUnit,
+                _buffersByBinding,
+                RentFrameBindingSnapshot());
+        }
+
+        private ComputeDispatchSnapshot CaptureComputeSnapshot(
+            Dictionary<string, ProgramUniformValue> uniforms,
+            Dictionary<uint, XRTexture> samplersByUnit,
+            Dictionary<uint, string> samplerNamesByUnit,
+            Dictionary<string, XRTexture> samplersByName,
+            Dictionary<uint, ProgramImageBinding> imagesByUnit,
+            Dictionary<uint, XRDataBuffer> buffersByBinding,
+            ComputeDispatchSnapshot? rentedSnapshot)
+        {
+            ComputeDispatchSnapshot snapshot = rentedSnapshot ?? new ComputeDispatchSnapshot();
+            snapshot.Reset(
+                uniforms,
+                samplersByUnit,
+                samplerNamesByUnit,
+                samplersByName,
+                imagesByUnit);
+            snapshot.Buffers.EnsureCapacity(buffersByBinding.Count);
+            bool allowSynchronousUpload = Renderer.AllowSynchronousResourceUploads;
+            foreach (KeyValuePair<uint, XRDataBuffer> pair in buffersByBinding)
+            {
+                XRDataBuffer buffer = pair.Value;
+                if (Renderer.GetOrCreateAPIRenderObject(buffer, generateNow: allowSynchronousUpload) is not VkDataBuffer vkBuffer ||
+                    !vkBuffer.TryCaptureComputeBufferSnapshot(allowSynchronousUpload, out VulkanComputeBufferBinding bufferBinding))
+                {
+                    bufferBinding = new VulkanComputeBufferBinding(buffer, default, 0UL, 0);
                 }
 
-                return snapshot;
+                snapshot.Buffers[pair.Key] = bufferBinding;
+                if (!string.IsNullOrWhiteSpace(buffer.AttributeName))
+                    snapshot.BuffersByName.TryAdd(buffer.AttributeName, bufferBinding);
             }
+
+            snapshot.PublishBindingLayoutSignatures();
+
+            return snapshot;
         }
 
         /// <summary>
@@ -574,9 +712,21 @@ public unsafe partial class VulkanRenderer
 
         internal bool HasBoundDescriptorResources()
         {
+            if (TryGetActiveBindingCaptureState(out BindingCaptureState capture))
+                return capture.SamplersByName.Count != 0 ||
+                    capture.BuffersByBinding.Count != 0;
+
+            if (Monitor.IsEntered(_bindingLock))
+                return HasBoundDescriptorResourcesNoLock();
+
             lock (_bindingLock)
-                return _samplersByName.Count != 0 || _buffersByBinding.Count != 0;
+                return HasBoundDescriptorResourcesNoLock();
         }
+
+        private bool HasBoundDescriptorResourcesNoLock()
+            => _appliedBindingSnapshot is { } snapshot
+                ? snapshot.SamplersByName.Count != 0 || snapshot.Buffers.Count != 0
+                : _samplersByName.Count != 0 || _buffersByBinding.Count != 0;
 
         private void Uniform(string name, Matrix4x4 value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._mat4, value));
         private void Uniform(string name, Quaternion value) => SetUniformValue(name, new ProgramUniformValue(EShaderVarType._vec4, new Vector4(value.X, value.Y, value.Z, value.W)));
@@ -635,22 +785,40 @@ public unsafe partial class VulkanRenderer
             if (texture is not XRTexture xrTexture)
                 return;
 
+            if (!TryResolveBindingWriteState(out BindingCaptureState? capture))
+                return;
+
             uint unit = textureUnit < 0 ? 0u : (uint)textureUnit;
-            lock (_bindingLock)
+            if (capture is not null)
             {
-                _samplersByUnit[unit] = xrTexture;
-                if (!string.IsNullOrWhiteSpace(name))
-                {
-                    _samplerNamesByUnit[unit] = name;
-                    _samplersByName[name] = xrTexture;
-                }
-                else
-                {
-                    _samplerNamesByUnit.Remove(unit);
-                }
+                capture.SetSampler(name, xrTexture, unit);
+            }
+            else if (Monitor.IsEntered(_bindingLock))
+            {
+                SetSamplerNoLock(name, xrTexture, unit);
+            }
+            else
+            {
+                lock (_bindingLock)
+                    SetSamplerNoLock(name, xrTexture, unit);
             }
 
             Renderer.TrackTextureBinding(xrTexture);
+        }
+
+        private void SetSamplerNoLock(string name, XRTexture texture, uint unit)
+        {
+            DetachAppliedBindingSnapshotNoLock();
+            _samplersByUnit[unit] = texture;
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                _samplerNamesByUnit[unit] = name;
+                _samplersByName[name] = texture;
+            }
+            else
+            {
+                _samplerNamesByUnit.Remove(unit);
+            }
         }
 
         private void Sampler(int location, IRenderTextureResource texture, int textureUnit)
@@ -661,8 +829,27 @@ public unsafe partial class VulkanRenderer
             if (texture is not XRTexture xrTexture)
                 return;
 
-            lock (_bindingLock)
-                _imagesByUnit[unit] = new ProgramImageBinding(xrTexture, level, layered, layer, access, format);
+            if (!TryResolveBindingWriteState(out BindingCaptureState? capture))
+                return;
+
+            ProgramImageBinding binding = new(xrTexture, level, layered, layer, access, format);
+            if (capture is not null)
+            {
+                capture.ImagesByUnit[unit] = binding;
+            }
+            else if (Monitor.IsEntered(_bindingLock))
+            {
+                DetachAppliedBindingSnapshotNoLock();
+                _imagesByUnit[unit] = binding;
+            }
+            else
+            {
+                lock (_bindingLock)
+                {
+                    DetachAppliedBindingSnapshotNoLock();
+                    _imagesByUnit[unit] = binding;
+                }
+            }
 
             Renderer.TrackTextureBinding(xrTexture);
         }
@@ -672,8 +859,26 @@ public unsafe partial class VulkanRenderer
             if (buffer is null)
                 return;
 
-            lock (_bindingLock)
+            if (!TryResolveBindingWriteState(out BindingCaptureState? capture))
+                return;
+
+            if (capture is not null)
+            {
+                capture.BuffersByBinding[index] = buffer;
+            }
+            else if (Monitor.IsEntered(_bindingLock))
+            {
+                DetachAppliedBindingSnapshotNoLock();
                 _buffersByBinding[index] = buffer;
+            }
+            else
+            {
+                lock (_bindingLock)
+                {
+                    DetachAppliedBindingSnapshotNoLock();
+                    _buffersByBinding[index] = buffer;
+                }
+            }
 
             Renderer.TrackBufferBinding(buffer);
         }
@@ -1074,9 +1279,18 @@ public unsafe partial class VulkanRenderer
             if (string.IsNullOrEmpty(samplerName))
                 return false;
 
+            if (TryGetActiveBindingCaptureState(out BindingCaptureState capture))
+            {
+                if (!capture.SamplersByName.TryGetValue(samplerName, out texture))
+                    return false;
+
+                return true;
+            }
+
             lock (_bindingLock)
             {
-                if (_samplersByName.TryGetValue(samplerName, out XRTexture? found))
+                Dictionary<string, XRTexture> samplers = _appliedBindingSnapshot?.SamplersByName ?? _samplersByName;
+                if (samplers.TryGetValue(samplerName, out XRTexture? found))
                 {
                     texture = found;
                     return true;
@@ -1088,9 +1302,23 @@ public unsafe partial class VulkanRenderer
 
         internal bool TryGetBoundBuffer(uint binding, out XRDataBuffer? buffer)
         {
+            if (TryGetActiveBindingCaptureState(out BindingCaptureState capture))
+            {
+                buffer = capture.BuffersByBinding.GetValueOrDefault(binding);
+                return buffer is not null;
+            }
+
             lock (_bindingLock)
             {
-                if (_buffersByBinding.TryGetValue(binding, out XRDataBuffer? found))
+                if (_appliedBindingSnapshot is { } snapshot &&
+                    snapshot.Buffers.TryGetValue(binding, out VulkanComputeBufferBinding captured))
+                {
+                    buffer = captured.Data;
+                    return true;
+                }
+
+                if (_appliedBindingSnapshot is null &&
+                    _buffersByBinding.TryGetValue(binding, out XRDataBuffer? found))
                 {
                     buffer = found;
                     return true;
@@ -1109,10 +1337,11 @@ public unsafe partial class VulkanRenderer
         {
             lock (_bindingLock)
             {
-                hash.Add(_samplersByName.Count);
+                Dictionary<string, XRTexture> samplers = _appliedBindingSnapshot?.SamplersByName ?? _samplersByName;
+                hash.Add(samplers.Count);
                 ulong xor = 0;
                 ulong sum = 0;
-                foreach (KeyValuePair<string, XRTexture> pair in _samplersByName)
+                foreach (KeyValuePair<string, XRTexture> pair in samplers)
                     AddUnorderedFingerprintItem(ref xor, ref sum, ComputeSamplerResourceFingerprintItem(pair.Key, pair.Value));
 
                 hash.Add(xor);
@@ -1131,11 +1360,25 @@ public unsafe partial class VulkanRenderer
         {
             lock (_bindingLock)
             {
-                hash.Add(_buffersByBinding.Count);
                 ulong xor = 0;
                 ulong sum = 0;
-                foreach (KeyValuePair<uint, XRDataBuffer> pair in _buffersByBinding)
-                    AddUnorderedFingerprintItem(ref xor, ref sum, ComputeBoundBufferResourceFingerprintItem(pair.Key, pair.Value));
+                if (_appliedBindingSnapshot is { } snapshot)
+                {
+                    hash.Add(snapshot.Buffers.Count);
+                    foreach (KeyValuePair<uint, VulkanComputeBufferBinding> pair in snapshot.Buffers)
+                    {
+                        AddUnorderedFingerprintItem(
+                            ref xor,
+                            ref sum,
+                            ComputeBoundBufferResourceFingerprintItem(pair.Key, pair.Value.Data));
+                    }
+                }
+                else
+                {
+                    hash.Add(_buffersByBinding.Count);
+                    foreach (KeyValuePair<uint, XRDataBuffer> pair in _buffersByBinding)
+                        AddUnorderedFingerprintItem(ref xor, ref sum, ComputeBoundBufferResourceFingerprintItem(pair.Key, pair.Value));
+                }
 
                 hash.Add(xor);
                 hash.Add(sum);
@@ -1227,6 +1470,10 @@ public unsafe partial class VulkanRenderer
             _descriptorSetLayouts = result.Layouts;
             _programDescriptorBindings.Clear();
             _programDescriptorBindings.AddRange(result.Bindings);
+            _descriptorLayoutFingerprint = ComputeDescriptorLayoutFingerprint(_descriptorSetLayouts);
+            _descriptorSchemaFingerprint = ComputeDescriptorSchemaFingerprint(
+                _programDescriptorBindings,
+                _descriptorSetLayouts.Length);
             _descriptorSetUsesUpdateAfterBind = result.SetUsesUpdateAfterBind;
             _descriptorSetsRequireUpdateAfterBind = result.RequiresUpdateAfterBind;
             _descriptorSetsRequireVariableDescriptorCount = result.RequiresVariableDescriptorCount;
@@ -1249,6 +1496,46 @@ public unsafe partial class VulkanRenderer
             }
 
             CreatePipelineLayout(_descriptorSetLayouts);
+        }
+
+        /// <summary>
+        /// Computes immutable descriptor layout and schema identities once per successful
+        /// link. Draw submission can then compare the cached values without walking every
+        /// descriptor binding again.
+        /// </summary>
+        private static ulong ComputeDescriptorLayoutFingerprint(IReadOnlyList<DescriptorSetLayout> layouts)
+        {
+            const ulong offsetBasis = 14695981039346656037UL;
+            const ulong prime = 1099511628211UL;
+            ulong hash = offsetBasis;
+            for (int i = 0; i < layouts.Count; i++)
+            {
+                hash ^= layouts[i].Handle;
+                hash *= prime;
+            }
+
+            hash ^= unchecked((ulong)layouts.Count);
+            return hash * prime;
+        }
+
+        private static ulong ComputeDescriptorSchemaFingerprint(
+            IReadOnlyList<DescriptorBindingInfo> bindings,
+            int setCount)
+        {
+            VulkanStableHash64 hash = new(schemaVersion: 2);
+            hash.Add(setCount);
+            for (int bindingIndex = 0; bindingIndex < bindings.Count; bindingIndex++)
+            {
+                DescriptorBindingInfo binding = bindings[bindingIndex];
+                hash.Add(binding.Set);
+                hash.Add(binding.Binding);
+                hash.Add((int)binding.DescriptorType);
+                hash.Add(binding.Count);
+                hash.Add((int)binding.StageFlags);
+                hash.Add(binding.Name);
+            }
+
+            return hash.Value;
         }
 
         public bool TryGetAutoUniformBlock(string name, out AutoUniformBlockInfo block)
@@ -1371,6 +1658,8 @@ public unsafe partial class VulkanRenderer
                 DestroyPipelineLayout("VkRenderProgram.DestroyLayouts");
 
             _programDescriptorBindings.Clear();
+            _descriptorLayoutFingerprint = 0UL;
+            _descriptorSchemaFingerprint = 0UL;
             _descriptorHeapLayout = null;
             _descriptorSetUsesUpdateAfterBind = Array.Empty<bool>();
             _descriptorSetsRequireUpdateAfterBind = false;

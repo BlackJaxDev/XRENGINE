@@ -795,11 +795,14 @@ public sealed class VulkanCommandChainDataModelTests
         string meshUniformsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs").Replace("\r\n", "\n");
 
         temporalSource.ShouldContain("internal readonly record struct TemporalViewKey");
-        temporalSource.ShouldContain("private static readonly Dictionary<TemporalViewKey, TemporalState> TemporalStates");
+        temporalSource.ShouldContain("private static readonly ConcurrentDictionary<TemporalViewKey, TemporalState> TemporalStates");
         temporalSource.ShouldContain("public TemporalEyeState LeftEye { get; } = new();");
         temporalSource.ShouldContain("public TemporalEyeState RightEye { get; } = new();");
         temporalSource.ShouldContain("RightEyePrevViewProjectionUnjittered");
-        temporalSource.ShouldContain("TemporalKeysByPipelineInstance");
+        temporalSource.ShouldContain("TemporalStatesByPipelineInstance");
+        temporalSource.ShouldContain("state.UniformSnapshot.TryRead(out data)");
+        temporalSource.ShouldContain("PublishTemporalUniformData(state)");
+        temporalSource.ShouldNotContain("lock (TemporalStatesLock)");
         temporalSource.ShouldContain("ActiveRightEyeJitterHandle");
         temporalSource.ShouldContain("rightEyeCamera.PushProjectionJitter");
         temporalSource.ShouldNotContain("ConditionalWeakTable<XRCamera, TemporalState>");
@@ -1788,7 +1791,6 @@ public sealed class VulkanCommandChainDataModelTests
                 recordedScheduleSignature: schedule.StructuralSignature,
                 recordedGroupSignature: groupSignature,
                 recordedGroupCount: schedule.Groups.Length,
-                recordedResourcePlanRevision: schedule.ResourcePlanRevision,
                 recordedProfilerActive: false,
                 recordedProfilerFrameSlot: -1,
                 currentProfilerActive: false,
@@ -1797,7 +1799,7 @@ public sealed class VulkanCommandChainDataModelTests
     }
 
     [Test]
-    public void PrimaryCommandBufferDirtyReason_SeparatesScheduleResourceAndProfilerChanges()
+    public void PrimaryCommandBufferDirtyReason_SeparatesScheduleAndProfilerChanges()
     {
         CommandChainSchedule schedule = CreateSchedule(dynamicOverlay: false, chainCount: 2);
 
@@ -1806,7 +1808,6 @@ public sealed class VulkanCommandChainDataModelTests
                 recordedScheduleSignature: schedule.StructuralSignature + 1,
                 recordedGroupSignature: VulkanRenderer.ComputePrimaryCommandBufferGroupSignature(schedule) + 1,
                 recordedGroupCount: schedule.Groups.Length + 1,
-                recordedResourcePlanRevision: schedule.ResourcePlanRevision + 1,
                 recordedProfilerActive: false,
                 recordedProfilerFrameSlot: -1,
                 currentProfilerActive: true,
@@ -1814,7 +1815,6 @@ public sealed class VulkanCommandChainDataModelTests
             .ShouldBe(
                 PrimaryCommandBufferDirtyReason.ScheduleStructure |
                 PrimaryCommandBufferDirtyReason.GroupStructure |
-                PrimaryCommandBufferDirtyReason.ResourcePlan |
                 PrimaryCommandBufferDirtyReason.ProfilerMode);
     }
 
@@ -1829,6 +1829,35 @@ public sealed class VulkanCommandChainDataModelTests
             .ShouldNotBe(VulkanRenderer.ComputePrimaryCommandBufferGroupSignature(twoChains));
         VulkanRenderer.ComputePrimaryCommandBufferGroupSignature(oneChain)
             .ShouldNotBe(VulkanRenderer.ComputePrimaryCommandBufferGroupSignature(overlay));
+    }
+
+    [Test]
+    public void PrimaryCommandBufferGroupSignature_IgnoresSecondaryPacketContent()
+    {
+        RenderPassChainGroup baselineGroup = CreateGroup(
+            passIndex: 3,
+            targetIdentity: 4,
+            dynamicOverlay: false,
+            chainCount: 2);
+        RenderPassChainGroup changedPacketContentGroup = new(
+            baselineGroup.PassIndex,
+            baselineGroup.TargetIdentity,
+            baselineGroup.TargetName,
+            baselineGroup.ChainKeys,
+            baselineGroup.StructuralSignature + 1UL,
+            baselineGroup.SupportsSecondaryCommandBuffers,
+            baselineGroup.DynamicOverlay);
+        CommandChainSchedule baseline = new(
+            structuralSignature: 0x100UL,
+            resourcePlanRevision: 0x200UL,
+            groups: new[] { baselineGroup });
+        CommandChainSchedule changedPacketContent = new(
+            structuralSignature: 0x101UL,
+            resourcePlanRevision: 0x200UL,
+            groups: new[] { changedPacketContentGroup });
+
+        VulkanRenderer.ComputePrimaryCommandBufferGroupSignature(baseline)
+            .ShouldBe(VulkanRenderer.ComputePrimaryCommandBufferGroupSignature(changedPacketContent));
     }
 
     [Test]

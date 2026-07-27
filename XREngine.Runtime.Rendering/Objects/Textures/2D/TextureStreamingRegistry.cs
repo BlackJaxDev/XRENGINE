@@ -70,12 +70,8 @@ internal sealed class TextureStreamingRegistry
                 continue;
             }
 
-            // Use the record's dedicated VisibilityLock here (not Sync) so per-frame
-            // visibility tagging never collides with import/transition work that holds
-            // Sync.  Previously this used Monitor.TryEnter(record.Sync) and silently
-            // dropped the visibility update on contention, which let textures fall past
-            // the demotion edge and never re-promote even though they were on screen.
-            lock (record.VisibilityLock)
+            int writeVersion = BeginVisibilityWrite(record);
+            try
             {
                 if (record.LastVisibleFrameId != frameId)
                 {
@@ -102,20 +98,24 @@ internal sealed class TextureStreamingRegistry
 
                     record.VisiblePageSelection = record.VisiblePageSelection.Union(pageSelection);
                 }
+            }
+            finally
+            {
+                EndVisibilityWrite(record, writeVersion);
+            }
 
-                if (TextureRuntimeDiagnostics.IsVerboseEnabled)
-                {
-                    float priorityScore = (projectedPixelSpan + screenCoverage * 1024.0f)
-                        * TextureResidencyPolicy.ResolveTextureRoleMultiplier(texture.SamplerName)
-                        * uvDensityHint;
-                    TextureRuntimeDiagnostics.LogVisibilityRecorded(
-                        frameId,
-                        texture.Name,
-                        record.FilePath,
-                        projectedPixelSpan,
-                        screenCoverage,
-                        priorityScore);
-                }
+            if (TextureRuntimeDiagnostics.IsVerboseEnabled)
+            {
+                float priorityScore = (projectedPixelSpan + screenCoverage * 1024.0f)
+                    * TextureResidencyPolicy.ResolveTextureRoleMultiplier(texture.SamplerName)
+                    * uvDensityHint;
+                TextureRuntimeDiagnostics.LogVisibilityRecorded(
+                    frameId,
+                    texture.Name,
+                    record.FilePath,
+                    projectedPixelSpan,
+                    screenCoverage,
+                    priorityScore);
             }
         }
     }
@@ -134,10 +134,15 @@ internal sealed class TextureStreamingRegistry
                 continue;
             }
 
-            lock (record.VisibilityLock)
+            int writeVersion = BeginVisibilityWrite(record);
+            try
             {
                 record.LastBoundFrameId = frameId;
                 record.LastBoundMaterialTextureCount = materialTextureCount;
+            }
+            finally
+            {
+                EndVisibilityWrite(record, writeVersion);
             }
         }
     }
@@ -210,28 +215,16 @@ internal sealed class TextureStreamingRegistry
 
                 ITextureResidencyBackend backend = record.Backend ?? resolveBackend(record.SourceWidth, record.SourceHeight, record.Format);
 
-                // Read visibility fields under VisibilityLock so we never see a torn
-                // half-update from a concurrent RecordUsage.  The lock is independent
-                // from Sync so we can safely nest it here.
-                long lastVisibleFrameId;
-                long lastBoundFrameId;
-                int lastBoundMaterialTextureCount;
-                float minVisibleDistance;
-                float maxProjectedPixelSpan;
-                float maxScreenCoverage;
-                float uvDensityHint;
-                SparseTextureStreamingPageSelection visiblePageSelection;
-                lock (record.VisibilityLock)
-                {
-                    lastVisibleFrameId = record.LastVisibleFrameId;
-                    lastBoundFrameId = record.LastBoundFrameId;
-                    lastBoundMaterialTextureCount = record.LastBoundMaterialTextureCount;
-                    minVisibleDistance = record.MinVisibleDistance;
-                    maxProjectedPixelSpan = record.MaxProjectedPixelSpan;
-                    maxScreenCoverage = record.MaxScreenCoverage;
-                    uvDensityHint = record.UvDensityHint;
-                    visiblePageSelection = record.VisiblePageSelection;
-                }
+                ReadVisibilitySnapshot(
+                    record,
+                    out long lastVisibleFrameId,
+                    out long lastBoundFrameId,
+                    out int lastBoundMaterialTextureCount,
+                    out float minVisibleDistance,
+                    out float maxProjectedPixelSpan,
+                    out float maxScreenCoverage,
+                    out float uvDensityHint,
+                    out SparseTextureStreamingPageSelection visiblePageSelection);
 
                 snapshots.Add(new ImportedTextureStreamingSnapshot(
                     record,
@@ -314,6 +307,69 @@ internal sealed class TextureStreamingRegistry
         }
 
         return count;
+    }
+
+    private static int BeginVisibilityWrite(ImportedTextureStreamingRecord record)
+    {
+        // Visibility mutations are a handful of scalar writes. A multi-writer
+        // sequence lock keeps that bounded critical section in user mode instead
+        // of parking the collect thread in Monitor.Enter.
+        SpinWait spinWait = default;
+        while (true)
+        {
+            int version = Volatile.Read(ref record.VisibilityVersion);
+            if ((version & 1) != 0)
+            {
+                spinWait.SpinOnce();
+                continue;
+            }
+
+            int writeVersion = unchecked(version + 1);
+            if (Interlocked.CompareExchange(ref record.VisibilityVersion, writeVersion, version) == version)
+                return writeVersion;
+
+            spinWait.SpinOnce();
+        }
+    }
+
+    private static void EndVisibilityWrite(ImportedTextureStreamingRecord record, int writeVersion)
+        => Volatile.Write(ref record.VisibilityVersion, unchecked(writeVersion + 1));
+
+    private static void ReadVisibilitySnapshot(
+        ImportedTextureStreamingRecord record,
+        out long lastVisibleFrameId,
+        out long lastBoundFrameId,
+        out int lastBoundMaterialTextureCount,
+        out float minVisibleDistance,
+        out float maxProjectedPixelSpan,
+        out float maxScreenCoverage,
+        out float uvDensityHint,
+        out SparseTextureStreamingPageSelection visiblePageSelection)
+    {
+        SpinWait spinWait = default;
+        while (true)
+        {
+            int version = Volatile.Read(ref record.VisibilityVersion);
+            if ((version & 1) != 0)
+            {
+                spinWait.SpinOnce();
+                continue;
+            }
+
+            lastVisibleFrameId = record.LastVisibleFrameId;
+            lastBoundFrameId = record.LastBoundFrameId;
+            lastBoundMaterialTextureCount = record.LastBoundMaterialTextureCount;
+            minVisibleDistance = record.MinVisibleDistance;
+            maxProjectedPixelSpan = record.MaxProjectedPixelSpan;
+            maxScreenCoverage = record.MaxScreenCoverage;
+            uvDensityHint = record.UvDensityHint;
+            visiblePageSelection = record.VisiblePageSelection;
+
+            if (version == Volatile.Read(ref record.VisibilityVersion))
+                return;
+
+            spinWait.SpinOnce();
+        }
     }
 
     private void MarkRecordRefsSnapshotDirty()

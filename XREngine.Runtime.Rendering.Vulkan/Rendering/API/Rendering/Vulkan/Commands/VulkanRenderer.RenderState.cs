@@ -12,7 +12,28 @@ namespace XREngine.Rendering.Vulkan
     {
         // =========== Render Parameters ===========
 
+        private ulong _materialUniformFrameTimeFrameId = ulong.MaxValue;
+        private float _materialUniformUpdateDeltaLive;
         private float _materialUniformSecondsLive;
+        private float _materialUniformDeltaSecondsLive;
+
+        /// <summary>
+        /// Captures the time uniforms once for the current engine render frame.
+        /// Material setup and deferred frame-data refresh both run on the render thread,
+        /// so the render-frame ID is the ownership boundary and no per-draw lock is needed.
+        /// </summary>
+        private void EnsureMaterialUniformFrameTime()
+        {
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            if (_materialUniformFrameTimeFrameId == frameId)
+                return;
+
+            _materialUniformUpdateDeltaLive = RuntimeEngine.Time.Timer.Update.Delta;
+            _materialUniformSecondsLive = RuntimeEngine.ElapsedTime;
+            _materialUniformDeltaSecondsLive = RuntimeEngine.Time.Timer.Render.Delta;
+            _materialUniformFrameTimeFrameId = frameId;
+        }
+
         private XRMaterial? _vulkanShadowBindingSourceMaterial;
         private XRRenderProgram? _vulkanShadowBindingProgram;
         private ulong _vulkanShadowBindingSourceLayoutVersion = ulong.MaxValue;
@@ -137,7 +158,6 @@ namespace XREngine.Rendering.Vulkan
             else
                 SetTextureUniforms(program, uniformSource);
 
-            _materialUniformSecondsLive += RuntimeEngine.Time.Timer.Update.Delta;
             EUniformRequirements reqs =
                 (material.RenderOptions?.RequiredEngineUniforms ?? EUniformRequirements.None) |
                 program.GetActiveEngineUniformRequirements();
@@ -160,9 +180,10 @@ namespace XREngine.Rendering.Vulkan
 
             if ((reqs & EUniformRequirements.RenderTime) != 0)
             {
+                EnsureMaterialUniformFrameTime();
                 program.Uniform(EEngineUniform.RenderTime.ToStringFast(), _materialUniformSecondsLive);
-                program.Uniform(EEngineUniform.EngineTime.ToStringFast(), RuntimeEngine.ElapsedTime);
-                program.Uniform(EEngineUniform.DeltaTime.ToStringFast(), RuntimeEngine.Time.Timer.Render.Delta);
+                program.Uniform(EEngineUniform.EngineTime.ToStringFast(), _materialUniformSecondsLive);
+                program.Uniform(EEngineUniform.DeltaTime.ToStringFast(), _materialUniformDeltaSecondsLive);
             }
 
             if ((reqs & EUniformRequirements.ViewportDimensions) != 0)

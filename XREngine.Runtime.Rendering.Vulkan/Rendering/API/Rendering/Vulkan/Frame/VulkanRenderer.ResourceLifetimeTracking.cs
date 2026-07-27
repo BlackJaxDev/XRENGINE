@@ -227,6 +227,10 @@ public unsafe partial class VulkanRenderer
     private readonly Dictionary<ulong, ulong> _vulkanImageViewBackingImages = new();
     private readonly Dictionary<ulong, ulong> _vulkanBufferViewBackingBuffers = new();
     private readonly Dictionary<ulong, VulkanResourceLifetimeKey[]> _vulkanFramebufferAttachments = new();
+    // Queue submission is serialized by _oneTimeSubmitLock and descriptor refresh
+    // runs under _vulkanResourceLifetimeLock, so one retained lookup serves every
+    // command buffer without per-record or per-frame dictionary allocation.
+    private readonly Dictionary<VulkanResourceLifetimeKey, ulong> _vulkanSubmissionDependencyGenerationsScratch = new(4096);
     private readonly List<VulkanLifetimeSubmission> _vulkanLifetimeSubmissions = new(16);
     private readonly ThreadLocal<HashSet<ulong>> _vulkanChangedDescriptorSetsScratch =
         new(static () => []);
@@ -2128,6 +2132,11 @@ public unsafe partial class VulkanRenderer
         commandLifetime.RefreshTouchedDependencies();
         List<KeyValuePair<VulkanResourceLifetimeKey, ulong>> touched = commandLifetime.TouchedDependencies;
         int descriptorScanCount = touched.Count;
+        Dictionary<VulkanResourceLifetimeKey, ulong> touchedGenerations =
+            _vulkanSubmissionDependencyGenerationsScratch;
+        touchedGenerations.Clear();
+        for (int i = 0; i < descriptorScanCount; i++)
+            touchedGenerations[touched[i].Key] = touched[i].Value;
         for (int i = 0; i < descriptorScanCount; i++)
         {
             VulkanResourceLifetimeKey key = touched[i].Key;
@@ -2142,6 +2151,7 @@ public unsafe partial class VulkanRenderer
                 VulkanResourceLifetimeKey referenceKey = snapshot.References[referenceIndex];
                 if (!TryAppendSubmittedDescriptorDependency_NoLock(
                         touched,
+                        touchedGenerations,
                         referenceKey,
                         out failureReason))
                 {
@@ -2165,6 +2175,7 @@ public unsafe partial class VulkanRenderer
 
     private bool TryAppendSubmittedDescriptorDependency_NoLock(
         List<KeyValuePair<VulkanResourceLifetimeKey, ulong>> touched,
+        Dictionary<VulkanResourceLifetimeKey, ulong> touchedGenerations,
         VulkanResourceLifetimeKey key,
         out string failureReason)
     {
@@ -2180,30 +2191,26 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        bool alreadyTracked = false;
-        for (int i = 0; i < touched.Count; i++)
+        if (touchedGenerations.TryGetValue(key, out ulong trackedGeneration))
         {
-            if (touched[i].Key != key)
-                continue;
-
-            if (touched[i].Value != resource.Generation)
+            if (trackedGeneration != resource.Generation)
             {
                 failureReason = $"descriptor submission dependency {key} changed generation while the submission was prepared";
                 return false;
             }
-
-            alreadyTracked = true;
-            break;
         }
-
-        if (!alreadyTracked)
+        else
+        {
             touched.Add(new KeyValuePair<VulkanResourceLifetimeKey, ulong>(key, resource.Generation));
+            touchedGenerations.Add(key, resource.Generation);
+        }
 
         if (key.Type == ObjectType.ImageView &&
             _vulkanImageViewBackingImages.TryGetValue(key.Handle, out ulong backingImageHandle) &&
             backingImageHandle != 0 &&
             !TryAppendSubmittedDescriptorDependency_NoLock(
                 touched,
+                touchedGenerations,
                 ResourceKey(ObjectType.Image, backingImageHandle),
                 out failureReason))
         {
@@ -2215,6 +2222,7 @@ public unsafe partial class VulkanRenderer
             backingBufferHandle != 0 &&
             !TryAppendSubmittedDescriptorDependency_NoLock(
                 touched,
+                touchedGenerations,
                 ResourceKey(ObjectType.Buffer, backingBufferHandle),
                 out failureReason))
         {

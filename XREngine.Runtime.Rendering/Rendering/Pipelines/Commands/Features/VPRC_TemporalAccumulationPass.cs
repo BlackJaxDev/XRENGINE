@@ -1,5 +1,5 @@
 using System;
-using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Runtime.CompilerServices;
@@ -51,6 +51,13 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
     private sealed class TemporalState
     {
+        public TemporalState(in TemporalViewKey key)
+            => Key = key;
+
+        public TemporalViewKey Key { get; }
+        public object MutationSync { get; } = new();
+        public TemporalUniformDataSnapshot UniformSnapshot { get; } = new();
+
         public uint HaltonIndex = 1;
         public TemporalEyeState LeftEye { get; } = new();
         public TemporalEyeState RightEye { get; } = new();
@@ -369,9 +376,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         int OpenXrViewIndex,
         int RenderTargetProfile);
 
-    private static readonly object TemporalStatesLock = new();
-    private static readonly Dictionary<TemporalViewKey, TemporalState> TemporalStates = [];
-    private static readonly Dictionary<int, TemporalViewKey> TemporalKeysByPipelineInstance = [];
+    private static readonly ConcurrentDictionary<TemporalViewKey, TemporalState> TemporalStates = [];
+    private static readonly ConcurrentDictionary<int, TemporalState> TemporalStatesByPipelineInstance = [];
 
     public enum EPhase
     {
@@ -740,7 +746,11 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         if (!TryGetActiveState(out _, out var state))
             return;
 
-        state.HistoryExposureReady = ready;
+        lock (state.MutationSync)
+        {
+            state.HistoryExposureReady = ready;
+            PublishTemporalUniformData(state);
+        }
     }
 
     internal static bool TryGetTemporalUniformData([NotNullWhen(true)] out TemporalUniformData data)
@@ -751,14 +761,9 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             return false;
         }
 
-        lock (TemporalStatesLock)
-        {
-            if (TemporalStates.TryGetValue(key, out TemporalState? state))
-            {
-                data = CreateTemporalUniformData(key, state);
-                return true;
-            }
-        }
+        if (TemporalStates.TryGetValue(key, out TemporalState? state) &&
+            state.UniformSnapshot.TryRead(out data))
+            return true;
 
         data = default;
         return false;
@@ -773,15 +778,9 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         XRRenderPipelineInstance instance,
         [NotNullWhen(true)] out TemporalUniformData data)
     {
-        lock (TemporalStatesLock)
-        {
-            if (TemporalKeysByPipelineInstance.TryGetValue(instance.InstanceId, out TemporalViewKey key) &&
-                TemporalStates.TryGetValue(key, out TemporalState? state))
-            {
-                data = CreateTemporalUniformData(key, state);
-                return true;
-            }
-        }
+        if (TemporalStatesByPipelineInstance.TryGetValue(instance.InstanceId, out TemporalState? state) &&
+            state.UniformSnapshot.TryRead(out data))
+            return true;
 
         data = default;
         return false;
@@ -842,33 +841,31 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         bool keyResolved = TryResolveTemporalKey(instance, out TemporalViewKey temporalKey);
         bool invalidatedExistingState = false;
         uint effectiveExpectedLayerMask = expectedLayerMask;
-        if (keyResolved)
+        if (keyResolved && TemporalStates.TryGetValue(temporalKey, out TemporalState? state))
         {
-            lock (TemporalStatesLock)
+            lock (state.MutationSync)
             {
-                if (TemporalStates.TryGetValue(temporalKey, out TemporalState? state))
+                TemporalHistoryGenerationTracker generation = state.HistoryGeneration;
+                if (generation.ExpectedLayerMask != 0u)
+                    effectiveExpectedLayerMask = generation.ExpectedLayerMask;
+                bool hasTemporalData =
+                    (generation.CurrentMatrixLayerMask & effectiveExpectedLayerMask) != 0u ||
+                    generation.LeftEyeHistoryReady ||
+                    generation.RightEyeHistoryReady ||
+                    state.HistoryReady ||
+                    state.HistoryExposureReady ||
+                    state.PendingHistoryReady ||
+                    state.PendingHistoryCoverage.ColorLayerMask != 0u ||
+                    state.PendingHistoryCoverage.DepthLayerMask != 0u ||
+                    state.PendingHistoryCoverage.TsrColorLayerMask != 0u;
+                if (hasTemporalData)
                 {
-                    TemporalHistoryGenerationTracker generation = state.HistoryGeneration;
-                    if (generation.ExpectedLayerMask != 0u)
-                        effectiveExpectedLayerMask = generation.ExpectedLayerMask;
-                    bool hasTemporalData =
-                        (generation.CurrentMatrixLayerMask & effectiveExpectedLayerMask) != 0u ||
-                        generation.LeftEyeHistoryReady ||
-                        generation.RightEyeHistoryReady ||
-                        state.HistoryReady ||
-                        state.HistoryExposureReady ||
-                        state.PendingHistoryReady ||
-                        state.PendingHistoryCoverage.ColorLayerMask != 0u ||
-                        state.PendingHistoryCoverage.DepthLayerMask != 0u ||
-                        state.PendingHistoryCoverage.TsrColorLayerMask != 0u;
-                    if (hasTemporalData)
-                    {
-                        generation.InvalidateLayers(effectiveExpectedLayerMask);
-                        generation.RejectCurrentMatrices(effectiveExpectedLayerMask);
-                        ResetHistoryStorage(state);
-                        state.ResetReasonThisFrame |= EOpenXrSmokeTemporalResetReason.MissingSnapshot;
-                        invalidatedExistingState = true;
-                    }
+                    generation.InvalidateLayers(effectiveExpectedLayerMask);
+                    generation.RejectCurrentMatrices(effectiveExpectedLayerMask);
+                    ResetHistoryStorage(state);
+                    state.ResetReasonThisFrame |= EOpenXrSmokeTemporalResetReason.MissingSnapshot;
+                    PublishTemporalUniformData(state);
+                    invalidatedExistingState = true;
                 }
             }
         }
@@ -939,6 +936,13 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         };
     }
 
+    private static void PublishTemporalUniformData(TemporalState state)
+    {
+        TemporalViewKey key = state.Key;
+        TemporalUniformData data = CreateTemporalUniformData(key, state);
+        state.UniformSnapshot.Publish(data);
+    }
+
     private static bool TryCreateCurrentFrameViewProjection(
         XRCamera camera,
         out Matrix4x4 viewProjection)
@@ -956,13 +960,14 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         if (!TryResolveTemporalKey(instance, out TemporalViewKey key))
             return;
 
-        lock (TemporalStatesLock)
-        {
-            if (!TemporalStates.TryGetValue(key, out TemporalState? state))
-                return;
+        if (!TemporalStates.TryGetValue(key, out TemporalState? state))
+            return;
 
+        lock (state.MutationSync)
+        {
             state.ResetReasonThisFrame |= EOpenXrSmokeTemporalResetReason.ExplicitReset;
             ResetHistory(state);
+            PublishTemporalUniformData(state);
         }
     }
 
@@ -974,16 +979,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             return false;
         }
 
-        lock (TemporalStatesLock)
-        {
-            if (!TemporalStates.TryGetValue(key, out state))
-            {
-                state = new TemporalState();
-                TemporalStates.Add(key, state);
-            }
-
-            TemporalKeysByPipelineInstance[instance.InstanceId] = key;
-        }
+        state = TemporalStates.GetOrAdd(key, static key => new TemporalState(key));
+        TemporalStatesByPipelineInstance[instance.InstanceId] = state;
 
         return true;
     }
@@ -1088,6 +1085,14 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             return;
         }
 
+        lock (state.MutationSync)
+            BeginTemporalFrame(instance, state);
+    }
+
+    private static void BeginTemporalFrame(
+        XRRenderPipelineInstance instance,
+        TemporalState state)
+    {
         state.PendingHistoryReady = false;
         state.HistoryExposureReady = false;
         state.PendingHistoryCoverage.Clear();
@@ -1143,6 +1148,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             state.HistoryReady = false;
             state.ResetReasonThisFrame |= EOpenXrSmokeTemporalResetReason.MissingCamera;
             LogTemporalReseedPending(instance, state, "missing primary camera");
+            PublishTemporalUniformData(state);
             return;
         }
 
@@ -1239,6 +1245,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
                         : "history generation awaiting layer reseed";
             LogTemporalReseedPending(instance, state, reason);
         }
+
+        PublishTemporalUniformData(state);
     }
 
     private static bool CaptureEyeTemporalState(XRCamera camera, TemporalEyeState eyeState, bool historyReady)
@@ -1318,11 +1326,14 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         uint depthSourceMask = ResolveAttachmentLayerMask(depthSourceFbo, color: false);
         uint colorDestinationMask = ResolveAttachmentLayerMask(historyDestinationFbo, color: true);
         uint depthDestinationMask = ResolveAttachmentLayerMask(historyDestinationFbo, color: false);
-        state.PendingHistoryCoverage.RecordColorAndDepth(
-            colorSourceMask & colorDestinationMask,
-            depthSourceMask & depthDestinationMask);
-        state.PendingHistoryReady = state.PendingHistoryCoverage.IsComplete
-            && state.HistoryGeneration.CurrentMatricesComplete;
+        lock (state.MutationSync)
+        {
+            state.PendingHistoryCoverage.RecordColorAndDepth(
+                colorSourceMask & colorDestinationMask,
+                depthSourceMask & depthDestinationMask);
+            state.PendingHistoryReady = state.PendingHistoryCoverage.IsComplete
+                && state.HistoryGeneration.CurrentMatricesComplete;
+        }
     }
 
     private void MarkTsrHistoryColorCaptured()
@@ -1334,7 +1345,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         XRFrameBuffer? destination = instance.GetFBO<XRFrameBuffer>(TsrHistoryColorFBOName);
         if (source is null || destination is null)
         {
-            state.PendingHistoryReady = false;
+            lock (state.MutationSync)
+                state.PendingHistoryReady = false;
             Debug.RenderingWarningEvery(
                 $"Temporal.TsrHistoryCoverage.MissingFbo.{instance.InstanceId}",
                 TimeSpan.FromSeconds(1),
@@ -1347,9 +1359,12 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
         uint sourceMask = ResolveAttachmentLayerMask(source, color: true);
         uint destinationMask = ResolveAttachmentLayerMask(destination, color: true);
-        state.PendingHistoryCoverage.RecordTsrColor(sourceMask & destinationMask);
-        state.PendingHistoryReady = state.PendingHistoryCoverage.IsComplete
-            && state.HistoryGeneration.CurrentMatricesComplete;
+        lock (state.MutationSync)
+        {
+            state.PendingHistoryCoverage.RecordTsrColor(sourceMask & destinationMask);
+            state.PendingHistoryReady = state.PendingHistoryCoverage.IsComplete
+                && state.HistoryGeneration.CurrentMatricesComplete;
+        }
     }
 
     private static uint ResolveAttachmentLayerMask(XRFrameBuffer frameBuffer, bool color)
@@ -1404,10 +1419,13 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         if (!TryGetActiveState(out _, out var state))
             return;
 
-        state.ActiveJitterHandle?.Dispose();
-        state.ActiveJitterHandle = null;
-        state.ActiveRightEyeJitterHandle?.Dispose();
-        state.ActiveRightEyeJitterHandle = null;
+        lock (state.MutationSync)
+        {
+            state.ActiveJitterHandle?.Dispose();
+            state.ActiveJitterHandle = null;
+            state.ActiveRightEyeJitterHandle?.Dispose();
+            state.ActiveRightEyeJitterHandle = null;
+        }
     }
 
     private static void CommitTemporalFrame()
@@ -1418,6 +1436,14 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             return;
         }
 
+        lock (state.MutationSync)
+            CommitTemporalFrame(instance, state);
+    }
+
+    private static void CommitTemporalFrame(
+        XRRenderPipelineInstance instance,
+        TemporalState state)
+    {
         state.ActiveJitterHandle?.Dispose();
         state.ActiveJitterHandle = null;
         state.ActiveRightEyeJitterHandle?.Dispose();
@@ -1428,6 +1454,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             state.PendingHistoryReady = false;
             state.HistoryReady = false;
             state.PendingHistoryCoverage.Clear();
+            PublishTemporalUniformData(state);
             return;
         }
 
@@ -1478,10 +1505,12 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
                 committedLayerMask,
                 state.PendingHistoryCoverage);
             state.PendingHistoryCoverage.Clear();
+            PublishTemporalUniformData(state);
             return;
         }
 
         state.PendingHistoryCoverage.Clear();
+        PublishTemporalUniformData(state);
         //Debug.Out("[Temporal] Commit completed: history stored.");
     }
 

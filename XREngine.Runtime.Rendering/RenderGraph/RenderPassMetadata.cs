@@ -17,6 +17,7 @@ public sealed class RenderPassMetadata
     private ReadOnlyCollection<int>? _explicitDependenciesView;
     private ReadOnlyCollection<string>? _descriptorSchemasView;
     private int _revision;
+    private readonly RenderPassMetadataRevisionSource _revisionSource;
 
     public int PassIndex { get; }
     public int DeclarationOrder { get; }
@@ -30,11 +31,22 @@ public sealed class RenderPassMetadata
     public int Revision => _revision;
 
     public RenderPassMetadata(int passIndex, string name, ERenderGraphPassStage stage, int? declarationOrder = null)
+        : this(
+            passIndex,
+            name,
+            stage,
+            declarationOrder,
+            new RenderPassMetadataRevisionSource())
+    {
+    }
+
+    internal RenderPassMetadata(int passIndex, string name, ERenderGraphPassStage stage, int? declarationOrder, RenderPassMetadataRevisionSource revisionSource)
     {
         PassIndex = passIndex;
         DeclarationOrder = declarationOrder ?? passIndex;
         Name = string.IsNullOrWhiteSpace(name) ? $"Pass{passIndex}" : name;
         Stage = stage;
+        _revisionSource = revisionSource;
         _resourceUsagesView = _resourceUsages.AsReadOnly();
         AddDescriptorSchema(RenderGraphDescriptorSchemaCatalog.EngineGlobals.Name);
         if (stage == ERenderGraphPassStage.Graphics)
@@ -62,7 +74,7 @@ public sealed class RenderPassMetadata
             return;
 
         _resourceUsages.Add(usage);
-        _revision++;
+        AdvanceRevision();
     }
 
     internal void AddDependency(int passIndex)
@@ -73,7 +85,7 @@ public sealed class RenderPassMetadata
         if (_explicitDependencies.Add(passIndex))
         {
             _explicitDependenciesView = null;
-            _revision++;
+            AdvanceRevision();
         }
     }
 
@@ -85,7 +97,7 @@ public sealed class RenderPassMetadata
         if (_descriptorSchemas.Add(schemaName))
         {
             _descriptorSchemasView = null;
-            _revision++;
+            AdvanceRevision();
         }
     }
 
@@ -95,7 +107,7 @@ public sealed class RenderPassMetadata
             return;
 
         Stage = stage;
-        _revision++;
+        AdvanceRevision();
     }
 
     internal void UpdateName(string name)
@@ -104,7 +116,7 @@ public sealed class RenderPassMetadata
             return;
 
         Name = name;
-        _revision++;
+        AdvanceRevision();
     }
 
     internal void UpdatePipelineReadiness(bool required)
@@ -113,6 +125,12 @@ public sealed class RenderPassMetadata
             return;
 
         RequiresPipelineReady = required;
+        AdvanceRevision();
+    }
+
+    private void AdvanceRevision()
+    {
         _revision++;
+        _revisionSource.Advance();
     }
 }

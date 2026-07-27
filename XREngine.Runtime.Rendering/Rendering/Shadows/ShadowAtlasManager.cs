@@ -308,7 +308,7 @@ public sealed partial class ShadowAtlasManager
     private readonly List<ShadowAtlasRenderPlanEntry> _renderPlanEntries = new();
     private readonly List<ShadowAtlasRenderPlanMember> _renderPlanMembers = new();
     private readonly ShadowAtlasRenderPlan[] _renderPlans = [new(), new()];
-    private readonly object _renderPlanSync = new();
+    private readonly object[] _renderPlanLocks = [new(), new()];
     private readonly object _completionSync = new();
     private readonly List<ShadowTileCompletion> _completionDrainScratch = new();
     private ShadowTileCompletion[] _tileCompletions = new ShadowTileCompletion[256];
@@ -1669,10 +1669,14 @@ public sealed partial class ShadowAtlasManager
         return result;
     }
 
-    public ShadowAtlasRenderPlan PublishedRenderPlan => _renderPlans[_publishedRenderPlanIndex];
+    public ShadowAtlasRenderPlan PublishedRenderPlan
+        => _renderPlans[Volatile.Read(ref _publishedRenderPlanIndex)];
 
-    private ShadowAtlasRenderPlan GetPendingRenderPlan()
-        => _renderPlans[1 - _publishedRenderPlanIndex];
+    private int GetPendingRenderPlanIndex()
+        => 1 - Volatile.Read(ref _publishedRenderPlanIndex);
+
+    private ShadowAtlasRenderPlan GetPendingRenderPlan(int pendingRenderPlanIndex)
+        => _renderPlans[pendingRenderPlanIndex];
 
     private void BuildRenderPlan()
     {
@@ -1762,8 +1766,13 @@ public sealed partial class ShadowAtlasManager
                 BudgetClass: tileBudgetClass));
         }
 
-        lock (_renderPlanSync)
-            GetPendingRenderPlan().SetData(_frameId, AllocateRenderPlanId(), _requests.Count, _renderPlanEntries, _renderPlanMembers);
+        // Rendering owns the published buffer while collection builds the other
+        // buffer. A lock per buffer preserves safety for capture/reset paths without
+        // serializing normal shadow rendering and next-frame plan construction.
+        int pendingRenderPlanIndex = GetPendingRenderPlanIndex();
+        lock (_renderPlanLocks[pendingRenderPlanIndex])
+            GetPendingRenderPlan(pendingRenderPlanIndex).SetData(
+                _frameId, AllocateRenderPlanId(), _requests.Count, _renderPlanEntries, _renderPlanMembers);
     }
 
     private ulong AllocateRenderPlanId()
@@ -1831,9 +1840,9 @@ public sealed partial class ShadowAtlasManager
                 ? ShadowAtlasRenderBudgetClass.Deferrable
                 : ShadowAtlasRenderBudgetClass.Normal;
 
-    private ShadowAtlasRenderPlan SelectRenderPlanForExecution()
+    private ShadowAtlasRenderPlan SelectRenderPlanForExecution(int renderPlanIndex)
     {
-        ShadowAtlasRenderPlan plan = PublishedRenderPlan;
+        ShadowAtlasRenderPlan plan = _renderPlans[renderPlanIndex];
         LogRenderPlanExecutionSource(plan);
         return plan;
     }
@@ -1907,7 +1916,8 @@ public sealed partial class ShadowAtlasManager
     public int RenderScheduledTiles(bool collectVisibleNow = false)
     {
         AssertRenderThread();
-        lock (_renderPlanSync)
+        int renderPlanIndex = Volatile.Read(ref _publishedRenderPlanIndex);
+        lock (_renderPlanLocks[renderPlanIndex])
         {
         long frameStart = Stopwatch.GetTimestamp();
         int budget = Math.Max(0, _settings.MaxTilesRenderedPerFrame);
@@ -1923,7 +1933,7 @@ public sealed partial class ShadowAtlasManager
         int deferredByTexture = 0;
         int firstDeferredRequestIndex = -1;
 
-        ShadowAtlasRenderPlan plan = SelectRenderPlanForExecution();
+        ShadowAtlasRenderPlan plan = SelectRenderPlanForExecution(renderPlanIndex);
         ReadOnlySpan<ShadowAtlasRenderPlanEntry> entries = plan.Entries;
         int requestCount = plan.RequestCount;
 
@@ -2255,8 +2265,11 @@ public sealed partial class ShadowAtlasManager
         _previousAllocations = _currentAllocations;
         _currentAllocations = oldPrevious;
         _currentAllocations.Clear();
-        lock (_renderPlanSync)
-            _publishedRenderPlanIndex = 1 - _publishedRenderPlanIndex;
+        int nextRenderPlanIndex = GetPendingRenderPlanIndex();
+        lock (_renderPlanLocks[nextRenderPlanIndex])
+        {
+            Volatile.Write(ref _publishedRenderPlanIndex, nextRenderPlanIndex);
+        }
 
         using (RuntimeEngine.Profiler.Start("ShadowAtlasManager.PublishFrameData.TrimResidents"))
             TrimResidentAllocations(publishedCurrentAllocations);
@@ -2684,10 +2697,13 @@ public sealed partial class ShadowAtlasManager
         _renderPlanMembers.RemoveAll(member =>
             member.Allocation.AtlasKind == atlasKind ||
             GetAtlasKind(member.Request.ProjectionType) == atlasKind);
-        lock (_renderPlanSync)
+        lock (_renderPlanLocks[0])
         {
-            for (int i = 0; i < _renderPlans.Length; i++)
-                _renderPlans[i].Clear();
+            lock (_renderPlanLocks[1])
+            {
+                for (int i = 0; i < _renderPlans.Length; i++)
+                    _renderPlans[i].Clear();
+            }
         }
 
         for (int i = 0; i < _requestBuckets.Length; i++)
@@ -4387,9 +4403,10 @@ public sealed partial class ShadowAtlasManager
     private int ResolveTilesScheduledMetric()
     {
         int planned = 0;
-        lock (_renderPlanSync)
+        int pendingRenderPlanIndex = GetPendingRenderPlanIndex();
+        lock (_renderPlanLocks[pendingRenderPlanIndex])
         {
-            ShadowAtlasRenderPlan pending = GetPendingRenderPlan();
+            ShadowAtlasRenderPlan pending = GetPendingRenderPlan(pendingRenderPlanIndex);
             ReadOnlySpan<ShadowAtlasRenderPlanEntry> entries = pending.Entries;
             for (int i = 0; i < entries.Length; i++)
             {

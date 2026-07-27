@@ -210,7 +210,6 @@ namespace XREngine.Rendering
         /// <returns></returns>
         private BaseVersion GetVersion(bool forceNoStereo = false)
         {
-            bool stereoPass = !forceNoStereo && RuntimeEngine.Rendering.State.IsStereoPass && CanUseVrSpecificVersions();
             bool useMeshDeform = DeformMeshRenderer is not null && _meshDeformInfluences is not null;
 
             BaseVersion ver;
@@ -222,6 +221,15 @@ namespace XREngine.Rendering
                 return RuntimeEngine.Rendering.State.IsPointLightAtlasGroupedShadowPass
                     ? GetPointLightAtlasInstancedVersion()
                     : GetPointLightInstancedVersion();
+
+            bool stereoPass =
+                !forceNoStereo &&
+                RuntimeEngine.Rendering.State.IsStereoPass &&
+                CanUseVrSpecificVersions();
+            if (!stereoPass)
+                return useMeshDeform
+                    ? GetMeshDeformDefaultVersion()
+                    : GetDefaultVersion();
 
             bool allowNvStereo = !RuntimeEngine.Rendering.State.IsVulkan;
             bool preferNV = allowNvStereo && RuntimeEngine.Rendering.Settings.PreferNVStereo;

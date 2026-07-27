@@ -7,7 +7,18 @@ namespace XREngine.Rendering.RenderGraph;
 /// </summary>
 public sealed class RenderPassMetadataSignatureCacheEntry
 {
-    public int RevisionStamp { get; set; } = int.MinValue;
+    private int _revisionStamp = int.MinValue;
+    private int _signature;
 
-    public int Signature { get; set; }
+    public int RevisionStamp
+    {
+        get => Volatile.Read(ref _revisionStamp);
+        set => Volatile.Write(ref _revisionStamp, value);
+    }
+
+    public int Signature
+    {
+        get => Volatile.Read(ref _signature);
+        set => Volatile.Write(ref _signature, value);
+    }
 }

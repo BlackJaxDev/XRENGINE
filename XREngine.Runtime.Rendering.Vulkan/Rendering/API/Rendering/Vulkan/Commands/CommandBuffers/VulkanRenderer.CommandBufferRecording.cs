@@ -150,7 +150,11 @@ namespace XREngine.Rendering.Vulkan
             }
 
             CommandBufferRecordingScratch frameDataScratch = _commandBufferRecordingScratch.Value!;
-            if (!TryRegisterFrameWideMeshFrameDataRequirements(
+            bool frameDataManifestRegistered;
+            string frameDataManifestReason;
+            using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.FrameDataManifest))
+            {
+                frameDataManifestRegistered = TryRegisterFrameWideMeshFrameDataRequirements(
                     ops,
                     dynamicUiBatchTextOps,
                     commandBufferImageSlot,
@@ -159,7 +163,9 @@ namespace XREngine.Rendering.Vulkan
                     frameDataScratch,
                     frameDataScratch.ReusableMeshFrameDataFamilyBases,
                     out _,
-                    out string frameDataManifestReason))
+                    out frameDataManifestReason);
+            }
+            if (!frameDataManifestRegistered)
             {
                 recordingDeferredReason = frameDataManifestReason;
                 FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
@@ -274,42 +280,49 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            FrameOpContext commandBufferFallbackContext = hasStaticFrameOps
-                ? ops[0].Context
-                : dynamicUiBatchTextOps.Length > 0
-                    ? dynamicUiBatchTextOps[0].Context
-                    : CaptureFrameOpContext();
-            ulong frameOpContextFingerprint = ComputeCommandBufferFrameOpContextFingerprint(
-                ops,
-                dynamicUiBatchTextOps,
-                commandBufferFallbackContext);
-            ulong frameOpContextId = ResolveCommandBufferFrameOpContextId(
-                ops,
-                dynamicUiBatchTextOps,
-                commandBufferFallbackContext);
-            CommandBufferGenerationDomains currentGenerations = CaptureCommandBufferGenerationDomains(
-                imageIndex,
-                frameOpsSignature,
-                ops,
-                dynamicUiBatchTextOps,
-                dynamicUiBatchTextSignature,
-                commandBufferFallbackContext,
-                frameOpContextFingerprint,
-                gpuPipelineProfilingActive,
-                commandBufferImageSlot);
-            // Take the synchronized cache-publication generation once for this prepared frame.
-            // All primary/range signature construction below consumes this immutable snapshot.
-            ulong sharedGraphicsPipelineGeneration = SharedGraphicsPipelineGeneration;
-            CommandRecordingDependencySignature currentDependencySignature = CaptureCommandRecordingDependencySignature(
-                imageIndex,
-                commandBufferImageSlot,
-                plannerRevision,
-                frameOpsSignature,
-                dynamicUiBatchTextSignature,
-                commandBufferFallbackContext,
-                currentGenerations,
-                ops,
-                sharedGraphicsPipelineGeneration);
+            FrameOpContext commandBufferFallbackContext;
+            ulong frameOpContextFingerprint;
+            ulong frameOpContextId;
+            CommandBufferGenerationDomains currentGenerations;
+            CommandRecordingDependencySignature currentDependencySignature;
+            using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.DependencySnapshot))
+            {
+                commandBufferFallbackContext = hasStaticFrameOps
+                    ? ops[0].Context
+                    : dynamicUiBatchTextOps.Length > 0
+                        ? dynamicUiBatchTextOps[0].Context
+                        : CaptureFrameOpContext();
+                frameOpContextFingerprint = ComputeCommandBufferFrameOpContextFingerprint(
+                    ops,
+                    dynamicUiBatchTextOps,
+                    commandBufferFallbackContext);
+                frameOpContextId = ResolveCommandBufferFrameOpContextId(
+                    ops,
+                    dynamicUiBatchTextOps,
+                    commandBufferFallbackContext);
+                currentGenerations = CaptureCommandBufferGenerationDomains(
+                    imageIndex,
+                    frameOpsSignature,
+                    ops,
+                    dynamicUiBatchTextOps,
+                    dynamicUiBatchTextSignature,
+                    commandBufferFallbackContext,
+                    frameOpContextFingerprint,
+                    gpuPipelineProfilingActive,
+                    commandBufferImageSlot);
+                // Take the synchronized cache-publication generation once for this prepared frame.
+                // All primary/range signature construction below consumes this immutable snapshot.
+                ulong sharedGraphicsPipelineGeneration = SharedGraphicsPipelineGeneration;
+                currentDependencySignature = CaptureCommandRecordingDependencySignature(
+                    imageIndex,
+                    commandBufferImageSlot,
+                    plannerRevision,
+                    dynamicUiBatchTextSignature,
+                    commandBufferFallbackContext,
+                    currentGenerations,
+                    ops,
+                    sharedGraphicsPipelineGeneration);
+            }
 
             BeginRecordedTextureUploadSubmitBatch();
             FrameOp[] textureUploadOps = DrainTextureUploadFrameOps();
@@ -332,7 +345,10 @@ namespace XREngine.Rendering.Vulkan
             if (!imageForcedDirty && HaveCommandBuffersDirtiedSince(ensureStartDirtyGeneration))
                 imageForcedDirty = true;
 
-            ulong imageLayoutStartSignature = ComputeImageLayoutStateSignature();
+            ulong imageLayoutStartSignature;
+            using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.ImageLayoutSnapshot))
+                imageLayoutStartSignature = ComputeImageLayoutStateSignature();
+
             bool hasMutableGpuDrivenFrameOps = hasStaticFrameOps && HasMutableGpuDrivenFrameOps(ops);
             if (!requiresTrackedPresentSourceRefresh &&
                 !hasStaticFrameOps &&
@@ -355,6 +371,8 @@ namespace XREngine.Rendering.Vulkan
                 return lastSwapchainWriterCommandBuffer;
             }
 
+            ulong preparedCommandChainFastScheduleSignature = 0;
+            bool hasPreparedCommandChainFastScheduleSignature = false;
             if (VulkanPrimaryCommandBufferReuseEnabled &&
                 !hasMutableGpuDrivenFrameOps &&
                 !imageForcedDirty &&
@@ -382,7 +400,9 @@ namespace XREngine.Rendering.Vulkan
                     out dynamicUiBatchTextSecondaryCommandBuffer,
                     out dynamicUiBatchTextOverlayOpCount,
                     out CommandBufferCacheVariant? reusableDynamicUiBatchTextOverlayVariant,
-                    out swapchainLayoutAfterCommandBuffer))
+                    out swapchainLayoutAfterCommandBuffer,
+                    out preparedCommandChainFastScheduleSignature,
+                    out hasPreparedCommandChainFastScheduleSignature))
             {
                 if (delayDynamicUiBatchTextOverlayRecording)
                 {
@@ -415,7 +435,10 @@ namespace XREngine.Rendering.Vulkan
                     scheduledDynamicUiBatchTextSignature,
                     plannerRevision,
                     allowExternalSwapchainTarget: false,
-                    out commandChainStats);
+                    out commandChainStats,
+                    hasPreparedCommandChainFastScheduleSignature
+                        ? preparedCommandChainFastScheduleSignature
+                        : null);
             }
 
             if (commandChainSchedule is not null)
@@ -443,6 +466,9 @@ namespace XREngine.Rendering.Vulkan
                 ? 0
                 : ComputePrimaryCommandBufferGroupSignature(commandChainSchedule, commandChainCache);
             int commandChainPrimaryGroupCount = commandChainSchedule?.Groups.Length ?? 0;
+            ulong commandChainPrimarySkeletonSignature = commandChainSchedule is null
+                ? ulong.MaxValue
+                : ComputeCommandChainPrimarySkeletonSignature(ops);
 
             CommandBufferCacheVariant variant = GetOrCreateCommandBufferVariant(
                 imageIndex,
@@ -461,11 +487,18 @@ namespace XREngine.Rendering.Vulkan
             bool dirty = imageForcedDirty || variant.Dirty;
             bool forcedDirty = dirty;
             bool usingCommandChains = commandChainSchedule is not null;
+            bool allCommandChainGroupsUseSecondaryBuffers =
+                commandChainSchedule is not null &&
+                UsesOnlySecondaryCommandBufferGroups(commandChainSchedule);
             bool hasTextureUploadFrameOps = hasStaticFrameOps && HasTextureUploadFrameOps(ops);
             bool frameOpsRequireFreshPrimary = hasStaticFrameOps &&
                 (!VulkanPrimaryCommandBufferReuseEnabled || hasMutableGpuDrivenFrameOps);
             CommandRecordingDependencyMismatch dependencyMismatch =
-                variant.RecordedDependencySignature.Compare(currentDependencySignature);
+                usingCommandChains
+                    ? variant.RecordedDependencySignature.CompareCommandChainPrimary(
+                        currentDependencySignature,
+                        allCommandChainGroupsUseSecondaryBuffers)
+                    : variant.RecordedDependencySignature.Compare(currentDependencySignature);
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordCommandBuffer.DirtyEvaluation"))
             {
@@ -576,7 +609,6 @@ namespace XREngine.Rendering.Vulkan
                         variant.CommandChainPrimaryGroupSignature,
                         variant.CommandChainPrimaryGroupCount,
                         commandChainPrimaryGroupSignature,
-                        variant.PlannerRevision,
                         variant.GpuProfilerActive,
                         variant.GpuProfilerFrameSlot,
                         gpuPipelineProfilingActive,
@@ -651,6 +683,7 @@ namespace XREngine.Rendering.Vulkan
                         {
                             variant.CommandChainScheduleSignature = commandChainSchedule.StructuralSignature;
                             variant.CommandChainPrimaryGroupSignature = commandChainPrimaryGroupSignature;
+                            variant.CommandChainPrimarySkeletonSignature = commandChainPrimarySkeletonSignature;
                             variant.CommandChainPrimaryGroupCount = commandChainPrimaryGroupCount;
                         }
                         variant.PreserveSwapchainForOverlay = preserveSwapchainForOverlay;
@@ -871,6 +904,7 @@ namespace XREngine.Rendering.Vulkan
             variant.CommandChainPrimaryGroupSignature = commandChainSchedule is null || commandChainCache is null
                 ? ulong.MaxValue
                 : ComputePrimaryCommandBufferGroupSignature(commandChainSchedule, commandChainCache);
+            variant.CommandChainPrimarySkeletonSignature = commandChainPrimarySkeletonSignature;
             variant.CommandChainPrimaryGroupCount = commandChainSchedule is null ? -1 : commandChainPrimaryGroupCount;
             variant.PlannerRevision = plannerRevision;
             variant.GpuProfilerActive = gpuPipelineProfilingActive;
@@ -1049,7 +1083,6 @@ namespace XREngine.Rendering.Vulkan
             uint imageIndex,
             int frameSlot,
             ulong resourcePlanGeneration,
-            ulong staticStructuralSignature,
             ulong volatileSuffixSignature,
             in FrameOpContext context,
             in CommandBufferGenerationDomains generations,
@@ -1061,6 +1094,12 @@ namespace XREngine.Rendering.Vulkan
             renderAreaHash.Add(context.DisplayHeight);
             renderAreaHash.Add(context.InternalWidth);
             renderAreaHash.Add(context.InternalHeight);
+
+            FrameOpSignatureHasher outputPassAttachmentHash = new();
+            outputPassAttachmentHash.Add(context.OutputFrameBufferIdentity);
+            outputPassAttachmentHash.Add(context.OutputTargetIdentity);
+            outputPassAttachmentHash.Add(context.OutputTargetName);
+            outputPassAttachmentHash.Add(ComputePassMetadataSignature(context.PassMetadata));
 
             uint viewMask = context.MultiviewEnabled
                 ? 0x3u
@@ -1088,7 +1127,7 @@ namespace XREngine.Rendering.Vulkan
                 out ulong preparedProgramIdentity);
 
             return new CommandRecordingDependencySignature(
-                OutputPassAttachment: staticStructuralSignature,
+                OutputPassAttachment: outputPassAttachmentHash.ToHash(),
                 RenderArea: renderAreaHash.ToHash(),
                 ViewMask: viewMask,
                 QueueFamily: context.SubmissionQueueFamily,
@@ -1528,7 +1567,6 @@ namespace XREngine.Rendering.Vulkan
                     commandChainScheduleSignature,
                     commandChainPrimaryGroupSignature,
                     commandChainPrimaryGroupCount,
-                    plannerRevision,
                     current.Profiler);
             if (primaryFrameStateDirty)
             {
@@ -1552,15 +1590,12 @@ namespace XREngine.Rendering.Vulkan
             ulong scheduleSignature,
             ulong groupSignature,
             int groupCount,
-            ulong plannerRevision,
             ulong profilerGeneration)
         {
             if ((reasons & PrimaryCommandBufferDirtyReason.ScheduleStructure) != 0)
                 return $"primary-chain-schedule old=0x{variant.CommandChainScheduleSignature:X16} new=0x{scheduleSignature:X16}";
             if ((reasons & PrimaryCommandBufferDirtyReason.GroupStructure) != 0)
                 return $"primary-chain-groups old=0x{variant.CommandChainPrimaryGroupSignature:X16}/{variant.CommandChainPrimaryGroupCount} new=0x{groupSignature:X16}/{groupCount}";
-            if ((reasons & PrimaryCommandBufferDirtyReason.ResourcePlan) != 0)
-                return $"primary-chain-resource-plan old={variant.PlannerRevision} new={plannerRevision}";
             if ((reasons & PrimaryCommandBufferDirtyReason.ProfilerMode) != 0)
                 return $"primary-chain-profiler old=0x{variant.RecordedGenerations.Profiler:X16} new=0x{profilerGeneration:X16}";
             return $"primary-chain-state old=clean new=record-required field={PrimaryCommandBufferDirtyReason.None}";
@@ -1698,13 +1733,19 @@ namespace XREngine.Rendering.Vulkan
             out CommandBuffer dynamicUiBatchTextSecondaryCommandBuffer,
             out int dynamicUiBatchTextOverlayOpCount,
             out CommandBufferCacheVariant? dynamicUiBatchTextOverlayVariant,
-            out ImageLayout swapchainLayoutAfterCommandBuffer)
+            out ImageLayout swapchainLayoutAfterCommandBuffer,
+            out ulong preparedFastScheduleSignature,
+            out bool hasPreparedFastScheduleSignature)
         {
             commandBuffer = default;
             dynamicUiBatchTextSecondaryCommandBuffer = default;
             dynamicUiBatchTextOverlayOpCount = 0;
             dynamicUiBatchTextOverlayVariant = null;
             swapchainLayoutAfterCommandBuffer = ImageLayout.PresentSrcKhr;
+            preparedFastScheduleSignature = 0;
+            hasPreparedFastScheduleSignature = false;
+            using VulkanCpuStageScope commandBufferReuseStage = new(EVulkanCpuStage.CommandBufferReuse);
+
             if (!CommandChainsEnabledForCurrentRecording ||
                 _commandBufferVariants is null ||
                 imageIndex >= _commandBufferVariants.Length)
@@ -1715,11 +1756,16 @@ namespace XREngine.Rendering.Vulkan
             FrameOp[] scheduledDynamicUiBatchTextOps = preserveSwapchainForOverlay
                 ? Array.Empty<FrameOp>()
                 : dynamicUiBatchTextOps;
-            ulong fastScheduleSignature = ComputeCommandChainFastScheduleSignature(
-                imageIndex,
-                ops,
-                scheduledDynamicUiBatchTextOps,
-                plannerRevision);
+            ulong fastScheduleSignature;
+            using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.CommandChainFastSignature))
+            {
+                fastScheduleSignature = ComputeCommandChainFastScheduleSignature(
+                    imageIndex,
+                    ops,
+                    scheduledDynamicUiBatchTextOps,
+                    plannerRevision);
+            }
+            hasPreparedFastScheduleSignature = true;
             if (!TryGetCachedCommandChainSchedule(
                     imageIndex,
                     fastScheduleSignature,
@@ -1734,6 +1780,9 @@ namespace XREngine.Rendering.Vulkan
             Dictionary<CommandChainKey, CommandChain> commandChainCache = GetCommandChainCache(imageIndex);
             ulong currentPrimaryGroupSignature = ComputePrimaryCommandBufferGroupSignature(cachedSchedule, commandChainCache);
             int currentPrimaryGroupCount = cachedSchedule.Groups.Length;
+            ulong currentPrimarySkeletonSignature = ComputeCommandChainPrimarySkeletonSignature(ops);
+            bool allCommandChainGroupsUseSecondaryBuffers =
+                UsesOnlySecondaryCommandBufferGroups(cachedSchedule);
 
             List<CommandBufferCacheVariant> variants = _commandBufferVariants[imageIndex];
             bool hasDynamicUiBatchTextOverlay = dynamicUiBatchTextOpCount > 0;
@@ -1741,7 +1790,9 @@ namespace XREngine.Rendering.Vulkan
             {
                 CommandBufferCacheVariant variant = variants[i];
                 CommandRecordingDependencyMismatch dependencyMismatch =
-                    variant.RecordedDependencySignature.Compare(currentDependencySignature);
+                    variant.RecordedDependencySignature.CompareCommandChainPrimary(
+                        currentDependencySignature,
+                        allCommandChainGroupsUseSecondaryBuffers);
                 if (dependencyMismatch.RequiresRecording && VulkanFrameDiagnosticsTraceEnabled)
                 {
                     Debug.VulkanEvery(
@@ -1754,8 +1805,8 @@ namespace XREngine.Rendering.Vulkan
                 }
                 if (variant.Dirty ||
                     dependencyMismatch.RequiresRecording ||
-                    variant.CommandChainScheduleSignature != cachedSchedule.StructuralSignature ||
                     variant.CommandChainPrimaryGroupSignature != currentPrimaryGroupSignature ||
+                    variant.CommandChainPrimarySkeletonSignature != currentPrimarySkeletonSignature ||
                     variant.CommandChainPrimaryGroupCount != currentPrimaryGroupCount ||
                     // Query brackets stay inline and are deliberately omitted from the
                     // command-chain schedule. They therefore need their own primary-cache
@@ -1820,6 +1871,11 @@ namespace XREngine.Rendering.Vulkan
                     : dynamicUiBatchTextSignature;
                 variant.DynamicUiOpCount = dynamicUiBatchTextOpCount;
                 variant.PreserveSwapchainForOverlay = preserveSwapchainForOverlay;
+                variant.FrameOpsSignature = frameOpsSignature;
+                variant.CommandChainScheduleSignature = cachedSchedule.StructuralSignature;
+                variant.CommandChainPrimaryGroupSignature = currentPrimaryGroupSignature;
+                variant.CommandChainPrimarySkeletonSignature = currentPrimarySkeletonSignature;
+                variant.CommandChainPrimaryGroupCount = currentPrimaryGroupCount;
                 variant.PlannerRevision = plannerRevision;
                 variant.GpuProfilerActive = gpuPipelineProfilingActive;
                 variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
@@ -2930,6 +2986,8 @@ namespace XREngine.Rendering.Vulkan
             meshDrawSlotsByRenderer.EnsureCapacity(Math.Max(1, recordingScratch.RecordMeshDrawSlotCapacityHint));
             VulkanMeshFrameDataReservationManifest frameDataManifest = recordingScratch.MeshFrameDataManifest;
             ulong frameDataGeneration = MeshFrameDataReservationGeneration;
+            using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.PrimaryFrameDataManifest))
+            {
             frameDataManifest.Begin(frameDataGeneration, recordingScratch.RecordMeshDrawSlotCapacityHint);
             if (!TryRegisterFrameWideMeshFrameDataRequirements(
                     ops,
@@ -2956,6 +3014,7 @@ namespace XREngine.Rendering.Vulkan
                     $"Unable to reserve {reservation.Value} mesh frame-data slots before command recording.";
                 return false;
             }
+            }
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshDrawSlotsByRendererFamily =
                 recordingScratch.PrimaryMeshDrawSlotsByRendererFamily;
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshFrameDataFamilyBases =
@@ -2972,6 +3031,8 @@ namespace XREngine.Rendering.Vulkan
                 ComputeFrameOpsSignature(ops));
             bool warmupPreviouslyCompleted = pipelineVariantManifest.WarmupCompleted;
             bool graphicsPipelinesReady = true;
+            using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.PrimaryPrewarm))
+            {
             string firstGraphicsPipelinePendingReason = string.Empty;
             foreach (VulkanPipelineVariantRequirement requirement in pipelineVariantManifest.Requirements)
             {
@@ -3131,6 +3192,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             pipelineVariantManifest.MarkWarmupCompleted();
+            }
 
             if (!frameDataManifest.TrySeal(
                     MeshFrameDataReservationGeneration,
@@ -3142,6 +3204,8 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
             using VulkanMeshFrameDataManifestRecordingScope frameDataManifestScope = new(frameDataManifest);
+            using VulkanCpuStageScope primaryCommandEncodingStage =
+                new(EVulkanCpuStage.PrimaryCommandEncoding);
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.ResetAndBegin"))
             {

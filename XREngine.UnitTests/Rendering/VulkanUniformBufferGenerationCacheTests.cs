@@ -654,7 +654,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         recording.ShouldContain("MarkCommandBuffersDirty(\"mesh frame-data layout generation changed\")");
         AssertOrdered(
             recording,
-            "if (!TryRegisterFrameWideMeshFrameDataRequirements(\n                    ops,\n                    dynamicUiBatchTextOps,",
+            "frameDataManifestRegistered = TryRegisterFrameWideMeshFrameDataRequirements(\n                    ops,\n                    dynamicUiBatchTextOps,",
             "if (!imageForcedDirty && HaveCommandBuffersDirtiedSince(ensureStartDirtyGeneration))",
             "TryReuseLastSwapchainWriterVariant(",
             "TryReuseCleanCommandChainPrimaryVariant(");
@@ -804,6 +804,78 @@ public sealed class VulkanUniformBufferGenerationCacheTests
 
         drawing[prewarmStart..prewarmEnd].ShouldContain("lock (_recordDrawSync)");
         drawing[refreshStart..refreshEnd].ShouldContain("lock (_recordDrawSync)");
+    }
+
+    [Test]
+    public void EngineUniformResolution_ComputesInverseModelOnlyForTheInverseModelUniform()
+    {
+        string uniforms = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
+
+        int resolverStart = uniforms.IndexOf(
+            "private bool TryResolveEngineUniformValue(",
+            StringComparison.Ordinal);
+        int legacyWriterStart = uniforms.IndexOf(
+            "private bool TryWriteEngineUniform(",
+            resolverStart,
+            StringComparison.Ordinal);
+        int legacyWriterEnd = uniforms.IndexOf(
+            "private bool UploadUniform<T>(",
+            legacyWriterStart,
+            StringComparison.Ordinal);
+
+        resolverStart.ShouldBeGreaterThanOrEqualTo(0);
+        legacyWriterStart.ShouldBeGreaterThan(resolverStart);
+        legacyWriterEnd.ShouldBeGreaterThan(legacyWriterStart);
+
+        string resolver = uniforms[resolverStart..legacyWriterStart];
+        string legacyWriter = uniforms[legacyWriterStart..legacyWriterEnd];
+        resolver.ShouldContain(
+            "case nameof(EEngineUniform.RootInvModelMatrix):\n\t\t\t\t\tMatrix4x4.Invert(draw.ModelMatrix, out Matrix4x4 inverseModel);");
+        legacyWriter.ShouldContain(
+            "case nameof(EEngineUniform.RootInvModelMatrix):\n\t\t\t\t\tMatrix4x4.Invert(draw.ModelMatrix, out Matrix4x4 inverseModel);");
+        resolver.IndexOf("Matrix4x4.Invert(", StringComparison.Ordinal)
+            .ShouldBe(resolver.LastIndexOf("Matrix4x4.Invert(", StringComparison.Ordinal));
+        legacyWriter.IndexOf("Matrix4x4.Invert(", StringComparison.Ordinal)
+            .ShouldBe(legacyWriter.LastIndexOf("Matrix4x4.Invert(", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void TimeUniformResolution_UsesOneFrameStableTimerSnapshot()
+    {
+        string renderState = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.RenderState.cs");
+        string uniforms = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
+
+        int resolverStart = uniforms.IndexOf(
+            "private bool TryResolveEngineUniformValue(",
+            StringComparison.Ordinal);
+        int legacyWriterStart = uniforms.IndexOf(
+            "private bool TryWriteEngineUniform(",
+            resolverStart,
+            StringComparison.Ordinal);
+        int legacyWriterEnd = uniforms.IndexOf(
+            "private bool UploadUniform<T>(",
+            legacyWriterStart,
+            StringComparison.Ordinal);
+
+        resolverStart.ShouldBeGreaterThanOrEqualTo(0);
+        legacyWriterStart.ShouldBeGreaterThan(resolverStart);
+        legacyWriterEnd.ShouldBeGreaterThan(legacyWriterStart);
+
+        string resolver = uniforms[resolverStart..legacyWriterStart];
+        string legacyWriter = uniforms[legacyWriterStart..legacyWriterEnd];
+
+        renderState.ShouldContain("private void EnsureMaterialUniformFrameTime()");
+        renderState.ShouldContain("ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;");
+        renderState.ShouldContain("_materialUniformSecondsLive = RuntimeEngine.ElapsedTime;");
+        renderState.ShouldNotContain("_materialUniformSecondsLive += RuntimeEngine.Time.Timer.Update.Delta;");
+        renderState.ShouldContain("program.Uniform(EEngineUniform.EngineTime.ToStringFast(), _materialUniformSecondsLive);");
+        resolver.ShouldNotContain("RuntimeEngine.ElapsedTime");
+        legacyWriter.ShouldNotContain("RuntimeEngine.ElapsedTime");
+        resolver.ShouldContain("Renderer.EnsureMaterialUniformFrameTime();");
+        legacyWriter.ShouldContain("Renderer.EnsureMaterialUniformFrameTime();");
     }
 
     [Test]

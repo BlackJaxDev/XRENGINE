@@ -1231,6 +1231,42 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
+			if (refreshMaterialUniforms &&
+				draw.ProgramBindingSnapshot is null &&
+				_program is { } activeProgram)
+			{
+				// Keep snapshot-less material callbacks and all of their consumers in one
+				// private draw scope. This avoids publishing transient draw bindings through
+				// the program-wide dictionaries and then reacquiring that monitor for every
+				// auto-uniform member.
+				using VkRenderProgram.BindingUpdateScope bindingUpdate = activeProgram.BeginBindingUpdate();
+				return TryRefreshReusableCommandBufferFrameDataBindingsNoLock(
+					imageIndex,
+					draw,
+					drawUniformSlot,
+					out reason,
+					refreshMaterialUniforms,
+					material);
+			}
+
+			return TryRefreshReusableCommandBufferFrameDataBindingsNoLock(
+				imageIndex,
+				draw,
+				drawUniformSlot,
+				out reason,
+				refreshMaterialUniforms,
+				material);
+		}
+
+		private bool TryRefreshReusableCommandBufferFrameDataBindingsNoLock(
+			uint imageIndex,
+			in PendingMeshDraw draw,
+			int drawUniformSlot,
+			out string reason,
+			bool refreshMaterialUniforms,
+			XRMaterial material)
+		{
+			reason = "reusable";
 			if (refreshMaterialUniforms && _program?.Data is { } programData)
 				NotifyDrawUniforms(material, programData, draw);
 
@@ -1246,7 +1282,11 @@ public unsafe partial class VulkanRenderer
 				reason = $"descriptors {descriptorReason}; snapshot={(draw.ProgramBindingSnapshot is null ? "none" : "captured")} program='{_program?.Data?.Name ?? "<unnamed program>"}'";
 				return false;
 			}
-			if (!TryRefreshSharedMaterialDescriptorSetForReusableFrame(material, frameIndex, out string sharedMaterialDescriptorReason))
+			if (!TryRefreshSharedMaterialDescriptorSetForReusableFrame(
+					material,
+					frameIndex,
+					draw.ProgramBindingSnapshot is not null,
+					out string sharedMaterialDescriptorReason))
 			{
 				reason = $"descriptors {sharedMaterialDescriptorReason}; snapshot={(draw.ProgramBindingSnapshot is null ? "none" : "captured")} program='{_program?.Data?.Name ?? "<unnamed program>"}'";
 				return false;

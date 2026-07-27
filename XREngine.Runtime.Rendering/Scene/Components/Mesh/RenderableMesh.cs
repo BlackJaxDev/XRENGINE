@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
+using System.Threading;
 using SimpleScene.Util.ssBVH;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -34,30 +35,26 @@ namespace XREngine.Components.Scene.Mesh
         #region LOD and component state
 
         private readonly object _lodsLock = new();
+        private int _lodCount;
+        private XRMeshRenderer? _currentLODRenderer;
 
         public XRMeshRenderer? CurrentLODRenderer
-        {
-            get
-            {
-                lock (_lodsLock)
-                    return _currentLOD?.Value?.Renderer;
-            }
-        }
+            => Volatile.Read(ref _currentLODRenderer);
 
         public XRMesh? CurrentLODMesh
-        {
-            get
-            {
-                lock (_lodsLock)
-                    return _currentLOD?.Value?.Renderer?.Mesh;
-            }
-        }
+            => Volatile.Read(ref _currentLODRenderer)?.Mesh;
 
         private LinkedListNode<RenderableLOD>? _currentLOD = null;
         public LinkedListNode<RenderableLOD>? CurrentLOD
         {
             get => _currentLOD;
-            private set => SetField(ref _currentLOD, value);
+            private set
+            {
+                if (!SetField(ref _currentLOD, value))
+                    return;
+
+                Volatile.Write(ref _currentLODRenderer, value?.Value.Renderer);
+            }
         }
         public IRuntimeRenderWorld? World => Component.SceneNode.World as IRuntimeRenderWorld;
         public LinkedList<RenderableLOD> LODs { get; private set; } = new();
@@ -136,6 +133,7 @@ namespace XREngine.Components.Scene.Mesh
                     LODs.AddLast(new RenderableLOD(renderer, lod.MaxVisibleDistance, lod.MinProjectedScreenRadiusPixels));
                     TrackBones(renderer.Mesh, true);
                 }
+                Volatile.Write(ref _lodCount, LODs.Count);
             }
 
             RootBone = ResolveSkinnedRootBoneTransform(
@@ -310,6 +308,9 @@ namespace XREngine.Components.Scene.Mesh
             => UpdateLOD(camera.DistanceFromRenderNearPlane(Component.Transform.RenderTranslation));
         public void UpdateLOD(float distanceToCamera)
         {
+            if (Volatile.Read(ref _lodCount) <= 1)
+                return;
+
             lock (_lodsLock)
             {
                 if (LODs.Count == 0)
@@ -462,6 +463,7 @@ namespace XREngine.Components.Scene.Mesh
             RenderableLOD[] lods;
             lock (_lodsLock)
             {
+                Volatile.Write(ref _lodCount, 0);
                 lods = [.. LODs];
                 CurrentLOD = null;
                 LODs.Clear();

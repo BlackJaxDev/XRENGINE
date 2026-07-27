@@ -89,8 +89,8 @@ public unsafe partial class VulkanRenderer
 				activeSetMask &= ~(1u << (int)DescriptorSetMaterial);
 			}
 			int activeSetCount = System.Numerics.BitOperations.PopCount(activeSetMask);
-			ulong layoutFingerprint = ComputeDescriptorLayoutFingerprint(layouts);
-			ulong schemaFingerprint = ComputeDescriptorSchemaFingerprint(bindings, setCount);
+			ulong layoutFingerprint = _program.DescriptorLayoutFingerprint;
+			ulong schemaFingerprint = _program.DescriptorSchemaFingerprint;
 			ulong resourceFingerprint = ComputeDescriptorResourceFingerprint(
 				material,
 				frameCount,
@@ -442,6 +442,55 @@ public unsafe partial class VulkanRenderer
 				out reason);
 
 		/// <summary>
+		/// Activates the current descriptor allocation without re-resolving every binding
+		/// when command-chain validation has already proven the captured descriptor
+		/// resources are unchanged. The exact completed frame slot must still contain the
+		/// allocation's currently published fingerprint; otherwise the full validation and
+		/// refresh path remains authoritative.
+		/// </summary>
+		private bool TryActivateValidatedCapturedDescriptorSetsFast(
+			XRMaterial material,
+			int drawUniformSlot,
+			int descriptorFrameSlotCount,
+			int setCount,
+			ulong layoutFingerprint,
+			ulong schemaFingerprint,
+			int viewFamilyIdentity,
+			int refreshFrameIndex)
+		{
+			DescriptorAllocation? allocation = _activeDescriptorAllocation;
+			if (allocation is null || _descriptorDirty)
+				return false;
+
+			if (!ReferenceEquals(allocation.Material, material) ||
+				!DescriptorAllocationMatchesProgram(allocation) ||
+				allocation.MaterialBindingLayoutVersion != material.BindingLayoutVersion ||
+				allocation.DescriptorFrameSlotCount != descriptorFrameSlotCount ||
+				allocation.SetCount != setCount ||
+				allocation.LayoutFingerprint != layoutFingerprint ||
+				allocation.SchemaFingerprint != schemaFingerprint ||
+				allocation.ViewFamilyIdentity != viewFamilyIdentity ||
+				allocation.DrawUniformSlot != drawUniformSlot ||
+				!IsDescriptorAllocationValid(allocation, descriptorFrameSlotCount, setCount))
+			{
+				return false;
+			}
+
+			int descriptorSlotIndex = ResolveDescriptorFrameIndex(refreshFrameIndex, allocation.Sets.Length);
+			if (!DescriptorSlotResourceFingerprintMatches(
+					allocation,
+					descriptorSlotIndex,
+					allocation.ResourceFingerprint))
+			{
+				return false;
+			}
+
+			ActivateDescriptorAllocation(allocation);
+			_descriptorDirty = false;
+			return true;
+		}
+
+		/// <summary>
 		/// Refreshes the exact shared-material descriptor slot consumed by a reusable
 		/// command buffer. A same-handle refresh republishes the tracked resource
 		/// snapshot; a replacement handle requires recording a new bind command.
@@ -449,6 +498,7 @@ public unsafe partial class VulkanRenderer
 		private bool TryRefreshSharedMaterialDescriptorSetForReusableFrame(
 			XRMaterial material,
 			int frameIndex,
+			bool capturedResourcesValidated,
 			out string reason)
 		{
 			reason = "reusable";
@@ -480,11 +530,20 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
-			if (!allocation.SharedMaterial.TryGetMaterialDescriptorSet(
+			DescriptorSet currentSet = default;
+			bool materialSetReady =
+				capturedResourcesValidated &&
+				allocation.SharedMaterial.TryGetValidatedReusableMaterialDescriptorSet(
 					program,
 					frameIndex,
-					out DescriptorSet currentSet,
-					out _))
+					out currentSet);
+			if (!materialSetReady)
+				materialSetReady = allocation.SharedMaterial.TryGetMaterialDescriptorSet(
+					program,
+					frameIndex,
+					out currentSet,
+					out _);
+			if (!materialSetReady)
 			{
 				reason = $"shared-material descriptor refresh failed for frame {frameIndex}";
 				return false;
@@ -516,7 +575,7 @@ public unsafe partial class VulkanRenderer
 			if (layouts is not { Count: > 0 } || bindings is not { Count: > 0 })
 				return 0UL;
 
-			return ComputeDescriptorSchemaFingerprint(bindings, layouts.Count);
+			return program!.DescriptorSchemaFingerprint;
 		}
 
 		internal ulong ComputeRecordedDescriptorResourceSignature(XRMaterial material, VkRenderProgram? preparedProgram)
@@ -572,12 +631,27 @@ public unsafe partial class VulkanRenderer
 			int descriptorFrameSlotCount = frameCount;
 			int setCount = layouts.Count;
 			int viewFamilyIdentity = Renderer.ResolveMeshDescriptorViewFamilyIdentity();
-			ulong layoutFingerprint = ComputeDescriptorLayoutFingerprint(layouts);
-			ulong schemaFingerprint = ComputeDescriptorSchemaFingerprint(bindings, setCount);
+			ulong layoutFingerprint = _program.DescriptorLayoutFingerprint;
+			ulong schemaFingerprint = _program.DescriptorSchemaFingerprint;
 			bool usesSharedMaterialTier = _activeDescriptorAllocation is { } activeAllocation &&
 				DescriptorAllocationMatchesProgram(activeAllocation) &&
 				ReferenceEquals(activeAllocation.Material, material) &&
 				activeAllocation.UsesSharedMaterialTier;
+			if (resourcesCapturedByFrameSignature &&
+				refreshFrameIndex is { } validatedFrameIndex &&
+				TryActivateValidatedCapturedDescriptorSetsFast(
+					material,
+					drawUniformSlot,
+					descriptorFrameSlotCount,
+					setCount,
+					layoutFingerprint,
+					schemaFingerprint,
+					viewFamilyIdentity,
+					validatedFrameIndex))
+			{
+				return true;
+			}
+
 			ulong resourceFingerprint = ComputeDescriptorResourceFingerprint(
 				material,
 				frameCount,
@@ -1316,45 +1390,6 @@ public unsafe partial class VulkanRenderer
 			return true;
 		}
 
-        /// <summary>
-        /// Computes a fingerprint over descriptor set layout metadata (binding indices,
-        /// types, stages). Used to detect when the schema changes and a full
-        /// reallocation of the descriptor pool is required.
-        /// </summary>
-		private static ulong ComputeDescriptorLayoutFingerprint(IReadOnlyList<DescriptorSetLayout> layouts)
-		{
-			const ulong offsetBasis = 14695981039346656037UL;
-			const ulong prime = 1099511628211UL;
-			ulong hash = offsetBasis;
-			for (int i = 0; i < layouts.Count; i++)
-			{
-				hash ^= layouts[i].Handle;
-				hash *= prime;
-			}
-
-			hash ^= unchecked((ulong)layouts.Count);
-			return hash * prime;
-		}
-
-        private static ulong ComputeDescriptorSchemaFingerprint(IReadOnlyList<DescriptorBindingInfo> bindings, int setCount)
-		{
-			VulkanStableHash64 hash = new(schemaVersion: 2);
-			hash.Add(setCount);
-
-			for (int bindingIndex = 0; bindingIndex < bindings.Count; bindingIndex++)
-			{
-				DescriptorBindingInfo binding = bindings[bindingIndex];
-				hash.Add(binding.Set);
-				hash.Add(binding.Binding);
-				hash.Add((int)binding.DescriptorType);
-				hash.Add(binding.Count);
-				hash.Add((int)binding.StageFlags);
-				hash.Add(binding.Name);
-			}
-
-			return hash.Value;
-		}
-
 		private string ComputeDescriptorResourceFingerprintDetails(XRMaterial material, int frameCount, IReadOnlyList<DescriptorBindingInfo> bindings)
 		{
 			StringBuilder builder = new(256);
@@ -1592,13 +1627,16 @@ public unsafe partial class VulkanRenderer
 				!IsFrameSourceSamplerBinding(material, binding) &&
 				!string.IsNullOrWhiteSpace(binding.Name);
 
-		private bool IsFrameSourceSamplerBinding(XRMaterial material, DescriptorBindingInfo binding)
+		private bool IsFrameSourceSamplerBinding(
+			XRMaterial material,
+			DescriptorBindingInfo binding,
+			ComputeDispatchSnapshot? snapshot = null)
 		{
 			if (IsFrameSourceSamplerName(binding.Name))
 				return true;
 
 			if (string.IsNullOrWhiteSpace(binding.Name) ||
-				MaterialResolvesDescriptorBinding(material, binding) ||
+				MaterialResolvesDescriptorBinding(material, binding, snapshot) ||
 				!BindingResolvesPipelineResourceTexture(binding))
 			{
 				return false;
@@ -1607,19 +1645,22 @@ public unsafe partial class VulkanRenderer
 			XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
 			return pipeline is not null &&
 				_program is not null &&
-				_program.TryGetSamplerTexture(binding.Name, out XRTexture? programTexture) &&
+				TryGetProgramSamplerTexture(snapshot, binding.Name, out XRTexture? programTexture) &&
 				pipeline.TryGetTexture(binding.Name, out XRTexture? pipelineTexture) &&
 				ReferenceEquals(programTexture, pipelineTexture);
 		}
 
-		private bool MaterialResolvesDescriptorBinding(XRMaterial material, DescriptorBindingInfo binding)
+		private bool MaterialResolvesDescriptorBinding(
+			XRMaterial material,
+			DescriptorBindingInfo binding,
+			ComputeDispatchSnapshot? snapshot = null)
 		{
 			if (VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding))
 				return material.Textures.Count > 0;
 
 			if (!string.IsNullOrWhiteSpace(binding.Name) &&
 				_program is not null &&
-				_program.TryGetSamplerTexture(binding.Name, out _))
+				TryGetProgramSamplerTexture(snapshot, binding.Name, out _))
 			{
 				return false;
 			}
@@ -1632,6 +1673,17 @@ public unsafe partial class VulkanRenderer
 				bindlessMaterialArray: false);
 
 			return resolution.HasTexture;
+		}
+
+		private bool TryGetProgramSamplerTexture(
+			ComputeDispatchSnapshot? snapshot,
+			string samplerName,
+			out XRTexture? texture)
+		{
+			texture = null;
+			return snapshot is not null
+				? snapshot.TryGetSamplerTexture(samplerName, out texture)
+				: _program is not null && _program.TryGetSamplerTexture(samplerName, out texture);
 		}
 
 		private static bool MaterialOwnsNamedSamplerBinding(XRMaterial material, string? bindingName)
@@ -1705,7 +1757,7 @@ public unsafe partial class VulkanRenderer
 
 			XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
 			if (!SnapshotHasFrameSourceSampler(snapshot, pipeline) &&
-				!DescriptorBindingsHaveFrameSourceSampler(material, _program.DescriptorBindings))
+				!DescriptorBindingsHaveFrameSourceSampler(material, _program.DescriptorBindings, snapshot))
 			{
 				return true;
 			}
@@ -1730,6 +1782,7 @@ public unsafe partial class VulkanRenderer
 				frameSets,
 				_program.DescriptorBindings,
 				material,
+				snapshot,
 				out reason);
 		}
 
@@ -1745,10 +1798,13 @@ public unsafe partial class VulkanRenderer
 			return false;
 		}
 
-		private bool DescriptorBindingsHaveFrameSourceSampler(XRMaterial material, IReadOnlyList<DescriptorBindingInfo> bindings)
+		private bool DescriptorBindingsHaveFrameSourceSampler(
+			XRMaterial material,
+			IReadOnlyList<DescriptorBindingInfo> bindings,
+			ComputeDispatchSnapshot? snapshot)
 		{
 			for (int i = 0; i < bindings.Count; i++)
-				if (IsFrameSourceSamplerBinding(material, bindings[i]))
+				if (IsFrameSourceSamplerBinding(material, bindings[i], snapshot))
 					return true;
 
 			return false;
@@ -1760,6 +1816,7 @@ public unsafe partial class VulkanRenderer
 			DescriptorSet[] frameSets,
 			IReadOnlyList<DescriptorBindingInfo> bindings,
 			XRMaterial material,
+			ComputeDispatchSnapshot? snapshot,
 			out string reason)
 		{
 			bool refreshed = false;
@@ -1769,7 +1826,7 @@ public unsafe partial class VulkanRenderer
 			for (int i = 0; i < bindings.Count; i++)
 			{
 				DescriptorBindingInfo binding = bindings[i];
-				if (!IsFrameSourceSamplerBinding(material, binding))
+				if (!IsFrameSourceSamplerBinding(material, binding, snapshot))
 					continue;
 
 				if (!IsImageDescriptorBinding(binding.DescriptorType))
@@ -1790,7 +1847,7 @@ public unsafe partial class VulkanRenderer
 
 				for (int arrayIndex = 0; arrayIndex < (int)descriptorCount; arrayIndex++)
 				{
-					if (!TryResolveImage(binding, material, binding.DescriptorType, out imageInfos[arrayIndex], arrayIndex))
+					if (!TryResolveImage(binding, material, binding.DescriptorType, out imageInfos[arrayIndex], arrayIndex, snapshot))
 					{
 						reason = $"failed to resolve frame-source sampler '{binding.Name}'";
 						return false;
@@ -2993,21 +3050,39 @@ public unsafe partial class VulkanRenderer
 		/// combined-image-sampler, sampled-image, and storage-image types.
 		/// For combined depth-stencil formats, automatically creates a depth-only view.
 		/// </summary>
-		private bool TryResolveImage(DescriptorBindingInfo binding, XRMaterial material, DescriptorType descriptorType, out DescriptorImageInfo imageInfo, int arrayIndex = 0)
+		private bool TryResolveImage(
+			DescriptorBindingInfo binding,
+			XRMaterial material,
+			DescriptorType descriptorType,
+			out DescriptorImageInfo imageInfo,
+			int arrayIndex = 0,
+			ComputeDispatchSnapshot? snapshot = null)
 		{
 			imageInfo = default;
 			bool bindless = VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding);
-			MaterialTextureBindingResolution textureBinding = MaterialTextureBindingResolver.Resolve(
-				material,
-				binding.Name,
-				(int)binding.Binding,
-				arrayIndex,
-				bindless,
-				_program,
-				static (program, samplerName) =>
-					program is not null && program.TryGetSamplerTexture(samplerName, out XRTexture? namedTexture)
-						? namedTexture
-						: null);
+			MaterialTextureBindingResolution textureBinding = snapshot is not null
+				? MaterialTextureBindingResolver.Resolve(
+					material,
+					binding.Name,
+					(int)binding.Binding,
+					arrayIndex,
+					bindless,
+					snapshot,
+					static (capturedSnapshot, samplerName) =>
+						capturedSnapshot.TryGetSamplerTexture(samplerName, out XRTexture? namedTexture)
+							? namedTexture
+							: null)
+				: MaterialTextureBindingResolver.Resolve(
+					material,
+					binding.Name,
+					(int)binding.Binding,
+					arrayIndex,
+					bindless,
+					_program,
+					static (program, samplerName) =>
+						program is not null && program.TryGetSamplerTexture(samplerName, out XRTexture? namedTexture)
+							? namedTexture
+							: null);
 			XRTexture? texture = textureBinding.Texture;
 
 			if (texture is null)

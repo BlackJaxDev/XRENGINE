@@ -270,9 +270,7 @@ namespace XREngine.Rendering.Occlusion
         // Effective mode observed during the completed frame. RenderCPU can be
         // called again later for no-camera passes; aggregate the frame so those
         // disabled passes do not hide an earlier active path in the debug UI.
-        private static readonly object ActiveModeLock = new();
-        private static EOcclusionCullingMode _currentEffectiveMode = EOcclusionCullingMode.Disabled;
-        private static EMeshSubmissionStrategy _currentSubmissionStrategy;
+        private static int _currentActiveModeState;
         private static EOcclusionCullingMode _lastEffectiveMode = EOcclusionCullingMode.Disabled;
         private static EMeshSubmissionStrategy _lastSubmissionStrategy;
 
@@ -636,13 +634,9 @@ namespace XREngine.Rendering.Occlusion
                 _lastFrameGpuHiZSkipReasons[i] = _gpuHiZSkipReasons[i];
                 _gpuHiZSkipReasons[i] = 0;
             }
-            lock (ActiveModeLock)
-            {
-                _lastEffectiveMode = _currentEffectiveMode;
-                _lastSubmissionStrategy = _currentSubmissionStrategy;
-                _currentEffectiveMode = EOcclusionCullingMode.Disabled;
-                _currentSubmissionStrategy = default;
-            }
+            int completedActiveModeState = Interlocked.Exchange(ref _currentActiveModeState, 0);
+            _lastEffectiveMode = UnpackActiveMode(completedActiveModeState);
+            _lastSubmissionStrategy = UnpackSubmissionStrategy(completedActiveModeState);
 
             _lastFrameCpuSocTested = _cpuSocTested;
             _lastFrameCpuSocCulled = _cpuSocCulled;
@@ -940,15 +934,33 @@ namespace XREngine.Rendering.Occlusion
         /// <summary>Records the active occlusion mode and submission strategy this frame.</summary>
         public static void RecordActiveMode(EOcclusionCullingMode mode, EMeshSubmissionStrategy strategy)
         {
-            lock (ActiveModeLock)
+            int replacement = PackActiveMode(mode, strategy);
+            while (true)
             {
-                if (GetModePriority(mode) < GetModePriority(_currentEffectiveMode))
+                int current = Volatile.Read(ref _currentActiveModeState);
+                if (GetModePriority(mode) < GetModePriority(UnpackActiveMode(current)))
                     return;
 
-                _currentEffectiveMode = mode;
-                _currentSubmissionStrategy = strategy;
+                if (Interlocked.CompareExchange(
+                        ref _currentActiveModeState,
+                        replacement,
+                        current) == current)
+                {
+                    return;
+                }
             }
         }
+
+        private static int PackActiveMode(
+            EOcclusionCullingMode mode,
+            EMeshSubmissionStrategy strategy)
+            => unchecked(((int)strategy << 16) | ((int)mode & 0xFFFF));
+
+        private static EOcclusionCullingMode UnpackActiveMode(int state)
+            => (EOcclusionCullingMode)(state & 0xFFFF);
+
+        private static EMeshSubmissionStrategy UnpackSubmissionStrategy(int state)
+            => (EMeshSubmissionStrategy)((uint)state >> 16);
 
         private static int GetModePriority(EOcclusionCullingMode mode)
         {
