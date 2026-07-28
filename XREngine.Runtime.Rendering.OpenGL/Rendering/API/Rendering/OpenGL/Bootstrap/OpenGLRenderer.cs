@@ -78,7 +78,11 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
             return _version;
         }
     }
-    public OpenGLRenderer(XRWindow window, bool shouldLinkWindow = true) : base(window, shouldLinkWindow)
+    public OpenGLRenderer(
+        XRWindow window,
+        bool shouldLinkWindow = true,
+        long backendGeneration = 0) :
+        base(window, shouldLinkWindow, backendGeneration)
     {
         ESApi = Silk.NET.OpenGLES.GL.GetApi(Window.GLContext);
 

@@ -103,8 +103,11 @@ namespace XREngine.Rendering.Vulkan
                 1,
                 &toTransfer);
 
+            // Use a visibly distinct recovery background. A black clear is
+            // indistinguishable from a dead renderer when no prior swapchain
+            // content survived a resize.
             ClearColorValue clearColor =
-                new(0.0f, 0.0f, 0.0f, 1.0f);
+                new(0.06f, 0.015f, 0.08f, 1.0f);
             CmdClearColorImageTracked(
                 commandBuffer,
                 swapchainImage,
@@ -136,6 +139,48 @@ namespace XREngine.Rendering.Vulkan
                 null,
                 1,
                 &toPresent);
+        }
+
+        private bool TryRecordRejectedDesktopRecoveryOverlay(
+            ref DesktopFrameAttempt attempt,
+            ImGuiFrameSnapshot? snapshot,
+            CommandBuffer predecessorCommandBuffer,
+            out CommandBuffer overlayCommandBuffer)
+        {
+            overlayCommandBuffer = default;
+            if (snapshot is null)
+                return false;
+
+            try
+            {
+                bool recorded = TryRecordImGuiOverlayCommandBuffer(
+                    attempt.ImageIndex,
+                    snapshot,
+                    ImageLayout.PresentSrcKhr,
+                    predecessorCommandBuffer,
+                    out overlayCommandBuffer);
+                if (recorded)
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.Frame.{GetHashCode()}.RecoveryOverlay",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Recorded ImGui over the rejected-frame recovery background for image {0}.",
+                        attempt.ImageIndex);
+                }
+
+                return recorded;
+            }
+            catch (Exception ex)
+            {
+                overlayCommandBuffer = default;
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.RecoveryOverlayFailed",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Rejected-frame ImGui recovery overlay failed; presenting the recovery background instead. {0}: {1}",
+                    ex.GetType().Name,
+                    ex.Message);
+                return false;
+            }
         }
 
         private void ReleaseUnsubmittedRejectedDesktopAbortCommand(

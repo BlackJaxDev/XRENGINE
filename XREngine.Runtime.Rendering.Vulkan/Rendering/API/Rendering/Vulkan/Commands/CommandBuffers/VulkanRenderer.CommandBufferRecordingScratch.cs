@@ -14,7 +14,12 @@ namespace XREngine.Rendering.Vulkan
             public Dictionary<int, FrameOp> SwapchainWriterOpByPipeline { get; } = new();
             public Dictionary<int, int> SwapchainWriterDynamicUiDrawCountByPipeline { get; } = new();
             public HashSet<nint> ExecutedCommandChainSecondaryHandles { get; } = new();
-            public HashSet<int> OptionalPipelineDeferredOpIndices { get; } = new();
+            public HashSet<FrameOp> PipelineDeferredOps { get; } =
+                new(ReferenceEqualityComparer.Instance);
+            public HashSet<int> PipelineDeferredRequirementIndices { get; } = [];
+            public ulong PipelineDeferredManifestIdentity { get; set; }
+            public ulong PipelineDeferredActivityGeneration { get; set; }
+            public ulong PipelineDeferredSharedPipelineGeneration { get; set; }
             public HashSet<VkRenderQuery> PreparedInlineQueries { get; } = new(ReferenceEqualityComparer.Instance);
             public HashSet<VkRenderQuery> BegunInlineQueries { get; } = new(ReferenceEqualityComparer.Instance);
             public HashSet<object> VisitedResourceRegistries { get; } = new(ReferenceEqualityComparer.Instance);

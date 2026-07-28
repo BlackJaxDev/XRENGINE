@@ -4,6 +4,18 @@ Date: 2026-07-25
 
 Result: Complete for the documented Windows/CoreCLR desktop workflow.
 
+> **2026-07-27 regression addendum:** The historical validation below remains
+> accurate for its recorded sessions, but current structural Vulkan
+> `Build and Reload Renderer` is not considered safe after NVIDIA Streamline
+> initializes. A candidate generation terminated the editor with native
+> fast-fail `0xc0000409` while Streamline was being reinitialized. Vulkan shader
+> reload and same-generation renderer restart were subsequently live-validated
+> and remain the supported same-process paths. Structural Vulkan C# changes
+> require a full editor restart until Streamline runtime ownership is moved to a
+> stable process-lifetime service or the operation is rejected before teardown.
+> See the
+> [2026-07-27 investigation](../../investigations/rendering/vulkan-uber-pipeline-stall-black-recovery-2026-07-27.md).
+
 ## Inventory and ownership audit
 
 The work was performed directly in the active Runtime Modularization Phase 4

@@ -126,6 +126,7 @@ namespace XREngine.Rendering.Vulkan
             public ImageLayout SwapchainLayoutAfterScene;
             public long SceneCommandBufferDirtyGeneration;
             public int SceneSwapchainWriteCount;
+            public int RecoverySwapchainWriteCount;
 
             public bool CollectReleased;
             public bool Submitted;

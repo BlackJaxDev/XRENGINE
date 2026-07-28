@@ -12,8 +12,11 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer(XRWindow window, bool shouldLinkWindow = true) :
-        AbstractRenderer<Vk>(window, shouldLinkWindow),
+    public unsafe partial class VulkanRenderer(
+        XRWindow window,
+        bool shouldLinkWindow = true,
+        long backendGeneration = 0) :
+        AbstractRenderer<Vk>(window, shouldLinkWindow, backendGeneration),
         ISparseTextureStreamingBackendCapability,
         IStreamlinePresentationBackendCapability
     {

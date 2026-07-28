@@ -28,6 +28,9 @@ public sealed class VulkanRendererBackendFactory :
                 nameof(context));
         }
 
-        return new VulkanRenderer(window, context.LinkRendererToWindow);
+        return new VulkanRenderer(
+            window,
+            context.LinkRendererToWindow,
+            context.ModuleGeneration);
     }
 }

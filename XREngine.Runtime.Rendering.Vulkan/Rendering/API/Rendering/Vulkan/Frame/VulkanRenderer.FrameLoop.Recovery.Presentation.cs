@@ -15,7 +15,8 @@ namespace XREngine.Rendering.Vulkan
             Result? rejectedSubmitResult,
             bool commandBufferDirtyFlagSet,
             bool commandBuffersDirtiedAfterSceneRecord,
-            int clearedLayoutCount)
+            int clearedLayoutCount,
+            bool recoveryFrameWritten)
         {
             VulkanDesktopPresentDispatchOutcome dispatch =
                 QueueDesktopPresent(
@@ -48,7 +49,9 @@ namespace XREngine.Rendering.Vulkan
                 ref attempt,
                 presentResult,
                 accepted,
-                hasValidFrameContent: false);
+                hasValidFrameContent:
+                    imageHasValidPresentedContent ||
+                    recoveryFrameWritten);
             if (presentResult == Result.ErrorDeviceLost)
             {
                 attempt.TransitionAcquireOwnership(
@@ -72,8 +75,10 @@ namespace XREngine.Rendering.Vulkan
             RecordCompletedRejectedDesktopRecovery(
                 ref attempt,
                 in policy,
-                imageHasValidPresentedContent,
-                recordedSwapchainWriteCount,
+                imageHasValidPresentedContent ||
+                    recoveryFrameWritten,
+                recordedSwapchainWriteCount +
+                    attempt.RecoverySwapchainWriteCount,
                 presentResult,
                 rejectionStage,
                 rejectedSubmitResult,

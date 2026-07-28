@@ -522,18 +522,26 @@ public sealed class VulkanStablePacketAndDescriptorTests
     }
 
     [Test]
-    public void MutableGpuDrivenPrimaries_AreNeverCleanReuseCandidates()
+    public void MutableGpuDrivenPrimaries_ReuseStableInlineTopology()
     {
         string recording = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string diagnostics = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpDiagnostics.cs");
+        string markers = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.SubmissionMarkers.cs");
+        string meshRenderer = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
 
         recording.ShouldContain("bool hasMutableGpuDrivenFrameOps = hasStaticFrameOps && HasMutableGpuDrivenFrameOps(ops);");
         recording.ShouldContain("!hasMutableGpuDrivenFrameOps &&");
-        recording.ShouldContain("\"mutable-gpu-driven-frame-ops\"");
+        recording.ShouldContain("hasStaticFrameOps && !VulkanPrimaryCommandBufferReuseEnabled");
+        recording.ShouldNotContain("\"mutable-gpu-driven-frame-ops\"");
+        recording.ShouldContain("PrepareSubmissionMarkersForCommandBufferReuse(");
         diagnostics.ShouldContain("IndirectDrawOp or MeshTaskDispatchIndirectCountOp");
         diagnostics.ShouldNotContain("ComputeDispatchOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp");
+        markers.ShouldContain("RegisterSubmissionMarkersForCommandBuffer");
+        meshRenderer.ShouldNotContain("hash.Add(marker.Fence.GetHashCode());");
     }
 
     [Test]
@@ -773,6 +781,39 @@ public sealed class VulkanStablePacketAndDescriptorTests
         descriptors.ShouldContain("setState.UsesUpdateAfterBind");
         pipeline.ShouldContain("ClassifyTextureBindingChange");
         pipeline.ShouldContain("RenderResourceChangeKind.StructuralLayout");
+    }
+
+    [Test]
+    public void MeshDescriptorRefresh_SkipsUnchangedBindingsBeforeNativeUpdate()
+    {
+        string descriptors = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
+        string allocation = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Classes/VkMeshRenderer.DescriptorAllocation.cs");
+        string key = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Structs/VkMeshRenderer.DescriptorWriteKey.cs");
+
+        allocation.ShouldContain("Dictionary<DescriptorWriteKey, ulong> DescriptorWriteSignatures");
+        key.ShouldContain("ulong DescriptorSetHandle");
+        descriptors.ShouldContain("ComputeDescriptorBufferInfoSignature(");
+        descriptors.ShouldContain("ComputeDescriptorImageInfoSignature(");
+        descriptors.ShouldContain("ComputeDescriptorTexelBufferSignature(");
+        AssertOrdered(
+            descriptors,
+            "if (DescriptorWriteMatches(allocation, bufferKey, bufferSignature))",
+            "bufferMap.Add((writes.Count, bufferStart, binding, descriptorCount));");
+        AssertOrdered(
+            descriptors,
+            "if (DescriptorWriteMatches(allocation, imageKey, imageSignature))",
+            "imageMap.Add((writes.Count, imageStart, binding, descriptorCount));");
+        AssertOrdered(
+            descriptors,
+            "if (DescriptorWriteMatches(allocation, texelKey, texelSignature))",
+            "texelMap.Add((writes.Count, texelStart, binding, descriptorCount));");
+        AssertOrdered(
+            descriptors,
+            "Renderer.TryUpdateDescriptorSetsTracked",
+            "allocation.DescriptorWriteSignatures[signatures[signatureIndex].key]");
     }
 
     [Test]

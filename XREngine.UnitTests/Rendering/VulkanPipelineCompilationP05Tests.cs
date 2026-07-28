@@ -9,15 +9,19 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class VulkanPipelineCompilationP05Tests
 {
     [Test]
-    public void BackgroundGraphicsCompilation_UsesSharedPipelineCacheAndCompileRequiredProbe()
+    public void BackgroundGraphicsCompilation_UsesIsolatedPersistentCacheAndCompileRequiredProbe()
     {
         string queue = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCompileQueue.cs");
         string cache = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCache.cs");
 
-        queue.ShouldContain("pipelineCache: ActivePipelineCache");
+        queue.ShouldContain("pipelineCache: BackgroundPipelineCache");
+        queue.ShouldNotContain("pipelineCache: ActivePipelineCache");
         queue.ShouldNotContain("pipelineCache: default");
+        cache.ShouldContain("private PipelineCache _backgroundPipelineCache;");
+        cache.ShouldContain("PublishVulkanBackgroundPipelineCache");
+        cache.ShouldContain("MergePipelineCaches");
         cache.ShouldContain("VulkanPipelineFailOnCompileRequiredFlag");
         cache.ShouldContain("VulkanPipelineCompileRequiredResult");
         cache.ShouldContain("EVulkanPipelineTelemetryEvent.CompileRequired");
@@ -63,9 +67,155 @@ public sealed class VulkanPipelineCompilationP05Tests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCompileQueue.cs");
 
         source.ShouldContain("activeJobCount >= capacity");
+        source.ShouldContain("int capacity = workerCount;");
         source.ShouldContain("EVulkanPipelineTelemetryEvent.QueueRejected");
-        source.ShouldContain("_vulkanGraphicsPipelineCompileJobs.TryRemove(compileKey");
+        source.ShouldContain("_vulkanGraphicsPipelineProgramCompileJobs.ContainsKey");
+        source.ShouldContain("another cold pipeline for program");
+        source.ShouldContain("VulkanPipelineCompileQuarantineSeconds");
+        source.ShouldContain("[Vulkan][PipelineWatchdog]");
+        source.ShouldContain("return 1;");
+        source.ShouldContain("VulkanPipelineCompileTask.RunAsync");
+        source.ShouldContain("VulkanPipelineCompileActivityGeneration");
+        source.ShouldContain("pipelineCache: BackgroundPipelineCache");
+        source.ShouldContain("PublishVulkanBackgroundPipelineCache(elapsedMs)");
+        source.ShouldContain("_vulkanGraphicsPipelineCompileJobs.TryRemove(");
+        source.ShouldContain("completedJob.Request.CompileKey");
         source.ShouldContain("StoreOrRetireSharedGraphicsPipeline(pipelineKey, result.Pipeline)");
+
+        string pipelineCache = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCache.cs");
+        pipelineCache.ShouldContain("private PipelineCache _backgroundPipelineCache;");
+        pipelineCache.ShouldContain("Api.CreatePipelineCache(");
+        pipelineCache.ShouldContain("Api!.MergePipelineCaches(");
+        pipelineCache.ShouldContain("Api!.DestroyPipelineCache(device, _backgroundPipelineCache");
+        pipelineCache.ShouldContain("compileMilliseconds >= 1_000.0");
+
+        string task = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCompileTask.cs");
+        task.ShouldContain("await compileGate.WaitAsync()");
+        task.ShouldContain("TaskCompletionSource<T>");
+        task.ShouldContain("Thread worker = new");
+        task.ShouldContain("IsBackground = true");
+        task.ShouldContain("ThreadPriority.BelowNormal");
+        task.ShouldContain("TaskCreationOptions.RunContinuationsAsynchronously");
+        task.ShouldNotContain("compileGate.Wait();");
+    }
+
+    [Test]
+    public void ShaderAndProgramMutation_DrainNativePipelineCompilesBeforeDestroyingDependencies()
+    {
+        string queue = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCompileQueue.cs");
+        string shader = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkShader.cs");
+        string program = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+        string request = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Classes/VkMeshRenderer.GraphicsPipelineBuildRequest.cs");
+        string pipeline = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
+        string preparation = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Preparation.cs");
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+
+        queue.ShouldContain("ExecuteWithVulkanPipelineCompilationQuiesced");
+        queue.ShouldContain("_vulkanPipelineCompileDependencyMutationActive");
+        queue.ShouldContain("_vulkanPipelineCompileDependencyGeneration");
+        queue.ShouldContain(
+            "request.DependencyGeneration !=");
+        queue.ShouldContain("DrainVulkanPipelineCompileJobs(jobs, reason)");
+        queue.ShouldContain("job.PublicationTask.Wait()");
+        queue.ShouldContain("CaptureVulkanPipelineCompilationDependencies");
+        request.ShouldContain(
+            "public long DependencyGeneration { get; } = dependencyGeneration;");
+        pipeline.ShouldContain(
+            "IsVulkanPipelineCompileDependencyGenerationCurrent(");
+        pipeline.ShouldContain(
+            "Renderer.CaptureVulkanPipelineCompilationDependencies(");
+        pipeline.ShouldContain(
+            "stage.Module.Handle == 0 || stage.PName is null");
+        preparation.ShouldContain(
+            "if (!_program.Link(MeshRenderer?.GenerateAsync ?? false))");
+        preparation.ShouldContain(
+            "ObserveActiveProgramLinkGeneration(_program);");
+        pipeline.ShouldContain(
+            "_program.LinkGeneration,");
+        recording.ShouldContain(
+            "programHash.Add(draw.PreparedProgram?.LinkGeneration ?? 0UL);");
+
+        int shaderBarrier = shader.IndexOf(
+            "private void Invalidate()", StringComparison.Ordinal);
+        int shaderRenderThreadDispatch = shader.IndexOf(
+            "RuntimeEngine.InvokeOnMainThread(Invalidate", shaderBarrier, StringComparison.Ordinal);
+        int shaderInvalidationBarrier = shader.IndexOf(
+            "ExecuteWithVulkanPipelineCompilationQuiesced", shaderBarrier, StringComparison.Ordinal);
+        int shaderInvalidationEvent = shader.IndexOf(
+            "ShaderInvalidated?.Invoke(this)", shaderInvalidationBarrier, StringComparison.Ordinal);
+        shaderBarrier.ShouldBeGreaterThanOrEqualTo(0);
+        shaderRenderThreadDispatch.ShouldBeGreaterThan(shaderBarrier);
+        shaderInvalidationBarrier.ShouldBeGreaterThan(shaderRenderThreadDispatch);
+        shaderInvalidationBarrier.ShouldBeGreaterThan(shaderBarrier);
+        shaderInvalidationEvent.ShouldBeGreaterThan(shaderInvalidationBarrier);
+
+        int shaderDestroyBarrier = shader.IndexOf(
+            "private void DestroyShaderResources()", StringComparison.Ordinal);
+        int shaderDestroy = shader.IndexOf(
+            "DestroyShaderModule", shaderDestroyBarrier, StringComparison.Ordinal);
+        shaderDestroyBarrier.ShouldBeGreaterThanOrEqualTo(0);
+        shaderDestroy.ShouldBeGreaterThan(shaderDestroyBarrier);
+
+        int programBarrier = program.IndexOf(
+            "private void BuildProgramInterface()", StringComparison.Ordinal);
+        int programMutation = program.IndexOf(
+            "ExecuteWithVulkanPipelineCompilationQuiesced", programBarrier, StringComparison.Ordinal);
+        int layoutDestroy = program.IndexOf(
+            "DestroyLayoutsAfterPipelineCompileDrain", programMutation, StringComparison.Ordinal);
+        programBarrier.ShouldBeGreaterThanOrEqualTo(0);
+        programMutation.ShouldBeGreaterThan(programBarrier);
+        layoutDestroy.ShouldBeGreaterThan(programMutation);
+    }
+
+    [Test]
+    public async Task AsyncCompileTask_NeverInvokesNativeCompileOnTheCallingThread()
+    {
+        using SemaphoreSlim compileGate = new(initialCount: 1, maxCount: 1);
+        int callingThreadId = Environment.CurrentManagedThreadId;
+        int compileThreadId = callingThreadId;
+
+        int result = await VulkanPipelineCompileTask.RunAsync(
+            compileGate,
+            () =>
+            {
+                compileThreadId = Environment.CurrentManagedThreadId;
+                return 42;
+            });
+
+        result.ShouldBe(42);
+        compileThreadId.ShouldNotBe(callingThreadId);
+        compileGate.CurrentCount.ShouldBe(1);
+    }
+
+    [Test]
+    public void SharedPipelineLibraries_ReserveBeforeEnteringTheDriver()
+    {
+        string cache = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanGraphicsPipelineLibraryCache.cs");
+        string pipeline = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
+
+        cache.ShouldContain("_sharedGraphicsPipelineLibraryCreations.Add(key)");
+        cache.ShouldContain("TryGetOrReserveSharedGraphicsPipelineLibrary");
+        cache.ShouldContain("CompleteSharedGraphicsPipelineLibraryCreation");
+        cache.ShouldContain("CancelSharedGraphicsPipelineLibraryCreation");
+
+        int reserve = pipeline.IndexOf(
+            "TryGetOrReserveSharedGraphicsPipelineLibrary(", StringComparison.Ordinal);
+        int create = pipeline.IndexOf(
+            "Renderer.CreateGraphicsPipelineWithCachePolicy(", reserve, StringComparison.Ordinal);
+        reserve.ShouldBeGreaterThanOrEqualTo(0);
+        create.ShouldBeGreaterThan(reserve);
+        pipeline.ShouldContain("VulkanPipelineCompilationDeferredException");
     }
 
     [Test]
@@ -77,10 +227,10 @@ public sealed class VulkanPipelineCompilationP05Tests
         int methodEnd = secondarySource.IndexOf("private bool TryRecordSecondaryBucket", methodStart, StringComparison.Ordinal);
         string method = secondarySource[methodStart..methodEnd];
 
-        int prewarm = method.IndexOf("TryPrewarmGraphicsPipelinesForRecording", StringComparison.Ordinal);
         int begin = method.IndexOf("Api.BeginCommandBuffer(secondary", StringComparison.Ordinal);
-        prewarm.ShouldBeGreaterThanOrEqualTo(0);
-        begin.ShouldBeGreaterThan(prewarm);
+        begin.ShouldBeGreaterThanOrEqualTo(0);
+        method.ShouldContain("materialization is deliberately owned by the render thread before");
+        method.ShouldNotContain("TryPrewarmGraphicsPipelinesForRecording");
         method.ShouldContain("chain.State = CommandChainState.NotReady;");
         method.ShouldContain("chain.DirtyReason |= CommandChainDirtyReason.PipelineGeneration;");
 

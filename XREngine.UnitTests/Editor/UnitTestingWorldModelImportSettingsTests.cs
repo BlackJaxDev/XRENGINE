@@ -6,9 +6,11 @@ using System.IO;
 using System.Linq;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Editor;
+using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.Bootstrap.Builders;
+using XREngine.UnitTests.Rendering;
 
 namespace XREngine.UnitTests.Editor;
 
@@ -279,11 +281,16 @@ public sealed class UnitTestingWorldModelImportSettingsTests
     }
 
     [Test]
+    [NonParallelizable]
     public void BootstrapWorldFactory_AppliesProceduralSkySettingsToSkybox()
     {
         UnitTestingWorldSettings previousSettings = RuntimeBootstrapState.Settings;
+        IRuntimeRenderingHostServices previousRenderingHostServices = RuntimeRenderingHostServices.Current;
+        IRuntimeShaderServices? previousShaderServices = RuntimeShaderServices.Current;
         try
         {
+            RuntimeRenderingHostServices.Current = RuntimeRenderingBootstrap.CreateEngineHostServices();
+            RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
             RuntimeBootstrapState.Settings = new UnitTestingWorldSettings
             {
                 Skybox = true,
@@ -296,6 +303,7 @@ public sealed class UnitTestingWorldModelImportSettingsTests
                 LightProbe = LightProbeMode.Off,
                 VRPawn = false,
                 Locomotion = false,
+                AddPhysics = false,
             };
 
             var world = BootstrapWorldFactory.CreateUnitTestWorld(setUI: false, isServer: false);
@@ -313,6 +321,8 @@ public sealed class UnitTestingWorldModelImportSettingsTests
         finally
         {
             RuntimeBootstrapState.Settings = previousSettings;
+            RuntimeRenderingHostServices.Current = previousRenderingHostServices;
+            RuntimeShaderServices.Current = previousShaderServices;
         }
     }
 

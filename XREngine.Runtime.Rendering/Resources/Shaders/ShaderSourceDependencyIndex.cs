@@ -123,11 +123,9 @@ internal static class ShaderSourceDependencyIndex
             shaders = [.. unique];
         }
 
-        for (int i = 0; i < shaders.Length; i++)
-            shaders[i].NotifySourceDependencyChanged(reason);
-
-        Interlocked.Add(ref _notificationsPublished, shaders.Length);
-        return shaders.Length;
+        int invalidated = PublishInvalidationsOnRenderThread(shaders, reason);
+        Interlocked.Add(ref _notificationsPublished, invalidated);
+        return invalidated;
     }
 
     internal static int ProcessFileChangeImmediately(in ShaderSourceFileChange change)
@@ -254,8 +252,31 @@ internal static class ShaderSourceDependencyIndex
             shaders = [.. unique];
         }
 
+        return PublishInvalidationsOnRenderThread(shaders, normalizedPath);
+    }
+
+    /// <summary>
+    /// Publishes one dependency-change batch at a render-thread safe point.
+    /// Keeping the whole batch in one job prevents a frame from relinking and
+    /// recording against only part of a multi-stage program's invalidation set.
+    /// </summary>
+    private static int PublishInvalidationsOnRenderThread(XRShader[] shaders, string reason)
+    {
+        if (shaders.Length == 0)
+            return 0;
+
+        if (!RuntimeRenderingHostServices.HasConcreteHost)
+            return PublishInvalidations(shaders, reason);
+
+        return RuntimeRenderingHostServices.Scheduling.InvokeRenderThreadTask(
+            () => PublishInvalidations(shaders, reason),
+            $"ShaderSourceDependencyIndex.Publish[{reason}]");
+    }
+
+    private static int PublishInvalidations(XRShader[] shaders, string reason)
+    {
         for (int i = 0; i < shaders.Length; i++)
-            shaders[i].NotifySourceDependencyChanged(normalizedPath);
+            shaders[i].NotifySourceDependencyChanged(reason);
 
         return shaders.Length;
     }

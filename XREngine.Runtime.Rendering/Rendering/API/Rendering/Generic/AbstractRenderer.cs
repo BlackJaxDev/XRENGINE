@@ -52,7 +52,8 @@ namespace XREngine.Rendering
     {
         /// <inheritdoc />
         public virtual RendererBackendId BackendId => default;
-        public long BackendGeneration { get; internal set; }
+        public long BackendGeneration { get; }
+        public virtual bool IsBackendReplacementFrameReady => true;
         private int _acceptsBackendWork = 1;
 
         /// <summary>
@@ -127,9 +128,13 @@ namespace XREngine.Rendering
         #region Window / Lifecycle
         private XRWindow _window;
 
-        protected AbstractRenderer(XRWindow window, bool shouldLinkWindow = true)
+        protected AbstractRenderer(
+            XRWindow window,
+            bool shouldLinkWindow = true,
+            long backendGeneration = 0)
         {
             _window = window;
+            BackendGeneration = backendGeneration;
 
             //Set the initial object cache for this window of all existing render objects
             using (_roCacheLock.EnterScope())
@@ -690,8 +695,19 @@ namespace XREngine.Rendering
 
         internal void BeginBackendRetirement()
         {
-            Interlocked.Exchange(ref _acceptsBackendWork, 0);
+            if (Interlocked.Exchange(ref _acceptsBackendWork, 0) == 0)
+                return;
+
             Active = false;
+            OnBackendRetirementBeginning();
+        }
+
+        /// <summary>
+        /// Quiesces backend-owned native workers before API wrappers or the device are destroyed.
+        /// Implementations must not return while work can still access this renderer's native state.
+        /// </summary>
+        protected virtual void OnBackendRetirementBeginning()
+        {
         }
 
         /// <summary>
@@ -1435,7 +1451,12 @@ namespace XREngine.Rendering
 
         #endregion
     }
-    public abstract unsafe partial class AbstractRenderer<TAPI>(XRWindow window, bool shouldLinkWindow = true) : AbstractRenderer(window, shouldLinkWindow) where TAPI : NativeAPI
+    public abstract unsafe partial class AbstractRenderer<TAPI>(
+        XRWindow window,
+        bool shouldLinkWindow = true,
+        long backendGeneration = 0) :
+        AbstractRenderer(window, shouldLinkWindow, backendGeneration)
+        where TAPI : NativeAPI
     {
         ~AbstractRenderer() => _api?.Dispose();
 

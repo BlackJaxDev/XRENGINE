@@ -122,11 +122,20 @@ public sealed class RendererBackendCatalog : IRendererBackendCatalog, IDisposabl
         {
             ModuleGeneration = registration.Metadata.Generation,
         };
-        IRuntimeRendererHost renderer = registration.Factory.Create(generationContext);
-        if (renderer is AbstractRenderer abstractRenderer)
-            abstractRenderer.BackendGeneration = registration.Metadata.Generation;
-        return renderer ?? throw new InvalidOperationException(
-            $"Renderer backend factory '{registration.Metadata.DisplayName}' returned null for backend '{id}'.");
+        IRuntimeRendererHost renderer = registration.Factory.Create(generationContext) ??
+            throw new InvalidOperationException(
+                $"Renderer backend factory '{registration.Metadata.DisplayName}' returned null for backend '{id}'.");
+        if (renderer.BackendGeneration != registration.Metadata.Generation)
+        {
+            throw new InvalidOperationException(
+                $"Renderer backend factory '{registration.Metadata.DisplayName}' created generation " +
+                $"{renderer.BackendGeneration}, but the registered module generation is " +
+                $"{registration.Metadata.Generation}. Factories must pass " +
+                $"{nameof(RendererBackendCreateContext.ModuleGeneration)} into the renderer constructor " +
+                "before API wrappers are created.");
+        }
+
+        return renderer;
     }
 
     public void Dispose()

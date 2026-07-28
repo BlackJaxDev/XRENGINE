@@ -466,6 +466,9 @@ namespace XREngine.Rendering.Vulkan
                 ? 0
                 : ComputePrimaryCommandBufferGroupSignature(commandChainSchedule, commandChainCache);
             int commandChainPrimaryGroupCount = commandChainSchedule?.Groups.Length ?? 0;
+            bool allCommandChainGroupsUseSecondaryBuffers =
+                commandChainSchedule is not null &&
+                UsesOnlySecondaryCommandBufferGroups(commandChainSchedule);
             ulong commandChainPrimarySkeletonSignature = commandChainSchedule is null
                 ? ulong.MaxValue
                 : ComputeCommandChainPrimarySkeletonSignature(ops);
@@ -479,6 +482,8 @@ namespace XREngine.Rendering.Vulkan
                 commandChainPrimaryGroupSignature,
                 commandChainPrimaryGroupCount,
                 preserveSwapchainForOverlay,
+                currentDependencySignature,
+                allCommandChainGroupsUseSecondaryBuffers,
                 ops);
             if (imageForcedDirty)
                 MarkCommandBufferVariantsDirty(imageIndex, "image-forced-dirty");
@@ -487,12 +492,15 @@ namespace XREngine.Rendering.Vulkan
             bool dirty = imageForcedDirty || variant.Dirty;
             bool forcedDirty = dirty;
             bool usingCommandChains = commandChainSchedule is not null;
-            bool allCommandChainGroupsUseSecondaryBuffers =
-                commandChainSchedule is not null &&
-                UsesOnlySecondaryCommandBufferGroups(commandChainSchedule);
             bool hasTextureUploadFrameOps = hasStaticFrameOps && HasTextureUploadFrameOps(ops);
-            bool frameOpsRequireFreshPrimary = hasStaticFrameOps &&
-                (!VulkanPrimaryCommandBufferReuseEnabled || hasMutableGpuDrivenFrameOps);
+            // GPU-written indirect argument/count contents are data publication,
+            // not command topology. The frame-op and immutable dependency
+            // signatures already key buffer identity, offsets, capacities,
+            // pipelines, descriptors, targets, and frame slot. Keep mutable
+            // GPU-driven ops inline (rather than persistent secondaries), but
+            // allow the complete primary to replay when those identities match.
+            bool frameOpsRequireFreshPrimary =
+                hasStaticFrameOps && !VulkanPrimaryCommandBufferReuseEnabled;
             CommandRecordingDependencyMismatch dependencyMismatch =
                 usingCommandChains
                     ? variant.RecordedDependencySignature.CompareCommandChainPrimary(
@@ -506,9 +514,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     dirty = true;
                     primaryFrameStateDirty = true;
-                    primaryFrameStateDirtyReason = hasMutableGpuDrivenFrameOps
-                        ? "mutable-gpu-driven-frame-ops"
-                        : "reuse-disabled";
+                    primaryFrameStateDirtyReason = "reuse-disabled";
                 }
 
                 if (gpuProfilerCommandBufferStateDirty)
@@ -562,7 +568,7 @@ namespace XREngine.Rendering.Vulkan
                     primaryFrameStateDirty = true;
                     primaryFrameStateDirtyReason = variant.RecordedImageLayoutEndState is null
                         ? "missing-layout-state"
-                        : "image-layout-start";
+                        : "image-layout-entry-state";
                 }
 
                 if (!dirty && variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresentedAtRecord)
@@ -737,6 +743,10 @@ namespace XREngine.Rendering.Vulkan
                             frameOpContextFingerprint,
                             frameOpContextId,
                             usingCommandChains ? "primary-command-chain" : "primary");
+                        PrepareSubmissionMarkersForCommandBufferReuse(
+                            variant.PrimaryCommandBuffer,
+                            ops,
+                            dynamicUiBatchTextOps);
                         return variant.PrimaryCommandBuffer;
                     }
                 }
@@ -845,8 +855,10 @@ namespace XREngine.Rendering.Vulkan
                             break;
                         }
 
-                        CancelRecordedTextureUploadSubmitBatch(
-                            "command buffer resource generation retired during recording retry");
+                        // Texture uploads are recorded into an independent primary command
+                        // buffer. Keep that batch alive while retrying the scene primary so
+                        // the desktop recovery submit can still make streaming progress if
+                        // the retry is also deferred.
                         VulkanSwapchainDepthResources? currentDepth = CurrentSwapchainDepthResources;
                         Debug.VulkanWarningEvery(
                             $"Vulkan.Primary.RetryRetiredResource.{GetHashCode()}",
@@ -860,8 +872,10 @@ namespace XREngine.Rendering.Vulkan
                     if (!primaryRecorded)
                     {
                         _lastEnsureCommandBufferRecordedPrimary = false;
-                        CancelRecordedTextureUploadSubmitBatch(
-                            "command buffer recording deferred before or during recording");
+                        // A scene-recording deferral does not invalidate the separately
+                        // recorded texture-upload command buffer. Its caller either submits
+                        // the upload with the recovery frame or explicitly cancels it if no
+                        // legal recovery submit is possible.
                         FailUnsubmittedSubmissionMarkers(ops, dynamicUiBatchTextOps);
                         return default;
                     }
@@ -1187,6 +1201,7 @@ namespace XREngine.Rendering.Vulkan
                 vertexHash.Add(renderer.Mesh?.Buffers is null ? 0 : RuntimeHelpers.GetHashCode(renderer.Mesh.Buffers));
                 programHash.Add(draw.PreparedProgramIdentity);
                 programHash.Add(draw.PreparedProgram?.BindingId ?? 0u);
+                programHash.Add(draw.PreparedProgram?.LinkGeneration ?? 0UL);
             }
 
             meshIdentity = meshHash.ToHash();
@@ -1572,8 +1587,8 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (string.Equals(primaryFrameStateDirtyReason, "query-pool-prepare", StringComparison.Ordinal))
                     return $"query-generation old=0x{previous.Query:X16} new=0x{current.Query:X16}";
-                if (string.Equals(primaryFrameStateDirtyReason, "image-layout-start", StringComparison.Ordinal))
-                    return $"image-layout-generation old=0x{variant.RecordedImageLayoutStartSignature:X16} new=0x{imageLayoutStartSignature:X16}";
+                if (string.Equals(primaryFrameStateDirtyReason, "image-layout-entry-state", StringComparison.Ordinal))
+                    return $"image-layout-entry-state mismatch; global snapshots old=0x{variant.RecordedImageLayoutStartSignature:X16} new=0x{imageLayoutStartSignature:X16}";
                 return $"primary-frame-state old=cached new=record-required field={primaryFrameStateDirtyReason ?? "unknown"}";
             }
 
@@ -1913,6 +1928,10 @@ namespace XREngine.Rendering.Vulkan
                     frameOpContextId,
                     "command-chain-primary");
                 commandBuffer = variant.PrimaryCommandBuffer;
+                PrepareSubmissionMarkersForCommandBufferReuse(
+                    commandBuffer,
+                    ops,
+                    dynamicUiBatchTextOps);
                 if (dynamicUiSecondaryReady)
                 {
                     dynamicUiBatchTextSecondaryCommandBuffer = variant.DynamicUiSecondaryCommandBuffer;
@@ -3020,8 +3039,8 @@ namespace XREngine.Rendering.Vulkan
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshFrameDataFamilyBases =
                 recordingScratch.PrimaryMeshFrameDataFamilyBases;
             meshDrawSlotsByRendererFamily.Clear();
-            HashSet<int> optionalPipelineDeferredOpIndices = recordingScratch.OptionalPipelineDeferredOpIndices;
-            optionalPipelineDeferredOpIndices.Clear();
+            HashSet<FrameOp> pipelineDeferredOps = recordingScratch.PipelineDeferredOps;
+            pipelineDeferredOps.Clear();
             EMeshSubmissionStrategy submissionStrategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
             VulkanPipelineVariantManifest pipelineVariantManifest = GetOrBuildPipelineVariantManifest(
                 CompiledRenderGraph.Plan,
@@ -3029,13 +3048,35 @@ namespace XREngine.Rendering.Vulkan
                 submissionStrategy,
                 UseDynamicRenderingRenderTargets,
                 ComputeFrameOpsSignature(ops));
+            HashSet<int> deferredRequirementIndices =
+                recordingScratch.PipelineDeferredRequirementIndices;
+            ulong pipelineCompileActivityGeneration =
+                VulkanPipelineCompileActivityGeneration;
+            ulong sharedPipelineGeneration = SharedGraphicsPipelineGeneration;
+            bool reuseDeferredPipelineReadiness =
+                IsVulkanPipelineAsyncCompilationEnabled &&
+                deferredRequirementIndices.Count > 0 &&
+                recordingScratch.PipelineDeferredManifestIdentity ==
+                    pipelineVariantManifest.CompatibilityIdentity &&
+                recordingScratch.PipelineDeferredActivityGeneration ==
+                    pipelineCompileActivityGeneration &&
+                recordingScratch.PipelineDeferredSharedPipelineGeneration ==
+                    sharedPipelineGeneration;
+            if (!reuseDeferredPipelineReadiness)
+                deferredRequirementIndices.Clear();
             bool warmupPreviouslyCompleted = pipelineVariantManifest.WarmupCompleted;
             bool graphicsPipelinesReady = true;
+            int deferredPipelineDrawCount = 0;
             using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.PrimaryPrewarm))
             {
             string firstGraphicsPipelinePendingReason = string.Empty;
-            foreach (VulkanPipelineVariantRequirement requirement in pipelineVariantManifest.Requirements)
+            string firstDeferredPipelineReason = string.Empty;
+            for (int requirementIndex = 0;
+                 requirementIndex < pipelineVariantManifest.Requirements.Count;
+                 requirementIndex++)
             {
+                VulkanPipelineVariantRequirement requirement =
+                    pipelineVariantManifest.Requirements[requirementIndex];
                 int opIndex = requirement.OpIndex;
                 PendingMeshDraw pendingDraw = ops[opIndex] switch
                 {
@@ -3055,7 +3096,7 @@ namespace XREngine.Rendering.Vulkan
                     }
                     else
                     {
-                        optionalPipelineDeferredOpIndices.Add(opIndex);
+                        pipelineDeferredOps.Add(ops[opIndex]);
                     }
                     continue;
                 }
@@ -3100,6 +3141,20 @@ namespace XREngine.Rendering.Vulkan
                 if (pipelinePassIndex == int.MinValue)
                     continue;
 
+                if (reuseDeferredPipelineReadiness &&
+                    deferredRequirementIndices.Contains(requirementIndex))
+                {
+                    pipelineDeferredOps.Add(ops[opIndex]);
+                    deferredPipelineDrawCount++;
+                    if (firstDeferredPipelineReason.Length == 0)
+                    {
+                        firstDeferredPipelineReason =
+                            $"Pass={requirement.PassName} Mesh='{meshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' " +
+                            "Reason=pipeline compile still pending";
+                    }
+                    continue;
+                }
+
                 if (!TryResolveGraphicsPipelinePrewarmTarget(
                         target,
                         pipelinePassIndex,
@@ -3113,7 +3168,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     if (!requirement.Required)
                     {
-                        optionalPipelineDeferredOpIndices.Add(opIndex);
+                        pipelineDeferredOps.Add(ops[opIndex]);
                         Debug.VulkanEvery(
                             $"Vulkan.OptionalPipelineNodeDeferred.{GetHashCode()}.{requirement.PassIndex}",
                             TimeSpan.FromSeconds(1),
@@ -3147,27 +3202,17 @@ namespace XREngine.Rendering.Vulkan
                     continue;
                 }
 
-                if (!requirement.Required)
+                pipelineDeferredOps.Add(ops[opIndex]);
+                if (IsVulkanPipelineAsyncCompilationEnabled)
+                    deferredRequirementIndices.Add(requirementIndex);
+                deferredPipelineDrawCount++;
+                if (firstDeferredPipelineReason.Length == 0)
                 {
-                    optionalPipelineDeferredOpIndices.Add(opIndex);
-                    Debug.VulkanEvery(
-                        $"Vulkan.OptionalPipelineNodeDeferred.{GetHashCode()}.{requirement.PassIndex}",
-                        TimeSpan.FromSeconds(1),
-                        "[Vulkan] Optional pipeline node deferred without rejecting the frame. Pass={0} Variant={1} Dynamic={2} Stereo={3} Multiview={4} Reason={5}",
-                        requirement.PassName,
-                        requirement.SubmissionStrategy,
-                        requirement.DynamicRendering,
-                        requirement.Stereo,
-                        requirement.Multiview,
-                        pipelineReason);
-                    continue;
-                }
-
-                graphicsPipelinesReady = false;
-                if (firstGraphicsPipelinePendingReason.Length == 0)
-                {
-                    firstGraphicsPipelinePendingReason =
-                        $"op={opIndex} mesh='{meshRenderer.Mesh?.Name ?? "<unnamed mesh>"}': {pipelineReason}";
+                    firstDeferredPipelineReason =
+                        $"Pass={requirement.PassName} Required={requirement.Required} " +
+                        $"Variant={requirement.SubmissionStrategy} Dynamic={requirement.DynamicRendering} " +
+                        $"Stereo={requirement.Stereo} Multiview={requirement.Multiview} " +
+                        $"Mesh='{meshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' Reason={pipelineReason}";
                 }
             }
             recordingScratch.RecordMeshDrawSlotCapacityHint = Math.Max(
@@ -3191,7 +3236,29 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            pipelineVariantManifest.MarkWarmupCompleted();
+            if (deferredPipelineDrawCount == 0)
+            {
+                deferredRequirementIndices.Clear();
+                pipelineVariantManifest.MarkWarmupCompleted();
+            }
+            else
+            {
+                if (IsVulkanPipelineAsyncCompilationEnabled)
+                {
+                    recordingScratch.PipelineDeferredManifestIdentity =
+                        pipelineVariantManifest.CompatibilityIdentity;
+                    recordingScratch.PipelineDeferredActivityGeneration =
+                        pipelineCompileActivityGeneration;
+                    recordingScratch.PipelineDeferredSharedPipelineGeneration =
+                        sharedPipelineGeneration;
+                }
+                Debug.VulkanEvery(
+                    $"Vulkan.PipelineDrawDeferralSummary.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Recording a partial frame with {0} draw operation(s) deferred for pipeline compilation; the rest of the frame will still submit. First={1}",
+                    deferredPipelineDrawCount,
+                    firstDeferredPipelineReason);
+            }
             }
 
             if (!frameDataManifest.TrySeal(
@@ -5112,6 +5179,8 @@ namespace XREngine.Rendering.Vulkan
                 int count = 0;
                 for (int i = startIndex; i < ops.Length; i++)
                 {
+                    if (pipelineDeferredOps.Contains(ops[i]))
+                        break;
                     if (ops[i] is not MeshDrawOp candidate)
                         break;
 
@@ -5141,6 +5210,8 @@ namespace XREngine.Rendering.Vulkan
                 int count = 0;
                 for (int i = startIndex; i < ops.Length; i++)
                 {
+                    if (pipelineDeferredOps.Contains(ops[i]))
+                        break;
                     if (ops[i] is not IndirectDrawOp candidate)
                         break;
                     if (!AreFrameOpContextsRecordingCompatible(candidate.Context, activeContext))
@@ -6560,7 +6631,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                 for (int opIndex = 0; opIndex < ops.Length; opIndex++)
                 {
-                    if (optionalPipelineDeferredOpIndices.Contains(opIndex))
+                    if (pipelineDeferredOps.Contains(ops[opIndex]))
                         continue;
 
                     var op = ops[opIndex];

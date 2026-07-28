@@ -172,6 +172,8 @@ namespace XREngine.Rendering.Vulkan
             ulong commandChainPrimaryGroupSignature,
             int commandChainPrimaryGroupCount,
             bool preserveSwapchainForOverlay,
+            in CommandRecordingDependencySignature currentDependencySignature,
+            bool allCommandChainGroupsUseSecondaryBuffers,
             FrameOp[] frameOpsForDiagnostics)
         {
             if (_commandBufferVariants is null || imageIndex >= _commandBufferVariants.Length)
@@ -186,21 +188,46 @@ namespace XREngine.Rendering.Vulkan
             for (int i = 0; i < variants.Count; i++)
             {
                 CommandBufferCacheVariant variant = variants[i];
+                bool logicalKeyMatches;
                 if (useCommandChainKey)
                 {
-                    if (variant.CommandChainScheduleSignature == commandChainSchedule!.StructuralSignature &&
+                    logicalKeyMatches =
+                        variant.CommandChainScheduleSignature == commandChainSchedule!.StructuralSignature &&
                         variant.CommandChainPrimaryGroupSignature == commandChainPrimaryGroupSignature &&
                         variant.CommandChainPrimaryGroupCount == commandChainPrimaryGroupCount &&
                         variant.FrameOpsSignature == frameOpsSignature &&
                         variant.DynamicUiSignature == dynamicUiBatchTextSignature &&
                         variant.PreserveSwapchainForOverlay == preserveSwapchainForOverlay &&
-                        (variant.DynamicUiOpCount > 0) == hasDynamicUiBatchTextOverlay)
-                        return variant;
+                        (variant.DynamicUiOpCount > 0) == hasDynamicUiBatchTextOverlay;
                 }
-                else if (variant.FrameOpsSignature == frameOpsSignature &&
-                    variant.DynamicUiSignature == dynamicUiBatchTextSignature &&
-                    variant.PreserveSwapchainForOverlay == preserveSwapchainForOverlay)
-                    return variant;
+                else
+                {
+                    logicalKeyMatches =
+                        variant.FrameOpsSignature == frameOpsSignature &&
+                        variant.DynamicUiSignature == dynamicUiBatchTextSignature &&
+                        variant.PreserveSwapchainForOverlay == preserveSwapchainForOverlay;
+                }
+
+                if (logicalKeyMatches)
+                {
+                    CommandRecordingDependencyMismatch dependencyMismatch =
+                        useCommandChainKey
+                            ? variant.RecordedDependencySignature.CompareCommandChainPrimary(
+                                currentDependencySignature,
+                                allCommandChainGroupsUseSecondaryBuffers)
+                            : variant.RecordedDependencySignature.Compare(currentDependencySignature);
+                    if (!ShouldPreserveCleanVariantForAttachmentMismatch(
+                            variant.Dirty,
+                            dependencyMismatch))
+                    {
+                        return variant;
+                    }
+
+                    // Desktop render-target instances rotate independently of the logical frame-op
+                    // stream. Preserve the clean primary for its concrete attachment and keep
+                    // searching so the cache can retain one variant per rotating attachment.
+                    continue;
+                }
 
                 if (reusableDirtyMatch is null &&
                     variant.Dirty &&
@@ -279,6 +306,13 @@ namespace XREngine.Rendering.Vulkan
             return evicted;
         }
 
+        internal static bool ShouldPreserveCleanVariantForAttachmentMismatch(
+            bool variantDirty,
+            in CommandRecordingDependencyMismatch dependencyMismatch)
+            => !variantDirty &&
+               dependencyMismatch.RequiresRecording &&
+               dependencyMismatch.Field == CommandRecordingDependencyField.OutputPassAttachment;
+
         private CommandBuffer AllocateCommandBuffer(CommandBufferLevel level, string label)
             => AllocateCommandBuffer(level, label, commandPool);
 
@@ -321,11 +355,18 @@ namespace XREngine.Rendering.Vulkan
             return profilingActive && variant.GpuProfilerFrameSlot != frameSlot;
         }
 
-        private static bool IsCommandBufferVariantImageLayoutStateDirty(
+        private bool IsCommandBufferVariantImageLayoutStateDirty(
             CommandBufferCacheVariant variant,
             ulong imageLayoutStartSignature)
-            => variant.RecordedImageLayoutStartSignature != imageLayoutStartSignature ||
-               variant.RecordedImageLayoutEndState is null;
+        {
+            // Keep the global signature for diagnostics, but scope reuse validity to
+            // the entry states of images actually consumed by this command buffer.
+            // Texture streaming and unrelated render outputs legitimately mutate the
+            // renderer-wide layout map without changing this primary's contract.
+            _ = imageLayoutStartSignature;
+            return variant.RecordedImageLayoutEndState is null ||
+                   HasRecordedImageEntryStateMismatch(variant.PrimaryCommandBuffer);
+        }
 
         private void LogCommandChainSecondaryInheritanceMismatch(
             string chainName,

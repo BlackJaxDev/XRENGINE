@@ -477,8 +477,12 @@ public sealed class RendererReplacementCoordinator
 
         void OnFrame(XRWindow window, long frameGeneration)
         {
-            if (frameGeneration != generation)
+            if (frameGeneration != generation ||
+                window.Renderer.BackendGeneration != generation ||
+                !window.Renderer.IsBackendReplacementFrameReady)
+            {
                 return;
+            }
 
             lock (sync)
             {

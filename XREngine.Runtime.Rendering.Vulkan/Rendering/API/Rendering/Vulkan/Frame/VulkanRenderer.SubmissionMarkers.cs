@@ -56,6 +56,40 @@ public unsafe partial class VulkanRenderer
     }
 
     /// <summary>
+    /// Associates the current frame's CPU fence objects with a replayed command
+    /// buffer. Submission markers do not encode Vulkan commands; their position
+    /// only contributes a render-pass boundary to the structural frame-op
+    /// signature. Rebinding them here lets stable GPU-driven primaries replay
+    /// while each caller still receives the timeline value from this submission.
+    /// </summary>
+    private void PrepareSubmissionMarkersForCommandBufferReuse(
+        CommandBuffer commandBuffer,
+        ReadOnlySpan<FrameOp> frameOps,
+        ReadOnlySpan<FrameOp> dynamicUiFrameOps)
+    {
+        ResetSubmissionMarkersForCommandBuffer(commandBuffer);
+        RegisterSubmissionMarkersForCommandBuffer(commandBuffer, frameOps);
+        RegisterSubmissionMarkersForCommandBuffer(commandBuffer, dynamicUiFrameOps);
+    }
+
+    private void PrepareSubmissionMarkersForCommandBufferReuse(
+        CommandBuffer commandBuffer,
+        ReadOnlySpan<FrameOp> frameOps)
+    {
+        ResetSubmissionMarkersForCommandBuffer(commandBuffer);
+        RegisterSubmissionMarkersForCommandBuffer(commandBuffer, frameOps);
+    }
+
+    private void RegisterSubmissionMarkersForCommandBuffer(
+        CommandBuffer commandBuffer,
+        ReadOnlySpan<FrameOp> frameOps)
+    {
+        for (int index = 0; index < frameOps.Length; index++)
+            if (frameOps[index] is SubmissionMarkerOp marker)
+                RegisterSubmissionMarker(commandBuffer, marker.Fence);
+    }
+
+    /// <summary>
     /// Fails markers whose drained frame operations could not be recorded into a
     /// command buffer. Without this abort path, those fences remain permanently
     /// unbound because no command-buffer handle exists for submit/reset cleanup.

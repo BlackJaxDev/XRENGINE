@@ -107,6 +107,7 @@ public unsafe partial class VulkanRenderer
         public readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> EntrySubresources = new(8);
         public readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> Subresources = new(32);
         public readonly List<KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState>> TouchedSubresources = new(32);
+        public bool EntryStateIncomplete;
         public ulong RecordingGeneration;
 
         public void RefreshTouchedSubresources()
@@ -1139,6 +1140,25 @@ public unsafe partial class VulkanRenderer
             return;
 
         VulkanTrackedImageSubresource key = new(imageHandle, mip, layer, trackedAspect);
+        if (!recorded.Subresources.ContainsKey(key) &&
+            !recorded.EntrySubresources.ContainsKey(key))
+        {
+            if (_trackedImageSubresourceStates.TryGetValue(
+                    key,
+                    out VulkanImageSubresourceState? submittedState))
+            {
+                recorded.EntrySubresources[key] = submittedState.Submitted;
+            }
+            else
+            {
+                // A command buffer recorded against an untracked image normally uses
+                // Undefined as its first oldLayout. Submit it once so the exact entry
+                // contract is published, then record a reusable variant on the next
+                // frame instead of assuming that first-use transition is replay-safe.
+                recorded.EntryStateIncomplete = true;
+            }
+        }
+
         uint resolvedQueueFamily = queueFamilyIndex;
         if (resolvedQueueFamily == Vk.QueueFamilyIgnored)
         {
@@ -1402,6 +1422,7 @@ public unsafe partial class VulkanRenderer
             recorded.Subresources.Clear();
             recorded.EntrySubresources.Clear();
             recorded.TouchedSubresources.Clear();
+            recorded.EntryStateIncomplete = false;
             recorded.RecordingGeneration = ResolveCommandBufferRecordingGeneration(commandBuffer);
         }
     }
@@ -1547,6 +1568,20 @@ public unsafe partial class VulkanRenderer
                     continue;
                 }
 
+                primaryState.EntryStateIncomplete |= secondaryState.EntryStateIncomplete;
+                foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> pair in secondaryState.EntrySubresources)
+                {
+                    if (primaryState.Subresources.TryGetValue(pair.Key, out VulkanImageAccessState priorPrimaryState))
+                    {
+                        if (!AreRecordedImageEntryStatesCompatible(priorPrimaryState, pair.Value))
+                            primaryState.EntryStateIncomplete = true;
+                        continue;
+                    }
+
+                    if (!primaryState.EntrySubresources.ContainsKey(pair.Key))
+                        primaryState.EntrySubresources[pair.Key] = pair.Value;
+                }
+
                 foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> pair in secondaryState.TouchedSubresources)
                     primaryState.Subresources[pair.Key] = pair.Value;
             }
@@ -1654,6 +1689,60 @@ public unsafe partial class VulkanRenderer
         // queue submission, so restoring a snapshot is intentionally a no-op.
         _ = snapshot.Signature;
     }
+
+    /// <summary>
+    /// Checks only the image subresources consumed by a recorded command buffer.
+    /// Global layout state also contains unrelated streaming uploads, histories,
+    /// and other output variants; changes to those resources must not invalidate
+    /// an otherwise compatible cached primary.
+    /// </summary>
+    private bool HasRecordedImageEntryStateMismatch(CommandBuffer commandBuffer)
+    {
+        if (commandBuffer.Handle == 0)
+            return true;
+
+        lock (_vulkanImageLayoutLock)
+        {
+            if (!_recordedImageLayoutsByCommandBuffer.TryGetValue(
+                    unchecked((ulong)commandBuffer.Handle),
+                    out VulkanRecordedImageLayoutState? recorded))
+            {
+                return true;
+            }
+
+            if (recorded.EntryStateIncomplete)
+                return true;
+
+            foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> pair in recorded.EntrySubresources)
+            {
+                if (!_trackedImageSubresourceStates.TryGetValue(
+                        pair.Key,
+                        out VulkanImageSubresourceState? submittedState) ||
+                    !AreRecordedImageEntryStatesCompatible(
+                        submittedState.Submitted,
+                        pair.Value))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool AreRecordedImageEntryStatesCompatible(
+        in VulkanImageAccessState actual,
+        in VulkanImageAccessState expected)
+        => actual.Layout == expected.Layout &&
+           actual.StageMask == expected.StageMask &&
+           actual.AccessMask == expected.AccessMask &&
+           actual.ExpectedDescriptorLayout == expected.ExpectedDescriptorLayout &&
+           (actual.ResourceGeneration == 0 ||
+            expected.ResourceGeneration == 0 ||
+            actual.ResourceGeneration == expected.ResourceGeneration) &&
+           (actual.QueueFamilyIndex == Vk.QueueFamilyIgnored ||
+            expected.QueueFamilyIndex == Vk.QueueFamilyIgnored ||
+            actual.QueueFamilyIndex == expected.QueueFamilyIndex);
 
     private ulong ComputeImageLayoutStateSignature(CommandBuffer commandBuffer = default)
     {

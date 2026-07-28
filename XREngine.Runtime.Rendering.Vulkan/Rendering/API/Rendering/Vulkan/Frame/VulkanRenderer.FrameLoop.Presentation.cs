@@ -9,6 +9,11 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
+        private int _hasPresentedCompleteSceneFrame;
+
+        public override bool IsBackendReplacementFrameReady
+            => Volatile.Read(ref _hasPresentedCompleteSceneFrame) != 0;
+
         private EDesktopFrameFlow PresentSubmittedDesktopFrame(
             ref DesktopFrameAttempt attempt)
         {
@@ -218,8 +223,12 @@ namespace XREngine.Rendering.Vulkan
 
             bool submittedFrameWroteSwapchain =
                 attempt.SceneSwapchainWriteCount > 0 ||
+                attempt.RecoverySwapchainWriteCount > 0 ||
                 attempt.HasImGuiOverlayCommandBuffer ||
                 attempt.HasDynamicTextOverlayCommandBuffer;
+            if (attempt.SceneSwapchainWriteCount > 0)
+                Volatile.Write(ref _hasPresentedCompleteSceneFrame, 1);
+
             if (submittedFrameWroteSwapchain)
             {
                 _swapchainImageHasValidPresentedContent[

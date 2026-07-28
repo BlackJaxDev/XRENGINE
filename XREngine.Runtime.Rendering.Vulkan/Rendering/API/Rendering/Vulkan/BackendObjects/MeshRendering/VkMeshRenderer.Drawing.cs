@@ -492,7 +492,7 @@ public unsafe partial class VulkanRenderer
 				if (requiresDescriptors)
 				{
 					int frameIndex = imageIndex > int.MaxValue ? int.MaxValue : (int)imageIndex;
-					if (!EnsureDescriptorSets(material, drawUniformSlot, frameIndex))
+					if (!EnsureDescriptorSets(material, drawUniformSlot, frameIndex, draw.ProgramBindingSnapshot))
 					{
 						reason = "descriptor sets pending";
 						ReturnRentedVertexBufferSnapshot(vertexBuffers, vertexBindings);
@@ -756,7 +756,7 @@ public unsafe partial class VulkanRenderer
 			if (!requiresDescriptors)
 				return true;
 
-			if (!EnsureDescriptorSets(material, drawUniformSlot, imageIndex))
+			if (!EnsureDescriptorSets(material, drawUniformSlot, imageIndex, draw.ProgramBindingSnapshot))
 			{
 				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=EnsureDescriptorSets returned false");
 				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
@@ -1013,7 +1013,13 @@ public unsafe partial class VulkanRenderer
 				MeshRenderer.OnPreparingRenderData();
 
 			if (draw.PreparedProgram is { } preparedProgram)
-				ActivateCapturedProgram(material, preparedProgram, draw.PreparedProgramIdentity);
+			{
+				if (!ActivateCapturedProgram(material, preparedProgram, draw.PreparedProgramIdentity))
+				{
+					reason = "program pending";
+					return false;
+				}
+			}
 			else if (!EnsureProgram(material))
 			{
 				reason = "program pending";
@@ -1038,7 +1044,7 @@ public unsafe partial class VulkanRenderer
 
 			BuildVertexInputState();
 
-			if (!EnsureDescriptorSets(material, drawUniformSlot, frameIndex))
+			if (!EnsureDescriptorSets(material, drawUniformSlot, frameIndex, draw.ProgramBindingSnapshot))
 			{
 				reason = $"descriptors pending; program='{_program?.Data?.Name ?? "<unnamed program>"}'";
 				return false;
@@ -1192,7 +1198,12 @@ public unsafe partial class VulkanRenderer
 			XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 			if (draw.PreparedProgram is { } preparedProgram)
 			{
-				ActivateCapturedProgram(material, preparedProgram, draw.PreparedProgramIdentity);
+				if (!ActivateCapturedProgram(material, preparedProgram, draw.PreparedProgramIdentity))
+				{
+					reason = "captured program pending";
+					return false;
+				}
+
 				EnsureRuntimeDeformationBuffersCurrent();
 			}
 			else if (!TryPrepareForRendering(material, out string prepareReason))
@@ -1276,6 +1287,7 @@ public unsafe partial class VulkanRenderer
 				drawUniformSlot,
 				draw.ProgramBindingSnapshot is not null,
 				frameIndex,
+				draw.ProgramBindingSnapshot,
 				out string descriptorReason);
 			if (!descriptorSetsReusable)
 			{

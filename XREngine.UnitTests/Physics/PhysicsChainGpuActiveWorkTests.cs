@@ -71,7 +71,7 @@ public sealed class PhysicsChainGpuActiveWorkTests
         string solver = File.ReadAllText(Path.Combine(Path.GetDirectoryName(ShaderPath)!, "PhysicsChain.comp"))
             .Replace("\r\n", "\n");
         string dispatcher = File.ReadAllText(Path.Combine(
-            WorkspaceRoot, "XRENGINE", "Rendering", "Compute", "GPUPhysicsChainDispatcher.cs"));
+            WorkspaceRoot, "XREngine.Runtime.Rendering", "Rendering", "PhysicsCompute", "GPUPhysicsChainDispatcher.cs"));
 
         scheduler.ShouldContain("CapacityPerBucket");
         solver.ShouldContain("ActiveTreeIds[ActiveTreeIdBase + dispatchIndex]");
@@ -98,7 +98,7 @@ public sealed class PhysicsChainGpuActiveWorkTests
     public void StableActiveInputs_UploadOnlyVersionedDirtyRanges()
     {
         string dispatcher = File.ReadAllText(Path.Combine(
-            WorkspaceRoot, "XRENGINE", "Rendering", "Compute", "GPUPhysicsChainDispatcher.cs"))
+            WorkspaceRoot, "XREngine.Runtime.Rendering", "Rendering", "PhysicsCompute", "GPUPhysicsChainDispatcher.cs"))
             .Replace("\r\n", "\n");
 
         dispatcher.ShouldContain("bool fullUpload = !IsActiveWorkLayoutCurrent(requests)");

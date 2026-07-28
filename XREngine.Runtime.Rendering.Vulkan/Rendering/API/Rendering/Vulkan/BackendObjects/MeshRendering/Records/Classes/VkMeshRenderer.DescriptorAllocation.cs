@@ -38,7 +38,7 @@ public unsafe partial class VulkanRenderer
             public string ResourceFingerprintDetails = string.Empty;
             public ulong LastUsedSerial;
             public int SharedReferenceCount;
-            public readonly Dictionary<FrameSourceDescriptorWriteKey, ulong> FrameSourceDescriptorWriteSignatures = new();
+            public readonly Dictionary<DescriptorWriteKey, ulong> DescriptorWriteSignatures = new();
         }
     }
 }

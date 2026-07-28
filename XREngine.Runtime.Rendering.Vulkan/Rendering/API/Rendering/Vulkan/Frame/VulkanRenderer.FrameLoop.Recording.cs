@@ -75,7 +75,8 @@ namespace XREngine.Rendering.Vulkan
                         {
                             return HandleDesktopRecordingDeferred(
                                 ref attempt,
-                                recordingDeferredReason);
+                                recordingDeferredReason,
+                                imguiOverlaySnapshot);
                         }
                     }
                     catch (InvalidOperationException ex)
@@ -159,8 +160,14 @@ namespace XREngine.Rendering.Vulkan
 
         private EDesktopFrameFlow HandleDesktopRecordingDeferred(
             ref DesktopFrameAttempt attempt,
-            string reason)
+            string reason,
+            ImGuiFrameSnapshot? recoveryOverlaySnapshot)
         {
+            Debug.VulkanWarningEvery(
+                $"Vulkan.Frame.{GetHashCode()}.RecordDeferredReason",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Scene command-buffer recording deferred; a separately recorded texture-upload batch will remain eligible for the recovery submit. {0}",
+                reason);
             bool swapchainAttachmentRetired =
                 IsSwapchainResourceRetirementRecordingFailure(reason);
             if (TryRecoverRejectedDesktopImage(
@@ -170,7 +177,9 @@ namespace XREngine.Rendering.Vulkan
                     recordedSwapchainWriteCount:
                         attempt.SceneSwapchainWriteCount,
                     rejectionStage: "RecordDeferred",
-                    rejectedSubmitResult: null))
+                    rejectedSubmitResult: null,
+                    recoveryOverlaySnapshot:
+                        recoveryOverlaySnapshot))
             {
                 if (swapchainAttachmentRetired)
                 {

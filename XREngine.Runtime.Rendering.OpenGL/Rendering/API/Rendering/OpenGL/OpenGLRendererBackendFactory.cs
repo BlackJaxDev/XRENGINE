@@ -18,6 +18,9 @@ public sealed class OpenGLRendererBackendFactory : IRendererBackendFactory
                 nameof(context));
         }
 
-        return new OpenGLRenderer(window, context.LinkRendererToWindow);
+        return new OpenGLRenderer(
+            window,
+            context.LinkRendererToWindow,
+            context.ModuleGeneration);
     }
 }

@@ -17,6 +17,7 @@ public unsafe partial class VulkanRenderer
 			public readonly List<(int writeIndex, int bufferIndex, DescriptorBindingInfo binding, uint descriptorCount)> BufferMap = [];
 			public readonly List<(int writeIndex, int imageIndex, DescriptorBindingInfo binding, uint descriptorCount)> ImageMap = [];
 			public readonly List<(int writeIndex, int texelIndex, DescriptorBindingInfo binding, uint descriptorCount)> TexelMap = [];
+			public readonly List<(DescriptorWriteKey key, ulong signature)> Signatures = [];
 
 			public void Clear()
 			{
@@ -27,6 +28,7 @@ public unsafe partial class VulkanRenderer
 				BufferMap.Clear();
 				ImageMap.Clear();
 				TexelMap.Clear();
+				Signatures.Clear();
 			}
 		}
 	}
