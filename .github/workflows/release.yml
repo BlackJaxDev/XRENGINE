@@ -71,7 +71,7 @@ jobs:
           "DOCS_ARCHIVE=$archive" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Upload DocFX site
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: xrengine-docs-${{ github.sha }}
           path: ${{ env.DOCS_ARCHIVE }}
@@ -156,7 +156,7 @@ jobs:
           "RELEASE_ASSET_ROOT=$archiveRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Upload packaged applications
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-binaries-${{ github.ref_name }}
           path: ${{ env.RELEASE_ASSET_ROOT }}/*.zip
